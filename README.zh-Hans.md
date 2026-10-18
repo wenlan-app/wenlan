@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=c577ff92a2d459e1aa449f29ab8148cf794573f2e50ed6a12c08c1bd2b5b100b -->
+<!-- README_SYNC: source=README.md sha256=f4a302ed8126b6736a97378fc9e4549a2b846faed02cc518a5b69d90ef58b631 -->
 
 <p align="center">
   <picture>
@@ -83,20 +83,20 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 日常使用
 
-你可以单独使用 App，也可以搭配 AI 工作。把值得留下的知识与进度存回 Wenlan，下次接着用。
+工作中留下新发现与进度，下次直接接着用。
 
 <p align="center">
   <img src="./docs/assets/wenlan-daily-workflow-zh-Hans.png" alt="来源与已有记忆积累在 Wenlan；在 App 或 AI 中使用，再存回新记忆与工作进度，供下次继续。" width="100%">
 </p>
 
-简化流程示意；插件指令与笔记整理均按需使用，没有固定顺序。
+简化流程示意；插件指令与页面整理均按需使用，没有固定顺序。
 
-- **从你的资料开始。** 导入文档和选定的对话作为来源，或在 App 编写笔记。你也能编辑内容、查看引用来源、审核修订，无需连接 AI。
-- **运用知识、编写新笔记。** 请 AI 用 `/recall` 找回相关来源与记忆，运用于任务中；也能编写带引用的新笔记，或依据现有版本更新笔记，再存回 Wenlan。
-- **留下你的新发现。** 在 App 中，或请 AI 使用 `/capture`，保存决定或心得，以及其理由和来源。
-- **告一段落，下次继续。** 用 `/handoff` 保存记忆、会话记录和下一步；如果新发现改变了本次用到的笔记，也会一并更新。下次用 `/brief` 读取项目摘要，接回这些上下文。
+- **从你的资料开始。** 导入文档和选定的对话作为来源，或在 App 编写页面。你也能编辑内容、查看引用来源、审核修订，无需连接 AI。
+- **运用知识、编写新页面。** 请 AI 找回相关来源与记忆，用于当前任务（`/recall`）；也能编写带引用的新页面，或依据现有版本更新页面，再存回 Wenlan。
+- **留下你的新发现。** 保存决定或心得，以及其理由和来源；可在 App 操作，或请 AI 代存（`/capture`）。
+- **告一段落，下次继续。** 保存记忆、会话记录和下一步，并在新发现影响本次用到的页面时一并更新（`/handoff`）。下次读取项目摘要，接回上下文（`/brief`）。
 
-**按需整理积累的记忆：** `/distill` 将相关记忆整理或更新为带引用的笔记，不是编写新笔记的必要步骤。[插件指令](plugin/skills/README.md)。
+**按需整理积累的记忆：** 将相关记忆整理或更新为带引用的页面（`/distill`），不是编写新页面的必要步骤。[插件指令](plugin/skills/README.md)。
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -113,11 +113,11 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 把散落的资料整理成知识
 
-**来源**保留你读过的资料；**记忆**留下你的发现与判断理由。将两者整理成**带有引用的 Markdown 笔记**，供你阅读、编辑，用 `[[wikilinks]]` 连接相关内容，也能通过引用查回原始资料。
+**来源**保留你读过的资料；**记忆**留下你的发现与判断理由。将两者整理成**带有引用的 Markdown 页面**，供你阅读、编辑，用 `[[wikilinks]]` 连接相关内容，也能通过引用查回原始资料。
 
 - **文件与对话导入**：导入 Markdown、文本文件、文本型 PDF、文件夹，以及 ChatGPT 或 Claude 导出的 ZIP，保留来源引用。扫描版 PDF 需先提取文本再导入。对话导入保留当时记录；已注册的文件来源可刷新为最新内容。
 - **Obsidian 只读连接**：读取已有仓库并按需刷新，不修改原始文件，也不将变化同步回去。
-- **原子记忆**：单独找回一条发现，不必加载整段对话或整篇笔记。
+- **原子记忆**：单独找回一条发现，不必加载整段对话或整个页面。
 - **知识图谱**：通过不同类型的实体、关系与知识群集（communities），发现相关主题；配置整理模型后，将重复提及连接到同一实体。
 
 <a id="探索你的个人知识图谱"></a>
@@ -166,12 +166,12 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 更新知识，保留历史
 
-**依据引用关系更新。** Wenlan 中的来源或记忆变更、移除时，引用它的笔记会被标记为待更新。启用后台 AI 并有可用模型后，符合条件的笔记会根据最新资料重新生成；引用不足的草稿不会采用。
+**依据引用关系更新。** Wenlan 中的来源或记忆变更、移除时，引用它的页面会被标记为待更新。启用后台 AI 并有可用模型后，符合条件的页面会根据最新资料重新生成；引用不足的草稿不会采用。
 
-- **Steep 后台整理**：为已保存的记忆补上类型、结构化信息、搜索线索与图谱连接；也可选择将记忆与来源合成为带有引用的笔记。
-- **[修订审核与历史](docs/knowledge-guide.zh-Hans.md#updates-and-history)**：查看笔记由谁修改、比较版本并追溯记忆的替代关系；后台更新会为你创建或编辑过的笔记提出修订，而设为需审核的笔记也会拦下 AI 主动修改，等待你确认。
-- **维基导出**：将符合条件的笔记导出为 Open Knowledge Format（OKF）维基。
-- **[可选的后台模型](docs/setup-and-data.zh-Hans.md#models)**：用设备端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 兼容本地服务，或已配置的云端提供商启用整理、笔记合成和自动更新。
+- **Steep 后台整理**：为已保存的记忆补上类型、结构化信息、搜索线索与图谱连接；也可选择将记忆与来源合成为带有引用的页面。
+- **[修订审核与历史](docs/knowledge-guide.zh-Hans.md#updates-and-history)**：查看页面由谁修改、比较版本并追溯记忆的替代关系；后台更新会为你创建或编辑过的页面提出修订，而设为需审核的页面也会拦下 AI 主动修改，等待你确认。
+- **维基导出**：将符合条件的页面导出为 Open Knowledge Format（OKF）维基。
+- **[可选的后台模型](docs/setup-and-data.zh-Hans.md#models)**：用设备端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 兼容本地服务，或已配置的云端提供商启用整理、页面合成和自动更新。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
@@ -182,7 +182,7 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 系统架构
 
-**共用本地知识库。** App、CLI 与 AI 工具通过 Wenlan 本地服务读写。笔记以 Markdown 保存；记忆、关系与搜索索引由本地 libSQL 管理。
+**共用本地知识库。** App、CLI 与 AI 工具通过 Wenlan 本地服务读写。页面以 Markdown 保存；记忆、关系与搜索索引由本地 libSQL 管理。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hans.png" alt="架构示意：App 与 AI 工具共用本地知识库，后台整理模型为可选项。" width="100%">

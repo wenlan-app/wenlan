@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=c577ff92a2d459e1aa449f29ab8148cf794573f2e50ed6a12c08c1bd2b5b100b -->
+<!-- README_SYNC: source=README.md sha256=f4a302ed8126b6736a97378fc9e4549a2b846faed02cc518a5b69d90ef58b631 -->
 
 <p align="center">
   <picture>
@@ -83,20 +83,20 @@ Después, pídele a tu IA:
 
 ## Uso diario
 
-Puedes usar la aplicación por sí sola o trabajar con tu IA. Guarda en Wenlan el conocimiento útil y el progreso para retomarlos en la próxima tarea.
+Guarda los nuevos hallazgos y avances mientras trabajas y retoma donde lo dejaste la próxima vez.
 
 <p align="center">
   <img src="./docs/assets/wenlan-daily-workflow-es-ES.png" alt="Las fuentes y memorias previas se acumulan en Wenlan; úsalas en la aplicación o con IA y guarda nuevas memorias y el progreso para continuar después." width="100%">
 </p>
 
-Flujo simplificado. Los comandos del plugin y la organización de notas son opcionales, sin un orden fijo.
+Flujo simplificado. Los comandos del plugin y la organización de páginas son opcionales, sin un orden fijo.
 
-- **Empieza por tu material.** Importa documentos y conversaciones seleccionadas como fuentes, o escribe notas en la aplicación. Allí puedes editar, consultar las fuentes citadas y revisar cambios sin conectar una IA.
-- **Usa tu conocimiento y escribe notas nuevas.** Pide a tu IA que recupere fuentes y memorias relevantes con `/recall` y las use en la tarea. También puede escribir una nota con citas o actualizar una existente a partir de su versión actual y guardarla en Wenlan.
-- **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o con `/capture` a través de tu IA.
-- **Pausa y retoma.** `/handoff` guarda memorias, un registro de la sesión y los siguientes pasos; también actualiza las notas usadas durante la sesión si nuevos hallazgos las cambian. Usa `/brief` para leer el resumen del proyecto y retomar ese contexto la próxima vez.
+- **Empieza por tu material.** Importa documentos y conversaciones seleccionadas como fuentes, o escribe páginas en la aplicación. Allí puedes editar, consultar las fuentes citadas y revisar cambios sin conectar una IA.
+- **Usa tu conocimiento y escribe páginas nuevas.** Pide a tu IA que recupere fuentes y memorias relevantes para la tarea (`/recall`). También puede escribir una página con citas o actualizar una existente a partir de su versión actual y guardarla en Wenlan.
+- **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o a través de tu IA (`/capture`).
+- **Pausa y retoma.** Guarda memorias, un registro de la sesión y los siguientes pasos, y actualiza las páginas usadas si nuevos hallazgos las cambian (`/handoff`). La próxima vez, carga el resumen del proyecto para retomar el trabajo (`/brief`).
 
-**Organiza las memorias acumuladas cuando lo necesites:** `/distill` sintetiza o actualiza notas con citas a partir de memorias relacionadas; no es necesario para escribir una nota nueva. [Comandos del plugin](plugin/skills/README.md).
+**Organiza las memorias acumuladas cuando lo necesites:** Sintetiza o actualiza páginas con citas a partir de memorias relacionadas (`/distill`); no es necesario para escribir una página nueva. [Comandos del plugin](plugin/skills/README.md).
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -113,11 +113,11 @@ Flujo simplificado. Los comandos del plugin y la organización de notas son opci
 
 ## Organiza la información dispersa en conocimiento
 
-Las **fuentes** conservan el material que has leído; las **memorias** recogen tus conclusiones y el razonamiento que las sustenta. Reúne ambas en **notas Markdown con citas** que puedas leer, editar y enlazar mediante `[[wikilinks]]`. Sigue las citas para consultar el material original.
+Las **fuentes** conservan el material que has leído; las **memorias** recogen tus conclusiones y el razonamiento que las sustenta. Reúne ambas en **páginas Markdown con citas** que puedas leer, editar y enlazar mediante `[[wikilinks]]`. Sigue las citas para consultar el material original.
 
 - **Importación de archivos y conversaciones:** Importa Markdown, texto, PDF con texto seleccionable, carpetas y ZIP de ChatGPT o Claude conservando las referencias a sus fuentes. Los PDF escaneados necesitan extracción de texto antes de importarlos. Los chats importados conservan una instantánea; las fuentes de archivos registradas se pueden actualizar desde el disco.
 - **Conexión de solo lectura con Obsidian:** Lee una bóveda existente y actualízala bajo demanda sin modificar sus archivos ni sincronizar cambios de vuelta.
-- **Memorias atómicas:** Recupera un hallazgo concreto sin cargar una conversación o nota entera.
+- **Memorias atómicas:** Recupera un hallazgo concreto sin cargar una conversación o página entera.
 - **Grafo de conocimiento:** Descubre temas relacionados mediante entidades tipadas, relaciones y grupos de conocimiento (comunidades); un modelo de enriquecimiento configurado vincula menciones repetidas a la misma entidad (resolución de menciones).
 
 <a id="explora-tu-grafo-de-conocimiento-personal"></a>
@@ -166,12 +166,12 @@ Activa el interruptor **Web access** en Settings para que clientes web de IA com
 
 ## Actualiza el conocimiento, conserva su historial
 
-**Las actualizaciones siguen las citas.** Si cambias o eliminas en Wenlan una fuente o memoria citada, el sistema marca para actualizar las notas que la utilizan. Con la IA en segundo plano activada y un modelo disponible, las notas aptas se reconstruyen a partir de las evidencias actuales; se rechazan los borradores con citas insuficientes.
+**Las actualizaciones siguen las citas.** Si cambias o eliminas en Wenlan una fuente o memoria citada, el sistema marca para actualizar las páginas que la utilizan. Con la IA en segundo plano activada y un modelo disponible, las páginas aptas se reconstruyen a partir de las evidencias actuales; se rechazan los borradores con citas insuficientes.
 
-- **Enriquecimiento en segundo plano con Steep:** Añade tipos, datos estructurados, pistas de búsqueda y enlaces al grafo a las memorias capturadas; la síntesis opcional combina memorias y fuentes en notas con citas.
-- **[Revisión e historial](docs/knowledge-guide.es-ES.md#updates-and-history):** Consulta quién modificó cada nota, compara versiones y sigue las sustituciones de memorias. La actualización en segundo plano propone revisiones para las notas que hayas creado o editado; las notas configuradas para revisión también retienen los cambios explícitos de la IA hasta que los apruebes.
-- **Exportación de wikis:** Exporta las notas aptas como una wiki Open Knowledge Format (OKF).
-- **[Modelos opcionales en segundo plano](docs/setup-and-data.es-ES.md#models):** Activa el enriquecimiento, la síntesis de notas y la actualización automática con Qwen en el dispositivo (llama.cpp), servidores locales compatibles con OpenAI como Ollama o LM Studio, o proveedores de nube configurados.
+- **Enriquecimiento en segundo plano con Steep:** Añade tipos, datos estructurados, pistas de búsqueda y enlaces al grafo a las memorias capturadas; la síntesis opcional combina memorias y fuentes en páginas con citas.
+- **[Revisión e historial](docs/knowledge-guide.es-ES.md#updates-and-history):** Consulta quién modificó cada página, compara versiones y sigue las sustituciones de memorias. La actualización en segundo plano propone revisiones para las páginas que hayas creado o editado; las páginas configuradas para revisión también retienen los cambios explícitos de la IA hasta que los apruebes.
+- **Exportación de wikis:** Exporta las páginas aptas como una wiki Open Knowledge Format (OKF).
+- **[Modelos opcionales en segundo plano](docs/setup-and-data.es-ES.md#models):** Activa el enriquecimiento, la síntesis de páginas y la actualización automática con Qwen en el dispositivo (llama.cpp), servidores locales compatibles con OpenAI como Ollama o LM Studio, o proveedores de nube configurados.
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history.png" alt="Flujo ilustrativo: un hallazgo en un documento actualiza la memoria de V1 a V2 y después influye en una nota, que se actualiza automáticamente o queda pendiente de revisión." width="100%">
@@ -182,7 +182,7 @@ Activa el interruptor **Web access** en Settings para que clientes web de IA com
 
 ## Arquitectura
 
-**Una base local compartida.** La app, la CLI y las herramientas de IA conectadas leen y escriben mediante el servicio local de Wenlan. Las notas son archivos Markdown; memorias, relaciones e índices de búsqueda residen en libSQL local.
+**Una base local compartida.** La app, la CLI y las herramientas de IA conectadas leen y escriben mediante el servicio local de Wenlan. Las páginas son archivos Markdown; memorias, relaciones e índices de búsqueda residen en libSQL local.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-es-ES.png" alt="Vista de la arquitectura: la app y las herramientas de IA comparten una base de conocimiento local, con modelos opcionales para la organización en segundo plano." width="100%">

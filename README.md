@@ -81,20 +81,20 @@ Then ask your AI:
 
 ## In everyday use
 
-Use the App on its own or work with your AI. Keep useful knowledge and progress in Wenlan, ready for the next task.
+Save new findings and progress as you work, then pick up where you left off next time.
 
 <p align="center">
   <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
 </p>
 
-Simplified workflow. Plugin commands and note organization are optional, with no fixed sequence.
+Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
 
-- **Start with your material.** Import documents and selected conversations as sources, or write notes in the App. You can edit, follow citations, and review proposed changes there without connecting AI.
-- **Use your knowledge and write new notes.** Ask your AI to find relevant sources and memories with `/recall` and use them for the task. It can also write cited notes or update existing ones from their current version, then save them to Wenlan.
-- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or with `/capture` through your AI.
-- **Pause and resume.** `/handoff` saves memories, a session log, and next steps, and updates notes used in the session when new findings change them. `/brief` brings back the project brief next time.
+- **Start with your material.** Import documents and selected conversations as sources, or write pages in the App. You can edit, follow citations, and review proposed changes there without connecting AI.
+- **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
+- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
+- **Pause and resume.** Save memories, a session log, and next steps, and update pages used in the session when new findings change them (`/handoff`). Next time, load the project brief to resume (`/brief`).
 
-**Organize accumulated memories when needed:** `/distill` synthesizes or refreshes cited notes from related memories; it is not required to write a new note. [Plugin commands](plugin/skills/README.md).
+**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -110,11 +110,11 @@ Simplified workflow. Plugin commands and note organization are optional, with no
 
 ## Organize scattered material into knowledge
 
-**Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown notes with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
+**Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
 
 - **File and conversation imports:** Import Markdown, text, text-based PDFs, folders, and ChatGPT or Claude export ZIPs while retaining source references. Scanned PDFs need text extraction before import. Chat imports preserve a snapshot; registered file sources can refresh from disk.
 - **Read-only Obsidian connection:** Read an existing vault and refresh it on demand without modifying its files or syncing changes back.
-- **Atomic memories:** Retrieve individual findings without loading an entire conversation or note.
+- **Atomic memories:** Retrieve individual findings without loading an entire conversation or page.
 - **Knowledge graph:** Discover related topics through typed entities, relations, and knowledge clusters (communities); a configured enrichment model links repeated mentions to the same entity (mention resolution).
 
 <a id="explore-your-personal-knowledge-graph"></a>
@@ -161,11 +161,11 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 ## Keep knowledge current, with its history
 
-**Updates follow citations.** Changing or removing a cited source or memory in Wenlan marks the notes that use it for refresh. With background AI enabled and a model available, eligible notes rebuild from current evidence; drafts with insufficient citations are rejected.
+**Updates follow citations.** Changing or removing a cited source or memory in Wenlan marks the pages that use it for refresh. With background AI enabled and a model available, eligible pages rebuild from current evidence; drafts with insufficient citations are rejected.
 
-- **Steep background enrichment:** Add types, structured details, search cues, and graph links to captured memories; optional note synthesis combines them with sources into cited notes.
-- **[Revision review and history](docs/knowledge-guide.md#updates-and-history):** See who changed a note, compare versions, and trace memory replacements. Background refresh proposes revisions for notes you created or edited; a review lock also holds explicit AI edits for approval.
-- **Wiki export:** Export eligible notes as an Open Knowledge Format (OKF) wiki.
+- **Steep background enrichment:** Add types, structured details, search cues, and graph links to captured memories; optional page synthesis combines them with sources into cited pages.
+- **[Revision review and history](docs/knowledge-guide.md#updates-and-history):** See who changed a page, compare versions, and trace memory replacements. Background refresh proposes revisions for pages you created or edited; a review lock also holds explicit AI edits for approval.
+- **Wiki export:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
 - **[Optional background models](docs/setup-and-data.md#models):** Enable enrichment, synthesis, and automatic refresh with on-device Qwen (llama.cpp), local OpenAI-compatible servers such as Ollama or LM Studio, or configured cloud providers.
 
 <p align="center">
@@ -177,7 +177,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 ## Architecture
 
-**One local knowledge base.** App, CLI, and connected AI tools read and write through Wenlan’s local service. Notes are Markdown files; memories, relationships, and search indexes live in local libSQL.
+**One local knowledge base.** App, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture.png" alt="Architecture overview: App and AI tools share a local knowledge base, with optional background enrichment models." width="100%">
