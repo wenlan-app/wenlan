@@ -148,7 +148,7 @@ describe("AgentsSection", () => {
     await screen.findByText("Codex");
     await userEvent.click(screen.getByRole("button", { name: "Details: Trust levels" }));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "Full: Sees everything: identity, preferences, lessons, gotchas, decisions, pages, and search results.",
+      "Full: Sees everything: identity, preferences, lessons, gotchas, decisions, notes, and search results.",
     );
     expect(screen.getByRole("tooltip").textContent).toContain("\n");
   });

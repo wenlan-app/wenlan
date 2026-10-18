@@ -22,7 +22,7 @@ describe("translation resources", () => {
       "Welcome to Wenlan",
     );
     expect(resources.en.translation.main.searchPlaceholder).toBe(
-      "Search pages, memories, sources...",
+      "Search notes, memories, sources...",
     );
     expect(resources.en.translation.settings.language.label).toBe("Language");
   });
@@ -191,8 +191,8 @@ describe("translation resources", () => {
     ]);
     expect(editors.map((editor) => editor.openExisting)).toEqual([
       "Open existing",
-      "打开现有页面",
-      "開啟現有頁面",
+      "打开现有笔记",
+      "開啟現有筆記",
     ]);
   });
 
@@ -265,7 +265,7 @@ describe("translation resources", () => {
 
     expect(datelines).toEqual([
       {
-        lastDistilled: "Last distilled {{time}}",
+        lastDistilled: "Last organized {{time}}",
         lastUpdated: "Last updated {{time}}",
         sourceMemories_one: "from {{count}} memory",
         sourceMemories_other: "from {{count}} memories",
@@ -278,7 +278,7 @@ describe("translation resources", () => {
         updateBlocked: "update blocked: citations couldn't be verified",
       },
       {
-        lastDistilled: "上次精炼：{{time}}",
+        lastDistilled: "上次整理：{{time}}",
         lastUpdated: "上次更新：{{time}}",
         sourceMemories_one: "来自 {{count}} 条记忆",
         sourceMemories_other: "来自 {{count}} 条记忆",
@@ -291,7 +291,7 @@ describe("translation resources", () => {
         updateBlocked: "更新受阻：引用未通过验证",
       },
       {
-        lastDistilled: "上次精煉：{{time}}",
+        lastDistilled: "上次整理：{{time}}",
         lastUpdated: "上次更新：{{time}}",
         sourceMemories_one: "來自 {{count}} 則記憶",
         sourceMemories_other: "來自 {{count}} 則記憶",
@@ -366,9 +366,9 @@ describe("translation resources", () => {
     // When Pages, Memories, and Updated are read
     // Then all supported locales provide the approved copy
     expect(overviewResources.map((overview) => overview.pages)).toEqual([
-      "Pages",
-      "页面",
-      "頁面",
+      "Notes",
+      "笔记",
+      "筆記",
     ]);
     expect(overviewResources.map((overview) => overview.memories)).toEqual([
       "Memories",

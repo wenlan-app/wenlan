@@ -12,7 +12,8 @@ describe("sample dataset integrity", () => {
   it.each(LOCALES)("keeps every %s citation quote inside its source body", (locale) => {
     const data = getSampleData(locale);
     const bodies = new Map(data.sources.map((source) => [source.id, source.body]));
-    expect(data.sources.length).toBe(3);
+    // One captured chat decision and one file: the page is the result, never a source.
+    expect(data.sources.map((source) => source.type)).toEqual(["memory", "file"]);
     for (const citation of data.citations) {
       const body = bodies.get(citation.sourceId);
       expect(body, citation.id).toBeDefined();
@@ -33,8 +34,8 @@ describe("sample dataset integrity", () => {
         expect(quotes.has(id), `${locale}:${id}`).toBe(true);
       }
     }
-    expect(data.page.related.title).toBeTruthy();
-    expect(data.page.related.body).toBeTruthy();
+    expect(data.ai.question).toBeTruthy();
+    expect(data.ai.answer).toContain(data.page.title);
   });
 
   it.each(LOCALES)("gives %s distinct own-data commands per client", (locale) => {

@@ -235,6 +235,25 @@ fn revision_target_kind(target_is_page: i64) -> wenlan_types::responses::Revisio
     }
 }
 
+/// Why a staged page revision card needs review, for the card's reason line.
+/// Reads `review_reason` from the card's structured_fields; a card staged
+/// before that field existed is `background` when its `edited_by` is a
+/// pipeline writer, and unexplained otherwise.
+pub(crate) fn revision_review_reason(
+    structured_fields: Option<&serde_json::Value>,
+) -> Option<String> {
+    let fields = structured_fields?;
+    if let Some(reason) = fields.get("review_reason").and_then(|r| r.as_str()) {
+        return Some(reason.to_string());
+    }
+    let edited_by = fields.get("edited_by").and_then(|e| e.as_str())?;
+    matches!(
+        crate::post_write::Writer::classify(edited_by),
+        crate::post_write::Writer::Pipeline(_)
+    )
+    .then(|| "background".to_string())
+}
+
 fn legacy_read_scope(space: Option<&str>) -> ReadScope {
     match space {
         None => ReadScope::Global,
@@ -1449,6 +1468,9 @@ pub const EMBEDDING_DIM: usize = 768;
 /// reconciles both schema-133 lineages.
 /// Migration 135 stores user-authored source annotations independently of
 /// source-ingest chunks and Page lifetimes.
+/// Migration 136 records one history row per successful Brief update.
+/// Migration 137 adds `pages.review_required`, the review lock that stages
+/// every machine write.
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1456,7 +1478,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 135;
+pub const SCHEMA_VERSION: u32 = 137;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -1973,6 +1995,7 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("continue", "Continue"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
+    ("muse-code", "Muse Code"),
     ("obsidian", "Obsidian"),
     ("openai-mcp", "ChatGPT"),
     ("raycast", "Raycast"),
@@ -2076,6 +2099,7 @@ mod agent_id_tests {
             known_client_display_name("claude-code"),
             Some("Claude Code")
         );
+        assert_eq!(known_client_display_name("muse-code"), Some("Muse Code"));
         assert_eq!(known_client_display_name("unknown-tool"), None);
     }
 }
@@ -3264,9 +3288,9 @@ const RESPLIT_MAX_THRESHOLD: f64 = 0.92;
 /// one coherent topic into several shards, and nothing downstream ever compares
 /// a pending cluster with its siblings: the Jaccard/subset filter in
 /// `handle_distill` scores a cluster only against *existing* pages, and two
-/// disjoint shards of one topic score 0 there. The page each shard creates is
-/// born `unconfirmed`, so shard one cannot deduplicate shard two inside the
-/// same pass either — one topic becomes two pages.
+/// disjoint shards of one topic score 0 there. Write-time page dedup catches
+/// shard two only when its prose lands close enough to shard one's page, so
+/// one topic can still become two pages.
 ///
 /// Merge those siblings back together before the pass writes anything, using
 /// the one same-pass signal already computed for every cluster: the mean-pooled
@@ -10392,6 +10416,23 @@ impl MemoryDB {
             }
             if version < 135 {
                 self.migrate_135_source_annotations().await?;
+            }
+
+            // Migration 136 records one history row per successful Brief update.
+            if ceiling < 136 {
+                return Ok(());
+            }
+            if version < 136 {
+                self.migrate_136_brief_history().await?;
+            }
+            // Migration 137 adds the page review lock: `pages.review_required`
+            // makes every machine write stage a revision card. See
+            // migrate_137_page_review_required.
+            if ceiling < 137 {
+                return Ok(());
+            }
+            if version < 137 {
+                self.migrate_137_page_review_required(version).await?;
             }
         }
 
@@ -17763,6 +17804,48 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Migration 137: add `pages.review_required`, the review lock. While it
+    /// is 1, every machine write (agent refresh with or without
+    /// `expected_version`, and every pipeline stage) stages a revision card
+    /// instead of landing; human edits are unaffected. `NOT NULL DEFAULT 0`
+    /// leaves every existing row unlocked. The column-exists check keeps a
+    /// crash-replay (ALTER applied, version bump lost) idempotent, same
+    /// pattern as migration 127.
+    async fn migrate_137_page_review_required(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(137, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let has_col: bool = {
+            let mut rows = conn
+                .query(
+                    "SELECT COUNT(*) FROM pragma_table_info('pages') \
+                     WHERE name = 'review_required'",
+                    (),
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m137 col check: {e}")))?;
+            match rows.next().await {
+                Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
+                _ => false,
+            }
+        };
+        if !has_col {
+            conn.execute(
+                "ALTER TABLE pages ADD COLUMN review_required INTEGER NOT NULL DEFAULT 0",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m137 add review_required: {e}")))?;
+        }
+        conn.execute("PRAGMA user_version = 137", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m137 bump: {e}")))?;
+        log::info!("[migration] Migration 137 applied: pages.review_required column added");
+        Ok(())
+    }
+
     async fn migrate_135_source_annotations(&self) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute_batch(
@@ -17780,6 +17863,17 @@ impl MemoryDB {
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("m135 source annotations: {e}")))?;
+        Ok(())
+    }
+
+    async fn migrate_136_brief_history(&self) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch(&format!(
+            "{} PRAGMA user_version = 136;",
+            brief::BRIEF_HISTORY_DDL
+        ))
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("m136 brief history: {e}")))?;
         Ok(())
     }
 
@@ -31240,7 +31334,9 @@ impl MemoryDB {
     /// memory results SEED the merged score_map; page rows contribute only the
     /// RRF mass `1/(60+rank)` on top. Carrying `relevance_score` would double-add
     /// at different scales and warp ranking. `raw_score` retains the page's
-    /// internal vec+FTS RRF score for diagnostics only.
+    /// internal vec+FTS RRF score for diagnostics only. `confirmed` carries
+    /// [`crate::pages::page_is_trusted`] so a reader can tell a confirmed or
+    /// human-owned page from one an AI wrote that nobody has looked at.
     ///
     /// **Recency caveat**: `page.last_modified` is parsed from RFC3339; on parse
     /// failure, `last_modified=0` (1970-01-01). Page-channel rows MUST stay out of
@@ -31252,6 +31348,7 @@ impl MemoryDB {
     // by the additive page path on the search handlers (page-reachability Task 6).
     // `pub` (not `pub(crate)`) because the additive caller lives in wenlan-server.
     pub fn search_result_from_page(page: Page) -> SearchResult {
+        let trusted = crate::pages::page_is_trusted(&page);
         let last_modified = chrono::DateTime::parse_from_rfc3339(&page.last_modified)
             .map(|dt| dt.timestamp())
             .unwrap_or(0);
@@ -31272,7 +31369,7 @@ impl MemoryDB {
             space: page.space,
             source_agent: None,
             confidence: None,
-            confirmed: None,
+            confirmed: Some(trusted),
             stability: None,
             supersedes: None,
             summary: page.summary,
@@ -43830,7 +43927,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' ORDER BY created_at ASC LIMIT 1",
                 (),
             )
@@ -43982,7 +44079,7 @@ impl MemoryDB {
 
     /// The ONE shared page-visibility gate used by /api/context,
     /// /api/memory/search, and /api/search. Order: space-scope (pure) →
-    /// effective-tier (fail-closed) → confirmed/rank/cap. Returns at most `cap`
+    /// effective-tier (fail-closed) → rank (confirmed weighted up)/cap. Returns at most `cap`
     /// pages the caller may see.
     pub async fn select_visible_pages(
         &self,
@@ -44655,15 +44752,16 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("list_pending_revisions row: {e}")))?
         {
-            let grounded_in = row
+            let structured_fields = row
                 .get::<Option<String>>(5)
                 .unwrap_or(None)
-                .and_then(|sf| serde_json::from_str::<serde_json::Value>(&sf).ok())
-                .and_then(|v| {
-                    v.get("grounded_in")
-                        .and_then(|g| g.as_str())
-                        .map(str::to_string)
-                });
+                .and_then(|sf| serde_json::from_str::<serde_json::Value>(&sf).ok());
+            let grounded_in = structured_fields.as_ref().and_then(|v| {
+                v.get("grounded_in")
+                    .and_then(|g| g.as_str())
+                    .map(str::to_string)
+            });
+            let review_reason = revision_review_reason(structured_fields.as_ref());
             let targets_a_page = row.get::<i64>(6).unwrap_or(0) != 0;
             let chunk = row
                 .get::<String>(2)
@@ -44704,6 +44802,7 @@ impl MemoryDB {
                 last_modified,
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
+                review_reason,
             });
         }
         Ok(out)
@@ -44829,16 +44928,16 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("list_pending_revisions_scoped row: {e}")))?
         {
-            let grounded_in = row
+            let structured_fields = row
                 .get::<Option<String>>(5)
                 .unwrap_or(None)
-                .and_then(|sf| serde_json::from_str::<serde_json::Value>(&sf).ok())
-                .and_then(|value| {
-                    value
-                        .get("grounded_in")
-                        .and_then(|ground| ground.as_str())
-                        .map(str::to_string)
-                });
+                .and_then(|sf| serde_json::from_str::<serde_json::Value>(&sf).ok());
+            let grounded_in = structured_fields.as_ref().and_then(|v| {
+                v.get("grounded_in")
+                    .and_then(|g| g.as_str())
+                    .map(str::to_string)
+            });
+            let review_reason = revision_review_reason(structured_fields.as_ref());
             let targets_a_page = row.get::<i64>(6).unwrap_or(0) != 0;
             let chunk = row
                 .get::<String>(2)
@@ -44879,6 +44978,7 @@ impl MemoryDB {
                 last_modified,
                 target_kind: revision_target_kind(row.get::<i64>(6).unwrap_or(0)),
                 grounded_in,
+                review_reason,
             });
         }
         Ok(out)
@@ -51298,6 +51398,7 @@ impl MemoryDB {
                         "SELECT 1 FROM pages
                          WHERE id=?1 AND version=?2 AND status='active'
                            AND creation_kind='source' AND COALESCE(user_edited,0)=0
+                           AND COALESCE(review_required,0)=0
                          LIMIT 1",
                         libsql::params![id, expected_page_version],
                     )
@@ -51327,7 +51428,8 @@ impl MemoryDB {
                              embedding=vector32(?6), citations=NULL,
                              source_revision=COALESCE(source_revision, 0)+1
                          WHERE id=?7 AND status='active'
-                           AND creation_kind='source' AND COALESCE(user_edited,0)=0",
+                           AND creation_kind='source' AND COALESCE(user_edited,0)=0
+                           AND COALESCE(review_required,0)=0",
                         libsql::params![
                             title,
                             summary,
@@ -51347,7 +51449,8 @@ impl MemoryDB {
                              last_compiled=?5, last_modified=?5, citations=NULL,
                              source_revision=COALESCE(source_revision, 0)+1
                          WHERE id=?6 AND status='active'
-                           AND creation_kind='source' AND COALESCE(user_edited,0)=0",
+                           AND creation_kind='source' AND COALESCE(user_edited,0)=0
+                           AND COALESCE(review_required,0)=0",
                         libsql::params![
                             title,
                             summary,
@@ -51626,7 +51729,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 &format!(
-                    "SELECT id, title, summary, content, {entity_id_column}, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                    "SELECT id, title, summary, content, {entity_id_column}, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE id = ?1{fence_sql}"
                 ),
                 libsql::params![id],
@@ -51645,7 +51748,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE entity_id = ?1 AND status = 'active' AND COALESCE(kind, 'concept') != 'entity' LIMIT 1",
                 libsql::params![entity_id],
             )
@@ -51737,7 +51840,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 &format!(
-                    "SELECT id, title, summary, content, {entity_id_column}, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                    "SELECT id, title, summary, content, {entity_id_column}, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE status = ?1{fence_sql} ORDER BY last_modified DESC LIMIT ?2 OFFSET ?3"
                 ),
                 libsql::params![status, limit, offset],
@@ -51767,7 +51870,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages
                  WHERE status = ?1
                    AND COALESCE(kind, 'concept') != 'entity'
@@ -51801,7 +51904,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let (sql, params): (String, Vec<libsql::Value>) = match space {
             Some("uncategorized") => (
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE status = ?1 AND COALESCE(kind, 'concept') != 'entity' AND space = '00000000-0000-4000-8000-000000000001' ORDER BY last_modified DESC LIMIT ?2 OFFSET ?3".to_string(),
                 vec![
                     libsql::Value::Text(status.to_string()),
@@ -51810,7 +51913,7 @@ impl MemoryDB {
                 ],
             ),
             Some(d) => (
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE status = ?1 AND COALESCE(kind, 'concept') != 'entity' AND space = ?2 ORDER BY last_modified DESC LIMIT ?3 OFFSET ?4".to_string(),
                 vec![
                     libsql::Value::Text(status.to_string()),
@@ -51820,7 +51923,7 @@ impl MemoryDB {
                 ],
             ),
             None => (
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages WHERE status = ?1 AND COALESCE(kind, 'concept') != 'entity' ORDER BY last_modified DESC LIMIT ?2 OFFSET ?3".to_string(),
                 vec![
                     libsql::Value::Text(status.to_string()),
@@ -52021,11 +52124,13 @@ impl MemoryDB {
         changelog: &str,
         citations_json: Option<&str>,
         expected_source_revision: i64,
+        expected_version: Option<i64>,
         receipt: Option<OperationReceipt<'_>>,
     ) -> Result<bool, WenlanError> {
-        // `expected_version` stays None here on purpose: the inner fn refuses a
-        // write that carries both CAS modes, and this entry point's guard is the
-        // source revision.
+        // This entry point's guard is the source revision. `expected_version`
+        // is `Some` only for an agent refresh that proved it read the current
+        // version; the UPDATE then fences on both, and the inner fn refuses
+        // that combination for any other writer.
         self.try_update_page_content(
             id,
             content,
@@ -52034,7 +52139,7 @@ impl MemoryDB {
             require_stale,
             Some(changelog),
             citations_json,
-            None,
+            expected_version,
             Some(expected_source_revision),
             None,
             None,
@@ -52349,12 +52454,17 @@ impl MemoryDB {
         // comment. Combining is still safe either way: the SQL builder below
         // appends `status = 'active'` on both the version-only and the
         // source-revision-only branch, so combining never drops that check
-        // regardless of which fence supplied it. Every other caller stays
-        // single-fence.
+        // regardless of which fence supplied it. An agent refresh that sent
+        // `expected_version` also fences on both: the route reads the
+        // source revision first, and the agent's version is the page it read,
+        // so a human rename (which bumps only `version`) between the gate and
+        // this UPDATE cannot let the stale agent body land. Every other caller
+        // stays single-fence.
         if expected_version.is_some()
             && expected_source_revision.is_some()
             && page_growth_guard.is_none()
             && link_reason != "citation_backfill"
+            && link_reason != "agent_refresh"
             && consume_revision_id.is_none()
         {
             return Err(WenlanError::Validation(
@@ -52568,6 +52678,13 @@ impl MemoryDB {
                     sql.push_str(" AND incarnation = ?9");
                 }
             }
+            // Review lock (PR A): a machine writer never lands on a locked
+            // page. The gate above already staged a card for a lock it saw;
+            // this predicate catches a lock set after that read. Human writers
+            // (the editor, the vault watcher, accepting a revision card) pass.
+            if !matches!(link_reason, "manual_edit" | "fs_edit" | "revision_accept") {
+                sql.push_str(" AND COALESCE(review_required, 0) = 0");
+            }
             let update_result = match (expected_version, expected_source_revision) {
                 (Some(version), None) => {
                     conn.execute(
@@ -52731,6 +52848,13 @@ impl MemoryDB {
                 } else {
                     sql.push_str(" AND COALESCE(source_revision, 0) = ?7 AND status = 'active'");
                 }
+            }
+            // Review lock (PR A): a machine writer never lands on a locked
+            // page. The gate above already staged a card for a lock it saw;
+            // this predicate catches a lock set after that read. Human writers
+            // (the editor, the vault watcher, accepting a revision card) pass.
+            if !matches!(link_reason, "manual_edit" | "fs_edit" | "revision_accept") {
+                sql.push_str(" AND COALESCE(review_required, 0) = 0");
             }
             let update_result = match (expected_version, expected_source_revision) {
                 (Some(version), None) => {
@@ -53101,6 +53225,7 @@ impl MemoryDB {
                         COALESCE(c.sources_updated_count, 0), c.stale_reason, COALESCE(c.user_edited, 0),
                         COALESCE(c.changelog, '[]'), COALESCE(c.creation_kind, 'distilled'), COALESCE(c.review_status, 'confirmed'),
                         c.workspace, c.citations, COALESCE(c.kind, 'concept'),
+                        c.refresh_blocked_reason, COALESCE(c.review_required, 0),
                         vector_distance_cos(c.embedding, vector32(?1)) as dist
                  FROM pages c
                  WHERE c.status = 'active' AND c.embedding IS NOT NULL
@@ -53115,7 +53240,7 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(e.to_string()))?
         {
-            let dist: f64 = row.get(21).unwrap_or(1.0);
+            let dist: f64 = row.get(23).unwrap_or(1.0);
             let similarity = 1.0 - dist;
             if similarity >= similarity_threshold {
                 return Ok(Some(Self::row_to_page(&row)?));
@@ -53131,7 +53256,10 @@ impl MemoryDB {
     ///    eligible (M1 honest columns, migration 80: `workspace` and `space`
     ///    are mirrored duplicates, so reading either is equivalent).
     ///    `None` = no workspace constraint.
-    ///  - only `review_status='confirmed'` pages are dedup targets.
+    ///  - entity shadow pages and `creation_kind='source'` document pages are
+    ///    never dedup targets. `review_status` is not consulted: pages are
+    ///    born unconfirmed, so gating on it let AI-written pages pile up
+    ///    near-duplicates of each other.
     ///  - when `allow_user_edited=false`, human-owned pages (`user_edited=1` or
     ///    `creation_kind='authored'`) are REFUSED so the caller never silently
     ///    rewrites hand-owned prose.
@@ -53156,6 +53284,9 @@ impl MemoryDB {
 
     /// Automatic growth owns generated concept prose. Its eligibility is not
     /// the retired review-status column; truth visibility remains a veto.
+    /// Human-owned and review-locked pages are dropped in SQL before ranking,
+    /// so growth never spends a model call on a page it may not write, and the
+    /// next-best eligible page (or a terminal no-match) is the answer.
     pub(crate) async fn find_growable_page_scoped(
         &self,
         entity_id: Option<&str>,
@@ -53184,12 +53315,13 @@ impl MemoryDB {
             let conn = self.conn.lock().await;
             let mut rows = conn
                 .query(
-                    "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                    "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                      FROM pages
                      WHERE entity_id = ?1 AND status = 'active'
-                       AND ((?5=0 AND COALESCE(review_status, 'confirmed')='confirmed') OR (?5=1 AND creation_kind IN ('distilled','research') AND LOWER(title) <> 'overview' AND COALESCE(kind, 'concept') <> 'entity'))
+                       AND ((?5=0 AND COALESCE(creation_kind, 'distilled') <> 'source' AND COALESCE(kind, 'concept') <> 'entity') OR (?5=1 AND creation_kind IN ('distilled','research') AND LOWER(title) <> 'overview' AND COALESCE(kind, 'concept') <> 'entity'))
                        AND (?2 IS NULL OR (?2 = ?4 AND space IS NULL) OR space = ?2)
                        AND (?3 != 0 OR (COALESCE(user_edited, 0) = 0 AND COALESCE(creation_kind, 'distilled') <> 'authored'))
+                       AND (?5 = 0 OR COALESCE(review_required, 0) = 0)
                      ORDER BY id ASC LIMIT 1",
                     libsql::params![eid, workspace, allow_human_owned, UNFILED_SPACE_ID, i64::from(growth)],
                 )
@@ -53203,7 +53335,7 @@ impl MemoryDB {
                 return Ok(Some(Self::row_to_page(&row)?));
             }
         }
-        // Embedding cosine, scoped in SQL on space + review_status + ownership.
+        // Embedding cosine, scoped in SQL on space + page kind + ownership.
         let emb_sql = Self::vec_to_sql(embedding);
         let allow_human_owned = i64::from(allow_user_edited);
         let conn = self.conn.lock().await;
@@ -53214,12 +53346,14 @@ impl MemoryDB {
                         COALESCE(c.sources_updated_count, 0), c.stale_reason, COALESCE(c.user_edited, 0),
                         COALESCE(c.changelog, '[]'), COALESCE(c.creation_kind, 'distilled'), COALESCE(c.review_status, 'confirmed'),
                         c.workspace, c.citations, COALESCE(c.kind, 'concept'),
+                        c.refresh_blocked_reason, COALESCE(c.review_required, 0),
                         vector_distance_cos(c.embedding, vector32(?1)) as dist
                  FROM pages c
                  WHERE c.status = 'active' AND c.embedding IS NOT NULL
-                   AND ((?5=0 AND COALESCE(c.review_status, 'confirmed')='confirmed') OR (?5=1 AND c.creation_kind IN ('distilled','research') AND LOWER(c.title) <> 'overview' AND COALESCE(c.kind, 'concept') <> 'entity'))
+                   AND ((?5=0 AND COALESCE(c.creation_kind, 'distilled') <> 'source' AND COALESCE(c.kind, 'concept') <> 'entity') OR (?5=1 AND c.creation_kind IN ('distilled','research') AND LOWER(c.title) <> 'overview' AND COALESCE(c.kind, 'concept') <> 'entity'))
                    AND (?2 IS NULL OR (?2 = ?4 AND c.space IS NULL) OR c.space = ?2)
                    AND (?3 != 0 OR (COALESCE(c.user_edited, 0) = 0 AND COALESCE(c.creation_kind, 'distilled') <> 'authored'))
+                   AND (?5 = 0 OR COALESCE(c.review_required, 0) = 0)
                  ORDER BY dist ASC LIMIT 1",
                 libsql::params![emb_sql, workspace, allow_human_owned, UNFILED_SPACE_ID, i64::from(growth)],
             )
@@ -53230,10 +53364,13 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(e.to_string()))?
         {
-            let dist: f64 = row.get(21).unwrap_or(1.0);
+            let dist: f64 = row.get(23).unwrap_or(1.0);
             if 1.0 - dist >= threshold {
                 let page = Self::row_to_page(&row)?;
                 if !allow_user_edited && (page.user_edited || page.creation_kind == "authored") {
+                    return Ok(None);
+                }
+                if growth && page.review_required {
                     return Ok(None);
                 }
                 return Ok(Some(page));
@@ -53421,6 +53558,7 @@ impl MemoryDB {
                  WHERE status = 'active' AND LOWER(title) = LOWER(?1)
                    AND content = ?2
                    AND creation_kind = 'research' AND COALESCE(user_edited, 0) = 0
+                   AND COALESCE(review_required, 0) = 0
                  ORDER BY id ASC",
                 libsql::params!["Overview", placeholder],
             )
@@ -53463,7 +53601,8 @@ impl MemoryDB {
                  WHERE id = ?2 AND status = 'active' AND version = ?3
                    AND source_revision = ?4 AND content = ?5
                    AND lower(title) = 'overview'
-                   AND creation_kind = 'research' AND COALESCE(user_edited, 0) = 0",
+                   AND creation_kind = 'research' AND COALESCE(user_edited, 0) = 0
+                   AND COALESCE(review_required, 0) = 0",
                 libsql::params![now.to_rfc3339(), id, expected_version, expected_source_revision, placeholder],
             ).await.map_err(|e| WenlanError::VectorDb(format!("overview archive: {e}")))?;
             if affected == 1 {
@@ -55135,8 +55274,12 @@ impl MemoryDB {
              c.source_memory_ids, c.version, c.status, c.created_at, \
              c.last_compiled, c.last_modified, \
              COALESCE(c.sources_updated_count, 0), c.stale_reason, \
-             COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), COALESCE(c.creation_kind, 'distilled'), COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept')"
+             COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), COALESCE(c.creation_kind, 'distilled'), COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
+             NULL, COALESCE(c.review_required, 0)"
         );
+        // Column 21 (`refresh_blocked_reason`) stays NULL on search as before;
+        // column 22 carries the review lock so a search hit reports it. The
+        // vector arm's distance therefore sits at column 23.
 
         // Optional page_type clause: pages store their category in `space`.
         // When Some("recap") is passed, only pages with space='recap' are returned.
@@ -55196,7 +55339,7 @@ impl MemoryDB {
                 };
                 match Self::row_to_page(&row) {
                     Ok(page) => {
-                        let distance: f64 = match row.get(21) {
+                        let distance: f64 = match row.get(23) {
                             Ok(d) => d,
                             Err(e) if strict_scan => {
                                 return Err(WenlanError::VectorDb(format!(
@@ -55513,6 +55656,10 @@ impl MemoryDB {
                 Ok(libsql::Value::Text(reason)) => Some(reason),
                 _ => None,
             },
+            // Column 22 (migration 137). Same graceful raw-Value read: a
+            // SELECT that stops before it (or carries a non-integer there)
+            // reads as unlocked.
+            review_required: matches!(row.get_value(22), Ok(libsql::Value::Integer(v)) if v != 0),
             truth: None,
         })
     }
@@ -56005,7 +56152,10 @@ impl MemoryDB {
 
     /// List active pages never citation-processed (`citations IS NULL`), oldest
     /// `last_modified` first. Feeds the annotate-only citation-backfill sweep
-    /// (`citations::run_citation_backfill_tick`). Returns bare ids (row
+    /// (`citations::run_citation_backfill_tick`). A review-locked page is
+    /// skipped: inserting `[N]` markers rewrites the body a person asked to
+    /// review first, and skipping here spends no model call on a write the
+    /// content UPDATE's lock predicate would refuse anyway. Returns bare ids (row
     /// enumeration, no `COUNT(*)` — see the libsql vector-index COUNT bug note).
     pub async fn get_pages_missing_citations(
         &self,
@@ -56014,7 +56164,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' AND citations IS NULL ORDER BY last_modified ASC LIMIT ?1",
+                "SELECT id FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' AND citations IS NULL AND COALESCE(review_required, 0) = 0 ORDER BY last_modified ASC LIMIT ?1",
                 libsql::params![limit as i64],
             )
             .await
@@ -56516,7 +56666,7 @@ impl MemoryDB {
                         c.source_memory_ids, c.version, c.status, c.created_at, c.last_compiled, c.last_modified,
                         COALESCE(c.sources_updated_count, 0), c.stale_reason, COALESCE(c.user_edited, 0),
                         COALESCE(c.changelog, '[]'), COALESCE(c.creation_kind, 'distilled'), COALESCE(c.review_status, 'confirmed'),
-                        c.workspace, c.citations, COALESCE(c.kind, 'concept'), c.refresh_blocked_reason
+                        c.workspace, c.citations, COALESCE(c.kind, 'concept'), c.refresh_blocked_reason, COALESCE(c.review_required, 0)
                  FROM pages c
                  INNER JOIN edges cs ON cs.src_id = c.id AND cs.edge_type = 'cites'
                         AND cs.valid_until IS NULL AND cs.dst_kind = 'memory'
@@ -57138,6 +57288,30 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Set or clear the review lock (`pages.review_required`, migration 137).
+    /// While set, every machine write stages a revision card instead of
+    /// landing; human edits are unaffected. The flag is page metadata, not
+    /// content: it does not bump `version` or touch `last_modified`, so a
+    /// caller holding `expected_version` is not invalidated by a lock toggle.
+    /// Entity shadow rows are never matched. Returns `false` when no
+    /// non-entity page has `page_id`.
+    pub async fn set_page_review_required(
+        &self,
+        page_id: &str,
+        required: bool,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let changed = conn
+            .execute(
+                "UPDATE pages SET review_required = ?1 \
+                 WHERE id = ?2 AND COALESCE(kind, 'concept') != 'entity'",
+                libsql::params![i64::from(required), page_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("set_page_review_required: {e}")))?;
+        Ok(changed > 0)
+    }
+
     /// [`Self::set_page_refresh_blocked_reason`] fenced to the compile input
     /// the discarded refresh started from: the marker lands only while the
     /// page is still active at the captured `fence`. Every canonical page
@@ -57609,7 +57783,7 @@ impl MemoryDB {
     ) -> Result<Option<crate::pages::Page>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut sql = String::from(
-            "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+            "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
              FROM pages
              WHERE stale_reason = ? AND status = 'active'
                AND COALESCE(kind, 'concept') != 'entity'
@@ -57648,7 +57822,7 @@ impl MemoryDB {
     ) -> Result<Vec<crate::pages::Page>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut sql = String::from(
-            "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason \
+            "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0) \
              FROM pages WHERE stale_reason = ?1 AND status = 'active' AND COALESCE(kind, 'concept') != 'entity'",
         );
         let mut bind: Vec<libsql::Value> = vec![libsql::Value::Text(reason.to_string())];
@@ -57684,7 +57858,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason
+                "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
                  FROM pages
                  WHERE status = 'archived'
                    AND COALESCE(kind, 'concept') != 'entity'
@@ -60083,6 +60257,25 @@ pub(crate) fn compute_page_delta_summary(
     };
 
     Some(result)
+}
+
+/// Stamp the numeric twin of `compute_page_delta_summary` onto a changelog
+/// entry (`char_delta`, `sources_added`, `sources_removed`), so the app can
+/// localize the summary instead of showing the English `delta_summary`.
+pub(crate) fn add_page_delta_counts(
+    entry: &mut serde_json::Value,
+    old_content: &str,
+    old_source_ids: &[String],
+    new_content: &str,
+    new_source_ids: &[&str],
+) {
+    use std::collections::HashSet;
+    let old_set: HashSet<&str> = old_source_ids.iter().map(|s| s.as_str()).collect();
+    let new_set: HashSet<&str> = new_source_ids.iter().copied().collect();
+    entry["char_delta"] =
+        serde_json::json!(new_content.chars().count() as i64 - old_content.chars().count() as i64);
+    entry["sources_added"] = serde_json::json!(new_set.difference(&old_set).count() as i64);
+    entry["sources_removed"] = serde_json::json!(old_set.difference(&new_set).count() as i64);
 }
 
 /// Compute a short human-readable summary of what changed between two adjacent

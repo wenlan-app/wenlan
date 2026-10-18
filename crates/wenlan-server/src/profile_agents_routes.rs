@@ -9,6 +9,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use wenlan_core::db::presence_agent_id;
+use wenlan_types::requests::RegisterAgentRequest;
 
 // ===== Profile Types =====
 
@@ -76,7 +78,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/profile",
             get(handle_get_profile).put(handle_update_profile),
         )
-        .route("/api/agents", get(handle_list_agents))
+        .route(
+            "/api/agents",
+            get(handle_list_agents).post(handle_register_agent),
+        )
         .route(
             "/api/agents/{name}",
             get(handle_get_agent)
@@ -173,6 +178,34 @@ pub async fn handle_list_agents(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?;
     Ok(Json(agents.into_iter().map(agent_to_response).collect()))
+}
+
+/// POST /api/agents
+///
+/// The user connected a tool from the app, which is their authorisation:
+/// register it as trusted now, not at its first write. Idempotent; a row the
+/// user edited, the tool wrote through, or disabled is returned unchanged
+/// (see `MemoryDB::register_trusted_agent`).
+pub async fn handle_register_agent(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Json(req): Json<RegisterAgentRequest>,
+) -> Result<Json<AgentResponse>, ServerError> {
+    // Snapshot the DB Arc; the guard must not be held across the DB awaits
+    // below (AGENTS.md: never hold a tokio RwLock guard across .await).
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    if presence_agent_id(&req.name).is_none() {
+        return Err(ServerError::BadRequest(
+            "name must be a non-empty agent name of at most 64 characters, without control characters, and not a reserved name".to_string(),
+        ));
+    }
+    let agent = db
+        .register_trusted_agent(&req.name)
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    Ok(Json(agent_to_response(agent)))
 }
 
 pub async fn handle_get_agent(

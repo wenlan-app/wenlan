@@ -5,7 +5,12 @@ use crate::{
 };
 use std::path::Path;
 
-struct PageRevisionCard {
+/// Error code prefix for a page revision card that can no longer apply because
+/// the page moved past the version (or source revision) it was staged on. The
+/// card is discarded when this is returned.
+pub const PAGE_REVISION_OUTDATED: &str = "page_revision_outdated";
+
+pub(super) struct PageRevisionCard {
     page_id: String,
     revision_id: String,
     page_version: Option<i64>,
@@ -14,7 +19,7 @@ struct PageRevisionCard {
     source_memory_ids: Vec<String>,
 }
 
-async fn resolve_page_revision_card(
+pub(super) async fn resolve_page_revision_card(
     db: &MemoryDB,
     id: &str,
 ) -> Result<Option<PageRevisionCard>, WenlanError> {
@@ -95,7 +100,7 @@ async fn resolve_page_revision_card(
 // with card consumption. A card carrying no `source_revision` is refused
 // outright and its page re-queued; a card carrying no `page_version` still
 // accepts on the source-revision fence, which is the stronger of the two.
-async fn accept_page_revision_card(
+pub(super) async fn accept_page_revision_card(
     db: &MemoryDB,
     card: PageRevisionCard,
     knowledge_path: Option<&Path>,
@@ -149,7 +154,7 @@ async fn accept_page_revision_card(
             .collect(),
     );
     let new_version = current.version + 1;
-    let entry = serde_json::json!({
+    let mut entry = serde_json::json!({
         "version": new_version,
         "at": chrono::Utc::now().timestamp(),
         "edited_by": "revision_accept",
@@ -162,6 +167,13 @@ async fn accept_page_revision_card(
         ),
         "incoming_source_ids": added_sources_json,
     });
+    crate::db::add_page_delta_counts(
+        &mut entry,
+        &current.content,
+        &current.source_memory_ids,
+        &card.content,
+        &source_refs,
+    );
     let existing_cl = db.get_page_changelog(&card.page_id).await?;
     const DEFAULT_CHANGELOG_CAP: usize = 20;
     let new_changelog =
@@ -183,6 +195,22 @@ async fn accept_page_revision_card(
         .await?;
 
     if !wrote {
+        // A concurrent accept or dismiss of this same card consumes it in its
+        // own transaction, which also moves the page past this card's fences.
+        // That is not an outdated card: the change may well have landed, so
+        // never tell the human it was discarded. The check is sound after the
+        // failed write because the fences only move forward: once this CAS
+        // missed, no later accept of the card can succeed either.
+        if db
+            .pending_memory_revision_payload(&card.revision_id)
+            .await?
+            .is_none()
+        {
+            return Err(WenlanError::NotFound(format!(
+                "revision card {} for page {} was already resolved",
+                card.revision_id, card.page_id
+            )));
+        }
         let current_version = db
             .get_page(&card.page_id)
             .await?
@@ -194,9 +222,17 @@ async fn accept_page_revision_card(
                 card.revision_id, card.page_id
             )));
         };
+        // Both fences only ever move forward, so a card that missed them once
+        // can never land. Leaving it queued strands it: every later accept
+        // fails the same way and the page keeps showing a pending revision
+        // the human cannot clear (a locked page edited by hand after an agent
+        // proposed a change is the common case). Discard it, the same way a
+        // dismiss would, and say so with a machine code the app and the MCP
+        // client both recognise. The human's prose is untouched.
         let mut msg = format!(
-            "page revision card {} was staged for page {} at staged version {}, but current version {} no longer matches",
-            card.revision_id, card.page_id, staged_version, current_version
+            "{PAGE_REVISION_OUTDATED}: page {} changed after revision card {} was proposed \
+             (staged version {}, current version {}",
+            card.page_id, card.revision_id, staged_version, current_version
         );
         // A source attached after this card was staged bumps only
         // `source_revision`, leaving `version` unchanged -- so a
@@ -212,6 +248,8 @@ async fn accept_page_revision_card(
                     .unwrap_or_else(|| "unknown".to_string())
             ));
         }
+        msg.push_str("); the card was discarded. Re-read the page and propose the change again.");
+        db.delete_by_source_id("memory", &card.revision_id).await?;
         return Err(WenlanError::Conflict(msg));
     }
 

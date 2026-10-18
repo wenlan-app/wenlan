@@ -5,7 +5,8 @@ import { PageIcon } from "../assets/PageIcon";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
+import { toast } from "sonner";
+import { deletePage, discardPageDraft, getPage, knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
 import { listAllActivePages, listAllDraftPages, listAllActivePagesExplicitBrowse, listAllDraftPagesExplicitBrowse, EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { pageSpaceContext } from "./pagePresentation";
 import { collectPageInventory, filterPageInventory, folderScope, inventoryFolderPath, pageFolderPath, pageMatchesInventoryScope, type WikiInventoryScope } from "./pageInventory";
@@ -25,16 +26,22 @@ type PageInventoryPanelProps = {
   readonly onCreatePage?: (folderPath?: string) => void;
   readonly onOpenDraft?: (draftId: string, space: string | null) => void;
   readonly onOpenPage?: (page: Page) => void;
+  /** File-tree mode: called after a note (published page or draft) was deleted from the directory, so the host can close its tab. */
+  readonly onDeletePage?: (pageId: string) => void;
+  /** File-tree mode: the number of notes the tree lists, or null until it has loaded. */
+  readonly onNoteCountChange?: (count: number | null) => void;
 };
 
 type FolderContextMenuState = {
   readonly path: string;
+  /** Set when the menu was opened on a note row; absent for folders and empty space. */
+  readonly noteId?: string;
   readonly x: number;
   readonly y: number;
   readonly invoker: HTMLElement;
 };
 
-export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage }: PageInventoryPanelProps) {
+export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage, onDeletePage, onNoteCountChange }: PageInventoryPanelProps) {
   const { i18n, t } = useTranslation();
   const id = useId();
   const queryClient = useQueryClient();
@@ -50,6 +57,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const [contextMenu, setContextMenu] = useState<FolderContextMenuState | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const contextMenuItemRef = useRef<HTMLButtonElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const deletingRef = useRef(false);
   const folderFormInvokerRef = useRef<HTMLElement | null>(null);
   const folderCreation = useWikiFolderCreation();
   const explicitBrowse = browsing || fileTree;
@@ -57,6 +66,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const drafts = useQuery({ queryKey: explicitBrowse ? ["pages", "draft"] : ["pages", "inventory", "passive", "draft"], queryFn: explicitBrowse ? listAllDraftPagesExplicitBrowse : listAllDraftPages, ...(explicitBrowse ? EXPLICIT_BROWSE_QUERY_POLICY : { staleTime: 30_000 }) });
   const folders = useKnowledgeFolders();
   const pages = useMemo(() => collectPageInventory(active.data ?? [], drafts.data ?? []), [active.data, drafts.data]);
+  const noteCount = fileTree && active.isSuccess && drafts.isSuccess ? pages.length : null;
+  useEffect(() => { onNoteCountChange?.(noteCount); }, [noteCount, onNoteCountChange]);
   const selectedPage = pages.find(page => page.id === currentPageId);
   const selectedPath = selectedPage ? pageFolderPath(selectedPage) : currentFolderPath !== undefined ? currentFolderPath : inventoryFolderPath(inventoryScope);
   const [creationPath, setCreationPath] = useState<string | null>(selectedPath);
@@ -110,13 +121,17 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     setCreateError(false);
     if (restoreFocus) requestAnimationFrame(() => folderFormInvokerRef.current?.focus());
   };
-  const openContextMenu = (path: string, invoker: HTMLElement, x: number, y: number) => {
-    setContextMenu({ path, invoker, x, y });
+  const openContextMenu = (path: string, invoker: HTMLElement, x: number, y: number, noteId?: string) => {
+    setContextMenu({ path, invoker, x, y, ...(noteId ? { noteId } : {}) });
   };
   const contextTarget = (target: EventTarget | null, fallback: HTMLElement) => {
     const element = target instanceof Element ? target : null;
     if (!element) return { path: "", invoker: fallback };
     if (element.closest("form, input, textarea, select, [contenteditable='true']")) return null;
+    const note = element.closest<HTMLElement>("[data-page-id]");
+    if (note?.dataset.pageId) {
+      return { path: note.dataset.folderPath ?? "", noteId: note.dataset.pageId, invoker: note.querySelector<HTMLElement>(".notes-inventory-page") ?? fallback };
+    }
     const folder = element.closest<HTMLElement>("[data-folder-path]");
     const path = folder?.dataset.folderPath ?? "";
     const invoker = folder?.querySelector<HTMLElement>(".notes-inventory-scope") ?? (element.closest<HTMLElement>("button") ?? fallback);
@@ -126,15 +141,65 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     const target = contextTarget(event.target, event.currentTarget);
     if (!target) return;
     event.preventDefault();
-    openContextMenu(target.path, target.invoker, event.clientX, event.clientY);
+    openContextMenu(target.path, target.invoker, event.clientX, event.clientY, target.noteId);
+  };
+  const deleteNote = async (noteId: string) => {
+    const note = pages.find(candidate => candidate.id === noteId);
+    if (!note || deletingRef.current) return;
+    if (!confirm(t("pageDetail.deleteConfirm"))) return;
+    deletingRef.current = true;
+    try {
+      if (note.status === "draft") {
+        // delete_page rejects drafts; a draft is discarded at its latest version.
+        // An open editor can autosave between the read and the discard, so a
+        // version conflict reads the version again once.
+        for (let attempt = 0; ; attempt++) {
+          const latest = await getPage(noteId);
+          if (!latest) break;
+          try { await discardPageDraft({ id: noteId, expectedVersion: latest.version }); break; }
+          catch (cause) {
+            const code = cause && typeof cause === "object" && "code" in cause ? (cause as { code?: unknown }).code : null;
+            if (code === "page_draft_not_found") break;
+            if (code !== "draft_version_conflict" || attempt > 0) throw cause;
+          }
+        }
+      } else await deletePage(noteId);
+      void queryClient.invalidateQueries({ queryKey: ["page", noteId], refetchType: "none" });
+      void queryClient.invalidateQueries({ queryKey: ["pages"] });
+      void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
+      void queryClient.invalidateQueries({ queryKey: ["page-links", noteId], refetchType: "none" });
+      void queryClient.invalidateQueries({ queryKey: ["page-revisions", noteId], refetchType: "none" });
+      void queryClient.invalidateQueries({ queryKey: ["page-sources", noteId], refetchType: "none" });
+      onDeletePage?.(noteId);
+      requestAnimationFrame(() => {
+        const focused = document.activeElement;
+        if (!focused || focused === document.body) scrollRef.current?.focus();
+      });
+    } catch {
+      toast(t("pageDetail.deleteError"));
+    } finally { deletingRef.current = false; }
   };
   const handleContextMenuKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.key === "Delete" || event.key === "Backspace") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      const row = event.target instanceof HTMLElement && event.target.matches(".notes-inventory-page") ? event.target.closest<HTMLElement>("[data-page-id]") : null;
+      if (row?.dataset.pageId) { event.preventDefault(); void deleteNote(row.dataset.pageId); }
+      return;
+    }
     if (event.key !== "ContextMenu" && !(event.key === "F10" && event.shiftKey)) return;
     const target = contextTarget(event.target, event.currentTarget);
     if (!target) return;
     event.preventDefault();
     const rect = target.invoker.getBoundingClientRect();
-    openContextMenu(target.path, target.invoker, rect.left, rect.bottom);
+    openContextMenu(target.path, target.invoker, rect.left, rect.bottom, target.noteId);
+  };
+  const contextNote = contextMenu?.noteId ? pages.find(candidate => candidate.id === contextMenu.noteId) : undefined;
+  const openContextNote = () => {
+    if (!contextNote) return;
+    const draft = contextNote.status === "draft";
+    if (draft ? !onOpenDraft : !onOpenPage) return;
+    setContextMenu(null);
+    if (draft) onOpenDraft?.(contextNote.id, pageSpaceContext(contextNote) ?? null);
+    else onOpenPage?.(contextNote);
   };
   const dismissContextMenu = (restoreFocus: boolean) => {
     if (restoreFocus) contextMenu?.invoker.focus();
@@ -170,7 +235,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const renderPage = (page: Page) => {
     const draft = page.status === "draft";
     const title = draft && !page.title.trim() ? t("pages.overview.untitledDraft") : page.title;
-    return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span></button></li>;
+    return <li key={page.id} data-folder-path={pageFolderPath(page) ?? ""} data-page-id={page.id} data-page-status={page.status}><button type="button" className="notes-page-button notes-inventory-page" aria-label={t("pages.overview.openPage", { title })} aria-current={currentPageId === page.id ? "page" : undefined} data-active={currentPageId === page.id ? "true" : undefined} title={title} disabled={draft ? !onOpenDraft : !onOpenPage} onClick={() => draft ? onOpenDraft?.(page.id, pageSpaceContext(page) ?? null) : onOpenPage?.(page)}><PageIcon size={16}/><span className="notes-page-title">{title}</span></button></li>;
   };
   const renderFolder = (folder: KnowledgeFolder, depth: number): React.ReactNode => {
     const children = (folders.data?.folders ?? []).filter(item => item.path !== folder.path && item.parent_path === folder.path);
@@ -221,7 +286,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     </div></div>}
     {!fileTree && folderCreateForm}
     {!fileTree && <label className="notes-list-filter"><span className="sr-only">{t("pages.folders.searchAll")}</span><MagnifyingGlass aria-hidden="true" size={14}/><input aria-label={t("pages.folders.searchAll")} placeholder={t("pages.folders.searchAll")} onChange={event => setFilter(event.target.value)} type="search" value={filter}/></label>}
-    <div className="notes-list-scroll" tabIndex={fileTree ? 0 : undefined} role={fileTree ? "group" : undefined} aria-label={fileTree ? t("pages.folders.title") : undefined} onContextMenu={fileTree ? handleContextMenu : undefined} onKeyDown={fileTree ? handleContextMenuKey : undefined}>
+    <div className="notes-list-scroll" ref={scrollRef} tabIndex={fileTree ? 0 : undefined} role={fileTree ? "group" : undefined} aria-label={fileTree ? t("pages.folders.title") : undefined} onContextMenu={fileTree ? handleContextMenu : undefined} onKeyDown={fileTree ? handleContextMenuKey : undefined}>
       {(active.isPending || drafts.isPending) ? <p className="notes-list-state" role="status">{t("pages.overview.loading")}</p> : (active.isError || drafts.isError) ? <div className="notes-list-state" role="alert"><p>{t("pages.overview.error")}</p><button type="button" onClick={() => { void active.refetch(); void drafts.refetch(); }}>{t("pageDetail.retry")}</button></div> : <>
         {!fileTree && <button type="button" className="notes-inventory-scope notes-inventory-all" aria-label={t("pages.inventory.all")} data-active={selectedPath === null ? "true" : undefined} aria-current={selectedPath === null ? "page" : undefined} onClick={() => { setFilter(""); onBrowse?.("all"); }} disabled={!onBrowse}><Stack aria-hidden="true" size={16}/><span>{t("pages.inventory.all")}</span></button>}
         {hasFilter ? <><p className="notes-folder-parent">{t("pages.folders.searchAll")}</p><ul className="notes-page-list">{filterPageInventory(pages, filter, i18n.language).map(renderPage)}</ul>{!filterPageInventory(pages, filter, i18n.language).length && <p className="notes-list-state">{t("pages.overview.noMatches")}</p>}</> : <>
@@ -239,8 +304,19 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
         {folderUnavailable && <p className="notes-list-state" role="status">{t("pages.folders.unavailable")}</p>}
       </>}
     </div>
-    {contextMenu && createPortal(<div className="mem-popover-surface notes-folder-context-menu" role="menu" aria-label={t("pages.folders.title")} ref={contextMenuRef} style={{ left: contextMenu.x, top: contextMenu.y }} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); dismissContextMenu(true); } else if (event.key === "Tab") dismissContextMenu(false); }}>
-      <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>
+    {contextMenu && createPortal(<div className="mem-popover-surface notes-folder-context-menu" role="menu" aria-label={t("pages.folders.title")} ref={contextMenuRef} style={{ left: contextMenu.x, top: contextMenu.y }} onKeyDown={event => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); dismissContextMenu(true); }
+      else if (event.key === "Tab") dismissContextMenu(false);
+      else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[role='menuitem']"));
+        const index = items.indexOf(document.activeElement as HTMLElement);
+        if (items.length > 1) { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
+      }
+    }}>
+      {contextMenu.noteId ? <>
+        <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
+        <button type="button" role="menuitem" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>
+      </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}
     </div>, document.body)}
   </section>;
 }

@@ -57,13 +57,13 @@ for (const persisted of [false, true]) {
       await openWikiNote(page, "Original synthetic note");
       await expect(title(page)).toHaveValue(original.title);
     } else {
-      await page.getByRole("button", { name: "New page", exact: true }).click();
+      await page.getByRole("button", { name: "New note", exact: true }).click();
       await title(page).fill(original.title);
       await content(page).fill(original.content);
       // Click before the debounce: the transition itself must flush this editor.
       expect(controller.calls().filter(call => call.command === "create_page_draft")).toHaveLength(0);
     }
-    await page.getByRole("button", { name: "New page", exact: true }).click();
+    await page.getByRole("button", { name: "New note", exact: true }).click();
     await expect(title(page)).toHaveValue("");
     await expect(content(page)).toHaveValue("");
     await expect(title(page)).toBeFocused();
@@ -102,7 +102,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 
       await page.locator('[data-sidebar-toggle="true"]').click();
       await expect(sidebar(page)).toHaveAttribute("aria-hidden", "true");
     }
-    await page.getByRole("button", { name: "New page", exact: true }).click();
+    await page.getByRole("button", { name: "New note", exact: true }).click();
     await title(page).fill("Popup Escape synthetic draft");
     await content(page).fill("The writing session stays here.");
     await showSidebar(page);

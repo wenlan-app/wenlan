@@ -54,7 +54,7 @@ pub struct SearchResponse {
     pub results: Vec<wenlan_core::db::SearchResult>,
     pub took_ms: f64,
     /// Distilled pages surfaced through the shared `select_visible_pages`
-    /// visibility gate (space-scope → effective-tier → confirmed/rank/cap).
+    /// visibility gate (space-scope → effective-tier → rank/cap, confirmed weighted up).
     /// Absent when nothing passed the gate; mirrors `SearchMemoryResponse`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supplemental_pages: Option<Vec<wenlan_core::db::SearchResult>>,
@@ -269,7 +269,7 @@ async fn handle_search_inner(
     // Additive page path: surface gated distilled pages through the
     // `supplemental_pages` field, routed through the SAME shared
     // `select_visible_pages` visibility gate (space-scope → effective-tier →
-    // confirmed/rank/cap) used by /api/context and /api/memory/search. Resolve
+    // rank/cap, confirmed weighted up) used by /api/context and /api/memory/search. Resolve
     // caller trust from the `x-agent-name` header, fail-CLOSED to "unknown"
     // (mirror handle_context above). Skipped for the "recent context" sentinel.
     // Fail CLOSED: any lookup error leaves pages out (never surface ungated).
@@ -288,7 +288,12 @@ async fn handle_search_inner(
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let raw = db
-            .search_pages_scoped(&req.query, 3, None, &scope)
+            .search_pages_scoped(
+                &req.query,
+                wenlan_core::pages::PAGE_CANDIDATE_POOL,
+                None,
+                &scope,
+            )
             .await
             .unwrap_or_default();
         let ids: std::collections::HashSet<String> =
@@ -936,10 +941,9 @@ async fn handle_distill_inner(
     });
     if no_clusters_and_no_pages {
         if let serde_json::Value::Object(ref mut map) = response {
-            // Distinguish "nothing to synthesize" from "nothing CAN
-            // synthesize" -- on a fresh install with no on-device model or
-            // API key configured, telling the user to capture more memories
-            // sends them the wrong way.
+            // Clustering itself needs no model, so an empty pass means too
+            // few related memories either way. Without a model nothing links
+            // memories to topics, so grouping rests on similarity alone.
             let prefer_llm =
                 foreground_rebuild_llm(api_llm.as_ref(), external_llm.as_ref(), llm.as_ref());
             let model_available = prefer_llm
@@ -949,7 +953,7 @@ async fn handle_distill_inner(
             let hint = if model_available {
                 "No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Capture more related memories, or check the daemon log for dropped clusters."
             } else {
-                "No synthesis model is configured or reachable: install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan:setup` before distilling."
+                "No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan:setup` also links memories to topics automatically, which helps them group."
             };
             map.insert("hint".into(), serde_json::json!(hint));
         }
@@ -1929,7 +1933,7 @@ mod distill_sweep_route_tests {
     }
 
     #[tokio::test]
-    async fn distill_with_no_model_and_no_clusters_hints_at_model_setup_not_more_memories() {
+    async fn distill_with_no_model_and_no_clusters_says_no_model_is_needed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let emitter: Arc<dyn wenlan_core::events::EventEmitter> =
             Arc::new(wenlan_core::events::NoopEmitter);
@@ -1963,11 +1967,15 @@ mod distill_sweep_route_tests {
         let payload: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
         let hint = payload["hint"].as_str().expect("hint present");
+        // Clustering needs no model, so an empty pass on a no-model install
+        // asks for more related memories and only offers setup as a help.
         assert!(
-            hint.contains("wenlan setup"),
-            "with no model configured, the hint should point at setup, not more memories: {hint}"
+            hint.contains("Distilling does not need a model"),
+            "with no model configured, the hint must not make a model a prerequisite: {hint}"
         );
-        assert!(!hint.contains("Capture more related memories"));
+        assert!(hint.contains("Capture more related memories"), "{hint}");
+        assert!(hint.contains("wenlan setup"), "{hint}");
+        assert!(!hint.contains("before distilling"), "{hint}");
     }
 
     #[tokio::test]
@@ -2934,6 +2942,7 @@ mod context_page_selection_tests {
             stale_reason: None,
             pending_rebuild: None,
             refresh_blocked_reason: None,
+            review_required: false,
             user_edited: false,
             relevance_score,
             last_edited_by: None,

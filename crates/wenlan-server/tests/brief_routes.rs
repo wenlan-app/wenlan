@@ -260,3 +260,101 @@ async fn patch_commits_safe_changes_reports_stale_conflicts_and_projects_receipt
     assert_eq!(stale.applied.len(), 1);
     assert!(temp.path().join("status").join("work.md").is_file());
 }
+
+async fn get_request(
+    app: wenlan_server::router::AppRouter,
+    uri: &str,
+    space_header: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut builder = Request::builder().method(Method::GET).uri(uri);
+    if let Some(space) = space_header {
+        builder = builder.header("x-wenlan-space", space);
+    }
+    let response = app
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+#[tokio::test]
+async fn history_lists_updates_newest_first_and_show_returns_the_old_brief() {
+    let (app, _temp, _db) = fixture().await;
+    for (op, text) in [("op-1", "first item"), ("op-2", "second item")] {
+        let (status, _) =
+            json_request(app.clone(), Method::PATCH, update("work", op, text), None).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    let (status, body) = get_request(app.clone(), "/api/brief/history?space=work", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let response: wenlan_types::BriefHistoryResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(response.space.as_deref(), Some("work"));
+    let versions: Vec<i64> = response.entries.iter().map(|e| e.version).collect();
+    assert_eq!(versions, vec![2, 1]);
+    assert_eq!(response.entries[0].caller_id, "brief-route-test");
+    assert_eq!(response.entries[0].operation_id, "op-2");
+    assert_eq!(response.entries[0].mutation_count, 1);
+
+    let (_, body) = get_request(app.clone(), "/api/brief/history?space=work&limit=1", None).await;
+    let limited: wenlan_types::BriefHistoryResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(limited.entries.len(), 1);
+    assert_eq!(limited.entries[0].version, 2);
+
+    // the header selects the Space just like the Brief read route
+    let (_, body) = get_request(app.clone(), "/api/brief/history", Some("work")).await;
+    let by_header: wenlan_types::BriefHistoryResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(by_header.entries.len(), 2);
+
+    let (status, body) = get_request(app.clone(), "/api/brief/history/1?space=work", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let old: wenlan_types::BriefVersionResponse = serde_json::from_value(body).unwrap();
+    assert_eq!(old.entry.version, 1);
+    assert_eq!(old.brief.version, 1);
+    assert_eq!(old.brief.active.len(), 1);
+    assert_eq!(old.brief.active[0].text, "first item");
+
+    let (status, _) = get_request(app, "/api/brief/history/9?space=work", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn history_is_scoped_to_the_resolved_space() {
+    let (app, _temp, db) = fixture().await;
+    json_request(
+        app.clone(),
+        Method::PATCH,
+        update("work", "work-op", "work only item"),
+        None,
+    )
+    .await;
+    db.create_space("personal", None, false).await.unwrap();
+
+    // another Space sees nothing and cannot read the version
+    let (status, body) = get_request(app.clone(), "/api/brief/history", Some("personal")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 0);
+    let (status, body) = get_request(app.clone(), "/api/brief/history/1", Some("personal")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!body.to_string().contains("work only item"));
+
+    // explicit query Space wins over the header
+    let (_, body) = get_request(
+        app.clone(),
+        "/api/brief/history?space=work",
+        Some("personal"),
+    )
+    .await;
+    assert_eq!(body["entries"].as_array().unwrap().len(), 1);
+
+    // an unknown Space is rejected, not silently widened
+    let (status, _) = get_request(app.clone(), "/api/brief/history", Some("missing")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    let (status, _) = get_request(app, "/api/brief/history/1", Some("missing")).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

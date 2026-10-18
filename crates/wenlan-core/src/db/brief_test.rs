@@ -469,3 +469,141 @@ async fn brief_summary_uses_brief_version_without_blocking_item_changes() {
     assert_eq!(brief.last_session_summary, "first summary");
     assert_eq!(brief.backlog.len(), 1);
 }
+
+#[tokio::test]
+async fn brief_history_records_one_row_per_applied_update_with_snapshot() {
+    let (db, _temp) = test_db().await;
+    let first = db
+        .apply_brief_update(&update_request(
+            "history",
+            "op-one",
+            vec![add("first item", BriefItemState::Active)],
+        ))
+        .await
+        .unwrap();
+    let item_id = first.applied[0].item_id.clone().unwrap();
+    let second = BriefUpdateRequest {
+        space: "history".into(),
+        caller_id: "other-caller".into(),
+        operation_id: "op-two".into(),
+        summary: Some(BriefSummaryUpdate {
+            text: "second summary".into(),
+            expected_version: first.brief_version,
+        }),
+        mutations: vec![BriefMutation::Move {
+            item_id,
+            expected_version: 1,
+            state: BriefItemState::Backlog,
+        }],
+    };
+    let second_receipt = db.apply_brief_update(&second).await.unwrap();
+    assert_eq!(second_receipt.brief_version, 2);
+
+    let history = db.list_brief_history("history", 10).await.unwrap();
+    assert_eq!(
+        history.iter().map(|e| e.version).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    assert_eq!(history[0].caller_id, "other-caller");
+    assert_eq!(history[0].operation_id, "op-two");
+    assert_eq!(history[0].summary, "second summary");
+    assert_eq!(history[0].mutation_count, 2);
+    assert_eq!(history[1].caller_id, "brief-test");
+    assert_eq!(history[1].mutation_count, 1);
+    assert_eq!(history[1].summary, "");
+
+    // limit keeps the newest entries
+    let limited = db.list_brief_history("history", 1).await.unwrap();
+    assert_eq!(limited.len(), 1);
+    assert_eq!(limited[0].version, 2);
+
+    // v1 shows the Brief as it was, v2 the current one
+    let v1 = db.get_brief_version("history", 1).await.unwrap().unwrap();
+    assert_eq!(v1.brief.version, 1);
+    assert_eq!(v1.brief.active.len(), 1);
+    assert!(v1.brief.backlog.is_empty());
+    assert_eq!(v1.brief.last_session_summary, "");
+    let v2 = db.get_brief_version("history", 2).await.unwrap().unwrap();
+    assert!(v2.brief.active.is_empty());
+    assert_eq!(v2.brief.backlog.len(), 1);
+    assert_eq!(v2.brief.last_session_summary, "second summary");
+    assert_eq!(
+        db.get_brief_by_space_name("history")
+            .await
+            .unwrap()
+            .unwrap(),
+        v2.brief
+    );
+    assert!(db.get_brief_version("history", 3).await.unwrap().is_none());
+    assert!(db
+        .get_brief_version("elsewhere", 1)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn brief_history_skips_conflict_only_updates_and_replays() {
+    let (db, _temp) = test_db().await;
+    let created = db
+        .apply_brief_update(&update_request(
+            "quiet",
+            "create",
+            vec![add("only item", BriefItemState::Active)],
+        ))
+        .await
+        .unwrap();
+    let item_id = created.applied[0].item_id.clone().unwrap();
+
+    // every mutation conflicts: nothing applies, so no history row
+    let conflict = update_request(
+        "quiet",
+        "stale",
+        vec![BriefMutation::Edit {
+            item_id,
+            expected_version: 99,
+            text: "stale".into(),
+        }],
+    );
+    let receipt = db.apply_brief_update(&conflict).await.unwrap();
+    assert!(receipt.applied.is_empty());
+    assert_eq!(receipt.conflicts.len(), 1);
+
+    // an exact replay of an applied operation adds nothing either
+    let replay = update_request(
+        "quiet",
+        "replayed",
+        vec![add("replayed item", BriefItemState::Backlog)],
+    );
+    db.apply_brief_update(&replay).await.unwrap();
+    db.apply_brief_update(&replay).await.unwrap();
+
+    let versions: Vec<i64> = db
+        .list_brief_history("quiet", 10)
+        .await
+        .unwrap()
+        .iter()
+        .map(|e| e.version)
+        .collect();
+    assert_eq!(versions, vec![2, 1]);
+}
+
+#[tokio::test]
+async fn brief_history_migration_creates_table_and_stamps_136() {
+    let (db, _temp) = test_db().await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute_batch("DROP TABLE brief_history; PRAGMA user_version=135;")
+            .await
+            .unwrap();
+    }
+    db.migrate_136_brief_history().await.unwrap();
+    db.migrate_136_brief_history().await.unwrap();
+    assert!(db.list_brief_history("none", 5).await.unwrap().is_empty());
+    let conn = db.conn.lock().await;
+    let mut rows = conn.query("PRAGMA user_version", ()).await.unwrap();
+    assert_eq!(
+        rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        136
+    );
+}

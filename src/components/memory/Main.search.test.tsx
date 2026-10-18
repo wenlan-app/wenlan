@@ -58,6 +58,9 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
+const reloadWindowMock = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/reloadWindow", () => ({ reloadWindow: reloadWindowMock }));
+
 vi.mock("../../hooks/useSearch", () => ({
   useSearch: useSearchMock,
 }));
@@ -68,6 +71,10 @@ vi.mock("../../lib/tauri", () => ({
   getMemoryStats: vi.fn().mockResolvedValue({ total: 0, new_today: 0, confirmed: 0, domains: [] }),
   searchEntities: vi.fn().mockResolvedValue([]),
   searchPages: vi.fn().mockResolvedValue([]),
+  // Main reads the getting-started state to decide whether the Wiki shows its directory.
+  listAgents: vi.fn().mockResolvedValue([]),
+  listRegisteredSources: vi.fn().mockResolvedValue([]),
+  listOnboardingMilestones: vi.fn().mockResolvedValue([]),
   listSpaces: listSpacesMock,
   openFile: openFileMock,
   openSearchResult: openSearchResultMock,
@@ -393,7 +400,6 @@ vi.mock("../onboarding/FirstUseGuide", () => ({
     onImport: () => void;
     onBack: () => void;
     onOpenPage: (id: string) => void;
-    onConnect: (client?: "chatgpt" | "codex" | "claude") => void;
   }) => (
     <section
       data-testid="first-use-guide"
@@ -403,10 +409,6 @@ vi.mock("../onboarding/FirstUseGuide", () => ({
       <button type="button" onClick={props.onImport}>Bring memories</button>
       <button type="button" onClick={props.onBack}>Leave first use</button>
       <button type="button" onClick={() => props.onOpenPage("library-page")}>Open knowledge result</button>
-      <button type="button" onClick={() => props.onConnect("chatgpt")}>Connect ChatGPT sample</button>
-      <button type="button" onClick={() => props.onConnect("codex")}>Connect Codex sample</button>
-      <button type="button" onClick={() => props.onConnect("claude")}>Connect Claude sample</button>
-      <button type="button" onClick={() => props.onConnect()}>Connect unspecified tool</button>
     </section>
   ),
 }));
@@ -621,6 +623,19 @@ describe("Main search", () => {
     expect(onBackFromDetail).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: i18n.t("main.back") }));
     expect(onBackFromDetail).toHaveBeenCalledOnce();
+  });
+
+  it("reloads on Cmd+R only after the open draft has saved", async () => {
+    const user = userEvent.setup();
+    const flush = deferred<boolean>();
+    draftFlushMock.mockReturnValue(flush.promise);
+    reloadWindowMock.mockReset();
+    renderMain();
+    await user.click(screen.getByRole("button", { name: "Create standalone draft" }));
+    fireEvent.keyDown(window, { key: "r", metaKey: true });
+    expect(reloadWindowMock).not.toHaveBeenCalled();
+    await act(async () => flush.resolve(true));
+    expect(reloadWindowMock).toHaveBeenCalledOnce();
   });
 
   it("keeps global Back in a draft until it saves and restores the saved identity with Forward", async () => {
@@ -1244,10 +1259,10 @@ describe("Main search", () => {
     vi.mocked(createPageDraft).mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "New page" }));
+    await user.click(screen.getByRole("button", { name: "New note" }));
     const oldTitle = await screen.findByRole("textbox", { name: "Title" });
     await user.type(oldTitle, "Unsaved original");
-    await user.click(screen.getByRole("button", { name: "New page" }));
+    await user.click(screen.getByRole("button", { name: "New note" }));
     await screen.findByRole("alert");
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(oldTitle);
     expect(oldTitle).toHaveValue("Unsaved original");
@@ -1262,11 +1277,11 @@ describe("Main search", () => {
     );
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "New page" }));
+    await user.click(screen.getByRole("button", { name: "New note" }));
     const oldTitle = await screen.findByRole("textbox", { name: "Title" });
     await user.type(oldTitle, "Pending original");
-    await user.click(screen.getByRole("button", { name: "New page" }));
-    await user.click(screen.getByRole("button", { name: "New page" }));
+    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.click(screen.getByRole("button", { name: "New note" }));
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(oldTitle);
     expect(oldTitle).toHaveValue("Pending original");
     expect(createPageDraft).toHaveBeenCalledTimes(1);
@@ -1628,9 +1643,9 @@ describe("Main search", () => {
 
     const searchAction = screen.getByRole("button", { name: "Search" });
     expect(searchAction).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByPlaceholderText("Search pages, memories, sources...")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search notes, memories, sources...")).not.toBeInTheDocument();
     await user.click(searchAction);
-    const searchInput = screen.getByPlaceholderText("Search pages, memories, sources...");
+    const searchInput = screen.getByPlaceholderText("Search notes, memories, sources...");
 
     expect(searchAction).toHaveAttribute("aria-expanded", "true");
     expect(searchInput).toHaveFocus();
@@ -1646,7 +1661,7 @@ describe("Main search", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Search" });
     const shell = document.querySelector(".memory-shell");
-    const input = screen.getByPlaceholderText("Search pages, memories, sources...");
+    const input = screen.getByPlaceholderText("Search notes, memories, sources...");
     expect(shell).toHaveAttribute("inert");
     expect(input).toHaveFocus();
 
@@ -1696,7 +1711,7 @@ describe("Main search", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByText("Recently opened")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open Page: Research notes" }));
+    await user.click(screen.getByRole("button", { name: "Open Note: Research notes" }));
     expect(await screen.findByTestId("page-detail")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
   });

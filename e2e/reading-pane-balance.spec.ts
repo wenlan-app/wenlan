@@ -40,19 +40,18 @@ for (const cfg of [
       expect(frame!.width).toBeGreaterThanOrEqual(460);
     }
     async function balancedStart(selector: string) {
-      const spacing = await page.locator(selector).evaluate(el => {
+      // The column centres in its lane, settling one frame after a side
+      // column opens or closes and once the rail finishes folding.
+      await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
+      await expect.poll(() => page.locator(selector).evaluate(el => {
         const frame = el.getBoundingClientRect();
-        const lane = el.parentElement!.getBoundingClientRect();
-        // Atomic documents establish the shared origin, even when a Wiki or
-        // file uses a longer line. Compare like origins, not unlike measures.
-        return { left: frame.left - lane.left, spare: lane.width - 624, width: lane.width };
-      });
-      // Narrow lanes use their spare space for text; their minimum useful
-      // width and stable origin are checked separately by readable().
-      if (spacing.width >= 900) {
-        expect(spacing.left / spacing.spare).toBeGreaterThanOrEqual(0.15);
-        expect(spacing.left / spacing.spare).toBeLessThanOrEqual(0.4);
-      }
+        const lane = el.parentElement!;
+        const box = lane.getBoundingClientRect();
+        const style = getComputedStyle(lane);
+        const left = box.left + lane.clientLeft + parseFloat(style.paddingLeft);
+        const right = left + lane.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        return Math.abs((frame.left - left) - (right - frame.right));
+      })).toBeLessThanOrEqual(1);
     }
     async function titleAndTools(frameSelector: string, titleSelector: string, toolsSelector?: string) {
       const frame = await page.locator(frameSelector).boundingBox();
@@ -78,13 +77,12 @@ for (const cfg of [
     const headingType = await titleAndTools(".source-document-page > .reading-document-frame", ".source-document-page .page-detail-title");
     const sourceType = await page.locator(".source-document-body p").first().evaluate(el => ({ size: getComputedStyle(el).fontSize, leading: getComputedStyle(el).lineHeight }));
     expect(sourceType).toEqual({ size: "15px", leading: "26.25px" });
-    const sourceStart = (await page.locator(".source-document-body").boundingBox())!.x;
+    await balancedStart(".source-document-page > .reading-document-frame");
     const sourceOpenWidth = (await page.locator(".source-document-body").boundingBox())!.width;
     await capture("source-info-open");
     await pane.locator(".page-info-drawer-close").click();
     await expect(pane).toHaveCount(0);
     await readable(".source-document-page > .reading-document-frame", ".source-document-page");
-    expect(Math.abs((await page.locator(".source-document-body").boundingBox())!.x - sourceStart)).toBeLessThanOrEqual(1);
     expect((await page.locator(".source-document-body").boundingBox())!.width).toBeGreaterThanOrEqual(sourceOpenWidth);
     await balancedStart(".source-document-page > .reading-document-frame");
     await capture("source-info-closed");
@@ -97,14 +95,37 @@ for (const cfg of [
     await balancedStart(".page-detail-document");
     expect(await titleAndTools(".page-detail-document", ".page-document-editor--title .cm-line:first-child", ".page-detail-actions-menu-trigger")).toEqual(headingType);
     await capture("wiki-info-closed");
+    // Info and the note list open and close independently.
+    const directory = page.locator(".wiki-workspace-directory");
+    const listShown = await directory.isVisible();
+    const shell = page.locator(".memory-shell");
+    await expect(shell).toHaveAttribute("data-sidebar-layout", cfg.mode);
     await page.getByRole("button", { name: t.pageInspector.open, exact: true }).click();
     await expect(pane).toBeVisible();
+    // Labels fold to icons while the rail, list, Info and a 600px note do not fit.
+    const folds = cfg.mode === "labels" && cfg.width < 240 + 248 + 320 + 600;
+    await expect(shell).toHaveAttribute("data-sidebar-layout", folds ? "icons" : cfg.mode);
+    await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
     expect((await pane.boundingBox())!.width).toBe(320);
     await readable(".page-detail-document", ".note-group-content");
     expect(await page.locator(".page-detail .cm-line:not(.cm-writing-heading)").first().evaluate(el => ({ size: getComputedStyle(el).fontSize, leading: getComputedStyle(el).lineHeight }))).toEqual(sourceType);
-    expect(Math.abs((await page.locator(".page-detail-document").boundingBox())!.x - wikiStart)).toBeLessThanOrEqual(1);
+    await balancedStart(".page-detail-document");
+    await expect(directory).toBeVisible({ visible: listShown });
     await capture("wiki-info-open");
+    if (folds) {
+      // The rail toggle brings the labels back while Info stays open.
+      await page.locator("[data-sidebar-toggle]").click();
+      await expect(shell).toHaveAttribute("data-sidebar-layout", "labels");
+      await expect(pane).toBeVisible();
+      await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
+      await readable(".page-detail-document", ".note-group-content");
+    }
     await pane.locator(".page-info-drawer-close").click();
+    await expect(pane).toHaveCount(0);
+    await expect(shell).toHaveAttribute("data-sidebar-layout", cfg.mode);
+    await expect(page.locator(".memory-shell[data-sidebar-auto-transition]")).toHaveCount(0);
+    await expect(directory).toBeVisible({ visible: listShown });
+    await expect(page.locator(".page-detail .cm-content")).toBeVisible();
     await readable(".page-detail-document", ".note-group-content");
     expect(Math.abs((await page.locator(".page-detail-document").boundingBox())!.x - wikiStart)).toBeLessThanOrEqual(1);
     await page.getByRole("button", { name: t.pageInspector.open, exact: true }).click();
@@ -125,10 +146,10 @@ for (const cfg of [
         await titleAndTools(".memory-document-frame", ".memory-document-editor .cm-line:first-child", ".memory-detail-actions .page-detail-actions-menu-trigger");
         expect(await page.locator(".memory-document-editor .cm-line:first-child").evaluate(el => ({ size: getComputedStyle(el).fontSize, leading: getComputedStyle(el).lineHeight }))).toEqual(sourceType);
       }
+      await balancedStart(kind === "memory" ? ".memory-document-frame" : ".entity-detail-dossier .page-detail-document");
       const start = (await reader.boundingBox())!.x;
       await capture(`${kind}-info-open`);
       await pane.locator(".page-info-drawer-close").click();
-      expect(Math.abs((await reader.boundingBox())!.x - start)).toBeLessThanOrEqual(1);
       await balancedStart(kind === "memory" ? ".memory-document-frame" : ".entity-detail-dossier .page-detail-document");
       await capture(`${kind}-info-closed`);
       await page.getByRole("button", { name: t.knowledgeContext.memoryPanel, exact: true }).click();

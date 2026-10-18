@@ -120,8 +120,12 @@ enum Commands {
     },
     /// Read the current Space Brief, optionally with related context.
     Brief(commands::brief::BriefArgs),
-    /// Browse distilled pages, or open one in your editor by title query.
+    /// Browse distilled pages, open one in your editor by title query, or
+    /// lock a page so machine updates wait for your review.
+    #[command(args_conflicts_with_subcommands = true)]
     Pages {
+        #[command(subcommand)]
+        action: Option<commands::pages::PagesAction>,
         /// Title/filename substring. Omit to list pages newest-first.
         query: Option<String>,
         /// Max pages to list (newest-first). 0 = all. Ignored when a query opens a page.
@@ -280,14 +284,14 @@ async fn main() -> anyhow::Result<ExitCode> {
         .with_recovery(recovery_enabled);
     let is_brief_update = matches!(
         &cli.command,
-        Commands::Brief(args) if args.command.is_some()
+        Commands::Brief(args) if args.is_update()
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
     let operation = match &cli.command {
-        Commands::Search { .. }
-        | Commands::Recall { .. }
-        | Commands::Brief(commands::brief::BriefArgs { command: None, .. })
-        | Commands::Memories { .. } => Some(CliSpaceOperation::Read),
+        Commands::Search { .. } | Commands::Recall { .. } | Commands::Memories { .. } => {
+            Some(CliSpaceOperation::Read)
+        }
+        Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
         Commands::Capture { .. } => Some(CliSpaceOperation::Write),
         _ => None,
     };
@@ -460,6 +464,11 @@ async fn main() -> anyhow::Result<ExitCode> {
             .await?
         }
         Commands::Pages {
+            action: Some(action),
+            ..
+        } => commands::pages::run_action(&client, format, cli.quiet, action).await?,
+        Commands::Pages {
+            action: None,
             query,
             limit,
             resolve_id,
@@ -566,6 +575,105 @@ mod catalog_tests {
             visible,
             "HELP_GROUPS in main.rs drifted from the visible clap subcommands"
         );
+    }
+
+    /// `wenlan pages lock|unlock <id>` parse as the review-lock actions, and
+    /// a plain query (or no argument) still browses pages as before.
+    #[test]
+    fn pages_lock_unlock_and_query_parse() {
+        use super::commands::pages::PagesAction;
+        use super::Commands;
+        use clap::Parser;
+
+        let lock = Cli::try_parse_from(["wenlan", "pages", "lock", "page_abc"]).expect("lock");
+        let Commands::Pages {
+            action: Some(PagesAction::Lock { page_id }),
+            query: None,
+            ..
+        } = lock.command
+        else {
+            panic!("expected pages lock");
+        };
+        assert_eq!(page_id, "page_abc");
+
+        let unlock =
+            Cli::try_parse_from(["wenlan", "pages", "unlock", "page_abc"]).expect("unlock");
+        let Commands::Pages {
+            action: Some(PagesAction::Unlock { page_id }),
+            ..
+        } = unlock.command
+        else {
+            panic!("expected pages unlock");
+        };
+        assert_eq!(page_id, "page_abc");
+
+        let browse = Cli::try_parse_from(["wenlan", "pages", "daemon", "--print"]).expect("query");
+        let Commands::Pages {
+            action: None,
+            query: Some(query),
+            print: true,
+            ..
+        } = browse.command
+        else {
+            panic!("expected a page query");
+        };
+        assert_eq!(query, "daemon");
+
+        let list = Cli::try_parse_from(["wenlan", "pages"]).expect("list");
+        assert!(matches!(
+            list.command,
+            Commands::Pages {
+                action: None,
+                query: None,
+                ..
+            }
+        ));
+
+        assert!(
+            Cli::try_parse_from(["wenlan", "pages", "lock"]).is_err(),
+            "lock needs a page id"
+        );
+    }
+
+    #[test]
+    fn brief_history_and_show_parse_beside_topic_and_update() {
+        use super::commands::brief::BriefCommand;
+        use super::Commands;
+        use clap::Parser;
+
+        let parse = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+            Commands::Brief(brief) => brief,
+            _ => panic!("expected brief"),
+        };
+
+        let plain = parse(&["wenlan", "brief"]);
+        assert!(plain.command.is_none() && plain.topic.is_none());
+        let topic = parse(&["wenlan", "brief", "release gate"]);
+        assert_eq!(topic.topic.as_deref(), Some("release gate"));
+        assert!(!topic.is_update());
+
+        let default_limit = parse(&["wenlan", "brief", "history"]);
+        assert!(matches!(
+            default_limit.command,
+            Some(BriefCommand::History { limit: 20 })
+        ));
+        let short = parse(&["wenlan", "brief", "history", "-l", "5"]);
+        assert!(matches!(
+            short.command,
+            Some(BriefCommand::History { limit: 5 })
+        ));
+        let long = parse(&["wenlan", "brief", "history", "--limit", "7"]);
+        assert!(matches!(
+            long.command,
+            Some(BriefCommand::History { limit: 7 })
+        ));
+        let show = parse(&["wenlan", "brief", "show", "--version", "3"]);
+        assert!(matches!(
+            show.command,
+            Some(BriefCommand::Show { version: 3 })
+        ));
+        assert!(Cli::try_parse_from(["wenlan", "brief", "show"]).is_err());
+        assert!(parse(&["wenlan", "brief", "update", "--file", "x.json"]).is_update());
     }
 
     #[test]

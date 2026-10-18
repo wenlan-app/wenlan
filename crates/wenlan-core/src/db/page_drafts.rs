@@ -9,7 +9,7 @@ const PAGE_COLUMNS: &str = "id, title, summary, content, entity_id, space,
     COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0),
     COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'),
     COALESCE(review_status, 'confirmed'), workspace, citations,
-    COALESCE(kind, 'concept')";
+    COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)";
 
 fn ensure_meaningful_snapshot(title: &str, content: &str) -> Result<(), WenlanError> {
     if title.trim().is_empty() && content.trim().is_empty() {

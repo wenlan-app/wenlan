@@ -172,15 +172,16 @@ pub struct CliReader {
     pub adapter: &'static str,
 }
 
-/// All 183 registered `(method, path, handler)` triples.
+/// All 184 registered `(method, path, handler)` triples.
 ///
-/// 65 page-bearing, 118 not. Expands to 189 `(builder, method, path)`
-/// runtime entries: 178 in `main`, 11 in `repair`.
+/// 65 page-bearing, 119 not. Expands to 190 `(builder, method, path)`
+/// runtime entries: 179 in `main`, 11 in `repair`.
 #[rustfmt::skip]
 pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Get, path: "/api/activity", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Get, path: "/api/activities", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_list_activities", evidence: "AgentActivityRow.detail = title={page.title}" },
     HttpReader { method: ReaderMethod::Get, path: "/api/agents", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/agents", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "AgentResponse carries no page prose" },
     HttpReader { method: ReaderMethod::Delete, path: "/api/agents/{name}", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_delete_agent", evidence: "opaque response type — fail-closed" },
     HttpReader { method: ReaderMethod::Get, path: "/api/agents/{name}", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
     HttpReader { method: ReaderMethod::Put, path: "/api/agents/{name}", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
@@ -188,6 +189,8 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Post, path: "/api/ambient/sweep", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Patch, path: "/api/brief", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "BriefUpdateReceipt carries no page prose" },
     HttpReader { method: ReaderMethod::Post, path: "/api/brief", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_read_brief", evidence: "Brief.last_session_summary, BriefItem.text, SearchResult.content" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/brief/history", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "Brief update log: Brief text only, no page prose" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/brief/history/{version}", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "past Brief snapshot: Brief text only, no page prose" },
     HttpReader { method: ReaderMethod::Get, path: "/api/briefing", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_get_briefing", evidence: "BriefingResponse.content = revision-card titles" },
     HttpReader { method: ReaderMethod::Get, path: "/api/capture-stats", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_capture_stats", evidence: "opaque response type — fail-closed" },
     HttpReader { method: ReaderMethod::Post, path: "/api/chunks/delete-bulk", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
@@ -318,6 +321,7 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Delete, path: "/api/pages/{id}/map/nodes/{node_id}", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_delete_map_node", evidence: "PageMapNode.label" },
     HttpReader { method: ReaderMethod::Patch, path: "/api/pages/{id}/map/nodes/{node_id}", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_patch_map_node", evidence: "PageMapNode.label" },
     HttpReader { method: ReaderMethod::Post, path: "/api/pages/{id}/review", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "receipt only: version, content digest, nonce digest — no prose" },
+    HttpReader { method: ReaderMethod::Put, path: "/api/pages/{id}/review-required", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "flag receipt only: page id and review_required — no prose" },
     HttpReader { method: ReaderMethod::Get, path: "/api/pages/{id}/revisions", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::NamedPage, adapter: "handle_get_page_revisions", evidence: "PageChangelogEntry.citations_summary, PageChangelogEntry.delta_sum" },
     HttpReader { method: ReaderMethod::Get, path: "/api/pages/{id}/sources", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::NamedPage, adapter: "handle_get_page_sources", evidence: "MemoryItem.content, MemoryItem.source_text, MemoryItem.summary, Me" },
     HttpReader { method: ReaderMethod::Get, path: "/api/profile", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },

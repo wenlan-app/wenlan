@@ -81,9 +81,9 @@ describe("NoteReviewNotice", () => {
     renderNotice({ ...basePage, review_status: "unconfirmed" }, { onReview });
 
     expect(await screen.findByRole("status")).toHaveTextContent("6 items need review");
-    expect(screen.getByText("Page revisions (1)")).toBeInTheDocument();
+    expect(screen.getByText("Note revisions (1)")).toBeInTheDocument();
     expect(screen.getByText("Related source issues (3)")).toBeInTheDocument();
-    expect(screen.getByText("Page suggestions (2)")).toBeInTheDocument();
+    expect(screen.getByText("Note suggestions (2)")).toBeInTheDocument();
     expect(screen.getByRole("status")).not.toHaveTextContent("other-page");
     expect(screen.getByRole("status")).not.toHaveTextContent("unlinked");
     expect(screen.getByRole("status")).not.toHaveTextContent("unconfirmed");
@@ -106,7 +106,7 @@ describe("NoteReviewNotice", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Review changes" }));
     expect(onReview).toHaveBeenCalledWith("refinement:id-exact-page");
-    expect(screen.getByText("Page suggestions (1)")).toBeInTheDocument();
+    expect(screen.getByText("Note suggestions (1)")).toBeInTheDocument();
     expect(screen.getByRole("status")).not.toHaveTextContent("id-prefix-only");
   });
 

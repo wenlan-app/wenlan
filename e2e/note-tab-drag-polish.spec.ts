@@ -12,7 +12,7 @@ async function start(p:Page,width=1440,theme="light",count=3){
  const fixture={...base,pages:Array.from({length:12},(_,i)=>({...base.pages[0],id:`drag-${i+1}`,title:`Drag note ${i+1}`,content:`# Drag note ${i+1}\n\n`+Array.from({length:55},(_,j)=>`Paragraph ${j+1}. A synthetic note for reading position and moving safely.`).join("\n\n"),storage_path:`drag-${i+1}.md`,folder_path:""}))};
  const runtime=await installTauriMock(p,{fixture,locale:"en",rawActions:[],delays:{update_page:200},localStorage:{"wenlan-theme":theme}});
  await p.goto("/");for(let i=1;i<=count;i++)await openWikiNote(p,`Drag note ${i}`);
- await expect(group(p).getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await expect(group(p).getByRole("textbox",{name:"Note editor",exact:true})).toBeVisible();
  return{errors,runtime};
 }
 async function point(el:Locator,side:"before"|"after"|"middle"="middle"){
@@ -68,7 +68,7 @@ test('body transfer obeys save protection',async({page},info)=>{
  const {errors,runtime}=await start(page,2560);await menu(page,3);
  await group(page,'secondary').getByRole('button',{name:'Open note sidebar',exact:true}).click();
  const inspector=group(page,'secondary').locator('.page-info-drawer-group-overlay-panel');await expect(inspector).toBeVisible();
- const editor=group(page).getByRole('textbox',{name:'Page editor',exact:true});runtime.failNext('update_page','save refused',3);
+ const editor=group(page).getByRole('textbox',{name:'Note editor',exact:true});runtime.failNext('update_page','save refused',3);
  await editor.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});await page.keyboard.insertText(' Unsaved stays.');
  const body=(await group(page,'secondary').locator('.note-group-content').boundingBox())!;
  await drag(page,tab(page,2),{x:body.x+body.width/2,y:body.y+160});

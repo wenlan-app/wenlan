@@ -535,15 +535,16 @@ A surface that transmits anyway is a failing test on that surface. That gate is
 soft, and saying so plainly is what cooperative-tier means. It is also no longer
 load-bearing: the shape gate holds even when this one is bypassed.
 
-## HTTP — all 195 registered `(method, path, handler)` triples
+## HTTP — all 197 registered `(method, path, handler)` triples
 
-73 page-bearing, 122 not.
+73 page-bearing, 124 not.
 
 | Method | Path | Builder | Page-bearing | Class | Marker-shape | Adapter | Evidence |
 |---|---|---|---|---|---|---|---|
 | `GET` | `/api/activity` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/activities` | main | yes | automatic | `none` | `handle_list_activities` | AgentActivityRow.detail = title={page.title} |
 | `GET` | `/api/agents` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
+| `POST` | `/api/agents` | main | no | not_applicable | `none` | — | AgentResponse carries no page prose |
 | `DELETE` | `/api/agents/{name}` | main | yes | automatic | `none` | `handle_delete_agent` | opaque response type — fail-closed |
 | `GET` | `/api/agents/{name}` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `PUT` | `/api/agents/{name}` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
@@ -551,6 +552,8 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/ambient/sweep` | main | no | not_applicable | `none` | — | no prose fields |
 | `PATCH` | `/api/brief` | main | no | not_applicable | `none` | — | BriefUpdateReceipt carries no page prose |
 | `POST` | `/api/brief` | main | yes | automatic | `none` | `handle_read_brief` | Brief.last_session_summary, BriefItem.text, SearchResult.content |
+| `GET` | `/api/brief/history` | main | no | not_applicable | `none` | — | Brief update log: Brief text only, no page prose |
+| `GET` | `/api/brief/history/{version}` | main | no | not_applicable | `none` | — | past Brief snapshot: Brief text only, no page prose |
 | `GET` | `/api/briefing` | main | yes | automatic | `none` | `handle_get_briefing` | BriefingResponse.content = revision-card titles |
 | `GET` | `/api/capture-stats` | main | yes | automatic | `none` | `handle_capture_stats` | opaque response type — fail-closed |
 | `POST` | `/api/chunks/delete-bulk` | main | no | not_applicable | `none` | — | no prose fields |
@@ -679,6 +682,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/pages/{id}/map/nodes/{node_id}` | main | yes | automatic | `none` | `handle_delete_map_node` | PageMapNode.label |
 | `PATCH` | `/api/pages/{id}/map/nodes/{node_id}` | main | yes | automatic | `none` | `handle_patch_map_node` | PageMapNode.label |
 | `POST` | `/api/pages/{id}/review` | main | no | not_applicable | `none` | — | receipt only: version, content digest, nonce digest — no prose |
+| `PUT` | `/api/pages/{id}/review-required` | main | no | not_applicable | `none` | — | flag receipt only: page id and review_required — no prose |
 | `GET` | `/api/pages/{id}/revisions` | main | yes | automatic | **`named_page`** | `handle_get_page_revisions` | PageChangelogEntry.citations_summary, PageChangelogEntry.delta_sum |
 | `GET` | `/api/pages/{id}/sources` | main | yes | automatic | **`named_page`** | `handle_get_page_sources` | MemoryItem.content, MemoryItem.source_text, MemoryItem.summary, Me |
 | `GET` | `/api/profile` | main | no | not_applicable | `none` | — | no prose fields |
@@ -1258,8 +1262,8 @@ carrying the authority of agreement.
 | `core/post_write/page_create.rs::create_page_impl` | `pub(super)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::insert_page_with_kind`, `core/db.rs::resolve_orphan_page_links` |
 | `core/post_write/page_create.rs::replace_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_create.rs::write_document_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::insert_document_source_page_at_hash` |
-| `core/post_write/page_revision.rs::accept_page_revision_card` | `private` | no | no | — | `core/db.rs::get_page` |
-| `core/post_write/page_revision.rs::resolve_page_revision_card` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/post_write/page_revision.rs::accept_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
+| `core/post_write/page_revision.rs::resolve_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::project_latest_page` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_update.rs::update_page_db_impl` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/refinery/mod.rs::enqueue_changed_pages` | `pub(crate)` | no | no | — | `core/db.rs::list_pages` |
@@ -1297,7 +1301,7 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_create_page_inner` | `private` | no | no | `server/page_routes.rs::handle_create_page` | `core/db.rs::get_page` |
 | `server/page_routes.rs::handle_refresh_page_inner` | `private` | no | no | `server/page_routes.rs::handle_refresh_page` | `core/db.rs::get_page` |
 | `server/page_routes.rs::handle_update_page` | `pub` | no | no | — | `core/db.rs::get_page` |
-| `server/page_routes.rs::reject_entity_page_mutation` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_delete_page` | `core/db.rs::entity_shadow_page_owner` |
+| `server/page_routes.rs::reject_entity_page_mutation` | `private` | no | no | `server/page_routes.rs::handle_archive_page`, `server/page_routes.rs::handle_delete_page`, `server/page_routes.rs::handle_set_page_review_required` | `core/db.rs::entity_shadow_page_owner` |
 | `server/repair_routes.rs::handle_prepare` | `private` | no | no | — | `core/repair.rs::prepare_memory_reclassification_with_pages` |
 | `server/routes.rs::handle_distill` | `pub` | no | no | — | `server/routes.rs::handle_distill_inner` |
 | `server/routes.rs::handle_recent_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` |
@@ -1324,7 +1328,7 @@ carrying the authority of agreement.
 | `core/db/scoped_pages.rs::get_page_scoped` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_move_page`, `server/source_annotation_routes.rs::handle_update_source_annotation`, `server/source_annotation_routes.rs::hydrate_pages` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
 | `core/db/scoped_pages.rs::get_page_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::handle_get_page`, `server/page_routes.rs::handle_get_page_revisions` | `core/db/scoped_pages.rs::get_page_scoped_inner` |
 | `core/db/scoped_pages.rs::list_pages_scoped` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_export_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
-| `core/db/scoped_pages.rs::list_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::handle_list_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
+| `core/db/scoped_pages.rs::list_pages_scoped_browse` | `pub` | no | **yes** | `server/page_routes.rs::list_visible_browse_pages` | `core/db/scoped_pages.rs::list_pages_scoped_inner` |
 | `core/document_enrichment.rs::refresh_okf_linkers` | `private` | no | no | — | `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
 | `core/document_enrichment.rs::run_document_enrichment_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_document_enrichment_slice_tick`, `server/scheduler/ambient.rs::run_import_document_prep_slice` | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
 | `core/document_enrichment.rs::run_document_enrichment_with_profile` | `pub` | no | no | — | `core/document_enrichment.rs::run_document_enrichment_with_request_budget` |
@@ -1360,7 +1364,7 @@ carrying the authority of agreement.
 | `core/m6/shadow.rs::sample_oracle` | `private` | no | no | — | `core/m6/oracle.rs::recompute_full` |
 | `core/maintenance/page_merge_order.rs::order_survivor` | `pub(super)` | no | no | — | `core/maintenance/page_merge_order.rs::load_candidate` |
 | `core/post_ingest.rs::write_grown_page` | `private` | no | no | — | `core/db.rs::find_page_by_source_memory` |
-| `core/post_write/page_dispatch.rs::page_write` | `pub` | no | no | — | `core/post_write/page_create.rs::create_page_impl`, `core/post_write/page_create.rs::replace_source_page_impl`, `core/post_write/page_create.rs::write_document_source_page_impl` |
+| `core/post_write/page_dispatch.rs::page_write` | `pub` | no | **yes** | `server/page_routes.rs::handle_refresh_page_inner` | `core/post_write/page_create.rs::create_page_impl`, `core/post_write/page_create.rs::replace_source_page_impl`, `core/post_write/page_create.rs::write_document_source_page_impl` |
 | `core/post_write/page_revision.rs::accept_pending_revision_with_knowledge_path` | `pub` | no | **yes** | `server/memory_routes.rs::handle_accept_revision` | `core/post_write/page_revision.rs::accept_page_revision_card`, `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_revision.rs::dismiss_pending_revision` | `pub` | yes | no | — | `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_update.rs::update_page_impl` | `pub(super)` | no | no | — | `core/post_write/page_update.rs::project_latest_page`, `core/post_write/page_update.rs::update_page_db_impl` |
@@ -1376,7 +1380,7 @@ carrying the authority of agreement.
 | `core/synthesis/distill.rs::synthesize_candidate_body` | `pub(crate)` | no | no | — | `core/synthesis/distill.rs::build_page_compile_user_prompt` |
 | `core/synthesis/refinement_queue.rs::apply_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
 | `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner` | `core/db/truth_exposure.rs::page_visibility` |
-| `core/truth_adapter.rs::filter_pages` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_list_pages`, `server/page_routes.rs::handle_search_pages`, `server/routes.rs::handle_distill_inner` | `core/truth_adapter.rs::verdicts` |
+| `core/truth_adapter.rs::filter_pages` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::list_visible_browse_pages`, `server/routes.rs::handle_distill_inner` | `core/truth_adapter.rs::verdicts` |
 | `core/truth_adapter.rs::page_write_permit` | `pub` | no | **yes** | `server/page_routes.rs::handle_export_page`, `server/page_routes.rs::handle_export_pages` | `core/db/truth_exposure.rs::page_visibility` |
 | `server/cmd_cutover.rs::run` | `pub` | yes | no | — | `core/export/knowledge.rs::plan_truth_cutover` |
 | `server/cmd_prune_junk_entities.rs::restore` | `pub` | yes | no | — | `core/db.rs::restore_entity` |
@@ -1399,6 +1403,7 @@ carrying the authority of agreement.
 | `server/page_routes.rs::handle_delete_page` | `pub` | no | no | — | `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/page_routes.rs::handle_refresh_page` | `pub` | no | no | — | `server/page_routes.rs::handle_refresh_page_inner` |
 | `server/page_routes.rs::handle_review_page` | `pub` | no | no | — | `core/db/presence_review.rs::review_page_with_presence` |
+| `server/page_routes.rs::handle_set_page_review_required` | `pub` | no | no | — | `server/page_routes.rs::reject_entity_page_mutation` |
 | `server/refinery_routes.rs::handle_accept_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
 | `server/repair_prepare_operation_routes.rs::handle_prepare_operation` | `private` | no | no | — | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/repair_routes.rs::handle_apply` | `private` | no | no | — | `core/repair.rs::apply_repair_with_pages` |

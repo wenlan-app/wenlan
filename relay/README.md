@@ -595,6 +595,42 @@ node --test relay/tests/sessions.test.ts relay/tests/grants.test.ts \
   relay/tests/stream-revocation.test.ts
 ```
 
+## Limits and request logs
+
+`RelayAuthority.limit` admits each request before it reads the body. The key
+follows what the relay can tell about the caller, because Claude, ChatGPT and
+other AI apps call from their own shared servers, so many people share one
+address:
+
+| Request | Limit |
+| --- | --- |
+| Every request | 600 per minute in total |
+| Anonymous (no credential) | 120 per minute per address |
+| `/mcp` with a bearer token | 120 per minute per OAuth grant, after the token is verified |
+| Device API with a device credential | 120 per minute per device |
+| Credentials the relay rejects | 60 per minute per address; each credentialed request counts until it is verified and is then refunded, so concurrent guesses stay bounded |
+| `/devices`, `/devices/reverse` (turning Web access on) | 10 per hour per address, 100 per day in total |
+| `/oauth/register` (client registration) | 60 per hour per address for an allowlisted AI app, 20 for other clients, 250 per day in total |
+
+Registration is limited after its bounded body is read, so the redirect host can
+choose the budget. That host is only a claim, so it selects a per-address
+budget rather than a shared per-app one that anyone could exhaust. A request
+refused by its hourly window never spends a daily one.
+
+Each request to the central authority writes one JSON line,
+`{"event":"relay_request",...}`, with `route` (identifiers replaced by `:id`),
+`method`, `status`, `ms`, `who` (`anonymous`, `grant` or `device`), `limit`
+(the window that refused it), `app` (allowlisted AI app name or `other`, on
+`/authorize` and `/oauth/register`), `device` (12 hex characters of the device
+identifier's hash) and `error` (the error type of a 503). A 429 without `limit`
+came from the per-grant or pairing-lookup limit. Lines never contain addresses,
+tokens, Space names or bodies; `tests/limits-logs-runtime.test.mjs` checks this.
+
+Workers Logs keep these lines; invocation logs stay off so Cloudflare does not
+record request URLs or headers. Read them in the Cloudflare dashboard (Workers,
+`wenlan-relay`, Logs), or stream new ones with
+`npx wrangler tail --config relay/wrangler.standalone.toml --format json`.
+
 ## Retention and cleanup
 
 The standalone authority uses `src/bounded-store.ts` for every application

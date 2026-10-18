@@ -47,6 +47,13 @@ describe("AddSourceMenu", () => {
     expect(screen.queryByText("Your daemon needs an update to index files.")).toBeNull();
   });
 
+  it("offers past AI chats and opens the chat export import in place", async () => {
+    render(wrap(<AddSourceMenu onClose={() => {}} />));
+    fireEvent.click(await screen.findByText("Past AI chats"));
+    expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
+    expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
+  });
+
   it("shows the update-daemon notice on an old daemon", async () => {
     mocks.getDaemonVersion.mockResolvedValue("0.9.5");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
@@ -77,11 +84,11 @@ describe("AddSourceMenu", () => {
     mocks.openDialog.mockResolvedValue("/Users/me/vault");
     mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    const vault = await screen.findByText("Connect Obsidian Vault");
+    const vault = await screen.findByText("Connect Obsidian vault");
     expect(vault.closest("button")).toHaveClass("source-add-option--vault");
     fireEvent.click(vault);
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault"));
-    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect Obsidian Vault", directory: true, multiple: false });
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect Obsidian vault", directory: true, multiple: false });
   });
 
   it("does not register a source when the native folder picker is cancelled", async () => {
@@ -99,7 +106,7 @@ describe("AddSourceMenu", () => {
     const { toast } = await import("sonner");
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Connect Obsidian Vault"));
+    fireEvent.click(await screen.findByText("Connect Obsidian vault"));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Could not add the source", { description: "Error: Choose the root folder of an Obsidian vault." }));
     expect(mocks.addSource).not.toHaveBeenCalled();
   });

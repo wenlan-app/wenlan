@@ -40,6 +40,13 @@ export type TauriMockPageScenario = {
 export type InstallTauriMockOptions = {
   /** Opt-in for preference persistence journeys across a real browser reload. */
   readonly preserveLocalStorage?: boolean;
+  /**
+   * The Wiki home hides its directory while the getting-started checklist is
+   * open, and most fixtures are small libraries with no connected tool, so the
+   * checklist counts as dismissed by default. Pass true in the few specs that
+   * exercise the checklist itself.
+   */
+  readonly gettingStarted?: boolean;
   readonly locale: AppLocale;
   readonly rawActions: readonly string[];
   readonly memories?: readonly MemoryItem[];

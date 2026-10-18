@@ -9,15 +9,19 @@
  * older or compromised relay answer cannot promote an unknown host.
  */
 
-const KNOWN_HOSTS: Record<string, "Claude" | "ChatGPT"> = {
+type KnownClientName = "Claude" | "ChatGPT" | "Muse";
+
+const KNOWN_HOSTS: Record<string, KnownClientName> = {
   "claude.ai": "Claude",
   "claude.com": "Claude",
   "chatgpt.com": "ChatGPT",
   "chat.openai.com": "ChatGPT",
+  // Meta's Muse custom connectors return to this host.
+  "agent.meta.ai": "Muse",
 };
 
 export type ClientIdentity =
-  | { kind: "known"; name: "Claude" | "ChatGPT" }
+  | { kind: "known"; name: KnownClientName }
   /** `host` is null when the relay did not say (an older relay). */
   | { kind: "unknown"; host: string | null };
 

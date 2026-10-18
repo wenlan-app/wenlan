@@ -20,6 +20,26 @@ RELEASE_BRANCH = "release-please--branches--main"
 RELEASE_AUTHOR = "7xuanlu"
 RELEASE_REPO_OWNER = "wenlan-app"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Files whose only release-branch change is the version that bump-version.sh
+# writes. When main edits one of them near a version line, the merge conflicts
+# on that line; main's copy plus a re-run of bump-version.sh is the right merge.
+VERSION_SYNCED_PATHS = frozenset(
+    {
+        "Cargo.lock",
+        "Cargo.toml",
+        "app/Cargo.toml",
+        "app/tauri.conf.json",
+        "crates/wenlan-cli/npm/package.json",
+        "crates/wenlan-mcp/npm/package.json",
+        "package.json",
+        "plugin-codex/.codex-plugin/plugin.json",
+        "plugin-codex/overlay.json",
+        "plugin-codex/skills/setup/SKILL.md",
+        "plugin/.claude-plugin/plugin.json",
+        "plugin/scripts/wenlan-mcp-runner.sh",
+        "plugin/skills/setup/SKILL.md",
+    }
+)
 
 
 class SyncError(RuntimeError):
@@ -128,6 +148,22 @@ def _default_run(command: Sequence[str], **kwargs: object) -> subprocess.Complet
     return subprocess.run(command, text=True, **kwargs)
 
 
+def _resolve_version_conflicts(run_command: RunCommand) -> None:
+    unmerged = run_command(
+        ["git", "diff", "--name-only", "--diff-filter=U"],
+        check=True,
+        capture_output=True,
+    ).stdout.split()
+    others = sorted(set(unmerged) - VERSION_SYNCED_PATHS)
+    if not unmerged or others:
+        run_command(["git", "merge", "--abort"], check=False)
+        detail = ", ".join(others) if others else "no conflicted paths reported"
+        raise SyncError(f"merging main needs a manual resolution: {detail}")
+    run_command(["git", "checkout", "--theirs", "--", *unmerged], check=True)
+    run_command(["git", "add", "--", *unmerged], check=True)
+    run_command(["git", "commit", "--no-edit"], check=True)
+
+
 def synchronize_release_branch(
     expected_head_sha: str,
     bump_script: Path,
@@ -155,7 +191,9 @@ def synchronize_release_branch(
         check=True,
     )
     run_command(["git", "fetch", "--no-tags", "origin", BASE_BRANCH], check=True)
-    run_command(["git", "merge", "--no-edit", "origin/main"], check=True)
+    merge = run_command(["git", "merge", "--no-edit", "origin/main"], check=False)
+    if merge.returncode != 0:
+        _resolve_version_conflicts(run_command)
     run_command(["bash", str(bump_script)], check=True)
     run_command(["git", "add", "-u"], check=True)
     staged = run_command(["git", "diff", "--cached", "--quiet"], check=False)

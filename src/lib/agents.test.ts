@@ -47,6 +47,7 @@ describe("clientTypeFamily", () => {
     expect(clientTypeFamily("claude_desktop")).toBe("claude-desktop");
     expect(clientTypeFamily("cursor")).toBe("cursor");
     expect(clientTypeFamily("gemini_cli")).toBe("gemini-cli");
+    expect(clientTypeFamily("muse_code")).toBe("muse-code");
   });
 
   it("returns empty string for an unknown client_type", () => {

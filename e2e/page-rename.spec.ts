@@ -14,7 +14,7 @@ const recentChanges = [{
 async function openFixturePage(page: Page, title = "Fixture architecture"): Promise<void> {
   if (page.url() === "about:blank") await page.goto("/");
   await openWikiNote(page, title);
-  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
   await expect(editor).toBeVisible();
   await editor.press("Escape");
   await expect(editor).toHaveCount(0);
@@ -22,7 +22,7 @@ async function openFixturePage(page: Page, title = "Fixture architecture"): Prom
 }
 
 async function chooseRename(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Page actions" }).click();
+  await page.getByRole("button", { name: "Note actions" }).click();
   await page.getByRole("menuitem", { name: "Rename note" }).click();
 }
 
@@ -78,9 +78,9 @@ test("renames an active page while preserving its identity and body after revisi
   await page.getByRole("textbox", { name: "Note title" }).press("Enter");
   await expect(page.getByRole("button", { name: "Renaming…" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Cancel rename" })).toBeDisabled();
-  await page.getByRole("button", { name: "Page actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "Edit page" })).toBeDisabled();
-  await page.getByRole("button", { name: "Page actions" }).click();
+  await page.getByRole("button", { name: "Note actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Edit note" })).toBeDisabled();
+  await page.getByRole("button", { name: "Note actions" }).click();
 
   await expect(page.getByRole("heading", { level: 1, name: "Renamed architecture" })).toBeVisible();
   const renamed = await page.evaluate(async () =>
@@ -111,7 +111,7 @@ test("cancels a note rename without changing the title", async ({ page }) => {
   await page.getByRole("textbox", { name: "Note title" }).fill("Discard this title");
   await page.getByRole("textbox", { name: "Note title" }).press("Escape");
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();
-  await page.getByRole("button", { name: "Page actions" }).click();
+  await page.getByRole("button", { name: "Note actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Rename note" })).toBeVisible();
 });
 

@@ -257,6 +257,7 @@ mod tests {
             last_modified: 0,
             target_kind: wenlan_types::responses::RevisionTargetKind::Memory,
             grounded_in: None,
+            review_reason: None,
         }
     }
 

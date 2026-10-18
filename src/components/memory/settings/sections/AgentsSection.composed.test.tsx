@@ -49,14 +49,14 @@ function renderAgentsSection() {
 }
 
 describe("AgentsSection composed - remote consent boundary", () => {
-  it("renders one truthful relay disclosure and no legacy no-auth claim", async () => {
+  it("renders one relay disclosure and no legacy no-auth claim", async () => {
     renderAgentsSection();
 
     // Remote Access section has loaded (status: connected) — the warning is
     // unconditional once RemoteAccessPanel has rendered.
-    await screen.findByText(/Authorized requests and results pass through wenlan-relay/);
+    await screen.findByText(/reach it through wenlan-relay/);
 
-    expect(screen.getAllByText(/Authorized requests and results pass through wenlan-relay/)).toHaveLength(1);
+    expect(screen.getAllByText(/reach it through wenlan-relay/)).toHaveLength(1);
     expect(screen.getAllByRole("heading", { name: "Web access" })).toHaveLength(1);
     expect(screen.queryByText(/no authentication for Claude\.ai and ChatGPT/)).not.toBeInTheDocument();
   });

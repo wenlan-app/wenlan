@@ -6,6 +6,7 @@ import {
   detectMcpClients,
   writeMcpConfig,
   installClientPlugin,
+  registerConnectedAgent,
   listAgents,
   getWireState,
   downloadOnDeviceModel,
@@ -31,7 +32,7 @@ import {
 } from "../lib/setupErrors";
 import { fillUnsetPinsWithRetry, type SourcePin } from "../lib/routingPins";
 import { dragStripHeight } from "../lib/windowChrome";
-import { NotesWelcome, type NotesWelcomeDestination } from "./onboarding/NotesWelcome";
+import { NotesWelcome } from "./onboarding/NotesWelcome";
 import { ImportFlow } from "./ChatImport/ImportFlow";
 import VaultConnectCard, { type VaultPick } from "./memory/sources/VaultConnectCard";
 import { isPluginClient } from "./connect/pluginClients";
@@ -39,6 +40,7 @@ import { unreadPluginWriteRisk } from "./connect/setupRisk";
 import ClientRow, { clientRowDescId } from "./connect/ClientRow";
 import { entryUnreadable, isConfigOnly, repairReasonOf } from "./connect/clientHealth";
 import {
+  ConnectionChip,
   familyOfAnyId,
   familyOfClient,
   heardSince,
@@ -49,7 +51,8 @@ import { OnDeviceModelCard } from "./intelligence/IntelligenceSetup";
 import type { PresetGroup } from "./intelligence/providerPresets";
 import AnyProviderCard from "./intelligence/AnyProviderCard";
 import { Button, Tag, SectionHeader } from "./memory/settings/primitives";
-import { resolveAgentDisplayName } from "../lib/agents";
+import { OWN_IDENTITY, resolveAgentDisplayName } from "../lib/agents";
+import { PlugsConnected } from "@phosphor-icons/react";
 
 // Module-level so each is a stable reference across renders — AnyProviderCard
 // memoizes its preset list on these, and a fresh array literal per render
@@ -70,7 +73,7 @@ const EmbeddedSetupWizardContext = createContext(false);
 interface SetupWizardProps {
   // May return a promise: the Done step awaits it and, on a rejection, stays
   // put with an inline alert so the user can try again.
-  onComplete: (destination?: NotesWelcomeDestination) => void | Promise<void>;
+  onComplete: () => void | Promise<void>;
   initialStep?: WizardStep;
   // Preview-harness seams. The model and import rows of the setting-up step are
   // conditional on picks made in earlier steps, so entering at `setting-up`
@@ -623,7 +626,11 @@ function ConnectStep({
   hideDots: boolean;
 }) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [selectedClients, setSelectedClients] = useState<Record<string, boolean>>({});
+  // Client types already told to the daemon this mount. The effect below re-runs
+  // whenever `clients` refetches; each tool is registered once.
+  const registeredRef = useRef<Set<string>>(new Set());
 
   const { data: clients, isLoading, isError } = useQuery({
     queryKey: ["mcp-clients"],
@@ -675,8 +682,18 @@ function ConnectStep({
       .map((client) => client.client_type);
     if (configuredNames.length > 0) {
       onConnected(configuredNames);
+      // A tool found already wired never goes through a write or an install, so
+      // nothing else tells the daemon the user connected it. Best-effort: this
+      // never blocks or fails the step, and each tool is sent once per mount.
+      const unregistered = configuredNames.filter((name) => !registeredRef.current.has(name));
+      if (unregistered.length > 0) {
+        for (const name of unregistered) registeredRef.current.add(name);
+        void Promise.allSettled(unregistered.map((name) => registerConnectedAgent(name))).then(
+          () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
+        );
+      }
     }
-  }, [clients, onConnected]);
+  }, [clients, onConnected, queryClient]);
 
   // ROUND 5, DEFECT 4. This was `.filter((client) => client.detected)` over a
   // boolean, so a client whose detection FAILED was dropped from the list
@@ -1202,6 +1219,9 @@ function SettingUpStep({
             }
             onConnectedRef.current([clientType]);
             queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+            // The write/install registered the tool with the daemon; refresh
+            // the agents list so the home checklist sees the new row.
+            queryClient.invalidateQueries({ queryKey: ["agents"] });
           },
           (err) => {
             // A failed row never blocks the wizard: it shows its reason, stays
@@ -2137,11 +2157,10 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 type OnboardingPin = SourcePin;
 
-// Defect 4: raw canonical agent ids (e.g. two ids that both mean "Codex")
-// must never render. Every entry is resolved through resolveAgentDisplayName
-// and deduped by resolved display name; the list is capped so the row never
-// runs unbounded.
-const MAX_AGENT_CHIPS = 6;
+// Raw canonical agent ids (e.g. two ids that both mean "Codex") must never
+// render. Every entry is resolved through resolveAgentDisplayName and deduped
+// by resolved display name. Wenlan's own identities (the setup probe, the app,
+// its CLI) are not tools the user connected and are left out.
 
 /** Done is where a user waits for the tool they just added to call in, so it
  *  looks more often than Settings does. */
@@ -2178,8 +2197,6 @@ export function DoneStep({
     ? importResult.imported
     : chatImportedMemories;
   const hasImportData = importedMemoryCount > 0;
-  const hasConnectedAgents = connectedAgents.length > 0;
-  const isSkipPath = !hasImportData && !hasConnectedAgents;
   const breakdownEntries = hasLegacyImportData
     ? Object.entries(importResult.breakdown).filter(([, count]) => count > 0)
     : [];
@@ -2189,27 +2206,33 @@ export function DoneStep({
       importResult.relations_created
     : 0;
 
-  // One chip per tool, split by what is actually known: Connected once the
-  // tool has called Wenlan, Added while only the wizard's side is done. The
-  // list this reads is "everything the wizard wrote or found", which is why it
-  // cannot be shown under a "Connected:" label as it is.
-  const { connectedNames, addedNames } = useMemo(() => {
+  // One row per tool, each Added or Connected by what is actually known:
+  // Connected once the tool has called Wenlan, Added while only the wizard's
+  // side is done. The list this reads is "everything the wizard wrote or
+  // found", which is why it cannot be shown as "Connected" as it is. Wenlan's
+  // own setup probe arrives on it too; it is not the user's tool.
+  const tools = useMemo(() => {
     const seenFamilies = seenFamiliesOf(agentConnections, seenSince);
     const byName = new Map<string, boolean>();
     for (const rawId of connectedAgents) {
+      const family = familyOfAnyId(rawId);
+      if (OWN_IDENTITY.test(family) || OWN_IDENTITY.test(rawId)) continue;
       const displayName = resolveAgentDisplayName(rawId, agentConnections);
-      const isConnected = seenFamilies.has(familyOfAnyId(rawId));
+      const isConnected = seenFamilies.has(family);
       byName.set(displayName, (byName.get(displayName) ?? false) || isConnected);
     }
-    const connected: string[] = [];
-    const added: string[] = [];
-    for (const [name, isConnected] of byName) (isConnected ? connected : added).push(name);
-    return { connectedNames: connected, addedNames: added };
+    return Array.from(byName, ([name, isConnected]) => ({
+      name,
+      status: isConnected ? ("connected" as const) : ("added" as const),
+    }));
   }, [connectedAgents, agentConnections, seenSince]);
-  const visibleConnectedNames = connectedNames.slice(0, MAX_AGENT_CHIPS);
-  const overflowConnectedCount = connectedNames.length - visibleConnectedNames.length;
-  const visibleAddedNames = addedNames.slice(0, MAX_AGENT_CHIPS);
-  const overflowAddedCount = addedNames.length - visibleAddedNames.length;
+  const hasTools = tools.length > 0;
+  const anyToolConnected = tools.some((tool) => tool.status === "connected");
+  // Tools that are all merely Added claim nothing yet: no success mark, and
+  // the title says what is true. With no tools (an import-only finish) the
+  // import is the news and the original all-set title stands.
+  const toolsPending = hasTools && !anyToolConnected;
+  const isSkipPath = !hasImportData && !hasTools;
 
   // Onboarding completion wires explicit per-job pins from what the user
   // configured, so the defaults are visible instead of silent. Only on the
@@ -2358,7 +2381,7 @@ export function DoneStep({
       hideDots={hideDots}
       activeStep="done"
       primaryAction={{
-        label: t("setup.getStarted"),
+        label: wireRouting ? t("setup.getStarted") : t("setup.done.backToWiki"),
         onClick: handleComplete,
         loading: completing,
       }}
@@ -2368,34 +2391,45 @@ export function DoneStep({
       className="flex flex-col items-center text-center"
       style={{ gap: "28px", paddingTop: "32px" }}
     >
-      {/* Success icon */}
+      {/* Success icon: green only once a tool has called Wenlan. */}
       <div
         style={{
           width: "56px",
           height: "56px",
           borderRadius: "50%",
-          backgroundColor: "var(--mem-status-success-bg)",
+          backgroundColor: toolsPending
+            ? "var(--mem-surface)"
+            : "var(--mem-status-success-bg)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        <svg
-          width="28"
-          height="28"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--mem-status-success-text)"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        {toolsPending ? (
+          <PlugsConnected
+            size={28}
+            weight="regular"
+            color="var(--mem-text-secondary)"
+            aria-hidden="true"
+          />
+        ) : (
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--mem-status-success-text)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
       </div>
 
-      {/* Beefed Done copy: headline + two prose lines */}
+      {/* Headline + one line of body */}
       <div
         style={{
           display: "flex",
@@ -2413,7 +2447,7 @@ export function DoneStep({
             margin: 0,
           }}
         >
-          {t("setup.done.allSetTitle")}
+          {toolsPending ? t("setup.done.addedTitle") : t("setup.done.allSetTitle")}
         </p>
         <p
           style={{
@@ -2424,18 +2458,7 @@ export function DoneStep({
             margin: 0,
           }}
         >
-          {t("setup.done.allSetBody1")}
-        </p>
-        <p
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "14px",
-            color: "var(--mem-text-secondary)",
-            lineHeight: 1.6,
-            margin: 0,
-          }}
-        >
-          {t("setup.done.allSetBody2")}
+          {toolsPending ? t("setup.done.restartHint") : t("setup.done.allSetBody1")}
         </p>
         {routingSummary && <p style={routingSummaryStyle}>{routingSummary}</p>}
         {assurance && <p style={routingSummaryStyle}>{assurance}</p>}
@@ -2528,62 +2551,43 @@ export function DoneStep({
         </div>
       )}
 
-      {/* Tools that have called Wenlan. */}
-      {visibleConnectedNames.length > 0 && (
-        <div
-          className="flex flex-wrap items-center justify-center gap-2"
-          style={{ marginTop: "-8px" }}
-          data-testid="done-connected-agents"
+      {/* One row per tool the user connected, with what is known about it. */}
+      {hasTools && (
+        <ul
+          data-testid="setup-done-tools"
+          className="w-full text-left"
+          style={{
+            maxWidth: "420px",
+            margin: 0,
+            padding: 0,
+            listStyle: "none",
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+          }}
         >
-          <span
-            style={{
-              fontFamily: "var(--mem-font-body)",
-              fontSize: "13px",
-              color: "var(--mem-text-secondary)",
-            }}
-          >
-            {t("setup.done.connected")}
-          </span>
-          {visibleConnectedNames.map((name) => (
-            <Tag key={name} tone="accent">
-              {name}
-            </Tag>
+          {tools.map((tool) => (
+            <li
+              key={tool.name}
+              data-testid="setup-done-tool"
+              data-status={tool.status}
+              className="flex items-center justify-between gap-3"
+            >
+              <span
+                style={{
+                  fontFamily: "var(--mem-font-body)",
+                  fontSize: "14px",
+                  color: "var(--mem-text)",
+                  minWidth: 0,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {tool.name}
+              </span>
+              <ConnectionChip status={tool.status} />
+            </li>
           ))}
-          {overflowConnectedCount > 0 && (
-            <Tag tone="neutral">
-              {t("setup.done.moreAgents", { count: overflowConnectedCount })}
-            </Tag>
-          )}
-        </div>
-      )}
-
-      {/* Tools Wenlan added that have not called yet. */}
-      {visibleAddedNames.length > 0 && (
-        <div
-          className="flex flex-wrap items-center justify-center gap-2"
-          style={{ marginTop: visibleConnectedNames.length > 0 ? "-16px" : "-8px" }}
-          data-testid="done-added-agents"
-        >
-          <span
-            style={{
-              fontFamily: "var(--mem-font-body)",
-              fontSize: "13px",
-              color: "var(--mem-text-secondary)",
-            }}
-          >
-            {t("setup.done.added")}
-          </span>
-          {visibleAddedNames.map((name) => (
-            <Tag key={name} tone="neutral">
-              {name}
-            </Tag>
-          ))}
-          {overflowAddedCount > 0 && (
-            <Tag tone="neutral">
-              {t("setup.done.moreAgents", { count: overflowAddedCount })}
-            </Tag>
-          )}
-        </div>
+        </ul>
       )}
     </div>
     </StepShell>

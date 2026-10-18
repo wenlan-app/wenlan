@@ -32,5 +32,12 @@ type = "Data"
 globs = ["**/*.png"]
 fallthrough = false
 
+# Only the relay's own one-line request records (route, status, which limit
+# fired). Invocation logs stay off so Cloudflare does not record request URLs
+# or headers. See README "Request logs".
 [observability]
-enabled = false
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+invocation_logs = false

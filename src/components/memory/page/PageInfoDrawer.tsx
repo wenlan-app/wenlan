@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ArrowsIn, ArrowsOut, X } from "@phosphor-icons/react";
 import { WorkspaceNoteGroupContext, WorkspacePaneHostContext } from "../navigation/WorkspacePaneHost";
 import { clampRightSidebarWidth, readRightSidebarWidth, writeRightSidebarWidth } from "../navigation/rightSidebarPreferences";
 import { RightSidebarResizeHandle } from "../navigation/RightSidebarResizeHandle";
+import { useReportWorkspaceDemand } from "../navigation/workspaceDemand";
 import "./PageInfoDrawer.css";
 
 interface PageInfoDrawerProps {
   open: boolean;
   /** Automatically visible docked context should leave focus in the reader. */
   focusOnOpen?: boolean;
+  /**
+   * The control that opens this pane. Closing returns focus here, because a
+   * pane that opened by default has no focused trigger of its own to go back to.
+   */
+  returnFocusRef?: RefObject<HTMLElement | null>;
   /** A surface can start compact while preserving an explicitly resized width. */
   defaultWidth?: number;
   headerContent?: ReactNode;
@@ -51,7 +57,14 @@ function focusableControls(panel: HTMLElement): HTMLElement[] {
   });
 }
 
-export default function PageInfoDrawer({ open, focusOnOpen = true, defaultWidth: preferredWidth, onClose, title, children, closeLabel, headerContent, headerActions, inspector = false, docked = false, expanded = false, expandedHost, onExpandedChange, expandLabel, restoreLabel, variant = "info" }: PageInfoDrawerProps) {
+// The caller's named opener wins over the element focused when the pane
+// appeared: a pane that opened on its own captured an incidental element.
+function returnTarget(named: RefObject<HTMLElement | null> | undefined, trigger: HTMLElement | null) {
+  if (named?.current?.isConnected) return named.current;
+  return trigger?.isConnected ? trigger : null;
+}
+
+export default function PageInfoDrawer({ open, focusOnOpen = true, returnFocusRef, defaultWidth: preferredWidth, onClose, title, children, closeLabel, headerContent, headerActions, inspector = false, docked = false, expanded = false, expandedHost, onExpandedChange, expandLabel, restoreLabel, variant = "info" }: PageInfoDrawerProps) {
   const workspacePaneHost = useContext(WorkspacePaneHostContext);
   const noteGroup = useContext(WorkspaceNoteGroupContext);
   const [groupWidth, setGroupWidth] = useState(0);
@@ -118,8 +131,9 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, defaultWidth:
   onCloseRef.current = onClose;
   const closeFromResize = () => {
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest(".sidebar-resize-handle--right") && triggerRef.current?.isConnected) {
-      triggerRef.current.focus({ preventScroll: true });
+    const target = returnTarget(returnFocusRef, triggerRef.current);
+    if (active instanceof HTMLElement && active.closest(".sidebar-resize-handle--right") && target) {
+      target.focus({ preventScroll: true });
     }
     onCloseRef.current();
   };
@@ -136,6 +150,9 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, defaultWidth:
     : 320);
   const baseWidth = committedWidth ?? defaultWidth;
   const displayWidth = previewWidth === 0 ? 0 : clampRightSidebarWidth(previewWidth ?? baseWidth, maxWidth);
+  // The shell weighs the preferred width, not the width this window allows,
+  // so folding the rail to make room does not change the answer.
+  useReportWorkspaceDemand("info", open && !expandedWorkspace && (hosted || groupOverlay) ? clampRightSidebarWidth(baseWidth, 600) : 0);
   const effectiveGroupWidth = groupWidth || noteGroup?.element?.getBoundingClientRect().width || 0;
   // Keep enough room for a readable selected note title, its close/menu
   // controls, the new-note button, and the global search action.
@@ -237,6 +254,12 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, defaultWidth:
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     triggerRef.current = trigger;
     if (!groupScoped && (!nonModal || focusOnOpen)) closeRef.current?.focus();
+    // Only a reader who was working in the pane is sent to its opener. Effect
+    // re-runs while the pane stays open must leave the reader's focus alone.
+    let focusInside = !!panelRef.current?.contains(document.activeElement);
+    const trackFocus = (event: FocusEvent) => {
+      focusInside = event.target instanceof Node && !!panelRef.current?.contains(event.target);
+    };
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (groupScoped && !(event.target instanceof Node && noteGroup?.element?.contains(event.target))) return;
@@ -292,13 +315,16 @@ export default function PageInfoDrawer({ open, focusOnOpen = true, defaultWidth:
       if (target instanceof Node && !panelRef.current?.contains(target)) closeRef.current?.focus();
     };
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("focusin", trackFocus);
     if (!groupScoped && !nonModal) document.addEventListener("focusin", containFocus);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("focusin", containFocus);
-      if (!groupScoped && trigger?.isConnected && (!nonModal || document.activeElement === document.body || panelRef.current?.contains(document.activeElement))) trigger.focus();
+      document.removeEventListener("focusin", trackFocus);
+      const target = returnTarget(focusInside ? returnFocusRef : undefined, trigger);
+      if (!groupScoped && target && (!nonModal || document.activeElement === document.body || panelRef.current?.contains(document.activeElement))) target.focus();
     };
-  }, [open, nonModal, inspector, groupScoped, noteGroup, focusOnOpen]);
+  }, [open, nonModal, inspector, groupScoped, noteGroup, focusOnOpen, returnFocusRef]);
 
   if (!open) return null;
 

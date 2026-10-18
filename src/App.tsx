@@ -23,7 +23,6 @@ import {
 } from "./lib/bootRetryPolicy";
 import Main from "./components/memory/Main";
 import SetupWizard from "./components/SetupWizard";
-import type { NotesWelcomeDestination } from "./components/onboarding/NotesWelcome";
 import { RuntimeOverlays } from "./components/RuntimeOverlays";
 import { dragStripHeight } from "./lib/windowChrome";
 
@@ -64,10 +63,8 @@ export default function App() {
   // gate that has no data (the fail-closed error branch below) puts the query
   // back to pending, which swaps the wizard for the starting-runtime screen and
   // drops every pick the user made.
-  const [welcomeDestination, setWelcomeDestination] = useState<NotesWelcomeDestination>();
-  async function handleWizardComplete(destination?: NotesWelcomeDestination) {
+  async function handleWizardComplete() {
     await setSetupCompleted(true);
-    setWelcomeDestination(destination);
     queryClient.invalidateQueries({ queryKey: ["shouldShowWizard"] });
   }
 
@@ -325,9 +322,6 @@ export default function App() {
     body = (
       <div className="w-screen min-h-screen bg-[var(--bg-secondary)]">
         <Main
-          initialView={welcomeDestination === "connections"
-            ? { kind: "settings", section: "agents" }
-            : welcomeDestination ? { kind: welcomeDestination } : undefined}
           initialMemoryId={selectedMemoryId}
           initialPageId={selectedPageId}
           onRegisterQuitGuard={registerQuitGuard}

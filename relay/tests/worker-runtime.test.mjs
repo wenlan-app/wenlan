@@ -267,7 +267,7 @@ test('actual Worker entry owns enrollment, safe cookies, consent and OAuth forwa
       assert.equal(oversized.status, 413);
       // Earlier failed enrollments still consume the abuse budget.
       let limited = false;
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 11; i++) {
         const response = await post('/devices', candidate);
         if (response.status === 429) {
           limited = true;

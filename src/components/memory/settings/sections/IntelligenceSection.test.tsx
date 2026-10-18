@@ -98,12 +98,12 @@ describe("IntelligenceSection", () => {
     });
     renderSection();
 
-    const toggle = await screen.findByRole("button", { name: "Background AI organization" });
+    const toggle = await screen.findByRole("button", { name: "Background steeping" });
     await waitFor(() => expect(toggle).toBeEnabled());
     expect(toggle).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(toggle);
     expect(mocks.setBackgroundAiEnabled).toHaveBeenCalledWith(true);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Background AI organization" })).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Background steeping" })).toHaveAttribute("aria-pressed", "true"));
     expect(mocks.setSourcePin).not.toHaveBeenCalled();
   });
 
@@ -112,7 +112,7 @@ describe("IntelligenceSection", () => {
     mocks.getResolvedRouting.mockResolvedValue(pinnedRouting());
     renderSection();
 
-    await screen.findByRole("button", { name: "Background AI organization" });
+    await screen.findByRole("button", { name: "Background steeping" });
     expect(screen.queryByText("AI available")).not.toBeInTheDocument();
     expect(screen.queryByText("Background AI is off")).not.toBeInTheDocument();
     expect(screen.queryByText("Some tasks still need an AI service.")).not.toBeInTheDocument();
@@ -128,7 +128,7 @@ describe("IntelligenceSection", () => {
     });
     const qc = renderSection();
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
-    const toggle = await screen.findByRole("button", { name: "Background AI organization" });
+    const toggle = await screen.findByRole("button", { name: "Background steeping" });
     await waitFor(() => expect(toggle).toBeEnabled());
 
     await userEvent.click(toggle);
@@ -143,13 +143,13 @@ describe("IntelligenceSection", () => {
       .mockResolvedValueOnce(false)
       .mockRejectedValueOnce(new Error("settings unavailable"));
     const qc = renderSection();
-    await screen.findByRole("button", { name: "Background AI organization" });
+    await screen.findByRole("button", { name: "Background steeping" });
 
     await qc.invalidateQueries({ queryKey: ["backgroundAiEnabled"] });
 
-    await waitFor(() => expect(screen.getByRole("status", { name: "Background AI organization" })).toHaveAttribute("data-state", "unavailable"));
-    expect(screen.queryByRole("button", { name: "Background AI organization" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Background AI organization" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("status", { name: "Background steeping" })).toHaveAttribute("data-state", "unavailable"));
+    expect(screen.queryByRole("button", { name: "Background steeping" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Background steeping" })).not.toBeInTheDocument();
     expect(await screen.findByText("Could not save this setting. Try again.")).toBeInTheDocument();
   });
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { NoteTabs } from "./NoteTabs";
@@ -23,6 +23,48 @@ function renderTabs(overrides: Partial<React.ComponentProps<typeof NoteTabs>> = 
 }
 
 describe("NoteTabs", () => {
+  it("renders no home button unless the strip is given a home action", () => {
+    renderTabs();
+
+    expect(screen.queryByRole("button", { name: "Wiki home" })).not.toBeInTheDocument();
+    expect(document.querySelector(".note-tab-home")).not.toBeInTheDocument();
+  });
+
+  it("puts a named home button before the tablist and reports whether home is the current place", async () => {
+    const user = userEvent.setup();
+    const onHome = vi.fn();
+    const { rerender, props } = renderTabs({ onHome, homeActive: true, activeKey: undefined });
+    const home = screen.getByRole("button", { name: "Wiki home" });
+
+    expect(home).toHaveAttribute("aria-current", "page");
+    expect(home).toHaveAttribute("data-active", "true");
+    expect(document.querySelector(".note-tabs")?.firstElementChild).toBe(home);
+    expect(home.compareDocumentPosition(screen.getByRole("tablist")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(home.closest('[role="tablist"]')).toBeNull();
+    await user.click(home);
+    expect(onHome).toHaveBeenCalledTimes(1);
+
+    rerender(<NoteTabs {...props} onHome={onHome} homeActive={false} />);
+    expect(screen.getByRole("button", { name: "Wiki home" })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("button", { name: "Wiki home" })).toHaveAttribute("data-active", "false");
+  });
+
+  it("keeps the home button when no note is open and out of the tab arrow-key order", async () => {
+    const user = userEvent.setup();
+    renderTabs({ tabs: [], activeKey: undefined, onHome: vi.fn(), homeActive: true });
+    expect(screen.getByRole("button", { name: "Wiki home" })).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    cleanup();
+
+    renderTabs({ onHome: vi.fn() });
+    const first = screen.getByRole("tab", { name: "First note" });
+    first.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "Second note" })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(first).toHaveFocus();
+  });
+
   it("does not show a direct move action and marks its group and tabs for drag targeting", () => {
     const onMoveToOtherGroup = vi.fn();
     renderTabs({ onMoveToOtherGroup, moveLabel: "Move to other group", groupId: "secondary" });
@@ -84,7 +126,17 @@ describe("NoteTabs", () => {
 
     rerender(<NoteTabs {...props} tabs={[tabs[1]]} activeKey={tabs[1].key} />);
     await waitFor(() => expect(screen.getByRole("tab", { name: "Second note" })).toHaveFocus());
-    await user.click(screen.getByRole("button", { name: "New page" }));
+    await user.click(screen.getByRole("button", { name: "New note" }));
     expect(props.onCreate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("NoteTabs window dragging", () => {
+  it("lets the empty strip drag the window while tabs and buttons stay plain", () => {
+    renderTabs({ onHome: vi.fn() });
+    expect(document.querySelector(".note-tabs")).toHaveAttribute("data-tauri-drag-region");
+    expect(screen.getByRole("tablist")).toHaveAttribute("data-tauri-drag-region");
+    expect(screen.getByRole("tab", { name: "First note" })).not.toHaveAttribute("data-tauri-drag-region");
+    expect(screen.getByRole("button", { name: "Wiki home" })).not.toHaveAttribute("data-tauri-drag-region");
   });
 });

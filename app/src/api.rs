@@ -1133,6 +1133,21 @@ impl WenlanClient {
         self.get_json("/api/import/state").await
     }
 
+    // ── Agent registration ──────────────────────────────────────────
+
+    /// POST /api/agents — tell the daemon the user connected `name` (an MCP
+    /// client) so it is trusted from its first read. Idempotent on the daemon
+    /// side; callers on the connect path treat a failure as non-fatal.
+    pub async fn register_agent(
+        &self,
+        name: &str,
+    ) -> Result<wenlan_types::responses::AgentResponse, String> {
+        let req = wenlan_types::requests::RegisterAgentRequest {
+            name: name.to_string(),
+        };
+        self.post_json("/api/agents", &req).await
+    }
+
     // ── Source registry ──────────────────────────────────────────────
 
     pub async fn list_sources(&self) -> Result<Vec<wenlan_types::sources::Source>, String> {
@@ -2709,6 +2724,61 @@ mod tests {
         assert!(err.contains("Parse /api/import/chat-export"), "{err}");
     }
 
+    #[tokio::test]
+    async fn register_agent_posts_the_name_and_decodes_the_agent() {
+        let (base_url, request) = serve_response_once(
+            "200 OK",
+            r#"{"id":"a-1","name":"claude-code","display_name":"Claude Code","agent_type":"api","description":null,"enabled":true,"trust_level":"full","last_seen_at":null,"memory_count":0,"created_at":1,"updated_at":1}"#,
+        )
+        .await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+
+        let agent = client.register_agent("claude-code").await.unwrap();
+
+        assert_eq!(agent.name, "claude-code");
+        assert_eq!(agent.trust_level, "full");
+        assert_eq!(agent.last_seen_at, None);
+        let request = request.await.unwrap();
+        assert_eq!(
+            request.lines().next().unwrap_or_default(),
+            "POST /api/agents HTTP/1.1"
+        );
+        assert_eq!(
+            request_body(&request),
+            serde_json::json!({"name": "claude-code"})
+        );
+    }
+
+    #[tokio::test]
+    async fn register_agent_propagates_http_errors_and_decode_failures() {
+        let (base_url, _request) =
+            serve_response_once("400 Bad Request", r#"{"error":"name must be valid"}"#).await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+        let err = client
+            .register_agent("unknown")
+            .await
+            .expect_err("the fixture deliberately rejects the name");
+        assert!(err.contains("HTTP POST /api/agents returned 400"), "{err}");
+        assert!(err.contains("name must be valid"), "{err}");
+
+        let (base_url, _request) = serve_response_once("200 OK", "{}").await;
+        let client = WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        };
+        let err = client
+            .register_agent("claude-code")
+            .await
+            .expect_err("an empty object is not an AgentResponse");
+        assert!(err.contains("Parse /api/agents"), "{err}");
+    }
+
     /// Accepts one connection, reads the request, waits `delay`, then answers
     /// 200 with `body`.
     async fn serve_json_after(delay: std::time::Duration, body: &'static str) -> String {
@@ -3444,7 +3514,7 @@ mod tests {
 
     #[tokio::test]
     async fn distill_review_posts_empty_global_request_to_daemon() {
-        let body = r#"{"pages_created":0,"scoped":false,"created_ids":[],"pending":[],"stale_pages":[],"stale_truncated":false,"orphan_topics":[],"clusters_found":0,"hint":"No synthesis model is configured or reachable: install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan:setup` before distilling."}"#;
+        let body = r#"{"pages_created":0,"scoped":false,"created_ids":[],"pending":[],"stale_pages":[],"stale_truncated":false,"orphan_topics":[],"clusters_found":0,"hint":"No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan:setup` also links memories to topics automatically, which helps them group."}"#;
         let (base_url, request) = serve_json_once(body).await;
         let client = WenlanClient {
             client: reqwest::Client::new(),
@@ -3458,7 +3528,7 @@ mod tests {
         assert_eq!(resp.clusters_found, Some(0));
         assert_eq!(
             resp.hint.as_deref(),
-            Some("No synthesis model is configured or reachable: install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan:setup` before distilling.")
+            Some("No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan:setup` also links memories to topics automatically, which helps them group.")
         );
         let request = request.await.unwrap();
         assert_eq!(

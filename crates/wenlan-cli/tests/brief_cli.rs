@@ -253,3 +253,95 @@ fn recall_uses_memory_search_instead_of_legacy_context() {
         .iter()
         .all(|request| request.path != "/api/context"));
 }
+
+fn history_response() -> String {
+    serde_json::json!({
+        "space": "work",
+        "entries": [{
+            "version": 2,
+            "created_at": 1_700_000_100,
+            "caller_id": "handoff",
+            "operation_id": "op-2",
+            "summary": "second summary",
+            "mutation_count": 1,
+            "mutations": [{"mutation_index": 0, "kind": "add", "item_id": "item-x", "version": 1}]
+        }]
+    })
+    .to_string()
+}
+
+#[test]
+fn brief_history_gets_the_limited_list_in_the_resolved_space() {
+    let (host, recorded) = spawn_stub(vec![response(&space_list()), response(&history_response())]);
+
+    cli()
+        .env("WENLAN_HOST", host)
+        .args([
+            "--space", "work", "--format", "table", "brief", "history", "-l", "5",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("second summary"))
+        .stdout(predicate::str::contains("handoff"));
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(
+        (recorded[1].method.as_str(), recorded[1].path.as_str()),
+        ("GET", "/api/brief/history?limit=5")
+    );
+}
+
+#[test]
+fn brief_history_json_keeps_the_typed_entries() {
+    let (host, _recorded) =
+        spawn_stub(vec![response(&space_list()), response(&history_response())]);
+
+    cli()
+        .env("WENLAN_HOST", host)
+        .args(["--space", "work", "--format", "json", "brief", "history"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"operation_id\": \"op-2\""));
+}
+
+#[test]
+fn brief_show_gets_one_version_and_prints_the_brief_layout() {
+    let body = serde_json::json!({
+        "entry": {
+            "version": 1,
+            "created_at": 1_700_000_000,
+            "caller_id": "handoff",
+            "operation_id": "op-1",
+            "summary": "old summary",
+            "mutation_count": 1,
+            "mutations": []
+        },
+        "brief": serde_json::from_str::<serde_json::Value>(&brief_response()).unwrap()["brief"].clone()
+    })
+    .to_string();
+    let (host, recorded) = spawn_stub(vec![response(&space_list()), response(&body)]);
+
+    cli()
+        .env("WENLAN_HOST", host)
+        .args([
+            "--space",
+            "work",
+            "--format",
+            "table",
+            "brief",
+            "show",
+            "--version",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Version 1"))
+        .stdout(predicate::str::contains("open the PR"))
+        .stdout(predicate::str::contains("item-machine-id").not());
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(
+        (recorded[1].method.as_str(), recorded[1].path.as_str()),
+        ("GET", "/api/brief/history/1")
+    );
+}

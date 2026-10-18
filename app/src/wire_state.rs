@@ -348,6 +348,11 @@ mod tests {
             route_for("gemini_cli", &Reading::Yes, &Reading::No),
             "config"
         );
+        // Muse Code has no plugin surface: a detected one is written a raw entry.
+        assert_eq!(
+            route_for("muse_code", &Reading::Yes, &Reading::No),
+            "config"
+        );
     }
 
     #[test]

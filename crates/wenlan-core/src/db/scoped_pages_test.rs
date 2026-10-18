@@ -45,6 +45,7 @@ fn page(id: &str, workspace: Option<&str>) -> Page {
         stale_reason: None,
         pending_rebuild: None,
         refresh_blocked_reason: None,
+        review_required: false,
         user_edited: false,
         relevance_score: 1.0,
         last_edited_by: None,
@@ -1173,4 +1174,57 @@ async fn a_root_that_fails_to_decode_empties_the_channel() {
         degraded.is_empty(),
         "an undecodable root must empty the whole channel, not error and not degrade to buckets"
     );
+}
+
+/// PR A ruling 5: every search arm reads the review lock, so a locked page
+/// comes back with `review_required = true` from the global and the scoped
+/// search. The vector arm also still decodes its distance from the shifted
+/// column (a scoped vector decode error would fail the scoped search).
+#[tokio::test]
+async fn search_reports_the_review_lock_globally_and_scoped() {
+    let (db, _tmp) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        "locked-search-page",
+        "Quasar Nebula Survey",
+        Some("Notes on quasar nebula observations"),
+        "Quasar nebula observations from the survey telescope",
+        None,
+        None,
+        &["mem-locked-search"],
+        &now,
+    )
+    .await
+    .unwrap();
+    assert!(db
+        .set_page_review_required("locked-search-page", true)
+        .await
+        .unwrap());
+
+    let global = db.search_pages("quasar nebula", 10, None).await.unwrap();
+    let hit = global
+        .iter()
+        .find(|page| page.id == "locked-search-page")
+        .expect("global search finds the locked page");
+    assert!(hit.review_required, "global search reports the lock");
+
+    for scope in [ReadScope::Global, ReadScope::Uncategorized] {
+        let scoped = db
+            .search_pages_scoped("quasar nebula", 10, None, &scope)
+            .await
+            .unwrap();
+        let hit = scoped
+            .iter()
+            .find(|page| page.id == "locked-search-page")
+            .unwrap_or_else(|| panic!("{scope:?} search finds the locked page"));
+        assert!(hit.review_required, "{scope:?} search reports the lock");
+    }
+
+    let browse = db
+        .search_pages_scoped_browse("quasar nebula", 10, None, &ReadScope::Global)
+        .await
+        .unwrap();
+    assert!(browse
+        .iter()
+        .any(|page| page.id == "locked-search-page" && page.review_required));
 }

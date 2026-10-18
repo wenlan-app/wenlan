@@ -82,7 +82,7 @@ describe("VaultConnectCard", () => {
     const onPick = vi.fn();
     renderCard({ onPick });
     await userEvent.click(screen.getByText("Browse…"));
-    await waitFor(() => expect(screen.getByText(/No notes found/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/No files found/)).toBeInTheDocument());
     await waitFor(() =>
       expect(onPick).toHaveBeenCalledWith({ sourceType: "directory", path: "/v", label: "v" }),
     );
@@ -215,7 +215,7 @@ describe("VaultConnectCard", () => {
   it("states Obsidian support even when zero vaults are detected", async () => {
     renderCard();
     expect(
-      await screen.findByText("Obsidian vaults: indexes your Markdown notes"),
+      await screen.findByText("Obsidian vaults: indexes your Markdown files"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Any folder: indexes .md, .txt, and .pdf files"),

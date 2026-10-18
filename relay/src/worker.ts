@@ -12,6 +12,7 @@ import { domainVerification } from './domain-verification.ts';
 import { ReverseChannelUnavailable, ReverseConnections } from './reverse-connections.ts';
 import { authenticateReverseDevice, beginReverseActivation, commitReverseActivation, reverseConnectionCurrent, type OwnedState } from './reverse-devices.ts';
 import { verifyConnectorContract } from './connector-check.ts';
+import { knownClientName } from './client-identity.ts';
 
 interface Env extends PublicEnv {
   PUBLIC_ORIGIN: string;
@@ -20,11 +21,89 @@ interface Env extends PublicEnv {
 }
 
 const RATE_WINDOW_CAP = 4096;
-/** Authorized /mcp requests per OAuth grant per minute, after the per-peer
- * and global limits. Bounds one connected client regardless of its IPs.
+/** Authorized /mcp requests per OAuth grant per minute, after the global
+ * limit. Bounds one connected client regardless of its IPs.
  */
 const GRANT_REQUESTS_PER_MINUTE = 120;
-interface RateWindow { key: string; max: number; expires: number }
+/** Requests per paired device per minute on the device API. */
+const DEVICE_REQUESTS_PER_MINUTE = 120;
+/** Requests that present a credential skip the per-address window, because
+ * AI apps call from shared servers. Each one counts here while unverified and
+ * is refunded once the relay accepts it, so only rejected credentials stay
+ * counted and guessing them from one address stays bounded, even when the
+ * guesses arrive concurrently.
+ */
+const REJECTED_CREDENTIALS_PER_MINUTE = 60;
+/** Client registrations per address per hour. AI apps register from their
+ * own shared servers, so an allowlisted redirect host gets a larger budget.
+ * The redirect host is only a claim here; the daily cap still bounds both.
+ */
+const REGISTRATIONS_PER_HOUR = { known: 60, other: 20 };
+/** Web access enrollments (turning it on, reconnecting) per address per hour. */
+const ENROLLMENTS_PER_HOUR = 10;
+interface RateWindow { key: string; max: number; expires: number; name: string }
+interface Admission { retryAfter: number; limit?: string; refund?: string }
+
+/** What a request presents before the relay has checked it. */
+type Claim = { kind: 'anonymous' } | { kind: 'grant' } | { kind: 'device'; id: string };
+
+const DEVICE_PATH = /^\/(?:devices\/(?:refresh|renew|rotate|revoke|reverse\/connect|reverse\/status)|grants(?:\/[A-Za-z0-9_-]{16,128}\/revoke)?|pairings\/lookup|pairings\/[A-Za-z0-9_-]{32,128}(?:\/approve|\/deny)?)$/;
+
+function claimOf(request: Request, path: string): Claim {
+  const bearer = request.headers.get('authorization') ?? '';
+  if (!bearer.startsWith('Bearer ')) return { kind: 'anonymous' };
+  if (path === '/mcp') return { kind: 'grant' };
+  const id = request.headers.get('x-wenlan-device-id') ?? '';
+  return DEVICE_PATH.test(path) && validSecret(id) && validSecret(bearer.slice(7))
+    ? { kind: 'device', id } : { kind: 'anonymous' };
+}
+
+/** True when the relay accepted the credential the request presented. A 429
+ * here comes from a per-grant or per-device limit, after verification.
+ */
+function credentialAccepted(kind: Claim['kind'], status: number): boolean {
+  if (kind === 'grant') return status !== 401;
+  return status === 101 || status === 429 || (status >= 200 && status < 300);
+}
+
+/** One line per request for Workers Logs. Never request or response bodies,
+ * tokens, addresses or Space names: only the route, outcome, which limit
+ * fired, and short hashes that tell devices apart.
+ */
+interface RequestLog {
+  route: string;
+  method: string;
+  status?: number;
+  ms?: number;
+  who: Claim['kind'];
+  device?: string;
+  app?: string;
+  limit?: string;
+  error?: string;
+}
+
+function routeOf(path: string): string {
+  return path.replace(/^\/pairings\/[A-Za-z0-9_-]{32,128}/, '/pairings/:id')
+    .replace(/^\/grants\/[A-Za-z0-9_-]{16,128}\//, '/grants/:id/').slice(0, 64);
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.constructor.name.slice(0, 64) : 'unknown';
+}
+
+function logRequest(entry: RequestLog): void {
+  console.log(JSON.stringify({ event: 'relay_request', ...entry }));
+}
+
+function limited(retryAfter: number): Response {
+  const response = failure(429, 'Request limit reached');
+  response.headers.set('retry-after', String(retryAfter));
+  return response;
+}
+
+function windowOf(key: string, name: string, max: number, expires: number): RateWindow {
+  return { key, name, max, expires };
+}
 
 /** One v1 authorization authority: device state and consent share a transaction
  * domain. Do not shard these independently or bind to the legacy route service.
@@ -141,33 +220,75 @@ export class RelayAuthority extends DurableObject<Env> {
     return failure(404, 'Not found');
   }
 
-  private async limit(request: Request): Promise<number> {
+  private async peer(request: Request): Promise<string> {
+    return hashSecret((request.headers.get('cf-connecting-ip') ?? 'unknown').slice(0, 128));
+  }
+
+  /** Runs before the body is read. Anonymous requests are keyed by address;
+   * credentialed ones by their device, with rejected credentials counted per
+   * address. Client registration is limited separately once its body is read.
+   */
+  private async limit(request: Request, claim: Claim): Promise<Admission> {
     const requestedPath = new URL(request.url).pathname;
     const path = requestedPath === '/devices/reverse' ? '/devices' : requestedPath;
-    const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
-    const peer = await hashSecret(ip.slice(0, 128));
+    const peer = await this.peer(request);
     const now = Date.now();
     const minute = Math.floor(now / 60_000);
     const hour = Math.floor(now / 3_600_000);
-    const windows: RateWindow[] = [
-      { key: `global:${minute}`, max: 600, expires: (minute + 1) * 60_000 },
-      { key: `peer:${peer}:${minute}`, max: 120, expires: (minute + 1) * 60_000 },
-    ];
-    if (path === '/devices' || path === '/oauth/register') windows.push({
-      key: `${path}:${peer}:${hour}`, max: path === '/devices' ? 3 : 10, expires: (hour + 1) * 3_600_000,
-    });
-    if (path === '/pairing/sample' && request.method === 'POST') windows.push(
-      { key: `sample-peer:${peer}:${minute}`, max: 10, expires: (minute + 1) * 60_000 },
-      { key: `sample-global:${minute}`, max: 60, expires: (minute + 1) * 60_000 },
-    );
-    if (request.method === 'POST' && (path === '/devices' || path === '/oauth/register')) {
-      const day = Math.floor(now / 86_400_000);
-      windows.push({
-        key: `path-global:${path}:day:${day}`, max: path === '/devices' ? 100 : 250,
-        expires: (day + 1) * 86_400_000,
-      });
+    const nextMinute = (minute + 1) * 60_000;
+    const windows: RateWindow[] = [windowOf(`global:${minute}`, 'global-minute', 600, nextMinute)];
+    if (claim.kind === 'anonymous') {
+      windows.push(windowOf(`peer:${peer}:${minute}`, 'address-minute', 120, nextMinute));
+    } else {
+      windows.push(windowOf(`rejected:${peer}:${minute}`, 'rejected-credentials-minute',
+        REJECTED_CREDENTIALS_PER_MINUTE, nextMinute));
+      if (claim.kind === 'device') windows.push(windowOf(`device:${await hashSecret(claim.id)}:${minute}`,
+        'device-minute', DEVICE_REQUESTS_PER_MINUTE, nextMinute));
     }
-    return this.consume(windows, now);
+    if (path === '/devices') windows.push(windowOf(`${path}:${peer}:${hour}`, 'enroll-address-hour',
+      ENROLLMENTS_PER_HOUR, (hour + 1) * 3_600_000));
+    if (path === '/pairing/sample' && request.method === 'POST') windows.push(
+      windowOf(`sample-peer:${peer}:${minute}`, 'sample-address-minute', 10, nextMinute),
+      windowOf(`sample-global:${minute}`, 'sample-global-minute', 60, nextMinute),
+    );
+    if (request.method === 'POST' && path === '/devices') {
+      const day = Math.floor(now / 86_400_000);
+      windows.push(windowOf(`path-global:${path}:day:${day}`, 'enroll-day', 100, (day + 1) * 86_400_000));
+    }
+    const admission = await this.consume(windows, now);
+    return claim.kind === 'anonymous' || admission.retryAfter ? admission : { ...admission, refund: `rejected:${peer}:${minute}` };
+  }
+
+  /** Client registration (DCR) limits, applied once the bounded body is read
+   * so the redirect host can pick the budget. All of its windows are checked
+   * together, so a request over its hourly budget never spends the daily one.
+   */
+  private async limitRegistration(request: Request, buffered: Request): Promise<Admission & { app: string }> {
+    let app: string | null = null;
+    if (request.method === 'POST') {
+      try {
+        const uris = (await buffered.clone().json() as { redirect_uris?: unknown }).redirect_uris;
+        const names = Array.isArray(uris) && uris.length ? uris.map(uri => knownClientName(uri)) : [null];
+        app = names.every(name => name !== null && name === names[0]) ? names[0] : null;
+      } catch { app = null; }
+    }
+    const path = '/oauth/register';
+    const peer = await this.peer(request);
+    const now = Date.now();
+    const hour = Math.floor(now / 3_600_000);
+    const windows: RateWindow[] = [app
+      ? windowOf(`${path}:${app}:${peer}:${hour}`, 'register-address-hour', REGISTRATIONS_PER_HOUR.known, (hour + 1) * 3_600_000)
+      : windowOf(`${path}:${peer}:${hour}`, 'register-address-hour', REGISTRATIONS_PER_HOUR.other, (hour + 1) * 3_600_000)];
+    if (request.method === 'POST') {
+      const day = Math.floor(now / 86_400_000);
+      windows.push(windowOf(`path-global:${path}:day:${day}`, 'register-day', 250, (day + 1) * 86_400_000));
+    }
+    return { ...await this.consume(windows, now), app: app ?? 'other' };
+  }
+
+  /** Returns an accepted credential's provisional count to its address. */
+  private refund(key: string): void {
+    this.state.storage.sql.exec('UPDATE rate_window SET count = count - 1 WHERE key = ? AND count > 0', key);
   }
 
   /** Runs only after the bearer token was verified, keyed by its grant. */
@@ -175,18 +296,23 @@ export class RelayAuthority extends DurableObject<Env> {
     const now = Date.now();
     const minute = Math.floor(now / 60_000);
     const grant = await hashSecret(grantId.slice(0, 256));
-    return this.consume([{ key: `grant:${grant}:${minute}`, max: GRANT_REQUESTS_PER_MINUTE,
-      expires: (minute + 1) * 60_000 }], now);
+    return (await this.consume([windowOf(`grant:${grant}:${minute}`, 'grant-minute', GRANT_REQUESTS_PER_MINUTE,
+      (minute + 1) * 60_000)], now)).retryAfter;
   }
 
-  private async consume(windows: RateWindow[], now: number): Promise<number> {
-    const retryAfter = this.state.storage.transactionSync(() => {
+  /** Admits only when every window has room, then counts the request in each.
+   * Returns the first window that is full.
+   */
+  private async consume(windows: RateWindow[], now: number): Promise<Admission> {
+    const admission = this.state.storage.transactionSync((): Admission => {
       const rows = windows.map(window => ({
         window,
         row: this.state.storage.sql.exec<{ count: number }>('SELECT count FROM rate_window WHERE key = ?', window.key).toArray()[0],
       }));
       for (const { window, row } of rows) {
-        if (row && row.count >= window.max) return Math.max(1, Math.ceil((window.expires - now) / 1000));
+        if (row && row.count >= window.max) {
+          return { retryAfter: Math.max(1, Math.ceil((window.expires - now) / 1000)), limit: window.name };
+        }
       }
 
       let missing = rows.filter(item => !item.row).length;
@@ -197,17 +323,17 @@ export class RelayAuthority extends DurableObject<Env> {
         rowCount = this.state.storage.sql.exec<{ count: number }>('SELECT COUNT(*) AS count FROM rate_window').one().count;
         missing = windows.filter(window => !this.state.storage.sql.exec(
           'SELECT key FROM rate_window WHERE key = ?', window.key).toArray()[0]).length;
-        if (rowCount + missing > RATE_WINDOW_CAP) return 60;
+        if (rowCount + missing > RATE_WINDOW_CAP) return { retryAfter: 60, limit: 'table-full' };
       }
 
       for (const window of windows) this.state.storage.sql.exec(
         'INSERT INTO rate_window (key,count,expires) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1',
         window.key, window.expires);
-      return 0;
+      return { retryAfter: 0 };
     });
     const nextAlarm = await this.state.storage.getAlarm();
     if (nextAlarm === null || nextAlarm > now + 60_000) await this.state.storage.setAlarm(now + 60_000);
-    return retryAfter;
+    return admission;
   }
 
   async alarm(): Promise<void> {
@@ -229,6 +355,21 @@ export class RelayAuthority extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (!this.central) return this.respond(request);
+    const started = Date.now();
+    const entry: RequestLog = { route: routeOf(new URL(request.url).pathname), method: request.method.slice(0, 8), who: 'anonymous' };
+    const admitted: { refund?: string } = {};
+    const response = await this.respond(request, entry, admitted);
+    entry.status = response.status;
+    entry.ms = Date.now() - started;
+    if (admitted.refund && credentialAccepted(entry.who, response.status)) {
+      try { this.refund(admitted.refund); } catch { /* The window may already be reclaimed. */ }
+    }
+    logRequest(entry);
+    return response;
+  }
+
+  private async respond(request: Request, entry?: RequestLog, admitted?: { refund?: string }): Promise<Response> {
     try {
       const url = new URL(request.url);
       if (url.origin !== this.env.PUBLIC_ORIGIN || url.href.length > 8192) return failure(400, 'Invalid request target');
@@ -240,12 +381,16 @@ export class RelayAuthority extends DurableObject<Env> {
       if ((request.headers.get('authorization')?.length ?? 0) > 4096 || (request.headers.get('cookie')?.length ?? 0) > 4096) {
         return failure(431, 'Request headers too large');
       }
-      const retryAfter = await this.limit(request);
-      if (retryAfter) {
-        const response = failure(429, 'Request limit reached');
-        response.headers.set('retry-after', String(retryAfter));
-        return response;
+      const claim = claimOf(request, url.pathname);
+      if (entry) {
+        entry.who = claim.kind;
+        if (claim.kind === 'device') entry.device = (await hashSecret(claim.id)).slice(0, 12);
+        if (url.pathname === '/authorize') entry.app = knownClientName(url.searchParams.get('redirect_uri')) ?? 'other';
       }
+      const admission = await this.limit(request, claim);
+      if (entry) entry.limit = admission.limit;
+      if (admitted) admitted.refund = admission.refund;
+      if (admission.retryAfter) return limited(admission.retryAfter);
       if (url.pathname.startsWith('/devices/reverse') && (url.search || (request.method === 'GET' && request.body))) {
         return failure(400, 'Invalid connection request');
       }
@@ -260,6 +405,11 @@ export class RelayAuthority extends DurableObject<Env> {
         if (url.pathname === '/pairing.js') return new Response(pairingJS, { headers: { 'content-type': 'text/javascript; charset=utf-8' } });
       }
       const buffered = await boundedRequest(request, url.pathname === '/mcp' ? 64 * 1024 : 16 * 1024);
+      if (url.pathname === '/oauth/register') {
+        const registration = await this.limitRegistration(request, buffered);
+        if (entry) { entry.app = registration.app; entry.limit = registration.limit; }
+        if (registration.retryAfter) return limited(registration.retryAfter);
+      }
       const ctx = { waitUntil: (promise: Promise<unknown>) => this.state.waitUntil(promise),
         passThroughOnException() {}, props: {} } as ExecutionContext;
       const exchanging = url.pathname === '/oauth/token' && request.method === 'POST';
@@ -286,7 +436,9 @@ export class RelayAuthority extends DurableObject<Env> {
         return response;
       } finally { if (mutating) this.authorizationMutationActive = false; }
     } catch (error) {
-      return error instanceof HttpFailure ? failure(error.status, error.message) : failure(503, 'Wenlan connection unavailable');
+      if (error instanceof HttpFailure) return failure(error.status, error.message);
+      if (entry) entry.error = errorName(error);
+      return failure(503, 'Wenlan connection unavailable');
     }
   }
 
@@ -304,6 +456,10 @@ export default {
       const verification = domainVerification(request, env.DOMAIN_VERIFICATION_TOKEN);
       if (verification) return verification;
       return await env.AUTHORITY.get(env.AUTHORITY.idFromName('wenlan-v1')).fetch(request);
-    } catch { return failure(503, 'Wenlan connection unavailable'); }
+    } catch (error) {
+      logRequest({ route: routeOf(new URL(request.url).pathname), method: request.method.slice(0, 8),
+        who: 'anonymous', status: 503, error: errorName(error) });
+      return failure(503, 'Wenlan connection unavailable');
+    }
   },
 };

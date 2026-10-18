@@ -1966,12 +1966,13 @@ mod tests {
             .generate_embeddings(&["new evidence for the ambient page".to_string()])
             .unwrap()
             .remove(0);
-        assert!(
+        assert_eq!(
             db.find_matching_page_scoped(Some(&entity_id), &embedding, 2.0, Some("work"), false)
                 .await
                 .unwrap()
-                .is_none(),
-            "dedup keeps its existing review gate"
+                .map(|page| page.id),
+            Some("ambient-growth-page".to_string()),
+            "dedup matches an unconfirmed page like growth does"
         );
         let provider = Arc::new(MutatingGrowthProvider {
             db: db.clone(),
@@ -2184,6 +2185,99 @@ mod tests {
             "terminal no-match receipt must stop re-spins"
         );
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// PR A: a review-locked page is dropped from the growth match set before
+    /// the model call. The memory that matched only the locked page records a
+    /// terminal no-match (so it stops being picked first), and the next
+    /// candidate, which matches an eligible page, still grows it.
+    #[tokio::test]
+    async fn page_growth_skips_a_review_locked_page_before_the_model_call() {
+        let (db, _dir) = test_db().await;
+        let db = Arc::new(db);
+        let locked_entity = db
+            .create_entity("Locked Growth", "Topic", Some("work"))
+            .await
+            .unwrap();
+        let open_entity = db
+            .create_entity("Open Growth", "Topic", Some("work"))
+            .await
+            .unwrap();
+        insert_growth_page(
+            &db,
+            "growth-locked-page",
+            &locked_entity,
+            "work",
+            "locked page body a person is reviewing",
+        )
+        .await;
+        insert_growth_page(
+            &db,
+            "growth-open-page",
+            &open_entity,
+            "work",
+            "existing machine-owned page body",
+        )
+        .await;
+        assert!(db
+            .set_page_review_required("growth-locked-page", true)
+            .await
+            .unwrap());
+        seed_page_growth_memory(
+            &db,
+            "growth-lock-a-memory",
+            "new evidence for the locked page",
+            Some(&locked_entity),
+            Some("work"),
+        )
+        .await;
+        seed_page_growth_memory(
+            &db,
+            "growth-lock-b-memory",
+            "new evidence for the open page",
+            Some(&open_entity),
+            Some("work"),
+        )
+        .await;
+        let provider = Arc::new(MutatingGrowthProvider {
+            db: db.clone(),
+            response: "existing machine-owned page body. New evidence.[1]".to_string(),
+            mutation: GrowthMutation::None,
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+
+        let first = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+            .await
+            .unwrap();
+        assert!(first.selected);
+        assert!(first.terminal_no_match, "{first:?}");
+        assert_eq!(first.llm_calls, 0);
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            0,
+            "the locked page consumes no model call"
+        );
+        let receipt = db
+            .get_enrichment_steps("growth-lock-a-memory")
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|step| step.step == "page_growth")
+            .expect("the skipped attempt is recorded");
+        assert_eq!(receipt.status, "ok");
+
+        let second = run_page_growth_slice(&db, &llm, &PromptRegistry::default(), 2.0, None)
+            .await
+            .unwrap();
+        assert!(second.matched && second.committed, "{second:?}");
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        let open = db.get_page("growth-open-page").await.unwrap().unwrap();
+        assert!(open
+            .source_memory_ids
+            .contains(&"growth-lock-b-memory".to_string()));
+        let locked = db.get_page("growth-locked-page").await.unwrap().unwrap();
+        assert_eq!(locked.content, "locked page body a person is reviewing");
     }
 
     #[tokio::test]
@@ -2970,10 +3064,11 @@ mod tests {
     }
 
     /// The same post-reload recheck on the legacy `grow_page` entrypoint.
-    /// `grow_page` matches with `allow_user_edited = true`, so what bites there
-    /// is a page sent back for review: `review_status` leaves `confirmed` in the
-    /// match-to-reload window and the page stops being a dedup target. Mutation
-    /// check: delete the recheck and `grow_page` generates and writes anyway.
+    /// `grow_page` matches with `allow_user_edited = true` and dedup ignores
+    /// `review_status`, so what bites there is a page moved to another space in
+    /// the match-to-reload window: it stops being a dedup target for this
+    /// memory's space. Mutation check: delete the recheck and `grow_page`
+    /// generates and writes anyway.
     #[tokio::test]
     async fn grow_page_skips_a_page_that_stopped_matching_before_the_reload() {
         let (db, _dir) = test_db().await;
@@ -2986,7 +3081,7 @@ mod tests {
             "grow-recheck-page",
             &entity_id,
             "work",
-            "page before it left the confirmed set",
+            "page before it moved to another space",
         )
         .await;
         seed_page_growth_memory(
@@ -3035,7 +3130,7 @@ mod tests {
             parked_rx
                 .await
                 .expect("grow_page must reach the post-match pause");
-            db.set_page_review_status("grow-recheck-page", "unconfirmed")
+            db.set_page_workspace("grow-recheck-page", Some("personal"))
                 .await
                 .unwrap();
             go_tx.send(()).expect("grow_page must still be parked");
@@ -3044,14 +3139,14 @@ mod tests {
         let (grew, _) = tokio::join!(grow, unconfirm);
         assert!(
             !grew.unwrap(),
-            "a page that left the confirmed set must not be grown"
+            "a page that moved out of the memory's space must not be grown"
         );
         assert!(
             stub.captured_prompt.lock().unwrap().is_none(),
             "no prompt may be built for a page that stopped matching"
         );
         let page = db.get_page("grow-recheck-page").await.unwrap().unwrap();
-        assert_eq!(page.content, "page before it left the confirmed set");
+        assert_eq!(page.content, "page before it moved to another space");
     }
 
     /// Spec §5.1 (True source kinds): `grow_page`'s numbered-source list must

@@ -17,7 +17,7 @@ beforeEach(async () => {
 function renderInApp() {
   return render(<StrictMode>
     <button type="button">App navigation</button>
-    <FirstUseSample onBackToGuide={vi.fn()} onBringData={vi.fn()} onConnect={vi.fn()} />
+    <FirstUseSample onBack={vi.fn()} onFinish={vi.fn()} />
   </StrictMode>);
 }
 

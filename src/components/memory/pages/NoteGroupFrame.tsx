@@ -34,7 +34,7 @@ export function NoteGroupFrame({ id, label, tabs, children, onFocus, contentId, 
             onFocusCapture={notifyFocus} onPointerDownCapture={notifyFocus}>
             <section aria-label={label} className="note-group-document">
               <header className="note-group-header" data-tauri-drag-region>
-                <div className="note-group-tabs">{tabs}</div>
+                <div className="note-group-tabs" data-tauri-drag-region>{tabs}</div>
                 {onGlobalToolsHost && <div className="note-group-global-tools" ref={onGlobalToolsHost} />}
                 <div className="note-group-document-tools" ref={setToolsHost} />
               </header>

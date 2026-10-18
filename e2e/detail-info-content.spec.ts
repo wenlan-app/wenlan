@@ -136,6 +136,12 @@ for (const scenario of [
   if(width>=1100){
    await expect(pane).toBeVisible();
    measurements.push(await measure('both-sidebars'));
+   // Below 1160 the labelled rail folds to icons while Info is open; its toggle expands it first.
+   if(mode==='labels'&&width<240+320+600){
+    await expect(page.locator('.memory-shell')).toHaveAttribute('data-sidebar-layout','icons');
+    await page.getByRole('button',{name:'Show sidebar',exact:true}).click();
+    await expect(page.locator('.memory-shell')).toHaveAttribute('data-sidebar-layout','labels');
+   }
    await page.getByRole('button',{name:'Hide sidebar',exact:true}).click();
    measurements.push(await measure('left-closed'));
    await pane.getByRole('button',{name:'Close',exact:true}).click();

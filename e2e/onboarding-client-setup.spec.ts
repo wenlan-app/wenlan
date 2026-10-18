@@ -3,10 +3,12 @@ import { test, expect } from '@playwright/test';
 import { installTauriMock, collectBrowserErrors } from './tauriMock';
 import { enFirstUse } from '../src/components/onboarding/firstUseCopy';
 
+const enSetupStart = 'Get started';
+
 // Fixture-only rendering: this does not exercise native APIs or live OAuth.
 const cases = [['en', enFirstUse]] as const;
 for (const [locale, copy] of cases) for (const width of [1440, 375]) {
-  test(`${locale} ${width}: sample to read-only web setup`, async ({ page, baseURL }, info) => {
+  test(`${locale} ${width}: sample ends by opening notes`, async ({ page, baseURL }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     const errors = collectBrowserErrors(page);
     const external: string[] = [];
@@ -47,28 +49,12 @@ for (const [locale, copy] of cases) for (const width of [1440, 375]) {
     await page.getByRole('tab', { name: 'Codex', exact: true }).click();
     await expect(page.getByRole('button', { name: `${copy.sample.copyCommand}: ${copy.sample.handoffLabel}`, exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'ChatGPT', exact: true }).click();
-    await page.getByRole('button', { name: copy.sample.connectCta, exact: true }).click();
+    await expect(page.getByRole('button', { name: /^Connect my AI$/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Bring my data$/ })).toHaveCount(0);
+    await page.getByRole('button', { name: enSetupStart, exact: true }).click();
     await expect(page.getByTestId('first-use-sample')).toHaveCount(0);
     expect(completed).toBe(true);
     await expect(page.locator('[data-testid="setup-wizard"]')).toHaveCount(0);
-    const webName = /^(Web access|网页访问|網頁存取)$/;
-    await expect(page.getByRole('heading', { name: webName })).toHaveCount(1);
-    // Turning Web access on is one question with two answers: the whole
-    // library is one click, nothing is preselected, and there is no consent checkbox.
-    const webSection = page.locator('section').filter({ has: page.getByRole('heading', { name: webName }) });
-    const webToggle = webSection.getByRole('button', { name: /^(Share whole library|共享整个资料库|分享整個資料庫)$/ });
-    await expect(webToggle).toHaveCount(1);
-    await expect(webToggle).toBeVisible();
-    await expect(webToggle).toBeEnabled();
-    await expect(webSection.getByRole('button', { name: /^(Share one Space…|只共享一个 Space…|只分享一個 Space…)$/ })).toHaveCount(1);
-    await expect(webSection.getByRole('combobox')).toHaveCount(0);
-    await expect(webSection.getByRole('checkbox')).toHaveCount(0);
-    await expect.poll(() => webToggle.evaluate(node => {
-      const section = node.closest('section');
-      return section ? getComputedStyle(section).opacity : null;
-    })).toBe('1');
-    await webToggle.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: info.outputPath('web-settings.png'), fullPage: true, animations: 'disabled' });
     expect(await page.locator('vite-error-overlay').count()).toBe(0);
     expect(errors.pageErrors).toEqual([]);
     expect(errors.consoleErrors).toEqual([]);

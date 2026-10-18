@@ -35,15 +35,16 @@ for(const scene of scenes)test.describe(`${scene.width} ${scene.theme} ${scene.l
  await info.attach('both-info-geometry',{body:JSON.stringify(await Promise.all([geometry(left),geometry(right)])),contentType:'application/json'});
  await expect(left.locator('.note-inspector-toggle')).toBeVisible();
  await expect(left.locator('.note-inspector-toggle')).toHaveAttribute('aria-expanded','true');
- await aligned(left);await aligned(right);
+ // Opening, expanding and toggling Info reflows the groups and can fold the rail, so the geometry polls until it settles.
+ await expect(async()=>{await aligned(left);await aligned(right);}).toPass({timeout:10_000});
  await right.locator('.note-inspector-tabs [role="tab"]').nth(1).click();
  await expect(right.locator('.page-canvas')).toBeVisible();
  await right.locator('.page-info-drawer-workspace-toggle').click();
  await expect(right.locator('.page-info-drawer-expanded-group')).toBeVisible();
- await aligned(left);await aligned(right);
+ await expect(async()=>{await aligned(left);await aligned(right);}).toPass({timeout:10_000});
  await expect(left.locator('.note-inspector-tabs [role="tab"]').first()).toHaveAttribute('aria-selected','true');
  await page.screenshot({path:info.outputPath('right-expanded.png')});
- await right.locator('.page-info-drawer-workspace-toggle').click();await aligned(right);
+ await right.locator('.page-info-drawer-workspace-toggle').click();await expect(async()=>{await aligned(right);}).toPass({timeout:10_000});
  await right.locator('.note-inspector-toggle').click();
  await expect(right.locator('.page-info-drawer')).toHaveCount(0);
  await expect(right.locator('.note-inspector-toggle')).toHaveAttribute('aria-expanded','false');
@@ -51,7 +52,7 @@ for(const scene of scenes)test.describe(`${scene.width} ${scene.theme} ${scene.l
  await right.locator('.note-inspector-toggle').click();
  await expect(right.locator('.note-inspector-toggle')).toHaveAttribute('aria-expanded','true');
  await right.locator('.note-inspector-tabs [role="tab"]').nth(1).click();
- await aligned(left);await aligned(right);
+ await expect(async()=>{await aligned(left);await aligned(right);}).toPass({timeout:10_000});
  await page.screenshot({path:info.outputPath('toggle-restored.png')});
  if(scene.width===1680){
   for(const width of [375,2560,1680]){

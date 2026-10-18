@@ -225,7 +225,7 @@ describe("CitationChip", () => {
     fireEvent.focus(chip);
     expect(chip).not.toHaveTextContent("mem-1");
     expect(screen.getByText(/no longer exists/i)).toBeInTheDocument();
-    expect(screen.getByText(/re-distill/i)).toBeInTheDocument();
+    expect(screen.getByText(/rebuild/i)).toBeInTheDocument();
     expect(screen.getByText("mem-1")).toBeInTheDocument();
     await user.click(chip);
     expect(onOpenMemory).not.toHaveBeenCalled();
@@ -330,10 +330,10 @@ describe("CitationChip", () => {
     });
   });
 
-  it("explains that authored content survives re-distillation", () => {
+  it("explains that authored content survives a rebuild", () => {
     renderChip({ citation: cite({ source_kind: "authored" }), sourceMemory: null });
     fireEvent.focus(screen.getByRole("button", { name: /Written here/ }));
-    expect(screen.getByText(/kept unchanged when the page is re-distilled/i)).toBeInTheDocument();
+    expect(screen.getByText(/kept unchanged when the note is rebuilt/i)).toBeInTheDocument();
   });
 });
 

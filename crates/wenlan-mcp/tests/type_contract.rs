@@ -1144,6 +1144,7 @@ fn sample_pending_revision_item(target: &str, rev: &str) -> PendingRevisionItem 
         last_modified: 1_715_000_000,
         target_kind: wenlan_types::responses::RevisionTargetKind::Memory,
         grounded_in: None,
+        review_reason: None,
     }
 }
 

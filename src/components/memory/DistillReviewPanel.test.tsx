@@ -245,12 +245,12 @@ describe("DistillReviewPanel", () => {
     const { user, onOpenActivity } = renderPanel();
 
     expect(await screen.findByText("Retrieval Pipeline")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Pages with new sources" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Notes with new sources" })).toBeInTheDocument();
     expect(screen.getByText("Retrieval Pipeline")).toBeInTheDocument();
-    expect(screen.getByText(/first 10 stale pages/i)).toBeInTheDocument();
+    expect(screen.getByText(/first 10 stale notes/i)).toBeInTheDocument();
     expect(screen.getByText(/Background discoveries are available in Activity/)).toBeInTheDocument();
     expect(screen.queryByText("Vector clocks")).toBeNull();
-    expect(screen.queryByRole("heading", { name: "New page candidates" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "New note candidates" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "New topics" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Review Temporal page refresh" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Review Vector clocks" })).toBeNull();
@@ -281,15 +281,15 @@ describe("DistillReviewPanel", () => {
     );
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Page refresh")).toBeInTheDocument();
+    expect(within(dialog).getByText("Note refresh")).toBeInTheDocument();
     expect(within(dialog).getByText("3 sources updated")).toBeInTheDocument();
     // No dismiss verb exists for stale pages, so the dialog never offers one.
     expect(within(dialog).queryByRole("button", { name: "Dismiss" })).toBeNull();
 
-    await user.click(within(dialog).getByRole("button", { name: "Open page" }));
+    await user.click(within(dialog).getByRole("button", { name: "Open note" }));
     expect(onPageClick).toHaveBeenCalledWith("page_stale");
 
-    await user.click(within(dialog).getByRole("button", { name: "Refresh page" }));
+    await user.click(within(dialog).getByRole("button", { name: "Refresh note" }));
     await waitFor(() => {
       expect(redistillPage).toHaveBeenCalledWith("page_stale");
     });
@@ -683,10 +683,10 @@ describe("DistillReviewPanel review queue", () => {
 
     const dialog = await screen.findByRole("dialog");
     await within(dialog).findByText(/Nothing unique is lost/i);
-    expect(within(dialog).getByText("Kept page")).toBeInTheDocument();
-    expect(within(dialog).getByText("Retiring page")).toBeInTheDocument();
+    expect(within(dialog).getByText("Kept note")).toBeInTheDocument();
+    expect(within(dialog).getByText("Retiring note")).toBeInTheDocument();
 
-    await user.click(within(dialog).getByRole("button", { name: /Merge pages/i }));
+    await user.click(within(dialog).getByRole("button", { name: /Merge notes/i }));
     await waitFor(() => expect(acceptRefinement).toHaveBeenCalledWith("ref-page-merge"));
   });
 
@@ -772,7 +772,7 @@ describe("DistillReviewPanel review queue", () => {
     const expected: Array<[RegExp, string]> = [
       [/Review Target memory/, "1 of 4"],
       [/contradicts/, "2 of 4"],
-      [/Page merge/, "3 of 4"],
+      [/Note merge/, "3 of 4"],
       [/look like the same entity/, "4 of 4"],
     ];
     for (const [card, position] of expected) {
@@ -892,7 +892,7 @@ describe("DistillReviewPanel review filter", () => {
     expect(within(group).getByRole("button", { name: /^All/ })).toBeInTheDocument();
     expect(within(group).getByRole("button", { name: /^Revisions/ })).toBeInTheDocument();
     expect(within(group).queryByRole("button", { name: /^Conflicts/ })).toBeNull();
-    expect(within(group).queryByRole("button", { name: /^Pages/ })).toBeNull();
+    expect(within(group).queryByRole("button", { name: /^Notes/ })).toBeNull();
     expect(within(group).queryByRole("button", { name: /^Merges/ })).toBeNull();
     expect(within(group).queryByRole("button", { name: /^Candidates/ })).toBeNull();
     expect(within(group).queryByRole("button", { name: /^Topics/ })).toBeNull();

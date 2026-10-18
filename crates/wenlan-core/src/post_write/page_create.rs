@@ -11,6 +11,32 @@ const VALID_PAGE_CREATION_KINDS: [&str; 5] =
 
 const PAGE_BIRTH_REVIEW_STATUS: &str = "unconfirmed";
 
+/// The creation kind a page create lands as. An explicit kind is kept as
+/// given (and validated by the caller). With no kind, the daemon picks:
+/// enough distinct sources to clear the distillation floor
+/// (`page_min_cluster_size`) make a "distilled" page; anything less,
+/// including no sources at all, makes an "authored" page. This is how a page
+/// written from a conversation lands without the caller choosing a kind.
+pub fn resolve_page_creation_kind<'a>(
+    requested: Option<&'a str>,
+    source_memory_ids: &[String],
+    page_min_cluster_size: usize,
+) -> &'a str {
+    if let Some(kind) = requested {
+        return kind;
+    }
+    let distinct = source_memory_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>()
+        .len();
+    if distinct > 0 && distinct >= page_min_cluster_size {
+        "distilled"
+    } else {
+        "authored"
+    }
+}
+
 #[cfg(test)]
 type CreatePagePreDbGate = (
     String,
@@ -145,7 +171,10 @@ pub(super) async fn replace_source_page_impl(
         .get_page(page_id)
         .await?
         .ok_or_else(|| WenlanError::NotFound(format!("Page not found: {page_id}")))?;
-    if current.creation_kind != "source" || current.user_edited {
+    // A review lock holds a source page the same way a human edit does: the
+    // enrichment replacement is a machine write and never lands on it. The
+    // db-layer UPDATE carries the same predicate for a lock set after this read.
+    if current.creation_kind != "source" || current.user_edited || current.review_required {
         return Err(WenlanError::Conflict(format!(
             "source Page {page_id} is not machine-owned"
         )));
@@ -283,7 +312,11 @@ pub(super) async fn create_page_impl(
         ));
     }
     crate::export::provenance::validate_canonical_page_content(&req.content)?;
-    let creation_kind = req.creation_kind.as_deref().unwrap_or("distilled");
+    let creation_kind = resolve_page_creation_kind(
+        req.creation_kind.as_deref(),
+        &req.source_memory_ids,
+        page_min_cluster_size,
+    );
     if creation_kind == "distilled" && req.source_memory_ids.is_empty() {
         return Err(WenlanError::Validation(
             "distilled page must cite at least one source memory".into(),
@@ -400,6 +433,7 @@ pub(super) async fn create_page_impl(
         stale_reason: None,
         pending_rebuild: None,
         refresh_blocked_reason: None,
+        review_required: false,
         user_edited: false,
         relevance_score: 0.0,
         last_edited_by: None,

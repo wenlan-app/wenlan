@@ -366,3 +366,161 @@ async fn a_padded_label_gives_the_same_display_name_through_a_read_and_a_write()
         );
     }
 }
+
+// Connecting a tool is the user's authorisation: a name nobody has seen is
+// registered at "full", but it has not been *used*, so `last_seen_at` stays
+// empty (the app counts a tool as connected only once it has been seen).
+#[tokio::test]
+async fn registering_a_connected_tool_creates_it_at_full_without_a_sighting() {
+    let (db, _dir) = test_db().await;
+
+    let agent = db.register_trusted_agent("Claude Code").await.unwrap();
+
+    assert_eq!(agent.name, "claude-code");
+    assert_eq!(agent.trust_level, "full");
+    assert!(agent.enabled);
+    assert_eq!(agent.last_seen_at, None);
+    assert_eq!(agent.memory_count, 0);
+    assert_eq!(row_count(&db).await, 1);
+}
+
+#[tokio::test]
+async fn registering_a_connected_tool_promotes_an_untouched_read_row() {
+    let (db, _dir) = test_db().await;
+    assert_eq!(
+        db.record_agent_presence("claude-code").await.unwrap(),
+        AgentPresence::Created
+    );
+    let before = db.get_agent("claude-code").await.unwrap().unwrap();
+    assert_eq!(before.trust_level, "unknown");
+
+    let agent = db.register_trusted_agent("claude-code").await.unwrap();
+
+    assert_eq!(agent.trust_level, "full");
+    let after = db.get_agent("claude-code").await.unwrap().unwrap();
+    assert_eq!(after.trust_level, "full");
+    // Promotion is not an edit and not a use: the sighting and the untouched
+    // marker survive, so a second registration is a no-op.
+    assert_eq!(after.last_seen_at, before.last_seen_at);
+    assert_eq!(after.updated_at, after.created_at);
+    assert_eq!(after.memory_count, 0);
+    let again = db.register_trusted_agent("claude-code").await.unwrap();
+    assert_eq!(again.trust_level, "full");
+    assert_eq!(row_count(&db).await, 1);
+}
+
+#[tokio::test]
+async fn registering_a_connected_tool_leaves_user_edited_and_written_rows_alone() {
+    let (db, _dir) = test_db().await;
+
+    // A user who set the trust to "unknown" themselves.
+    db.record_agent_presence("edited-bot").await.unwrap();
+    db.update_agent("edited-bot", None, Some("hands off"), None, None, None)
+        .await
+        .unwrap();
+    let edited_before = db.get_agent("edited-bot").await.unwrap().unwrap();
+    assert_ne!(edited_before.updated_at, edited_before.created_at);
+
+    // A tool that already wrote (memory_count > 0) but is still "unknown".
+    db.record_agent_presence("written-bot").await.unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE agent_connections SET memory_count = 3 WHERE name = 'written-bot'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    // A trust level the user chose.
+    db.register_agent("review-bot").await.unwrap();
+    db.update_agent("review-bot", None, None, None, Some("review"), None)
+        .await
+        .unwrap();
+
+    for name in ["edited-bot", "written-bot", "review-bot"] {
+        let before = db.get_agent(name).await.unwrap().unwrap();
+        let returned = db.register_trusted_agent(name).await.unwrap();
+        let after = db.get_agent(name).await.unwrap().unwrap();
+        assert_eq!(returned.trust_level, before.trust_level, "{name}");
+        assert_eq!(after.trust_level, before.trust_level, "{name}");
+        assert_eq!(after.updated_at, before.updated_at, "{name}");
+        assert_eq!(after.memory_count, before.memory_count, "{name}");
+    }
+    assert_eq!(
+        db.get_agent("edited-bot")
+            .await
+            .unwrap()
+            .unwrap()
+            .trust_level,
+        "unknown"
+    );
+    assert_eq!(
+        db.get_agent("written-bot")
+            .await
+            .unwrap()
+            .unwrap()
+            .trust_level,
+        "unknown"
+    );
+    assert_eq!(
+        db.get_agent("review-bot")
+            .await
+            .unwrap()
+            .unwrap()
+            .trust_level,
+        "review"
+    );
+}
+
+#[tokio::test]
+async fn registering_a_connected_tool_keeps_a_disabled_row_disabled() {
+    let (db, _dir) = test_db().await;
+    db.record_agent_presence("off-bot").await.unwrap();
+    // Disable underneath the API so the row still has the untouched marker:
+    // the only shape on which the `enabled` check is the guard.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE agent_connections SET enabled = 0 WHERE name = 'off-bot'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    let agent = db.register_trusted_agent("off-bot").await.unwrap();
+
+    assert!(!agent.enabled);
+    assert_eq!(agent.trust_level, "unknown");
+    let after = db.get_agent("off-bot").await.unwrap().unwrap();
+    assert!(!after.enabled);
+    assert_eq!(after.trust_level, "unknown");
+}
+
+#[tokio::test]
+async fn registering_a_connected_tool_rejects_names_the_read_path_rejects() {
+    let (db, _dir) = test_db().await;
+    let too_long = "x".repeat(65);
+    for bad in [
+        "",
+        "   ",
+        "---",
+        "unknown",
+        "wenlan-setup",
+        "bad\u{0}name",
+        "line\nbreak",
+        too_long.as_str(),
+    ] {
+        let err = db
+            .register_trusted_agent(bad)
+            .await
+            .expect_err("an invalid name must not register");
+        assert!(
+            matches!(err, crate::error::WenlanError::Validation(_)),
+            "{bad:?}: {err:?}"
+        );
+    }
+    assert_eq!(row_count(&db).await, 0);
+}

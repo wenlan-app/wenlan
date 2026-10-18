@@ -25,6 +25,7 @@ export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
   "continue": "Continue",
   "cursor": "Cursor",
   "gemini-cli": "Gemini CLI",
+  "muse-code": "Muse Code",
   "obsidian": "Obsidian",
   "openai-mcp": "ChatGPT",
   "raycast": "Raycast",
@@ -116,6 +117,8 @@ export function clientTypeFamily(clientType: string): string {
       return "cursor";
     case "gemini_cli":
       return "gemini-cli";
+    case "muse_code":
+      return "muse-code";
     default:
       return "";
   }
@@ -161,6 +164,11 @@ export function toolFamilyOf(agent: { name: string; agent_type: string }): strin
   if (name === "wenlan-setup") return "wenlan-setup";
   return name;
 }
+
+/** Wenlan's own identities: the app, its CLI, and the setup probe. Their calls
+ *  say nothing about whether the user has connected an AI tool, so no list of
+ *  the user's tools shows them. Tested against a tool family. */
+export const OWN_IDENTITY = /^(wenlan|origin)(-|$)|^(manual|unknown)$/;
 
 /** Display label for a tool family: the registry name, else the same
  *  prettifier `resolveAgentDisplayName` uses for an unrecognized slug. */

@@ -79,9 +79,9 @@
 
 .wiki-workspace-mode {
   position: relative;
-  display: flex;
+  display: grid;
   align-items: center;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   min-height: 40px;
   box-sizing: border-box;
@@ -97,9 +97,26 @@
   white-space: nowrap;
 }
 
+.wiki-workspace-mode > .wiki-workspace-mode-sizer {
+  position: static;
+  grid-area: 1 / 1;
+  width: auto;
+  height: 0;
+  padding: 0 30px 0 8px;
+  overflow: hidden;
+  clip: auto;
+  visibility: hidden;
+  font: 14px var(--mem-font-body);
+  white-space: nowrap;
+}
+
 .wiki-workspace-mode select {
   display: block;
-  width: 100%;
+  grid-area: 1 / 1;
+  /* The sizer sets the width; a select would otherwise size to its widest option. */
+  width: 0;
+  min-width: 100%;
+  text-overflow: ellipsis;
   height: 32px;
   appearance: none;
   padding: 0 30px 0 8px;
@@ -120,8 +137,16 @@
   color: var(--mem-text-secondary);
 }
 
+.wiki-workspace-note-count {
+  flex: 0 0 auto;
+  color: var(--mem-text-tertiary);
+  font: 13px var(--mem-font-body);
+  font-variant-numeric: tabular-nums;
+}
+
 .wiki-workspace-new-folder {
   display: grid;
+  margin-left: auto;
   flex: 0 0 32px;
   width: 32px;
   height: 32px;
@@ -289,6 +314,17 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   }
 }
 
+/* A library with no notes has nothing to list, and an open getting-started
+   checklist is the screen's content: drop the directory (and the narrow-layout
+   toggle that opens it) so the start panel owns the width. Keyed on the
+   workspace, not the panel, so it also wins over the narrow container rules
+   above. Both columns return once the library has notes and the checklist is
+   done or hidden. */
+.wiki-workspace[data-directory-hidden="true"] > .wiki-workspace-folders-toggle,
+.wiki-workspace[data-directory-hidden="true"] .wiki-workspace-body .wiki-workspace-directory {
+  display: none;
+}
+
 .wiki-workspace-reading { display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;overflow:hidden;background:var(--workspace-document-background, var(--mem-bg)); }
 
 /* Align the panel selector with the Search target in the compact rail. */
@@ -315,6 +351,9 @@ html[data-theme="light"] .workspace-wiki-tabs { background: var(--mem-bg); }
   .memory-shell[data-note-workspace] .memory-main-content--wiki { margin-top:-52px; }
   .memory-shell[data-note-workspace] .memory-workspace-header { width:calc(var(--workspace-sidebar-width) + 248px); }
   .memory-shell[data-note-workspace] .wiki-workspace-directory { padding-top:64px; }
+  /* The titlebar reserves the directory's width so it never covers the tab strip.
+     A workspace without a directory, so the tabs start at the sidebar edge. */
+  .memory-shell[data-note-workspace]:has(.wiki-workspace[data-directory-hidden="true"]) .memory-workspace-header { width:var(--workspace-sidebar-width); }
 }
 
 .note-owner-notice { position:absolute; z-index:1200; bottom:24px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:12px; max-width:calc(100% - 32px); padding:10px 12px; border:1px solid var(--mem-border); border-radius:8px; background:var(--mem-surface); color:var(--mem-text); box-shadow:var(--mem-shadow-overlay); font:13px/1.5 var(--mem-font-body); }

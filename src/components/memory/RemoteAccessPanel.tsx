@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ArrowClockwise, ArrowSquareOut, Check, Copy } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowSquareOut } from "@phosphor-icons/react";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import {
   clipboardWrite, testRemoteMcpConnection, type RemoteConnectionTest,
 } from "../../lib/tauri";
 import { setPendingPairingCode } from "../../lib/pairingLink";
 import { classifyPairingCode } from "../../lib/pairingCode";
-import { Button, Card, Field, Input, SectionHeader, StatusChip, Tag } from "./settings/primitives";
+import { Button, Card, Field, Input, SectionHeader, SettingRow, StatusChip, Tag } from "./settings/primitives";
 import {
   Disclosure, InlineConfirm, RemoteErrorMessage, errorText, secondaryText,
 } from "./remoteAccessParts";
 import { ConnectedApps } from "./RemoteAccessApps";
+import { RemoteOtherAppsGuide } from "./RemoteOtherAppsGuide";
 import { RemoteScopeChooser } from "./RemoteScopeChooser";
-import { scopeLabel, type RemoteScope } from "./remoteScope";
+import { scopeLabel, wholeLibrary, type RemoteScope } from "./remoteScope";
 import { useRemoteAccess } from "./useRemoteAccess";
 
 /** The key is offered a renewal this long before it ends. */
@@ -57,7 +58,12 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   const { status, profile, spaces, connected, relayUrl, isOn, pendingDisconnect, ready, nativeReadFailed, nativeLoading, queryError, scope } = remote;
   const now = useNow(60_000);
   const [confirming, setConfirming] = useState<Confirming | null>(null);
-  const [copied, setCopied] = useState(false);
+  // The switch was flipped on while Spaces exist: the one question is showing,
+  // and nothing is turned on until it is answered.
+  const [choosing, setChoosing] = useState(false);
+  // The "Other apps" guide, and the button that opened it (which gets focus back).
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideOpener = useRef<HTMLElement | null>(null);
   const [chatgptOpened, setChatgptOpened] = useState(false);
   const [probe, setProbe] = useState<RemoteConnectionTest | null>(null);
 
@@ -79,6 +85,11 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
     mutationFn: (operation: () => Promise<void>) => operation(),
     onSettled: () => remote.refresh(),
   });
+  // The guide only makes sense while there is a link to give.
+  const guideAvailable = connected && Boolean(relayUrl);
+  useEffect(() => { if (!guideAvailable) setGuideOpen(false); }, [guideAvailable]);
+  // Once it is on (or the question is no longer needed), there is nothing left to ask.
+  useEffect(() => { if (isOn) setChoosing(false); }, [isOn]);
   const busy = action.isPending;
   const run = (operation: () => Promise<void>) => { action.reset(); action.mutate(operation); };
 
@@ -92,6 +103,7 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   const turnOnAgain = () => run(async () => {
     await remote.stop();
     if (scope && spaceExists(scope)) await remote.switchOn(scope);
+    else setChoosing(true);
   });
   const changeScope = (target: RemoteScope) => run(async () => {
     await remote.stop();
@@ -103,11 +115,9 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
     setProbe(null);
     setProbe(await testRemoteMcpConnection());
   });
-  const copyUrl = (url: string) => run(async () => { await clipboardWrite(url); setCopied(true); });
   const addToClaude = (url: string) => run(async () => { await openExternal(claudeAddConnectorUrl(url)); });
   const addToChatGPT = (url: string) => run(async () => {
     await clipboardWrite(url);
-    setCopied(true);
     setChatgptOpened(true);
     await openExternal(CHATGPT_URL);
   });
@@ -118,9 +128,10 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
     </Button>
   );
 
-  let body: React.ReactNode;
+  // The switch itself says loading, saving or unavailable; the body adds the rest.
+  let body: React.ReactNode = null;
   if (nativeLoading) {
-    body = <p role="status" className={secondaryText}>{t("settings.controlState.loading")}</p>;
+    body = null;
   } else if (nativeReadFailed) {
     // The saved settings could not be read, so nothing here may look like permission to turn on.
     body = <div className="space-y-2"><RemoteErrorMessage error={queryError} />{stopButton}</div>;
@@ -136,14 +147,11 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   } else if (stuck && status?.status === "error") {
     body = <div className="space-y-2"><RemoteErrorMessage error={status.error} />{stopButton}</div>;
   } else if (!isOn) {
-    body = (
-      <div className="min-w-0 space-y-3">
-        <StatusChip state={{ kind: "idle" }} label={t("remoteAccess.statusOff")} />
-        {spacesFailed
-          ? <RemoteErrorMessage error={queryError} />
-          : <RemoteScopeChooser spaces={spaces} defaultSpace={remote.defaultSpace} busy={busy} disabled={!ready} onChoose={turnOn} />}
-      </div>
-    );
+    body = choosing
+      ? spacesFailed
+        ? <RemoteErrorMessage error={queryError} />
+        : <RemoteScopeChooser spaces={spaces} defaultSpace={remote.defaultSpace} busy={busy} disabled={!ready} onChoose={turnOn} />
+      : null;
   } else if (ended) {
     body = (
       <div className="min-w-0 space-y-3">
@@ -159,126 +167,147 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   } else {
     const failed = status?.status === "error";
     body = (
-      <div className="min-w-0 space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {connected && <StatusChip state={{ kind: "up" }} label={t("remoteAccess.statusConnected")} />}
-          {status?.status === "starting" && <StatusChip state={{ kind: "probing" }} label={t("remoteAccess.statusConnecting")} />}
-          {!connected && status?.status === "off" && <StatusChip state={{ kind: "idle" }} label={t("remoteAccess.statusOff")} />}
-          {profile && <span className="text-sm break-words">{t("remoteAccess.sharing", { space: scopeLabel(t, profile.space) })}</span>}
-        </div>
-
-        {failed && <RemoteErrorMessage error={status.error} />}
-
-        {expiringSoon && (
-          <div role="status" className="space-y-2 rounded border border-[var(--mem-status-warning-border)] bg-[var(--mem-status-warning-bg)] p-3 text-sm text-[var(--mem-status-warning-text)]">
-            <p className="break-words">{t("remoteAccess.expiringSoon", { date: new Date(expiresAt!).toLocaleDateString(language) })}</p>
-            {confirming?.kind === "renew"
-              ? <InlineConfirm message={t("remoteAccess.renewConfirm")} confirmLabel={t("remoteAccess.renew")} busy={busy}
-                  onConfirm={renew} onCancel={() => setConfirming(null)} />
-              : <Button variant="secondary" size="sm" disabled={busy} onClick={() => setConfirming({ kind: "renew" })}>{t("remoteAccess.renew")}</Button>}
+      <div className="min-w-0 space-y-6">
+        <div className="min-w-0 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div className="flex flex-wrap items-center gap-3 min-w-0">
+              {connected && <StatusChip state={{ kind: "up" }} label={t("remoteAccess.statusConnected")} />}
+              {status?.status === "starting" && <StatusChip state={{ kind: "probing" }} label={t("remoteAccess.statusConnecting")} />}
+              {!connected && status?.status === "off" && <StatusChip state={{ kind: "idle" }} label={t("remoteAccess.statusOff")} />}
+              {profile && <span className="text-sm break-words">{t("remoteAccess.sharing", { space: scopeLabel(t, profile.space) })}</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-1 -mx-[10px]">
+              {profile?.enabled && (
+                <Button variant="ghost" size="sm" disabled={busy || !ready} onClick={() => run(async () => { await remote.reconnect(profile.revision); })}>
+                  <ArrowClockwise size={14} aria-hidden="true" />{t("remoteAccess.reconnect")}
+                </Button>
+              )}
+              {connected && (
+                <Button variant="ghost" size="sm" disabled={busy} onClick={testConnection}>
+                  {t("remoteAccess.testConnection")}
+                </Button>
+              )}
+              {failed
+                ? stopButton
+                : <Button variant="ghost" size="sm" aria-expanded={confirming?.kind === "choose" || confirming?.kind === "change"}
+                    disabled={busy || spacesFailed || !ready || (scope?.kind === "wholeLibrary" && spaces.length === 0)}
+                    onClick={() => setConfirming({ kind: "choose" })}>{t("remoteAccess.changeSpace")}</Button>}
+            </div>
           </div>
-        )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          {profile?.enabled && (
-            <Button variant="secondary" size="sm" disabled={busy || !ready} onClick={() => run(async () => { await remote.reconnect(profile.revision); })}>
-              <ArrowClockwise size={14} aria-hidden="true" />{t("remoteAccess.reconnect")}
-            </Button>
+          {failed && <RemoteErrorMessage error={status.error} />}
+
+          {expiringSoon && (
+            <div role="status" className="space-y-2 rounded border border-[var(--mem-status-warning-border)] bg-[var(--mem-status-warning-bg)] p-3 text-sm text-[var(--mem-status-warning-text)]">
+              <p className="break-words">{t("remoteAccess.expiringSoon", { date: new Date(expiresAt!).toLocaleDateString(language) })}</p>
+              {confirming?.kind === "renew"
+                ? <InlineConfirm message={t("remoteAccess.renewConfirm")} confirmLabel={t("remoteAccess.renew")} busy={busy}
+                    onConfirm={renew} onCancel={() => setConfirming(null)} />
+                : <Button variant="secondary" size="sm" disabled={busy} onClick={() => setConfirming({ kind: "renew" })}>{t("remoteAccess.renew")}</Button>}
+            </div>
           )}
-          {connected && (
-            <Button variant="secondary" size="sm" disabled={busy} onClick={testConnection}>
-              {t("remoteAccess.testConnection")}
-            </Button>
+
+          {probe?.ok && <p role="status" className={secondaryText}>{t("remoteAccess.testOk", { ms: probe.latency_ms ?? "?" })}</p>}
+          {probe && !probe.ok && (
+            <div className="space-y-1">
+              <p role="alert" className={errorText}>{t("remoteAccess.connectionFailed")}</p>
+              {probe.error && <Disclosure label={t("remoteAccess.details")}><p className="text-xs break-words text-[var(--mem-text-secondary)]">{probe.error}</p></Disclosure>}
+            </div>
           )}
-          {failed
-            ? stopButton
-            : <>
-                <Button variant="secondary" size="sm" aria-expanded={confirming?.kind === "choose" || confirming?.kind === "change"}
-                  disabled={busy || spacesFailed || !ready || (scope?.kind === "wholeLibrary" && spaces.length === 0)}
-                  onClick={() => setConfirming({ kind: "choose" })}>{t("remoteAccess.changeSpace")}</Button>
-                <Button variant="secondary" size="sm" disabled={busy} onClick={() => setConfirming({ kind: "off" })}>{t("remoteAccess.turnOff")}</Button>
-              </>}
+
+          {confirming?.kind === "choose" && (
+            <div className="min-w-0 space-y-2">
+              <RemoteScopeChooser spaces={spaces} defaultSpace={remote.defaultSpace} current={scope} busy={busy}
+                onChoose={(target) => setConfirming({ kind: "change", scope: target })} />
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>{t("remoteAccess.cancel")}</Button>
+            </div>
+          )}
+          {confirming?.kind === "change" && (
+            <InlineConfirm message={confirming.scope.kind === "wholeLibrary"
+              ? t("remoteAccess.changeConfirmWholeLibrary")
+              : t("remoteAccess.changeConfirm", { space: confirming.scope.name })} confirmLabel={t("remoteAccess.change")}
+              busy={busy} onConfirm={() => changeScope(confirming.scope)} onCancel={() => setConfirming(null)} />
+          )}
         </div>
-
-        {probe?.ok && <p role="status" className={secondaryText}>{t("remoteAccess.testOk", { ms: probe.latency_ms ?? "?" })}</p>}
-        {probe && !probe.ok && (
-          <div className="space-y-1">
-            <p role="alert" className={errorText}>{t("remoteAccess.connectionFailed")}</p>
-            {probe.error && <Disclosure label={t("remoteAccess.details")}><p className="text-xs break-words text-[var(--mem-text-secondary)]">{probe.error}</p></Disclosure>}
-          </div>
-        )}
-
-        {confirming?.kind === "off" && (
-          <InlineConfirm message={t("remoteAccess.offConfirm")} confirmLabel={t("remoteAccess.turnOff")} busy={busy}
-            onConfirm={turnOff} onCancel={() => setConfirming(null)} />
-        )}
-        {confirming?.kind === "choose" && (
-          <div className="min-w-0 space-y-2">
-            <RemoteScopeChooser spaces={spaces} defaultSpace={remote.defaultSpace} current={scope} busy={busy}
-              onChoose={(target) => setConfirming({ kind: "change", scope: target })} />
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>{t("remoteAccess.cancel")}</Button>
-          </div>
-        )}
-        {confirming?.kind === "change" && (
-          <InlineConfirm message={confirming.scope.kind === "wholeLibrary"
-            ? t("remoteAccess.changeConfirmWholeLibrary")
-            : t("remoteAccess.changeConfirm", { space: confirming.scope.name })} confirmLabel={t("remoteAccess.change")}
-            busy={busy} onConfirm={() => changeScope(confirming.scope)} onCancel={() => setConfirming(null)} />
-        )}
 
         {connected && relayUrl && (
-          <div className="border-t border-[var(--mem-border)] pt-4 space-y-2">
-            <ol className="list-decimal pl-5 space-y-2 text-sm">
-              <li className="min-w-0 space-y-2">
-                <span className="block">{t("remoteAccess.howTo1")}</span>
-                <span className="flex flex-wrap gap-2">
-                  <Button variant="primary" size="sm" disabled={busy} onClick={() => addToClaude(relayUrl)}>
-                    {t("remoteAccess.addToClaude")}<ArrowSquareOut size={14} aria-hidden="true" />
-                  </Button>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToChatGPT(relayUrl)}>
-                    {t("remoteAccess.addToChatGPT")}<ArrowSquareOut size={14} aria-hidden="true" />
-                  </Button>
-                </span>
-                {chatgptOpened && <p role="status" className={secondaryText}>{t("remoteAccess.chatgptHint")}</p>}
-                <span className="block text-[var(--mem-text-secondary)]">{t("remoteAccess.otherAppsHint")}</span>
-                <span className="flex items-start gap-2 min-w-0">
-                  <code className="flex-1 min-w-0 break-all text-xs py-1">{relayUrl}</code>
-                  <button type="button" className="p-2 shrink-0 rounded border border-[var(--mem-border)]"
-                    title={t("connectMatrix.copyUrl")} aria-label={copied ? t("remoteAccess.linkCopied") : t("connectMatrix.copyUrl")}
-                    disabled={busy} onClick={() => copyUrl(relayUrl)}>
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                  </button>
-                </span>
-              </li>
-              <li>{t("remoteAccess.howTo2")}</li>
-            </ol>
-            <p className={secondaryText}>{t("remoteAccess.localAppsHint")}</p>
+          <div className="min-w-0 space-y-3">
+            <p className={secondaryText}>{t("remoteAccess.addHint")}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToClaude(relayUrl)}>
+                {t("remoteAccess.addToClaude")}<ArrowSquareOut size={14} aria-hidden="true" />
+              </Button>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToChatGPT(relayUrl)}>
+                {t("remoteAccess.addToChatGPT")}<ArrowSquareOut size={14} aria-hidden="true" />
+              </Button>
+              <Button variant="secondary" size="sm" aria-haspopup="dialog" disabled={busy}
+                onClick={(event) => { guideOpener.current = event.currentTarget; setGuideOpen(true); }}>
+                {t("remoteAccess.otherApps")}
+              </Button>
+            </div>
+            {chatgptOpened && <p role="status" className={secondaryText}>{t("remoteAccess.chatgptHint")}</p>}
           </div>
         )}
 
         {/* Only while connected: asking the relay otherwise would only fail, and an empty header reads as broken. */}
         {profile?.enabled && connected && Boolean(profile.credential_expires_at) && (
-          <div className="border-t border-[var(--mem-border)] pt-4">
-            <ConnectedApps key={profile.revision} revision={profile.revision} enabled />
-          </div>
+          <ConnectedApps key={profile.revision} revision={profile.revision} enabled />
         )}
       </div>
     );
   }
 
+  // The switch cannot be flipped on while the saved state is unreadable, a
+  // disconnect is unfinished or an error is stuck: those only offer Stop.
+  // Turning on needs the Spaces, so the switch waits for them instead of ignoring a click.
+  const loading = nativeLoading || (!isOn && !ready && !nativeReadFailed && !spacesFailed);
+  const cannotTurnOn = nativeReadFailed || (!isOn && (pendingDisconnect || stuck));
+  const onToggle = () => {
+    if (isOn) {
+      setConfirming({ kind: "off" });
+    } else if (choosing) {
+      setChoosing(false);
+    } else if (spacesFailed) {
+      setChoosing(true);
+    } else if (ready && !pendingDisconnect) {
+      // With no Space to pick, the whole library is the only choice.
+      if (spaces.length === 0) turnOn(wholeLibrary);
+      else setChoosing(true);
+    }
+  };
+  const showCodeEntry = !nativeLoading && !nativeReadFailed && !pendingDisconnect && !stuck && !ended;
+  const offConfirm = confirming?.kind === "off" && isOn && !nativeReadFailed
+    ? <InlineConfirm message={t("remoteAccess.offConfirm")} confirmLabel={t("remoteAccess.turnOff")} busy={busy}
+        onConfirm={turnOff} onCancel={() => setConfirming(null)} />
+    : null;
+  const actionError = action.error ? <RemoteErrorMessage error={action.error} /> : null;
+  const hasContent = Boolean(body || offConfirm || actionError || showCodeEntry);
+
   return (
     <div className="min-w-0 space-y-4" style={{ fontFamily: "var(--mem-font-body)", color: "var(--mem-text)" }}>
       <SectionHeader label={t("remoteAccess.title")} action={<Tag tone="neutral">{t("remoteAccess.experimentalBadge")}</Tag>} />
-      <Card padding="card">
-        <div className="min-w-0 space-y-4">
-          <p className={secondaryText}>{t("remoteAccess.intro")}</p>
-          {/* Said once, always: requests and results go through the relay. */}
-          <p className={secondaryText}>{t("remoteAccess.relayDisclosure")}</p>
-          {body}
-          {action.error && <RemoteErrorMessage error={action.error} />}
-          {!nativeLoading && !nativeReadFailed && !pendingDisconnect && !stuck && !ended && <CodeEntry />}
-        </div>
+      <Card padding="rows">
+        {/* The intro also says, once, that requests and results go through the relay. */}
+        <SettingRow
+          title={t("remoteAccess.toggleTitle")}
+          description={t("remoteAccess.intro")}
+          enabled={isOn || choosing}
+          onToggle={onToggle}
+          valueUnknown={loading || cannotTurnOn || busy}
+          unknownState={loading ? "loading" : cannotTurnOn ? "unavailable" : "saving"}
+        />
+        {hasContent && (
+          <div className="min-w-0 px-5 py-4 space-y-6">
+            {offConfirm}
+            {body}
+            {actionError}
+            {showCodeEntry && <CodeEntry />}
+          </div>
+        )}
       </Card>
+      {guideOpen && relayUrl && guideAvailable && (
+        <RemoteOtherAppsGuide relayUrl={relayUrl} returnFocus={guideOpener.current} onClose={() => setGuideOpen(false)} />
+      )}
     </div>
   );
 }
@@ -291,7 +320,7 @@ function CodeEntry() {
   const classified = classifyPairingCode(value);
   const invalid = value.trim() !== "" && classified.kind === "invalid";
   return (
-    <div className="border-t border-[var(--mem-border)] pt-4">
+    <div>
       <Disclosure label={t("remoteAccess.haveCode")}>
         <form className="space-y-3 max-w-sm" onSubmit={(event) => {
           event.preventDefault();

@@ -105,6 +105,8 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/memory/by-ids"),
         (Method::Get, "/api/memory/{id}/versions"),
         (Method::Get, "/api/decisions"),
+        (Method::Get, "/api/brief/history"),
+        (Method::Get, "/api/brief/history/{version}"),
         (Method::Get, "/api/briefing"),
         (Method::Get, "/api/memory/pending-revisions"),
         (Method::Get, "/api/memory/pending-revision/{source_id}"),

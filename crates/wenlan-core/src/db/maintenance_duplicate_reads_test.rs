@@ -105,6 +105,39 @@ async fn near_duplicate_reader_preserves_pair_order_cursor_and_raw_sources() {
 }
 
 #[tokio::test]
+async fn near_duplicate_reader_ignores_review_status_but_skips_source_pages() {
+    let (db, _tmp) = crate::db::tests::test_db().await;
+    for id in ["a", "b", "c"] {
+        insert_page(&db, id, id, &[], None).await;
+    }
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "UPDATE pages SET review_status = 'unconfirmed' WHERE id IN ('a', 'b')",
+        (),
+    )
+    .await
+    .unwrap();
+    conn.execute(
+        "UPDATE pages SET creation_kind = 'source' WHERE id = 'c'",
+        (),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let reader = db.begin_near_duplicate_slice_reader().await;
+    let pairs = reader.scan_near_duplicate_slice(None, 3).await.unwrap();
+    let eligible: Vec<(&str, &str, bool)> = pairs
+        .iter()
+        .map(|row| (row.left_id.as_str(), row.right_id.as_str(), row.eligible))
+        .collect();
+    assert_eq!(
+        eligible,
+        vec![("a", "b", true), ("a", "c", false), ("b", "c", false)]
+    );
+}
+
+#[tokio::test]
 async fn near_duplicate_reader_keeps_connection_locked_until_reader_drop() {
     let (db, _tmp) = crate::db::tests::test_db().await;
     let db = Arc::new(db);

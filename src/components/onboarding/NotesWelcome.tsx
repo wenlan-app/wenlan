@@ -7,13 +7,8 @@ import { Button } from "../memory/settings/primitives";
 import { FirstUseSample } from "./FirstUseSample";
 import "./notesWelcome.css";
 
-export type NotesWelcomeDestination =
-  | "sources"
-  | "connect-agent"
-  | "connections";
-
 interface NotesWelcomeProps {
-  onComplete: (destination?: NotesWelcomeDestination) => void | Promise<void>;
+  onComplete: () => void | Promise<void>;
 }
 
 export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
@@ -36,15 +31,14 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
     }
   }, [sampleOpen]);
 
-  async function openNotes(destination?: NotesWelcomeDestination) {
+  async function openNotes() {
     // State updates may be batched, so guard before invoking the callback.
     if (inFlight.current) return;
     inFlight.current = true;
     setPending(true);
     setFailed(false);
     try {
-      if (destination === undefined) await onComplete();
-      else await onComplete(destination);
+      await onComplete();
     } catch {
       setFailed(true);
     } finally {
@@ -93,27 +87,10 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
               }}
             >
               <FirstUseSample
-                backLabel={t("setup.notesFirst.backToWelcome")}
-                onBackToGuide={backToWelcome}
-                onBringData={() => void openNotes("sources")}
-                onConnect={(client) => void openNotes(
-                  client === "chatgpt" ? "connections" : "connect-agent",
-                )}
-                headerAction={(
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="notes-welcome__sample-open"
-                    loading={pending}
-                    disabled={pending}
-                    aria-busy={pending}
-                    aria-label={t("setup.notesFirst.open")}
-                    onClick={() => void openNotes()}
-                  >
-                    {t("setup.notesFirst.open")}
-                  </Button>
-                )}
+                backLabel={t("setup.back")}
+                onBack={backToWelcome}
+                finishLabel={t("setup.notesFirst.start")}
+                onFinish={() => void openNotes()}
               />
             </div>
           </div>
@@ -128,8 +105,7 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
             <h1 id={titleId} className="notes-welcome__title">
               {t("setup.welcomeTitle")}
             </h1>
-            <p className="notes-welcome__body">{t("setup.notesFirst.body")}</p>
-            <p className="notes-welcome__hint">{t("setup.notesFirst.hint")}</p>
+            <p className="notes-welcome__body">{t("setup.notesFirst.intro")}</p>
             {failed && (
               <p className="notes-welcome__error" role="alert">
                 {t("setup.notesFirst.openFailed")}
@@ -139,14 +115,12 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
               type="button"
               variant="primary"
               className="notes-welcome__open"
-              style={{ minHeight: 44, height: "auto" }}
               loading={pending}
               disabled={pending}
               aria-busy={pending}
-              aria-label={t("setup.notesFirst.open")}
               onClick={() => void openNotes()}
             >
-              {t("setup.notesFirst.open")}
+              {t("setup.notesFirst.start")}
             </Button>
             <button
               ref={sampleTrigger}

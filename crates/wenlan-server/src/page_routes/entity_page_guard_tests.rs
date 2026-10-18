@@ -115,3 +115,26 @@ async fn a_page_that_is_not_an_entitys_is_untouched_by_the_guard() {
         "the guard must not fire for a page that is not an entity's: {body}"
     );
 }
+
+#[tokio::test]
+async fn locking_an_entity_page_is_refused_the_same_way() {
+    let (state, _tmp, entity_id, page_id) = state_with_entity().await;
+    let app = crate::router::build_router(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/pages/{page_id}/review-required"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"required":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes = axum::body::to_bytes(response.into_body(), 1_048_576)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["entity_id"], serde_json::Value::String(entity_id));
+}

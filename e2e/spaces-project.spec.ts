@@ -10,7 +10,7 @@ test("reads only current Space sources and opens notes through the shared editor
   await page.goto("/");
   await openPrimaryDestination(page, "Spaces");
   await page.getByTestId("space-row-project-wenlan").getByRole("button", { name: "Wenlan", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".space-dossier-archive,.space-dossier-entities,.space-dossier-review")).toHaveCount(0);
   expect(controller.calls().filter(call => ["list_memories_cmd", "list_entities_cmd"].includes(call.command) && JSON.stringify(call.args).includes('"Wenlan"'))).toEqual([]);
   await page.getByRole("tab", { name: "Sources" }).click();
@@ -22,14 +22,14 @@ test("reads only current Space sources and opens notes through the shared editor
   await expect(page.getByRole("complementary", { name: "Writing experience observations" })).toHaveCount(0);
   await openPrimaryDestination(page, "Spaces");
   await page.getByTestId("space-row-project-reading").getByRole("button", { name: "讀書會", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: "Sources" }).click();
   await expect(page.getByText("Writing experience observations")).toHaveCount(0);
   await page.getByText("讀書會摘錄", { exact: true }).click();
   await expect(page.getByText("這份文件只屬於讀書會，用來驗證來源讀取不會跨越空間。")).toBeVisible();
   expect(controller.calls().filter(call => call.command === "get_chunks").at(-1)?.args).toEqual({ source: "file", sourceId: "design.md", space: "讀書會" });
   await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
   // New notes inherit their Space without an extra creation form.
   await expect(page.getByRole("region", { name: "New note", exact: true }).getByRole("combobox")).toHaveCount(0);
@@ -56,7 +56,7 @@ test("source preview Escape returns focus to the activating row and tab switch d
   await expect(row).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("complementary", { name: "Writing experience observations" })).toBeVisible();
-  await page.getByRole("tab", { name: "Pages" }).click();
+  await page.getByRole("tab", { name: "Notes" }).click();
   await expect(page.getByRole("complementary", { name: "Writing experience observations" })).toHaveCount(0);
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
@@ -72,7 +72,7 @@ test("Space source failures retry and remain distinct from an empty document lis
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.getByText("Writing experience observations")).toBeVisible();
   await page.getByRole("button", { name: "Actions for Wenlan" }).press("ArrowDown");
-  await expect(page.getByRole("menuitem", { name: "Review page changes" })).toBeFocused();
+  await expect(page.getByRole("menuitem", { name: "Review note changes" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("button", { name: "Actions for Wenlan" })).toBeFocused();
 });
@@ -85,7 +85,7 @@ test("project Notes, Sources and the source preview fit a narrow window", async 
   await openPrimaryDestination(page, "Spaces");
   await page.getByTestId("space-row-project-wenlan").getByRole("button", { name: "Wenlan", exact: true }).click();
   const overflow = () => page.evaluate(async () => { await document.fonts.ready; return document.documentElement.scrollWidth - innerWidth; });
-  await expect(page.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
   expect(await overflow()).toBeLessThanOrEqual(1);
   await page.getByRole("tab", { name: "Sources" }).click();
   await expect(page.getByText("Writing experience observations", { exact: true })).toBeVisible();

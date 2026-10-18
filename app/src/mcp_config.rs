@@ -282,12 +282,83 @@ pub(crate) fn client_config_path_for(
         "claude_code" => under(home, HOME, &[".claude.json"]),
         "gemini_cli" => under(home, HOME, &[".gemini", "settings.json"]),
         "codex_cli" => under(home, HOME, &[".codex", "config.toml"]),
+        // Muse Code documents one user settings file, `~/.config/muse/settings.json`,
+        // on every platform. It is NOT resolved through `config_dir`: on macOS
+        // and Windows that is `Library/Application Support` / `AppData`, which
+        // is not where Muse Code looks.
+        "muse_code" => under(home, HOME, &[".config", "muse", "settings.json"]),
         _ => ClientConfigPath::UnknownClient,
     }
 }
 
 const MCP_SERVER_KEY: &str = "wenlan";
 const LEGACY_MCP_SERVER_KEY: &str = "origin";
+
+/// How a client's JSON config file spells "my MCP servers". Chosen by
+/// `client_type` ([`JsonDialect::for_client`]) and consulted by every JSON
+/// reader and writer in this file, so detection, health, write, repair and
+/// removal can never disagree about which key a client's entry lives under: a
+/// writer that wrote `mcp_servers` while detection read `mcpServers` would
+/// report a freshly connected tool as "not set up" forever.
+///
+/// Codex CLI is not a dialect: it is TOML, and has its own `_toml` functions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonDialect {
+    /// `{"mcpServers": {"wenlan": {"command": .., "args": [..]}}}` — Cursor,
+    /// Claude Code, Claude Desktop and Gemini CLI.
+    McpServers,
+    /// Muse Code's `settings.json`: `{"schema_version": 1, "mcp_servers":
+    /// {"wenlan": {"transport": "stdio", "mode": "optional", "command": ..,
+    /// "args": [..]}}}`. Snake-case servers key; a mandatory `schema_version`
+    /// (a settings file without it fails to load as "malformed settings file");
+    /// and a per-server `mode` that defaults to `required`, which ABORTS the
+    /// whole Muse Code run when that server fails to start.
+    Muse,
+}
+
+impl JsonDialect {
+    fn for_client(client_type: &str) -> Self {
+        match client_type {
+            "muse_code" => JsonDialect::Muse,
+            _ => JsonDialect::McpServers,
+        }
+    }
+
+    /// The top-level key the client's servers live under.
+    fn servers_key(self) -> &'static str {
+        match self {
+            JsonDialect::McpServers => "mcpServers",
+            JsonDialect::Muse => "mcp_servers",
+        }
+    }
+
+    /// Add the fields this dialect needs beside `command`/`args` to the entry
+    /// about to be written. A no-op for `mcpServers` clients, whose entry stays
+    /// exactly `{command, args}`.
+    ///
+    /// Muse Code gets `mode: "optional"` deliberately: with the default
+    /// (`required`) a stopped or uninstalled Wenlan would stop the user's Muse
+    /// Code from running at all, and a memory layer must never be able to do
+    /// that to the tool it serves.
+    fn decorate_entry(self, entry: &mut serde_json::Value) {
+        if let (JsonDialect::Muse, Some(entry)) = (self, entry.as_object_mut()) {
+            entry.insert("transport".into(), serde_json::json!("stdio"));
+            entry.insert("mode".into(), serde_json::json!("optional"));
+        }
+    }
+
+    /// Add the root-level keys this dialect requires, WITHOUT touching a value
+    /// the user already has: `schema_version` is written only when the key is
+    /// absent, so a file already pinned to a newer schema is never downgraded.
+    /// `root` is known to be an object by the time this runs
+    /// ([`check_json_config_shape`]).
+    fn prepare_root(self, root: &mut serde_json::Value) {
+        if let (JsonDialect::Muse, Some(root)) = (self, root.as_object_mut()) {
+            root.entry("schema_version")
+                .or_insert_with(|| serde_json::json!(1));
+        }
+    }
+}
 
 /// Check if a JSON config string already has a Wenlan entry or legacy Origin
 /// entry. `Ok(false)` is a MEASURED no — the file parsed and holds no such
@@ -297,9 +368,20 @@ const LEGACY_MCP_SERVER_KEY: &str = "origin";
 /// A parsed file with no `mcpServers` key, or one whose `mcpServers` is not a
 /// container, is a genuine `Ok(false)`: it demonstrably holds no
 /// `mcpServers.wenlan` entry. Only the PARSE is a failed measurement.
+///
+/// The `mcpServers` spelling; [`has_configured_entry_in`] takes the dialect.
+#[cfg(test)]
 fn has_configured_entry(json_str: &str) -> Result<bool, String> {
+    has_configured_entry_in(JsonDialect::McpServers, json_str)
+}
+
+/// [`has_configured_entry`] under `dialect`'s servers key. A file that holds a
+/// Wenlan entry under the OTHER dialect's key is a measured `Ok(false)`: a
+/// Muse Code `settings.json` with `mcpServers.wenlan` in it is an entry Muse
+/// Code never reads.
+fn has_configured_entry_in(dialect: JsonDialect, json_str: &str) -> Result<bool, String> {
     let value = parse_json(json_str)?;
-    Ok(match value.get("mcpServers") {
+    Ok(match value.get(dialect.servers_key()) {
         Some(servers) => {
             servers.get(MCP_SERVER_KEY).is_some() || servers.get(LEGACY_MCP_SERVER_KEY).is_some()
         }
@@ -324,9 +406,17 @@ fn has_configured_entry_toml(toml_str: &str) -> Result<bool, String> {
 /// rename, where both entries launch a server against the same daemon. Distinct
 /// from `has_configured_entry`, which is an OR: the fix here removes only the
 /// stale `origin`, so detection has to know both are present, not just one.
+///
+/// The `mcpServers` spelling; [`has_both_raw_entries_in`] takes the dialect.
+#[cfg(test)]
 fn has_both_raw_entries(json_str: &str) -> Result<bool, String> {
+    has_both_raw_entries_in(JsonDialect::McpServers, json_str)
+}
+
+/// [`has_both_raw_entries`] under `dialect`'s servers key.
+fn has_both_raw_entries_in(dialect: JsonDialect, json_str: &str) -> Result<bool, String> {
     let value = parse_json(json_str)?;
-    Ok(match value.get("mcpServers") {
+    Ok(match value.get(dialect.servers_key()) {
         Some(servers) => {
             servers.get(MCP_SERVER_KEY).is_some() && servers.get(LEGACY_MCP_SERVER_KEY).is_some()
         }
@@ -739,6 +829,7 @@ fn client_cli_names(client_type: &str) -> &'static [&'static str] {
         "claude_desktop" => &["claude-desktop"],
         "gemini_cli" => &["gemini"],
         "codex_cli" => &["codex"],
+        "muse_code" => &["muse"],
         _ => &[],
     }
 }
@@ -827,22 +918,29 @@ fn program_reading(client_type: &str, home: Option<&Path>, probes: &DetectProbes
 }
 
 /// What a client leaves behind in its own home folder, beyond the one config
-/// file `detect_mcp_clients_from` already reads: Cursor's `~/.cursor` and
-/// Codex's `~/.codex` exist once the client has run, with or without a
-/// `mcp.json` / `config.toml`. Only the folder's existence is asked — never its
-/// contents (`config.toml` is the user's, and read only where it already was).
+/// file `detect_mcp_clients_from` already reads: Cursor's `~/.cursor`, Codex's
+/// `~/.codex` and Muse Code's `~/.config/muse` exist once the client has run,
+/// with or without a `mcp.json` / `config.toml` / `settings.json`. Only the
+/// folder's existence is asked — never its contents (`config.toml` is the
+/// user's, and read only where it already was).
 fn client_home_dir_reading(
     client_type: &str,
     home: Option<&Path>,
     exists: &dyn Fn(&Path) -> Reading,
 ) -> Reading {
-    let dir = match client_type {
-        "cursor" => ".cursor",
-        "codex_cli" => ".codex",
+    // Path components rather than one string, so `.config/muse` is joined with
+    // the platform's own separator.
+    let dir: &[&str] = match client_type {
+        "cursor" => &[".cursor"],
+        "codex_cli" => &[".codex"],
+        "muse_code" => &[".config", "muse"],
         _ => return Reading::No,
     };
     match home {
-        Some(home) => exists(&home.join(dir)),
+        Some(home) => exists(
+            &dir.iter()
+                .fold(home.to_path_buf(), |acc, part| acc.join(part)),
+        ),
         // The missing home is already reported through the config path and the
         // program search; adding it here would only repeat it.
         None => Reading::No,
@@ -866,15 +964,15 @@ fn install_state_of(program: &Reading, leftovers: &Reading) -> InstallState {
 }
 
 /// Whether a client config's contents hold a raw wenlan/origin `mcpServers`
-/// (or Codex's `[mcp_servers.*]`) entry — the file-based half of
-/// `already_configured`. `wire_state` needs the two halves kept apart: a raw
-/// entry and a missing plugin point at different fixes.
+/// (or Codex's `[mcp_servers.*]`, or Muse Code's `mcp_servers`) entry — the
+/// file-based half of `already_configured`. `wire_state` needs the two halves
+/// kept apart: a raw entry and a missing plugin point at different fixes.
 fn raw_entry_reading(client_type: &str, config: &ConfigRead) -> Reading {
     config.asks(|s| {
         if client_type == "codex_cli" {
             has_configured_entry_toml(s)
         } else {
-            has_configured_entry(s)
+            has_configured_entry_in(JsonDialect::for_client(client_type), s)
         }
     })
 }
@@ -884,7 +982,7 @@ fn raw_entry_reading(client_type: &str, config: &ConfigRead) -> Reading {
 /// `raw_entry_reading`'s TOML/JSON split, sharing
 /// `has_both_raw_entries`/`has_both_raw_entries_toml` so detection and the
 /// `remove_legacy_origin_entry` fix stay symmetric. This is the one signal a
-/// no-plugin client (cursor, gemini_cli) needs: those can never trip the
+/// no-plugin client (cursor, gemini_cli, muse_code) needs: those can never trip the
 /// plugin+raw double-registration path in `wire_state`, so without it their
 /// raw+raw duplicate is invisible.
 fn raw_duplicate_reading(client_type: &str, config: &ConfigRead) -> Reading {
@@ -892,7 +990,7 @@ fn raw_duplicate_reading(client_type: &str, config: &ConfigRead) -> Reading {
         if client_type == "codex_cli" {
             has_both_raw_entries_toml(s)
         } else {
-            has_both_raw_entries(s)
+            has_both_raw_entries_in(JsonDialect::for_client(client_type), s)
         }
     })
 }
@@ -911,8 +1009,8 @@ pub(crate) fn client_config_has_both_raw_entries(client_type: &str, config_path:
 }
 
 /// Whether `client_type`'s Wenlan plugin is enabled — the plugin half of
-/// `already_configured` for the three clients that support one. `cursor` and
-/// `gemini_cli` have no plugin path, so they are a MEASURED `No` here (and
+/// `already_configured` for the three clients that support one. `cursor`,
+/// `gemini_cli` and `muse_code` have no plugin path, so they are a MEASURED `No` here (and
 /// route to `"config"` in `wire_state`, never `"plugin"`): there is no plugin
 /// surface to fail to read.
 fn client_plugin_enabled_for(
@@ -1169,11 +1267,13 @@ fn entry_health_reading(
             Ok(value) => value,
             Err(error) => return EntryHealth::Unreadable { error },
         };
-        match value.get("mcpServers").and_then(|servers| {
-            servers
-                .get(MCP_SERVER_KEY)
-                .or(servers.get(LEGACY_MCP_SERVER_KEY))
-        }) {
+        match value
+            .get(JsonDialect::for_client(client_type).servers_key())
+            .and_then(|servers| {
+                servers
+                    .get(MCP_SERVER_KEY)
+                    .or(servers.get(LEGACY_MCP_SERVER_KEY))
+            }) {
             Some(entry) => entry_health_of(entry_spec_json(entry), probes),
             None => EntryHealth::NoEntry,
         }
@@ -1241,6 +1341,7 @@ pub(crate) fn detect_mcp_clients_with(
         ("Claude Desktop", "claude_desktop"),
         ("Gemini CLI", "gemini_cli"),
         ("Codex CLI", "codex_cli"),
+        ("Muse Code", "muse_code"),
     ];
 
     clients
@@ -2037,6 +2138,7 @@ fn json_type_name(value: &serde_json::Value) -> &'static str {
 fn check_json_config_shape(
     config_path: &std::path::Path,
     root: &serde_json::Value,
+    dialect: JsonDialect,
 ) -> Result<(), AppError> {
     let unchanged = "Nothing was written — your existing MCP configuration is unchanged.";
     if !root.is_object() {
@@ -2047,13 +2149,14 @@ fn check_json_config_shape(
             json_type_name(root)
         )));
     }
-    match root.get("mcpServers") {
+    let key = dialect.servers_key();
+    match root.get(key) {
         // Absent, or present-and-null: both are places a fresh `mcpServers`
         // object can be put without destroying anything.
         None | Some(serde_json::Value::Null) => Ok(()),
         Some(servers) if servers.is_object() => Ok(()),
         Some(servers) => Err(AppError::Generic(format!(
-            "Unexpected shape in {}: `mcpServers` is {}, but it has to be an object for Wenlan to \
+            "Unexpected shape in {}: `{key}` is {}, but it has to be an object for Wenlan to \
              add its entry to it. {unchanged}",
             config_path.display(),
             json_type_name(servers)
@@ -2124,6 +2227,7 @@ pub fn agent_name_for_client(client_type: &str) -> Option<&'static str> {
         "claude_desktop" => Some("claude-desktop"),
         "cursor" => Some("cursor"),
         "gemini_cli" => Some("gemini-cli"),
+        "muse_code" => Some("muse-code"),
         _ => None,
     }
 }
@@ -2212,10 +2316,27 @@ pub fn write_wenlan_entry(
     config_path: &std::path::Path,
     client_type: &str,
 ) -> Result<Vec<UndeterminedInput>, AppError> {
-    write_wenlan_entry_with(
+    write_wenlan_entry_in(
         config_path,
         client_type == "claude_code",
+        JsonDialect::for_client(client_type),
         with_agent_name(wenlan_mcp_decision().0, agent_name_for_client(client_type)),
+    )
+}
+
+/// [`write_wenlan_entry_in`] in the `mcpServers` dialect — the body most
+/// writer tests stage a decision through.
+#[cfg(test)]
+pub(crate) fn write_wenlan_entry_with(
+    config_path: &std::path::Path,
+    is_claude_code: bool,
+    decision: McpEntryDecision,
+) -> Result<Vec<UndeterminedInput>, AppError> {
+    write_wenlan_entry_in(
+        config_path,
+        is_claude_code,
+        JsonDialect::McpServers,
+        decision,
     )
 }
 
@@ -2225,9 +2346,10 @@ pub fn write_wenlan_entry(
 /// every platform a test runs on — Windows answers `NotFound` for several
 /// shapes Unix answers `ENOTDIR` for — and the branch under test is this
 /// function's, not the OS's.
-pub(crate) fn write_wenlan_entry_with(
+fn write_wenlan_entry_in(
     config_path: &std::path::Path,
     is_claude_code: bool,
+    dialect: JsonDialect,
     decision: McpEntryDecision,
 ) -> Result<Vec<UndeterminedInput>, AppError> {
     let (entry, undetermined) = entry_to_write(decision)?;
@@ -2241,7 +2363,7 @@ pub(crate) fn write_wenlan_entry_with(
             let parsed = serde_json::from_str::<serde_json::Value>(contents).map_err(|e| {
                 AppError::Generic(format!("Invalid JSON in {}: {}", config_path.display(), e))
             })?;
-            check_json_config_shape(config_path, &parsed)?;
+            check_json_config_shape(config_path, &parsed, dialect)?;
             parsed
         }
         None if is_claude_code => {
@@ -2254,17 +2376,22 @@ pub(crate) fn write_wenlan_entry_with(
         None => serde_json::json!({}),
     };
 
-    // Ensure `mcpServers` is an OBJECT, not merely present — `check_json_config_shape`
-    // has already ruled out every shape but object/null/absent, and a present
-    // `null` still has to be replaced before it can be indexed.
-    if !root.get("mcpServers").is_some_and(|v| v.is_object()) {
-        root["mcpServers"] = serde_json::json!({});
+    // Ensure the servers key (`mcpServers`, or `mcp_servers` for Muse Code) is
+    // an OBJECT, not merely present — `check_json_config_shape` has already
+    // ruled out every shape but object/null/absent, and a present `null` still
+    // has to be replaced before it can be indexed.
+    let servers_key = dialect.servers_key();
+    if !root.get(servers_key).is_some_and(|v| v.is_object()) {
+        root[servers_key] = serde_json::json!({});
     }
-    root["mcpServers"][MCP_SERVER_KEY] =
+    let mut entry_value =
         serde_json::to_value(entry).map_err(|e| AppError::Generic(e.to_string()))?;
-    if let Some(servers) = root["mcpServers"].as_object_mut() {
+    dialect.decorate_entry(&mut entry_value);
+    root[servers_key][MCP_SERVER_KEY] = entry_value;
+    if let Some(servers) = root[servers_key].as_object_mut() {
         servers.remove(LEGACY_MCP_SERVER_KEY);
     }
+    dialect.prepare_root(&mut root);
 
     // Write back with pretty formatting
     let formatted =
@@ -2366,12 +2493,14 @@ pub(crate) fn write_wenlan_entry_toml_with(
 }
 
 /// Shared body of the JSON removal verbs below: read, parse, remove every key
-/// in `keys` from `mcpServers`, then — only once a removal is certain — back
+/// in `keys` from `dialect`'s servers key (`mcpServers`; `mcp_servers` for Muse
+/// Code), then — only once a removal is certain — back
 /// the file up before writing it back, so a no-op leaves no stray `.bak`.
 /// `not_found` is the caller's nothing-was-removed message, which the UI
 /// surfaces verbatim. Every sibling server and unrelated key survives.
 fn remove_json_keys(
     config_path: &std::path::Path,
+    dialect: JsonDialect,
     keys: &[&str],
     not_found: &str,
 ) -> Result<(), AppError> {
@@ -2381,7 +2510,7 @@ fn remove_json_keys(
     })?;
 
     let removed = root
-        .get_mut("mcpServers")
+        .get_mut(dialect.servers_key())
         .and_then(|servers| servers.as_object_mut())
         .map(|servers| {
             // Deliberately not `any`/`fold`: every key must be removed, so
@@ -2456,6 +2585,22 @@ fn remove_toml_keys(
 pub fn remove_wenlan_entry(config_path: &std::path::Path) -> Result<(), AppError> {
     remove_json_keys(
         config_path,
+        JsonDialect::McpServers,
+        &[MCP_SERVER_KEY, LEGACY_MCP_SERVER_KEY],
+        "No Wenlan MCP entry found to remove",
+    )
+}
+
+/// [`remove_wenlan_entry`] for `client_type`'s own JSON dialect: Muse Code's
+/// entry lives under `mcp_servers`, so removing it from `mcpServers` would
+/// report "nothing to remove" about a file that holds the entry.
+pub fn remove_wenlan_entry_for(
+    config_path: &std::path::Path,
+    client_type: &str,
+) -> Result<(), AppError> {
+    remove_json_keys(
+        config_path,
+        JsonDialect::for_client(client_type),
         &[MCP_SERVER_KEY, LEGACY_MCP_SERVER_KEY],
         "No Wenlan MCP entry found to remove",
     )
@@ -2483,6 +2628,21 @@ pub fn remove_wenlan_entry_toml(config_path: &std::path::Path) -> Result<(), App
 pub fn remove_legacy_origin_entry(config_path: &std::path::Path) -> Result<(), AppError> {
     remove_json_keys(
         config_path,
+        JsonDialect::McpServers,
+        &[LEGACY_MCP_SERVER_KEY],
+        "No legacy origin MCP entry found to remove",
+    )
+}
+
+/// [`remove_legacy_origin_entry`] for `client_type`'s own JSON dialect. Same
+/// reason as [`remove_wenlan_entry_for`].
+pub fn remove_legacy_origin_entry_for(
+    config_path: &std::path::Path,
+    client_type: &str,
+) -> Result<(), AppError> {
+    remove_json_keys(
+        config_path,
+        JsonDialect::for_client(client_type),
         &[LEGACY_MCP_SERVER_KEY],
         "No legacy origin MCP entry found to remove",
     )
@@ -2567,6 +2727,7 @@ mod tests {
             ("claude_code", &[".claude.json"]),
             ("gemini_cli", &[".gemini", "settings.json"]),
             ("codex_cli", &[".codex", "config.toml"]),
+            ("muse_code", &[".config", "muse", "settings.json"]),
         ] {
             let path = client_config_path(client_type).unwrap();
             let expected = tail.iter().fold(PathBuf::new(), |acc, part| acc.join(part));
@@ -4145,7 +4306,13 @@ mod tests {
     #[test]
     fn a_home_that_could_not_be_determined_is_not_a_missing_client() {
         let config_dir = PathBuf::from("/tmp/fixture-config");
-        for client_type in ["cursor", "claude_code", "gemini_cli", "codex_cli"] {
+        for client_type in [
+            "cursor",
+            "claude_code",
+            "gemini_cli",
+            "codex_cli",
+            "muse_code",
+        ] {
             match client_config_path_for(client_type, None, Some(&config_dir)) {
                 ClientConfigPath::Undetermined(why) => assert!(
                     why.contains("home directory"),
@@ -4170,7 +4337,7 @@ mod tests {
         let clients = detect_mcp_clients_from(None, None, |_| Reading::No);
         assert_eq!(
             clients.len(),
-            5,
+            6,
             "a client whose path could not be built must still be a row that says so"
         );
         for client in &clients {
@@ -4333,6 +4500,7 @@ mod tests {
             "claude_desktop",
             "gemini_cli",
             "codex_cli",
+            "muse_code",
         ] {
             assert!(types.contains(&expected.to_string()), "missing {expected}");
         }
@@ -6254,5 +6422,450 @@ args = ["-y", "wenlan-mcp"]
             serde_json::json!({"kind": "no_entry"})
         );
         assert_eq!(value["detected"], serde_json::json!({"kind": "no"}));
+    }
+
+    // ── Muse Code: `mcp_servers` + `schema_version` + `mode: optional` ───
+
+    /// The wenlan entry a Muse Code write is expected to produce for `command`
+    /// and a named client: the shared `{command, args}` plus the two fields the
+    /// Muse dialect adds.
+    fn muse_entry(command: &str, args: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "transport": "stdio",
+            "mode": "optional",
+            "command": command,
+            "args": args,
+        })
+    }
+
+    /// A decision that writes `command` for Muse Code, named the way
+    /// `write_wenlan_entry` names it.
+    fn muse_write() -> McpEntryDecision {
+        with_agent_name(staged_write(), agent_name_for_client("muse_code"))
+    }
+
+    fn read_json(path: &Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn muse_code_dialect_is_chosen_by_client_type_alone() {
+        assert_eq!(JsonDialect::for_client("muse_code"), JsonDialect::Muse);
+        assert_eq!(JsonDialect::Muse.servers_key(), "mcp_servers");
+        for client_type in ["cursor", "claude_code", "claude_desktop", "gemini_cli"] {
+            assert_eq!(
+                JsonDialect::for_client(client_type),
+                JsonDialect::McpServers,
+                "{client_type}"
+            );
+        }
+        assert_eq!(JsonDialect::McpServers.servers_key(), "mcpServers");
+        assert_eq!(agent_name_for_client("muse_code"), Some("muse-code"));
+    }
+
+    /// The other dialects write exactly `{command, args}` and no root keys: the
+    /// Muse extras must not leak into Cursor's or Gemini CLI's files.
+    #[test]
+    fn mcp_servers_dialect_adds_nothing_beside_command_and_args() {
+        let mut entry = serde_json::json!({"command": "c", "args": []});
+        JsonDialect::McpServers.decorate_entry(&mut entry);
+        assert_eq!(entry, serde_json::json!({"command": "c", "args": []}));
+        let mut root = serde_json::json!({});
+        JsonDialect::McpServers.prepare_root(&mut root);
+        assert_eq!(root, serde_json::json!({}));
+    }
+
+    #[test]
+    fn muse_code_config_path_is_the_documented_settings_file() {
+        let home = PathBuf::from("/fixture/home");
+        // `config_dir` is deliberately a different place: Muse Code's file is
+        // under the home directory on every platform.
+        let config_dir = PathBuf::from("/fixture/Library/Application Support");
+        assert_eq!(
+            client_config_path_for("muse_code", Some(&home), Some(&config_dir)),
+            ClientConfigPath::Known(home.join(".config").join("muse").join("settings.json"))
+        );
+        assert!(matches!(
+            client_config_path_for("muse_code", None, Some(&config_dir)),
+            ClientConfigPath::Undetermined(_)
+        ));
+    }
+
+    /// An absent file is created with the three things Muse Code needs to load
+    /// it: the schema version, the snake_case servers key, and a non-fatal
+    /// server. Through the real entry point, so the agent name is Muse's.
+    #[test]
+    #[serial_test::serial]
+    fn muse_code_write_creates_a_loadable_settings_file() {
+        let _env = EnvGuard::capture(&[MCP_RESOLVER_HOME_ENV, "WENLAN_MCP_DEV_BIN"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let installed = install_wenlan_mcp_into(tmp.path());
+        std::env::remove_var("WENLAN_MCP_DEV_BIN");
+        std::env::set_var(MCP_RESOLVER_HOME_ENV, tmp.path());
+
+        let config_path = tmp
+            .path()
+            .join(".config")
+            .join("muse")
+            .join("settings.json");
+        assert!(!config_path.parent().unwrap().exists(), "control");
+        write_wenlan_entry(&config_path, "muse_code").unwrap();
+
+        let command = installed.to_str().unwrap();
+        let written = read_json(&config_path);
+        assert_eq!(
+            written,
+            serde_json::json!({
+                "schema_version": 1,
+                "mcp_servers": {
+                    "wenlan": muse_entry(command, &["--agent-name", "muse-code"]),
+                },
+            })
+        );
+        // Not under the key every other client uses, which Muse Code ignores.
+        assert!(written.get("mcpServers").is_none());
+        // No existing file, so no backup of one.
+        assert!(!config_path.with_extension("json.bak").exists());
+    }
+
+    #[test]
+    fn muse_code_write_preserves_siblings_unrelated_keys_and_the_existing_schema_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        let original = serde_json::json!({
+            "schema_version": 7,
+            "theme": "dark",
+            "mcp_servers": {
+                "other": {"transport": "stdio", "command": "other-cmd", "mode": "required"},
+            },
+            // A Cursor-style key Muse Code does not read must not be touched.
+            "mcpServers": {"cursor-only": {"command": "x"}},
+        });
+        std::fs::write(&config_path, original.to_string()).unwrap();
+
+        write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write()).unwrap();
+
+        let written = read_json(&config_path);
+        assert_eq!(
+            written["schema_version"], 7,
+            "an existing version is never overwritten"
+        );
+        assert_eq!(written["theme"], "dark");
+        assert_eq!(
+            written["mcp_servers"]["other"],
+            original["mcp_servers"]["other"]
+        );
+        assert_eq!(written["mcpServers"], original["mcpServers"]);
+        assert_eq!(
+            written["mcp_servers"]["wenlan"],
+            muse_entry("/opt/wenlan/bin/wenlan-mcp", &["--agent-name", "muse-code"])
+        );
+        // The pre-write bytes are kept.
+        assert_eq!(read_json(&config_path.with_extension("json.bak")), original);
+    }
+
+    /// A settings file that exists but predates `schema_version` is the one a
+    /// Muse Code refuses as "malformed settings file"; writing the entry adds
+    /// the key so the file loads. `mcp_servers` is created when absent.
+    #[test]
+    fn muse_code_write_adds_schema_version_only_when_it_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        std::fs::write(&config_path, r#"{"theme": "dark"}"#).unwrap();
+        write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write()).unwrap();
+        let written = read_json(&config_path);
+        assert_eq!(written["schema_version"], 1);
+        assert_eq!(written["theme"], "dark");
+        assert!(written["mcp_servers"]["wenlan"].is_object());
+
+        // `0` is a value somebody put there: still not ours to replace.
+        std::fs::write(&config_path, r#"{"schema_version": 0}"#).unwrap();
+        write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write()).unwrap();
+        assert_eq!(read_json(&config_path)["schema_version"], 0);
+    }
+
+    #[test]
+    fn muse_code_write_replaces_the_legacy_origin_entry_and_refreshes_a_stale_wenlan_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        std::fs::write(
+            &config_path,
+            serde_json::json!({
+                "schema_version": 1,
+                "mcp_servers": {
+                    "origin": {"transport": "stdio", "command": "/gone/origin-mcp"},
+                    "wenlan": {"transport": "stdio", "mode": "required", "command": "/gone/wenlan-mcp"},
+                    "other": {"transport": "stdio", "command": "x"},
+                },
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write()).unwrap();
+
+        let contents = std::fs::read_to_string(&config_path).unwrap();
+        let written = read_json(&config_path);
+        assert!(written["mcp_servers"]["origin"].is_null(), "{contents}");
+        assert_eq!(written["mcp_servers"]["other"]["command"], "x");
+        assert_eq!(
+            written["mcp_servers"]["wenlan"],
+            muse_entry("/opt/wenlan/bin/wenlan-mcp", &["--agent-name", "muse-code"]),
+            "a repair must also reset a `required` mode back to `optional`"
+        );
+        assert!(!parsed(has_both_raw_entries_in(
+            JsonDialect::Muse,
+            &contents
+        )));
+    }
+
+    /// The shape guard names the key the file actually uses, and refuses before
+    /// anything is backed up or written.
+    #[test]
+    fn muse_code_write_refuses_a_mcp_servers_that_is_not_an_object() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        let original = r#"{"schema_version": 1, "mcp_servers": []}"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let error = write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write())
+            .expect_err("a list cannot hold a keyed entry")
+            .to_string();
+        assert!(error.contains("`mcp_servers`"), "{error}");
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), original);
+        assert!(!config_path.with_extension("json.bak").exists());
+
+        // And a Cursor-style `mcpServers` list is not Muse Code's problem.
+        std::fs::write(&config_path, r#"{"mcpServers": []}"#).unwrap();
+        write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write()).unwrap();
+    }
+
+    #[test]
+    fn muse_code_detection_reads_mcp_servers_and_only_mcp_servers() {
+        let muse = r#"{"schema_version": 1, "mcp_servers": {"wenlan": {"command": "c"}}}"#;
+        let legacy = r#"{"schema_version": 1, "mcp_servers": {"origin": {"command": "c"}}}"#;
+        let both = r#"{"mcp_servers": {"wenlan": {}, "origin": {}}}"#;
+        let cursor_style = r#"{"schema_version": 1, "mcpServers": {"wenlan": {"command": "c"}}}"#;
+        let other = r#"{"schema_version": 1, "mcp_servers": {"other": {"command": "c"}}}"#;
+
+        let configured =
+            |body: &str| raw_entry_reading("muse_code", &ConfigRead::Contents(body.into()));
+        assert!(yes(configured(muse)));
+        assert!(yes(configured(legacy)));
+        assert!(!yes(configured(other)));
+        assert!(!yes(configured("{}")));
+        assert!(
+            !yes(configured(cursor_style)),
+            "an `mcpServers` entry is one Muse Code never reads"
+        );
+        // …and the reverse: a Muse-style file is not a Cursor entry.
+        assert!(!yes(raw_entry_reading(
+            "cursor",
+            &ConfigRead::Contents(muse.into())
+        )));
+
+        let duplicate =
+            |body: &str| raw_duplicate_reading("muse_code", &ConfigRead::Contents(body.into()));
+        assert!(yes(duplicate(both)));
+        assert!(!yes(duplicate(muse)));
+        assert!(!yes(duplicate(cursor_style)));
+
+        // An unparseable body is unmeasurable, not "not configured".
+        assert!(matches!(configured("not json"), Reading::Unreadable { .. }));
+        assert_eq!(configured_absent(), Reading::No);
+    }
+
+    fn configured_absent() -> Reading {
+        raw_entry_reading("muse_code", &ConfigRead::Absent)
+    }
+
+    /// Writer and detector agree: what `write_wenlan_entry_in` wrote is read
+    /// back as configured, and a removal clears it again.
+    #[test]
+    fn muse_code_round_trips_write_detect_and_remove() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        assert_eq!(
+            client_config_has_raw_entry("muse_code", &config_path),
+            Reading::No
+        );
+
+        write_wenlan_entry_in(&config_path, false, JsonDialect::Muse, muse_write()).unwrap();
+        assert!(yes(client_config_has_raw_entry("muse_code", &config_path)));
+        assert!(!yes(client_config_has_raw_entry("cursor", &config_path)));
+
+        remove_wenlan_entry_for(&config_path, "muse_code").unwrap();
+        assert!(!yes(client_config_has_raw_entry("muse_code", &config_path)));
+        let after = read_json(&config_path);
+        assert_eq!(
+            after["schema_version"], 1,
+            "removal leaves the rest of the file alone"
+        );
+        assert!(after["mcp_servers"].as_object().unwrap().is_empty());
+
+        // Nothing left to remove is the caller's message, not a silent success.
+        let error = remove_wenlan_entry_for(&config_path, "muse_code")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("No Wenlan MCP entry"), "{error}");
+    }
+
+    #[test]
+    fn muse_code_removal_keeps_siblings_and_legacy_removal_keeps_wenlan() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        let body = serde_json::json!({
+            "schema_version": 1,
+            "theme": "dark",
+            "mcp_servers": {
+                "wenlan": muse_entry("/w/wenlan-mcp", &["--agent-name", "muse-code"]),
+                "origin": {"transport": "stdio", "command": "/gone/origin-mcp"},
+                "other": {"transport": "stdio", "command": "x"},
+            },
+        });
+        std::fs::write(&config_path, body.to_string()).unwrap();
+        assert!(yes(client_config_has_both_raw_entries(
+            "muse_code",
+            &config_path
+        )));
+
+        remove_legacy_origin_entry_for(&config_path, "muse_code").unwrap();
+        let after = read_json(&config_path);
+        assert!(after["mcp_servers"]["origin"].is_null());
+        assert_eq!(
+            after["mcp_servers"]["wenlan"],
+            body["mcp_servers"]["wenlan"]
+        );
+        assert_eq!(after["mcp_servers"]["other"], body["mcp_servers"]["other"]);
+        assert!(!yes(client_config_has_both_raw_entries(
+            "muse_code",
+            &config_path
+        )));
+        assert!(
+            remove_legacy_origin_entry_for(&config_path, "muse_code").is_err(),
+            "a second removal has nothing to remove"
+        );
+
+        remove_wenlan_entry_for(&config_path, "muse_code").unwrap();
+        let after = read_json(&config_path);
+        assert!(after["mcp_servers"]["wenlan"].is_null());
+        assert_eq!(after["mcp_servers"]["other"], body["mcp_servers"]["other"]);
+        assert_eq!(after["theme"], "dark");
+        assert_eq!(after["schema_version"], 1);
+    }
+
+    /// Removal under the wrong dialect finds nothing, instead of deleting an
+    /// entry from a key the client does not use.
+    #[test]
+    fn removal_under_the_wrong_dialect_removes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("settings.json");
+        let original = r#"{"schema_version": 1, "mcp_servers": {"wenlan": {"command": "c"}}}"#;
+        std::fs::write(&config_path, original).unwrap();
+        assert!(remove_wenlan_entry(&config_path).is_err());
+        assert!(remove_legacy_origin_entry(&config_path).is_err());
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), original);
+        assert!(!config_path.with_extension("json.bak").exists());
+    }
+
+    #[test]
+    fn muse_code_entry_health_reads_the_mcp_servers_entry() {
+        let healthy = |body: &str, names: &[&str]| {
+            let which = resolves(names);
+            entry_health_reading(
+                "muse_code",
+                &ConfigRead::Contents(body.to_string()),
+                &health_probes(HostKind::MacOs, &which, &is_a_file),
+            )
+        };
+        let entry = |command: &str| {
+            serde_json::json!({
+                "schema_version": 1,
+                "mcp_servers": {"wenlan": muse_entry(command, &["--agent-name", "muse-code"])},
+            })
+            .to_string()
+        };
+
+        assert_eq!(
+            healthy(&entry("/opt/wenlan/bin/wenlan-mcp"), &[]),
+            EntryHealth::Healthy
+        );
+        assert_eq!(
+            healthy(&entry("wenlan-mcp"), &["wenlan-mcp"]),
+            EntryHealth::Healthy
+        );
+        assert_repair(
+            healthy(&entry("wenlan-mcp"), &[]),
+            RepairReason::CommandNotFound,
+        );
+        let no_command =
+            r#"{"schema_version": 1, "mcp_servers": {"wenlan": {"transport": "stdio"}}}"#;
+        assert_repair(healthy(no_command, &[]), RepairReason::CommandMissing);
+
+        // An `mcpServers` entry is invisible to Muse Code, so it is no entry.
+        let cursor_style =
+            r#"{"mcpServers": {"wenlan": {"command": "/opt/wenlan/bin/wenlan-mcp"}}}"#;
+        assert_eq!(healthy(cursor_style, &[]), EntryHealth::NoEntry);
+        assert_eq!(healthy("{}", &[]), EntryHealth::NoEntry);
+        assert!(matches!(
+            healthy("not json", &[]),
+            EntryHealth::Unreadable { .. }
+        ));
+    }
+
+    /// The `muse` CLI and the `~/.config/muse` folder are the two traces; the
+    /// settings file is a third, config-only one.
+    #[test]
+    fn muse_code_is_found_by_its_cli_and_remembered_by_its_home_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+
+        let machine = Machine::new(HostKind::Linux);
+        assert_eq!(
+            machine.install_state(home, "muse_code"),
+            InstallState::NotFound,
+            "control: an empty machine has no Muse Code"
+        );
+
+        let mut machine = Machine::new(HostKind::Linux);
+        machine.on_path = vec!["muse"];
+        let clients = machine.detect(home);
+        assert_eq!(
+            row(&clients, "muse_code").install_state,
+            InstallState::Installed
+        );
+        assert_eq!(row(&clients, "muse_code").detected, Reading::Yes);
+        assert_eq!(row(&clients, "muse_code").name, "Muse Code");
+
+        let mut machine = Machine::new(HostKind::MacOs);
+        machine.existing = vec![home.join(".config").join("muse")];
+        let clients = machine.detect(home);
+        assert_eq!(
+            row(&clients, "muse_code").install_state,
+            InstallState::ConfigOnly
+        );
+        assert_eq!(row(&clients, "muse_code").detected, Reading::Yes);
+
+        // The settings file alone is a leftover too.
+        let settings = home.join(".config").join("muse").join("settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        std::fs::write(
+            &settings,
+            r#"{"schema_version": 1, "mcp_servers": {"wenlan": {"command": "c"}}}"#,
+        )
+        .unwrap();
+        let clients = Machine::new(HostKind::MacOs).detect(home);
+        let muse = row(&clients, "muse_code");
+        assert_eq!(muse.install_state, InstallState::ConfigOnly);
+        assert_eq!(muse.config_path.as_deref(), settings.to_str());
+        assert_eq!(muse.already_configured, Reading::Yes);
+        assert_eq!(muse.has_raw_entry, Reading::Yes);
+        assert_eq!(
+            muse.has_plugin,
+            Reading::No,
+            "Muse Code has no plugin route"
+        );
+        // Not a neighbour's row: nothing else claims Muse's settings file.
+        assert_eq!(row(&clients, "gemini_cli").has_raw_entry, Reading::No);
     }
 }

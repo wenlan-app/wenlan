@@ -5,7 +5,7 @@ description: >
   when the user states a preference, makes a decision, corrects you, or
   shares a durable fact. Invoked as `/capture <content>`.
 argument-hint: "<content>"
-allowed-tools: ["Bash", "mcp__wenlan__capture", "mcp__wenlan__recall", "mcp__wenlan__create_entity", "mcp__wenlan__create_relation", "mcp__wenlan__list_rejections", "mcp__wenlan__accept_revision", "mcp__wenlan__dismiss_revision"]
+allowed-tools: ["Bash", "mcp__wenlan__capture", "mcp__wenlan__recall", "mcp__wenlan__create_entity", "mcp__wenlan__create_relation", "mcp__wenlan__list_rejections"]
 user-invocable: true
 ---
 
@@ -140,40 +140,32 @@ If a capture the user expected is missing or the user explicitly asks why it
 was rejected, call `list_rejections` to diagnose the quality gate. Do not list
 rejections after successful ordinary captures.
 
-## Post-capture contradiction signal
+## Read the capture receipt
 
-After `capture` returns, check `response.triggered_revisions` and `response.auto_superseded`.
+The daemon does not resolve contradictions at capture time. The receipt
+carries three signals worth acting on; everything else is informational.
 
-### auto_superseded (no action needed)
+### `gated: true` (write staged for human review)
 
-If `auto_superseded` is non-empty, the daemon already resolved the contradiction. Surface it as informational:
+The result opens with `Staged <id> for review. Not live yet.` This happens only
+when the call carried `supersedes` and this agent's trust level is below full.
+The memory it would replace keeps answering searches. Tell the user in one line
+that the correction is waiting in the review queue (`/brief` shows the top
+three; `/curate revisions` walks the full queue). Do not accept or dismiss the
+staged revision from this skill: the gate exists because a person downgraded
+this agent, so the decision is theirs.
 
-```
-Note: auto-superseded mem_X. Wenlan replaced a prior protected memory because
-trust=high and similarity > 0.9. No action needed.
-```
+### `near_duplicate: <id> (<similarity>)`
 
-No accept/dismiss call required. The revision was applied automatically.
+The daemon stored the memory anyway and names the closest existing one. If
+the new capture restates that memory, capture again with
+`supersedes=<id>` so the pair collapses with history preserved, or leave both
+when they are genuinely distinct facts. Do not call `forget` on either without
+the user's say-so.
 
-### triggered_revisions (human review needed)
+### `Warnings:`
 
-If `triggered_revisions` is non-empty (and `auto_superseded` is empty), render an inline block to the user:
+Schema-validation notes on `structured_fields`. Fix the fields and capture
+again only when a warning says a field was dropped.
 
-```
-Stored mem_new.
-
-This capture topic-matches a protected memory now flagged for revision:
-  - mem_target_abc
-
-Action: accept (replace original content) | dismiss (drop the revision) | leave (decide later)
-```
-
-Inline verb map:
-
-- accept: `accept_revision(target_source_id="mem_target_abc")`
-- dismiss: `dismiss_revision(target_source_id="mem_target_abc")`
-- leave: no call; surfaces again in next `/brief`
-
-Both fields can technically be non-empty in a single response (multiple protected matches), but in practice only one fires per capture: `auto_superseded` fires when trust=full and similarity > 0.9, `triggered_revisions` fires otherwise.
-
-If neither field is non-empty, the capture stored cleanly with no conflicts.
+A receipt with none of these stored cleanly; report `Stored <id>` and move on.

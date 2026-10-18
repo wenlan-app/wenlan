@@ -116,21 +116,21 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     await expect(dossier.getByRole("heading", { level: 1, name: "Wenlan", exact: true })).toBeVisible();
     await expect(dossier.getByRole("textbox", { name: "Edit description" })).toHaveValue("Editorial memory system");
     await expect(dossier.locator(".space-dossier-metrics")).toHaveCount(0);
-    const recent = dossier.getByRole("region", { name: "Pages", exact: true });
+    const recent = dossier.getByRole("region", { name: "Notes", exact: true });
     await expect(recent.locator(".space-dossier-page-list > button")).toHaveCount(6);
     await expect(recent.getByRole("button").first()).toContainText("Fixture architecture");
     await expect(recent.locator(".space-dossier-page-summary")).toHaveCount(6);
     await expect(recent.locator(".space-dossier-page-meta, time")).toHaveCount(0);
     await expect(dossier.locator(".space-dossier-rail")).toHaveCount(0);
     await expect(dossier.locator(".space-dossier-disclosure,.space-dossier-archive,.space-dossier-entities,.space-dossier-review")).toHaveCount(0);
-    await expect(dossier.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
+    await expect(dossier.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
     await expect(dossier.getByRole("tab", { name: "Sources" })).toBeVisible();
     await dossier.getByRole("button", { name: "Actions for Wenlan" }).click();
-    await expect(dossier.getByRole("menuitem", { name: "Review page changes" })).toBeVisible();
+    await expect(dossier.getByRole("menuitem", { name: "Review note changes" })).toBeVisible();
     await page.keyboard.press("Escape");
     await page.locator("main").evaluate((node) => { node.scrollTop = 0; });
     await expect.poll(() => page.locator("main").evaluate((node) => node.scrollTop)).toBe(0);
-    const create = dossier.getByRole("button", { name: "New page", exact: true });
+    const create = dossier.getByRole("button", { name: "New note", exact: true });
     await expect(create).toBeVisible();
     const control = await create.evaluate((node) => ({
       fontSize: Number.parseFloat(getComputedStyle(node).fontSize),

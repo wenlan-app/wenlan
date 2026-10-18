@@ -39,6 +39,13 @@ pub struct Page {
     /// compiled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_blocked_reason: Option<String>,
+    /// Review lock: when true, every machine write (agent refresh or
+    /// pipeline) stages a revision card instead of landing, regardless of
+    /// `expected_version`. Human edits are never gated by it. Set and cleared
+    /// by `PUT /api/pages/{id}/review-required`; absent from the wire while
+    /// false so unlocked pages serialize byte for byte as before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub review_required: bool,
     /// True if a human has edited this page's content directly.
     pub user_edited: bool,
     /// Relevance score from search (0.0-1.0). Only populated by `search_pages`;
@@ -131,6 +138,10 @@ fn default_page_kind() -> String {
 
 fn default_review_status() -> String {
     "confirmed".to_string()
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero_f32(v: &f32) -> bool {

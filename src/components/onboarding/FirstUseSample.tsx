@@ -9,7 +9,6 @@ import {
   Check,
   Copy,
   FileText,
-  LinkSimple,
   Pause,
   Play,
   SkipForward,
@@ -25,15 +24,15 @@ import {
   type SampleSource,
   type SampleSourceType,
 } from "./firstUseSampleData";
-import { PageIcon } from "../memory/assets/PageIcon";
 import "./firstUseGuide.css";
 
 export interface FirstUseSampleProps {
-  onBackToGuide: () => void;
-  onBringData: () => void;
-  onConnect: (client: SampleClient) => void;
+  /** Header back button: returns to wherever the walkthrough was opened from. */
+  onBack: () => void;
   backLabel?: string;
-  headerAction?: ReactNode;
+  /** Closing action of the "Let AI use your knowledge" panel. */
+  onFinish: () => void;
+  finishLabel?: string;
 }
 
 type SamplePhase = 0 | 1 | 2 | 3;
@@ -44,9 +43,7 @@ const SAMPLE_PHASE_MS = 3000;
 
 type CopyKey = "recall" | "handoff" | "brief";
 
-type SampleDialogState =
-  | { kind: "source"; sourceId: string; citationId: string | null }
-  | { kind: "related" };
+type SampleDialogState = { kind: "source"; sourceId: string; citationId: string | null };
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -61,7 +58,6 @@ function prefersReducedMotion(): boolean {
 
 function SourceGlyph({ type }: { type: SampleSourceType }) {
   if (type === "memory") return <Brain aria-hidden="true" weight="regular" />;
-  if (type === "page") return <PageIcon />;
   return <FileText aria-hidden="true" weight="regular" />;
 }
 
@@ -161,15 +157,14 @@ function SampleDialog({
 }
 
 export function FirstUseSample({
-  onBackToGuide,
-  onBringData,
-  onConnect,
+  onBack,
   backLabel,
-  headerAction,
+  onFinish,
+  finishLabel,
 }: FirstUseSampleProps) {
   const { t, i18n } = useTranslation();
   const data = getSampleData(resolveSampleLocale(i18n.language));
-  const { sources, citations, page } = data;
+  const { sources, citations, page, ai } = data;
 
   const [phase, setPhase] = useState<SamplePhase>(0);
   const [playing, setPlaying] = useState<boolean>(() => !prefersReducedMotion());
@@ -269,8 +264,8 @@ export function FirstUseSample({
   const sourceById = (id: string): SampleSource | undefined =>
     sources.find((source) => source.id === id);
 
-  const keyPointFor = (source: SampleSource): string =>
-    citations.find((entry) => entry.sourceId === source.id)?.quote ?? source.excerpt;
+  const quotesFor = (source: SampleSource): string[] =>
+    citations.filter((entry) => entry.sourceId === source.id).map((entry) => entry.quote);
 
   const paragraphSources = (paragraph: SamplePageParagraph): SampleSource[] => {
     const seen = new Set<string>();
@@ -301,18 +296,22 @@ export function FirstUseSample({
     { id: "claude", label: t("firstUse.sample.clientClaude") },
   ];
 
+  // The page leads; the next two steps show where its lines came from (a chat
+  // decision, then a file), and the last shows an AI answering from it.
   const phaseNames = [
-    t("firstUse.sample.phaseImport"),
-    t("firstUse.sample.phaseExtract"),
-    t("firstUse.sample.phaseConnect"),
-    t("firstUse.sample.phaseForm"),
+    t("firstUse.sample.phasePage"),
+    t("firstUse.sample.phaseMemory"),
+    t("firstUse.sample.phaseFile"),
+    t("firstUse.sample.phaseAi"),
   ];
   const phaseBodies = [
-    t("firstUse.sample.phaseImportBody"),
-    t("firstUse.sample.phaseExtractBody"),
-    t("firstUse.sample.phaseConnectBody"),
-    t("firstUse.sample.phaseFormBody"),
+    t("firstUse.sample.phasePageBody"),
+    t("firstUse.sample.phaseMemoryBody"),
+    t("firstUse.sample.phaseFileBody"),
+    t("firstUse.sample.phaseAiBody"),
   ];
+  const focusType: SampleSourceType | null =
+    phase === 1 ? "memory" : phase === 2 ? "file" : null;
   const showPlay = !reducedMotion && !playing && phase < FINAL_PHASE;
 
   return (
@@ -328,15 +327,9 @@ export function FirstUseSample({
           if (trigger instanceof HTMLElement) dialogTrigger.current = trigger;
         }}
       >
-        <div className="fug-row">
-          <button type="button" className="fug-back" onClick={onBackToGuide}>
-            <ArrowLeft aria-hidden="true" weight="regular" />
-            {backLabel ?? t("firstUse.sample.back")}
-          </button>
-          <span className="fus-animation-label">{t("firstUse.sample.animationLabel")}</span>
-          {headerAction}
-        </div>
-
+        {/* The steps and the way out share one row, so the walkthrough starts at
+            the top of the window and its last steps fit without scrolling. */}
+        <div className="fus-top">
         <ol className="fus-phases" aria-label={t("firstUse.sample.animationLabel")}>
           {phaseNames.map((name, index) => {
             const id = index as SamplePhase;
@@ -360,8 +353,14 @@ export function FirstUseSample({
             );
           })}
         </ol>
-        <p className="fus-phase-body">{phaseBodies[phase]}</p>
+          <button type="button" className="fug-back fus-exit" onClick={onBack}>
+            <ArrowLeft aria-hidden="true" weight="regular" />
+            {backLabel ?? t("firstUse.sample.back")}
+          </button>
+        </div>
 
+        <div className="fus-step-row">
+        <p className="fus-phase-body">{phaseBodies[phase]}</p>
         <div className="fus-controls">
           {playing ? (
             <button
@@ -417,6 +416,7 @@ export function FirstUseSample({
             </button>
           ) : null}
         </div>
+        </div>
 
         {aiOpen ? (
           <section className="fus-use" aria-labelledby="fus-use-title">
@@ -426,12 +426,6 @@ export function FirstUseSample({
             </button>
             <h2 id="fus-use-title">{t("firstUse.sample.useTitle")}</h2>
             <p>{t("firstUse.sample.useBody")}</p>
-            <p className="fus-note">{t("firstUse.sample.connectHint")}</p>
-            <div className="fus-cta-row">
-              <button type="button" className="fug-button-primary" onClick={() => onConnect(client)}>
-                {t("firstUse.sample.connectCta")}
-              </button>
-            </div>
             <div className="fus-tabs" role="tablist" aria-label={t("firstUse.sample.useTitle")}>
               {clientTabs.map((tab) => (
                 <button
@@ -481,7 +475,7 @@ export function FirstUseSample({
                     <div>
                       <code>{handoffCommand}</code>
                       <span>
-                        {t("firstUse.sample.handoffLabel")}. {t("firstUse.sample.handoffHint")}
+                        <strong>{t("firstUse.sample.handoffLabel")}</strong> {t("firstUse.sample.handoffHint")}
                       </span>
                     </div>
                     <button
@@ -508,7 +502,7 @@ export function FirstUseSample({
                 ) : (
                   <div>
                     <span>
-                      {t("firstUse.sample.handoffLabel")}. {t("firstUse.sample.handoffReadOnlyNote")}
+                      <strong>{t("firstUse.sample.handoffLabel")}</strong> {t("firstUse.sample.handoffReadOnlyNote")}
                     </span>
                   </div>
                 )}
@@ -517,7 +511,7 @@ export function FirstUseSample({
                 <div>
                   <code>{commands.brief}</code>
                   <span>
-                    {t("firstUse.sample.briefLabel")}. {t("firstUse.sample.briefHint")}
+                    <strong>{t("firstUse.sample.briefLabel")}</strong> {t("firstUse.sample.briefHint")}
                   </span>
                 </div>
                 <button
@@ -544,176 +538,130 @@ export function FirstUseSample({
             </ul>
             <p className="fus-note">{t("firstUse.sample.notInLibrary")}</p>
             <div className="fus-cta-row">
-              <button type="button" className="fug-button-secondary" onClick={onBringData}>
-                {t("firstUse.sample.bringCta")}
+              <button type="button" className="fug-button-primary" onClick={onFinish}>
+                {finishLabel ?? t("firstUse.sample.finish")}
               </button>
             </div>
           </section>
         ) : (
-          <div className="fus-workbench">
-            <div className="fus-rack" aria-label={t("firstUse.sample.sourcesTitle")}>
-              <p className="fus-rack-heading">
-                {t("firstUse.sample.sourcesTitle")} · {sources.length}
-              </p>
-              {sources.map((source) => (
-                <button
-                  key={source.id}
-                  type="button"
-                  data-testid={`sample-source-${source.id}`}
-                  data-source-type={source.type}
-                  data-linked={phase >= 2}
-                  className="fus-rack-card"
-                  aria-haspopup="dialog"
-                  onClick={() =>
-                    openSource(
-                      source.id,
-                      citations.find((entry) => entry.sourceId === source.id)?.id ?? null,
-                    )
-                  }
-                >
-                  <span className="fus-source-icon" aria-hidden="true">
-                    <SourceGlyph type={source.type} />
-                  </span>
-                  <span className="fus-rack-copy">
-                    <span className="fus-source-kind">{source.kind}</span>
-                    <span className="fus-rack-title">{source.title}</span>
-                    {phase === 0 ? (
-                      <span className="fus-rack-excerpt">{source.excerpt}</span>
-                    ) : (
-                      <span className="fus-rack-point">
-                        <HighlightedLine
-                          line={keyPointFor(source)}
-                          quote={phase >= 1 ? keyPointFor(source) : ""}
-                        />
-                      </span>
-                    )}
-                    {phase >= 2 ? (
-                      <span className="fus-marker">
-                        <LinkSimple aria-hidden="true" weight="regular" />
-                        {source.kind}
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-              ))}
-            </div>
+          <div className="fus-stage" data-phase={phase}>
+            <article
+              className="fus-result-page"
+              aria-labelledby="fus-result-title"
+              data-focus={focusType ?? undefined}
+            >
+              <p className="fug-eyebrow">{t("firstUse.sample.pageEyebrow")}</p>
+              <h2 id="fus-result-title">{page.title}</h2>
+              <p className="fus-result-subtitle">{page.subtitle}</p>
+              <div className="fus-result-rule" aria-hidden="true" />
+              {page.paragraphs.map((paragraph) => {
+                const lit = focusType != null &&
+                  paragraphSources(paragraph).some((source) => source.type === focusType);
+                return (
+                  <p
+                    key={paragraph.text}
+                    className="fus-result-paragraph"
+                    data-lit={lit}
+                    data-dimmed={focusType != null && !lit}
+                  >
+                    {lit ? <mark>{paragraph.text}</mark> : paragraph.text}{" "}
+                    {paragraph.citationIds.map((id) => {
+                      const entry = citationById(id);
+                      const source = entry ? sourceById(entry.sourceId) : undefined;
+                      if (!entry || !source) return null;
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          data-testid={`sample-citation-${id}`}
+                          data-source-type={source.type}
+                          className="fus-citation"
+                          aria-haspopup="dialog"
+                          aria-label={source.title}
+                          onClick={() => openSource(source.id, id)}
+                        >
+                          <SourceGlyph type={source.type} />
+                          {source.kind}
+                        </button>
+                      );
+                    })}
+                  </p>
+                );
+              })}
+            </article>
 
-            <div className="fus-doc" data-phase={phase}>
-              {phase === 0 ? (
-                <p className="fus-forming" key="staging">
-                  {t("firstUse.sample.formingNote")}
-                </p>
-              ) : null}
-              {phase === 1 ? (
-                <div key="points">
-                  <p className="fus-doc-heading">{t("firstUse.sample.pointsTitle")}</p>
-                  <ul className="fus-extract-list">
-                    {sources.map((source) => (
-                      <li key={source.id} data-source-type={source.type}>
+            {phase < FINAL_PHASE ? (
+              <section className="fus-origins" aria-label={t("firstUse.sample.sourcesTitle")}>
+                <p className="fus-rack-heading">{t("firstUse.sample.sourcesTitle")}</p>
+                <div className="fus-origin-grid">
+                  {sources.map((source) => {
+                    const lit = focusType === source.type;
+                    return (
+                      <button
+                        key={source.id}
+                        type="button"
+                        data-testid={`sample-source-${source.id}`}
+                        data-source-type={source.type}
+                        data-lit={lit}
+                        data-dimmed={focusType != null && !lit}
+                        className="fus-rack-card"
+                        aria-haspopup="dialog"
+                        onClick={() =>
+                          openSource(
+                            source.id,
+                            citations.find((entry) => entry.sourceId === source.id)?.id ?? null,
+                          )
+                        }
+                      >
                         <span className="fus-source-icon" aria-hidden="true">
                           <SourceGlyph type={source.type} />
                         </span>
-                        <span>
-                          <HighlightedLine
-                            line={keyPointFor(source)}
-                            quote={keyPointFor(source)}
-                          />
+                        <span className="fus-rack-copy">
+                          <span className="fus-source-kind">{source.kind}</span>
+                          <span className="fus-rack-title">{source.title}</span>
+                          {quotesFor(source).map((quote) => (
+                            <span key={quote} className="fus-rack-point">
+                              {lit ? <mark>{quote}</mark> : quote}
+                            </span>
+                          ))}
                         </span>
-                      </li>
-                    ))}
-                  </ul>
+                      </button>
+                    );
+                  })}
                 </div>
-              ) : null}
-              {phase === 2 ? (
-                <ul className="fus-connect-list" key="connect">
-                  {page.paragraphs.map((paragraph) => (
-                    <li key={paragraph.text}>
-                      <p>{paragraph.text}</p>
-                      <div className="fus-connect-badges">
-                        {paragraphSources(paragraph).map((source) => (
-                          <button
-                            key={source.id}
-                            type="button"
-                            data-source-type={source.type}
-                            className="fus-marker"
-                            aria-haspopup="dialog"
-                            aria-label={source.title}
-                            onClick={() =>
-                              openSource(
-                                source.id,
-                                paragraph.citationIds
-                                  .map((id) => citationById(id))
-                                  .find((entry) => entry?.sourceId === source.id)?.id ?? null,
-                              )
-                            }
-                          >
-                            <SourceGlyph type={source.type} />
-                            {source.kind}
-                          </button>
-                        ))}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {phase === FINAL_PHASE ? (
-                <article className="fus-result-page" key="form" aria-labelledby="fus-result-title">
-                  <p className="fug-eyebrow">{t("firstUse.sample.pageEyebrow")}</p>
-                  <h2 id="fus-result-title">{page.title}</h2>
-                  <p className="fus-result-subtitle">{page.subtitle}</p>
-                  <div className="fus-result-rule" aria-hidden="true" />
-                  {page.paragraphs.map((paragraph) => (
-                    <p key={paragraph.text} className="fus-result-paragraph">
-                      {paragraph.text}{" "}
-                      {paragraph.citationIds.map((id) => {
-                        const entry = citationById(id);
-                        const source = entry ? sourceById(entry.sourceId) : undefined;
-                        if (!entry || !source) return null;
-                        return (
-                          <button
-                            key={id}
-                            type="button"
-                            data-testid={`sample-citation-${id}`}
-                            data-source-type={source.type}
-                            className="fus-citation"
-                            aria-haspopup="dialog"
-                            aria-label={source.title}
-                            onClick={() => openSource(source.id, id)}
-                          >
-                            <SourceGlyph type={source.type} />
-                            {source.kind}
-                          </button>
-                        );
-                      })}
-                    </p>
-                  ))}
-                  <div className="fus-related-card">
-                    <p className="fus-related-eyebrow">{t("firstUse.sample.relatedTitle")}</p>
-                    <p className="fus-related-title">{page.related.title}</p>
-                    <p className="fus-related-body">{page.related.description}</p>
-                    <button
-                      type="button"
-                      className="fus-link"
-                      aria-haspopup="dialog"
-                      onClick={() => setDialog({ kind: "related" })}
-                    >
-                      {t("firstUse.sample.openRelated")}
-                      <LinkSimple aria-hidden="true" weight="regular" />
-                    </button>
-                  </div>
-                  <div className="fus-cta-row">
-                    <button
-                      type="button"
-                      className="fug-button-primary"
-                      onClick={() => setAiOpen(true)}
-                    >
-                      {t("firstUse.sample.useWithAi")}
-                      <ArrowRight aria-hidden="true" weight="regular" />
-                    </button>
-                  </div>
-                </article>
-              ) : null}
-            </div>
+              </section>
+            ) : (
+              <section className="fus-chat" aria-labelledby="fus-chat-title">
+                <div className="fus-chat-heading">
+                  <p className="fus-rack-heading" id="fus-chat-title">
+                    {t("firstUse.sample.aiTitle")}
+                  </p>
+                  <button
+                    type="button"
+                    className="fug-button-secondary"
+                    onClick={() => setAiOpen(true)}
+                  >
+                    {t("firstUse.sample.useWithAi")}
+                    <ArrowRight aria-hidden="true" weight="regular" />
+                  </button>
+                </div>
+                <div className="fus-chat-turn" data-role="user">
+                  <span className="fus-chat-who">{t("firstUse.sample.aiYou")}</span>
+                  <p>{ai.question}</p>
+                </div>
+                <div className="fus-chat-turn" data-role="ai">
+                  <span className="fus-chat-who">{t("firstUse.sample.aiName")}</span>
+                  <p>{ai.answer}</p>
+                </div>
+                {/* Bridge from the sample to the user's own library. */}
+                <div className="fus-own">
+                  <p>{t("firstUse.sample.ownBody")}</p>
+                  <button type="button" className="fug-button-primary" onClick={onFinish}>
+                    {finishLabel ?? t("firstUse.sample.startOwn")}
+                  </button>
+                </div>
+              </section>
+            )}
           </div>
         )}
       </div>
@@ -736,9 +684,7 @@ export function FirstUseSample({
                       path: dialogSource.path,
                       line: dialogSource.quoteLine ?? 1,
                     })
-                  : dialogSource.type === "memory"
-                    ? t("firstUse.sample.memoryOrigin")
-                    : t("firstUse.sample.pageOrigin")}
+                  : t("firstUse.sample.memoryOrigin")}
               </p>
             </div>
             <button
@@ -775,35 +721,6 @@ export function FirstUseSample({
         </SampleDialog>
       ) : null}
 
-      {dialog?.kind === "related" ? (
-        <SampleDialog
-          labelId="fus-related-title"
-          onClose={closeDialog}
-          testId="sample-related-dialog"
-          restoreFocusTo={dialogTrigger.current}
-        >
-          <div className="fus-dialog-header">
-            <div>
-              <p className="fug-eyebrow">{t("firstUse.sample.relatedTitle")}</p>
-              <h2 id="fus-related-title">{page.related.title}</h2>
-            </div>
-            <button
-              type="button"
-              className="fus-icon-button"
-              onClick={closeDialog}
-              aria-label={t("firstUse.sample.close")}
-            >
-              <X aria-hidden="true" weight="regular" />
-            </button>
-          </div>
-          <p className="fus-related-body">{page.related.description}</p>
-          <p className="fus-related-body">{page.related.body}</p>
-          <button type="button" className="fus-link" onClick={closeDialog}>
-            <ArrowLeft aria-hidden="true" weight="regular" />
-            {t("firstUse.sample.backToPage")}
-          </button>
-        </SampleDialog>
-      ) : null}
     </>
   );
 }

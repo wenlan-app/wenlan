@@ -231,7 +231,7 @@ describe("Review decision contracts", () => {
   it.each([archive, merge])("blocks $action when sources fail, and supports a successful retry", async (item) => {
     vi.mocked(api.getPageSources).mockRejectedValue(new Error("offline"));
     const { resolve, user } = mount(item);
-    const button = screen.getByRole("button", { name: item.action === "page_merge" ? "Merge pages" : "Archive" });
+    const button = screen.getByRole("button", { name: item.action === "page_merge" ? "Merge notes" : "Archive" });
     expect(await screen.findByRole("alert")).toHaveTextContent("required information");
     expect(button).toBeDisabled(); await user.click(button); expect(resolve).not.toHaveBeenCalled();
     vi.mocked(api.getPageSources).mockResolvedValue([]);
@@ -259,7 +259,7 @@ describe("Review decision contracts", () => {
   it.each([archive, merge])("distinguishes a missing linked source from a fetch error for $action", async (item) => {
     vi.mocked(api.getPageSources).mockResolvedValue([{ source: { page_id: fixture.pages[0].id, memory_source_id: "deleted", linked_at: 0 }, memory: null }]);
     mount(item);
-    const button = screen.getByRole("button", { name: item.action === "page_merge" ? "Merge pages" : "Archive" });
+    const button = screen.getByRole("button", { name: item.action === "page_merge" ? "Merge notes" : "Archive" });
     await screen.findByText(/Some linked sources are unavailable/);
     expect(screen.queryByRole("button", { name: "Retry loading" })).toBeNull();
     if (item.action === "page_merge") expect(button).toBeDisabled();
@@ -335,7 +335,7 @@ describe("Review decision contracts", () => {
 
   it("respects allowed actions for dismiss as well as approve", async () => {
     const { resolve, user } = mount({ ...archive, payload: { action: "page_keep_or_archive", page_id: fixture.pages[0].id, source_count: 0, allowed_actions: ["accept"] } });
-    expect(screen.queryByRole("button", { name: "Keep page" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Keep note" })).toBeNull();
     await user.keyboard("d"); expect(resolve).not.toHaveBeenCalled();
   });
 
@@ -344,7 +344,7 @@ describe("Review decision contracts", () => {
     const { onOpenPage, onOpenMemory, user } = mount(archive);
     await user.click(await screen.findByRole("button", { name: /Fixture architecture/ }));
     expect(onOpenMemory).toHaveBeenCalledWith("memory-0");
-    await user.click(screen.getByRole("button", { name: "Open page" }));
+    await user.click(screen.getByRole("button", { name: "Open note" }));
     expect(onOpenPage).toHaveBeenCalledWith(fixture.pages[0].id);
   });
 });

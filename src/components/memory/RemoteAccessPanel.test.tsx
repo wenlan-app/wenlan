@@ -44,6 +44,14 @@ async function connectedPanel() {
   return view;
 }
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
+const TOGGLE = "Let web and phone AI apps search your library";
+/** The switch is a button only once its value is known; before that it is a status. */
+const findToggle = () => screen.findByRole("button", { name: TOGGLE });
+/** Flips Web access on while Spaces exist, which asks the one question. */
+async function openChooser() {
+  fireEvent.click(await findToggle());
+  return screen.findByRole("group", { name: "What can web apps search?" });
+}
 
 // jsdom accessible-name queries are slow on a busy machine; the first test of a
 // file also pays the cold start. 4s still fails ahead of the 5s test timeout.
@@ -69,19 +77,45 @@ afterEach(async () => {
 });
 
 describe("turning on", () => {
-  it("asks one question with two answers, nothing preselected, and the whole library is one click", async () => {
+  it("is one switch, off, with the relay and stay-on facts in one short line", async () => {
     panel();
-    const question = await screen.findByRole("group", { name: "What can web apps search?" });
-    const whole = within(question).getByRole("button", { name: "Share whole library" });
+    const toggle = await findToggle();
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Claude, ChatGPT and others reach it through wenlan-relay. Keep this computer on.")).toBeInTheDocument();
+    expect(screen.queryByText("Off")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Have a code?" })).toBeInTheDocument();
+  });
+
+  it("with Spaces, flipping it on asks one question and turns nothing on yet", async () => {
+    mocks.listSpaces.mockResolvedValue(twoSpaces);
+    panel();
+    const question = await openChooser();
+    expect(within(question).getByRole("button", { name: "Share whole library" })).toBeEnabled();
     expect(within(question).getByRole("button", { name: "Share one Space…" })).toHaveAttribute("aria-expanded", "false");
-    expect(question).toHaveTextContent("Whole library means every Space, plus everything not in a Space.");
+    expect(question).not.toHaveTextContent(/Whole library means|create a Space first/);
+    // Nothing is preselected: no Space picker, no choice made for the person.
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Turn on/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Off")).toBeInTheDocument();
-    await waitFor(() => expect(whole).toBeEnabled());
+    expect(screen.getByRole("button", { name: TOGGLE })).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.configureRemoteAccess).not.toHaveBeenCalled();
     expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
-    fireEvent.click(whole);
+  });
+
+  it("flipping it back off while the question shows just hides the question", async () => {
+    mocks.listSpaces.mockResolvedValue(twoSpaces);
+    panel();
+    await openChooser();
+    fireEvent.click(button(TOGGLE));
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: TOGGLE })).toHaveAttribute("aria-pressed", "false");
+    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
+  });
+
+  it("the whole library is one click once the question is open", async () => {
+    mocks.listSpaces.mockResolvedValue(twoSpaces);
+    panel();
+    const question = await openChooser();
+    fireEvent.click(within(question).getByRole("button", { name: "Share whole library" }));
     await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(true, "configured"));
     expect(mocks.configureRemoteAccess).toHaveBeenCalledWith({ kind: "wholeLibrary" }, undefined);
   });
@@ -89,7 +123,7 @@ describe("turning on", () => {
   it("one Space starts from the one being viewed, and shares only the one picked", async () => {
     mocks.listSpaces.mockResolvedValue(twoSpaces);
     panel("private");
-    await waitFor(() => expect(button("Share one Space…")).toBeEnabled());
+    await openChooser();
     fireEvent.click(button("Share one Space…"));
     const select = await screen.findByRole("combobox", { name: "Space to share" });
     expect(select).toHaveValue("private");
@@ -102,7 +136,7 @@ describe("turning on", () => {
   it("one Space starts from the first Space when nothing else says which", async () => {
     mocks.listSpaces.mockResolvedValue(twoSpaces);
     panel();
-    await waitFor(() => expect(button("Share one Space…")).toBeEnabled());
+    await openChooser();
     fireEvent.click(button("Share one Space…"));
     expect(await screen.findByRole("combobox", { name: "Space to share" })).toHaveValue("review");
   });
@@ -110,27 +144,60 @@ describe("turning on", () => {
   it("never offers a Space named like the whole library as one Space", async () => {
     mocks.listSpaces.mockResolvedValue([{ id: "x", name: "*" }, { id: "s1", name: "review" }]);
     panel();
-    await waitFor(() => expect(button("Share one Space…")).toBeEnabled());
+    await openChooser();
     fireEvent.click(button("Share one Space…"));
     const select = await screen.findByRole("combobox", { name: "Space to share" });
     expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["review"]);
   });
 
   it("asks the same question again after it was turned off", async () => {
+    mocks.listSpaces.mockResolvedValue(twoSpaces);
     mocks.getRemoteAccessProfile.mockResolvedValue({ ...profile, enabled: false });
     panel();
-    expect(await screen.findByRole("button", { name: "Share whole library" })).toBeInTheDocument();
+    expect(await findToggle()).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("group")).not.toBeInTheDocument();
+    const question = await openChooser();
+    expect(within(question).getByRole("button", { name: "Share whole library" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
-  it("with no Spaces, the whole library is still one click, and one Space says to create one", async () => {
+  it("with no Spaces there is nothing to ask: flipping it on shares the whole library", async () => {
     mocks.listSpaces.mockResolvedValue([]);
     panel();
-    expect(await screen.findByText("To share just one Space, create a Space first.")).toBeInTheDocument();
-    expect(button("Share one Space…")).toBeDisabled();
-    await waitFor(() => expect(button("Share whole library")).toBeEnabled());
-    fireEvent.click(button("Share whole library"));
+    fireEvent.click(await findToggle());
     await waitFor(() => expect(mocks.configureRemoteAccess).toHaveBeenCalledWith({ kind: "wholeLibrary" }, undefined));
+    expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(true, "configured");
+    expect(screen.queryByRole("group", { name: "What can web apps search?" })).not.toBeInTheDocument();
+  });
+
+  it("a failed Space lookup is said when the switch is flipped on, and nothing is turned on", async () => {
+    mocks.listSpaces.mockRejectedValue(new Error("Daemon offline"));
+    panel();
+    fireEvent.click(await findToggle());
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "What can web apps search?" })).not.toBeInTheDocument();
+    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
+  });
+
+  it("shows Loading in the switch's place while the saved state and Spaces are read", async () => {
+    mocks.getRemoteAccessProfile.mockReturnValue(new Promise(() => {}));
+    panel();
+    expect(await screen.findByRole("status", { name: TOGGLE })).toHaveTextContent("Loading");
+    expect(screen.queryByRole("button", { name: TOGGLE })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Have a code?" })).not.toBeInTheDocument();
+  });
+
+  it("shows Saving beside the switch while a change is in flight, and ignores clicks on it", async () => {
+    mocks.listSpaces.mockResolvedValue([]);
+    mocks.configureRemoteAccess.mockReturnValue(new Promise(() => {}));
+    panel();
+    fireEvent.click(await findToggle());
+    const saving = await screen.findByRole("status", { name: "Saving" });
+    expect(saving).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: TOGGLE });
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(toggle);
+    expect(mocks.configureRemoteAccess).toHaveBeenCalledTimes(1);
   });
 
   it("says Connecting while it starts", async () => {
@@ -143,9 +210,9 @@ describe("turning on", () => {
 
   it("says why turning on failed, in plain words, with the raw sentence behind Details", async () => {
     mocks.toggleRemoteAccess.mockRejectedValue(new Error("Remote connection rate limited"));
+    mocks.listSpaces.mockResolvedValue([]);
     panel();
-    await waitFor(() => expect(button("Share whole library")).toBeEnabled());
-    fireEvent.click(button("Share whole library"));
+    fireEvent.click(await findToggle());
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Too many tries. Wait a few minutes, then try again.");
     expect(screen.queryByText(/rate limited/)).not.toBeInTheDocument();
@@ -160,6 +227,9 @@ describe("turning on", () => {
     expect(screen.queryByRole("button", { name: "Turn on" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Turn on again" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Share whole library" })).not.toBeInTheDocument();
+    // The switch claims neither position and cannot be flipped on.
+    expect(screen.getByRole("status", { name: TOGGLE })).toHaveTextContent("Unavailable");
+    expect(screen.queryByRole("button", { name: TOGGLE })).not.toBeInTheDocument();
     fireEvent.click(button("Stop access"));
     await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(false));
   });
@@ -178,25 +248,37 @@ describe("turning on", () => {
   it("a failed Space lookup does not stop an existing connection from being turned off", async () => {
     mocks.listSpaces.mockRejectedValue(new Error("Daemon offline"));
     await connectedPanel();
-    fireEvent.click(button("Turn off"));
+    fireEvent.click(button(TOGGLE));
     fireEvent.click(within(await screen.findByRole("group")).getByRole("button", { name: "Turn off" }));
     await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(false));
   });
 });
 
 describe("a connection that is on", () => {
-  it("shows status, the Space, and two plain steps that add Wenlan for you", async () => {
+  it("shows status, the Space, and one short instruction that adds Wenlan for you", async () => {
     await connectedPanel();
     expect(screen.getByText("Sharing: review")).toBeInTheDocument();
-    const steps = screen.getAllByRole("listitem").slice(0, 2);
-    expect(steps[0]).toHaveTextContent("Add Wenlan to your AI app.");
-    expect(within(steps[0]).getByRole("button", { name: "Add to Claude" })).toBeInTheDocument();
-    expect(within(steps[0]).getByRole("button", { name: "Copy link and open ChatGPT" })).toBeInTheDocument();
-    expect(steps[0]).toHaveTextContent("Another app? Add this link as a custom connector:");
-    expect(steps[0]).toHaveTextContent(relayUrl);
-    expect(steps[1]).toHaveTextContent("When Wenlan asks, click Allow.");
-    expect(screen.getByText(/like Codex or Claude Code, use Add a tool above/)).toBeInTheDocument();
+    expect(screen.getByText("Add Wenlan to your AI app, then click Allow when Wenlan asks.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to Claude" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to ChatGPT" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Other apps" })).toBeInTheDocument();
+    // The link is not in the card; it lives in the Other apps guide.
+    expect(screen.queryByText(relayUrl)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Another app/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/use Add a tool above/)).not.toBeInTheDocument();
     expect(await screen.findByText("No apps connected yet")).toBeInTheDocument();
+  });
+
+  it("separates its sections by space, never by horizontal rules", async () => {
+    await connectedPanel();
+    await screen.findByText("No apps connected yet");
+    // The card's own divider under the toggle row stays; everything in the body below it has none.
+    const body = screen.getByText("Connected").closest(".px-5.py-4") as HTMLElement;
+    expect(body).not.toBeNull();
+    expect(body.querySelector("ol")).toBeNull();
+    expect(body.querySelector("[class*='divide-y']")).toBeNull();
+    expect(body.querySelector(".border-t")).toBeNull();
   });
 
   it("says the whole library in words, never the stored value", async () => {
@@ -222,17 +304,88 @@ describe("a connection that is on", () => {
   it("ChatGPT copies the link first, opens ChatGPT, and says where to paste it", async () => {
     await connectedPanel();
     expect(screen.queryByText(/Developer mode/)).not.toBeInTheDocument();
-    fireEvent.click(button("Copy link and open ChatGPT"));
+    fireEvent.click(button("Add to ChatGPT"));
     await waitFor(() => expect(openExternal).toHaveBeenCalledWith("https://chatgpt.com/plugins"));
     expect(mocks.clipboardWrite).toHaveBeenCalledWith(relayUrl);
     expect(mocks.clipboardWrite.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(openExternal).mock.invocationCallOrder[0]);
     expect(await screen.findByText(/Link copied\. In ChatGPT, click Add, then Add custom MCP server\./)).toBeInTheDocument();
   });
 
-  it("copies only the relay URL", async () => {
+  it("Other apps opens a three step guide with the link; the card itself never shows the link", async () => {
     await connectedPanel();
-    fireEvent.click(button("Copy URL"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog", { name: "Add Wenlan to another AI app" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    const steps = within(dialog).getAllByRole("listitem");
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toHaveTextContent("In the app's settings, open Connectors and add a custom connector.");
+    expect(steps[1]).toHaveTextContent("Paste this link.");
+    expect(steps[1]).toHaveTextContent(relayUrl);
+    expect(steps[2]).toHaveTextContent("When Wenlan asks, click Allow.");
+    expect(within(dialog).getByText("Works with apps that support custom MCP connectors, such as Muse.")).toBeInTheDocument();
+    expect(dialog.textContent).not.toMatch(/[\u2013\u2014]/);
+    expect(dialog.querySelector("hr, .border-t, [class*='divide-']")).toBeNull();
+    // The dialog holds focus; the card behind it keeps no second copy of the link.
+    expect(dialog).toHaveFocus();
+    expect(screen.getAllByText(relayUrl)).toHaveLength(1);
+  });
+
+  it("opening the guide copies the relay URL, like Add to ChatGPT, and Copy copies it again", async () => {
+    await connectedPanel();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog");
     await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledWith(relayUrl));
+    expect(mocks.clipboardWrite).toHaveBeenCalledTimes(1);
+    expect(await within(dialog).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copied" }));
+    await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledTimes(2));
+    expect(mocks.clipboardWrite).toHaveBeenLastCalledWith(relayUrl);
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("a failed copy is not reported as copied", async () => {
+    mocks.clipboardWrite.mockRejectedValue(new Error("denied"));
+    await connectedPanel();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalled());
+    expect(within(dialog).getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Copied" })).not.toBeInTheDocument();
+  });
+
+  it("Escape closes the guide and returns focus to Other apps", async () => {
+    await connectedPanel();
+    const trigger = button("Other apps");
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("Done closes the guide and returns focus to Other apps", async () => {
+    await connectedPanel();
+    const trigger = button("Other apps");
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("the guide keeps Tab inside it", async () => {
+    await connectedPanel();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog");
+    // Opening copied the link already, so the first control reads Copied.
+    const copyAgain = await within(dialog).findByRole("button", { name: "Copied" });
+    const done = within(dialog).getByRole("button", { name: "Done" });
+    done.focus();
+    fireEvent.keyDown(done, { key: "Tab" });
+    expect(copyAgain).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(done).toHaveFocus();
   });
 
   it("has nothing to copy, and no steps, when the relay URL is missing", async () => {
@@ -240,7 +393,7 @@ describe("a connection that is on", () => {
     mocks.getRemoteAccessStatus.mockResolvedValue({ ...connected, relay_url: null });
     panel();
     await screen.findByText("Connected");
-    expect(screen.queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Other apps" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to Claude" })).not.toBeInTheDocument();
     expect(screen.queryByText("Add Wenlan to your AI app.")).not.toBeInTheDocument();
   });
@@ -316,13 +469,16 @@ describe("a connection that is on", () => {
 describe("asking before it ends connections", () => {
   it("turn off asks first, Escape cancels, then it turns off", async () => {
     await connectedPanel();
-    fireEvent.click(button("Turn off"));
+    expect(button(TOGGLE)).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Turn off" })).not.toBeInTheDocument();
+    fireEvent.click(button(TOGGLE));
     const ask = await screen.findByRole("group");
     expect(ask).toHaveTextContent("Turn off Web access? Connected web apps lose access right away.");
+    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
     fireEvent.keyDown(ask, { key: "Escape" });
     expect(screen.queryByRole("group")).not.toBeInTheDocument();
     expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
-    fireEvent.click(button("Turn off"));
+    fireEvent.click(button(TOGGLE));
     fireEvent.click(within(await screen.findByRole("group")).getByRole("button", { name: "Turn off" }));
     await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(false));
   });
@@ -566,6 +722,15 @@ describe("when the key is running out or has run out", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Turn off" }));
     await waitFor(() => expect(mocks.toggleRemoteAccess.mock.calls).toEqual([[false]]));
   });
+
+  it("an ended key's switch also asks before turning off", async () => {
+    mocks.getRemoteAccessProfile.mockResolvedValue({ ...profile, credential_expires_at: Date.now() - DAY });
+    mocks.getRemoteAccessStatus.mockResolvedValue({ status: "off" });
+    panel();
+    fireEvent.click(await findToggle());
+    expect(await screen.findByRole("group")).toHaveTextContent("Turn off Web access?");
+    expect(mocks.toggleRemoteAccess).not.toHaveBeenCalled();
+  });
 });
 
 describe("Have a code?", () => {
@@ -617,11 +782,14 @@ describe("in every language", () => {
     ["zh-Hant", "網頁存取", "分享整個資料庫", "新增到 Claude", "正在分享：整個資料庫"],
     ["zh-Hans", "网页访问", "共享整个资料库", "添加到 Claude", "正在共享：整个资料库"],
   ])("renders %s without English fallback", async (locale, title, whole, addToClaude, sharingWhole) => {
+    const toggleTitle = locale === "zh-Hant" ? "讓網頁和手機上的 AI 搜尋你的資料庫" : "让网页和手机上的 AI 搜索你的资料库";
     await i18n.changeLanguage(locale);
     panel();
     expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
+    mocks.listSpaces.mockResolvedValue(twoSpaces);
+    fireEvent.click(await screen.findByRole("button", { name: toggleTitle }));
     expect(await screen.findByRole("button", { name: whole })).toBeInTheDocument();
-    expect(screen.queryByText(/Share|Whole library|Web access|What can|Space to share|create a Space/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Share|Whole library|Web access|What can|Space to share|create a Space|Let web|Keep this/)).not.toBeInTheDocument();
     cleanup();
     mocks.getRemoteAccessProfile.mockResolvedValue({ ...profile, space: "*" });
     mocks.getRemoteAccessStatus.mockResolvedValue(connected);
@@ -629,7 +797,7 @@ describe("in every language", () => {
     await screen.findByRole("button", { name: i18n.t("remoteAccess.testConnection") });
     expect(screen.getByRole("button", { name: addToClaude })).toBeInTheDocument();
     expect(screen.getByText(sharingWhole)).toBeInTheDocument();
-    expect(screen.queryByText(/Connected|Add Wenlan|Add to Claude|Another app|Sharing|Test connection|Turn off|Change/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Connected|Add Wenlan|Add to Claude|Other apps|Sharing|Test connection|Turn off|Change/)).not.toBeInTheDocument();
   });
 });
 
@@ -637,7 +805,7 @@ describe("the relay disclosure", () => {
   it.each(["en", "zh-Hant", "zh-Hans"])("is on screen exactly once, off or on, in %s", async (locale) => {
     await i18n.changeLanguage(locale);
     panel();
-    await screen.findByRole("button", { name: i18n.t("remoteAccess.shareWholeLibrary") });
+    await screen.findByRole("button", { name: i18n.t("remoteAccess.toggleTitle") });
     expect(screen.getAllByText(/wenlan-relay/)).toHaveLength(1);
     cleanup();
     mocks.getRemoteAccessProfile.mockResolvedValue(profile);

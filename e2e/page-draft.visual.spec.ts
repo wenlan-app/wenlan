@@ -30,7 +30,7 @@ async function openPrimaryDestination(
   else await expect(page.getByRole("heading", { level: 1, name: destination })).toBeAttached();
 }
 
-async function controlMetrics(page: Page, name: "New page" | "New") {
+async function controlMetrics(page: Page, name: "New note" | "New") {
   return page.getByRole("button", { name, exact: true }).evaluate((element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -58,7 +58,7 @@ test("captures direct Page authoring from the tab action and Space detail", asyn
 
   await openPrimaryDestination(page, "Wiki");
   await settle(page);
-  const newPageMetrics = await controlMetrics(page, "New page");
+  const newPageMetrics = await controlMetrics(page, "New note");
   await page.screenshot({
     path: path.join(evidenceDir, "wiki-1280x900.png"),
     fullPage: false,
@@ -98,7 +98,7 @@ test("captures direct Page authoring from the tab action and Space detail", asyn
     fullPage: false,
   });
 
-  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeVisible();
   const spaceDraftForm = page.getByRole("region", { name: "New note", exact: true });
   await expect(spaceDraftForm.getByRole("combobox")).toHaveCount(0);
@@ -132,7 +132,7 @@ test("keeps the editor axis stable on wide screens and title conflicts readable 
     .getByRole("button", { name: "Wenlan", exact: true })
     .click();
   await expect(page.getByRole("heading", { level: 1, name: "Wenlan" })).toBeVisible();
-  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await page.getByRole("button", { name: "New note", exact: true }).click();
   await expect(page.getByRole("region", { name: "New note", exact: true })).toBeVisible();
   const draftContentEdge = await page.locator(".page-draft-editor").evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -153,7 +153,7 @@ test("keeps the editor axis stable on wide screens and title conflicts readable 
     .toMatchObject({ space: "Wenlan" });
   await page.locator(".note-tab-create").click();
   await expect(page.getByRole("alert")).toContainText(
-    "A page with this title already exists.",
+    "A note with this title already exists.",
   );
 
   await page.setViewportSize({ width: 375, height: 812 });

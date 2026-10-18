@@ -27,8 +27,9 @@ use wenlan_types::{
         StoreMemoryResponse,
     },
     sources::Source,
-    BriefReadRequest, BriefReadResponse, BriefUpdateReceipt, BriefUpdateRequest, EntityDetail,
-    OutboxDrainReport, PageSourceWithMemory,
+    BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
+    BriefUpdateRequest, BriefVersionResponse, EntityDetail, OutboxDrainReport,
+    PageSourceWithMemory,
 };
 
 mod lint;
@@ -342,6 +343,18 @@ impl WenlanClient {
         self.patch_json("/api/brief", request).await
     }
 
+    /// GET /api/brief/history — past Brief updates, newest first.
+    pub async fn brief_history(&self, limit: usize) -> Result<BriefHistoryResponse> {
+        self.get_json(&format!("/api/brief/history?limit={limit}"), true)
+            .await
+    }
+
+    /// GET /api/brief/history/{version} — the Brief as of one past update.
+    pub async fn brief_version(&self, version: i64) -> Result<BriefVersionResponse> {
+        self.get_json(&format!("/api/brief/history/{version}"), true)
+            .await
+    }
+
     /// POST /api/memory/store — write a memory.
     pub async fn store(
         &self,
@@ -480,6 +493,21 @@ impl WenlanClient {
     /// DELETE /api/spaces/default — clear the daemon-owned default save Space.
     pub async fn clear_default_space(&self) -> Result<()> {
         self.delete_ok("/api/spaces/default").await
+    }
+
+    /// PUT /api/pages/{id}/review-required — set or clear a page's review
+    /// lock. While set, every machine write to the page is staged as a
+    /// revision card; your own edits are unaffected.
+    pub async fn set_page_review_required(
+        &self,
+        page_id: &str,
+        required: bool,
+    ) -> Result<wenlan_types::responses::PageReviewRequiredResponse> {
+        self.put_json(
+            &format!("/api/pages/{page_id}/review-required"),
+            &wenlan_types::requests::SetPageReviewRequiredRequest { required },
+        )
+        .await
     }
 
     /// PUT /api/agents/{name} — update an agent's metadata.

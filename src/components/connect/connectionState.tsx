@@ -84,10 +84,11 @@ export const AGENTS_POLL_MS = 30_000;
  *  (the user comes back from restarting a tool) and on a slow interval while
  *  the window is visible. The app-wide default turns focus refetch off, so
  *  this has to opt in. */
-export function useLiveAgents(intervalMs: number = AGENTS_POLL_MS) {
+export function useLiveAgents(intervalMs: number = AGENTS_POLL_MS, enabled: boolean = true) {
   return useQuery({
     queryKey: ["agents"],
     queryFn: listAgents,
+    enabled,
     refetchOnWindowFocus: true,
     refetchInterval: intervalMs,
     refetchIntervalInBackground: false,

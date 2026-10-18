@@ -140,8 +140,11 @@ impl MemoryDB {
              COALESCE(c.sources_updated_count, 0), c.stale_reason, \
              COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), \
              COALESCE(c.creation_kind, 'distilled'), \
-             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept')"
+             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
+             NULL, COALESCE(c.review_required, 0)"
         );
+        // Same column layout as the scoped list/read twins: 21 stays NULL,
+        // 22 carries the review lock. The vector distance sits at column 23.
         let mut conditions = vec!["c.status = 'active'".to_string()];
         // Fence (M3 PR-1 stage f; Q1 lift, stage c; #708): the retrieval arm
         // (`fence_entity=true`) excludes every `kind='entity'` shadow page --
@@ -187,7 +190,7 @@ impl MemoryDB {
                     let page = Self::row_to_page(&row).map_err(|error| {
                         WenlanError::VectorDb(format!("search_pages_scoped vector decode: {error}"))
                     })?;
-                    let distance = row.get::<f64>(21).map_err(|error| {
+                    let distance = row.get::<f64>(23).map_err(|error| {
                         WenlanError::VectorDb(format!(
                             "search_pages_scoped vector distance: {error}"
                         ))
@@ -511,8 +514,12 @@ impl MemoryDB {
              COALESCE(c.sources_updated_count, 0), c.stale_reason, \
              COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), \
              COALESCE(c.creation_kind, 'distilled'), \
-             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept')"
+             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
+             NULL, COALESCE(c.review_required, 0)"
         );
+        // Column 21 (`refresh_blocked_reason`) stays NULL on the scoped browse
+        // twins as before; column 22 carries the review lock so list_pages and
+        // read_page can report it.
         // #708: the browse twin keeps established, active entity rows and
         // drops detected and archived ones; the fenced twin drops every
         // entity row as before. Both land in SQL before `LIMIT`, so a burst
@@ -742,8 +749,12 @@ impl MemoryDB {
              COALESCE(c.sources_updated_count, 0), c.stale_reason, \
              COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), \
              COALESCE(c.creation_kind, 'distilled'), \
-             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept')"
+             COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, COALESCE(c.kind, 'concept'), \
+             NULL, COALESCE(c.review_required, 0)"
         );
+        // Column 21 (`refresh_blocked_reason`) stays NULL on the scoped browse
+        // twins as before; column 22 carries the review lock so list_pages and
+        // read_page can report it.
         let (scope_sql, scope_value) = page_scope_clause(scope, "c.workspace", 2);
         let fence_sql = if fence_entity {
             " AND COALESCE(c.kind, 'concept') != 'entity'"

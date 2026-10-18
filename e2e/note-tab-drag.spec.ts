@@ -13,7 +13,7 @@ async function start(p:Page,width=1440,theme="light",count=3){
  const fixture={...base,pages:Array.from({length:12},(_,i)=>({...base.pages[0],id:`drag-${i+1}`,title:`Drag note ${i+1}`,content:`# Drag note ${i+1}\n\n`+Array.from({length:55},(_,j)=>`Paragraph ${j+1}. A synthetic note for reading position and moving safely.`).join("\n\n"),storage_path:`drag-${i+1}.md`,folder_path:""}))};
  const runtime=await installTauriMock(p,{fixture,locale:"en",rawActions:[],delays:{update_page:200},localStorage:{"wenlan-theme":theme}});
  await p.goto("/");for(let i=1;i<=count;i++)await openWikiNote(p,`Drag note ${i}`);
- await expect(group(p).getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await expect(group(p).getByRole("textbox",{name:"Note editor",exact:true})).toBeVisible();
  return{errors,runtime};
 }
 async function point(el:Locator,side:"before"|"after"|"middle"="middle"){
@@ -34,7 +34,7 @@ async function menu(p:Page,n:number,id="primary"){
 async function assertClean(errors:ReturnType<typeof collectBrowserErrors>){expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);}
 
 test("reorder keeps active editor, edit state and reading position; click remains click",async({page},info)=>{
- const{errors}=await start(page);const editor=group(page).getByRole("textbox",{name:"Page editor",exact:true});
+ const{errors}=await start(page);const editor=group(page).getByRole("textbox",{name:"Note editor",exact:true});
  await editor.evaluate(el=>el.setAttribute('data-instance','retained'));
  const scroller=group(page).locator('.note-group-content');await scroller.evaluate(el=>el.scrollTop=500);
  await drag(page,tab(page,3),await point(tab(page,1),"before"));
@@ -86,7 +86,7 @@ test("Escape, invalid area and viewport changes cancel without navigation",async
 
 test("failed source save and failed target save preserve both editors and ownership",async({page},info)=>{
  const{runtime,errors}=await start(page,1440,'dark');
- const editor=group(page).getByRole('textbox',{name:'Page editor',exact:true});
+ const editor=group(page).getByRole('textbox',{name:'Note editor',exact:true});
  runtime.failNext('update_page','save refused',3);
  await editor.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});await page.keyboard.insertText('\nUnsaved source survives.');
  await split(page,3);
@@ -97,7 +97,7 @@ test("failed source save and failed target save preserve both editors and owners
 
 test("a failing destination cannot absorb the dragged source",async({page})=>{
  const{runtime,errors}=await start(page);await menu(page,3);await expect(tab(page,3,'secondary')).toBeVisible();
- const right=group(page,'secondary').getByRole('textbox',{name:'Page editor',exact:true});
+ const right=group(page,'secondary').getByRole('textbox',{name:'Note editor',exact:true});
  runtime.failNext('update_page','destination save refused',3);
  await right.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});await page.keyboard.insertText('\nDestination draft survives.');
  await drag(page,tab(page,1),await point(tab(page,3,'secondary'),'before'));
@@ -111,7 +111,7 @@ test("overflow auto-scroll permits distant reordering while fixed controls stay 
  await expect.poll(()=>strip.evaluate(el=>el.scrollLeft),{timeout:10000}).toBe(0);
  await page.mouse.move(box.x+5,box.y+box.height/2);await page.mouse.up();
  await expect.poll(async()=> (await order(page))[0]).toBe('Drag note 12');
- const toggle=group(page).getByRole('button',{name:'Open note sidebar',exact:true});await expect(toggle).toBeInViewport();await expect(group(page).getByRole('button',{name:'New page',exact:true})).toBeInViewport();
+ const toggle=group(page).getByRole('button',{name:'Open note sidebar',exact:true});await expect(toggle).toBeInViewport();await expect(group(page).getByRole('button',{name:'New note',exact:true})).toBeInViewport();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth)).toBe(false);
  await page.screenshot({path:info.outputPath('overflow.png')});await assertClean(errors);
 });
@@ -131,13 +131,13 @@ test("last central tab can return to an empty group and a draft finalizes with i
  const empty=await group(page).locator('.note-tabs').boundingBox();
  await drag(page,tab(page,1,'secondary'),{x:empty!.x+empty!.width/2,y:empty!.y+empty!.height/2});
  await expect(group(page,'secondary')).toHaveCount(0);await expect(tab(page,1)).toBeVisible();
- await group(page).getByRole('button',{name:'New page',exact:true}).click();
+ await group(page).getByRole('button',{name:'New note',exact:true}).click();
  await group(page).getByRole('textbox',{name:'Title',exact:true}).fill('A draft moved safely');
  await group(page).getByRole('textbox',{name:'Content',exact:true}).fill('Saved content before moving a draft.');
  const draftTab=group(page).getByRole('tab',{name:'A draft moved safely',exact:true});
  const box=(await group(page).locator('.note-group-content').boundingBox())!;
  await drag(page,draftTab,{x:box.x+box.width-15,y:box.y+100});
- const movedEditor=group(page,'secondary').getByRole('textbox',{name:'Page editor',exact:true});
+ const movedEditor=group(page,'secondary').getByRole('textbox',{name:'Note editor',exact:true});
  await expect(movedEditor).toBeVisible();
  await expect(group(page,'secondary').locator('.page-detail').getByRole('status')).toHaveText('Saved');
  await expect.poll(()=>editorSource(movedEditor)).toContain('Saved content before moving a draft.');

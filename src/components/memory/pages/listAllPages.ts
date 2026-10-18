@@ -32,6 +32,8 @@ async function listAllPagesWithStatus(
       pages.push(page);
       added += 1;
     }
+    // The daemon counts limit and offset in pages this caller may see, so a
+    // short batch means the list ended, not that a hidden page was dropped.
     if (batch.length < PAGE_BATCH_SIZE || added === 0) return pages;
     offset += batch.length;
   }

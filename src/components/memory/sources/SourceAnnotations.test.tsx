@@ -81,7 +81,7 @@ describe("SourceAnnotations", () => {
     vi.mocked(listPages).mockResolvedValue([{ id: "page-1", title: "Reading practice", status: "active", entity_id: null } as never]);
     renderNotes({ onRegisterFlush: (next) => { flush = next; } });
     await screen.findByRole("textbox", { name: editorLabel });
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a Page" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
     let rejectToggle!: (error: Error) => void;
     vi.mocked(updateSourceAnnotation).mockImplementationOnce(() => new Promise((_, reject) => { rejectToggle = reject; }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
@@ -92,7 +92,7 @@ describe("SourceAnnotations", () => {
     await waitFor(() => expect(updateSourceAnnotation).toHaveBeenCalledTimes(1));
     await act(async () => { rejectToggle(new Error("offline")); await pending; });
     expect(completed).toBe(false);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked Page.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked note.");
   });
 
   it("opens directly into a Markdown Description and autosaves blockquotes without an Add reflection action", async () => {
@@ -153,7 +153,7 @@ describe("SourceAnnotations", () => {
     }));
     renderNotes({ renderRelatedPages: (content) => <aside data-testid="info-pages">{content}</aside> });
     const wrapper = await screen.findByTestId("info-pages");
-    expect(within(wrapper).getByRole("region", { name: "Pages" })).toBeInTheDocument();
+    expect(within(wrapper).getByRole("region", { name: "Notes" })).toBeInTheDocument();
     expect(await within(wrapper).findByText("Reading practice")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Description" })).not.toContainElement(wrapper);
   });
@@ -372,7 +372,7 @@ describe("SourceAnnotations", () => {
       id: "page-1", title: "Reading practice", status: "active", entity_id: null,
     } as never]);
     renderNotes();
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a Page" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
     const checkbox = await screen.findByRole("checkbox", { name: /Reading practice/ });
     fireEvent.click(checkbox);
     await waitFor(() => expect(updateSourceAnnotation).toHaveBeenCalledWith({
@@ -394,7 +394,7 @@ describe("SourceAnnotations", () => {
       .mockResolvedValueOnce(empty({ notes: "Server-side Description", version: 1 }));
     renderNotes();
     await screen.findByRole("textbox", { name: editorLabel });
-    fireEvent.click(screen.getByRole("button", { name: "+ Link a Page" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Link a note" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
     await waitFor(() => expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("Server-side Description"));
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(2);
@@ -413,7 +413,7 @@ describe("SourceAnnotations", () => {
       .mockResolvedValueOnce(empty())
       .mockResolvedValueOnce(empty({ page_ids: ["page-1"], pages: [{ id: "page-1", title: "Reading practice" }], version: 1 }));
     renderNotes();
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a Page" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /Reading practice/ })).toBeChecked());
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(1);
@@ -426,9 +426,9 @@ describe("SourceAnnotations", () => {
     } as never]);
     vi.mocked(updateSourceAnnotation).mockRejectedValueOnce(new Error("offline"));
     renderNotes();
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a Page" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked Page.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked note.");
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => window.setTimeout(resolve, 800));
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(1);
@@ -451,7 +451,7 @@ describe("SourceAnnotations", () => {
     await screen.findByRole("textbox", { name: editorLabel });
     const editor = screen.getByRole("textbox", { name: editorLabel });
     changeEditor(editor, "My unsaved note");
-    fireEvent.click(screen.getByRole("button", { name: "+ Link a Page" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Link a note" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This description changed elsewhere");
     expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("My unsaved note");

@@ -1,22 +1,61 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Shared display helpers for the page-detail subcomponents.
-import type { MemoryItem } from "../../../lib/tauri";
-
-const KNOWN_AGENTS: Record<string, string> = {
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  cursor: "Cursor",
-  "chatgpt-mcp": "ChatGPT",
-  chatgpt: "ChatGPT",
-  "gemini-cli": "Gemini CLI",
-  windsurf: "Windsurf",
-  zed: "Zed",
-};
+import type { TFunction } from "i18next";
+import { agentDisplayName, type MemoryItem, type PageChangelogEntry } from "../../../lib/tauri";
 
 export function prettyAgent(name: string | null | undefined): string {
-  if (!name) return "unknown agent";
-  const key = name.trim().toLowerCase();
-  return KNOWN_AGENTS[key] ?? name;
+  return agentDisplayName(name) ?? "unknown agent";
+}
+
+const WRITER_LABEL_KEYS = {
+  manual_edit: "revisionLabel.writer.manualEdit",
+  fs_edit: "revisionLabel.writer.fsEdit",
+  distill: "revisionLabel.writer.distill",
+  re_distill: "revisionLabel.writer.reDistill",
+  page_growth: "revisionLabel.writer.pageGrowth",
+  refinery_merge: "revisionLabel.writer.refineryMerge",
+  revision_accept: "revisionLabel.writer.revisionAccept",
+  citation_backfill: "revisionLabel.writer.citationBackfill",
+} as const;
+
+/** Who made a page revision, in words the reader can use. Never the raw
+ * `edited_by` slug: an unrecognized writer reads as a plain "Updated". */
+export function revisionWriterLabel(
+  t: TFunction,
+  editedBy: string,
+  agent?: string | null,
+): string {
+  if (editedBy === "agent_refresh") {
+    const name = agentDisplayName(agent?.trim());
+    return name
+      ? t("revisionLabel.writer.agentRefreshNamed", { agent: name })
+      : t("revisionLabel.writer.agentRefresh");
+  }
+  if (Object.prototype.hasOwnProperty.call(WRITER_LABEL_KEYS, editedBy)) {
+    return t(WRITER_LABEL_KEYS[editedBy as keyof typeof WRITER_LABEL_KEYS]);
+  }
+  return t("revisionLabel.writer.other");
+}
+
+/** One-line summary of what a revision changed. Entries with numeric deltas
+ * are localized; older entries only have the daemon's English `delta_summary`,
+ * which is shown for an English UI and left out otherwise. */
+export function revisionSummary(
+  t: TFunction,
+  entry: PageChangelogEntry,
+  language: string | undefined,
+): string | null {
+  const { char_delta: chars, sources_added: added, sources_removed: removed } = entry;
+  if (chars == null && added == null && removed == null) {
+    return language?.startsWith("en") ? (entry.delta_summary ?? null) : null;
+  }
+  const parts: string[] = [];
+  if (chars) {
+    parts.push(t("revisionLabel.summary.chars", { count: Math.abs(chars), sign: chars < 0 ? "-" : "+" }));
+  }
+  if (added) parts.push(t("revisionLabel.summary.sourcesAdded", { count: added }));
+  if (removed) parts.push(t("revisionLabel.summary.sourcesRemoved", { count: removed }));
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 const SOURCE_KIND_LABEL: Record<string, string> = {

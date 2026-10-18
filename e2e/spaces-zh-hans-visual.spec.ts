@@ -29,7 +29,7 @@ test("captures Simplified Chinese Space and Entity dossiers at physical DPR2", a
     .getByRole("button", { name: "空间", exact: true })
     .click();
   await page.getByRole("button", { name: "Wenlan", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "页面" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "笔记" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("tab", { name: "来源" })).toBeVisible();
   await expect(page.locator(".space-dossier-archive,.space-dossier-entities")).toHaveCount(0);
   await expect(page.locator("aside.memory-sidebar")).toHaveAttribute("aria-hidden", "true");

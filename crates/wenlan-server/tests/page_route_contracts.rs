@@ -16,8 +16,8 @@ use wenlan_types::requests::{
 };
 use wenlan_types::responses::{
     CreatePageResponse, ExportPageResponse, ExportStats, ListPageRevisionsResponse,
-    OrphanLinksResponse, PageLinksResponse, PageWriteResponse, SearchPagesResponse,
-    SuccessResponse,
+    OrphanLinksResponse, PageInventoryResponse, PageLinksResponse, PageWriteResponse,
+    SearchPagesResponse, SuccessResponse,
 };
 use wenlan_types::{Page, PageSourceWithMemory, RawDocument, WriteSpaceTarget};
 
@@ -154,6 +154,7 @@ fn page_routes(id: &str) -> Vec<RouteCase> {
                 content: "Refreshed route probe".to_string(),
                 source_memory_ids: vec!["route-probe-source".to_string()],
                 summary: None,
+                expected_version: None,
             }),
             marked: false,
         },
@@ -470,6 +471,7 @@ async fn page_routes_preserve_typed_contracts() {
         content: "Refresh content after, grounded in its source memory.".to_string(),
         source_memory_ids: vec!["page-route-source".to_string()],
         summary: Some("Refreshed Page route".to_string()),
+        expected_version: None,
     };
     let (status, refreshed): (StatusCode, PageWriteResponse) = request_typed(
         &router,
@@ -800,4 +802,137 @@ async fn export_okf_refuses_during_a_truth_cutover() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(stats.exported, 1, "{stats:?}");
     assert_eq!(std::fs::read(&page_file).unwrap(), before);
+}
+
+/// A hidden page inside a `GET /api/pages` window must not end the list for
+/// a pager. The app's `listAllPages` and MCP `list_pages` both stop at the
+/// first window shorter than `limit`; before windows were counted in visible
+/// pages, the five hidden pages below made the first 500-row window return
+/// 495 pages and the last 100 pages never loaded.
+#[tokio::test]
+async fn page_list_windows_count_visible_pages_so_paging_reaches_the_end() {
+    const PAGES: usize = 600;
+    const LIMIT: usize = 500;
+    let _guard = data_dir_lock().lock().await;
+    let (router, tmp, db) = common::test_app_no_gate().await;
+    let mut ids = Vec::with_capacity(PAGES);
+    for index in 0..PAGES {
+        ids.push(
+            common::create_page_fixture(
+                &db,
+                &format!("Paged page {index:03}"),
+                &format!("Body of paged page {index:03}."),
+                None,
+                &[],
+                "authored",
+            )
+            .await,
+        );
+    }
+
+    let fixture = libsql::Builder::new_local(tmp.path().join("origin_memory.db"))
+        .build()
+        .await
+        .unwrap();
+    let conn = fixture.connect().unwrap();
+    // Distinct timestamps make the newest-first order, and so which window
+    // holds which page, deterministic.
+    for (index, id) in ids.iter().enumerate() {
+        let modified = chrono::DateTime::from_timestamp(1_700_000_000 + index as i64, 0)
+            .unwrap()
+            .to_rfc3339();
+        conn.execute(
+            "UPDATE pages SET last_modified = ?1 WHERE id = ?2",
+            libsql::params![modified, id.as_str()],
+        )
+        .await
+        .unwrap();
+    }
+    // Hide five of the newest pages, all inside the first window.
+    let hidden: Vec<String> = ids
+        .iter()
+        .rev()
+        .skip(3)
+        .step_by(7)
+        .take(5)
+        .cloned()
+        .collect();
+    for id in &hidden {
+        let page = db.get_page(id).await.unwrap().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO page_truth_state
+                (page_id,page_version,support_status,human_reviewed,updated_at,evaluated_at)
+             VALUES (?1,?2,'provisional',0,1,1)",
+            libsql::params![id.as_str(), page.version],
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO claim_derivation_markers
+                (page_id,page_version,page_version_digest,extractor_version,inventory_count,created_at)
+             VALUES (?1,?2,?3,?4,1,0)",
+            libsql::params![
+                id.as_str(),
+                page.version,
+                wenlan_core::provenance::revision_content_digest(&page.content),
+                wenlan_core::db::EXTRACTOR_VERSION
+            ],
+        )
+        .await
+        .unwrap();
+    }
+    db.set_app_metadata("claim_promoter_enforcement", "1")
+        .await
+        .unwrap();
+    db.set_truth_cutover_generation(1).await.unwrap();
+    let visibility = db
+        .page_visibility(&wenlan_core::truth_contract::TruthGrant::Automatic, &ids)
+        .await
+        .unwrap();
+    for id in &ids {
+        let expected = if hidden.contains(id) {
+            wenlan_core::truth_contract::Visibility::Hidden
+        } else {
+            wenlan_core::truth_contract::Visibility::Full
+        };
+        assert_eq!(
+            visibility.get(id),
+            Some(&expected),
+            "fixture visibility for {id}"
+        );
+    }
+
+    // Page exactly as `listAllPages.ts` does: advance by what came back and
+    // stop at the first short window.
+    let mut seen = Vec::new();
+    let mut windows = Vec::new();
+    loop {
+        let (status, window): (StatusCode, PageInventoryResponse) = request_typed(
+            &router,
+            get(
+                format!("/api/pages?limit={LIMIT}&offset={}", seen.len()),
+                false,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        windows.push(window.pages.len());
+        seen.extend(window.pages.into_iter().map(|entry| entry.page.id));
+        if windows.last() < Some(&LIMIT) {
+            break;
+        }
+    }
+
+    assert_eq!(windows, vec![LIMIT, PAGES - hidden.len() - LIMIT]);
+    let mut expected: Vec<String> = ids
+        .iter()
+        .rev()
+        .filter(|id| !hidden.contains(id))
+        .cloned()
+        .collect();
+    assert_eq!(seen.len(), expected.len(), "no page may load twice");
+    assert_eq!(seen, expected, "every visible page, newest first");
+    expected.sort();
+    expected.dedup();
+    assert_eq!(expected.len(), PAGES - hidden.len());
 }

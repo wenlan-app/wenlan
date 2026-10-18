@@ -190,3 +190,113 @@ async fn moved_profile_and_agent_handlers_preserve_typed_contracts() {
         assert_eq!(error.error, "Database not initialized");
     }
 }
+
+fn register_body(name: &str) -> Body {
+    json_body(&wenlan_types::requests::RegisterAgentRequest {
+        name: name.to_string(),
+    })
+}
+
+#[tokio::test]
+async fn post_agents_registers_a_connected_tool_as_trusted() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+
+    let (status, agent): (StatusCode, AgentResponse) = request_typed(
+        &router,
+        Method::POST,
+        "/api/agents",
+        register_body("Claude Code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(agent.name, "claude-code");
+    assert_eq!(agent.trust_level, "full");
+    assert!(agent.enabled);
+    assert_eq!(
+        agent.last_seen_at, None,
+        "registering is not a sighting: the app counts a tool as connected only once it is seen"
+    );
+    assert_eq!(agent.memory_count, 0);
+
+    // Idempotent: the same call again returns the same row.
+    let (status, again): (StatusCode, AgentResponse) = request_typed(
+        &router,
+        Method::POST,
+        "/api/agents",
+        register_body("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again.id, agent.id);
+    assert_eq!(db.list_agents().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn post_agents_promotes_an_untouched_read_created_row() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.record_agent_presence("cursor").await.unwrap();
+    assert_eq!(
+        db.get_agent("cursor").await.unwrap().unwrap().trust_level,
+        "unknown"
+    );
+
+    let (status, agent): (StatusCode, AgentResponse) = request_typed(
+        &router,
+        Method::POST,
+        "/api/agents",
+        register_body("cursor"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(agent.trust_level, "full");
+    assert_eq!(
+        db.get_agent("cursor").await.unwrap().unwrap().trust_level,
+        "full"
+    );
+}
+
+#[tokio::test]
+async fn post_agents_leaves_a_user_edited_row_as_it_is() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.record_agent_presence("codex").await.unwrap();
+    db.update_agent("codex", None, Some("hands off"), None, None, None)
+        .await
+        .unwrap();
+    let before = db.get_agent("codex").await.unwrap().unwrap();
+    assert_eq!(before.trust_level, "unknown");
+    assert_ne!(before.updated_at, before.created_at);
+
+    let (status, agent): (StatusCode, AgentResponse) =
+        request_typed(&router, Method::POST, "/api/agents", register_body("codex")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(agent.trust_level, "unknown");
+    let after = db.get_agent("codex").await.unwrap().unwrap();
+    assert_eq!(after.trust_level, "unknown");
+    assert_eq!(after.updated_at, before.updated_at);
+}
+
+#[tokio::test]
+async fn post_agents_rejects_invalid_names_with_400_and_creates_nothing() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let too_long = "x".repeat(65);
+    for bad in [
+        "",
+        "   ",
+        "unknown",
+        "wenlan-setup",
+        "bad\u{0}name",
+        too_long.as_str(),
+    ] {
+        let (status, error): (StatusCode, ErrorEnvelope) =
+            request_typed(&router, Method::POST, "/api/agents", register_body(bad)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad:?}");
+        assert!(error.error.contains("name"), "{bad:?}: {}", error.error);
+    }
+    assert!(db.list_agents().await.unwrap().is_empty());
+
+    let no_db = build_router(Arc::new(RwLock::new(ServerState::default())));
+    let (status, error): (StatusCode, ErrorEnvelope) =
+        request_typed(&no_db, Method::POST, "/api/agents", register_body("cursor")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error.error, "Database not initialized");
+}

@@ -2411,7 +2411,9 @@ async fn page_write_update_user_edited_machine_write_creates_revision_card_witho
         .expect("revision card must be visible in pending revisions");
     assert_eq!(card.target_source_id, page_id);
     assert_eq!(card.revision_content, machine_content);
-    assert_eq!(card.source_agent.as_deref(), Some("page_write"));
+    // A pipeline lane's card is proposed by Wenlan itself, never shown
+    // under the internal `page_write` kind.
+    assert_eq!(card.source_agent.as_deref(), Some("wenlan"));
 
     let conn = db.test_primary_session().await;
     let mut rows = conn
@@ -3861,7 +3863,10 @@ async fn page_write_update_edit_landing_mid_write_is_not_clobbered() {
     // (page is still machine-owned) and before writing.
     let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
     let (go_tx, go_rx) = tokio::sync::oneshot::channel();
-    *PRE_WRITE_GATE.lock().unwrap() = Some((page_id.to_string(), parked_tx, go_rx));
+    PRE_WRITE_GATE
+        .lock()
+        .unwrap()
+        .push((page_id.to_string(), parked_tx, go_rx));
 
     // Close to the seeded source: `fs_edit` is not exempt from the
     // hallucination guard, so an unrelated body would be rejected before
@@ -4381,6 +4386,16 @@ async fn accept_pending_revision_page_write_card_updates_page_content() {
         db.get_memory_detail(card_id).await.unwrap().is_none(),
         "accepted Page proposal is a transient card, not a new ambient memory"
     );
+    let changelog: Vec<serde_json::Value> =
+        serde_json::from_str(&db.get_page_changelog(&page_id).await.unwrap()).unwrap();
+    let accept_entry = changelog.last().expect("accept logs a changelog entry");
+    assert_eq!(accept_entry["edited_by"], "revision_accept");
+    assert_eq!(
+        accept_entry["char_delta"],
+        proposed_content.chars().count() as i64 - human_content.chars().count() as i64
+    );
+    assert_eq!(accept_entry["sources_added"], 1);
+    assert_eq!(accept_entry["sources_removed"], 0);
 
     let writer =
         crate::export::knowledge::KnowledgeWriter::new(knowledge_dir.path().to_path_buf(), &db);
@@ -4499,7 +4514,9 @@ async fn pending_revision_queue_lists_a_gated_page_card_and_accept_applies_it() 
         "the queue must name the page as the card's target, so accept/dismiss resolve it"
     );
     assert_eq!(card.revision_content, proposed_content);
-    assert_eq!(card.source_agent.as_deref(), Some("page_write"));
+    // A pipeline lane's card is proposed by Wenlan itself, never shown
+    // under the internal `page_write` kind.
+    assert_eq!(card.source_agent.as_deref(), Some("wenlan"));
     assert_eq!(
         card.target_kind,
         wenlan_types::responses::RevisionTargetKind::Page,
@@ -4829,6 +4846,58 @@ async fn accept_page_revision_source_failure_keeps_page_retryable() {
 }
 
 #[tokio::test]
+async fn accept_of_a_card_consumed_concurrently_is_not_reported_as_outdated() {
+    // Two accepts can load the same pending card; the first lands it and
+    // consumes it, so the second fails the fence. That second caller must
+    // not be told the revision was discarded, because it was applied.
+    let (db, _dir) = test_db().await;
+    let mem_id = "mem_page_accept_race_original";
+    let content = "Rust ownership keeps memory safety rules explicit";
+    let proposed = "Rust ownership lets the compiler enforce memory safety rules";
+    seed_memory(&db, mem_id, content).await;
+    let page_id = seed_page(&db, mem_id, content).await;
+    let before = db.get_page(&page_id).await.unwrap().unwrap();
+    let source_revision = db.get_page_source_revision(&page_id).await.unwrap();
+    let staged = stage_page_revision_card(
+        &db,
+        &before,
+        proposed,
+        &[mem_id.to_string()],
+        source_revision,
+        "page_growth",
+        None,
+    )
+    .await
+    .unwrap();
+    let card_id = staged.revision_card_id.as_deref().unwrap();
+    let loaded_by_second_caller = super::page_revision::resolve_page_revision_card(&db, card_id)
+        .await
+        .unwrap()
+        .expect("pending page card must resolve");
+
+    let first = accept_pending_revision(&db, card_id, "test-agent")
+        .await
+        .unwrap();
+    assert!(first.wrote);
+
+    let err = super::page_revision::accept_page_revision_card(&db, loaded_by_second_caller, None)
+        .await
+        .unwrap_err();
+    match err {
+        WenlanError::NotFound(msg) => assert!(
+            !msg.starts_with(crate::post_write::PAGE_REVISION_OUTDATED),
+            "a consumed card must not carry the outdated code, got: {msg}"
+        ),
+        other => panic!("expected NotFound for an already-resolved card, got {other:?}"),
+    }
+    assert_eq!(
+        db.get_page(&page_id).await.unwrap().unwrap().content,
+        proposed,
+        "the first accept's content must stay applied"
+    );
+}
+
+#[tokio::test]
 async fn accept_pending_revision_page_write_card_conflicts_when_page_version_changed() {
     let (db, _dir) = test_db().await;
     let mem_id = "mem_page_accept_conflict_original";
@@ -4904,6 +4973,10 @@ async fn accept_pending_revision_page_write_card_conflicts_when_page_version_cha
     match err {
         WenlanError::Conflict(msg) => {
             assert!(
+                msg.starts_with(crate::post_write::PAGE_REVISION_OUTDATED),
+                "conflict must carry the outdated-card code, got: {msg}"
+            );
+            assert!(
                 msg.contains(&format!("staged version {staged_version}")),
                 "conflict message must name the staged version, got: {msg}"
             );
@@ -4920,13 +4993,16 @@ async fn accept_pending_revision_page_write_card_conflicts_when_page_version_cha
         after.content, newer_human_content,
         "stale page-write card must not overwrite newer human prose"
     );
+    // Both fences only move forward, so the card can never apply. Leaving it
+    // queued stranded it: every later accept failed the same way. It is
+    // discarded instead, and the error says so with a stable code.
     assert!(
-        db.list_pending_revisions(10)
+        !db.list_pending_revisions(10)
             .await
             .unwrap()
             .iter()
             .any(|row| row.revision_source_id == card_id),
-        "conflicted page-write card must remain pending"
+        "an outdated page-write card must be discarded, not left pending"
     );
 }
 
@@ -5025,13 +5101,16 @@ async fn accept_pending_revision_page_write_card_conflicts_when_a_source_attache
             .contains(&attached_mem_id.to_string()),
         "the concurrently attached source must survive the rejected accept"
     );
+    // Both fences only move forward, so the card can never apply. Leaving it
+    // queued stranded it: every later accept failed the same way. It is
+    // discarded instead, and the error says so with a stable code.
     assert!(
-        db.list_pending_revisions(10)
+        !db.list_pending_revisions(10)
             .await
             .unwrap()
             .iter()
             .any(|row| row.revision_source_id == card_id),
-        "conflicted page-write card must remain pending"
+        "an outdated page-write card must be discarded, not left pending"
     );
 }
 
@@ -6813,4 +6892,932 @@ fn known_writers_are_not_unknown() {
             "unknown-ness of {edited_by:?}"
         );
     }
+}
+
+// ── PR A: page write ownership (creation kind, expected_version, review lock) ──
+
+const OWNERSHIP_SOURCE: &str = "Tokio runtimes schedule async tasks across worker threads";
+
+async fn ownership_write(
+    db: &MemoryDB,
+    page_id: &str,
+    content: &str,
+    sources: &[&str],
+    edited_by: &str,
+    expected_version: Option<i64>,
+) -> Result<WriteResult, WenlanError> {
+    page_write(
+        db,
+        PageWrite::Update {
+            page_id,
+            req: UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: sources.iter().map(|s| s.to_string()).collect(),
+                expected_version,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by,
+            require_stale: false,
+            expected_source_revision: None,
+            knowledge_path: None,
+            citations: None,
+        },
+    )
+    .await
+}
+
+/// A machine-owned page (`insert_page` writes `creation_kind = distilled`)
+/// cited by one memory.
+async fn ownership_page(db: &MemoryDB, page_id: &str, mem_id: &str) -> crate::pages::Page {
+    seed_memory(db, mem_id, OWNERSHIP_SOURCE).await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        page_id,
+        "Tokio Scheduling",
+        None,
+        OWNERSHIP_SOURCE,
+        None,
+        None,
+        &[mem_id],
+        &now,
+    )
+    .await
+    .unwrap();
+    db.get_page(page_id).await.unwrap().unwrap()
+}
+
+/// Same page after a human `fs_edit`, so `user_edited` is set.
+async fn ownership_user_edited_page(
+    db: &MemoryDB,
+    page_id: &str,
+    mem_id: &str,
+) -> crate::pages::Page {
+    ownership_page(db, page_id, mem_id).await;
+    ownership_write(
+        db,
+        page_id,
+        "Tokio runtimes schedule async tasks across worker threads, with human notes",
+        &[mem_id],
+        "fs_edit",
+        None,
+    )
+    .await
+    .unwrap();
+    let page = db.get_page(page_id).await.unwrap().unwrap();
+    assert!(
+        page.user_edited,
+        "precondition: fs_edit marks human ownership"
+    );
+    page
+}
+
+#[test]
+fn resolve_page_creation_kind_follows_the_distinct_source_floor() {
+    let ids = |n: usize| (0..n).map(|i| format!("mem-{i}")).collect::<Vec<_>>();
+    assert_eq!(resolve_page_creation_kind(None, &ids(0), 3), "authored");
+    assert_eq!(resolve_page_creation_kind(None, &ids(1), 3), "authored");
+    assert_eq!(resolve_page_creation_kind(None, &ids(2), 3), "authored");
+    assert_eq!(resolve_page_creation_kind(None, &ids(3), 3), "distilled");
+    assert_eq!(
+        resolve_page_creation_kind(None, &["a".into(), "a".into(), "a".into()], 3),
+        "authored",
+        "duplicate ids count once against the floor"
+    );
+    assert_eq!(
+        resolve_page_creation_kind(Some("research"), &ids(5), 3),
+        "research",
+        "an explicit kind always wins"
+    );
+}
+
+#[tokio::test]
+async fn machine_write_requires_review_matrix() {
+    let (db, _dir) = test_db().await;
+    let machine = ownership_page(&db, "page_gate_matrix", "mem-gate-matrix").await;
+    let mut edited = machine.clone();
+    edited.user_edited = true;
+    let mut authored = machine.clone();
+    authored.creation_kind = "authored".to_string();
+    let mut locked = machine.clone();
+    locked.review_required = true;
+
+    let agent = Writer::classify("agent_refresh");
+    let pipeline = Writer::classify("re_distill");
+    let human = Writer::classify("manual_edit");
+
+    // Human writers are never gated, not even by the lock.
+    for page in [&machine, &edited, &authored, &locked] {
+        assert!(!machine_write_requires_review(human, page, false, false));
+        assert!(!machine_write_requires_review(human, page, true, true));
+    }
+    // Machine-owned page: nobody is gated.
+    assert!(!machine_write_requires_review(
+        agent, &machine, false, false
+    ));
+    assert!(!machine_write_requires_review(
+        pipeline, &machine, false, false
+    ));
+    // Agent with a checked version writes over human ownership.
+    assert!(!machine_write_requires_review(agent, &edited, true, false));
+    assert!(!machine_write_requires_review(
+        agent, &authored, true, false
+    ));
+    // Agent without a version is gated by human ownership.
+    assert!(machine_write_requires_review(agent, &edited, false, false));
+    assert!(machine_write_requires_review(
+        agent, &authored, false, false
+    ));
+    // Pipeline writers are gated by human ownership; a version does not help.
+    assert!(machine_write_requires_review(
+        pipeline, &edited, true, false
+    ));
+    assert!(machine_write_requires_review(
+        pipeline, &authored, true, false
+    ));
+    // user_forced releases user_edited but never authored.
+    assert!(!machine_write_requires_review(
+        pipeline, &edited, false, true
+    ));
+    assert!(machine_write_requires_review(
+        pipeline, &authored, false, true
+    ));
+    // The lock gates every machine writer, whatever else holds.
+    assert!(machine_write_requires_review(agent, &locked, true, false));
+    assert!(machine_write_requires_review(agent, &locked, false, false));
+    assert!(machine_write_requires_review(
+        pipeline, &locked, false, false
+    ));
+    assert!(machine_write_requires_review(
+        pipeline, &locked, false, true
+    ));
+}
+
+#[tokio::test]
+async fn create_page_without_kind_below_floor_lands_as_authored() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-kind-one", OWNERSHIP_SOURCE).await;
+    for (title, sources) in [
+        ("No Sources", Vec::<String>::new()),
+        ("One Source", vec!["mem-kind-one".to_string()]),
+    ] {
+        let req = CreateConceptRequest {
+            title: title.to_string(),
+            content: OWNERSHIP_SOURCE.to_string(),
+            summary: None,
+            entity_id: None,
+            space: (None).into(),
+            source_memory_ids: sources,
+            creation_kind: None,
+            workspace: None,
+        };
+        let result = create_page(&db, req, "test", None).await.unwrap();
+        let page = db.get_page(&result.id).await.unwrap().unwrap();
+        assert_eq!(
+            page.creation_kind, "authored",
+            "{title}: no kind and fewer sources than the floor must resolve to authored"
+        );
+    }
+}
+
+#[tokio::test]
+async fn create_page_without_kind_at_floor_lands_as_distilled() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-kind-a", "Tokio runtimes schedule async tasks").await;
+    seed_memory(&db, "mem-kind-b", "Tokio worker threads steal async tasks").await;
+    seed_memory(&db, "mem-kind-c", "Tokio schedules tasks across threads").await;
+    let req = CreateConceptRequest {
+        title: "Tokio Scheduling".to_string(),
+        content: OWNERSHIP_SOURCE.to_string(),
+        summary: None,
+        entity_id: None,
+        space: (None).into(),
+        source_memory_ids: vec![
+            "mem-kind-a".to_string(),
+            "mem-kind-b".to_string(),
+            "mem-kind-c".to_string(),
+        ],
+        creation_kind: None,
+        workspace: None,
+    };
+    let result = create_page_with_floor(&db, req, "test", None, 3)
+        .await
+        .unwrap();
+    let page = db.get_page(&result.id).await.unwrap().unwrap();
+    assert_eq!(page.creation_kind, "distilled");
+}
+
+#[tokio::test]
+async fn agent_refresh_with_matching_expected_version_writes_over_user_edit() {
+    let (db, _dir) = test_db().await;
+    let before = ownership_user_edited_page(&db, "page_agent_cas", "mem-agent-cas").await;
+    let content = "Tokio runtimes schedule async tasks across worker threads, refreshed by agent";
+    let result = ownership_write(
+        &db,
+        "page_agent_cas",
+        content,
+        &["mem-agent-cas"],
+        "agent_refresh",
+        Some(before.version),
+    )
+    .await
+    .unwrap();
+    assert!(result.wrote, "a version-checked agent refresh must land");
+    assert!(!result.gated);
+    let after = db.get_page("page_agent_cas").await.unwrap().unwrap();
+    assert_eq!(after.content, content);
+    assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn agent_refresh_without_expected_version_is_staged_on_user_edited_page() {
+    let (db, _dir) = test_db().await;
+    let before = ownership_user_edited_page(&db, "page_agent_nocas", "mem-agent-nocas").await;
+    let result = ownership_write(
+        &db,
+        "page_agent_nocas",
+        "Tokio runtimes schedule async tasks, rewritten without a version",
+        &["mem-agent-nocas"],
+        "agent_refresh",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!result.wrote);
+    assert!(result.gated);
+    let after = db.get_page("page_agent_nocas").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn agent_refresh_with_stale_expected_version_is_refused_before_any_card() {
+    let (db, _dir) = test_db().await;
+    let before = ownership_user_edited_page(&db, "page_agent_stale", "mem-agent-stale").await;
+    let result = ownership_write(
+        &db,
+        "page_agent_stale",
+        "Tokio runtimes schedule async tasks, written against an old version",
+        &["mem-agent-stale"],
+        "agent_refresh",
+        Some(before.version - 1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.outcome, WriteOutcome::Refused);
+    assert!(!result.wrote);
+    assert!(!result.gated, "a stale version is refused, never staged");
+    let after = db.get_page("page_agent_stale").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.version, before.version);
+    assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn review_lock_stages_agent_and_pipeline_writes_but_not_human_edits() {
+    let (db, _dir) = test_db().await;
+    let page = ownership_page(&db, "page_locked", "mem-locked").await;
+    assert!(!page.review_required);
+    assert!(db
+        .set_page_review_required("page_locked", true)
+        .await
+        .unwrap());
+    let locked = db.get_page("page_locked").await.unwrap().unwrap();
+    assert!(locked.review_required);
+
+    let agent = ownership_write(
+        &db,
+        "page_locked",
+        "Tokio runtimes schedule async tasks, agent rewrite under lock",
+        &["mem-locked"],
+        "agent_refresh",
+        Some(locked.version),
+    )
+    .await
+    .unwrap();
+    assert!(
+        agent.gated && !agent.wrote,
+        "the lock gates an agent even with a matching expected_version"
+    );
+
+    let pipeline = ownership_write(
+        &db,
+        "page_locked",
+        "Tokio runtimes schedule async tasks, pipeline rewrite under lock",
+        &["mem-locked"],
+        "re_distill",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        pipeline.gated && !pipeline.wrote,
+        "the lock gates pipeline writers"
+    );
+    assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 2);
+    assert_eq!(
+        db.get_page("page_locked").await.unwrap().unwrap().content,
+        locked.content
+    );
+
+    let human_content = "Tokio runtimes schedule async tasks across worker threads, human edit";
+    let human = ownership_write(
+        &db,
+        "page_locked",
+        human_content,
+        &["mem-locked"],
+        "manual_edit",
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(human.wrote, "a human edit passes the lock");
+    let after = db.get_page("page_locked").await.unwrap().unwrap();
+    assert_eq!(after.content, human_content);
+    assert!(
+        after.review_required,
+        "a human edit leaves the lock in place"
+    );
+}
+
+#[tokio::test]
+async fn user_forced_rebuild_is_still_staged_under_review_lock() {
+    let (db, _dir) = test_db().await;
+    let before = ownership_user_edited_page(&db, "page_forced_lock", "mem-forced-lock").await;
+    assert!(db
+        .set_page_review_required("page_forced_lock", true)
+        .await
+        .unwrap());
+    let fence = db
+        .try_get_page_fence("page_forced_lock")
+        .await
+        .unwrap()
+        .unwrap();
+    let result = page_write(
+        &db,
+        PageWrite::UserForcedUpdate {
+            page_id: "page_forced_lock",
+            req: UpdatePageRequest {
+                content: "Tokio runtimes schedule async tasks, forced rebuild".to_string(),
+                source_memory_ids: vec!["mem-forced-lock".to_string()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "re_distill",
+            expected_fence: &fence,
+            knowledge_path: None,
+            citations: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        result.gated && !result.wrote,
+        "user_forced never releases the lock"
+    );
+    let after = db.get_page("page_forced_lock").await.unwrap().unwrap();
+    assert_eq!(after.content, before.content);
+    assert!(after.user_edited);
+}
+
+#[tokio::test]
+async fn machine_refresh_with_empty_sources_is_allowed_only_for_a_sourceless_page() {
+    let (db, _dir) = test_db().await;
+    // Sourceless machine-owned page.
+    let req = CreateConceptRequest {
+        title: "Sourceless Notes".to_string(),
+        content: OWNERSHIP_SOURCE.to_string(),
+        summary: None,
+        entity_id: None,
+        space: (None).into(),
+        source_memory_ids: vec![],
+        creation_kind: Some("research".to_string()),
+        workspace: None,
+    };
+    let sourceless = create_page(&db, req, "test", None).await.unwrap().id;
+    let content = "Tokio runtimes schedule async tasks, refreshed with no sources";
+    let ok = ownership_write(&db, &sourceless, content, &[], "agent_refresh", None)
+        .await
+        .unwrap();
+    assert!(
+        ok.wrote,
+        "an empty-source refresh of a sourceless page must land"
+    );
+    let page = db.get_page(&sourceless).await.unwrap().unwrap();
+    assert_eq!(page.content, content);
+    assert!(page.source_memory_ids.is_empty());
+
+    // Sourced page: an empty source list would orphan it.
+    ownership_page(&db, "page_sourced_empty", "mem-sourced-empty").await;
+    let err = ownership_write(
+        &db,
+        "page_sourced_empty",
+        "Tokio runtimes schedule async tasks, sources dropped",
+        &[],
+        "agent_refresh",
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&err, WenlanError::Validation(m) if m.contains("must cite at least one source")),
+        "got {err:?}"
+    );
+    let page = db.get_page("page_sourced_empty").await.unwrap().unwrap();
+    assert_eq!(
+        page.source_memory_ids,
+        vec!["mem-sourced-empty".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn set_page_review_required_round_trips_without_bumping_version() {
+    let (db, _dir) = test_db().await;
+    let before = ownership_page(&db, "page_lock_rt", "mem-lock-rt").await;
+    let rev_before = db.get_page_source_revision("page_lock_rt").await.unwrap();
+    assert!(db
+        .set_page_review_required("page_lock_rt", true)
+        .await
+        .unwrap());
+    let locked = db.get_page("page_lock_rt").await.unwrap().unwrap();
+    assert!(locked.review_required);
+    assert_eq!(
+        locked.version, before.version,
+        "the lock is not a content edit"
+    );
+    assert_eq!(
+        db.get_page_source_revision("page_lock_rt").await.unwrap(),
+        rev_before
+    );
+    let listed = db.list_pages("active", 100, 0).await.unwrap();
+    assert!(
+        listed
+            .iter()
+            .any(|p| p.id == "page_lock_rt" && p.review_required),
+        "list reads must carry the lock too"
+    );
+    assert!(db
+        .set_page_review_required("page_lock_rt", false)
+        .await
+        .unwrap());
+    assert!(
+        !db.get_page("page_lock_rt")
+            .await
+            .unwrap()
+            .unwrap()
+            .review_required
+    );
+    assert!(
+        !db.set_page_review_required("page_missing", true)
+            .await
+            .unwrap(),
+        "an unknown page reports false"
+    );
+}
+
+// ── PR A fix round: fences that hold when the page moves after the gate ──
+
+/// Park the next write to `page_id` at the pre-write seam. Returns the
+/// "parked" receiver and the "go" sender.
+fn arm_pre_write_gate(
+    page_id: &str,
+) -> (
+    tokio::sync::oneshot::Receiver<()>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
+    let (go_tx, go_rx) = tokio::sync::oneshot::channel();
+    PRE_WRITE_GATE
+        .lock()
+        .unwrap()
+        .push((page_id.to_string(), parked_tx, go_rx));
+    (parked_rx, go_tx)
+}
+
+fn source_fenced_write<'a>(
+    page_id: &'a str,
+    content: &str,
+    mem_id: &str,
+    edited_by: &'a str,
+    expected_version: Option<i64>,
+    expected_source_revision: i64,
+) -> PageWrite<'a> {
+    PageWrite::Update {
+        page_id,
+        req: UpdatePageRequest {
+            content: content.to_string(),
+            source_memory_ids: vec![mem_id.to_string()],
+            expected_version,
+            caller_id: None,
+            operation_id: None,
+        },
+        edited_by,
+        require_stale: false,
+        expected_source_revision: Some(expected_source_revision),
+        knowledge_path: None,
+        citations: None,
+    }
+}
+
+/// Ruling 1: an agent refresh that sent `expected_version` and rides the
+/// source-revision fence must still lose to a version bump that leaves the
+/// source revision alone. A human rename lands while the agent write is
+/// parked after its version check; the agent write must come back Refused
+/// (route 409), not Contended, and the body must not move.
+///
+/// Mutation check: pass `None` instead of the agent's `expected_version` to
+/// the source-revision write and this test lands the stale agent body.
+#[tokio::test]
+async fn agent_refresh_loses_to_a_rename_between_version_check_and_write() {
+    let (db, _dir) = test_db().await;
+    let page_id = "page_agent_rename_race";
+    let page = ownership_page(&db, page_id, "mem-agent-rename-race").await;
+    let source_revision = db.get_page_source_revision(page_id).await.unwrap();
+    let (parked_rx, go_tx) = arm_pre_write_gate(page_id);
+
+    let agent = page_write(
+        &db,
+        source_fenced_write(
+            page_id,
+            "Tokio runtimes schedule async tasks, agent body from the pre-rename read",
+            "mem-agent-rename-race",
+            "agent_refresh",
+            Some(page.version),
+            source_revision,
+        ),
+    );
+    let rename = async {
+        parked_rx.await.expect("agent write must park");
+        db.rename_page(
+            page_id,
+            "Tokio Scheduling Renamed",
+            page.version,
+            &crate::read_scope::ReadScope::Global,
+            None,
+        )
+        .await
+        .expect("the rename lands while the agent write is parked");
+        go_tx.send(()).expect("agent write still parked");
+    };
+    let (agent, ()) = tokio::join!(agent, rename);
+    let agent = agent.unwrap();
+
+    let after = db.get_page(page_id).await.unwrap().unwrap();
+    assert!(
+        !agent.wrote,
+        "the stale agent body must not land: {agent:?}"
+    );
+    assert_eq!(after.content, page.content);
+    assert_eq!(agent.outcome, WriteOutcome::Refused);
+    assert!(
+        after.version > page.version,
+        "the rename bumped the version"
+    );
+    assert_eq!(
+        db.get_page_source_revision(page_id).await.unwrap(),
+        source_revision,
+        "the rename left the source revision alone, so only the version fence could catch it"
+    );
+    assert_eq!(after.title, "Tokio Scheduling Renamed");
+}
+
+async fn assert_late_lock_stages_a_card(page_id: &str, mem_id: &str, source_fenced: bool) {
+    let (db, _dir) = test_db().await;
+    let page = ownership_page(&db, page_id, mem_id).await;
+    let source_revision = db.get_page_source_revision(page_id).await.unwrap();
+    let (parked_rx, go_tx) = arm_pre_write_gate(page_id);
+    let body = "Tokio runtimes schedule async tasks, pipeline body from the unlocked read";
+
+    let write = if source_fenced {
+        source_fenced_write(page_id, body, mem_id, "re_distill", None, source_revision)
+    } else {
+        PageWrite::Update {
+            page_id,
+            req: UpdatePageRequest {
+                content: body.to_string(),
+                source_memory_ids: vec![mem_id.to_string()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "re_distill",
+            require_stale: false,
+            expected_source_revision: None,
+            knowledge_path: None,
+            citations: None,
+        }
+    };
+    let machine = page_write(&db, write);
+    let lock = async {
+        parked_rx
+            .await
+            .expect("machine write must park after the gate");
+        assert!(db.set_page_review_required(page_id, true).await.unwrap());
+        go_tx.send(()).expect("machine write still parked");
+    };
+    let (machine, ()) = tokio::join!(machine, lock);
+    let machine = machine.unwrap();
+
+    let after = db.get_page(page_id).await.unwrap().unwrap();
+    assert_eq!(
+        after.version, page.version,
+        "precondition: the lock toggle does not bump the version"
+    );
+    assert!(!machine.wrote, "a lock set after the gate must hold");
+    assert!(
+        machine.gated && machine.revision_card_id.is_some(),
+        "the retry re-reads the page, sees the lock, and stages a card: {machine:?}"
+    );
+    assert_eq!(after.content, page.content, "prose is unchanged");
+    assert_eq!(db.list_pending_revisions(10).await.unwrap().len(), 1);
+}
+
+/// Ruling 2, version-fenced mode. Mutation check: drop the review-lock
+/// predicate from the UPDATE and the pipeline body lands on the locked page.
+#[tokio::test]
+async fn review_lock_set_after_the_gate_stages_a_version_fenced_write() {
+    assert_late_lock_stages_a_card("page_late_lock_version", "mem-late-lock-version", false).await;
+}
+
+/// Ruling 2, source-revision-fenced mode.
+#[tokio::test]
+async fn review_lock_set_after_the_gate_stages_a_source_fenced_write() {
+    assert_late_lock_stages_a_card("page_late_lock_source", "mem-late-lock-source", true).await;
+}
+
+/// Ruling 3: the source-page replacement path (document enrichment) treats
+/// the review lock like `user_edited` and refuses before writing.
+#[tokio::test]
+async fn replace_source_on_a_review_locked_source_page_is_refused() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "page_locked_source",
+        "Source page",
+        None,
+        "Original body",
+        None,
+        None,
+        &["source-old"],
+        &now,
+        "source",
+        "confirmed",
+        None,
+        Some("[]"),
+    )
+    .await
+    .unwrap();
+    assert!(db
+        .set_page_review_required("page_locked_source", true)
+        .await
+        .unwrap());
+
+    let sources = vec!["source-new".to_string()];
+    let error = page_write(
+        &db,
+        PageWrite::ReplaceSource {
+            page_id: "page_locked_source",
+            title: "Source page",
+            summary: None,
+            content: "Enrichment body that must not land",
+            source_memory_ids: &sources,
+            agent: "doc-enrich",
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, WenlanError::Conflict(_)), "{error:?}");
+    assert_eq!(
+        db.get_page("page_locked_source")
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "Original body"
+    );
+}
+
+/// The card names who proposed it: the agent the caller identified, Wenlan
+/// for a pipeline lane, and nobody for an unidentified agent. Never the
+/// internal `page_write` kind, which the review dialog showed verbatim.
+#[tokio::test]
+async fn staged_page_card_names_its_proposer() {
+    let (db, _dir) = test_db().await;
+    let mem_id = "mem_card_proposer";
+    let content = "Rust ownership keeps memory safety rules explicit";
+    seed_memory(&db, mem_id, content).await;
+    let page_id = seed_page(&db, mem_id, content).await;
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let source_revision = db.get_page_source_revision(&page_id).await.unwrap();
+
+    let mut cases = Vec::new();
+    for (edited_by, proposer, expected) in [
+        ("agent_refresh", Some("claude-code"), Some("claude-code")),
+        ("agent_refresh", Some("  "), None),
+        ("agent_refresh", None, None),
+        ("re_distill", None, Some("wenlan")),
+    ] {
+        let staged = crate::post_write::stage_page_revision_card_proposed_by(
+            &db,
+            &page,
+            &format!("{content} ({edited_by} {proposer:?})"),
+            &[mem_id.to_string()],
+            source_revision,
+            edited_by,
+            proposer,
+            None,
+        )
+        .await
+        .unwrap();
+        cases.push((staged.revision_card_id.unwrap(), expected));
+    }
+
+    let listed = db.list_pending_revisions(10).await.unwrap();
+    for (card_id, expected) in cases {
+        let card = listed
+            .iter()
+            .find(|row| row.revision_source_id == card_id)
+            .expect("staged card is queued");
+        assert_eq!(card.source_agent.as_deref(), expected, "card {card_id}");
+    }
+}
+
+/// The card says why it needs review: the page's lock, Wenlan's own
+/// background upkeep, or the rare mid-write ownership flip. Both queue
+/// listings carry it, and a card staged before the field existed derives it
+/// from its writer.
+#[tokio::test]
+async fn staged_page_card_records_review_reason() {
+    let (db, _dir) = test_db().await;
+    let mem_id = "mem_card_reason";
+    let content = "Rust ownership keeps memory safety rules explicit";
+    seed_memory(&db, mem_id, content).await;
+    let page_id = seed_page(&db, mem_id, content).await;
+    let source_revision = db.get_page_source_revision(&page_id).await.unwrap();
+    let sources = [mem_id.to_string()];
+
+    let unlocked = db.get_page(&page_id).await.unwrap().unwrap();
+    assert!(db.set_page_review_required(&page_id, true).await.unwrap());
+    let locked = db.get_page(&page_id).await.unwrap().unwrap();
+
+    let mut cases = Vec::new();
+    for (page, edited_by, expected) in [
+        (&locked, "agent_refresh", Some("locked")),
+        // The lock wins over the writer: a background write to a locked page
+        // waits on the lock, not on upkeep.
+        (&locked, "re_distill", Some("locked")),
+        (&unlocked, "re_distill", Some("background")),
+        (&unlocked, "agent_refresh", Some("owned")),
+    ] {
+        let staged = stage_page_revision_card(
+            &db,
+            page,
+            &format!("{content} ({edited_by} {expected:?})"),
+            &sources,
+            source_revision,
+            edited_by,
+            None,
+        )
+        .await
+        .unwrap();
+        cases.push((staged.revision_card_id.unwrap(), expected));
+    }
+
+    let global = db.list_pending_revisions(10).await.unwrap();
+    let scoped = db
+        .list_pending_revisions_scoped(10, &crate::read_scope::ReadScope::Global)
+        .await
+        .unwrap();
+    for listed in [&global, &scoped] {
+        for (card_id, expected) in &cases {
+            let card = listed
+                .iter()
+                .find(|row| &row.revision_source_id == card_id)
+                .expect("staged card is queued");
+            assert_eq!(card.review_reason.as_deref(), *expected, "card {card_id}");
+        }
+    }
+
+    // Legacy cards have no `review_reason`: a pipeline writer reads as
+    // background upkeep, anything else stays unexplained.
+    for (edited_by, expected) in [
+        ("re_distill", Some("background")),
+        ("page_growth", Some("background")),
+        ("some_future_writer", Some("background")),
+        ("agent_refresh", None),
+        ("manual_edit", None),
+    ] {
+        let legacy = serde_json::json!({ "edited_by": edited_by });
+        assert_eq!(
+            crate::db::revision_review_reason(Some(&legacy)).as_deref(),
+            expected,
+            "legacy {edited_by}"
+        );
+    }
+    assert_eq!(crate::db::revision_review_reason(None), None);
+    let stamped = serde_json::json!({ "edited_by": "re_distill", "review_reason": "locked" });
+    assert_eq!(
+        crate::db::revision_review_reason(Some(&stamped)).as_deref(),
+        Some("locked")
+    );
+}
+
+/// An `agent_refresh` write records which agent made it, and every new
+/// changelog entry carries the numeric delta the app localizes from.
+/// A refresh that core itself gates (the page became locked or user-owned
+/// after the route checked it) still names the agent on the staged card.
+#[tokio::test]
+async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-gate-a", "gated source").await;
+    let page_id = seed_page(&db, "mem-gate-a", "gated source").await;
+    db.set_page_review_required(&page_id, true).await.unwrap();
+    let revision = db.get_page_source_revision(&page_id).await.unwrap();
+
+    let result = page_write(
+        &db,
+        PageWrite::AgentUpdate {
+            page_id: &page_id,
+            req: UpdatePageRequest {
+                content: "gated source, refreshed".to_string(),
+                source_memory_ids: vec!["mem-gate-a".to_string()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            agent: Some("claude-code"),
+            expected_source_revision: revision,
+            knowledge_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!result.wrote, "{result:?}");
+
+    let pending = db.list_pending_revisions(10).await.unwrap();
+    let card = pending
+        .iter()
+        .find(|p| p.target_source_id == page_id)
+        .expect("a staged card for the page");
+    assert_eq!(card.source_agent.as_deref(), Some("claude-code"));
+    assert_eq!(card.review_reason.as_deref(), Some("locked"));
+}
+
+#[tokio::test]
+async fn changelog_entry_records_agent_and_numeric_delta() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-cl-a", "first source").await;
+    seed_memory(&db, "mem-cl-b", "second source").await;
+    let page_id = seed_page(&db, "mem-cl-a", "first source").await;
+
+    let write = |content: &'static str, agent: Option<&'static str>, sources: Vec<String>| {
+        let db = &db;
+        let page_id = page_id.clone();
+        async move {
+            let revision = db.get_page_source_revision(&page_id).await.unwrap();
+            page_write(
+                db,
+                PageWrite::AgentUpdate {
+                    page_id: &page_id,
+                    req: UpdatePageRequest {
+                        content: content.to_string(),
+                        source_memory_ids: sources,
+                        expected_version: None,
+                        caller_id: None,
+                        operation_id: None,
+                    },
+                    agent,
+                    expected_source_revision: revision,
+                    knowledge_path: None,
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    let first = write(
+        "first source, now longer",
+        Some("claude-code"),
+        vec!["mem-cl-a".to_string(), "mem-cl-b".to_string()],
+    )
+    .await;
+    assert!(first.wrote, "{first:?}");
+    let second = write("short", None, vec!["mem-cl-a".to_string()]).await;
+    assert!(second.wrote, "{second:?}");
+
+    let cl = db.get_page_changelog(&page_id).await.unwrap();
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&cl).unwrap();
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_eq!(entries[0]["edited_by"], "agent_refresh");
+    assert_eq!(entries[0]["agent"], "claude-code");
+    assert_eq!(entries[0]["char_delta"], 12);
+    assert_eq!(entries[0]["sources_added"], 1);
+    assert_eq!(entries[0]["sources_removed"], 0);
+    assert!(entries[1].get("agent").is_none(), "{:?}", entries[1]);
+    assert_eq!(entries[1]["char_delta"], -19);
+    assert_eq!(entries[1]["sources_added"], 0);
+    assert_eq!(entries[1]["sources_removed"], 1);
+    assert!(entries[1]["delta_summary"].is_string());
 }

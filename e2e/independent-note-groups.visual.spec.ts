@@ -14,7 +14,7 @@ for(const locale of ['en'] as const) for(const theme of ['light']) for(const wid
   await openWikiNote(page,'Fixture architecture');
   await openWikiNote(page,'Why fixtures stay deterministic');
   const left=page.locator('[data-note-group-id="primary"]'),right=page.locator('[data-note-group-id="secondary"]');
-  await left.getByRole('button',{name:copy.pages.groups.moveToRight,exact:true}).click();
+  await left.getByRole('tab',{selected:true}).click({button:'right'});
   await page.getByRole('menuitem',{name:copy.pages.groups.moveToRight,exact:true}).click();
   await expect(right.locator('.page-detail')).toBeVisible();
   await expect(left.locator('.page-detail')).toBeVisible();

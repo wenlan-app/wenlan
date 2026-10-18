@@ -50,11 +50,17 @@ class FakeApi:
 
 class FakeRunner:
     def __init__(
-        self, *, push_fails: bool = False, remote_sha: str = HEAD_SHA
+        self,
+        *,
+        push_fails: bool = False,
+        remote_sha: str = HEAD_SHA,
+        unmerged: tuple[str, ...] | None = None,
     ) -> None:
         self.commands: list[tuple[str, ...]] = []
         self.push_fails = push_fails
         self.remote_sha = remote_sha
+        # None = the merge succeeds; a tuple = it stops with these paths unmerged.
+        self.unmerged = unmerged
 
     def __call__(
         self,
@@ -68,6 +74,14 @@ class FakeRunner:
         self.commands.append(recorded)
         if command == ["git", "rev-parse", "HEAD"]:
             return subprocess.CompletedProcess(command, 0, stdout=HEAD_SHA + "\n")
+        if command == ["git", "merge", "--no-edit", "origin/main"]:
+            return subprocess.CompletedProcess(
+                command, 0 if self.unmerged is None else 1, stdout=""
+            )
+        if command == ["git", "diff", "--name-only", "--diff-filter=U"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="\n".join(self.unmerged or ()) + "\n"
+            )
         if command == ["git", "diff", "--cached", "--quiet"]:
             return subprocess.CompletedProcess(command, 0, stdout="")
         if command[:3] == ["git", "ls-remote", "--exit-code"]:
@@ -155,6 +169,55 @@ class SyncReleasePrTests(unittest.TestCase):
             SYNC.synchronize_release_branch(
                 HEAD_SHA, Path("/trusted/bump-version.sh"), run_command=runner
             )
+
+    def test_version_only_conflict_takes_main_then_rebumps(self) -> None:
+        paths = (
+            "crates/wenlan-cli/npm/package.json",
+            "crates/wenlan-mcp/npm/package.json",
+        )
+        runner = FakeRunner(unmerged=paths)
+        SYNC.synchronize_release_branch(
+            HEAD_SHA, Path("/trusted/bump-version.sh"), run_command=runner
+        )
+        resolve = [
+            ("git", "checkout", "--theirs", "--", *paths),
+            ("git", "add", "--", *paths),
+            ("git", "commit", "--no-edit"),
+            ("bash", "/trusted/bump-version.sh"),
+        ]
+        start = runner.commands.index(resolve[0])
+        self.assertEqual(runner.commands[start : start + len(resolve)], resolve)
+        self.assertNotIn(("git", "merge", "--abort"), runner.commands)
+        self.assertEqual(
+            runner.commands[-1],
+            ("git", "push", "origin", "HEAD:refs/heads/release-please--branches--main"),
+        )
+
+    def test_conflict_outside_version_files_aborts_without_push(self) -> None:
+        runner = FakeRunner(unmerged=("package.json", "CHANGELOG.md"))
+        with self.assertRaisesRegex(SYNC.SyncError, "manual resolution: CHANGELOG.md"):
+            SYNC.synchronize_release_branch(
+                HEAD_SHA, Path("/trusted/bump-version.sh"), run_command=runner
+            )
+        self.assertIn(("git", "merge", "--abort"), runner.commands)
+        for command in runner.commands:
+            self.assertNotEqual(command[:2], ("git", "checkout"))
+            self.assertNotEqual(command[:1], ("bash",))
+            self.assertNotEqual(command[:3], ("git", "push", "origin"))
+
+    def test_failed_merge_without_conflicts_fails_closed(self) -> None:
+        runner = FakeRunner(unmerged=())
+        with self.assertRaisesRegex(SYNC.SyncError, "no conflicted paths"):
+            SYNC.synchronize_release_branch(
+                HEAD_SHA, Path("/trusted/bump-version.sh"), run_command=runner
+            )
+        self.assertIn(("git", "merge", "--abort"), runner.commands)
+
+    def test_version_synced_paths_are_all_rewritten_by_bump_script(self) -> None:
+        bump = SCRIPT.with_name("bump-version.sh").read_text(encoding="utf-8")
+        for path in sorted(SYNC.VERSION_SYNCED_PATHS):
+            with self.subTest(path=path):
+                self.assertIn(path, bump)
 
 
 if __name__ == "__main__":

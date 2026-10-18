@@ -21,6 +21,12 @@ describe("real folder inventory", () => {
     expect(pageMatchesInventoryScope(note(),"folder:")).toBe(false);
     expect(pageMatchesInventoryScope(note({creation_kind:"entity"}),"all")).toBe(false);
   });
+  it("keeps a note distilled about an entity, which carries entity_id", () => {
+    const aboutEntity = note({ entity_id:"ent_libsql", creation_kind:"distilled", storage_path:"libsql-database-architecture.md" });
+    expect(pageMatchesInventoryScope(aboutEntity,"folder:")).toBe(true);
+    expect(collectPageInventory([aboutEntity],[])).toEqual([aboutEntity]);
+    expect(collectPageInventory([note({ id:"shadow", entity_id:"ent_libsql", creation_kind:"entity" })],[])).toEqual([]);
+  });
   it("deduplicates status transitions with active precedence and global search", () => {
     const active=note({storage_path:"Work/note.md"});
     expect(collectPageInventory([active],[note({status:"draft"})])).toEqual([active]);

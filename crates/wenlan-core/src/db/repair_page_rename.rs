@@ -744,7 +744,8 @@ async fn page_on_connection(
                     status, created_at, last_compiled, last_modified,
                     COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0),
                     COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'),
-                    COALESCE(review_status, 'confirmed'), workspace, citations
+                    COALESCE(review_status, 'confirmed'), workspace, citations,
+                    NULL, NULL, COALESCE(review_required, 0)
                FROM pages WHERE id=?1 LIMIT 2",
             libsql::params![page_id],
         )

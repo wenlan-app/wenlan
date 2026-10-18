@@ -12,7 +12,7 @@ import {
   type PageChangelogEntry,
 } from "../../lib/tauri";
 import { truncateReviewText } from "./ReviewDialog";
-import { prettyAgent, relativeMs } from "./page/format";
+import { relativeMs, revisionSummary, revisionWriterLabel } from "./page/format";
 
 const secondaryTextStyle: React.CSSProperties = {
   fontFamily: "var(--mem-font-body)",
@@ -304,6 +304,9 @@ function MemoryRevisionRow({
 
 /** One prior version of the page a revision card proposes to rewrite. */
 function PageRevisionRow({ entry }: { entry: PageChangelogEntry }) {
+  const { t, i18n } = useTranslation();
+  const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
+  const summary = revisionSummary(t, entry, i18n.language);
   return (
     <div
       style={{
@@ -337,7 +340,7 @@ function PageRevisionRow({ entry }: { entry: PageChangelogEntry }) {
             color: "var(--mem-text-secondary)",
           }}
         >
-          {prettyAgent(entry.edited_by)}
+          {revisionWriterLabel(t, entry.edited_by, entry.agent)}
         </span>
         <span
           style={{
@@ -346,10 +349,10 @@ function PageRevisionRow({ entry }: { entry: PageChangelogEntry }) {
             color: "var(--mem-text-tertiary)",
           }}
         >
-          {relativeMs(entry.at * 1000)}
+          {relativeMs(entry.at * 1000, relativeLocale)}
         </span>
       </span>
-      {entry.delta_summary && (
+      {summary && (
         <span
           style={{
             fontSize: "var(--mem-text-meta)",
@@ -357,7 +360,7 @@ function PageRevisionRow({ entry }: { entry: PageChangelogEntry }) {
             color: "var(--mem-text-tertiary)",
           }}
         >
-          {truncateReviewText(entry.delta_summary, 80)}
+          {truncateReviewText(summary, 80)}
         </span>
       )}
     </div>

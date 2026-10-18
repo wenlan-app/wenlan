@@ -507,7 +507,7 @@ async fn page_for_title_rename_on_connection(
                         COALESCE(sources_updated_count,0),stale_reason,COALESCE(user_edited,0),
                         COALESCE(changelog,'[]'),COALESCE(creation_kind,'distilled'),
                         COALESCE(review_status,'confirmed'),workspace,citations,
-                        COALESCE(kind,'concept'),refresh_blocked_reason
+                        COALESCE(kind,'concept'),refresh_blocked_reason,COALESCE(review_required,0)
                    FROM pages WHERE id=?1 AND COALESCE(kind,'concept')!='entity'"
             ),
             libsql::params![page_id],

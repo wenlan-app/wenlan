@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CaretRight, ArrowLeft, ArrowClockwise } from "@phosphor-icons/react";
 import { toast } from "sonner";
@@ -104,6 +104,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     enabled: !!source,
   });
   const infoState = useDetailInfoOpen(`source-container:${location.sourceId}`);
+  const infoToggleRef = useRef<HTMLButtonElement>(null);
   const refreshMutation = useMutation({
     mutationFn: () => syncRegisteredSource(location.sourceId),
     onSuccess: async () => {
@@ -216,7 +217,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
           </span>)}
         </SourceCollectionBreadcrumbs>
         <SourceCollectionToolbar search={search} filter={filter} lens={lens} onSearchChange={onSearchChange} onFilterChange={onFilterChange}
-          onLensChange={onLensChange} onAdd={onAdd} trailing={<InfoToggle open={infoState.open} onClick={infoState.toggle} />} />
+          onLensChange={onLensChange} onAdd={onAdd} trailing={<InfoToggle ref={infoToggleRef} open={infoState.open} onClick={infoState.toggle} />} />
         <div className="source-container-notices">
           {dirQuery.isPending && <p role="status">{t("sourceContainer.loading")}</p>}
           {dirQuery.isError && <div role="alert"><span>{t("sourceContainer.folderReadError")}</span><button type="button" onClick={() => void dirQuery.refetch()}>{t("sourceContainer.retryFolder")}</button></div>}
@@ -229,7 +230,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
         </div>}
       </CollectionFrame>
     </main>
-    <PageInfoDrawer docked inspector focusOnOpen={false}
+    <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef}
       open={infoState.open} onClose={() => infoState.setOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
       <DetailInfoContent className="source-container-info">
         <SourceContainerInfo source={source} refreshing={refreshMutation.isPending} onRefresh={() => refreshMutation.mutate()} />

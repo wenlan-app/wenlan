@@ -58,12 +58,64 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/pages/{id}/rename", post(handle_rename_page))
         .route("/api/pages/{id}/revisions", get(handle_get_page_revisions))
         .route("/api/pages/{id}/review", post(handle_review_page))
+        .route(
+            "/api/pages/{id}/review-required",
+            put(handle_set_page_review_required),
+        )
 }
 
 pub(crate) fn register_manual_edit(
     router: TrackedRouter<SharedState>,
 ) -> TrackedRouter<SharedState> {
     router.route("/api/memory/{id}/update-page", post(handle_update_page))
+}
+
+/// One `GET /api/pages` window, with `limit` and `offset` counted in pages this
+/// caller may see.
+///
+/// The truth adapter can hide a page, and it can only run after SQL has
+/// picked the rows. Applying `limit` and `offset` to raw rows made any window
+/// holding a hidden page come back short, and every pager of this route (the
+/// app's `listAllPages`, MCP `list_pages`) reads a short window as the end of
+/// the list, so every page after it silently disappeared. Here the scan
+/// starts at the first row, skips `offset` visible pages, and keeps reading
+/// until it has `limit` of them or the rows run out. Rescanning from the top
+/// costs O(offset) rows per call, which is cheap at library sizes and keeps
+/// the wire unchanged for every client.
+async fn list_visible_browse_pages(
+    db: &wenlan_core::db::MemoryDB,
+    grant: &wenlan_core::truth_contract::TruthGrant,
+    status: &str,
+    limit: usize,
+    offset: usize,
+    scope: &wenlan_core::read_scope::ReadScope,
+) -> Result<Vec<wenlan_core::pages::Page>, wenlan_core::WenlanError> {
+    const MIN_SCAN_BATCH: usize = 100;
+    let batch = limit.max(MIN_SCAN_BATCH);
+    let mut skipped = 0;
+    let mut row_offset = 0;
+    let mut window = Vec::with_capacity(limit.min(batch));
+    while window.len() < limit {
+        // Q1 browse surface: `kind='entity'` dual-write shadow pages appear
+        // here, so read the unfenced `_browse` twin (export + internal callers
+        // keep the fenced `list_pages_scoped`).
+        let rows = db
+            .list_pages_scoped_browse(status, batch as i64, row_offset as i64, scope)
+            .await?;
+        let read = rows.len();
+        row_offset += read;
+        for page in wenlan_core::truth_adapter::filter_pages(db, grant, rows).await? {
+            if skipped < offset {
+                skipped += 1;
+            } else if window.len() < limit {
+                window.push(page);
+            }
+        }
+        if read < batch {
+            break;
+        }
+    }
+    Ok(window)
 }
 
 /// GET /api/pages
@@ -97,14 +149,7 @@ pub async fn handle_list_pages(
     let scope =
         crate::read_scope::effective_read_scope(&db, space.as_deref(), header_space.as_deref())
             .await?;
-    // Q1 browse surface: `kind='entity'` dual-write shadow pages appear here,
-    // so read the unfenced `_browse` twin (export + internal callers keep the
-    // fenced `list_pages_scoped`).
-    let pages = db
-        .list_pages_scoped_browse(status, limit as i64, offset as i64, &scope)
-        .await
-        .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
-    let pages = wenlan_core::truth_adapter::filter_pages(&db, &view.grant, pages)
+    let pages = list_visible_browse_pages(&db, &view.grant, status, limit, offset, &scope)
         .await
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
     // Enrich only the final scoped, truth-filtered browse result. Entity shadow
@@ -305,6 +350,31 @@ async fn reject_entity_page_mutation(
     })
 }
 
+/// PUT /api/pages/{id}/review-required
+///
+/// Set or clear a page's review lock. While it is set, every machine write
+/// (an agent refresh with or without `expected_version`, and every pipeline
+/// stage) stages a revision card instead of landing; human edits are never
+/// gated by it. The flag is metadata: it does not bump the page version.
+pub async fn handle_set_page_review_required(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(id): Path<String>,
+    Json(req): Json<wenlan_types::requests::SetPageReviewRequiredRequest>,
+) -> Result<Json<wenlan_types::responses::PageReviewRequiredResponse>, ServerError> {
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    reject_entity_page_mutation(&db, &id).await?;
+    if !db.set_page_review_required(&id, req.required).await? {
+        return Err(ServerError::NotFound(format!("page {id} not found")));
+    }
+    Ok(Json(wenlan_types::responses::PageReviewRequiredResponse {
+        page_id: id,
+        review_required: req.required,
+    }))
+}
+
 /// POST /api/pages/{id}/archive
 pub async fn handle_archive_page(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -402,11 +472,22 @@ pub async fn handle_create_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(req): Json<CreateConceptRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
-    // The core writer treats an omitted creation_kind as distilled. Keep the
-    // telemetry classification aligned so MCP's compact write_page payload is
-    // counted exactly like an explicit distilled request.
-    let is_distilled = req.creation_kind.as_deref().unwrap_or("distilled") == "distilled";
-    let telemetry = { state.read().await.telemetry.clone() };
+    // An omitted creation_kind is resolved by the core writer from the
+    // distinct source count against the distillation floor. Classify
+    // telemetry with the same resolver so MCP's compact write_page payload is
+    // counted as a wiki generation exactly when it lands as distilled.
+    let (telemetry, page_min_cluster_size) = {
+        let s = state.read().await;
+        (
+            s.telemetry.clone(),
+            s.tuning.distillation.page_min_cluster_size,
+        )
+    };
+    let is_distilled = wenlan_core::post_write::resolve_page_creation_kind(
+        req.creation_kind.as_deref(),
+        &req.source_memory_ids,
+        page_min_cluster_size,
+    ) == "distilled";
     let result = handle_create_page_inner(
         State(state),
         headers,
@@ -1340,10 +1421,20 @@ pub async fn handle_update_page(
 pub async fn handle_refresh_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<Json<wenlan_types::responses::PageWriteResponse>, ServerError> {
     let telemetry = { state.read().await.telemetry.clone() };
-    let result = handle_refresh_page_inner(State(state), Path(id), Json(req)).await;
+    // The agent named on a staged revision card. Only the header counts: an
+    // unattributed write leaves the card unattributed.
+    let proposer = headers
+        .get("x-agent-name")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let result =
+        handle_refresh_page_inner(State(state), Path(id), proposer.as_deref(), Json(req)).await;
     match &result {
         Ok((wenlan_core::post_write::WriteOutcome::Wrote, _)) => {
             telemetry.record(TelemetryEvent::WikiGenerated)
@@ -1354,9 +1445,27 @@ pub async fn handle_refresh_page(
     result.map(|(_, response)| Json(response))
 }
 
+/// 409 for an agent refresh whose `expected_version` no longer matches. The
+/// text is what the MCP `write_page` tool shows the agent, so it says exactly
+/// how to recover.
+fn page_read_required_conflict(id: &str, current_version: i64) -> ServerError {
+    ServerError::Conflict(format!(
+        "page {id} has the user's own writing, so a refresh must say which version it read; \
+         read it with read_page and retry write_page with expected_version {current_version}"
+    ))
+}
+
+fn page_moved_conflict(id: &str, current_version: i64) -> ServerError {
+    ServerError::Conflict(format!(
+        "page {id} moved to v{current_version}; re-read it with read_page and retry \
+         write_page with expected_version {current_version}"
+    ))
+}
+
 async fn handle_refresh_page_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
+    proposer: Option<&str>,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<
     (
@@ -1366,18 +1475,11 @@ async fn handle_refresh_page_inner(
     ServerError,
 > {
     // Validate the body before touching the filesystem. Empty content would
-    // produce an empty md; empty source list would orphan the page from its
-    // provenance trail — both contradict the route's documented contract.
+    // produce an empty md. An empty source list is checked against the page
+    // below: it is accepted only for a page that has no sources to drop.
     if req.content.trim().is_empty() {
         return Err(ServerError::ValidationError(
             "content must not be empty".into(),
-        ));
-    }
-    if req.source_memory_ids.is_empty() {
-        return Err(ServerError::ValidationError(
-            "source_memory_ids must not be empty — refresh keeps the page \
-             linked to its sources"
-                .into(),
         ));
     }
     wenlan_core::export::provenance::validate_canonical_page_content(&req.content)
@@ -1420,18 +1522,55 @@ async fn handle_refresh_page_inner(
         ))
     })?;
 
-    // Ownership gate (spec §5.1/§5.2): agent refresh is a machine write, so a
-    // human-owned page (user_edited=1 OR creation_kind='authored') must never be
-    // overwritten in place. Stage a pending revision card instead and return the
-    // gating flag; the page prose stays byte-unchanged until the human accepts.
-    if wenlan_core::post_write::page_is_human_owned(&existing) {
-        let result = wenlan_core::post_write::stage_page_revision_card(
+    // A caller-supplied `expected_version` is a precondition checked before
+    // any card is staged: a card built from content computed against an old
+    // version would revert whatever landed since once accepted.
+    if let Some(expected) = req.expected_version {
+        if expected != existing.version {
+            return Err(page_moved_conflict(&id, existing.version));
+        }
+    }
+    // A refresh that does not say which version it read cannot prove it saw
+    // the user's own writing, so it is refused the same way a stale read is:
+    // the agent re-reads and retries, and its next write lands directly. This
+    // used to stage a revision card, which turned an agent's omission into
+    // review work for the human. A locked page still stages a card below,
+    // because the lock asks for review of every agent change.
+    if req.expected_version.is_none()
+        && !existing.review_required
+        && wenlan_core::post_write::page_is_human_owned(&existing)
+    {
+        return Err(page_read_required_conflict(&id, existing.version));
+    }
+    if req.source_memory_ids.is_empty() && !existing.source_memory_ids.is_empty() {
+        return Err(ServerError::ValidationError(
+            "source_memory_ids must not be empty for a page that has sources; \
+             refresh keeps the page linked to its sources"
+                .into(),
+        ));
+    }
+
+    // Ownership gate (spec §5.1/§5.2): agent refresh is a machine write. A
+    // review-locked page always stages a card. A human-owned page
+    // (user_edited=1 OR creation_kind='authored') reaches here only with a
+    // checked `expected_version` (refused above otherwise), so it lands
+    // directly. The page prose stays byte-unchanged until the human accepts a
+    // card. The core gate re-runs the same rule inside its CAS loop, which
+    // still stages a card if the page turns human-owned mid-write.
+    if wenlan_core::post_write::machine_write_requires_review(
+        wenlan_core::post_write::Writer::classify("agent_refresh"),
+        &existing,
+        req.expected_version.is_some(),
+        false,
+    ) {
+        let result = wenlan_core::post_write::stage_page_revision_card_proposed_by(
             &db,
             &existing,
             &req.content,
             &req.source_memory_ids,
             source_revision,
             "agent_refresh",
+            proposer,
             None,
         )
         .await
@@ -1453,23 +1592,34 @@ async fn handle_refresh_page_inner(
         None => None,
     };
     use wenlan_core::post_write::WriteOutcome;
-    let result = wenlan_core::post_write::update_page_at_source_revision(
+    let result = wenlan_core::post_write::page_write(
         &db,
-        &id,
-        wenlan_types::requests::UpdatePageRequest {
-            content: req.content.clone(),
-            source_memory_ids: req.source_memory_ids.clone(),
-            expected_version: None,
-            caller_id: None,
-            operation_id: None,
+        wenlan_core::post_write::PageWrite::AgentUpdate {
+            page_id: &id,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content: req.content.clone(),
+                source_memory_ids: req.source_memory_ids.clone(),
+                expected_version: req.expected_version,
+                caller_id: None,
+                operation_id: None,
+            },
+            agent: proposer,
+            expected_source_revision: source_revision,
+            knowledge_path: page_root.as_deref(),
         },
-        "agent_refresh",
-        false,
-        source_revision,
-        page_root.as_deref(),
-        None,
     )
     .await?;
+    // The core gate refused because the page moved past `expected_version`
+    // between the pre-check above and the write. Nothing landed.
+    if result.outcome == WriteOutcome::Refused {
+        let current_version = db
+            .get_page(&id)
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+            .map(|page| page.version)
+            .unwrap_or(existing.version);
+        return Err(page_moved_conflict(&id, current_version));
+    }
     // Metadata follows the canonical result, never a rejected/staged candidate.
     if matches!(
         result.outcome,
@@ -2129,6 +2279,376 @@ mod create_page_endpoint_tests {
             2,
             "below configured threshold should mint a new page"
         );
+    }
+
+    // ── PR A: refresh ownership, expected_version, review lock ──
+
+    const REFRESH_SOURCES: [&str; 3] = ["mem-page-floor-a", "mem-page-floor-b", "mem-page-floor-c"];
+    const REFRESH_BODY: &str =
+        "Rust ownership and borrowing prevent memory safety bugs by validating references";
+
+    async fn send_json(
+        app: &crate::router::AppRouter,
+        method: &str,
+        uri: String,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1_048_576)
+            .await
+            .unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    /// A sourced distilled page, then a human `fs_edit` so it is human-owned.
+    async fn seed_user_edited_page(db: &wenlan_core::db::MemoryDB) -> wenlan_core::pages::Page {
+        let page_id = seed_distilled_page(
+            db,
+            "Rust Owned Refresh",
+            None,
+            REFRESH_BODY,
+            None,
+            &REFRESH_SOURCES,
+        )
+        .await;
+        wenlan_core::post_write::update_page(
+            db,
+            &page_id,
+            wenlan_types::requests::UpdatePageRequest {
+                content: format!("{REFRESH_BODY}, with human notes"),
+                source_memory_ids: REFRESH_SOURCES.iter().map(|s| s.to_string()).collect(),
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            "fs_edit",
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let page = db.get_page(&page_id).await.unwrap().unwrap();
+        assert!(
+            page.user_edited,
+            "precondition: fs_edit marks human ownership"
+        );
+        page
+    }
+
+    async fn state_db_app() -> (
+        Arc<wenlan_core::db::MemoryDB>,
+        crate::router::AppRouter,
+        tempfile::TempDir,
+    ) {
+        let (state, tmp) = build_state_with_db(3).await;
+        let db = { state.read().await.db.as_ref().cloned().unwrap() };
+        (db, crate::router::build_router(state), tmp)
+    }
+
+    #[tokio::test]
+    async fn refresh_with_stale_expected_version_returns_409_with_recovery_text() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+        let page = seed_user_edited_page(&db).await;
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{}", page.id),
+            json!({
+                "content": format!("{REFRESH_BODY}, agent rewrite"),
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": page.version - 1,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let text = body["error"].as_str().unwrap_or_default();
+        assert!(
+            text.contains(&format!("moved to v{}", page.version)) && text.contains("read_page"),
+            "409 must name the current version and how to recover: {body}"
+        );
+        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        let after = db.get_page(&page.id).await.unwrap().unwrap();
+        assert_eq!(after.content, page.content);
+    }
+
+    #[tokio::test]
+    async fn refresh_with_matching_expected_version_writes_a_human_owned_page() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+        let page = seed_user_edited_page(&db).await;
+        let content = format!(
+            "{REFRESH_BODY}, agent rewrite after reading v{}",
+            page.version
+        );
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{}", page.id),
+            json!({
+                "content": content,
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_ne!(body["gated"], json!(true), "{body}");
+        let after = db.get_page(&page.id).await.unwrap().unwrap();
+        assert_eq!(after.content, content);
+        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+
+        // Without expected_version the same page is refused: nothing is
+        // written and no card is staged, and the agent is told to re-read.
+        let current = db.get_page(&page.id).await.unwrap().unwrap().version;
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{}", page.id),
+            json!({
+                "content": format!("{REFRESH_BODY}, unversioned agent rewrite"),
+                "source_memory_ids": REFRESH_SOURCES,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        let text = body["error"].as_str().unwrap_or_default();
+        assert!(
+            text.contains(&format!("expected_version {current}")) && text.contains("read_page"),
+            "409 must say how to recover: {body}"
+        );
+        assert!(db.list_pending_revisions(10).await.unwrap().is_empty());
+        assert_eq!(
+            db.get_page(&page.id).await.unwrap().unwrap().content,
+            content
+        );
+    }
+
+    #[tokio::test]
+    async fn review_lock_route_sets_clears_and_gates_refresh() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+        let page_id = seed_distilled_page(
+            &db,
+            "Rust Locked Refresh",
+            None,
+            REFRESH_BODY,
+            None,
+            &REFRESH_SOURCES,
+        )
+        .await;
+        let version = db.get_page(&page_id).await.unwrap().unwrap().version;
+
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}/review-required"),
+            json!({ "required": true }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({ "page_id": page_id, "review_required": true }));
+        assert!(
+            db.get_page(&page_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .review_required
+        );
+
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}"),
+            json!({
+                "content": format!("{REFRESH_BODY}, agent rewrite under lock"),
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["gated"],
+            json!(true),
+            "the lock stages even a versioned refresh: {body}"
+        );
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().content,
+            REFRESH_BODY
+        );
+
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}/review-required"),
+            json!({ "required": false }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            !db.get_page(&page_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .review_required
+        );
+
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            "/api/pages/page_does_not_exist/review-required".to_string(),
+            json!({ "required": true }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+        let (status, _) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}/review-required"),
+            json!({ "required": true, "extra": 1 }),
+        )
+        .await;
+        assert!(
+            status.is_client_error(),
+            "unknown fields are rejected, got {status}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_with_empty_sources_depends_on_whether_the_page_has_sources() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+
+        let sourced = seed_distilled_page(
+            &db,
+            "Rust Sourced Refresh",
+            None,
+            REFRESH_BODY,
+            None,
+            &REFRESH_SOURCES,
+        )
+        .await;
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{sourced}"),
+            json!({ "content": format!("{REFRESH_BODY}, sources dropped"), "source_memory_ids": [] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+        let sourceless = wenlan_core::post_write::create_page(
+            &db,
+            CreateConceptRequest {
+                title: "Rust Sourceless Notes".to_string(),
+                content: REFRESH_BODY.to_string(),
+                summary: None,
+                entity_id: None,
+                space: (None).into(),
+                source_memory_ids: vec![],
+                creation_kind: Some("research".to_string()),
+                workspace: None,
+            },
+            "test",
+            None,
+        )
+        .await
+        .unwrap()
+        .id;
+        let content = format!("{REFRESH_BODY}, refreshed from the conversation");
+        // `source_memory_ids` omitted entirely: serde default is an empty list.
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{sourceless}"),
+            json!({ "content": content }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            db.get_page(&sourceless).await.unwrap().unwrap().content,
+            content
+        );
+    }
+
+    #[tokio::test]
+    async fn create_without_kind_and_one_source_is_authored_and_not_counted_as_wiki() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (state, _tmp) = build_state_with_db(3).await;
+        let db = { state.read().await.db.as_ref().cloned().unwrap() };
+        let telemetry_tmp = tempfile::tempdir().unwrap();
+        let telemetry = Arc::new(crate::telemetry::Telemetry::for_test(
+            telemetry_tmp.path(),
+            "http://127.0.0.1:1/events",
+            std::time::Duration::from_secs(3600),
+        ));
+        telemetry.set_enabled(true).unwrap();
+        {
+            state.write().await.telemetry = telemetry.clone();
+        }
+        let app = crate::router::build_router(state);
+        let (status, body) = send_json(
+            &app,
+            "POST",
+            "/api/pages".to_string(),
+            json!({
+                "title": "Rust Note From A Conversation",
+                "content": "Rust ownership prevents memory safety bugs",
+                "source_memory_ids": ["mem-page-floor-a"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let id = body["id"]
+            .as_str()
+            .expect("create returns an id")
+            .to_string();
+        let page = db.get_page(&id).await.unwrap().unwrap();
+        assert_eq!(page.creation_kind, "authored");
+        assert_eq!(
+            telemetry.status().pending_operations,
+            0,
+            "an authored page is not a wiki generation"
+        );
+        drop(telemetry_tmp);
     }
 }
 

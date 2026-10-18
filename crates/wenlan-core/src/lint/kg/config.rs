@@ -13,8 +13,8 @@ pub(crate) struct KgRunConfig {
     /// is configured, so it cannot answer "has the owner picked a model source".
     /// The pin is what `refinery::resolve_everyday` reads to produce
     /// `RouteMode::Unconfigured`, which is the exact condition on which the
-    /// capture path tells the user that "Steep is paused until
-    /// you choose a model source". A source that is chosen but unavailable
+    /// capture path tells the user that no model source is chosen, so Steep
+    /// is not classifying or linking the memory. A source that is chosen but unavailable
     /// resolves to `PinnedUnavailable`, so it stays `true` here and is never
     /// told to choose a source it already chose.
     pub(crate) model_source_configured: bool,

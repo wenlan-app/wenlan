@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.1](https://github.com/wenlan-app/wenlan/compare/v0.19.0...v0.19.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **app:** centre the note and fold the labelled rail when Info needs room ([#873](https://github.com/wenlan-app/wenlan/issues/873)) ([3e56210](https://github.com/wenlan-app/wenlan/commit/3e562104d34dfeb3c237a101f697eec67a79b2fa))
+* **app:** return Escape focus to the Info button when Info opened by default ([#867](https://github.com/wenlan-app/wenlan/issues/867)) ([87ee00a](https://github.com/wenlan-app/wenlan/commit/87ee00a54f7e2cb433fba30238ed540104074c80)), closes [#866](https://github.com/wenlan-app/wenlan/issues/866)
+* **core:** surface unconfirmed pages in search and stop requiring a model for AI-written pages ([#874](https://github.com/wenlan-app/wenlan/issues/874)) ([7758c67](https://github.com/wenlan-app/wenlan/commit/7758c67a25a5a21f7cd3026420934b3bda36f9f1))
+* **plugin:** make the capture skill read the receipt the daemon actually sends ([#872](https://github.com/wenlan-app/wenlan/issues/872)) ([2b6c2eb](https://github.com/wenlan-app/wenlan/commit/2b6c2eb66d29fdd786ef941c40fd7f9fd929d9e5))
+* **scripts:** report an interrupted dev runtime once, from the signalled shell ([#861](https://github.com/wenlan-app/wenlan/issues/861)) ([a561e73](https://github.com/wenlan-app/wenlan/commit/a561e736a95f30783fd69cece2ac1652c838ec01))
+* **ui:** list notes written about an entity in the Wiki Folders tree ([#875](https://github.com/wenlan-app/wenlan/issues/875)) ([61b462e](https://github.com/wenlan-app/wenlan/commit/61b462ea6adf019b3e27d3f58ac5a0fe055f76b1))
+
 ## [0.19.0](https://github.com/wenlan-app/wenlan/compare/v0.18.16...v0.19.0) (2026-10-12)
 
 

@@ -204,6 +204,34 @@ pub struct BriefUpdateReceipt {
     pub warnings: Vec<String>,
 }
 
+/// One successful Brief update, newest-first in `BriefHistoryResponse`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BriefHistoryEntry {
+    /// Brief version after this update.
+    pub version: i64,
+    pub created_at: i64,
+    pub caller_id: String,
+    pub operation_id: String,
+    /// Session summary as it stood after this update.
+    pub summary: String,
+    pub mutation_count: usize,
+    pub mutations: Vec<BriefAppliedMutation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BriefHistoryResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    pub entries: Vec<BriefHistoryEntry>,
+}
+
+/// The full Brief as it stood right after one past update.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BriefVersionResponse {
+    pub entry: BriefHistoryEntry,
+    pub brief: Brief,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +308,27 @@ mod tests {
         let value = serde_json::to_value(receipt).unwrap();
         assert_eq!(value["applied"][0]["kind"], "add");
         assert_eq!(value["conflicts"][0]["reason"], "version_mismatch");
+    }
+
+    #[test]
+    fn history_entry_round_trips_with_mutations() {
+        let entry = BriefHistoryEntry {
+            version: 2,
+            created_at: 10,
+            caller_id: "agent".into(),
+            operation_id: "op-1".into(),
+            summary: "did a thing".into(),
+            mutation_count: 1,
+            mutations: vec![BriefAppliedMutation {
+                mutation_index: Some(0),
+                kind: BriefMutationKind::Add,
+                item_id: Some("item-1".into()),
+                version: Some(1),
+            }],
+        };
+        let value = serde_json::to_value(&entry).unwrap();
+        assert_eq!(value["mutations"][0]["kind"], "add");
+        let back: BriefHistoryEntry = serde_json::from_value(value).unwrap();
+        assert_eq!(back, entry);
     }
 }

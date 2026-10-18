@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
-import { useUnobstructedContentWidth } from "./useUnobstructedContentWidth";
 
 interface DetailLayoutProps {
   readonly children: ReactNode;
@@ -19,10 +18,8 @@ export function DetailReadingFrame({
   className,
   variant = "long-form",
 }: DetailLayoutProps & { readonly variant?: "compact" | "long-form" }) {
-  const frameRef = useUnobstructedContentWidth("--reading-unobstructed-width");
   return (
     <div
-      ref={frameRef}
       className={`reading-document-frame${variant === "compact" ? " reading-document-frame--compact" : ""}${className ? ` ${className}` : ""}`}
       data-detail-reading={variant}
     >

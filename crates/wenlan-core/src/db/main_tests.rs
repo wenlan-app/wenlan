@@ -6154,6 +6154,7 @@ fn confirmed_page(id: &str, workspace: Option<&str>, sources: &[&str]) -> Page {
         stale_reason: None,
         pending_rebuild: None,
         refresh_blocked_reason: None,
+        review_required: false,
         user_edited: false,
         relevance_score: 0.5,
         last_edited_by: None,
@@ -25627,6 +25628,52 @@ async fn replace_source_page_advances_source_revision_with_exact_provenance() {
     assert_eq!(history[0].content, replacement);
 }
 
+/// PR A: a review lock holds a source page the same way `user_edited` does.
+/// Document enrichment's replacement is a machine write, so the UPDATE's
+/// predicate refuses it on a locked page and the body stays put.
+#[tokio::test]
+async fn replace_source_page_refuses_a_review_locked_page() {
+    let (db, _dir) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "page-source-locked",
+        "Source page",
+        None,
+        "Original body",
+        None,
+        None,
+        &["source-old"],
+        &now,
+        "source",
+        "confirmed",
+        None,
+        Some("[]"),
+    )
+    .await
+    .unwrap();
+    assert!(db
+        .set_page_review_required("page-source-locked", true)
+        .await
+        .unwrap());
+
+    let replaced = db
+        .replace_source_page(
+            "page-source-locked",
+            "Source page",
+            None,
+            "Enrichment body that must not land",
+            &["source-new"],
+            "doc-enrich",
+        )
+        .await
+        .unwrap();
+
+    assert!(!replaced, "a locked source page is not replaced");
+    let page = db.get_page("page-source-locked").await.unwrap().unwrap();
+    assert_eq!(page.content, "Original body");
+    assert_eq!(page.source_memory_ids, vec!["source-old".to_string()]);
+}
+
 #[tokio::test]
 async fn replace_source_page_rejects_reserved_delimiter_without_mutation() {
     use crate::export::provenance::{SOURCES_BLOCK_END, SOURCES_BLOCK_START};
@@ -29002,6 +29049,7 @@ async fn source_revision_only_cas_is_rejected_by_an_archived_page() {
             "test_g3 stale write",
             None,
             expected_source_revision,
+            None,
             None,
         )
         .await
@@ -38203,6 +38251,7 @@ fn from_page_tags_source_and_zeroes_score() {
         stale_reason: None,
         pending_rebuild: None,
         refresh_blocked_reason: None,
+        review_required: false,
         user_edited: false,
         relevance_score: 0.42,
         last_edited_by: None,

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-//! `wenlan brief [topic]` and typed handoff updates.
+//! `wenlan brief [topic]`, typed handoff updates, and update history.
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use std::path::{Path, PathBuf};
 use wenlan_types::{
-    Brief, BriefItem, BriefReadRequest, BriefReadResponse, BriefReadState, BriefUpdateReceipt,
-    BriefUpdateRequest, OutboxEnvelope, OutboxPayload, OUTBOX_SCHEMA,
+    Brief, BriefHistoryResponse, BriefItem, BriefReadRequest, BriefReadResponse, BriefReadState,
+    BriefUpdateReceipt, BriefUpdateRequest, BriefVersionResponse, OutboxEnvelope, OutboxPayload,
+    OUTBOX_SCHEMA,
 };
 
 use crate::client::WenlanClient;
@@ -31,6 +32,26 @@ pub enum BriefCommand {
         #[arg(long, value_name = "JSON_FILE")]
         file: PathBuf,
     },
+    /// List past Brief updates, newest first.
+    History {
+        /// Maximum number of updates to list.
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show the Brief as it stood after one past update.
+    Show {
+        /// Brief version to show (see `wenlan brief history`).
+        #[arg(long)]
+        version: i64,
+    },
+}
+
+impl BriefArgs {
+    /// True for the subcommands that write, which resolve their Space from the
+    /// update file rather than the read-side project mapping.
+    pub fn is_update(&self) -> bool {
+        matches!(self.command, Some(BriefCommand::Update { .. }))
+    }
 }
 
 pub async fn run(
@@ -42,6 +63,24 @@ pub async fn run(
     agent_name: Option<&str>,
 ) -> Result<()> {
     match args.command {
+        Some(BriefCommand::History { limit }) => {
+            let response = client.brief_history(limit).await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&response)?,
+                    ResolvedFormat::Table => print!("{}", format_history(&response)),
+                }
+            }
+        }
+        Some(BriefCommand::Show { version }) => {
+            let response = client.brief_version(version).await?;
+            if !quiet {
+                match format {
+                    ResolvedFormat::Json => print_json(&response)?,
+                    ResolvedFormat::Table => print!("{}", format_version(&response)),
+                }
+            }
+        }
         Some(BriefCommand::Update { file }) => {
             let request = load_update(&file)?;
             if let Some(space) = effective_space.as_deref() {
@@ -149,7 +188,66 @@ fn format_brief(response: &BriefReadResponse) -> String {
     }
 }
 
+fn format_history(response: &BriefHistoryResponse) -> String {
+    let space = response.space.as_deref().unwrap_or("(none)");
+    if response.entries.is_empty() {
+        return format!("No Brief updates recorded for Space '{space}'.\n");
+    }
+    let mut output = format!("Space: {space}\n\n");
+    output.push_str(&format!(
+        "{:<8} {:<17} {:<20} {:<7} {}\n",
+        "VERSION", "TIME", "CALLER", "CHANGES", "SUMMARY"
+    ));
+    for entry in &response.entries {
+        output.push_str(&format!(
+            "{:<8} {:<17} {:<20} {:<7} {}\n",
+            entry.version,
+            local_time(entry.created_at),
+            truncate(&entry.caller_id, 20),
+            entry.mutation_count,
+            truncate(entry.summary.lines().next().unwrap_or("").trim(), 60),
+        ));
+    }
+    output
+}
+
+fn format_version(response: &BriefVersionResponse) -> String {
+    let mut output = format!(
+        "Version {} ({} by {})\n\n",
+        response.entry.version,
+        local_time(response.entry.created_at),
+        response.entry.caller_id
+    );
+    output.push_str(&format_ready_brief_body(&response.brief, None));
+    output
+}
+
+fn local_time(unix_seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(unix_seconds, 0)
+        .map(|time| {
+            time.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| unix_seconds.to_string())
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(3)).collect();
+    format!("{kept}...")
+}
+
 fn format_ready_brief(brief: &Brief, response: &BriefReadResponse) -> String {
+    format_ready_brief_body(brief, response.related_context.as_ref())
+}
+
+fn format_ready_brief_body(
+    brief: &Brief,
+    related_context: Option<&wenlan_types::BriefRelatedContext>,
+) -> String {
     let mut output = format!("Space: {}\n\nLast session\n", brief.space);
     if brief.last_session_summary.trim().is_empty() {
         output.push_str("  (none)\n");
@@ -163,7 +261,7 @@ fn format_ready_brief(brief: &Brief, response: &BriefReadResponse) -> String {
     format_items(&mut output, "Active", &brief.active);
     format_items(&mut output, "Backlog", &brief.backlog);
 
-    if let Some(related) = &response.related_context {
+    if let Some(related) = related_context {
         output.push_str(&format!("\nRelated Context: {}\n", related.query));
         if related.results.is_empty() {
             output.push_str("  (no related memories)\n");
@@ -267,6 +365,80 @@ mod tests {
         assert!(output.contains("Related Context: release"));
         assert!(!output.contains("secret-space-id"));
         assert!(!output.contains("secret-item-id"));
+    }
+
+    fn entry(version: i64, summary: &str) -> wenlan_types::BriefHistoryEntry {
+        wenlan_types::BriefHistoryEntry {
+            version,
+            created_at: 1_700_000_000,
+            caller_id: "handoff".into(),
+            operation_id: format!("op-{version}"),
+            summary: summary.into(),
+            mutation_count: 2,
+            mutations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn history_table_lists_version_caller_changes_and_short_summary() {
+        let response = BriefHistoryResponse {
+            space: Some("work".into()),
+            entries: vec![
+                entry(2, &format!("{}\nsecond line", "long summary ".repeat(20))),
+                entry(1, "first"),
+            ],
+        };
+
+        let output = format_history(&response);
+
+        assert!(output.contains("VERSION"));
+        assert!(output.contains("handoff"));
+        assert!(output.contains("first"));
+        assert!(output.contains("..."));
+        assert!(!output.contains("second line"));
+        assert!(!output.contains("op-2"));
+        let first = output.lines().position(|l| l.starts_with("2 ")).unwrap();
+        let second = output.lines().position(|l| l.starts_with("1 ")).unwrap();
+        assert!(first < second, "newest first");
+        assert!(format_history(&BriefHistoryResponse {
+            space: Some("work".into()),
+            entries: Vec::new()
+        })
+        .contains("No Brief updates recorded"));
+    }
+
+    #[test]
+    fn show_renders_the_past_brief_in_the_same_layout_as_brief() {
+        let brief = Brief {
+            space_id: "secret-space-id".into(),
+            space: "work".into(),
+            last_session_summary: "old summary".into(),
+            last_handoff_at: Some(1),
+            version: 1,
+            active: vec![BriefItem {
+                id: "secret-item-id".into(),
+                text: "old item".into(),
+                state: wenlan_types::BriefItemState::Active,
+                added_at: 1,
+                gate: None,
+                version: 1,
+            }],
+            backlog: Vec::new(),
+        };
+        let output = format_version(&BriefVersionResponse {
+            entry: entry(1, "old summary"),
+            brief: brief.clone(),
+        });
+        let current = format_brief(&BriefReadResponse {
+            state: BriefReadState::Ready,
+            space: Some("work".into()),
+            brief: Some(brief),
+            related_context: None,
+        });
+
+        assert!(output.starts_with("Version 1 ("));
+        assert!(output.ends_with(&current));
+        assert!(!output.contains("secret-"));
     }
 
     #[test]

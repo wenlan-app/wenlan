@@ -268,17 +268,21 @@ describe("EntitiesView browse", () => {
     expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
   });
 
+  // CPU-bound: 100+ archived rows are each a button, so a button role query
+  // computes an accessible name for every row. Those two queries took most of
+  // this test's time and it hit the 5 s timeout on a loaded CI runner. Plain
+  // text queries scoped to buttons find the same controls without that scan.
   it("paginates archived topics with offsets and resets the active cursor when returning", async () => {
     fixture.push(...Array.from({ length: 101 }, (_, index) => entity({ id: `archive-${index}`, name: `Archived ${index}`, status: "archived" })));
     const { user } = renderView();
     await screen.findByText("Ada Lovelace");
     await openArchived(user);
     await screen.findByText("Countess of Lovelace");
-    await user.click(screen.getByRole("button", { name: "Load more" }));
+    await user.click(screen.getByText("Load more", { selector: "button" }));
     await screen.findByText("Archived 100");
     expect(queryEntities).toHaveBeenLastCalledWith({ status: "archived", limit: 100, offset: 100 });
     expect(screen.getByText("Countess of Lovelace")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Back to topics" }));
+    await user.click(screen.getByText("Back to topics", { selector: "button" }));
     await screen.findByText("Ada Lovelace");
     expect(loadActiveTopicsPage).toHaveBeenLastCalledWith({ query: "", type: "all", memories: "any" }, undefined);
   });

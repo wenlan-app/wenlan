@@ -37,8 +37,10 @@ impl NearDuplicateSliceReader<'_> {
                     a.source_memory_ids, b.source_memory_ids, \
                     CASE WHEN a.status = 'active' \
                                AND b.status = 'active' \
-                               AND COALESCE(a.review_status, 'confirmed') = 'confirmed' \
-                               AND COALESCE(b.review_status, 'confirmed') = 'confirmed' \
+                               AND COALESCE(a.creation_kind, 'distilled') <> 'source' \
+                               AND COALESCE(b.creation_kind, 'distilled') <> 'source' \
+                               AND COALESCE(a.kind, 'concept') <> 'entity' \
+                               AND COALESCE(b.kind, 'concept') <> 'entity' \
                                AND COALESCE(a.workspace, a.space, '') = COALESCE(b.workspace, b.space, '') \
                                AND lower(a.title) != 'overview' \
                                AND lower(b.title) != 'overview' \

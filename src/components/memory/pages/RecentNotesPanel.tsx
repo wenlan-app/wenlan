@@ -13,9 +13,11 @@ export interface RecentNotesPanelProps {
   readonly revision?: number;
   readonly mode?: "recent" | "custom";
   readonly onOpenPage?: (id: string) => void;
+  /** Offered from the empty list, so a note that was written but never opened is one click away. */
+  readonly onBrowseFolders?: () => void;
 }
 
-export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "recent", onOpenPage }: RecentNotesPanelProps) {
+export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "recent", onOpenPage, onBrowseFolders }: RecentNotesPanelProps) {
   const { t } = useTranslation();
   const isManualOrder = mode === "custom";
   const reorderHintId = useId();
@@ -43,7 +45,10 @@ export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "r
     <section className="wiki-recent-notes" aria-label={isManualOrder ? t("pages.recent.custom") : t("pages.recent.title")}>
       {mode === "custom" && <span id={reorderHintId} className="wiki-recent-sr-only">{t("pages.recent.reorderHint")}</span>}
       {orderedEntries.length === 0 ? (
-        <p className="wiki-recent-notes-empty">{t("pages.recent.empty")}</p>
+        <div className="wiki-recent-notes-empty">
+          <p>{t("pages.recent.empty")}</p>
+          {onBrowseFolders && <button type="button" onClick={onBrowseFolders}>{t("pages.recent.browseFolders")}</button>}
+        </div>
       ) : (
         <ul className="wiki-recent-notes-list">
           {orderedEntries.map(entry => (

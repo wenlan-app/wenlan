@@ -91,7 +91,7 @@ describe("PageInfo i18n", () => {
       citationState: "cited",
     });
     expect(screen.getByText("1 backlink · 1 revision · 1 source")).toBeInTheDocument();
-    await user.click(screen.getByText("Page info"));
+    await user.click(screen.getByText("Note info"));
     expect(screen.getByText("1 incoming memory")).toBeInTheDocument();
     expect(
       screen.getByText("Citations: 2 (1 unverified)"),
@@ -110,7 +110,7 @@ describe("PageInfo i18n", () => {
         source("mem-b", { memory_type: "pdfx" }),
       ],
     });
-    await user.click(screen.getByText("Page info"));
+    await user.click(screen.getByText("Note info"));
     const rows = screen.getAllByTestId("page-info-source-row");
     expect(within(rows[0]).getByText("unknown agent")).toBeInTheDocument();
     // Arbitrary data values are never translated.
@@ -128,7 +128,7 @@ describe("PageInfo i18n", () => {
     expect(
       screen.getByText("0 条反向链接 · 0 个修订 · 1 个来源"),
     ).toBeInTheDocument();
-    await user.click(screen.getByText("页面信息"));
+    await user.click(screen.getByText("笔记信息"));
     const headings = screen.getAllByRole("heading", { level: 4 });
     expect(headings.map((h) => h.textContent)).toEqual(["来源"]);
     const row = screen.getByTestId("page-info-source-row");
@@ -158,9 +158,9 @@ describe("PageInfo i18n", () => {
       ],
       citationState: "stripped-empty",
     });
-    await user.click(screen.getByText("页面信息"));
+    await user.click(screen.getByText("笔记信息"));
     expect(
-      screen.getByText("编辑已清除引用——重新整理以恢复"),
+      screen.getByText("编辑已清除引用。重新整理即可恢复"),
     ).toBeInTheDocument();
     expect(screen.getByText("2 条新增记忆")).toBeInTheDocument();
     expect(screen.getByText("显示全部 6 个来源")).toBeInTheDocument();
@@ -180,7 +180,7 @@ describe("PageInfo i18n", () => {
     expect(
       screen.getByText("0 條反向連結 · 0 個修訂 · 1 個來源"),
     ).toBeInTheDocument();
-    await user.click(screen.getByText("頁面資訊"));
+    await user.click(screen.getByText("筆記資訊"));
     const headings = screen.getAllByRole("heading", { level: 4 });
     expect(headings.map((h) => h.textContent)).toEqual(["來源"]);
     const row = screen.getByTestId("page-info-source-row");
@@ -193,9 +193,9 @@ describe("PageInfo i18n", () => {
   it("localizes the mismatch diagnostic in zh-Hant", async () => {
     await i18n.changeLanguage("zh-Hant");
     const { user } = renderInfo({ citationState: "stripped-mismatch" });
-    await user.click(screen.getByText("頁面資訊"));
+    await user.click(screen.getByText("筆記資訊"));
     expect(
-      screen.getByText("引用資料不相符——重新整理以修復"),
+      screen.getByText("引用資料不相符。重新整理即可修復"),
     ).toBeInTheDocument();
   });
 
@@ -242,5 +242,49 @@ describe("PageInfo i18n", () => {
       expect(onRetryRevisions).toHaveBeenCalledOnce();
       unmountError();
     }
+  });
+  it("labels revisions by writer instead of showing the raw slug", async () => {
+    await i18n.changeLanguage("en");
+    const at = Math.floor(Date.now() / 1000);
+    const { user } = renderInfo({
+      revisions: [
+        { version: 4, at, edited_by: "agent_refresh", agent: "claude-code", char_delta: 71, sources_added: 2, sources_removed: 0, delta_summary: "+mem_a; +71 chars" },
+        { version: 3, at, edited_by: "agent_refresh", char_delta: -3, sources_added: 0, sources_removed: 1 },
+        { version: 2, at, edited_by: "distill", delta_summary: "Synthesized from 3 sources" },
+        { version: 1, at, edited_by: "migration_99" },
+      ],
+    });
+    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByRole("button", { name: "Show all 4 revisions" }));
+    const rows = screen.getAllByRole("listitem").filter((li) => li.className.includes("note-revision-entry"));
+    expect(rows.map((row) => row.querySelector(".note-revision-meta")?.textContent)).toEqual([
+      expect.stringContaining("Updated by Claude Code"),
+      expect.stringContaining("Updated by an agent"),
+      expect.stringContaining("Wenlan compiled it from sources"),
+      expect.stringContaining("Updated"),
+    ]);
+    expect(screen.getByText("+71 characters · 2 sources added")).toBeInTheDocument();
+    expect(screen.getByText("-3 characters · 1 source removed")).toBeInTheDocument();
+    // Old entries show their English summary for an English UI.
+    expect(screen.getByText("Synthesized from 3 sources")).toBeInTheDocument();
+    expect(screen.queryByText(/agent_refresh|distill\b|migration_99|mem_a/)).toBeNull();
+  });
+
+  it("localizes the revision label and summary, and drops old English summaries", async () => {
+    await i18n.changeLanguage("zh-Hant");
+    const at = Math.floor(Date.now() / 1000);
+    const { user } = renderInfo({
+      revisions: [
+        { version: 3, at, edited_by: "agent_refresh", agent: "claude-code", char_delta: 71, sources_added: 2, sources_removed: 0 },
+        { version: 2, at, edited_by: "re_distill", delta_summary: "+mem_a; +71 chars (re_distill)" },
+      ],
+    });
+    await user.click(screen.getByText("筆記資訊"));
+    const meta = document.querySelectorAll(".note-revision-meta");
+    expect(meta[0]).toHaveTextContent("Claude Code 更新");
+    expect(meta[1]).toHaveTextContent("文瀾重新整理");
+    expect(screen.getByText("+71 字 · 新增 2 個來源")).toBeInTheDocument();
+    expect(screen.queryByText(/mem_a/)).toBeNull();
+    expect(document.querySelectorAll(".note-revision-summary")).toHaveLength(1);
   });
 });

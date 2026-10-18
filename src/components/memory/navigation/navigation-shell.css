@@ -2,6 +2,13 @@
   --mem-text-tertiary: var(--mem-text-meta-aa);
 }
 
+/* The rail folds to icons when Info needs the room; ease it so the note does not jump. */
+@media (prefers-reduced-motion: no-preference) {
+  .memory-shell[data-sidebar-auto-transition] .memory-sidebar {
+    transition: width 180ms ease;
+  }
+}
+
 .memory-shell {
   --collection-reading-width: 960px;
   --collection-gutter: 40px;

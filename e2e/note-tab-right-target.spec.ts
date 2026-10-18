@@ -12,7 +12,7 @@ async function start(p:Page,width=1440,theme="light",count=3){
  const fixture={...base,pages:Array.from({length:12},(_,i)=>({...base.pages[0],id:`drag-${i+1}`,title:`Drag note ${i+1}`,content:`# Drag note ${i+1}\n\n`+Array.from({length:55},(_,j)=>`Paragraph ${j+1}. A synthetic note for reading position and moving safely.`).join("\n\n"),storage_path:`drag-${i+1}.md`,folder_path:""}))};
  const runtime=await installTauriMock(p,{fixture,locale:"en",rawActions:[],delays:{update_page:200},localStorage:{"wenlan-theme":theme}});
  await p.goto("/");for(let i=1;i<=count;i++)await openWikiNote(p,`Drag note ${i}`);
- await expect(group(p).getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await expect(group(p).getByRole("textbox",{name:"Note editor",exact:true})).toBeVisible();
  return{errors,runtime};
 }
 async function point(el:Locator,side:"before"|"after"|"middle"="middle"){
@@ -42,7 +42,7 @@ for (const target of ['inspector', 'header']) test(`right ${target} creates a ne
  await page.screenshot({path:info.outputPath('before-release.png')});
  await expect(page.locator('.note-tab-split-preview[data-kind="split"]')).toBeVisible();
  await page.mouse.up();
- await expect(tab(page,1,'secondary')).toBeVisible();await expect(group(page,'secondary').getByRole('textbox',{name:'Page editor',exact:true})).toContainText('Drag note 1');
+ await expect(tab(page,1,'secondary')).toBeVisible();await expect(group(page,'secondary').getByRole('textbox',{name:'Note editor',exact:true})).toContainText('Drag note 1');
  await expect(tab(page,3)).toBeVisible();await expect(group(page).getByRole('tab',{name:'Info',exact:true})).toBeVisible();
  await expect(page.locator('[data-note-group-id]')).toHaveCount(2);
  await page.screenshot({path:info.outputPath('created-group.png')});await assertClean(errors);
@@ -65,7 +65,7 @@ test('existing opposite inspector accepts transfer; save refusal preserves sourc
  await expect(page.locator('.note-tab-split-preview[data-kind="transfer"]')).toBeVisible();
  await page.mouse.up();await expect.poll(()=>order(page,'secondary')).toEqual(['Drag note 3','Drag note 1']);
  await expect(group(page,'secondary').getByRole('tab',{name:'Info',exact:true})).toBeVisible();
- const editor=group(page).getByRole('textbox',{name:'Page editor',exact:true});runtime.failNext('update_page','save refused',3);
+ const editor=group(page).getByRole('textbox',{name:'Note editor',exact:true});runtime.failNext('update_page','save refused',3);
  await editor.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});await page.keyboard.insertText(' Unsaved survives.');
  await drag(page,tab(page,2),await point(drawer));
  await expect(group(page).getByRole('alert')).toBeVisible();await expect(tab(page,2)).toBeVisible();await expect(editor).toContainText('Unsaved survives.');

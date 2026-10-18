@@ -92,7 +92,7 @@ describe("ActivityFeed i18n", () => {
     renderActivityFeed(onOpenReview);
 
     const title = await screen.findByRole("heading", { level: 1, name: "活動" });
-    const review = screen.getByRole("button", { name: /審閱頁面變更/ });
+    const review = screen.getByRole("button", { name: /審閱筆記變更/ });
     const background = screen.getByTestId("activity-now");
     expect(title.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(review.compareDocumentPosition(background) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -191,12 +191,12 @@ describe("ActivityFeed i18n", () => {
     {
       language: "zh-Hant",
       actionFilter: "動作",
-      labels: ["略過頁面更新", "新增觀察", "新增實體", "新增關聯", "自動取代關聯"],
+      labels: ["略過筆記更新", "新增觀察", "新增實體", "新增關聯", "自動取代關聯"],
     },
     {
       language: "zh-Hans",
       actionFilter: "动作",
-      labels: ["跳过页面更新", "新增观察", "新增实体", "新增关系", "自动替换关系"],
+      labels: ["跳过笔记更新", "新增观察", "新增实体", "新增关系", "自动替换关系"],
     },
   ])("localizes backend action ids in the $language action filter", async ({ language, actionFilter, labels }) => {
     await i18n.changeLanguage(language);
@@ -230,7 +230,7 @@ describe("ActivityFeed i18n", () => {
     }
   });
 
-  it("maps legacy backend steep wording to current English page copy", async () => {
+  it("maps legacy backend steep wording to current English note copy", async () => {
     await i18n.changeLanguage("en");
     activityMock.mockResolvedValue([
       activity({
@@ -242,7 +242,7 @@ describe("ActivityFeed i18n", () => {
     renderActivityFeed();
 
     expect(
-      await screen.findByText("Wenlan refreshed 2 pages with new information"),
+      await screen.findByText("Wenlan refreshed 2 notes with new information"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/concept/i)).not.toBeInTheDocument();
   });

@@ -10,7 +10,7 @@
 // Invariant (enforced by firstUseSampleData.test.ts): every citation quote is
 // an exact substring of its source's body, in every locale.
 
-export type SampleSourceType = "memory" | "file" | "page";
+export type SampleSourceType = "memory" | "file";
 
 export interface SampleSource {
   id: string;
@@ -42,11 +42,12 @@ export interface SamplePage {
   title: string;
   subtitle: string;
   paragraphs: SamplePageParagraph[];
-  related: {
-    title: string;
-    description: string;
-    body: string;
-  };
+}
+
+/** The closing beat: a new chat where the AI answers from the page. */
+export interface SampleAiExchange {
+  question: string;
+  answer: string;
 }
 
 export type SampleClient = "chatgpt" | "codex" | "claude";
@@ -66,6 +67,7 @@ export interface SampleDataset {
   sources: SampleSource[];
   citations: SampleCitation[];
   page: SamplePage;
+  ai: SampleAiExchange;
   commands: Record<SampleClient, SampleCommands>;
 }
 
@@ -95,7 +97,7 @@ const enData: SampleDataset = {
       body: [
         "We want a slow weekend trip with no packed schedule.",
         "We decided to take the train to Tainan, leaving Saturday morning.",
-        "Keep the afternoon open for wandering — no hour-by-hour plan.",
+        "Keep the afternoon open for wandering. No hour-by-hour plan.",
       ],
     },
     {
@@ -106,25 +108,12 @@ const enData: SampleDataset = {
       location: "trip folder / packing-list.md",
       excerpt: "Book a stay near the Tainan station and pack light.",
       body: [
-        "No driving this time — keep getting around simple.",
+        "No driving this time. Keep getting around simple.",
         "Book a stay near the Tainan station and pack light.",
         "Rooms and tickets aren't booked yet; confirm before we leave.",
       ],
       path: "trip folder / packing-list.md",
       quoteLine: 2,
-    },
-    {
-      id: "sample-page",
-      type: "page",
-      kind: "Page",
-      title: "Slow travel",
-      location: "Wenlan / travel ideas / slow travel",
-      excerpt: "On short trips, anchor on one neighborhood and leave some hours unplanned.",
-      body: [
-        "An existing sample note about a favorite way to travel.",
-        "On short trips, anchor on one neighborhood and leave some hours unplanned.",
-        "Wandering into small shops along the way can become the memory of the trip.",
-      ],
     },
   ],
   citations: [
@@ -139,14 +128,9 @@ const enData: SampleDataset = {
       quote: "Book a stay near the Tainan station and pack light.",
     },
     {
-      id: "sample-cite-3",
-      sourceId: "sample-page",
-      quote: "On short trips, anchor on one neighborhood and leave some hours unplanned.",
-    },
-    {
       id: "sample-cite-4",
       sourceId: "sample-memory",
-      quote: "Keep the afternoon open for wandering — no hour-by-hour plan.",
+      quote: "Keep the afternoon open for wandering. No hour-by-hour plan.",
     },
     {
       id: "sample-cite-5",
@@ -156,32 +140,35 @@ const enData: SampleDataset = {
   ],
   page: {
     title: "An unhurried Tainan weekend",
-    subtitle: "From a conversation decision to a departure-ready plan.",
+    subtitle: "From a chat decision and a packing list to one note.",
     paragraphs: [
       {
-        text: "Transit is decided: take the train to Tainan, leaving Saturday morning.",
+        text: "Take the train to Tainan, leaving Saturday morning.",
         citationIds: ["sample-cite-1"],
       },
       {
-        text: "Stay near the station and pack light to keep moving simple.",
+        text: "Keep the afternoons open for wandering, with no packed schedule.",
+        citationIds: ["sample-cite-4"],
+      },
+      {
+        text: "Stay near the station and pack light.",
         citationIds: ["sample-cite-2"],
       },
       {
-        text: "Wander one neighborhood and keep unscheduled hours — echoing the decision not to pack the afternoon.",
-        citationIds: ["sample-cite-4", "sample-cite-3"],
+        text: "Still to do: book the room and the train tickets.",
+        citationIds: ["sample-cite-5"],
       },
     ],
-    related: {
-      title: "Two things left before departure",
-      description: "Connecting decided plans to unfinished prep.",
-      body: "Rooms and tickets still aren't booked. Compare stays near the station first, then confirm Saturday morning trains.",
-    },
+  },
+  ai: {
+    question: "What's left before the Tainan weekend?",
+    answer: "From your note “An unhurried Tainan weekend”: book a room near the station, then confirm the Saturday morning train.",
   },
   commands: {
     chatgpt: {
       recall: "@wenlan recall the decisions and next steps from my imported notes, and list the sources.",
       handoff: null,
-      brief: "@wenlan this is a new conversation — catch me up on earlier work and open todos.",
+      brief: "@wenlan this is a new conversation. Catch me up on earlier work and open todos.",
     },
     codex: {
       recall: "/recall decisions and next steps from my imports",
@@ -226,19 +213,6 @@ const hansData: SampleDataset = {
       path: "旅行文件夹 / 出发清单.md",
       quoteLine: 2,
     },
-    {
-      id: "sample-page",
-      type: "page",
-      kind: "页面",
-      title: "慢旅行",
-      location: "文澜 / 旅行灵感 / 慢旅行",
-      excerpt: "短途旅行可以以一个街区为中心，留一些没有安排的时间。",
-      body: [
-        "这是一页已存在的范例知识，记下喜欢的旅行方式。",
-        "短途旅行可以以一个街区为中心，留一些没有安排的时间。",
-        "比起赶完景点清单，沿途发现的小店也能成为旅行的记忆。",
-      ],
-    },
   ],
   citations: [
     {
@@ -250,11 +224,6 @@ const hansData: SampleDataset = {
       id: "sample-cite-2",
       sourceId: "sample-file",
       quote: "先找台南车站附近的住宿，带轻便行李。",
-    },
-    {
-      id: "sample-cite-3",
-      sourceId: "sample-page",
-      quote: "短途旅行可以以一个街区为中心，留一些没有安排的时间。",
     },
     {
       id: "sample-cite-4",
@@ -269,26 +238,29 @@ const hansData: SampleDataset = {
   ],
   page: {
     title: "一个不赶路的台南周末",
-    subtitle: "从对话里的决定，到出发前用得上的安排。",
+    subtitle: "从一段对话里的决定和一份清单，整理成一篇笔记。",
     paragraphs: [
       {
-        text: "交通已决定：搭火车去台南，周六早上出发。",
+        text: "搭火车去台南，周六早上出发。",
         citationIds: ["sample-cite-1"],
       },
       {
-        text: "住宿先找车站附近，行李保持轻便，让移动更简单。",
+        text: "下午留给散步，行程不排满。",
+        citationIds: ["sample-cite-4"],
+      },
+      {
+        text: "住车站附近，行李带轻便。",
         citationIds: ["sample-cite-2"],
       },
       {
-        text: "行程以街区散步为主，保留没有安排的时间。这也呼应了对话里不想把下午排满的想法。",
-        citationIds: ["sample-cite-4", "sample-cite-3"],
+        text: "还没做：订房和订车票。",
+        citationIds: ["sample-cite-5"],
       },
     ],
-    related: {
-      title: "出发前，还有两件事",
-      description: "把已决定的事，接到还没完成的准备。",
-      body: "订房与订车票都还没有完成。先比较车站附近的住宿，再确认周六早上的车次。",
-    },
+  },
+  ai: {
+    question: "这周末去台南，出发前还要做什么？",
+    answer: "根据你的笔记《一个不赶路的台南周末》：先订车站附近的住宿，再确认周六早上的车票。",
   },
   commands: {
     chatgpt: {
@@ -339,19 +311,6 @@ const hantData: SampleDataset = {
       path: "旅行資料夾 / 出發清單.md",
       quoteLine: 2,
     },
-    {
-      id: "sample-page",
-      type: "page",
-      kind: "頁面",
-      title: "慢旅行",
-      location: "文瀾 / 旅行靈感 / 慢旅行",
-      excerpt: "以一個街區為中心，留一些沒有安排的時間。",
-      body: [
-        "這是一頁已存在的範例知識，記下喜歡的旅行方式。",
-        "短途旅行可以以一個街區為中心，留一些沒有安排的時間。",
-        "比起趕完景點清單，沿途發現的小店也能成為旅行的記憶。",
-      ],
-    },
   ],
   citations: [
     {
@@ -363,11 +322,6 @@ const hantData: SampleDataset = {
       id: "sample-cite-2",
       sourceId: "sample-file",
       quote: "先找台南車站附近的住宿，帶輕便行李。",
-    },
-    {
-      id: "sample-cite-3",
-      sourceId: "sample-page",
-      quote: "短途旅行可以以一個街區為中心，留一些沒有安排的時間。",
     },
     {
       id: "sample-cite-4",
@@ -382,26 +336,29 @@ const hantData: SampleDataset = {
   ],
   page: {
     title: "一個不趕路的台南週末",
-    subtitle: "從對話裡的決定，到出發前用得上的安排。",
+    subtitle: "從一段對話裡的決定和一份清單，整理成一篇筆記。",
     paragraphs: [
       {
-        text: "交通已決定：搭火車去台南，週六早上出發。",
+        text: "搭火車去台南，週六早上出發。",
         citationIds: ["sample-cite-1"],
       },
       {
-        text: "住宿先找車站附近，行李保持輕便，讓移動更簡單。",
+        text: "下午留給散步，行程不排滿。",
+        citationIds: ["sample-cite-4"],
+      },
+      {
+        text: "住車站附近，行李帶輕便。",
         citationIds: ["sample-cite-2"],
       },
       {
-        text: "行程以街區散步為主，保留沒有安排的時間。這也呼應了對話裡不想把下午排滿的想法。",
-        citationIds: ["sample-cite-4", "sample-cite-3"],
+        text: "還沒做：訂房和訂車票。",
+        citationIds: ["sample-cite-5"],
       },
     ],
-    related: {
-      title: "出發前，還有兩件事",
-      description: "把已決定的事，接到還沒完成的準備。",
-      body: "訂房與訂車票都還沒有完成。先比較車站附近的住宿，再確認週六早上的車次。",
-    },
+  },
+  ai: {
+    question: "這週末去台南，出發前還要做什麼？",
+    answer: "根據你的筆記《一個不趕路的台南週末》：先訂車站附近的住宿，再確認週六早上的車票。",
   },
   commands: {
     chatgpt: {

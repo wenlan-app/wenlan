@@ -12,7 +12,7 @@ async function start(page: Page, theme = "light", width = 1440) {
  const tree = page.locator(".wiki-workspace-directory");
  await tree.getByRole("button", { name: "Work", exact: true }).click();
  await tree.getByRole("button", { name: "Open Fixture architecture", exact: true }).click();
- await expect(group(page,"primary").getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await expect(group(page,"primary").getByRole("textbox",{name:"Note editor",exact:true})).toBeVisible();
  await tree.getByRole("button", { name: "Research", exact: true }).click();
  await tree.getByRole("button", { name: "Open Why fixtures stay deterministic", exact: true }).click();
  await expect(group(page,"primary").getByRole("tab",{name:"Why fixtures stay deterministic",exact:true})).toHaveAttribute("aria-selected","true");
@@ -20,11 +20,11 @@ async function start(page: Page, theme = "light", width = 1440) {
 }
 async function move(page:Page, from="primary") {
  const label=from==="primary"?"Move to right group":"Move to central group";
- await group(page,from).getByRole("button",{name:label,exact:true}).click();
+ await group(page,from).getByRole("tab",{selected:true}).click({button:"right"});
  await page.getByRole("menuitem",{name:label,exact:true}).click();
 }
 async function append(page:Page, id:string, text:string) {
- const editor=group(page,id).getByRole("textbox",{name:"Page editor",exact:true});
+ const editor=group(page,id).getByRole("textbox",{name:"Note editor",exact:true});
  await editor.evaluate(el=>{const view=(el as any).cmTile.root.view;view.dispatch({selection:{anchor:view.state.doc.length}});view.focus();});
  await page.keyboard.insertText(text);return editor;
 }
@@ -62,7 +62,7 @@ test("inspector drag widths belong to each group and cancel without changing the
 test("independent editors, local inspectors, and a failed save cannot lose a moved note",async({page},info)=>{
  const {runtime,errors}=await start(page);
  await move(page);
- await expect(group(page,"secondary").getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await expect(group(page,"secondary").getByRole("textbox",{name:"Note editor",exact:true})).toBeVisible();
  await expect(group(page,"primary").getByRole("tab",{name:"Fixture architecture",exact:true})).toBeVisible();
  const rightEditor=await append(page,"secondary","\nRight group edit remains.");
  await rightEditor.evaluate(el=>el.setAttribute("data-editor-instance","right"));
@@ -107,7 +107,7 @@ test("switching the central note preserves the right editor and both inspector c
  await expect(editor).toHaveAttribute("data-editor-instance","right-stays");
  await expect(right.getByRole("tab",{name:"Mind map",exact:true})).toHaveAttribute("aria-selected","true");
  await left.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
- await expect(left.getByRole("textbox",{name:"Page editor",exact:true})).toBeVisible();
+ await expect(left.getByRole("textbox",{name:"Note editor",exact:true})).toBeVisible();
  await page.screenshot({path:info.outputPath("independent-inspectors.png"),fullPage:true});
  expect(errors.pageErrors).toEqual([]);
 });
@@ -118,7 +118,7 @@ test("a saved draft moves, auto-finalizes, and retains durable content in the ri
  await left.getByRole("textbox",{name:"Content",exact:true}).fill("Draft transferred safely.");
  await move(page);
  const right=group(page,"secondary");
- const editor=right.getByRole("textbox",{name:"Page editor",exact:true});
+ const editor=right.getByRole("textbox",{name:"Note editor",exact:true});
  await expect(editor).toBeVisible();
  await expect(right.locator('.page-detail .sr-only[role="status"]')).toHaveText("Saved");
  await expect.poll(()=>source(editor)).toContain("Draft transferred safely.");
@@ -152,10 +152,10 @@ test("Escape in a right draft cannot close or navigate a central draft", async (
  await tree.getByRole("button",{name:"Open Next experiment",exact:true}).click();
  await move(page);
  const left=group(page,"primary"),right=group(page,"secondary");
- await left.getByRole("button",{name:"New page",exact:true}).click();
+ await left.getByRole("button",{name:"New note",exact:true}).click();
  const title=left.getByRole("textbox",{name:"Title",exact:true});
  await title.fill("Central draft stays");
- await right.getByRole("button",{name:"New page",exact:true}).click();
+ await right.getByRole("button",{name:"New note",exact:true}).click();
  const rightTitle=right.getByRole("textbox",{name:"Title",exact:true});
  await rightTitle.fill("Right draft on Escape");
  await right.getByRole("textbox",{name:"Content",exact:true}).fill("Right draft content.");

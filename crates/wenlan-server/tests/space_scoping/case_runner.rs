@@ -60,6 +60,12 @@ pub const WAVE_2_RECORDS: &[ExpectedContract] = &[
         SelectionGate::SingleId404,
     ),
     query(Method::Get, "/api/decisions"),
+    query(Method::Get, "/api/brief/history"),
+    query_gate(
+        Method::Get,
+        "/api/brief/history/{version}",
+        SelectionGate::SingleId404,
+    ),
     header(Method::Get, "/api/memory/pending-revisions"),
     header_gate(
         Method::Get,
@@ -115,6 +121,12 @@ const fn body(method: Method, path: &'static str) -> ExpectedContract {
 
 const fn query(method: Method, path: &'static str) -> ExpectedContract {
     expected(method, path, SelectorPrecedence::QueryThenHeader)
+}
+
+const fn query_gate(method: Method, path: &'static str, gate: SelectionGate) -> ExpectedContract {
+    let mut contract = query(method, path);
+    contract.gate = gate;
+    contract
 }
 
 const fn header(method: Method, path: &'static str) -> ExpectedContract {
@@ -259,7 +271,7 @@ pub fn assert_wave_2_records_catalog_contract() {
         .iter()
         .map(|case| (case.method, case.path))
         .collect::<BTreeSet<_>>();
-    assert_eq!(keys.len(), 11, "Wave 2 records must contain 11 unique keys");
+    assert_eq!(keys.len(), 13, "Wave 2 records must contain 13 unique keys");
 
     for expected in WAVE_2_RECORDS {
         let actual = route(expected.method, expected.path).expect("cataloged Wave 2 route");
@@ -367,7 +379,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
 
     let rows = wenlan_server::sensitive_read_routes::sensitive_read_routes().collect::<Vec<_>>();
     // The source-annotation GET and POST routes add two PageWorkspace-scoped readers.
-    assert_eq!(rows.len(), 72);
+    assert_eq!(rows.len(), 74);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -378,7 +390,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        52
+        54
     );
     assert_eq!(
         rows.iter()

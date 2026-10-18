@@ -925,10 +925,15 @@ pub struct WritePageParams {
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
     #[schemars(
-        description = "Memory source_ids the page is distilled from. Required for traceability."
+        description = "Memory source_ids the page is distilled from. Optional: pass them when the page is built from captured memories, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
     )]
     #[serde(default)]
     pub source_memory_ids: Vec<String>,
+    #[schemars(
+        description = "Refresh only: pass page.version from read_page. When the page has moved on, the write is refused and nothing changes; re-read the page with read_page and retry. A refresh of a page the user wrote or edited lands directly with it and is refused without it."
+    )]
+    #[serde(default)]
+    pub expected_version: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1221,7 +1226,28 @@ fn format_capture_success(resp: &StoreMemoryResponse) -> String {
             msg.push_str(&format!("\n  - {}", warning));
         }
     }
+    if matches!(resp.enrichment.as_str(), "paused" | "off") {
+        msg.push_str(&format!(
+            "\nenrichment: {}. No model is classifying memories, so this one stays `{}`. \
+             Set memory_type yourself on later captures.",
+            resp.enrichment, resp.memory_type
+        ));
+    }
     msg
+}
+
+/// Clients without the plugin's distill skill (Claude Desktop, Cursor) only
+/// see the tool reply, so the reply itself says how to finish `pending`.
+fn distill_pending_guide(pending: usize) -> String {
+    format!(
+        "{pending} cluster(s) in `pending` are waiting for you to write them as pages. \
+         For each one, read `contents`; skip it if the memories do not share one topic. \
+         Otherwise write a short noun-phrase title, a one-sentence summary and wiki prose \
+         that only states what the memories say, then call write_page with \
+         source_memory_ids set to the cluster's `source_ids` (and its `entity_id` and \
+         `space` when present). When `existing_page_id` is set, pass it as page_id to \
+         refresh that page instead of creating a new one."
+    )
 }
 
 fn daemon_setup_hint() -> &'static str {
@@ -1245,6 +1271,37 @@ Install:
 /// Convert a backend error into a tool-level error result (isError: true)
 /// with an actionable message. This keeps the MCP transport healthy
 /// (no protocol-level McpError) while telling the caller what happened.
+/// A refresh the daemon refused with 409 wrote nothing: the page moved past
+/// the caller's `expected_version`. Say so plainly, with the recovery steps.
+fn page_write_conflict_result(
+    page_id: &str,
+    current_version: Option<i64>,
+    sent_version: bool,
+) -> CallToolResult {
+    if !sent_version {
+        let retry = current_version
+            .map(|version| format!("expected_version {version}"))
+            .unwrap_or_else(|| "its page.version as expected_version".to_string());
+        return CallToolResult::error(vec![ContentBlock::text(format!(
+            "write_page refused, nothing was written: page {page_id} has the user's own \
+             writing, so a refresh must say which version it read. Read it with read_page \
+             and retry write_page with {retry}."
+        ))]);
+    }
+    let text = match current_version {
+        Some(version) => format!(
+            "write_page refused, nothing was written: page {page_id} moved to v{version}. \
+             Re-read it with read_page and retry write_page with expected_version {version}."
+        ),
+        None => format!(
+            "write_page refused, nothing was written: page {page_id} moved to a newer version. \
+             Re-read it with read_page and retry write_page with its page.version as \
+             expected_version."
+        ),
+    };
+    CallToolResult::error(vec![ContentBlock::text(text)])
+}
+
 fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
     let msg = match &e {
         WenlanError::Unreachable(_) => format!(
@@ -1479,7 +1536,11 @@ impl WenlanMcpServer {
         if let Some(pages) = resp.supplemental_pages.as_ref().filter(|p| !p.is_empty()) {
             let pages_json = serde_json::to_string_pretty(pages)
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-            output.push_str(&format!("\n\nCompiled pages:\n{}", pages_json));
+            output.push_str(&format!(
+                "\n\nCompiled pages:\n`confirmed: false` marks an AI-written page the user has \
+                 not confirmed or edited; `raw_score` is its relevance.\n{}",
+                pages_json
+            ));
         }
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
@@ -2107,7 +2168,16 @@ impl WenlanMcpServer {
                 // thin wrapper; the synthesis lives where the LLM is.
                 let pretty =
                     serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string());
-                Ok(CallToolResult::success(vec![ContentBlock::text(pretty)]))
+                let pending = resp
+                    .get("pending")
+                    .and_then(|v| v.as_array())
+                    .map_or(0, Vec::len);
+                let text = if pending == 0 {
+                    pretty
+                } else {
+                    format!("{}\n\n{}", distill_pending_guide(pending), pretty)
+                };
+                Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
             }
             Err(e) => Ok(tool_error(e, "distill")),
         }
@@ -2311,13 +2381,6 @@ impl WenlanMcpServer {
     ) -> Result<CallToolResult, McpError> {
         match params.page_id {
             Some(page_id) => {
-                if params.source_memory_ids.is_empty() {
-                    return Ok(CallToolResult::error(vec![ContentBlock::text(
-                        "source_memory_ids is required when refreshing — carry through \
-                         the stale page's existing list from distill output"
-                            .to_string(),
-                    )]));
-                }
                 if self.transport == TransportMode::Http {
                     return Ok(CallToolResult::error(vec![ContentBlock::text(
                         "Update operations are not available over remote connections. \
@@ -2325,17 +2388,37 @@ impl WenlanMcpServer {
                             .to_string(),
                     )]));
                 }
+                let sent_version = params.expected_version.is_some();
                 let req = wenlan_types::requests::RefreshPageRequest {
                     content: params.content,
                     source_memory_ids: params.source_memory_ids,
                     summary: params.summary,
+                    expected_version: params.expected_version,
                 };
                 let path = format!("/api/pages/{page_id}");
                 // Typed end-to-end: a wire-shape drift on the daemon side fails at
                 // deserialize instead of silently returning the no-op "Refreshed"
                 // line. Same discipline as the other typed page responses.
                 let resp: wenlan_types::responses::PageWriteResponse =
-                    try_call!(self.client.put(&path, &req), "write_page");
+                    match self.client.put(&path, &req).await {
+                        Ok(resp) => resp,
+                        // 409: the page moved past expected_version, or the
+                        // refresh of a user-written page sent none, and
+                        // nothing was written. The client withholds daemon
+                        // free text from agents, so read the page's current
+                        // version here and give the same recovery steps the
+                        // daemon's 409 body carries.
+                        Err(WenlanError::Api { status: 409, .. }) => {
+                            let current = self
+                                .client
+                                .get::<wenlan_types::responses::PageReadResponse>(&path)
+                                .await
+                                .ok()
+                                .map(|page| page.page.page.version);
+                            return Ok(page_write_conflict_result(&page_id, current, sent_version));
+                        }
+                        Err(e) => return Ok(tool_error(e, "write_page")),
+                    };
                 // Ownership gate (spec §5.2): a human-owned page is never overwritten
                 // in place; the daemon stages a revision card. Surface that so the
                 // caller does not believe the prose was rewritten.
@@ -2469,8 +2552,19 @@ impl WenlanMcpServer {
             "read_page"
         );
         let visible = visible_page_sources_for_standard(&sources, crate::lock_state::is_locked());
+        let review_required = page.page.page.review_required;
+        let source_count = page.page.page.source_memory_ids.len();
+        let mut page_value = serde_json::to_value(&page.page).map_err(|error| {
+            McpError::internal_error(format!("read_page encode: {error}"), None)
+        })?;
+        // The Page wire omits an unset review lock; an agent deciding how to
+        // write needs the explicit answer either way.
+        if let Some(object) = page_value.as_object_mut() {
+            object.insert("review_required".into(), review_required.into());
+            object.insert("source_count".into(), source_count.into());
+        }
         let value = serde_json::json!({
-            "page": page.page,
+            "page": page_value,
             "okf": page.okf,
             "sources": visible,
         });
@@ -2524,6 +2618,9 @@ impl WenlanMcpServer {
                     "last_modified": entry.page.last_modified,
                     "stale_reason": entry.page.stale_reason,
                     "storage_path": entry.storage_path,
+                    "creation_kind": entry.page.creation_kind,
+                    "source_count": entry.page.source_memory_ids.len(),
+                    "review_required": entry.page.review_required,
                 })
             })
             .collect();
@@ -2718,10 +2815,10 @@ fn format_update_page_response(
     if resp.gated {
         match resp.revision_card_id {
             Some(card) => format!(
-                "Page {page_id} is human-owned; staged revision card for review — prose left unchanged.\ngated: true\nrevision_card_id: {card}"
+                "Page {page_id} needs review before machine changes land; staged a revision card, prose left unchanged.\ngated: true\nrevision_card_id: {card}"
             ),
             None => format!(
-                "Page {page_id} is human-owned; staged a revision card for review — prose left unchanged.\ngated: true"
+                "Page {page_id} needs review before machine changes land; staged a revision card, prose left unchanged.\ngated: true"
             ),
         }
     } else {
@@ -2731,7 +2828,11 @@ fn format_update_page_response(
 
 fn format_create_page_response(resp: CreatePageResponse) -> String {
     let mut text = match resp.attached_to {
-        Some(page_id) => format!("Attached to existing page {page_id}"),
+        Some(page_id) => format!(
+            "Attached to existing page {page_id}. Your sources now back that page, but \
+             your prose was not saved. To merge it, read_page {page_id} and call \
+             write_page with page_id={page_id}."
+        ),
         None => format!("Created page {}", resp.id),
     };
     append_write_receipt(
@@ -2850,7 +2951,7 @@ impl WenlanMcpServer {
     // --- Primary Tools ---
 
     #[tool(
-        description = "Capture a memory: one durable insight the user's wiki should keep.\n\nSTORE PROACTIVELY, without waiting for 'remember this' (a floor, not a trigger): when the user states a preference, makes a decision, corrects you or earlier information, or shares a durable fact about themselves or the people, projects, and tools they care about.\n\nWHEN NOT TO STORE: conversation filler; things the user can trivially re-derive (file paths, recent git history); anything already stored (recall first if unsure); Tool output or command results (file contents, build logs, system prompts); transient task state; general world facts not personal to this user; Your own inferences the user did not express; agent operating rules ('always X' / 'never Y' belong in the agent's own config, not shared memory: store the preference as a fact, never the rule).\n\nCONTENT QUALITY: Specific beats vague ('prefers Rust for CLI tools because of compile-time safety' > 'likes Rust'). Include the WHY, which only you know. Name people, projects, and tools; this powers the knowledge graph. Atomic: one idea per memory. Each call is one atomic idea: 'prefers TDD' and 'uses pytest' are two calls. Declarative, not narrative: 'User prefers X because Y', not 'User said today they prefer X'; memories outlive the conversation.\n\nMEMORY TYPES: omit and trust the backend. By default do NOT set memory_type; the backend auto-classifies into identity / preference / decision / lesson / gotcha / fact with more context than you have, and agents that over-specify pick wrong. Opt in only when sure: 'profile' (about the user: identity / preference), 'knowledge' (about the world: decision / lesson / gotcha / fact), or a precise type when the distinction matters. EXCEPTION: set memory_type=\"decision\" explicitly ONLY when the user articulated the alternatives weighed AND the reasoning; those structured fields power the Decision Log view. A bare 'I'm switching to Cursor' is a preference change, not a decision.\n\nOmitting structured_fields beats guessing. If `supersedes` is supplied for a correction, this call can replace an existing memory in retrieval; use it only when that replacement is intended.",
+        description = "Capture a memory: one durable insight the user's wiki should keep.\n\nSTORE PROACTIVELY, without waiting for 'remember this' (a floor, not a trigger): when the user states a preference, makes a decision, corrects you or earlier information, or shares a durable fact about themselves or the people, projects, and tools they care about.\n\nWHEN NOT TO STORE: conversation filler; things the user can trivially re-derive (file paths, recent git history); anything already stored (recall first if unsure); Tool output or command results (file contents, build logs, system prompts); transient task state; general world facts not personal to this user; Your own inferences the user did not express; agent operating rules ('always X' / 'never Y' belong in the agent's own config, not shared memory: store the preference as a fact, never the rule).\n\nCONTENT QUALITY: Specific beats vague ('prefers Rust for CLI tools because of compile-time safety' > 'likes Rust'). Include the WHY, which only you know. Name people, projects, and tools; this powers the knowledge graph. Atomic: one idea per memory. Each call is one atomic idea: 'prefers TDD' and 'uses pytest' are two calls. Declarative, not narrative: 'User prefers X because Y', not 'User said today they prefer X'; memories outlive the conversation.\n\nMEMORY TYPES: omit and trust the backend. By default do NOT set memory_type; the backend auto-classifies into identity / preference / decision / lesson / gotcha / fact with more context than you have, and agents that over-specify pick wrong. Opt in only when sure: 'profile' (about the user: identity / preference), 'knowledge' (about the world: decision / lesson / gotcha / fact), or a precise type when the distinction matters. EXCEPTION: set memory_type=\"decision\" explicitly ONLY when the user articulated the alternatives weighed AND the reasoning; those structured fields power the Decision Log view. A bare 'I'm switching to Cursor' is a preference change, not a decision. NO MODEL: when a capture receipt says `enrichment: paused` or `enrichment: off`, nothing classifies memories, so set memory_type yourself on every capture.\n\nOmitting structured_fields beats guessing. If `supersedes` is supplied for a correction, this call can replace an existing memory in retrieval; use it only when that replacement is intended.",
         annotations(
             title = "Capture",
             read_only_hint = false,
@@ -2983,7 +3084,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, clears the user-edited guard and can replace the page prose during rebuild. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. The daemon also runs distillation periodically in the background, so don't trigger redundantly during normal flow.",
+        description = "Trigger Wenlan's distillation pass. With no `target`, runs a full pass that clusters new memories into pages and refreshes the wiki view. With a `target`, scopes the pass: a page id (`page_*` or `concept_*`) re-distills that single page, an entity name scopes clustering to that entity, a space value (e.g. `work`, `personal`) scopes to that space. With `force=true` on a page target, clears the user-edited guard and can replace the page prose during rebuild. Rebuild may send page and source material to the daemon's configured external LLM provider. Use when the user explicitly asks to synthesize, distill, or rebuild a page. With a model source chosen the daemon also distills in the background, so don't trigger redundantly; without one, nothing distills in the background.",
         annotations(
             title = "Distill",
             read_only_hint = false,
@@ -3084,7 +3185,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Resolve a durable named entity idempotently. Use only as a support step when the user explicitly establishes a durable named entity, or when resolved ids are needed for a relation the user explicitly stated. Do not call create_entity for every ordinary capture; capture already handles its primary entity and daemon enrichment handles routine extraction.",
+        description = "Resolve a durable named entity idempotently. Use only as a support step when the user explicitly establishes a durable named entity, or when resolved ids are needed for a relation the user explicitly stated. Do not call create_entity for every ordinary capture: with a model source chosen, daemon enrichment extracts entities. Without one (a capture receipt says enrichment is paused or off), capture's `entity` links only an entity that already exists, so create the entity first.",
         annotations(
             title = "Resolve entity",
             read_only_hint = false,
@@ -3118,7 +3219,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create or refresh a distilled wiki page. This write can replace an existing page: omit page_id to create a new page (title required); the daemon writes the DB row and the on-disk <pages dir>/<slug>.md projection atomically (default ~/.wenlan/pages/, slug made unique on collision). Pass page_id (from the `stale_pages` block in distill output) to refresh that page in place — replaces content + source_memory_ids + optional summary, clears stale_reason, preserves page_id and created_at, bumps version monotonically so external [[wikilinks]] keep working. Never delete_page + recreate to refresh: that churns ids and loses version history. To change an existing page's title at the user's explicit request, use rename_page; refresh keeps the existing title. Refresh is not available over remote HTTP MCP transport (local stdio only).",
+        description = "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required); with enough cited sources it lands as a distilled page, otherwise as an authored page. The daemon writes the DB row and the on-disk <pages dir>/<slug>.md projection atomically (default ~/.wenlan/pages/, slug made unique on collision). Pass page_id (from the `stale_pages` block in distill output) to refresh that page in place — replaces content + source_memory_ids + optional summary, clears stale_reason, preserves page_id and created_at, bumps version monotonically so external [[wikilinks]] keep working. Never delete_page + recreate to refresh: that churns ids and loses version history. To change an existing page's title at the user's explicit request, use rename_page; refresh keeps the existing title. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user. Refresh is not available over remote HTTP MCP transport (local stdio only).",
         annotations(
             title = "Write page",
             read_only_hint = false,
@@ -3563,8 +3664,10 @@ impl ServerHandler for WenlanMcpServer {
              - get_page_sources shows what a page rests on.\n\n\
              BRIEF vs RECALL: brief is the Space-owned project snapshot; recall is a targeted lookup. \
              Brief reads never create or mutate state; only update_brief writes.\n\n\
-             The backend classifies, extracts entities, scores quality, and deduplicates. Focus on what only \
-             you know: the conversational context, why something matters, and what the user actually cares about."
+             When the user has chosen a model source, the backend classifies, extracts entities, scores quality, \
+             and deduplicates. Without one, capture receipts say enrichment is paused and you do the typing, and \
+             distill hands you clusters to write as pages. Either way, focus on what only you know: the \
+             conversational context, why something matters, and what the user actually cares about."
         )
     }
 }
@@ -3742,6 +3845,21 @@ mod tests {
             }
             other => panic!("unexpected tool error content: {other:?}"),
         }
+    }
+
+    #[test]
+    fn page_write_conflict_says_why_it_was_refused() {
+        let text = |result: CallToolResult| match &result.content[0] {
+            rmcp::model::ContentBlock::Text(text) => text.text.clone(),
+            other => panic!("unexpected tool error content: {other:?}"),
+        };
+        let unversioned = text(page_write_conflict_result("page_a", Some(4), false));
+        assert!(unversioned.contains("must say which version it read"));
+        assert!(unversioned.contains("expected_version 4"));
+        assert!(!unversioned.contains("moved to"));
+        let stale = text(page_write_conflict_result("page_a", Some(4), true));
+        assert!(stale.contains("moved to v4"));
+        assert!(stale.contains("expected_version 4"));
     }
 
     // ===== call_tool boundary: every LOCAL_ONLY_TOOL_NAMES entry is refused =====
@@ -5643,6 +5761,7 @@ mod tests {
             summary: None,
             entity_id: None,
             space: None,
+            expected_version: None,
         };
         let result = server.write_page_impl(params).await.unwrap();
         let content = &result.content[0];
@@ -5665,6 +5784,7 @@ mod tests {
             summary: None,
             entity_id: None,
             space: None,
+            expected_version: None,
         };
         let result = server.write_page_impl(params).await.unwrap();
         assert!(
@@ -5697,12 +5817,63 @@ mod tests {
         assert!(text.contains("write_outcome: attached_existing"));
     }
 
+    /// A daemon Page as the `/api/pages` reads serialize it, for wiremock.
+    fn page_wire_json(id: &str, version: i64, review_required: bool) -> serde_json::Value {
+        let mut page = serde_json::json!({
+            "id": id,
+            "title": "Conversation notes",
+            "summary": null,
+            "content": "body",
+            "entity_id": null,
+            "source_memory_ids": ["mem_a", "mem_b"],
+            "version": version,
+            "status": "active",
+            "created_at": "2026-10-01T00:00:00Z",
+            "last_compiled": "2026-10-01T00:00:00Z",
+            "last_modified": "2026-10-01T00:00:00Z",
+            "sources_updated_count": 0,
+            "stale_reason": null,
+            "user_edited": true,
+            "creation_kind": "authored",
+        });
+        if review_required {
+            page["review_required"] = serde_json::Value::Bool(true);
+        }
+        page
+    }
+
+    /// The MCP side no longer requires sources on refresh: an authored page
+    /// written from a conversation has none, and the daemon decides whether an
+    /// empty list is allowed for the page it holds. `expected_version` rides
+    /// on the wire.
     #[tokio::test]
-    async fn write_page_refresh_rejects_empty_sources_before_network() {
-        let server = make_server(TransportMode::Stdio, "agent", None);
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(100),
-            server.write_page_impl(WritePageParams {
+    async fn write_page_refresh_sends_empty_sources_and_expected_version_to_the_daemon() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .and(body_json(serde_json::json!({
+                "content": "body",
+                "source_memory_ids": [],
+                "summary": null,
+                "expected_version": 3
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let result = server
+            .write_page_impl(WritePageParams {
                 page_id: Some("page_x".into()),
                 title: None,
                 content: "body".into(),
@@ -5710,19 +5881,186 @@ mod tests {
                 summary: None,
                 entity_id: None,
                 space: None,
-            }),
-        )
-        .await
-        .expect("empty-source guard must return before any daemon retry")
-        .unwrap();
+                expected_version: Some(3),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false), "{result:?}");
+    }
+
+    /// A 409 from the refresh route means the page moved past
+    /// `expected_version`: the agent is told nothing was written, the page's
+    /// current version, and to re-read with read_page before retrying.
+    #[tokio::test]
+    async fn write_page_refresh_conflict_tells_the_agent_to_reread_and_retry() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": "page page_x moved to v5; re-read it with read_page and retry write_page with expected_version 5"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page": page_wire_json("page_x", 5, false)
+            })))
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let result = server
+            .write_page_impl(WritePageParams {
+                page_id: Some("page_x".into()),
+                title: None,
+                content: "body".into(),
+                source_memory_ids: vec!["mem_a".into()],
+                summary: None,
+                entity_id: None,
+                space: None,
+                expected_version: Some(4),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
         let text = match &result.content[0] {
             rmcp::model::ContentBlock::Text(text) => &text.text,
             other => panic!("expected text content, got {other:?}"),
         };
-        assert!(
-            result.is_error.unwrap_or(false) && text.contains("source_memory_ids is required"),
-            "empty refresh sources must fail locally before any daemon call: {text}"
+        for needle in [
+            "nothing was written",
+            "moved to v5",
+            "read_page",
+            "expected_version 5",
+        ] {
+            assert!(text.contains(needle), "missing {needle:?} in: {text}");
+        }
+    }
+
+    /// list_pages tells the agent what kind of page each one is, how many
+    /// sources it cites, and whether it is review-locked, so it can pick the
+    /// right write without reading every page first.
+    #[tokio::test]
+    async fn list_pages_reports_creation_kind_source_count_and_review_lock() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "pages": [
+                    page_wire_json("page_locked", 2, true),
+                    page_wire_json("page_open", 1, false),
+                ]
+            })))
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
         );
+        let result = server
+            .list_pages_impl(ListPagesParams {
+                status: None,
+                limit: None,
+                offset: None,
+                space: None,
+            })
+            .await
+            .unwrap();
+        let value = result.structured_content.expect("structured list");
+        let pages = value["pages"].as_array().expect("pages array");
+        assert_eq!(pages[0]["creation_kind"], "authored");
+        assert_eq!(pages[0]["source_count"], 2);
+        assert_eq!(pages[0]["review_required"], true);
+        assert_eq!(pages[1]["review_required"], false);
+    }
+
+    /// read_page always states the review lock and the source count, even
+    /// though the Page wire omits an unset lock.
+    #[tokio::test]
+    async fn read_page_states_review_lock_explicitly() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_open"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page": page_wire_json("page_open", 7, false)
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_open/sources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        );
+        let result = server.read_page_impl("page_open").await.unwrap();
+        let value = result.structured_content.expect("structured page");
+        assert_eq!(value["page"]["review_required"], false);
+        assert_eq!(value["page"]["version"], 7);
+        assert_eq!(value["page"]["source_count"], 2);
+    }
+
+    /// The schema tells agents sources are optional and expected_version
+    /// comes from read_page; the tool description carries the
+    /// conversation-to-page usage.
+    #[test]
+    fn write_page_documents_optional_sources_and_expected_version() {
+        let schema = serde_json::to_value(schemars::schema_for!(WritePageParams)).unwrap();
+        let props = &schema["properties"];
+        let sources = props["source_memory_ids"]["description"]
+            .as_str()
+            .expect("source_memory_ids description");
+        assert!(sources.contains("Optional"), "{sources}");
+        let expected = props["expected_version"]["description"]
+            .as_str()
+            .expect("expected_version description");
+        assert!(
+            expected.contains("page.version from read_page"),
+            "{expected}"
+        );
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(!required.contains(&"expected_version"));
+        assert!(!required.contains(&"source_memory_ids"));
+
+        let tool = WenlanMcpServer::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "write_page")
+            .expect("write_page registered");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("turn something from this conversation into a page"),
+            "{description}"
+        );
+        assert!(
+            description.contains("source_memory_ids are optional"),
+            "{description}"
+        );
+        assert!(description.contains("expected_version"), "{description}");
     }
 
     #[tokio::test]
@@ -5743,6 +6081,13 @@ mod tests {
             text.contains("revision_card_id: mem_page_card_1"),
             "revision_card_id missing from write_page refresh response: {text}"
         );
+        // A card is staged for a human-owned page and for a review lock alike,
+        // so the lead sentence names no single cause.
+        assert!(
+            text.starts_with("Page page_x needs review before machine changes land;"),
+            "{text}"
+        );
+        assert!(!text.contains("human-owned"), "{text}");
     }
 
     // ===== Remember request construction =====

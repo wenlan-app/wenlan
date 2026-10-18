@@ -79,3 +79,14 @@ describe("RecentNotesPanel custom ordering", () => {
     expect(onOpenPage).not.toHaveBeenCalled();
   });
 });
+
+describe("RecentNotesPanel empty list", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("offers the folder view when no note has been opened yet", () => {
+    const onBrowseFolders = vi.fn();
+    render(<RecentNotesPanel onBrowseFolders={onBrowseFolders} />);
+    fireEvent.click(screen.getByRole("button", { name: "Browse folders" }));
+    expect(onBrowseFolders).toHaveBeenCalledTimes(1);
+  });
+});

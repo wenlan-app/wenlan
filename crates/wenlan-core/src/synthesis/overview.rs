@@ -103,9 +103,10 @@ fn same_source_set(a: &[String], b: &[String]) -> bool {
 }
 
 /// Whether a row is a pre-fix empty placeholder: exact placeholder body,
-/// machine-owned, never user-edited.
+/// machine-owned, never user-edited, not review-locked.
 fn is_legacy_placeholder(page: &crate::pages::Page) -> bool {
     !page.user_edited
+        && !page.review_required
         && page.creation_kind == "research"
         && page.content.trim() == OVERVIEW_PLACEHOLDER_CONTENT
 }

@@ -6,7 +6,7 @@ import PageDetail from "../PageDetail";
 import { PageDraftEditor, type PageDraftEditorHandle } from "./PageDraftEditor";
 import { NoteGroupFrame } from "./NoteGroupFrame";
 import { NoteTabs } from "./NoteTabs";
-import { matchesNote, noteReadingKey, promoteNoteTab, reorderNoteTab, upsertNoteTab, type NoteTab, type NoteView } from "./noteTabState";
+import { matchesNote, noteId, noteReadingKey, promoteNoteTab, reorderNoteTab, upsertNoteTab, type NoteTab, type NoteView } from "./noteTabState";
 import type { View } from "../navigation/viewState";
 import type { MarkdownEditorSelection } from "../editor/MarkdownEditor";
 import { ReferenceNavigationProvider } from "../links/ReferenceNavigationContext";
@@ -141,17 +141,19 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
     requestAnimationFrame(() => root.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true }));
     return true;
   };
+  // Drops every tab showing this note, a published page or a draft (matched by
+  // its id or by the identity its editor reported), without flushing it.
   const removePage = (pageId: string) => {
     const current = viewRef.current;
-    const index = tabsRef.current.findIndex(tab => tab.view.kind === "page" && tab.view.pageId === pageId);
+    const isGone = (tab: NoteTab) => noteId(tab.view) === pageId || draftIdentityByTab.current.get(tab.key) === pageId;
+    const index = tabsRef.current.findIndex(isGone);
     if (index < 0) return;
-    const removedKeys = new Set(tabsRef.current
-      .filter(tab => tab.view.kind === "page" && tab.view.pageId === pageId)
-      .map(tab => tab.key));
+    const currentGone = !!current && tabsRef.current.some(tab => isGone(tab) && matchesNote(tab, current));
+    const removedKeys = new Set(tabsRef.current.filter(isGone).map(tab => tab.key));
     const remaining = tabsRef.current.filter(tab => !removedKeys.has(tab.key));
     for (const key of removedKeys) draftIdentityByTab.current.delete(key);
     updateTabs(remaining);
-    if (current?.kind === "page" && current.pageId === pageId) {
+    if (currentGone) {
       pageFlush.current = null;
       dirty.current = false;
       saving.current = false;

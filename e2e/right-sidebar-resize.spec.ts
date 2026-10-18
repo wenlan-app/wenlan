@@ -32,7 +32,7 @@ async function expectWidth(page: Page, width: number) {
 
 test('mirrored drag previews without saving and restores width across tabs close and reload', async ({ page }) => {
   const { errors, controller } = await start(page);
-  const editor = page.getByRole('textbox', { name: 'Page editor', exact: true });
+  const editor = page.getByRole('textbox', { name: 'Note editor', exact: true });
   await expect(editor).toBeVisible(); const body = await editor.innerText();
   await editor.evaluate(el => el.setAttribute('data-resize-original', 'true'));
   const before = (await pane(page).boundingBox())!.width, initial = await stored(page), p = await begin(page);
@@ -73,7 +73,9 @@ test('keyboard mirrors direction and closing restores last width while viewport 
   await start(page); await handle(page).focus(); await page.keyboard.press('End'); await expectWidth(page, 600);
   await page.keyboard.press('ArrowRight'); await expectWidth(page, 580); await page.keyboard.press('ArrowLeft'); await expectWidth(page, 600);
   const saved = await stored(page); await page.setViewportSize({ width: 1208, height: 900 });
-  await expect.poll(async () => (await pane(page).boundingBox())!.width).toBeLessThanOrEqual(380);
+  // The labelled rail folds to icons here, so the cap leaves the note 360px beside the list.
+  await expect(page.locator('.memory-shell')).toHaveAttribute('data-sidebar-layout', 'icons');
+  await expect.poll(async () => (await pane(page).boundingBox())!.width).toBeLessThanOrEqual(1208 - 64 - 248 - 360);
   expect(await stored(page)).toBe(saved);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.setViewportSize({ width: 1600, height: 900 }); await expectWidth(page, 600);

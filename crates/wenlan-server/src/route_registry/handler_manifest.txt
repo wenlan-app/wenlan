@@ -5,6 +5,8 @@ main|get|/api/activities|wenlan_server::activity_tag_routes::handle_list_activit
 main|get|/api/agents|wenlan_server::profile_agents_routes::handle_list_agents
 main|get|/api/agents/{name}|wenlan_server::profile_agents_routes::handle_get_agent
 main|get|/api/ambient/status|wenlan_server::ambient_routes::handle_ambient_status
+main|get|/api/brief/history|wenlan_server::brief_routes::handle_brief_history
+main|get|/api/brief/history/{version}|wenlan_server::brief_routes::handle_brief_version
 main|get|/api/briefing|wenlan_server::briefing_routes::handle_get_briefing
 main|get|/api/capture-stats|wenlan_server::memory_detail_routes::handle_capture_stats
 main|get|/api/chunks/{source_id}|wenlan_server::indexed_files_routes::handle_get_chunks
@@ -150,6 +152,7 @@ main|post|/api/spaces/{name}/confirm|wenlan_server::spaces_routes::handle_confir
 main|post|/api/spaces/{name}/pin|wenlan_server::spaces_routes::handle_pin_space
 main|post|/api/spaces/{name}/star|wenlan_server::spaces_routes::handle_toggle_space_starred
 main|post|/api/steep|wenlan_server::routes::handle_steep
+main|post|/api/agents|wenlan_server::profile_agents_routes::handle_register_agent
 main|put|/api/agents/{name}|wenlan_server::profile_agents_routes::handle_update_agent
 main|put|/api/chunks/{id}/update|wenlan_server::indexed_files_routes::handle_update_chunk
 main|put|/api/config|wenlan_server::config_routes::handle_update_config
@@ -163,6 +166,7 @@ main|put|/api/memory/{id}/update|wenlan_server::memory_routes::handle_update_mem
 main|put|/api/pages/drafts/{id}|wenlan_server::page_routes::handle_update_page_draft
 main|put|/api/pages/{id}|wenlan_server::page_routes::handle_refresh_page
 main|put|/api/pages/{id}/map/layout|wenlan_server::page_map_routes::handle_put_page_map_layout
+main|put|/api/pages/{id}/review-required|wenlan_server::page_routes::handle_set_page_review_required
 main|put|/api/profile|wenlan_server::profile_agents_routes::handle_update_profile
 main|put|/api/setup/anthropic-key|wenlan_server::config_routes::handle_set_anthropic_key
 main|put|/api/spaces/default|wenlan_server::spaces_routes::handle_set_default_space

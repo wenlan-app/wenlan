@@ -729,6 +729,13 @@ pub struct PageWriteResponse {
     pub gated: bool,
 }
 
+/// Receipt for `PUT /api/pages/{id}/review-required`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PageReviewRequiredResponse {
+    pub page_id: String,
+    pub review_required: bool,
+}
+
 /// DB save and Markdown projection are separate completion boundaries.
 /// Existing PageWriteResponse consumers ignore these additive fields.
 #[derive(Debug, Serialize, Deserialize)]
@@ -946,6 +953,19 @@ pub struct PageChangelogEntry {
     /// didn't touch citations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citations_summary: Option<String>,
+    /// The agent that made an `agent_refresh` write, from the `x-agent-name`
+    /// header. None for other writers or an unattributed refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// Numeric twin of `delta_summary`, so a UI can localize the summary
+    /// instead of showing English. None on entries written before these
+    /// fields existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub char_delta: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources_added: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources_removed: Option<i64>,
 }
 
 /// Response envelope for `/api/pages/{id}/revisions`.
@@ -1420,6 +1440,13 @@ pub struct PendingRevisionItem {
     /// other revision producers. Read from structured_fields.grounded_in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounded_in: Option<String>,
+    /// Why a page revision card needs review: `locked` (the page's review
+    /// lock), `background` (Wenlan's own upkeep wrote to a page with your
+    /// edits), or `owned` (the page turned user-owned mid-write). Read from
+    /// structured_fields.review_reason; derived for older cards. None for
+    /// memory-target revisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_reason: Option<String>,
 }
 
 /// Response returned by `POST /api/memory/revision/{id}/accept`.
@@ -1777,6 +1804,7 @@ mod tests {
             last_modified: 1_715_000_000,
             target_kind: RevisionTargetKind::Memory,
             grounded_in: None,
+            review_reason: None,
         };
         let json = serde_json::to_value(&item).unwrap();
         assert_eq!(json["target_source_id"], "mem_target");
@@ -1800,6 +1828,7 @@ mod tests {
             last_modified: 1_715_000_000,
             target_kind: RevisionTargetKind::Page,
             grounded_in: None,
+            review_reason: None,
         };
         let json = serde_json::to_value(&page_item).unwrap();
         assert_eq!(json["target_kind"], "page");
@@ -1815,6 +1844,46 @@ mod tests {
         });
         let decoded: PendingRevisionItem = serde_json::from_value(legacy).unwrap();
         assert_eq!(decoded.target_kind, RevisionTargetKind::Memory);
+    }
+
+    /// New fields are additive: omitted when absent, defaulted when an older
+    /// daemon never sent them.
+    #[test]
+    fn review_reason_and_changelog_fields_are_additive() {
+        let mut item = serde_json::json!({
+            "target_source_id": "page_abc",
+            "revision_source_id": "mem_rev",
+            "revision_content": "body",
+            "source_agent": null,
+            "last_modified": 1i64,
+        });
+        let decoded: PendingRevisionItem = serde_json::from_value(item.clone()).unwrap();
+        assert_eq!(decoded.review_reason, None);
+        assert!(serde_json::to_value(&decoded)
+            .unwrap()
+            .get("review_reason")
+            .is_none());
+        item["review_reason"] = "locked".into();
+        let decoded: PendingRevisionItem = serde_json::from_value(item).unwrap();
+        assert_eq!(decoded.review_reason.as_deref(), Some("locked"));
+
+        let old: PageChangelogEntry =
+            serde_json::from_str(r#"{"version":2,"at":1,"edited_by":"distill"}"#).unwrap();
+        assert_eq!(old.agent, None);
+        assert_eq!(old.char_delta, None);
+        let json = serde_json::to_value(&old).unwrap();
+        for key in ["agent", "char_delta", "sources_added", "sources_removed"] {
+            assert!(json.get(key).is_none(), "{key} must be omitted when absent");
+        }
+        let new: PageChangelogEntry = serde_json::from_str(
+            r#"{"version":3,"at":2,"edited_by":"agent_refresh","agent":"claude-code","char_delta":-4,"sources_added":1,"sources_removed":0}"#,
+        )
+        .unwrap();
+        assert_eq!(new.agent.as_deref(), Some("claude-code"));
+        assert_eq!(
+            (new.char_delta, new.sources_added, new.sources_removed),
+            (Some(-4), Some(1), Some(0))
+        );
     }
 }
 

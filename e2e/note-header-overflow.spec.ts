@@ -51,7 +51,7 @@ test("many tabs keep create and inspector reachable while direct move preserves 
   await page.screenshot({ path: info.outputPath("many-tabs.png") });
   await assertGeometry(frame(page));
   expect((await geometry(frame(page))).scroll).toBe(true);
-  const editor = frame(page).getByRole("textbox", { name: "Page editor", exact: true });
+  const editor = frame(page).getByRole("textbox", { name: "Note editor", exact: true });
   await editor.evaluate(el => { const view = (el as any).cmTile.root.view; view.dispatch({ selection: { anchor: view.state.doc.length } }); view.focus(); });
   await page.keyboard.insertText("\nPreserved during direct move.");
   runtime.failNext("update_page", "save refused");
@@ -64,7 +64,7 @@ test("many tabs keep create and inspector reachable while direct move preserves 
   await frame(page).getByRole("tab", { name: "Layout note 18", exact: true }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to right group", exact: true }).click();
   await expect(frame(page, "secondary").getByRole("tab", { name: "Layout note 18", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(frame(page, "secondary").getByRole("textbox", { name: "Page editor", exact: true })).toContainText("Preserved during direct move.");
+  await expect(frame(page, "secondary").getByRole("textbox", { name: "Note editor", exact: true })).toContainText("Preserved during direct move.");
   for (const width of [1440, 900, 375]) {
     await page.setViewportSize({ width, height: 900 });
     for (const id of ["primary", "secondary"]) await assertGeometry(frame(page, id));

@@ -32,6 +32,8 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/memory/{id}/versions","memory_versions",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/decisions","decision_list",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/decisions/domains","decision_spaces",NoSelector,UnauthenticatedLocal,Global,NoGate,NotApplicable,AggregateOnly),
+    row!(Get,"/api/brief/history","brief_history",QueryThenHeader,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
+    row!(Get,"/api/brief/history/{version}","brief_version",QueryThenHeader,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/briefing","briefing",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/memory/pending-revisions","memory_revisions",HeaderOnly,UnauthenticatedLocal,MemorySpace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/memory/pending-revision/{source_id}","memory_revision",HeaderOnly,UnauthenticatedLocal,MemorySpace,SingleId404,Rejected,Forbidden),

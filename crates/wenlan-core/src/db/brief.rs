@@ -42,6 +42,23 @@ CREATE TABLE IF NOT EXISTS brief_legacy_imports (
 );
 ";
 
+/// One row per successful Brief update. `brief_version` is the version AFTER
+/// the update; `snapshot_json` is the full resulting Brief. Written in the
+/// same transaction as the update, so history never disagrees with the Brief.
+pub(super) const BRIEF_HISTORY_DDL: &str = "
+CREATE TABLE IF NOT EXISTS brief_history (
+    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    brief_version INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    caller_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    mutations_json TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    PRIMARY KEY (space_id, brief_version)
+);
+";
+
 impl MemoryDB {
     pub(super) async fn ensure_brief_tables(tx: &libsql::Transaction) -> Result<(), WenlanError> {
         tx.execute_batch(BRIEF_TABLES_DDL)
@@ -206,91 +223,100 @@ fn item_matches_snapshot(
     }
 }
 
+/// Read a Space's Brief on any connection, so the update transaction can
+/// snapshot the exact state it is about to commit.
+async fn read_brief(
+    conn: &libsql::Connection,
+    space_name: &str,
+) -> Result<Option<wenlan_types::Brief>, WenlanError> {
+    let header = {
+        let mut rows = conn
+            .query(
+                "SELECT b.space_id, s.name, b.last_session_summary,
+                        b.last_handoff_at, b.version
+                   FROM briefs b
+                   JOIN spaces s ON s.id=b.space_id
+                  WHERE s.name=?1",
+                libsql::params![space_name],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("get brief: {error}")))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("get brief row: {error}")))?
+        else {
+            return Ok(None);
+        };
+        (
+            row.get::<String>(0).unwrap_or_default(),
+            row.get::<String>(1).unwrap_or_default(),
+            row.get::<String>(2).unwrap_or_default(),
+            row.get::<Option<i64>>(3).unwrap_or(None),
+            row.get::<i64>(4).unwrap_or(1),
+        )
+    };
+
+    let mut rows = conn
+        .query(
+            "SELECT id, text, state, added_at, gate, version
+               FROM brief_items
+              WHERE space_id=?1
+              ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END,
+                       added_at, id",
+            libsql::params![header.0.as_str()],
+        )
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("get brief items: {error}")))?;
+    let mut active = Vec::new();
+    let mut backlog = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|error| WenlanError::VectorDb(format!("get brief item row: {error}")))?
+    {
+        let state_text = row.get::<String>(2).unwrap_or_default();
+        let state = match state_text.as_str() {
+            "active" => wenlan_types::BriefItemState::Active,
+            "backlog" => wenlan_types::BriefItemState::Backlog,
+            other => {
+                return Err(WenlanError::VectorDb(format!(
+                    "brief item has invalid state '{other}'"
+                )));
+            }
+        };
+        let item = wenlan_types::BriefItem {
+            id: row.get::<String>(0).unwrap_or_default(),
+            text: row.get::<String>(1).unwrap_or_default(),
+            state,
+            added_at: row.get::<i64>(3).unwrap_or_default(),
+            gate: row.get::<Option<String>>(4).unwrap_or(None),
+            version: row.get::<i64>(5).unwrap_or(1),
+        };
+        match state {
+            wenlan_types::BriefItemState::Active => active.push(item),
+            wenlan_types::BriefItemState::Backlog => backlog.push(item),
+        }
+    }
+
+    Ok(Some(wenlan_types::Brief {
+        space_id: header.0,
+        space: header.1,
+        last_session_summary: header.2,
+        last_handoff_at: header.3,
+        version: header.4,
+        active,
+        backlog,
+    }))
+}
+
 impl MemoryDB {
     pub async fn get_brief_by_space_name(
         &self,
         space_name: &str,
     ) -> Result<Option<wenlan_types::Brief>, WenlanError> {
         let conn = self.conn.lock().await;
-        let header = {
-            let mut rows = conn
-                .query(
-                    "SELECT b.space_id, s.name, b.last_session_summary,
-                            b.last_handoff_at, b.version
-                       FROM briefs b
-                       JOIN spaces s ON s.id=b.space_id
-                      WHERE s.name=?1",
-                    libsql::params![space_name],
-                )
-                .await
-                .map_err(|error| WenlanError::VectorDb(format!("get brief: {error}")))?;
-            let Some(row) = rows
-                .next()
-                .await
-                .map_err(|error| WenlanError::VectorDb(format!("get brief row: {error}")))?
-            else {
-                return Ok(None);
-            };
-            (
-                row.get::<String>(0).unwrap_or_default(),
-                row.get::<String>(1).unwrap_or_default(),
-                row.get::<String>(2).unwrap_or_default(),
-                row.get::<Option<i64>>(3).unwrap_or(None),
-                row.get::<i64>(4).unwrap_or(1),
-            )
-        };
-
-        let mut rows = conn
-            .query(
-                "SELECT id, text, state, added_at, gate, version
-                   FROM brief_items
-                  WHERE space_id=?1
-                  ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END,
-                           added_at, id",
-                libsql::params![header.0.as_str()],
-            )
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("get brief items: {error}")))?;
-        let mut active = Vec::new();
-        let mut backlog = Vec::new();
-        while let Some(row) = rows
-            .next()
-            .await
-            .map_err(|error| WenlanError::VectorDb(format!("get brief item row: {error}")))?
-        {
-            let state_text = row.get::<String>(2).unwrap_or_default();
-            let state = match state_text.as_str() {
-                "active" => wenlan_types::BriefItemState::Active,
-                "backlog" => wenlan_types::BriefItemState::Backlog,
-                other => {
-                    return Err(WenlanError::VectorDb(format!(
-                        "brief item has invalid state '{other}'"
-                    )));
-                }
-            };
-            let item = wenlan_types::BriefItem {
-                id: row.get::<String>(0).unwrap_or_default(),
-                text: row.get::<String>(1).unwrap_or_default(),
-                state,
-                added_at: row.get::<i64>(3).unwrap_or_default(),
-                gate: row.get::<Option<String>>(4).unwrap_or(None),
-                version: row.get::<i64>(5).unwrap_or(1),
-            };
-            match state {
-                wenlan_types::BriefItemState::Active => active.push(item),
-                wenlan_types::BriefItemState::Backlog => backlog.push(item),
-            }
-        }
-
-        Ok(Some(wenlan_types::Brief {
-            space_id: header.0,
-            space: header.1,
-            last_session_summary: header.2,
-            last_handoff_at: header.3,
-            version: header.4,
-            active,
-            backlog,
-        }))
+        read_brief(&conn, space_name).await
     }
 
     pub async fn apply_brief_update(
@@ -701,6 +727,29 @@ impl MemoryDB {
             projection_path: None,
             warnings: Vec::new(),
         };
+        if !receipt.applied.is_empty() {
+            let snapshot = read_brief(&tx, request.space.trim())
+                .await?
+                .ok_or_else(|| WenlanError::VectorDb("brief missing after update".into()))?;
+            tx.execute(
+                "INSERT INTO brief_history
+                    (space_id, brief_version, created_at, caller_id, operation_id,
+                     summary, mutations_json, snapshot_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                libsql::params![
+                    space_id.as_str(),
+                    final_brief_version,
+                    now,
+                    request.caller_id.as_str(),
+                    request.operation_id.as_str(),
+                    snapshot.last_session_summary.as_str(),
+                    serde_json::to_string(&receipt.applied)?,
+                    serde_json::to_string(&snapshot)?
+                ],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("brief history insert: {error}")))?;
+        }
         let response = serde_json::to_string(&receipt)?;
         tx.execute(
             "INSERT INTO operation_receipts
@@ -726,6 +775,90 @@ impl MemoryDB {
             .await
             .map_err(|error| WenlanError::VectorDb(format!("brief update commit: {error}")))?;
         Ok(receipt)
+    }
+}
+
+fn history_entry_from_row(
+    row: &libsql::Row,
+) -> Result<wenlan_types::BriefHistoryEntry, WenlanError> {
+    let mutations: Vec<wenlan_types::BriefAppliedMutation> =
+        serde_json::from_str(&row.get::<String>(5).unwrap_or_default())?;
+    Ok(wenlan_types::BriefHistoryEntry {
+        version: row.get::<i64>(0).unwrap_or_default(),
+        created_at: row.get::<i64>(1).unwrap_or_default(),
+        caller_id: row.get::<String>(2).unwrap_or_default(),
+        operation_id: row.get::<String>(3).unwrap_or_default(),
+        summary: row.get::<String>(4).unwrap_or_default(),
+        mutation_count: mutations.len(),
+        mutations,
+    })
+}
+
+impl MemoryDB {
+    /// Brief update history for a Space, newest first. Empty when the Space
+    /// has no Brief or no recorded updates.
+    pub async fn list_brief_history(
+        &self,
+        space_name: &str,
+        limit: usize,
+    ) -> Result<Vec<wenlan_types::BriefHistoryEntry>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT h.brief_version, h.created_at, h.caller_id, h.operation_id,
+                        h.summary, h.mutations_json
+                   FROM brief_history h
+                   JOIN spaces s ON s.id=h.space_id
+                  WHERE s.name=?1
+                  ORDER BY h.brief_version DESC
+                  LIMIT ?2",
+                libsql::params![space_name, limit as i64],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("list brief history: {error}")))?;
+        let mut entries = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("brief history row: {error}")))?
+        {
+            entries.push(history_entry_from_row(&row)?);
+        }
+        Ok(entries)
+    }
+
+    /// The Brief as it stood right after update `version`, or `None` when
+    /// that version was never recorded for the Space.
+    pub async fn get_brief_version(
+        &self,
+        space_name: &str,
+        version: i64,
+    ) -> Result<Option<wenlan_types::BriefVersionResponse>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT h.brief_version, h.created_at, h.caller_id, h.operation_id,
+                        h.summary, h.mutations_json, h.snapshot_json
+                   FROM brief_history h
+                   JOIN spaces s ON s.id=h.space_id
+                  WHERE s.name=?1 AND h.brief_version=?2",
+                libsql::params![space_name, version],
+            )
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("get brief version: {error}")))?;
+        let Some(row) = rows
+            .next()
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("brief version row: {error}")))?
+        else {
+            return Ok(None);
+        };
+        let entry = history_entry_from_row(&row)?;
+        let mut brief: wenlan_types::Brief =
+            serde_json::from_str(&row.get::<String>(6).unwrap_or_default())?;
+        // The snapshot predates any later Space rename; show the current name.
+        brief.space = space_name.to_string();
+        Ok(Some(wenlan_types::BriefVersionResponse { entry, brief }))
     }
 }
 

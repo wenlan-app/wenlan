@@ -158,8 +158,16 @@ The relay's control-plane records include:
   token records, and grant receipts containing client/device/route/Space
   bindings, authorization IDs, status, timestamps, expiry and cleanup state.
 - Session and abuse-control state: opaque public-to-backend MCP session
-  mappings, backend session IDs, binding hashes, status and expiry, plus a
-  hash of the connecting IP with request rate-window counters and expiry.
+  mappings, backend session IDs, binding hashes, status and expiry, plus
+  request rate-window counters and expiry keyed by a hash of the connecting
+  IP, of the device identifier, or of the OAuth grant.
+- Request log lines in Cloudflare Workers Logs: for each request, its route
+  (with identifiers replaced by `:id`), method, status, duration, whether it
+  presented an app or device credential, which limit refused it, the name of
+  an allowlisted AI app or `other`, a 12-character hash of the device
+  identifier, and the error type of an internal failure. They contain no IP
+  address, token, Space name, request or response body, query or result.
+  Cloudflare keeps them for its Workers Logs retention period.
 
 Technical expiry denies access; it is not a physical deletion time. Pairing and
 authorization requests and pending reverse enrollments expire after 5 minutes,
@@ -195,8 +203,9 @@ shared copies and backups require their own deletion controls. Do not connect
 a Space containing credentials or other restricted information: the connector
 does not classify or redact sensitive text embedded in knowledge.
 
-Abuse-control counters use fixed calendar windows: per-IP-hash counters expire
-at the end of the current minute or hour, depending on the endpoint; aggregate
+Abuse-control counters use fixed calendar windows: per-IP-hash, per-device and
+per-grant counters expire at the end of the current minute or hour, depending
+on the endpoint; aggregate
 daily enrollment and client-registration counters expire at the end of the UTC
 day. The application stores a hash rather than the raw connecting IP in these
 counters. Expired rows are removed in batches of at most 256 by background
@@ -256,8 +265,9 @@ the database on your machine, regardless of this optional statistics setting.
 The desktop app also keeps the diagnostic log described above. The standalone
 relay separately keeps the
 authorization, routing, session and abuse-control records described above.
-Its candidate deployment configuration disables Workers observability logs;
-this setting is not a promise that Cloudflare retains no service-level data.
+Its deployment configuration keeps only the request log lines described above
+in Workers Logs and turns Cloudflare's own invocation logs off; this is not a
+promise that Cloudflare retains no service-level data.
 
 Opening a window starts the update check listed in the table above about three seconds later. On a first run it also triggers the search model download in that table, and if you left Web access on, it connects to Wenlan's web service again. Beyond those, see "Images in your notes reach their host" above, because the note you open can reach the network on its own.
 
@@ -311,7 +321,7 @@ Wenlan's legacy relay, at `origin-relay.originmemory.workers.dev`, is run by thi
   - If you pointed the knowledge or page path at a folder of your own, your pages are in that folder, not under `~/.wenlan/`.
   - Registering a legacy Remote Access tunnel leaves a record on the legacy relay. Turning legacy Remote Access off stops the tunnel on your machine; the app sends no request to remove that legacy registration. Open an issue if you want it deleted. The standalone `wenlan-relay` connector has separate device and grant revocation and asynchronous cleanup described under "Pre-release standalone `wenlan-relay` connector"; technical expiry is not a physical-deletion SLA.
   - The log file listed under "Where data is stored" is in none of those folders and is not removed with them.
-  - Wenlan writes an entry for itself into the configuration of each AI client you connect -- Claude Desktop, Claude Code, Cursor, Gemini, Codex. Those entries stay after uninstall, and the client will keep trying to launch Wenlan. Remove them by hand. The command-line tool also leaves a timestamped backup of each file it edited, beside the original.
+  - Wenlan writes an entry for itself into the configuration of each AI client you connect -- Claude Desktop, Claude Code, Cursor, Gemini, Codex, Muse Code. Those entries stay after uninstall, and the client will keep trying to launch Wenlan. Remove them by hand. The command-line tool also leaves a timestamped backup of each file it edited, beside the original.
   - An install upgraded from Origin may also have `~/.config/origin-mcp/`, holding that version's identifier and token.
 - Uninstall the daemon: run `wenlan background off` to stop it and disable autostart (this is a reversible runtime stop, not an uninstall), then remove the service registration for your platform -- `~/Library/LaunchAgents/com.wenlan.server.plist` (macOS), `~/.config/systemd/user/wenlan-server.service` (Linux), or the `WenlanServer` scheduled task (Windows) -- and delete `~/.wenlan/bin/`.
 - **Uninstall the desktop app:** turn off *Run Wenlan in background at login* in Settings and quit the app (this removes `~/Library/LaunchAgents/com.wenlan.server.plist` and `com.wenlan.desktop.plist` on macOS), then delete `Wenlan.app`; on Windows run the uninstaller from Apps & features. The data folders above stay until you delete them.

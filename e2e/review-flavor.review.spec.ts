@@ -39,7 +39,7 @@ async function storedReviewPages(page: Page, status: "active" | "draft"): Promis
 }
 
 async function closeWritingView(page: Page): Promise<void> {
-  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor).toBeEditable();
   // Escape flushes and returns to the reading surface. The editor may remain
@@ -48,6 +48,14 @@ async function closeWritingView(page: Page): Promise<void> {
   await expect(editor).not.toBeVisible();
   await expect(page.locator(".page-detail")).toBeVisible();
 }
+
+// The fixture library is small enough to show the getting-started card, which
+// hides the Wiki directory these flows browse. Start each test with it dismissed.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("onboarding:gettingStartedDismissed", "1");
+  });
+});
 
 async function installRejectedCommandAudit(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -82,9 +90,9 @@ test("keeps every enabled primary destination inside the Review command contract
 
   await navigation.getByRole("button", { name: "Graph", exact: true }).click();
   await expect(page.getByTestId("atlas-view")).toBeVisible();
-  // Same fixture and same count line as graph-rendering.visual.spec: pages
+  // Same fixture and same count line as graph-rendering.visual.spec: notes
   // lead, and the topic count is over what is drawn (the three connected ones).
-  await expect(page.getByText(/^7 pages · 3 topics(?: · \d+ regions?)?$/)).toBeVisible();
+  await expect(page.getByText(/^7 notes · 3 topics(?: · \d+ regions?)?$/)).toBeVisible();
 
   await openPrimaryDestination(page, "Memories");
   await expect(page.getByRole("region", { name: "Memory list" })).toBeVisible();
@@ -141,7 +149,7 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
   await openFixtureArchitecture(page);
   const initialPage = await storedReviewPage(page, "page-architecture");
   expect(initialPage).not.toBeNull();
-  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor).toBeEditable();
   const editedSource = "# Fixture architecture\n\nEdited through the Review-flavor lane.";
@@ -158,14 +166,14 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
   await expect(page.getByText("Edited through the Review-flavor lane.")).toBeVisible();
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Page actions", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Re-distill page", exact: true }).click();
-  await expect(page.getByText("Page re-distilled.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Note actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Rebuild note", exact: true }).click();
+  await expect(page.getByText("Note rebuilt.", { exact: true })).toBeVisible();
   await expect.poll(async () => (await storedReviewPage(page, "page-architecture"))?.last_compiled).toBe("2026-07-10T12:33:00Z");
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Page actions" }).click();
-  await page.getByRole("menuitem", { name: "Delete page" }).click();
+  await page.getByRole("button", { name: "Note actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete note" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
   await expect(
     page.locator(".wiki-workspace-directory").getByText("Fixture architecture", { exact: true }),
@@ -236,14 +244,14 @@ test("marks a stored page reviewed through the Review presence contract", async 
   // exact stored editor source without closing the current editor session.
   const initialPage = await storedReviewPage(page, "page-architecture");
   expect(initialPage).not.toBeNull();
-  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
   await expect(editor).toBeVisible();
   const reviewedSource = `${initialPage!.content}\n\nEdited in the Review editor before marking reviewed.`;
   await editor.fill(reviewedSource);
   // The Info action lives in the note sidebar, opened from the toolbar.
   await page.getByRole("button", { name: "Open note sidebar", exact: true }).click();
   await expect(page.getByRole("tab", { name: "Info", exact: true })).toBeVisible();
-  const review = page.getByRole("button", { name: "Mark page reviewed", exact: true });
+  const review = page.getByRole("button", { name: "Mark note reviewed", exact: true });
   await expect(review).toBeEnabled();
   await review.click();
 

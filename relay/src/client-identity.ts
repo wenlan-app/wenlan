@@ -15,6 +15,8 @@ const KNOWN_CLIENTS: ReadonlyMap<string, string> = new Map([
   ['claude.com', 'Claude'],
   ['chatgpt.com', 'ChatGPT'],
   ['chat.openai.com', 'ChatGPT'],
+  // Meta's Muse custom connectors return to this host.
+  ['agent.meta.ai', 'Muse'],
 ]);
 
 /** Trimmed, control characters removed, at most 80 characters, or null. */

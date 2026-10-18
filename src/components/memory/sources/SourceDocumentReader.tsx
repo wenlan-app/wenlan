@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -82,11 +82,12 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
 }) {
   const { t, i18n } = useTranslation();
   const { open, setOpen, toggle } = useDetailInfoOpen(JSON.stringify([file.source, file.source_id, space ?? null]));
+  const infoToggleRef = useRef<HTMLButtonElement>(null);
   const presentation = getSourcePresentation(file, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt") });
   const sourceSpace = space ?? file.space;
   const modified = Number.isFinite(file.last_modified) && file.last_modified > 0
     ? new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(file.last_modified * 1000)) : null;
-  const info = (relatedPages: ReactNode) => <PageInfoDrawer docked inspector focusOnOpen={false}
+  const info = (relatedPages: ReactNode) => <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef}
     open={open} onClose={() => setOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
     <DetailInfoContent className="source-document-info">
       {relatedPages}
@@ -107,7 +108,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
       {breadcrumbs && <div className="reading-document-breadcrumbs">{breadcrumbs}</div>}
       <header className="page-document-title-row source-document-page-header">
         <h1 className="page-detail-title">{file.title}</h1>
-        <div className="page-document-tools"><InfoToggle open={open} onClick={toggle} /></div>
+        <div className="page-document-tools"><InfoToggle ref={infoToggleRef} open={open} onClick={toggle} /></div>
       </header>
       {content !== undefined ? content : <SourceDocumentReader file={file} space={space} onReady={onReady} onRegisterFlush={onRegisterFlush} renderRelatedPages={info} />}
     </DetailReadingFrame>

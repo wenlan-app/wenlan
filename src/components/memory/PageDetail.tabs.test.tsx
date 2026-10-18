@@ -139,8 +139,8 @@ describe("PageDetail note inspector", () => {
     await screen.findByText("libSQL Architecture");
     expect(container.querySelector(".page-detail-top-row")).toBeNull();
     expect(screen.getByRole("button", { name: i18n.t("pageInspector.open") })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Page actions" }).closest(".page-document-title-row")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    expect(screen.getByRole("button", { name: "Note actions" }).closest(".page-document-title-row")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Note actions" }));
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageInspector.info") })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageCanvas.tabCanvas") })).toBeNull();
     await user.keyboard("{Escape}");

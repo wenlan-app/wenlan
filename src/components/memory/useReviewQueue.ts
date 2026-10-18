@@ -4,9 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   acceptPendingRevision,
   acceptRefinement,
+  agentDisplayName,
   confirmMemory,
   deleteMemory,
   dismissPendingRevision,
+  isPageRevisionOutdated,
   listPendingRevisions,
   listRefinements,
   listUnconfirmedMemories,
@@ -32,6 +34,8 @@ export type ReviewItem =
       revisionSourceId: string;
       content: string;
       agent: string | null;
+      /** Why a page revision needs review ("locked", "background", "owned"). */
+      reviewReason?: string | null;
       timestampMs: number | null;
     }
   | {
@@ -176,7 +180,8 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
           targetKind: item.target_kind,
           revisionSourceId: item.revision_source_id,
           content: item.revision_content,
-          agent: item.source_agent,
+          agent: agentDisplayName(item.source_agent),
+          reviewReason: item.review_reason ?? null,
           timestampMs: item.last_modified ? item.last_modified * 1000 : null,
         }),
       ),
@@ -236,6 +241,21 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
         return;
       }
       return approve ? acceptRefinement(item.id) : rejectRefinement(item.id);
+    },
+    onError: (error, { item }) => {
+      // The daemon discards a page revision card that can no longer apply.
+      // Drop it here too, so neither the queue nor the page banner keeps
+      // offering a card that is already gone.
+      if (item.kind !== "revision" || !isPageRevisionOutdated(error)) return;
+      queryClient.setQueriesData<PendingRevisionItem[]>(
+        { queryKey: REVISIONS_KEY },
+        (old) =>
+          old?.filter((entry) => entry.target_source_id !== item.targetSourceId) ?? [],
+      );
+      for (const key of ["page", "page-revisions"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+      queryClient.invalidateQueries({ queryKey: REVISIONS_KEY });
     },
     onSuccess: (_result, { item, approve }) => {
       if (approve && item.kind === "refinement" && item.action === "vocab_promote") {

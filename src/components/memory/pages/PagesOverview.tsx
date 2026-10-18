@@ -1,14 +1,13 @@
+import { useState } from "react";
 import { PageIcon } from "../assets/PageIcon";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import {
-  EXPLICIT_BROWSE_QUERY_POLICY,
-  listAllActivePagesExplicitBrowse,
-  listAllDraftPagesExplicitBrowse,
-} from "./listAllPages";
-import { collectPageInventory, type WikiInventoryScope } from "./pageInventory";
+import type { WikiInventoryScope } from "./pageInventory";
+import { useLibraryInventory } from "./useLibraryInventory";
 import "./wikiInventoryOverview.css";
 import { FirstPageMilestone } from "../../onboarding/FirstPageMilestone";
+import { GettingStarted } from "../../onboarding/GettingStarted";
+import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
+import AddSourceMenu from "../sources/AddSourceMenu";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -18,32 +17,52 @@ interface PagesOverviewProps {
   readonly onSelectDraft: (draftId: string, space: string | null) => void;
   readonly onSelectPage: (pageId: string) => void;
   readonly onSelectSpace: (spaceName: string) => void;
+  /** Getting-started destinations. The checklist renders only when both are
+   *  wired, so no step ever names an action with nothing behind it. Adding a
+   *  source opens its dialog in place and needs no destination. */
+  readonly onConnectTool?: () => void;
+  readonly onSeeExample?: () => void;
+  readonly onOpenIntelligence?: () => void;
 }
 
 export function PagesOverview({
+  onCreatePage,
   onSelectPage,
+  onConnectTool,
+  onSeeExample,
+  onOpenIntelligence,
 }: PagesOverviewProps) {
   const { t } = useTranslation();
-  const activePagesQuery = useQuery({
-    queryKey: ["pages", "active"],
-    queryFn: listAllActivePagesExplicitBrowse,
-    ...EXPLICIT_BROWSE_QUERY_POLICY,
-  });
-  const draftPagesQuery = useQuery({
-    queryKey: ["pages", "draft"],
-    queryFn: listAllDraftPagesExplicitBrowse,
-    ...EXPLICIT_BROWSE_QUERY_POLICY,
-  });
-  const pages = collectPageInventory(activePagesQuery.data ?? [], draftPagesQuery.data ?? []);
+  const { pages, empty } = useLibraryInventory();
+  const checklist = useGettingStartedState();
+  const [adding, setAdding] = useState(false);
+  const gettingStarted = onConnectTool && onSeeExample ? (
+    <GettingStarted
+      onWriteNote={() => onCreatePage(null)}
+      onConnectTool={onConnectTool}
+      onAddSources={() => setAdding(true)}
+      onSeeExample={onSeeExample}
+      onTurnOnSteeping={onOpenIntelligence}
+    />
+  ) : null;
+  // While the open checklist is the screen's content the panel above it shrinks
+  // to its title, so the whole home fits the default window.
+  const onboarding = gettingStarted !== null && checklist.visible && !checklist.dismissed;
 
   return (
-    <section className="wiki-overview wiki-reading-start mx-auto w-full max-w-[1130px] pb-16">
+    <section
+      className="wiki-overview wiki-reading-start mx-auto w-full max-w-[1130px] pb-16"
+      data-library-empty={empty ? "true" : undefined}
+      data-onboarding={onboarding ? "true" : undefined}
+    >
       <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />
       <div className="wiki-reading-start-panel">
         <PageIcon className="wiki-reading-start-icon" size={32} />
         <h1>{t("pages.overview.readingStartTitle")}</h1>
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
+      {gettingStarted}
+      {adding ? <AddSourceMenu onClose={() => setAdding(false)} /> : null}
     </section>
   );
 }

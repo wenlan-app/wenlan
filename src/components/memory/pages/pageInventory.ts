@@ -20,7 +20,10 @@ export function pageFolderPath(page: Page): string | null {
   return page.status === "draft" && typeof page.folder_path === "string" ? page.folder_path : null;
 }
 export function pageInventoryScope(page: Page): WikiInventoryScope | null {
-  if (page.entity_id || page.creation_kind === "entity") return null;
+  // Only an entity's own shadow page stays out of the inventory. A note
+  // distilled about an entity also carries `entity_id`, and it is an ordinary
+  // note with a file in the folder.
+  if (page.creation_kind === "entity") return null;
   const path = pageFolderPath(page);
   return path === null ? "all" : folderScope(path);
 }

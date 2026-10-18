@@ -115,6 +115,41 @@ pub fn page_is_human_owned(page: &crate::pages::Page) -> bool {
     page.user_edited || page.creation_kind == "authored"
 }
 
+/// The write gate's one ownership question: must this write be staged as a
+/// revision card instead of landing on `page`?
+///
+/// - A human writer is never gated, not even by the review lock.
+/// - The review lock (`page.review_required`) gates every machine writer.
+/// - An agent that proved it read the current page (`version_checked`: it
+///   sent an `expected_version` that matched) may update a human-owned page
+///   directly; the human-owned rule exists to stop blind overwrites, and a
+///   version-checked write is not blind.
+/// - A user-forced rebuild may release `user_edited`, but an authored page
+///   still gets a card.
+/// - Every other machine writer is gated on a human-owned page.
+///
+/// `version_checked` must only be true once the caller's `expected_version`
+/// has been compared with the loaded page: a mismatch is refused before this
+/// gate runs, so it never reaches here.
+pub fn machine_write_requires_review(
+    writer: Writer<'_>,
+    page: &crate::pages::Page,
+    version_checked: bool,
+    user_forced: bool,
+) -> bool {
+    if !writer.is_machine() {
+        return false;
+    }
+    if page.review_required {
+        return true;
+    }
+    match writer {
+        Writer::Agent(_) if version_checked => false,
+        _ if user_forced => page.creation_kind == "authored",
+        _ => page_is_human_owned(page),
+    }
+}
+
 /// Stage a machine write to a human-owned page as a pending revision card
 /// instead of overwriting the page's prose. Uses the same grammar as L3
 /// doc-grounded revisions (`crate::reconcile::write_revision`): a
@@ -140,6 +175,34 @@ pub async fn stage_page_revision_card(
     edited_by: &str,
     retry: Option<&RetryIdentity>,
 ) -> Result<WriteResult, WenlanError> {
+    stage_page_revision_card_proposed_by(
+        db,
+        page,
+        content,
+        source_memory_ids,
+        source_revision,
+        edited_by,
+        None,
+        retry,
+    )
+    .await
+}
+
+/// [`stage_page_revision_card`] naming who proposed the change. `proposer`
+/// is the agent the human sees on the card ("proposed by Claude Code"); when
+/// it is `None`, a pipeline writer is shown as Wenlan and any other writer
+/// leaves the card unattributed rather than showing an internal label.
+#[allow(clippy::too_many_arguments)]
+pub async fn stage_page_revision_card_proposed_by(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    content: &str,
+    source_memory_ids: &[String],
+    source_revision: i64,
+    edited_by: &str,
+    proposer: Option<&str>,
+    retry: Option<&RetryIdentity>,
+) -> Result<WriteResult, WenlanError> {
     stage_page_revision_card_inner(
         db,
         page,
@@ -148,6 +211,7 @@ pub async fn stage_page_revision_card(
         source_revision,
         None,
         edited_by,
+        proposer,
         retry,
     )
     .await?
@@ -178,6 +242,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         fence.source_revision,
         Some(fence),
         edited_by,
+        None,
         retry,
     )
     .await
@@ -192,9 +257,20 @@ async fn stage_page_revision_card_inner(
     source_revision: i64,
     fence: Option<&PageFence>,
     edited_by: &str,
+    proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
 ) -> Result<Option<WriteResult>, WenlanError> {
     crate::export::provenance::validate_canonical_page_content(content)?;
+    // Who the human sees on the card. Never the internal `page_write` kind:
+    // the named agent when the caller knows it, Wenlan for its own pipeline
+    // lanes, otherwise nothing.
+    let proposer: Option<String> = proposer
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            matches!(Writer::classify(edited_by), Writer::Pipeline(_)).then(|| "wenlan".to_string())
+        });
 
     let revision_card_id = format!(
         "mem_{}",
@@ -205,6 +281,16 @@ async fn stage_page_revision_card_inner(
             .take(12)
             .collect::<String>()
     );
+    // Why this write needed review, so the card can say so: the review lock
+    // first, then Wenlan's own background lanes, else the page became
+    // user-owned while the write was in flight.
+    let review_reason = if page.review_required {
+        "locked"
+    } else if matches!(Writer::classify(edited_by), Writer::Pipeline(_)) {
+        "background"
+    } else {
+        "owned"
+    };
     let structured = serde_json::json!({
         "revision_kind": "page_write",
         "target_kind": "page",
@@ -213,6 +299,7 @@ async fn stage_page_revision_card_inner(
         "source_revision": source_revision,
         "edited_by": edited_by,
         "source_memory_ids": source_memory_ids,
+        "review_reason": review_reason,
     })
     .to_string();
     let title: String = format!("Revision: {}", page.title)
@@ -227,7 +314,7 @@ async fn stage_page_revision_card_inner(
         last_modified: chrono::Utc::now().timestamp(),
         memory_type: Some("fact".to_string()),
         space: page.space.clone().or_else(|| page.workspace.clone()),
-        source_agent: Some("page_write".to_string()),
+        source_agent: proposer.clone(),
         confidence: Some(0.9),
         confirmed: Some(false),
         stability: Some("new".to_string()),
@@ -285,7 +372,7 @@ async fn stage_page_revision_card_inner(
     }
     if let Err(e) = db
         .log_agent_activity(
-            edited_by,
+            proposer.as_deref().unwrap_or(edited_by),
             "page_revision_card",
             &[page.id.clone(), revision_card_id.clone()],
             None,
@@ -329,22 +416,20 @@ type PreWriteGate = (
     tokio::sync::oneshot::Receiver<()>,
 );
 
+/// One armed gate per page id, so race tests on different pages can run in
+/// parallel without overwriting each other's gate.
 #[cfg(test)]
-pub(crate) static PRE_WRITE_GATE: std::sync::Mutex<Option<PreWriteGate>> =
-    std::sync::Mutex::new(None);
+pub(crate) static PRE_WRITE_GATE: std::sync::Mutex<Vec<PreWriteGate>> =
+    std::sync::Mutex::new(Vec::new());
 
 #[cfg(test)]
 async fn pre_write_pause(page_id: &str) {
     let gate = {
-        let mut slot = PRE_WRITE_GATE.lock().unwrap();
-        if slot
-            .as_ref()
-            .is_some_and(|(target, _, _)| target == page_id)
-        {
-            slot.take()
-        } else {
-            None
-        }
+        let mut slots = PRE_WRITE_GATE.lock().unwrap();
+        slots
+            .iter()
+            .position(|(target, _, _)| target == page_id)
+            .map(|i| slots.swap_remove(i))
     };
     if let Some((_, parked, go)) = gate {
         let _ = parked.send(());
@@ -531,6 +616,7 @@ pub(super) async fn update_page_impl(
     preserve_sources: bool,
     user_forced: bool,
     page_fence: Option<&PageFence>,
+    agent: Option<&str>,
 ) -> Result<WriteResult, WenlanError> {
     let result = update_page_db_impl(
         db,
@@ -545,6 +631,7 @@ pub(super) async fn update_page_impl(
         preserve_sources,
         user_forced,
         page_fence,
+        agent,
     )
     .await?;
     // Receipts describe the DB transaction. Repairing an independent
@@ -592,6 +679,7 @@ async fn update_page_db_impl(
     preserve_sources: bool,
     user_forced: bool,
     page_fence: Option<&PageFence>,
+    agent: Option<&str>,
 ) -> Result<WriteResult, WenlanError> {
     // ── Pre-write validation ────────────────────────────────────────────────
     if req.content.trim().is_empty() {
@@ -636,11 +724,11 @@ async fn update_page_db_impl(
     // authored page is legitimately born with zero sources (create_page
     // allows exactly that), so demanding one here would reject every later
     // human edit of that page — in the app and in the vault alike.
-    if !preserve_sources && req.source_memory_ids.is_empty() && writer.is_machine() {
-        return Err(WenlanError::Validation(
-            "page must cite at least one source memory".into(),
-        ));
-    }
+    // The check itself runs inside the CAS loop below, against the loaded
+    // page: an empty set is accepted only when the page has no sources to
+    // drop (an authored page written from a conversation).
+    let machine_empty_sources =
+        !preserve_sources && req.source_memory_ids.is_empty() && writer.is_machine();
     // Source-existence check removed. create_page validates sources at
     // creation time. Updates only carry forward or extend an already-valid
     // source list; re-checking on every update would break daemon-internal
@@ -722,6 +810,11 @@ async fn update_page_db_impl(
             let current = db.get_page(page_id).await?.ok_or_else(|| {
                 WenlanError::Validation(format!("page '{page_id}' does not exist"))
             })?;
+            if machine_empty_sources && !current.source_memory_ids.is_empty() {
+                return Err(WenlanError::Validation(
+                    "page must cite at least one source memory".into(),
+                ));
+            }
             let effective_sources = if preserve_sources {
                 &current.source_memory_ids
             } else {
@@ -746,7 +839,9 @@ async fn update_page_db_impl(
                 if current.version != guard.expected_page_version {
                     return Ok(no_op(WriteOutcome::Refused, vec![]));
                 }
-                if page_is_human_owned(&current) {
+                // A review-locked Page is skipped the same way: Page Growth
+                // never stages cards, it only grows machine-owned Pages.
+                if page_is_human_owned(&current) || current.review_required {
                     return terminal_result_with_receipt(
                         db,
                         retry.as_ref(),
@@ -801,13 +896,15 @@ async fn update_page_db_impl(
             // it is no longer advisory: whatever it decided is what the write
             // guards on. A user-forced rebuild overrides `user_edited` (the
             // write releases it together with the new body) but never an
-            // authored page, which still gets a revision card.
-            let human_owned = if user_forced {
-                current.creation_kind == "authored"
-            } else {
-                page_is_human_owned(&current)
-            };
-            if writer.is_machine() && human_owned {
+            // authored page or the review lock, which still get a revision
+            // card. An agent whose `expected_version` matched above may land
+            // on a human-owned page; see `machine_write_requires_review`.
+            if machine_write_requires_review(
+                writer,
+                &current,
+                req.expected_version.is_some(),
+                user_forced,
+            ) {
                 // `expected_source_revision` is the caller's compile fence
                 // when it supplied one. A caller with none (e.g. the generic
                 // `update_page` wrapper) gets an acceptance-time staging
@@ -845,13 +942,14 @@ async fn update_page_db_impl(
                         }
                     },
                     None => {
-                        stage_page_revision_card(
+                        stage_page_revision_card_proposed_by(
                             db,
                             &current,
                             &req.content,
                             effective_sources,
                             staged_source_revision,
                             edited_by,
+                            agent,
                             retry.as_ref(),
                         )
                         .await?
@@ -1018,6 +1116,16 @@ async fn update_page_db_impl(
                 "delta_summary": delta_summary,
                 "incoming_source_ids": added_sources_json,
             });
+            crate::db::add_page_delta_counts(
+                &mut entry,
+                &current.content,
+                &current.source_memory_ids,
+                &req.content,
+                &source_refs,
+            );
+            if let Some(agent) = agent {
+                entry["agent"] = serde_json::Value::String(agent.to_string());
+            }
             if let Some((_, ref stats_summary)) = citations {
                 entry["citations_summary"] = serde_json::Value::String(stats_summary.clone());
             }
@@ -1073,9 +1181,11 @@ async fn update_page_db_impl(
             // citation source for this write; a stale claim-map must not
             // survive a content change, and the new body re-enters bounded
             // annotation).
-            // The two CAS modes are mutually exclusive — the inner write refuses a
-            // call carrying both. A source-revision caller is guarded by the
-            // revision it compiled against, so it passes no expected_version.
+            // A source-revision caller is guarded by the revision it compiled
+            // against. An agent that also sent `expected_version` (already
+            // checked equal to `current_version` above) fences on both, so a
+            // version bump that leaves the source revision alone, such as a
+            // human rename, still refuses the write.
             let wrote = if let Some(guard) = page_growth {
                 db.try_update_page_growth_at_versions(
                     page_id,
@@ -1112,6 +1222,12 @@ async fn update_page_db_impl(
                     &new_changelog,
                     citations.as_ref().map(|(json, _)| json.as_str()),
                     source_revision,
+                    // Only the agent lane fences on both. Distill also carries
+                    // an `expected_version` here, but its write has always been
+                    // source-revision-only and the db layer refuses the pair
+                    // for any writer but `agent_refresh`.
+                    req.expected_version
+                        .filter(|_| matches!(writer, Writer::Agent(_))),
                     receipt,
                 )
                 .await?
@@ -1159,8 +1275,15 @@ async fn update_page_db_impl(
             // write only if the page was stale, and it wasn't. That is the answer to
             // the question it asked, not a discarded write, and it is the common
             // path on every re-distill sweep.
-            let landed_version = db.get_page(page_id).await?.map(|p| p.version);
-            if landed_version != Some(current_version) {
+            let landed = db.get_page(page_id).await?;
+            let landed_version = landed.as_ref().map(|p| p.version);
+            // A review lock set after the gate read leaves the version alone,
+            // but the UPDATE's lock predicate matched zero rows. Re-read so
+            // the next attempt's gate sees the lock and stages a card.
+            let lock_appeared = writer.is_machine()
+                && !current.review_required
+                && landed.as_ref().is_some_and(|p| p.review_required);
+            if landed_version != Some(current_version) || lock_appeared {
                 if attempt < MAX_CAS_ATTEMPTS {
                     log::debug!(
                         "[update_page] {page_id}: version moved {current_version} -> {landed_version:?} mid-write; reloading (attempt {attempt})"

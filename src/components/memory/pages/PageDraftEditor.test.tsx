@@ -308,7 +308,7 @@ describe("PageDraftEditor", () => {
     const title = await screen.findByRole("textbox", { name: "Title" });
 
     await act(async () => expect(await ref.current!.flush()).toBe(false));
-    expect(await screen.findByRole("alert")).toHaveTextContent("A page with this title already exists.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("A note with this title already exists.");
     expect(title).toHaveValue("Draft title");
     expect(screen.queryByRole("button", { name: "Open existing" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Rename note" }));

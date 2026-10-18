@@ -8,13 +8,14 @@ describe("clientIdentity", () => {
     ["claude.com", "Claude"],
     ["chatgpt.com", "ChatGPT"],
     ["chat.openai.com", "ChatGPT"],
+    ["agent.meta.ai", "Muse"],
     ["CLAUDE.AI", "Claude"],
   ])("names %s as %s when the relay agrees", (redirectHost, name) => {
     expect(clientIdentity({ knownClient: true, redirectHost })).toEqual({ kind: "known", name });
   });
 
   it("never promotes a host the app does not list, whatever the relay says", () => {
-    for (const redirectHost of ["evil.example", "claude.ai.evil.example", "notclaude.ai", "claude.ai:8443", "chatgpt.com.attacker.test"]) {
+    for (const redirectHost of ["evil.example", "claude.ai.evil.example", "notclaude.ai", "claude.ai:8443", "chatgpt.com.attacker.test", "meta.ai", "evil.agent.meta.ai"]) {
       expect(clientIdentity({ knownClient: true, redirectHost })).toEqual({
         kind: "unknown", host: redirectHost,
       });

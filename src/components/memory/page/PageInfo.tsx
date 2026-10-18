@@ -10,7 +10,7 @@ import type {
   PageSourceWithMemory,
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
-import { prettyAgent, relativeMs } from "./format";
+import { prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
 import "./NoteInfo.css";
 
 interface PageInfoProps {
@@ -241,18 +241,17 @@ export default function PageInfo({
               <ol className="note-revision-list" aria-label={t("pageInfo.revisions")}>
                 {visibleRevisions.map((entry) => {
                   const incomingCount = entry.incoming_source_ids?.length ?? 0;
+                  const summary = revisionSummary(t, entry, i18n.language);
                   return (
                     <li key={`${entry.version}-${entry.at}`} className="note-revision-entry">
                       <div className="note-revision-meta">
                         <span className="note-revision-version">v{entry.version}</span>
-                        <span>{entry.edited_by}</span>
+                        <span>{revisionWriterLabel(t, entry.edited_by, entry.agent)}</span>
                         <span className="note-revision-time">
                           {relativeMs(entry.at * 1000, relativeLocale)}
                         </span>
                       </div>
-                      {entry.delta_summary && (
-                        <p className="note-revision-summary">{entry.delta_summary}</p>
-                      )}
+                      {summary && <p className="note-revision-summary">{summary}</p>}
                       {(incomingCount > 0 || entry.citations_summary) && (
                         <div className="note-revision-provenance">
                           {incomingCount > 0 && <span>{t("pageInfo.incoming", { count: incomingCount })}</span>}

@@ -28,6 +28,7 @@ vi.mock("../lib/tauri", () => ({
   detectMcpClients: vi.fn().mockResolvedValue([]),
   writeMcpConfig: vi.fn().mockResolvedValue([]),
   installClientPlugin: vi.fn().mockResolvedValue(undefined),
+  registerConnectedAgent: vi.fn().mockResolvedValue(true),
   listAgents: vi.fn().mockResolvedValue([]),
   getWenlanMcpEntry: vi.fn().mockResolvedValue({ command: "npx", args: ["-y", "wenlan-mcp"] }),
   getRemoteAccessStatus: vi.fn().mockResolvedValue({ status: "off" }),
@@ -134,6 +135,7 @@ import {
   detectMcpClients,
   writeMcpConfig,
   installClientPlugin,
+  registerConnectedAgent,
   listAgents,
   setApiKey,
   getWireState,
@@ -204,6 +206,7 @@ describe("SetupWizard", () => {
     (detectMcpClients as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (writeMcpConfig as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (installClientPlugin as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    (registerConnectedAgent as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     (listAgents as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (setApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (getWireState as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -263,7 +266,7 @@ describe("SetupWizard", () => {
   it("starts with notes and an optional example, without setup questions", () => {
     renderWizard();
     expect(screen.getByText("Welcome to Wenlan")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open notes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Get started" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try an example" })).toBeInTheDocument();
     expect(screen.getAllByRole("button")).toHaveLength(2);
     expect(screen.queryByTestId("wizard-action-bar")).not.toBeInTheDocument();
@@ -330,13 +333,13 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(screen.getByText("欢迎使用文澜")).toBeInTheDocument();
-    expect(screen.getByText("不用先设置模型或导入资料。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开笔记" })).toBeInTheDocument();
+    expect(screen.getByText(/你和 AI 工具一起搭建的个人 Wiki/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始使用" })).toBeInTheDocument();
   });
 
   it("opens notes directly without entering intelligence setup", async () => {
     const { onComplete } = renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "Open notes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Choose how Wenlan thinks")).not.toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
@@ -412,7 +415,7 @@ describe("SetupWizard", () => {
     expect(screen.getByText("Import chat history")).toBeInTheDocument();
     // VaultConnectCard (Task 6), rendered inline as the second path. It carries
     // its own title — no separate wrapper heading duplicates it.
-    expect(screen.getByText("Connect a notes folder")).toBeInTheDocument();
+    expect(screen.getByText("Connect a Markdown folder")).toBeInTheDocument();
     expect(screen.queryByText("Obsidian vault / notes folder")).not.toBeInTheDocument();
   });
 
@@ -1065,8 +1068,9 @@ describe("SetupWizard", () => {
     // ago — it must not show up as a connected agent on Done.
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => {
-      expect(screen.getByText("You're all set.")).toBeInTheDocument();
+      expect(screen.getByText("Tools added")).toBeInTheDocument();
     });
+    expect(screen.queryByText("You're all set.")).not.toBeInTheDocument();
     expect(screen.queryByText("Claude")).not.toBeInTheDocument();
   });
 
@@ -1102,11 +1106,11 @@ describe("SetupWizard", () => {
     expect(screen.queryByText(/^Memories will appear/i)).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "Use your AI tools normally. As they work, Wenlan turns what they learn into source-cited pages and keeps the memories behind them. You can always return to Settings to connect more tools.",
+        "Use your AI tools normally. As they work, Wenlan turns what they learn into source-cited notes and keeps the memories behind them. You can always return to Settings to connect more tools.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Pages refresh between sessions, so the next one starts where the last ended."),
+      screen.getByText("Notes refresh between sessions, so the next one starts where the last ended."),
     ).toBeInTheDocument();
 
     expect(screen.queryByText("Back")).not.toBeInTheDocument();
@@ -1297,13 +1301,49 @@ describe("SetupWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => {
-      expect(screen.getByText("You're all set.")).toBeInTheDocument();
+      expect(screen.getByText("Tools added")).toBeInTheDocument();
     });
 
     expect(screen.getByText("Claude Desktop")).toBeInTheDocument();
     expect(screen.getByText("Gemini CLI")).toBeInTheDocument();
     expect(screen.queryByText("Claude desktop")).not.toBeInTheDocument();
     expect(screen.queryByText("Gemini cli")).not.toBeInTheDocument();
+  });
+
+  // A tool found already wired never runs a write or an install, so nothing
+  // else tells the daemon the user connected it (the agents table stayed at
+  // just `wenlan-setup`, and the home checklist stayed 0/N).
+  it("registers a tool reported already configured with the daemon, once, and not an unconfigured one", async () => {
+    (detectMcpClients as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        name: "Gemini CLI",
+        client_type: "gemini_cli",
+        config_path: "/path/to/gemini/settings.json",
+        detected: YES,
+        already_configured: YES,
+        has_raw_entry: YES,
+        has_raw_duplicate: NO,
+        has_plugin: NO,
+      },
+      {
+        name: "Cursor",
+        client_type: "cursor",
+        config_path: "/path/to/cursor",
+        detected: YES,
+        already_configured: NO,
+        has_raw_entry: NO,
+        has_raw_duplicate: NO,
+        has_plugin: NO,
+      },
+    ]);
+
+    renderWizard({ initialStep: "connect" });
+
+    await waitFor(() => {
+      expect(registerConnectedAgent).toHaveBeenCalledWith("gemini_cli");
+    });
+    expect(registerConnectedAgent).toHaveBeenCalledTimes(1);
+    expect(registerConnectedAgent).not.toHaveBeenCalledWith("cursor");
   });
 
   // Same bug, the other call site: a client that's *already configured*
@@ -1336,7 +1376,7 @@ describe("SetupWizard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     await waitFor(() => {
-      expect(screen.getByText("You're all set.")).toBeInTheDocument();
+      expect(screen.getByText("Tools added")).toBeInTheDocument();
     });
 
     expect(screen.getByText("Gemini CLI")).toBeInTheDocument();
@@ -1381,7 +1421,7 @@ describe("SetupWizard", () => {
     expect(screen.queryByText("Using another MCP client? Show config")).not.toBeInTheDocument();
   });
 
-  it("done: caps connected-agent chips at 6 with a +N overflow chip", async () => {
+  it("done: lists every connected agent, none hidden behind an overflow count", async () => {
     const ids = ["tool-a", "tool-b", "tool-c", "tool-d", "tool-e", "tool-f", "tool-g", "tool-h"];
     (listAgents as ReturnType<typeof vi.fn>).mockResolvedValue(
       ids.map((name) => ({ name, last_seen_at: FRESH(), memory_count: 1 })),
@@ -1408,16 +1448,17 @@ describe("SetupWizard", () => {
     await waitFor(() => {
       expect(screen.getByText(firstPrettified)).toBeInTheDocument();
     });
-    for (const id of ids.slice(0, 6)) {
+    for (const id of ids) {
       const prettified = id
         .split("-")
         .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(" ");
       expect(screen.getByText(prettified)).toBeInTheDocument();
     }
-    expect(screen.getByText("+2 more")).toBeInTheDocument();
-    expect(screen.queryByText("Tool G")).not.toBeInTheDocument();
-    expect(screen.queryByText("Tool H")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\+\d+ more/)).not.toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("setup-done-tools")).getAllByTestId("setup-done-tool"),
+    ).toHaveLength(8);
   });
 
   // Fix-back: the same DoneStep renders for the in-app connect-agent re-run
@@ -1477,7 +1518,7 @@ describe("SetupWizard", () => {
     expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
     // Re-run entry (wireRouting=false): neither the summary nor the no-model line.
     expect(
-      screen.queryByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
   });
 
@@ -1493,7 +1534,7 @@ describe("SetupWizard", () => {
       },
     });
     const { onComplete } = renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "Open notes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(getBackgroundAiEnabled).not.toHaveBeenCalled();
     expect(getResolvedRouting).not.toHaveBeenCalled();
@@ -2510,9 +2551,7 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(
-      await screen.findByText(
-        "Start with a note. Connect your AI tools when you need them.",
-      ),
+      await screen.findByText(/A personal Wiki you and your AI tools build together/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Welcome to Wenlan" }),
@@ -2958,7 +2997,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(screen.getByText("4 memories imported")).toBeInTheDocument();
     expect(screen.queryByText("Topics")).not.toBeInTheDocument();
     expect(screen.queryByText("Connections")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Pages will distill/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Notes will be organized/)).not.toBeInTheDocument();
   });
 
   it.each([false, true])("pinned daemon: Done respects background AI consent=%s", async (enabled) => {
@@ -2974,7 +3013,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
 
     await waitFor(() => expect(getBackgroundAiEnabled).toHaveBeenCalledTimes(1));
     if (!enabled) {
-      await screen.findByText(/Your wiki updates whenever your AI tools use Wenlan/);
+      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/);
       expect(getResolvedRouting).not.toHaveBeenCalled();
       expect(setSourcePin).not.toHaveBeenCalled();
       expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
@@ -2983,12 +3022,12 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     await waitFor(() => expect(setSourcePin).toHaveBeenCalledWith("on_device", "anthropic", true));
     expect(
       await screen.findByText(
-        "Everyday tasks: On-device. Page synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: On-device. Note synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
     // Exclusivity: a wired routing shows the summary, never the no-model line.
     expect(
-      screen.queryByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
   });
 
@@ -3007,7 +3046,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
     // Concluded without wiring (legacy daemon) → the no-model assurance shows.
     expect(
-      await screen.findByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).toBeInTheDocument();
   });
 
@@ -3032,7 +3071,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(screen.queryByText(/Everyday tasks:/)).not.toBeInTheDocument();
     // Concluded without wiring (nothing configured) → the no-model assurance shows.
     expect(
-      await screen.findByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).toBeInTheDocument();
   });
 
@@ -3055,7 +3094,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(setSourcePin).toHaveBeenCalledTimes(1);
     expect(
       await screen.findByText(
-        "Everyday tasks: Anthropic. Page synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: Anthropic. Note synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
   });
@@ -3075,12 +3114,12 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
 
     expect(
       await screen.findByText(
-        "Everyday tasks: On-device. Page synthesis: On-device. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: On-device. Note synthesis: On-device. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
     expect(
-      screen.queryByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
   });
 
@@ -3096,7 +3135,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     renderDone(true);
 
     expect(
-      await screen.findByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      await screen.findByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
   });
@@ -3127,11 +3166,11 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(getResolvedRouting).toHaveBeenCalledTimes(2);
     expect(
       await screen.findByText(
-        "Everyday tasks: On-device. Page synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: On-device. Note synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Your wiki updates whenever your AI tools use Wenlan/),
+      screen.queryByText(/Your Wiki updates whenever your AI tools use Wenlan/),
     ).not.toBeInTheDocument();
     expect(error).not.toHaveBeenCalled();
     error.mockRestore();
@@ -3142,7 +3181,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
   // not an unhandled rejection behind a button that silently did nothing.
   it.each([
     { variant: "skip path", chatImportResult: null, label: "Open Wenlan" },
-    { variant: "imported", chatImportResult: { memories_stored: 4 }, label: "Get started" },
+    { variant: "imported", chatImportResult: { memories_stored: 4 }, label: "Back to Wiki" },
   ])(
     "$variant: a rejected completion shows an inline alert and stays on Done; a second click that resolves completes",
     async ({ chatImportResult, label }) => {
@@ -3224,14 +3263,22 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
     (getResolvedRouting as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   });
 
+  // The Done list: one row per tool, display name left, chip right.
+  const toolRows = () => within(screen.getByTestId("setup-done-tools")).getAllByTestId("setup-done-tool");
+  const rowOf = (name: string) => {
+    const row = toolRows().find((r) => within(r).queryByText(name));
+    if (!row) throw new Error(`no row for ${name}`);
+    return row;
+  };
+
   it("a tool that was only written reads Added, never Connected", async () => {
     renderDoneWith(["cursor"], NOW());
 
-    const added = await screen.findByTestId("done-added-agents");
-    expect(within(added).getByText("Added. Restart to finish:")).toBeInTheDocument();
-    expect(within(added).getByText("Cursor")).toBeInTheDocument();
-    expect(screen.queryByTestId("done-connected-agents")).not.toBeInTheDocument();
-    expect(screen.queryByText("Connected:")).not.toBeInTheDocument();
+    await screen.findByTestId("setup-done-tools");
+    const row = rowOf("Cursor");
+    expect(row).toHaveAttribute("data-status", "added");
+    expect(within(row).getByText("Added")).toBeInTheDocument();
+    expect(within(row).queryByText("Connected")).not.toBeInTheDocument();
   });
 
   it("a tool that called Wenlan after the wizard started reads Connected", async () => {
@@ -3241,10 +3288,8 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     renderDoneWith(["cursor"], NOW());
 
-    const connected = await screen.findByTestId("done-connected-agents");
-    expect(within(connected).getByText("Connected:")).toBeInTheDocument();
-    expect(within(connected).getByText("Cursor")).toBeInTheDocument();
-    expect(screen.queryByTestId("done-added-agents")).not.toBeInTheDocument();
+    await waitFor(() => expect(rowOf("Cursor")).toHaveAttribute("data-status", "connected"));
+    expect(within(rowOf("Cursor")).getByText("Connected")).toBeInTheDocument();
   });
 
   it("an older sighting does not vouch for the config the wizard just wrote", async () => {
@@ -3258,11 +3303,8 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     renderDoneWith(["cursor", "codex_cli"], NOW());
 
-    const connected = await screen.findByTestId("done-connected-agents");
-    const added = await screen.findByTestId("done-added-agents");
-    expect(within(connected).getByText("Codex CLI")).toBeInTheDocument();
-    expect(within(connected).queryByText("Cursor")).not.toBeInTheDocument();
-    expect(within(added).getByText("Cursor")).toBeInTheDocument();
+    await waitFor(() => expect(rowOf("Codex CLI")).toHaveAttribute("data-status", "connected"));
+    expect(rowOf("Cursor")).toHaveAttribute("data-status", "added");
   });
 
   // `last_seen_at` and the wizard's entry time are both whole epoch seconds. A
@@ -3277,9 +3319,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     renderDoneWith(["cursor"], entered);
 
-    const connected = await screen.findByTestId("done-connected-agents");
-    expect(within(connected).getByText("Cursor")).toBeInTheDocument();
-    expect(screen.queryByTestId("done-added-agents")).not.toBeInTheDocument();
+    await waitFor(() => expect(rowOf("Cursor")).toHaveAttribute("data-status", "connected"));
   });
 
   it("a call one second before the wizard opened still reads Added", async () => {
@@ -3294,11 +3334,8 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     renderDoneWith(["cursor", "codex_cli"], entered);
 
-    const connected = await screen.findByTestId("done-connected-agents");
-    const added = await screen.findByTestId("done-added-agents");
-    expect(within(connected).getByText("Codex CLI")).toBeInTheDocument();
-    expect(within(added).getByText("Cursor")).toBeInTheDocument();
-    expect(within(connected).queryByText("Cursor")).not.toBeInTheDocument();
+    await waitFor(() => expect(rowOf("Codex CLI")).toHaveAttribute("data-status", "connected"));
+    expect(rowOf("Cursor")).toHaveAttribute("data-status", "added");
   });
 
   it("splits a mixed set: the seen tool is Connected and the unseen one stays Added", async () => {
@@ -3308,12 +3345,9 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     renderDoneWith(["codex_cli", "cursor"], NOW());
 
-    const connected = await screen.findByTestId("done-connected-agents");
-    const added = await screen.findByTestId("done-added-agents");
-    expect(within(connected).getByText("Codex CLI")).toBeInTheDocument();
-    expect(within(added).getByText("Cursor")).toBeInTheDocument();
-    expect(within(added).queryByText("Codex CLI")).not.toBeInTheDocument();
-    expect(within(connected).queryByText("Cursor")).not.toBeInTheDocument();
+    await waitFor(() => expect(rowOf("Codex CLI")).toHaveAttribute("data-status", "connected"));
+    expect(rowOf("Cursor")).toHaveAttribute("data-status", "added");
+    expect(toolRows()).toHaveLength(2);
   });
 
   it("without a cutoff any sighting counts, so a returning user's tool reads Connected", async () => {
@@ -3323,7 +3357,97 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     renderDoneWith(["cursor"], undefined);
 
-    await screen.findByTestId("done-connected-agents");
+    await waitFor(() => expect(rowOf("Cursor")).toHaveAttribute("data-status", "connected"));
+  });
+
+  it("does not list Wenlan's own setup probe as a tool", async () => {
+    renderDoneWith(["wenlan-setup", "cursor"], NOW());
+
+    await screen.findByTestId("setup-done-tools");
+    expect(toolRows()).toHaveLength(1);
+    expect(screen.queryByText("Wenlan Setup")).not.toBeInTheDocument();
+    expect(rowOf("Cursor")).toBeInTheDocument();
+  });
+
+  it("with only Wenlan's own identities it shows no tool list and keeps the import summary", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoneStep
+          wireRouting={false}
+          hideDots={false}
+          importResult={null}
+          chatImportResult={{ memories_stored: 4 }}
+          connectedAgents={["wenlan-setup"]}
+          seenSince={NOW()}
+          onComplete={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("4 memories imported")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-done-tools")).not.toBeInTheDocument();
+  });
+
+  it("when every tool is only Added, it says so and tells the user to restart", async () => {
+    renderDoneWith(["cursor", "codex_cli"], NOW());
+
+    expect(await screen.findByText("Tools added")).toBeInTheDocument();
+    expect(
+      screen.getByText("Restart these tools and they will read and write your library."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("You're all set.")).not.toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("setup.done.allSetBody1"))).not.toBeInTheDocument();
+  });
+
+  it("once a tool is Connected it keeps the all-set title and one line of body", async () => {
+    (listAgents as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: "cursor", agent_type: "", last_seen_at: FRESH(), memory_count: 0 },
+    ]);
+
+    renderDoneWith(["cursor", "codex_cli"], NOW());
+
+    expect(await screen.findByText("You're all set.")).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("setup.done.allSetBody1"))).toBeInTheDocument();
+    expect(screen.queryByText("Tools added")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Restart these tools and they will read and write your library."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists every tool without an overflow count", async () => {
+    renderDoneWith(
+      ["cursor", "codex_cli", "claude_code", "gemini_cli", "claude_desktop", "windsurf", "zed", "aider"],
+      NOW(),
+    );
+
+    await screen.findByTestId("setup-done-tools");
+    expect(toolRows()).toHaveLength(8);
+    expect(screen.queryByText(/\+\d+ more/)).not.toBeInTheDocument();
+  });
+
+  it("the in-app connect flow returns to the Wiki; first run keeps Get started", async () => {
+    const { unmount } = renderDoneWith(["cursor"], NOW());
+    expect(await screen.findByRole("button", { name: "Back to Wiki" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Get started" })).not.toBeInTheDocument();
+    unmount();
+
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoneStep
+          wireRouting
+          hideDots={false}
+          importResult={null}
+          chatImportResult={null}
+          connectedAgents={["cursor"]}
+          seenSince={NOW()}
+          onComplete={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("button", { name: "Get started" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to Wiki" })).not.toBeInTheDocument();
   });
 
   it("the Setting up row flips from Added to Connected on a fresh sighting", async () => {

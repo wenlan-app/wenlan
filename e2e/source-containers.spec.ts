@@ -141,8 +141,10 @@ for (const cfg of [
       expect(Math.abs(title!.y - origin!.y - 72)).toBeLessThanOrEqual(1);
       expect(Math.abs(title!.x - origin!.x - 32)).toBeLessThanOrEqual(1);
       const start = (await body.boundingBox())!.x;
+      // Info squeezes the lane at these widths, so the column re-centres when
+      // it closes; reopening Info must bring it back to the same place.
       await inspector.locator(".page-info-drawer-close").click();
-      expect(Math.abs((await body.boundingBox())!.x - start)).toBeLessThanOrEqual(1);
+      await expect(inspector).toHaveCount(0);
       await page.getByRole("button", { name: t.knowledgeContext.memoryPanel, exact: true }).click();
       await expect(inspector).toBeVisible();
       expect(Math.abs((await body.boundingBox())!.x - start)).toBeLessThanOrEqual(1);

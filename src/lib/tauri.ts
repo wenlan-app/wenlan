@@ -403,6 +403,16 @@ export async function openSearchResult(url: string): Promise<void> {
   return invoke("open_search_result", { url });
 }
 
+/** AI tool families with a link that opens a new chat with the question typed
+ *  in (never sent). Mirrors `prompt_link` in `app/src/ask_tool.rs`. */
+export const PROMPT_LINK_FAMILIES: readonly string[] = ["claude-desktop", "claude-code", "codex", "cursor"];
+
+/** Open a connected AI tool with `prompt` in its composer. Rejects when the
+ *  tool has no such link or nothing on this machine opens it. */
+export async function openToolWithPrompt(family: string, prompt: string): Promise<void> {
+  return invoke("open_tool_with_prompt", { family, prompt });
+}
+
 export interface SourceDirEntry {
   name: string;
   isDirectory: boolean;
@@ -986,14 +996,22 @@ export const FACET_COLORS: Record<string, string> = {
 // One agent-slug prettifier for every surface (list row, card, detail).
 export const AGENT_DISPLAY: Record<string, string> = {
   "claude-code": "Claude Code",
+  "claude-desktop": "Claude Desktop",
   claude: "Claude",
   chatgpt: "ChatGPT",
+  "chatgpt-mcp": "ChatGPT",
+  codex: "Codex",
   cursor: "Cursor",
+  "gemini-cli": "Gemini CLI",
+  "muse-code": "Muse Code",
+  windsurf: "Windsurf",
+  zed: "Zed",
+  wenlan: "Wenlan",
 };
 
 export function agentDisplayName(slug: string | null | undefined): string | null {
   if (!slug) return null;
-  return AGENT_DISPLAY[slug] ?? slug;
+  return AGENT_DISPLAY[slug.trim().toLowerCase()] ?? slug;
 }
 
 export type StabilityTier = "protected" | "standard" | "ephemeral";
@@ -1032,6 +1050,9 @@ export interface PendingRevisionItem {
   source_agent: string | null;
   last_modified: number;
   target_kind: RevisionTargetKind;
+  /** Why a page revision card needs review: "locked", "background" or
+   * "owned". Absent when the daemon cannot say (memory revisions, old cards). */
+  review_reason?: string | null;
 }
 
 export interface RevisionAcceptResponse {
@@ -1084,6 +1105,12 @@ export interface PageChangelogEntry {
   delta_summary?: string | null;
   incoming_source_ids?: string[] | null;
   citations_summary?: string | null;
+  /** The agent behind an `agent_refresh` write (the `x-agent-name` header). */
+  agent?: string | null;
+  /** Numeric twin of `delta_summary`; absent on entries written before them. */
+  char_delta?: number | null;
+  sources_added?: number | null;
+  sources_removed?: number | null;
 }
 
 export interface ListPageRevisionsResponse {
@@ -1528,6 +1555,13 @@ export function daemonErrorMessage(error: unknown): string | null {
   if (typeof payload !== "object" || payload === null) return null;
   const message = Reflect.get(payload, "error");
   return typeof message === "string" && message.trim() !== "" ? message : null;
+}
+
+/** True when the daemon refused a page revision card because the page moved
+ * past the version the card was proposed on. The daemon has already discarded
+ * the card; it can never apply. */
+export function isPageRevisionOutdated(error: unknown): boolean {
+  return daemonErrorMessage(error)?.startsWith("page_revision_outdated") ?? false;
 }
 
 /** The daemon's guard when a page delete is refused because the row belongs
@@ -2956,6 +2990,14 @@ export type PluginInstallClientType = "claude_code" | "codex_cli";
  *  wizard on that rejection. */
 export async function installClientPlugin(clientType: PluginInstallClientType): Promise<void> {
   return invoke("install_client_plugin", { clientType });
+}
+
+/** Tell the daemon the user connected `clientType` when setup found it already
+ *  configured (so neither a config write nor a plugin install ran). Resolves
+ *  to whether the daemon accepted the row; false for an unknown client or a
+ *  daemon that is down or slow. Best-effort: it never rejects on those. */
+export async function registerConnectedAgent(clientType: string): Promise<boolean> {
+  return invoke("register_connected_agent", { clientType });
 }
 
 // ===== Wire State (real, resolved wiring — wizard progress + Diagnostics) =====

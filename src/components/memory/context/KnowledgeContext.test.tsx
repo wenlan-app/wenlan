@@ -46,7 +46,7 @@ describe("KnowledgeContext",()=>{
       {id:"p2",title:"Linked page",space:null,creation_kind:"source",entity_id:null,last_modified:""},
     ],page_links:[{from:{kind:"page",id:"p"},to:{kind:"page",id:"p2"},link_type:"wikilink"}]});
     render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><KnowledgeContext kind="page" id="p" title="Current page"/></QueryClientProvider>);
-    await screen.findByRole("region",{name:"Linked pages"});
+    await screen.findByRole("region",{name:"Linked notes"});
     expect(screen.getByText("Connections",{selector:"summary"}).closest("details")).toHaveAttribute("open");
   });
 

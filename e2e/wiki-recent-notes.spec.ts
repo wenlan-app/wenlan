@@ -36,7 +36,7 @@ for (const mode of ["recent", "custom"]) test(`${mode} navigation honors failed 
  const runtime=await installTauriMock(page,{locale:"en",rawActions:[],fixture:createReviewDecisionFixture("wiki-folders"),delays:{update_page:150}});
  await page.goto("/");await openWikiNote(page,"Why fixtures stay deterministic");await openWikiNote(page,"Fixture architecture");
  const dir=page.locator(".wiki-workspace-directory");await dir.getByRole("combobox").selectOption(mode);
- const editor=page.getByRole("textbox",{name:"Page editor",exact:true});
+ const editor=page.getByRole("textbox",{name:"Note editor",exact:true});
  await editor.evaluate(el=>{el.setAttribute("data-proof","retained");const view=(el as any).cmTile.root.view;view.dispatch({selection:{anchor:view.state.doc.length}});view.focus();});
  await page.keyboard.insertText("\nProtected recent-navigation edit.");runtime.failNext("update_page","save refused");
  await dir.getByRole("button",{name:"Why fixtures stay deterministic",exact:true}).click();

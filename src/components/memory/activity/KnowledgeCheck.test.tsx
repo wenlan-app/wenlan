@@ -135,7 +135,7 @@ describe("KnowledgeCheck", () => {
 
   it("shows a neutral row with the human affected title, preserves focus on close, and shows the exact page-link change", async () => {
     await renderCheck(state({ entries: [readyEntry("eligible-link", true)] }));
-    const row = await screen.findByRole("button", { name: /A Page link needs reconnecting.*Trip notes/ });
+    const row = await screen.findByRole("button", { name: /A note link needs reconnecting.*Trip notes/ });
     fireEvent.click(row);
     const drawer = await screen.findByRole("dialog", { name: "Issue details" });
     expect(within(drawer).getByText("“Rain plan” is not linked")).toBeInTheDocument();
@@ -241,7 +241,7 @@ describe("KnowledgeCheck", () => {
     harness.setSnapshot(state({ entries: [reviewEntry], results: { "review-key": "not_started" } }));
     render(<KnowledgeCheck onBack={() => {}} onOpenReview={onOpenReview} />);
     await screen.findAllByText(/Trip notes/);
-    fireEvent.click(await screen.findByRole("button", { name: /Pages share the same title/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Notes share the same title/ }));
     const drawer = screen.getByRole("dialog", { name: "Issue details" });
     await within(drawer).findByText("Trip notes");
     fireEvent.click(within(drawer).getByRole("button", { name: "Review item" }));

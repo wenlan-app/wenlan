@@ -112,7 +112,7 @@ fn unknown_route_cannot_bypass_classification() {
 #[should_panic(expected = "unclassified router path")]
 fn wrong_method_cannot_satisfy_a_sensitive_registration() {
     let _ = TrackedRouter::<()>::new(Builder::Main)
-        .route("/api/agents", super::post(|| async { "leak" }));
+        .route("/api/agents/{name}", super::post(|| async { "leak" }));
 }
 
 #[test]

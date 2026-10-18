@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=579e30085bf1dc510e892abdf901a568191e551479923028a8f236d8fc0d4b91 -->
+<!-- README_SYNC: source=README.md sha256=b2887d5aa7c93f0e81477a0eaf2cb140997d0a682f02d4af5af87ee9c4acc631 -->
 
 <p align="center">
   <picture>
@@ -32,7 +32,7 @@
 <!-- R113 walkthrough: 1080p GitHub delivery; original masters retained. -->
 <p align="center">
   <a href="https://github.com/user-attachments/assets/6f354266-9400-44a8-8c69-91223a2b7c13">
-    <img src="./docs/assets/wenlan-personal-knowledge-zh-Hant.png" alt="Wenlan 中彼此連結的頁面、記憶與來源" width="100%">
+    <img src="./docs/assets/wenlan-personal-knowledge-zh-Hant.png" alt="Wenlan 中彼此連結的筆記、記憶與來源" width="100%">
   </a>
   <br><a href="https://github.com/user-attachments/assets/6f354266-9400-44a8-8c69-91223a2b7c13">▶ 觀看影片</a>
 </p>
@@ -62,9 +62,9 @@
 
 也可[不安裝桌面 App](docs/setup-and-data.zh-Hant.md#installation)，透過 AI 或 CLI 使用同一個本地知識庫。
 
-### 2. 開啟範例或建立頁面
+### 2. 開啟範例或建立筆記
 
-選擇「開啟筆記」進入 Wenlan，可先看歡迎畫面的範例，或建立自己的頁面。
+選擇「開始使用」進入 Wenlan，可先看歡迎畫面的範例，或建立自己的筆記。不必先匯入資料或設定 AI 模型。
 
 ### 3. 想使用時再連接 AI 工具
 
@@ -72,11 +72,11 @@
 |---|---|---|
 | Claude Code | 插件 | [Claude Code 指南](docs/setup-with-ai.md#claude-code) |
 | Codex | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、Claude Desktop、VS Code、Gemini CLI | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor、Claude Desktop、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
 安裝插件後，開啟新的 AI 對話並執行 `/setup`。連接 AI 不必另裝本地語言模型。
 
-接著試著找回剛開啟或保存的頁面：
+接著試著找回剛開啟或保存的筆記：
 
 > 找回 Wenlan 裡的「［標題］」筆記，附上引用。
 
@@ -89,17 +89,17 @@
 你可以單獨使用 App，也可以搭配 AI 工作。把值得留下的知識與進度存回 Wenlan，下次接著用。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wenlan-app/wenlan/c45723a1cc79be1dd3c4bd1226b5285ad135be8a/docs/assets/wenlan-daily-workflow-zh-Hant.png" alt="來源與既有記憶累積在 Wenlan；在 App 或 AI 中使用，再存回新記憶與工作進度，供下次接續。" width="100%">
+  <img src="./docs/assets/wenlan-daily-workflow-zh-Hant.png" alt="來源與既有記憶累積在 Wenlan；在 App 或 AI 中使用，再存回新記憶與工作進度，供下次接續。" width="100%">
 </p>
 
-簡化流程示意；插件指令與頁面整理均按需使用，沒有固定順序。
+簡化流程示意；插件指令與筆記整理均按需使用，沒有固定順序。
 
-- **從你的資料開始。** 匯入文件與選定的對話作為來源，或在 App 撰寫頁面。你也能編輯內容、查回引用來源、審核修訂，不必連接 AI。
-- **運用知識、撰寫新頁面。** 請 AI 用 `/recall` 找回相關來源與記憶，接著完成任務；也能撰寫帶引用的新頁面，存回 Wenlan。
+- **從你的資料開始。** 匯入文件與選定的對話作為來源，或在 App 撰寫筆記。你也能編輯內容、查回引用來源、審核修訂，不必連接 AI。
+- **運用知識、撰寫新筆記。** 請 AI 用 `/recall` 找回相關來源與記憶，運用於任務中；也能撰寫帶引用的新筆記，或依據現有版本更新筆記，再存回 Wenlan。
 - **留下你的新發現。** 在 App 中，或請 AI 使用 `/capture`，保存決定或心得，以及其理由與來源。
-- **告一段落，下次接續。** 用 `/handoff` 保存進度與下一步，同時留下值得保留的記憶與工作紀錄。下次用 `/brief` 讀取專案摘要，接回這些脈絡。
+- **告一段落，下次接續。** 用 `/handoff` 保存記憶、工作階段紀錄與下一步；若新發現改變了本次用到的筆記，也會一併更新。下次用 `/brief` 讀取專案摘要，接回這些脈絡。
 
-**按需整理累積的記憶：** `/distill` 將相關記憶整理或更新為帶引用的頁面，不是撰寫新頁面的必要步驟。[插件指令](plugin/skills/README.md)。
+**按需整理累積的記憶：** `/distill` 將相關記憶整理或更新為帶引用的筆記，不是撰寫新筆記的必要步驟。[插件指令](plugin/skills/README.md)。
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -116,11 +116,11 @@
 
 ## 把散落的資料整理成知識
 
-**來源**保留你讀過的資料；**記憶**留下你的發現與判斷理由。將兩者整理成**帶有引用的 Markdown 頁面**，讓你閱讀、編輯，用 `[[wikilinks]]` 連結相關內容，也能沿引用查回原始資料。
+**來源**保留你讀過的資料；**記憶**留下你的發現與判斷理由。將兩者整理成**帶有引用的 Markdown 筆記**，讓你閱讀、編輯，用 `[[wikilinks]]` 連結相關內容，也能沿引用查回原始資料。
 
 - **檔案與對話匯入**：匯入 Markdown、文字檔、文字型 PDF、資料夾，以及 ChatGPT 或 Claude 匯出的 ZIP，保留來源參照。掃描版 PDF 須先擷取文字再匯入。對話匯入保留當時紀錄；已登錄的檔案來源可重新整理為最新內容。
 - **Obsidian 唯讀連接**：讀取既有儲存庫並按需重新整理，不修改原始檔案，也不將變更同步回去。
-- **原子記憶**：單獨找回一筆發現，不必載入整段對話或整份頁面。
+- **原子記憶**：單獨找回一筆發現，不必載入整段對話或整份筆記。
 - **知識圖譜**：透過不同類型的實體、關係與知識群集（communities），發現相關主題；設定整理模型後，將重複提及連到同一實體。
 
 <a id="探索你的個人知識圖譜"></a>
@@ -149,11 +149,11 @@
 - **Spaces 範圍檢索**：選定 Space，將回傳的知識限制在相關專案或個人資料集合內。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wenlan-app/wenlan/c45723a1cc79be1dd3c4bd1226b5285ad135be8a/docs/assets/wenlan-knowledge-to-work-zh-Hant.png" alt="AI 接著做，不必從頭交代：關鍵詞、語義與圖譜檢索" width="100%">
+  <img src="./docs/assets/wenlan-knowledge-to-work-zh-Hant.png" alt="AI 接著做，不必從頭交代：關鍵詞、語義與圖譜檢索" width="100%">
 </p>
 <p>虛構案例，非產品測試；文瀾補充脈絡，與 Claude 原生記憶搭配使用。</p>
 
-實驗中的網頁存取功能可讓支援的用戶端搜尋整個資料庫或指定空間，但執行 Wenlan 的電腦必須保持連線。查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
+在「設定」中開啟「網頁存取」開關，即可讓 Claude、ChatGPT 或 Muse 等支援的網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。此功能仍在實驗階段；查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -169,26 +169,26 @@
 
 ## 更新知識，保留歷史
 
-**依引用關係更新。** Wenlan 中的來源或記憶變更、移除時，引用它的頁面會被標記為待更新。啟用背景 AI 並有可用模型後，符合條件的頁面會依最新資料重新整理；引用不足的草稿不會採用。
+**依引用關係更新。** Wenlan 中的來源或記憶變更、移除時，引用它的筆記會被標記為待更新。啟用背景 AI 並有可用模型後，符合條件的筆記會依最新資料重新整理；引用不足的草稿不會採用。
 
-- **Steep 背景整理**：為已保存的記憶補上類型、結構化資訊、搜尋線索與圖譜連結；也可選擇將記憶與來源合成為帶有引用的頁面。
-- **[修訂審核與歷史](docs/knowledge-guide.zh-Hant.md#updates-and-history)**：比較頁面版本、追溯記憶的取代關係；自動更新時，符合條件的 AI 維護頁面直接更新，你編輯過的頁面則提出修訂供審核。
-- **維基匯出**：將符合條件的頁面匯出為 Open Knowledge Format（OKF）維基。
-- **[選配的背景模型](docs/setup-and-data.zh-Hant.md#models)**：用裝置端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 相容本地服務，或已設定的雲端供應商啟用整理、頁面合成與自動更新。
+- **Steep 背景整理**：為已保存的記憶補上類型、結構化資訊、搜尋線索與圖譜連結；也可選擇將記憶與來源合成為帶有引用的筆記。
+- **[修訂審核與歷史](docs/knowledge-guide.zh-Hant.md#updates-and-history)**：查看筆記由誰修改、比較版本並追溯記憶的取代關係；背景更新會為你建立或編輯過的筆記提出修訂，而設為需審核的筆記也會攔下 AI 主動修改，等待你確認。
+- **維基匯出**：將符合條件的筆記匯出為 Open Knowledge Format（OKF）維基。
+- **[選配的背景模型](docs/setup-and-data.zh-Hant.md#models)**：用裝置端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 相容本地服務，或已設定的雲端供應商啟用整理、筆記合成與自動更新。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wenlan-app/wenlan/c45723a1cc79be1dd3c4bd1226b5285ad135be8a/docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的知識頁。" width="100%">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
 </p>
-<p>實機畫面搭配示範資料；連線與標註為示意。</p>
+<p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
 
 <a id="architecture"></a>
 
 ## 系統架構
 
-**共用本地知識庫。** App、CLI 與 AI 工具透過 Wenlan 本地服務讀寫。頁面以 Markdown 保存；記憶、關係與搜尋索引由本地 libSQL 管理。
+**共用本地知識庫。** App、CLI 與 AI 工具透過 Wenlan 本地服務讀寫。筆記以 Markdown 保存；記憶、關係與搜尋索引由本地 libSQL 管理。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/wenlan-app/wenlan/c45723a1cc79be1dd3c4bd1226b5285ad135be8a/docs/assets/wenlan-architecture-zh-Hant.png" alt="架構示意：App 與 AI 工具共用本地知識庫，背景整理模型為選配。" width="100%">
+  <img src="./docs/assets/wenlan-architecture-zh-Hant.png" alt="架構示意：App 與 AI 工具共用本地知識庫，背景整理模型為選配。" width="100%">
 </p>
 
 架構示意。[檢索、引用與模型](docs/technical-foundations.md)。

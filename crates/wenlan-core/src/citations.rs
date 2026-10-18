@@ -1055,6 +1055,44 @@ mod tests {
         );
     }
 
+    /// PR A: inserting `[N]` markers rewrites the body bytes, so a
+    /// review-locked page is skipped before any model call and its body and
+    /// `citations IS NULL` state stay as they were.
+    #[tokio::test]
+    async fn backfill_skips_a_review_locked_page_without_a_model_call() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        seed_backfill_page(&db, "p_locked", true).await;
+        assert!(db.set_page_review_required("p_locked", true).await.unwrap());
+
+        let annotated = format!("{BACKFILL_BODY}[1]");
+        let mock = Arc::new(crate::llm_provider::SequencedMockProvider::new(vec![
+            annotated.as_str(),
+        ]));
+        let llm: Arc<dyn LlmProvider> = mock.clone();
+        let prompts = PromptRegistry::default();
+
+        run_citation_backfill_tick(&db, &llm, &prompts)
+            .await
+            .unwrap();
+
+        assert_eq!(mock.call_count(), 0, "a locked page spends no model call");
+        let page = db.get_page("p_locked").await.unwrap().unwrap();
+        assert_eq!(page.content, BACKFILL_BODY, "the locked body is unchanged");
+        assert!(page.citations.is_empty());
+
+        assert!(db
+            .set_page_review_required("p_locked", false)
+            .await
+            .unwrap());
+        assert!(
+            db.get_pages_missing_citations(10)
+                .await
+                .unwrap()
+                .contains(&"p_locked".to_string()),
+            "unlocking re-arms the page for backfill"
+        );
+    }
+
     #[tokio::test]
     async fn citation_result_for_old_page_version_is_dropped() {
         let (db, _dir) = crate::db::tests::test_db().await;

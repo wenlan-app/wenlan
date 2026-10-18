@@ -321,6 +321,9 @@ For each page, parse the `write_page` result text:
 
 - A new-page call returns `Created page <id>` or
   `Attached to existing page <id>`, plus optional `warning: <delta>` lines.
+  `Attached` means the daemon found a near-duplicate page and kept only
+  your sources, not your prose. Read that page, merge your synthesis into
+  it, and refresh it with `write_page(page_id=<id>, ...)` before reporting.
 - A refresh call returns `Refreshed page <id>` today. Use the known page id
   and fall back to `refreshed` unless the tool later returns a
   `warning: <delta>` line.

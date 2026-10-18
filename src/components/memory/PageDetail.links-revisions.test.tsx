@@ -135,9 +135,9 @@ describe("PageDetail page links", () => {
     await user.click(contentLink);
     expect(defaultProps.onPageClick).toHaveBeenCalledWith("page-2");
 
-    expect(screen.queryByLabelText("Linked pages")).toBeNull();
+    expect(screen.queryByLabelText("Linked notes")).toBeNull();
     await openPageInfo(user);
-    const related = await screen.findByLabelText("Linked pages");
+    const related = await screen.findByLabelText("Linked notes");
     expect(within(related).getByText("Missing Link")).toBeInTheDocument();
     expect(within(related).queryByRole("button", { name: /Missing Link/ })).toBeNull();
     await user.click(within(related).getByRole("button", { name: /Resolved Link/ }));
@@ -152,9 +152,9 @@ describe("PageDetail page links", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />, client);
 
     expect(await screen.findByText("Link Test Page")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Page actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
-    const editor = await screen.findByRole("textbox", { name: "Page editor" });
+    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    const editor = await screen.findByRole("textbox", { name: "Note editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() =>
       replaceDocument(
@@ -240,7 +240,7 @@ describe("PageDetail page links", () => {
     });
     expect(tauriMocks.listPages).not.toHaveBeenCalled();
     await openPageInfo(user);
-    expect(screen.queryByLabelText("Linked pages")).toBeNull();
+    expect(screen.queryByLabelText("Linked notes")).toBeNull();
     expect(screen.getByRole("dialog", { name: i18n.t("pageInspector.label") })).toBeInTheDocument();
   });
 

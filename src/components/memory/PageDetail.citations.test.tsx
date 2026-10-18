@@ -27,6 +27,7 @@ vi.mock("../../lib/tauri", () => ({
   // the review action stays disabled unless a test opts in.
   pageReviewSupported: vi.fn().mockResolvedValue("daemon_unsupported"),
   reviewPage: vi.fn(),
+  agentDisplayName: (slug: string | null) => slug,
   ...tauriMocks,
   FACET_COLORS: {},
   STABILITY_TIERS: {},
@@ -162,7 +163,7 @@ describe("PageDetail citations", () => {
     expect(screen.queryByRole("button", { name: /Memory 1/ })).toBeNull();
     await openPageInfo(user);
     expect(
-      screen.getByText("Citations cleared by edit — re-distill to restore"),
+      screen.getByText("Citations cleared by edit. Rebuild to restore"),
     ).toBeInTheDocument();
   });
 
@@ -174,7 +175,7 @@ describe("PageDetail citations", () => {
     expect(screen.queryByText(/\[1\]/)).toBeNull();
     await openPageInfo(user);
     expect(
-      screen.getByText("Citation data mismatched — re-distill to repair"),
+      screen.getByText("Citation data mismatched. Rebuild to repair"),
     ).toBeInTheDocument();
   });
 

@@ -609,7 +609,7 @@ async fn refresh_that_does_not_write_leaves_no_projection_ahead_of_db() {
 }
 
 #[tokio::test]
-async fn refresh_page_user_edited_page_stages_revision_card_without_overwrite() {
+async fn refresh_page_user_edited_page_without_version_is_refused_without_overwrite() {
     let _guard = data_dir_lock().lock().await;
     let _config = WritableKnowledgeConfig::new();
     let (app, db, _dir) = test_app_with_db().await;
@@ -652,29 +652,25 @@ async fn refresh_page_user_edited_page_stages_revision_card_without_overwrite() 
     )
     .await;
 
-    assert_eq!(status, StatusCode::OK, "body: {body}");
-    assert_eq!(body["gated"], serde_json::json!(true), "body: {body}");
-    let revision_card_id = body["revision_card_id"]
-        .as_str()
-        .expect("gated response must include revision_card_id");
+    // An unversioned refresh cannot prove it saw the human's edit, so it is
+    // refused with recovery steps; no card is staged for the human.
+    assert_eq!(status, StatusCode::CONFLICT, "body: {body}");
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains(&format!("expected_version {}", before.version)),
+        "body: {body}"
+    );
 
     let after = db.get_page(&page_id).await.unwrap().unwrap();
     assert_eq!(
         after.content, before.content,
-        "PageWrite refresh must not overwrite human-owned page prose"
+        "a refused PageWrite refresh must not overwrite human-owned page prose"
     );
-    assert_eq!(
-        after.version, before.version,
-        "gated PageWrite refresh must not bump the protected page version"
+    assert_eq!(after.version, before.version);
+    assert!(
+        db.list_pending_revisions(10).await.unwrap().is_empty(),
+        "a refused refresh must not stage a revision card"
     );
-
-    let revisions = db.list_pending_revisions(10).await.unwrap();
-    let card = revisions
-        .iter()
-        .find(|r| r.revision_source_id == revision_card_id)
-        .expect("revision card must be visible in pending revisions");
-    assert_eq!(card.target_source_id, page_id);
-    assert_eq!(card.revision_content, proposed_content);
 }
 
 #[tokio::test]

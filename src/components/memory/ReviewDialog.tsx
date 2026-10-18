@@ -7,6 +7,7 @@ import type { TFunction } from "i18next";
 import {
   clipboardWrite,
   daemonErrorMessage,
+  isPageRevisionOutdated,
   getEntityDetail,
   getMemoryDetail,
   getPage,
@@ -179,6 +180,16 @@ export function truncateReviewText(value: string, max: number): string {
   const trimmed = value.trim().replace(/\s+/g, " ");
   if (trimmed.length <= max) return trimmed;
   return `${trimmed.slice(0, max - 3).trimEnd()}...`;
+}
+
+/** Why a page revision card needs review; nothing for a reason we do not know. */
+function revisionReasonText(t: TFunction, reason: string | null | undefined): string | null {
+  switch (reason) {
+    case "locked": return t("review.reasonLocked");
+    case "background": return t("review.reasonBackground");
+    case "owned": return t("review.reasonOwned");
+    default: return null;
+  }
 }
 
 function sourceRepairHint(t: TFunction, item: Extract<ReviewItem, { kind: "refinement" }>): string {
@@ -604,6 +615,9 @@ export default function ReviewDialog({
   const [showDone, setShowDone] = useState(false);
   const [sideBySide, setSideBySide] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  // A notice flash explains an outcome the human did not choose (a card the
+  // daemon discarded), so it stays up longer and carries no checkmark.
+  const [flashNotice, setFlashNotice] = useState(false);
   // The sentence shown when a resolve fails, not just a flag. Some refusals
   // are permanent and say so — a revision card staged before source-revision
   // fencing is discarded and its page re-queued, so "Try again" would be an
@@ -828,10 +842,15 @@ export default function ReviewDialog({
     const requestId = ++resolveRequestRef.current;
     setResolveError(null);
     setResolvingLocally(true);
+    let outdated = false;
     try {
       await onResolve({ item, approve });
     } catch (error) {
+      // The page moved after this revision was proposed; the daemon discarded
+      // the card. Say so and move on, the way a resolved card would.
+      outdated = item.kind === "revision" && isPageRevisionOutdated(error);
       if (
+        !outdated &&
         resolveRequestRef.current === requestId &&
         navigationVersionRef.current === navigationVersion
       ) {
@@ -840,7 +859,7 @@ export default function ReviewDialog({
           ? t("sourceRepair.sourceBusy")
           : code ?? t("review.actionError"));
       }
-      return;
+      if (!outdated) return;
     } finally {
       if (resolveRequestRef.current === requestId) {
         setResolvingLocally(false);
@@ -850,6 +869,14 @@ export default function ReviewDialog({
       resolveRequestRef.current !== requestId ||
       navigationVersionRef.current !== navigationVersion
     ) {
+      return;
+    }
+    if (outdated) {
+      setFlashNotice(true);
+      setFlash(t("review.revisionOutdated"));
+      window.setTimeout(() => { setFlash(null); setFlashNotice(false); }, 2400);
+      if (next) onOpenChange(reviewItemId(next));
+      else setShowDone(true);
       return;
     }
     setFlash(
@@ -1018,11 +1045,15 @@ export default function ReviewDialog({
               borderRadius: 16,
               zIndex: 3,
               fontFamily: "var(--mem-font-heading)",
-              fontSize: 19,
-              color: "var(--mem-status-success-text)",
+              fontSize: flashNotice ? 16 : 19,
+              color: flashNotice
+                ? "var(--mem-text)"
+                : "var(--mem-status-success-text)",
+              padding: "0 32px",
+              textAlign: "center",
             }}
           >
-            {flash} ✓
+            {flashNotice ? flash : `${flash} ✓`}
           </div>
         )}
 
@@ -1167,9 +1198,14 @@ export default function ReviewDialog({
                 }}
               >
                 {item.kind === "revision"
-                  ? item.agent
-                    ? t("review.proposedBy", { agent: item.agent })
-                    : ""
+                  ? <>
+                      {item.agent ? t("review.proposedBy", { agent: item.agent }) : ""}
+                      {revisionReasonText(t, item.reviewReason) && (
+                        <span data-testid="review-reason" style={{ display: "block" }}>
+                          {revisionReasonText(t, item.reviewReason)}
+                        </span>
+                      )}
+                    </>
                   : item.kind === "capture"
                     ? t("review.captureHint")
                     : item.kind === "page_candidate"

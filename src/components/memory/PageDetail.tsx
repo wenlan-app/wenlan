@@ -1831,7 +1831,9 @@ export default function PageDetail({
                         {t("pageDetail.renamePage")}
                       </button>
                     ) : null}
-                    <button
+                    {/* Re-distill rebuilds a page from its sources; a page
+                        with none has nothing to rebuild from. */}
+                    {sourceCount > 0 ? <button
                         className="page-detail-mobile-menu-item"
                         disabled={storedActionBlocked || redistillMutation.isPending}
                         aria-busy={redistillMutation.isPending}
@@ -1845,7 +1847,7 @@ export default function PageDetail({
                         {redistillMutation.isPending
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
-                    </button>
+                    </button> : null}
                     {obsidianSources.length === 0 ? (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -2433,7 +2435,12 @@ export default function PageDetail({
           <p className="document-kind-label">{t("knowledgeContext.noteKind")}</p>
             <div className="note-info-dateline">
               <span className="page-detail-dateline-item">
+                {/* "Last distilled" only for a page Wenlan distills from its
+                    sources. A page someone wrote (authored, which includes every
+                    page created with no sources) or edited by hand was not
+                    distilled into its current text; it shows when it last changed. */}
                 {page.creation_kind === "source" || page.creation_kind === "imported"
+                  || page.creation_kind === "authored" || page.user_edited
                   ? t("pageDetail.dateline.lastUpdated", {
                       time: relativeTimeFromISO(page.last_modified, t),
                     })

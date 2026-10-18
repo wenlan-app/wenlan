@@ -4,7 +4,7 @@ description: >
   End a work session. Stores durable captures, writes a narrative session log,
   and automatically applies typed item-level deltas to the current Space Brief.
   Invoked as `/handoff`.
-allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__update_brief"]
+allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__update_brief", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page"]
 ---
 
 # /handoff
@@ -14,6 +14,8 @@ Close the session with three separate artifacts:
 1. A typed update to the daemon-owned Space Brief.
 2. Durable MCP captures in that Space.
 3. A chronological session log in `~/.wenlan/sessions/`.
+
+It also brings the wiki pages this session used up to date (step 7).
 
 The daemon Brief is current-work authority. Its
 `~/.wenlan/sessions/_status/<space>.md` projection is a one-way human receipt.
@@ -117,7 +119,9 @@ preferences, and facts. Skip transient or git-recoverable state.
 ## 4. Write the session log
 
 Write `~/.wenlan/sessions/<YYYY-MM-DD-HHmm>-<slug>.md` with Accomplished,
-Decisions, Lessons & Gotchas, Open Threads, Captures stored, and Git summary.
+Decisions, Lessons & Gotchas, Open Threads, Captures stored, Pages touched, and
+Git summary. Pages touched lists each page this session used by title with
+the planned action; step 7 fills in the outcome.
 This is narrative history, not current-work authority. It is a plain file and
 must never depend on the daemon, so write it before the Brief update.
 
@@ -191,9 +195,44 @@ queued, not failed — record the path. Do not ask about ordinary captures.
 Pause only for a contradiction, critical incident, irreversible production
 action, or genuine durability ambiguity.
 
-## 7. Report
+## 7. Update the pages this session used
 
-Report capture counts (stored vs queued), session-log path,
+Skip this step when `daemon_down=1` or `space` is empty.
+
+List the wiki pages this session read, quoted, or changed. Recall them from the
+conversation: pages opened with `read_page`, `/pages`, or `recall` results the
+work relied on. Confirm each title against
+`mcp__plugin_wenlan_wenlan__list_pages` for the Space; drop any title that does
+not match a listed page exactly. Never fuzzy-match.
+
+For each confirmed page, decide whether this session changed what the page
+should say: a decision that replaces one it records, a fact it lacks, or a
+statement the session proved wrong. Leave the page alone when nothing it says
+changed. Restyling is not a reason to write.
+
+To update a page:
+
+1. Call `mcp__plugin_wenlan_wenlan__read_page` and keep `page.version` and
+   `page.source_memory_ids` (it may be empty).
+2. Edit the current body: keep everything still true, change only what this
+   session changed. Do not rewrite from memory of an older read.
+3. Call `mcp__plugin_wenlan_wenlan__write_page` with `page_id`, the edited
+   `content`, `expected_version` set to that `page.version`, and
+   `source_memory_ids` set to the page's existing source ids plus the ids of
+   any step 6 captures the new text relies on.
+
+A refusal saying the page moved means someone edited it after your read:
+read it again and redo the edit once. A `gated` result means the page is
+locked for review; report it as staged for review, not as updated. Do not ask
+approval for ordinary page updates.
+
+Afterwards, record each outcome (updated, staged for review, unchanged, or
+skipped because the daemon was down) under Pages touched in the session log.
+
+## 8. Report
+
+Report capture counts (stored vs queued), session-log path, pages updated or
+staged for review,
 applied/conflicted/queued Brief deltas, Brief version or outbox path, and
 projection path or warning. When anything queued, add: `N handoff note(s)
 saved locally — they sync when Wenlan starts (`wenlan outbox status`).`

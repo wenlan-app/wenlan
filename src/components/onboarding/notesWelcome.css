@@ -16,7 +16,7 @@
 
 .notes-welcome__content {
   width: 100%;
-  max-width: 400px;
+  max-width: 460px;
   margin: auto;
   text-align: center;
   font-family: var(--mem-font-body);
@@ -42,13 +42,6 @@
   font-size: var(--mem-text-lg);
   line-height: 1.6;
   text-wrap: balance;
-}
-
-.notes-welcome__hint {
-  margin: 16px 0 0;
-  color: var(--mem-text-tertiary);
-  font-size: var(--mem-text-sm);
-  line-height: 1.5;
 }
 
 .notes-welcome__error {
@@ -110,13 +103,6 @@
 
 .notes-welcome__sample .notes-welcome__error {
   margin: 0 0 16px;
-}
-
-.notes-welcome__sample-open {
-  min-height: 36px;
-  height: auto;
-  max-width: 100%;
-  white-space: normal;
 }
 
 @media (max-height: 600px) {

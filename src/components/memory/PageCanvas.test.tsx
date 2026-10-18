@@ -994,7 +994,7 @@ describe("PageCanvas", () => {
     await user.click(await screen.findByRole("button", { name: "select n_root" }));
     fireEvent.keyDown(surface(), { key: "Delete" });
     expect(
-      await screen.findByText("The center box is the page itself. It can't be deleted."),
+      await screen.findByText("The center box is the note itself. It can't be deleted."),
     ).toBeTruthy();
     expect(deletePageMapNode).not.toHaveBeenCalled();
 

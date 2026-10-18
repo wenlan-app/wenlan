@@ -1,17 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { WorkspaceBackButton } from "../memory/navigation/WorkspaceNavigation";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  ArrowRight,
-  BookOpenText,
-  Brain,
-  FileText,
-  Sparkle,
-  Tray,
-} from "@phosphor-icons/react";
+import { ArrowLeft, BookOpenText } from "@phosphor-icons/react";
 import {
   getActiveImportBatches,
   getImportBatchStatus,
@@ -26,16 +16,14 @@ import {
   summarizeImportBatches,
 } from "../memory/ImportPhases";
 import { FirstUseSample } from "./FirstUseSample";
-import type { SampleClient } from "./firstUseSampleData";
 import "./firstUseGuide.css";
 
-export type FirstUseGuideView = "guide" | "live";
+export type FirstUseGuideView = "sample" | "live";
 
 export interface FirstUseGuideProps {
+  /** The single way out of either view: back to the Wiki home. */
   onBack: () => void;
   onImport: () => void;
-  onSources: () => void;
-  onConnect: (client?: SampleClient) => void;
   onOpenIntelligence: () => void;
   onOpenPage: (id: string) => void;
   /** Entry view. The parent passes "live" when returning from a real import. */
@@ -43,8 +31,6 @@ export interface FirstUseGuideProps {
   /** The import just completed, if this guide was opened from that import. */
   batchId?: string;
 }
-
-type GuideView = "guide" | "choose" | "sample" | "live";
 
 /** Live queries poll only while the live view is mounted: entering the view
  *  mounts them, leaving it unmounts them. The sample view mounts no queries. */
@@ -59,181 +45,40 @@ const LIVE_PAGE_COUNT = 3;
 export function FirstUseGuide({
   onBack,
   onImport,
-  onSources,
-  onConnect,
   onOpenIntelligence,
   onOpenPage,
-  initialView = "guide",
+  initialView = "sample",
   batchId,
 }: FirstUseGuideProps) {
-  const { t } = useTranslation();
-  const [view, setView] = useState<GuideView>(initialView);
-
   return (
     <div
       data-testid="first-use-guide"
-      data-view={view}
+      data-view={initialView}
       className="fug-root"
     >
-      {view === "sample" ? (
-        <FirstUseSample
-          onBackToGuide={() => setView("guide")}
-          onBringData={() => setView("choose")}
-          onConnect={onConnect}
-        />
-      ) : null}
-
-      {view === "live" ? (
+      {initialView === "sample" ? (
+        <FirstUseSample onBack={onBack} onFinish={onBack} />
+      ) : (
         <FirstUseLive
-          onBackToGuide={() => setView("guide")}
+          onBack={onBack}
           onImport={onImport}
           onOpenIntelligence={onOpenIntelligence}
           onOpenPage={onOpenPage}
           batchId={batchId}
         />
-      ) : null}
-
-      {view === "guide" ? (
-        <div className="fug-guide">
-          <div className="fug-row">
-            <WorkspaceBackButton type="button" className="fug-back" onClick={onBack}>
-              <ArrowLeft aria-hidden="true" weight="regular" />
-              {t("firstUse.guide.back")}
-            </WorkspaceBackButton>
-            <span className="fug-eyebrow">{t("firstUse.guide.eyebrow")}</span>
-          </div>
-          <h1 className="fug-title">{t("firstUse.guide.title")}</h1>
-          <p className="fug-lede">{t("firstUse.guide.lede")}</p>
-          <ol className="fug-steps">
-            <li>
-              <span className="fug-step-icon" aria-hidden="true">
-                <Tray weight="regular" />
-              </span>
-              <div>
-                <p className="fug-step-title">{t("firstUse.guide.step1Title")}</p>
-                <p className="fug-step-body">{t("firstUse.guide.step1Body")}</p>
-              </div>
-            </li>
-            <li>
-              <span className="fug-step-icon" aria-hidden="true">
-                <BookOpenText weight="regular" />
-              </span>
-              <div>
-                <p className="fug-step-title">{t("firstUse.guide.step2Title")}</p>
-                <p className="fug-step-body">{t("firstUse.guide.step2Body")}</p>
-              </div>
-            </li>
-            <li>
-              <span className="fug-step-icon" aria-hidden="true">
-                <Sparkle weight="regular" />
-              </span>
-              <div>
-                <p className="fug-step-title">{t("firstUse.guide.step3Title")}</p>
-                <p className="fug-step-body">{t("firstUse.guide.step3Body")}</p>
-              </div>
-            </li>
-          </ol>
-          <div className="fus-cta-row">
-            <button
-              type="button"
-              className="fug-button-primary"
-              onClick={() => setView("sample")}
-            >
-              {t("firstUse.guide.tryExample")}
-              <ArrowRight aria-hidden="true" weight="regular" />
-            </button>
-            <button
-              type="button"
-              className="fug-button-secondary"
-              onClick={() => setView("choose")}
-            >
-              {t("firstUse.guide.bringData")}
-            </button>
-          </div>
-          <button type="button" className="fus-link" onClick={() => setView("live")}>
-            {t("firstUse.guide.seeKnowledge")}
-          </button>
-        </div>
-      ) : null}
-
-      {view === "choose" ? (
-        <div className="fug-guide">
-          <div className="fug-row">
-            <button
-              type="button"
-              className="fug-back"
-              onClick={() => setView("guide")}
-            >
-              <ArrowLeft aria-hidden="true" weight="regular" />
-              {t("firstUse.chooser.back")}
-            </button>
-          </div>
-          <h1 className="fug-title">{t("firstUse.chooser.title")}</h1>
-          <p className="fug-lede">{t("firstUse.chooser.body")}</p>
-          <ul className="fug-options">
-            <li>
-              <span className="fug-step-icon" aria-hidden="true">
-                <Brain weight="regular" />
-              </span>
-              <div>
-                <p className="fug-step-title">{t("firstUse.chooser.pasteTitle")}</p>
-                <p className="fug-step-body">{t("firstUse.chooser.pasteBody")}</p>
-              </div>
-              <button
-                type="button"
-                className="fug-button-secondary"
-                onClick={onImport}
-              >
-                {t("firstUse.chooser.pasteAction")}
-              </button>
-            </li>
-            <li>
-              <span className="fug-step-icon" aria-hidden="true">
-                <FileText weight="regular" />
-              </span>
-              <div>
-                <p className="fug-step-title">{t("firstUse.chooser.filesTitle")}</p>
-                <p className="fug-step-body">{t("firstUse.chooser.filesBody")}</p>
-              </div>
-              <button
-                type="button"
-                className="fug-button-secondary"
-                onClick={onSources}
-              >
-                {t("firstUse.chooser.filesAction")}
-              </button>
-            </li>
-            <li>
-              <span className="fug-step-icon" aria-hidden="true">
-                <Sparkle weight="regular" />
-              </span>
-              <div>
-                <p className="fug-step-title">{t("firstUse.chooser.connectTitle")}</p>
-                <p className="fug-step-body">{t("firstUse.chooser.connectBody")}</p>
-              </div>
-              <button
-                type="button"
-                className="fug-button-secondary"
-                onClick={() => onConnect()}
-              >
-                {t("firstUse.chooser.connectAction")}
-              </button>
-            </li>
-          </ul>
-        </div>
-      ) : null}
+      )}
     </div>
   );
 }
 
 function FirstUseLive({
-  onBackToGuide,
+  onBack,
   onImport,
   onOpenIntelligence,
   onOpenPage,
   batchId,
 }: {
-  onBackToGuide: () => void;
+  onBack: () => void;
   onImport: () => void;
   onOpenIntelligence: () => void;
   onOpenPage: (id: string) => void;
@@ -332,7 +177,7 @@ function FirstUseLive({
   return (
     <div data-testid="first-use-live" className="fug-guide">
       <div className="fug-row">
-        <button type="button" className="fug-back" onClick={onBackToGuide}>
+        <button type="button" className="fug-back" onClick={onBack}>
           <ArrowLeft aria-hidden="true" weight="regular" />
           {t("firstUse.live.back")}
         </button>

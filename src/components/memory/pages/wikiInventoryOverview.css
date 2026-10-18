@@ -38,6 +38,10 @@
 .wiki-reading-start-icon { color:var(--mem-text-tertiary);margin-bottom:16px; }
 .wiki-reading-start-panel h1 { color:var(--mem-text);font:600 20px/1.3 var(--mem-font-body);letter-spacing:normal;margin:0; }
 .wiki-reading-start-panel p { color:var(--mem-text-secondary);font:14px/1.65 var(--mem-font-body);margin:8px 0 0;max-width:38ch;overflow-wrap:anywhere; }
+/* While the getting-started checklist is open it is the home's only content,
+   so the panel steps out of sight and the checklist title leads. The landmark
+   heading stays in the DOM for navigation and screen readers. */
+.wiki-reading-start[data-onboarding="true"] .wiki-reading-start-panel { clip-path:inset(50%);height:1px;overflow:hidden;padding:0;position:absolute;white-space:nowrap;width:1px; }
 @media (max-width:639px) { .wiki-reading-start-panel { flex-basis:clamp(240px,42vh,420px);padding:24px 8px; }.wiki-reading-start-panel h1 { font-size:19px; } }
 
 .wiki-projection-notice { display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:9px 12px;border:1px solid var(--mem-border);border-radius:6px;color:var(--mem-text-secondary);font:12px/1.5 var(--mem-font-body); }

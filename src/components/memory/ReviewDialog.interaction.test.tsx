@@ -84,7 +84,7 @@ describe("ReviewDialog interaction safety", () => {
     await user.click(screen.getByRole("button", { name: "Open review" }));
 
     const dialog = await screen.findByRole("dialog");
-    const keep = within(dialog).getByRole("button", { name: "Keep page" });
+    const keep = within(dialog).getByRole("button", { name: "Keep note" });
     keep.focus();
     await user.keyboard("{Enter}");
 

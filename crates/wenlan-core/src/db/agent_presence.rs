@@ -12,6 +12,11 @@
 //! never calls `register_agent` or `touch_agent`. The first write promotes it
 //! in one conditional UPDATE (`promote_untouched_read_agent`) that only
 //! applies while that marker still holds.
+//!
+//! An explicit connection is the other way in: `register_trusted_agent` is the
+//! user's own gesture (connecting a tool from the app), so it registers the
+//! tool at `"full"` and lifts a read-created row the same way the first write
+//! would, before the tool has written anything.
 
 use super::{canonicalize_agent_id, new_agent_display_name, MemoryDB};
 use crate::error::WenlanError;
@@ -114,6 +119,37 @@ impl MemoryDB {
         } else {
             AgentPresence::AtCapacity
         })
+    }
+
+    /// Register `raw_name` as a tool the user has authorised, so its first
+    /// read already sees what a trusted agent sees.
+    ///
+    /// Idempotent. A missing row is created at `"full"` (`register_agent`). A
+    /// row the read path created (`"unknown"`, never written, never edited) is
+    /// promoted to `"full"` by the same conditional UPDATE the first write
+    /// uses. Every other row is returned exactly as it is: a user's edit
+    /// (`updated_at != created_at`), a tool that has written, a trust level the
+    /// user chose, and a disabled row all stay untouched. `last_seen_at` is not
+    /// set, so "connected" still means "has been used".
+    ///
+    /// Names are held to the read path's rules (`presence_agent_id`); an
+    /// empty, over-long, control-character, reserved or `"unknown"` name is a
+    /// `WenlanError::Validation` and creates nothing.
+    pub async fn register_trusted_agent(
+        &self,
+        raw_name: &str,
+    ) -> Result<super::AgentConnection, WenlanError> {
+        let Some(canonical) = presence_agent_id(raw_name) else {
+            return Err(WenlanError::Validation(format!(
+                "invalid agent name: {:?}",
+                raw_name
+            )));
+        };
+        let mut agent = self.register_agent(raw_name.trim()).await?;
+        if agent.enabled && agent.trust_level == "unknown" {
+            agent.trust_level = self.promote_untouched_read_agent(&canonical).await?;
+        }
+        Ok(agent)
     }
 
     /// First-write promotion of a row created by `record_agent_presence`.

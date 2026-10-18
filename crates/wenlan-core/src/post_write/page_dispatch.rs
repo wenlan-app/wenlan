@@ -35,6 +35,16 @@ pub enum PageWrite<'a> {
         knowledge_path: Option<&'a Path>,
         citations: Option<(String, String)>,
     },
+    /// An agent's `agent_refresh` of a Page it names (`agent`, from the
+    /// `x-agent-name` header), under a source-revision fence. Identical to
+    /// `Update` for `agent_refresh` except the changelog entry records `agent`.
+    AgentUpdate {
+        page_id: &'a str,
+        req: UpdatePageRequest,
+        agent: Option<&'a str>,
+        expected_source_revision: i64,
+        knowledge_path: Option<&'a Path>,
+    },
     /// Explicit user-forced rebuild of a Page body (Re-distill). Like `Update`
     /// under a source-revision fence with no stale requirement, except a
     /// `user_edited` Page is rewritten rather than staged, and that flag and
@@ -146,6 +156,31 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 false,
                 false,
                 None,
+                None,
+            )
+            .await
+        }
+        PageWrite::AgentUpdate {
+            page_id,
+            req,
+            agent,
+            expected_source_revision,
+            knowledge_path,
+        } => {
+            update_page_impl(
+                db,
+                page_id,
+                req,
+                "agent_refresh",
+                false,
+                Some(expected_source_revision),
+                knowledge_path,
+                None,
+                None,
+                false,
+                false,
+                None,
+                agent,
             )
             .await
         }
@@ -170,6 +205,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 false,
                 true,
                 Some(expected_fence),
+                None,
             )
             .await
         }
@@ -191,6 +227,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 None,
                 true,
                 false,
+                None,
                 None,
             )
             .await
@@ -442,6 +479,7 @@ pub(crate) async fn update_page_growth_at_versions(
         }),
         false,
         false,
+        None,
         None,
     )
     .await

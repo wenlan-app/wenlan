@@ -9,6 +9,7 @@ import { RecentNotesPanel } from "./RecentNotesPanel";
 import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
 import { NoteGroupFrame } from "./NoteGroupFrame";
+import { useReportWorkspaceDemand, WIKI_LIST_DOCKED_WIDTH } from "../navigation/workspaceDemand";
 import "./wikiWorkspace.css";
 
 export interface WikiWorkspaceProps {
@@ -27,6 +28,11 @@ export interface WikiWorkspaceProps {
   readonly onOpenRecentPage?: (id: string) => void;
   readonly browsing?: boolean;
   readonly fullBleed?: boolean;
+  /** A library with no notes and no drafts, or one whose getting-started
+   *  checklist is still open. The directory has nothing to list or would read
+   *  as a second sidebar, so the workspace collapses to the reading column
+   *  alone and the start panel owns the whole width. */
+  readonly directoryHidden?: boolean;
   readonly filter?: string;
   readonly onFilterChange?: (filter: string) => void;
   readonly onBrowse: (scope: WikiInventoryScope) => void;
@@ -34,6 +40,8 @@ export interface WikiWorkspaceProps {
   readonly onCreationFolderPathChange?: (path: string | null) => void;
   readonly onOpenDraft: (draftId: string, space: string | null) => void;
   readonly onOpenPage: (page: Page) => void;
+  /** Called after a note was deleted from the directory so its tab closes. */
+  readonly onDeletePage?: (pageId: string) => void;
 }
 
 export function WikiWorkspace({
@@ -52,6 +60,7 @@ export function WikiWorkspace({
   onOpenRecentPage,
   browsing = false,
   fullBleed = false,
+  directoryHidden = false,
   filter,
   onFilterChange,
   onBrowse,
@@ -59,6 +68,7 @@ export function WikiWorkspace({
   onCreationFolderPathChange,
   onOpenDraft,
   onOpenPage,
+  onDeletePage,
 }: WikiWorkspaceProps) {
   const { t } = useTranslation();
   const [folderOpen, setFolderOpen] = useState(false);
@@ -69,8 +79,10 @@ export function WikiWorkspace({
     onCreationFolderPathChange?.(inventoryMode === "folders" ? creationFolderPath : null);
   }, [creationFolderPath, inventoryMode, onCreationFolderPathChange]);
   const [canCreateFolder, setCanCreateFolder] = useState(false);
+  const [noteCount, setNoteCount] = useState<number | null>(null);
   const createFormRef = useRef<(() => void) | null>(null);
   const id = useId();
+  useReportWorkspaceDemand("list", WIKI_LIST_DOCKED_WIDTH);
   const reportCanCreateFolder = useCallback((available: boolean) => {
     setCanCreateFolder(current => current === available ? current : available);
   }, []);
@@ -109,7 +121,7 @@ export function WikiWorkspace({
 
   return (
     <WikiFolderCreationContext.Provider value={folderCreationContext}>
-    <div className="wiki-workspace">
+    <div className="wiki-workspace" data-directory-hidden={directoryHidden ? "true" : undefined}>
       <button
         type="button"
         className="wiki-workspace-folders-toggle"
@@ -125,6 +137,8 @@ export function WikiWorkspace({
           <div className="wiki-workspace-mode-row">
             <label className="wiki-workspace-mode">
               <span>{t("pages.recent.modeLabel")}</span>
+              {/* Sizes the selector to the chosen mode's name so the note count can sit right after it. */}
+              <span className="wiki-workspace-mode-sizer" aria-hidden="true">{t(inventoryMode === "recent" ? "pages.recent.title" : inventoryMode === "custom" ? "pages.recent.custom" : "pages.folders.title")}</span>
               <select
                 aria-label={t("pages.recent.modeLabel")}
                 title={isManualOrder ? t("pages.recent.customHint") : undefined}
@@ -137,6 +151,12 @@ export function WikiWorkspace({
               </select>
               <CaretDown aria-hidden="true" size={16} />
             </label>
+            {inventoryMode === "folders" && noteCount !== null && (
+              <span className="wiki-workspace-note-count" title={t("pages.folders.noteCount", { count: noteCount })}>
+                <span aria-hidden="true">{noteCount}</span>
+                <span className="sr-only">{t("pages.folders.noteCount", { count: noteCount })}</span>
+              </span>
+            )}
             {inventoryMode === "folders" && (
               <button
                 type="button"
@@ -156,6 +176,7 @@ export function WikiWorkspace({
               currentPageId={currentPageId}
               revision={recentRevision}
               onOpenPage={onOpenRecentPage ? closeForNavigation(onOpenRecentPage) : undefined}
+              onBrowseFolders={() => changeInventoryMode("folders")}
             />
           ) : (
             <PageInventoryPanel
@@ -170,6 +191,8 @@ export function WikiWorkspace({
               onCreatePage={closeForNavigation(onCreatePage)}
               onOpenDraft={closeForNavigation(onOpenDraft)}
               onOpenPage={closeForNavigation(onOpenPage)}
+              onDeletePage={onDeletePage}
+              onNoteCountChange={setNoteCount}
             />
           )}
         </aside>

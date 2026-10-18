@@ -961,6 +961,7 @@ mod tests {
             stale_reason: None,
             pending_rebuild: None,
             refresh_blocked_reason: None,
+            review_required: false,
             user_edited: false,
             relevance_score: 0.0,
             last_edited_by: None,

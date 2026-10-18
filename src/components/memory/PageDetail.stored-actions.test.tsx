@@ -53,7 +53,7 @@ const LINKED_PAGE = {
     "Intro sentence.\n\nThis page references [[Resolved Link]] and [[Missing Link]].\n\nIt also cites [memory](#memory:mem-1).",
   entity_id: null,
   domain: "testing",
-  source_memory_ids: [],
+  source_memory_ids: ["mem-1"],
   version: 1,
   status: "active",
   created_at: "2026-06-26T00:00:00+00:00",
@@ -78,7 +78,7 @@ describe("PageDetail stored actions in seamless editing", () => {
  beforeEach(() => {
   vi.clearAllMocks(); current = { ...LINKED_PAGE, user_edited: false };
   tauriMocks.getPage.mockImplementation(async () => current);
-  tauriMocks.getPageSources.mockResolvedValue([]); tauriMocks.listRegisteredSources.mockResolvedValue([]);
+  tauriMocks.getPageSources.mockResolvedValue([{source:{page_id:'page-1',memory_source_id:'mem-1',linked_at:0},memory:null}]); tauriMocks.listRegisteredSources.mockResolvedValue([]);
   tauriMocks.getPageLinks.mockResolvedValue({outbound:[],inbound:[]});
   tauriMocks.listOrphanLinks.mockResolvedValue({min_count:2,orphan_labels:[]});
   tauriMocks.getPageRevisions.mockResolvedValue({page_id:'page-1',current_version:1,user_edited:false,entries:[]});
@@ -92,7 +92,7 @@ describe("PageDetail stored actions in seamless editing", () => {
  });
  async function start(extra:Partial<React.ComponentProps<typeof PageDetail>>={}) {
   const r=renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} initialMode="edit" {...extra}/>);
-  const editor=await screen.findByRole('textbox',{name:'Page editor'});
+  const editor=await screen.findByRole('textbox',{name:'Note editor'});
   return {...r,editor};
  }
  async function action(user:ReturnType<typeof userEvent.setup>,label:string) {
@@ -103,11 +103,19 @@ describe("PageDetail stored actions in seamless editing", () => {
   await user.click(screen.getByRole('button',{name:i18n.t('pageInspector.open')}));
   return screen.getByRole('button',{name:i18n.t('pageDetail.markPageReviewed')});
  }
+ it('hides Re-distill on a page with no sources to rebuild from',async()=>{
+  current={...current,source_memory_ids:[]};
+  tauriMocks.getPageSources.mockResolvedValue([]);
+  const {user}=await start();
+  await user.click(screen.getByRole('button',{name:i18n.t('pageDetail.actions')}));
+  expect(screen.getByRole('menuitem',{name:'Delete note'})).toBeInTheDocument();
+  expect(screen.queryByRole('menuitem',{name:'Rebuild note'})).toBeNull();
+ });
  it('exposes existing commands without leaving seamless editing',async()=>{
   const {user}=await start();
-  await expect(action(user,'Re-distill page')).resolves.toBeEnabled();
+  await expect(action(user,'Rebuild note')).resolves.toBeEnabled();
   expect(await reviewAction(user)).toBeEnabled();
-  expect(await action(user,'Delete page')).toBeEnabled();
+  expect(await action(user,'Delete note')).toBeEnabled();
  });
  it('flushes edits then reviews exactly the saved body without closing the editor',async()=>{
   const {user,editor}=await start();
@@ -115,7 +123,7 @@ describe("PageDetail stored actions in seamless editing", () => {
   await user.click(await reviewAction(user));
   await waitFor(()=>expect(tauriMocks.reviewPage).toHaveBeenCalledWith('page-1','New human content'));
   expect(tauriMocks.updatePage.mock.invocationCallOrder[0]).toBeLessThan(tauriMocks.reviewPage.mock.invocationCallOrder[0]);
-  expect(screen.getByRole('textbox',{name:'Page editor'})).toBeVisible();
+  expect(screen.getByRole('textbox',{name:'Note editor'})).toBeVisible();
  });
  it('keeps the draft and does not review when saving fails',async()=>{
   tauriMocks.updatePage.mockRejectedValue(new Error('offline'));
@@ -123,20 +131,20 @@ describe("PageDetail stored actions in seamless editing", () => {
   await user.click(await reviewAction(user));
   await waitFor(()=>expect(tauriMocks.updatePage).toHaveBeenCalled());
   expect(tauriMocks.reviewPage).not.toHaveBeenCalled();
-  expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Page editor'})).state.doc.toString()).toBe('Unsaved human content');
+  expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Note editor'})).state.doc.toString()).toBe('Unsaved human content');
  });
  it('cancelled deletion preserves the saved note and editor',async()=>{
   vi.mocked(window.confirm).mockReturnValue(false);
   const {user,editor}=await start();act(()=>replaceDocument(editorViewFromTextbox(editor),'Keep this content'));
-  await user.click(await action(user,'Delete page'));
+  await user.click(await action(user,'Delete note'));
   await waitFor(()=>expect(window.confirm).toHaveBeenCalled());
   expect(tauriMocks.deletePage).not.toHaveBeenCalled();expect(current.content).toBe('Keep this content');
-  expect(screen.getByRole('textbox',{name:'Page editor'})).toBeVisible();
+  expect(screen.getByRole('textbox',{name:'Note editor'})).toBeVisible();
  });
  it('successful deletion navigates only after save and deletion',async()=>{
   const onBack=vi.fn();const {user,editor}=await start({onBack});
   act(()=>replaceDocument(editorViewFromTextbox(editor),'Saved before deletion'));
-  await user.click(await action(user,'Delete page'));
+  await user.click(await action(user,'Delete note'));
   await waitFor(()=>expect(onBack).toHaveBeenCalledOnce());
   expect(tauriMocks.updatePage.mock.invocationCallOrder[0]).toBeLessThan(tauriMocks.deletePage.mock.invocationCallOrder[0]);
  });
@@ -146,10 +154,10 @@ describe("PageDetail stored actions in seamless editing", () => {
   const {user}=await start();
   await user.click(await reviewAction(user));
   await screen.findByText(i18n.t('pageDetail.reviewApplied'));
-  await user.click(await action(user,'Re-distill page'));
+  await user.click(await action(user,'Rebuild note'));
   expect(screen.queryByText(i18n.t('pageDetail.reviewApplied'))).not.toBeInTheDocument();
   await waitFor(()=>expect(tauriMocks.redistillPage).toHaveBeenCalledOnce());
-  await waitFor(()=>expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Page editor'})).state.doc.toString()).toBe('Fresh rebuilt content'));
+  await waitFor(()=>expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Note editor'})).state.doc.toString()).toBe('Fresh rebuilt content'));
   expect(window.confirm).toHaveBeenCalled();
  });
  it('does not let pending actions authorize another navigation flush',async()=>{

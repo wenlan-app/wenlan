@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -107,6 +107,34 @@ describe("PageInfoDrawer", () => {
       unmount();
     } finally {
       trigger.remove();
+      window.matchMedia = original;
+    }
+  });
+
+  it("returns Escape focus to the named opener when docked context opened on its own", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() });
+    // The real Info toggle is portaled into the document tools host, so its
+    // ref stays attached while StrictMode re-runs the drawer's focus effect.
+    const toggle = document.createElement("button");
+    toggle.textContent = "Info";
+    document.body.append(toggle);
+    const returnFocusRef = { current: toggle };
+    function DefaultOpen() {
+      const [open, setOpen] = useState(true);
+      return <PageInfoDrawer docked inspector open={open} focusOnOpen={false} returnFocusRef={returnFocusRef} onClose={() => setOpen(false)} title="Info" closeLabel="Close info"><button>Source</button></PageInfoDrawer>;
+    }
+    try {
+      const user = userEvent.setup();
+      render(<StrictMode><DefaultOpen /></StrictMode>);
+      // Re-running the effect while the pane stays open leaves reader focus alone.
+      expect(document.body).toHaveFocus();
+      screen.getByRole("button", { name: "Source" }).focus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("complementary", { name: "Info" })).not.toBeInTheDocument();
+      expect(toggle).toHaveFocus();
+    } finally {
+      toggle.remove();
       window.matchMedia = original;
     }
   });

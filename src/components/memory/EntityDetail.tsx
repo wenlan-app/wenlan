@@ -59,6 +59,7 @@ function EntityDetailContent({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
   const { open: infoOpen, setOpen: setInfoOpen, toggle: toggleInfo } = useDetailInfoOpen(entityId);
+  const infoToggleRef = useRef<HTMLButtonElement>(null);
   const observationsFlushRef = useRef<(() => Promise<boolean>) | null>(null);
   const actionGuardRef = useRef(false);
   const mountedRef = useRef(true);
@@ -187,7 +188,7 @@ function EntityDetailContent({
           <h1 className="page-detail-title">{entity.name}</h1>
           <div className="page-document-tools">
             <BackButton onBack={onBack} label={t("entityDetail.back")} />
-            <InfoToggle open={infoOpen} onClick={toggleInfo} />
+            <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
             <EntityTopicMenu
               archived={archived}
               actionsPending={actionsPending}
@@ -224,7 +225,7 @@ function EntityDetailContent({
           />
         </section>
       </DetailReadingFrame>
-      <PageInfoDrawer docked inspector focusOnOpen={false} open={infoOpen} onClose={() => setInfoOpen(false)} title={t("entityDetail.contextTitle")} closeLabel={t("common.close")}>
+      <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef} open={infoOpen} onClose={() => setInfoOpen(false)} title={t("entityDetail.contextTitle")} closeLabel={t("common.close")}>
         <DetailInfoContent className="entity-topic-context">
           <InfoAction
             label={t(entity.confirmed ? "infoActions.releaseTopic" : "infoActions.keepTopic")}

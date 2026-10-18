@@ -344,6 +344,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "repair_verification_reports_stale"
             | "repair_plan_entry_too_large"
             | "repair_source_reports_stale"
+            | "page_revision_outdated"
             | "noise_pattern"
             | "too_short"
             | "not_novel"
@@ -383,6 +384,7 @@ mod tests {
             "repair_verification_reports_stale",
             "repair_plan_entry_too_large",
             "repair_source_reports_stale",
+            "page_revision_outdated",
         ] {
             let body = format!(r#"{{"error":"{code}","detail":"PRIVATE_SENTINEL"}}"#);
             let reason = parse_api_error_reason(body.as_bytes()).expect("typed reason survives");

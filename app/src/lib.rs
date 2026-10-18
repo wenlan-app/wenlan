@@ -11,6 +11,7 @@ pub use review::run_review;
 // ── App-specific modules (Tauri, sensors, UI) ──
 pub mod activity;
 pub mod api;
+mod ask_tool;
 pub mod config;
 mod daemon_start;
 pub mod error;
@@ -1570,6 +1571,7 @@ pub fn run() {
             search::delete_bulk,
             search::open_file,
             search::open_search_result,
+            ask_tool::open_tool_with_prompt,
             search::read_source_dir,
             search::detect_obsidian_vaults,
             search::read_text_file,
@@ -1693,6 +1695,7 @@ pub fn run() {
             search::remove_legacy_mcp_entry,
             search::get_wenlan_mcp_entry,
             search::install_client_plugin,
+            search::register_connected_agent,
             search::wire_state,
             // Remote access commands
             search::toggle_remote_access,

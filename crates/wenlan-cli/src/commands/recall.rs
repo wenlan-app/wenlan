@@ -27,7 +27,13 @@ pub async fn run(
 
 fn format_table(response: &SearchMemoryResponse) -> String {
     if response.results.is_empty() {
-        return "(no recalled memories)\n".to_string();
+        // A library of pages and no memories yet (every first-run user who
+        // only wrote notes) still has pages worth listing.
+        let mut output = "(no recalled memories)\n".to_string();
+        output.push_str(&super::format_supplemental_pages(
+            response.supplemental_pages.as_deref(),
+        ));
+        return output;
     }
     let mut output = format!(
         "{} recalled memor{} in {:.0}ms\n",
@@ -59,4 +65,36 @@ fn format_table(response: &SearchMemoryResponse) -> String {
         response.supplemental_pages.as_deref(),
     ));
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_table;
+    use wenlan_types::responses::SearchMemoryResponse;
+
+    #[test]
+    fn lists_compiled_pages_when_no_memory_matched() {
+        let response = SearchMemoryResponse {
+            results: Vec::new(),
+            took_ms: 3.0,
+            supplemental_pages: Some(vec![super::super::tests::page(
+                "Trip plan",
+                "page-source-1",
+            )]),
+        };
+        let output = format_table(&response);
+        assert!(output.starts_with("(no recalled memories)\n"), "{output}");
+        assert!(output.contains("Compiled pages:\n"), "{output}");
+        assert!(output.contains("Trip plan (page-source-1)"), "{output}");
+    }
+
+    #[test]
+    fn says_so_when_nothing_matched_at_all() {
+        let response = SearchMemoryResponse {
+            results: Vec::new(),
+            took_ms: 3.0,
+            supplemental_pages: None,
+        };
+        assert_eq!(format_table(&response), "(no recalled memories)\n");
+    }
 }

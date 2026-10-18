@@ -65,9 +65,9 @@ queue.
 
 | Tool | Purpose |
 | --- | --- |
-| `list_pages` | List wiki pages (id, title, summary, Space, status, last modified) to browse what exists. |
-| `read_page` | Read one wiki page in full together with the source memories it cites. |
-| `write_page` | Create or update a wiki page; a changed page with an edited file goes through a revision card. |
+| `list_pages` | List wiki pages (id, title, summary, Space, status, last modified, creation kind, source count, review lock) to browse what exists. |
+| `read_page` | Read one wiki page in full, including its version and review lock, together with the source memories it cites. |
+| `write_page` | Create or update a wiki page; sources are optional. Pass `expected_version` from `read_page` on a refresh; a stale version is refused, and a locked page or an unversioned refresh of an edited page goes through a revision card. |
 | `brief` | Read the current Space Brief; an optional topic appends separately labeled same-Space context. |
 | `update_brief` | Hand off to the next session: replace the summary and add, edit, move, gate, or complete items. Local stdio only. |
 | `capture` | Save one durable memory and return its explicit `source_memory_id`. |

@@ -1,23 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::route_registry::{post, TrackedRouter};
+use crate::route_registry::{get, post, TrackedRouter};
 use crate::{
     brief_files::project_brief_receipt, error::ServerError, space_header::SpaceHeader,
     state::SharedState, telemetry::TelemetryEvent,
 };
-use axum::{extract::State, response::Json};
+use axum::{
+    extract::{Path, Query, State},
+    response::Json,
+};
 use std::{future::Future, sync::Arc};
 use wenlan_core::{db::MemoryDB, read_scope::ReadScope};
 use wenlan_types::{
-    BriefReadRequest, BriefReadResponse, BriefReadState, BriefRelatedContext, BriefUpdateReceipt,
-    BriefUpdateRequest, SearchResult,
+    BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefReadState, BriefRelatedContext,
+    BriefUpdateReceipt, BriefUpdateRequest, BriefVersionResponse, SearchResult,
 };
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
-    router.route(
-        "/api/brief",
-        post(handle_read_brief).patch(handle_update_brief),
-    )
+    router
+        .route(
+            "/api/brief",
+            post(handle_read_brief).patch(handle_update_brief),
+        )
+        .route("/api/brief/history", get(handle_brief_history))
+        .route("/api/brief/history/{version}", get(handle_brief_version))
+}
+
+const HISTORY_DEFAULT_LIMIT: usize = 20;
+const HISTORY_MAX_LIMIT: usize = 200;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct BriefHistoryQuery {
+    #[serde(default, alias = "domain")]
+    pub space: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 const RELATED_CONTEXT_LIMIT: usize = 20;
@@ -232,6 +249,58 @@ pub async fn handle_update_brief(
     }
 
     Ok(Json(receipt))
+}
+
+/// GET /api/brief/history — successful Brief updates for the resolved Space,
+/// newest first. Brief text only; no page prose is returned.
+pub async fn handle_brief_history(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    Query(query): Query<BriefHistoryQuery>,
+) -> Result<Json<BriefHistoryResponse>, ServerError> {
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let Some(space) = resolve_space(&db, query.space.as_deref(), header_space.as_deref()).await?
+    else {
+        return Ok(Json(BriefHistoryResponse {
+            space: None,
+            entries: Vec::new(),
+        }));
+    };
+    let limit = query
+        .limit
+        .unwrap_or(HISTORY_DEFAULT_LIMIT)
+        .clamp(1, HISTORY_MAX_LIMIT);
+    let entries = db.list_brief_history(&space, limit).await?;
+    Ok(Json(BriefHistoryResponse {
+        space: Some(space),
+        entries,
+    }))
+}
+
+/// GET /api/brief/history/{version} — the full Brief as it stood right after
+/// that update. 404 when the Space has no such recorded version.
+pub async fn handle_brief_version(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    Path(version): Path<i64>,
+    Query(query): Query<BriefHistoryQuery>,
+) -> Result<Json<BriefVersionResponse>, ServerError> {
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let space = resolve_space(&db, query.space.as_deref(), header_space.as_deref())
+        .await?
+        .ok_or_else(|| ServerError::NotFound("no Space resolved".into()))?;
+    db.get_brief_version(&space, version)
+        .await?
+        .map(Json)
+        .ok_or_else(|| {
+            ServerError::NotFound(format!("no Brief version {version} in Space '{space}'"))
+        })
 }
 
 #[cfg(test)]

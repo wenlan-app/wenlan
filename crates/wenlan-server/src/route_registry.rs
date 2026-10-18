@@ -387,6 +387,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/memory/revision/{id}/dismiss", "/api/memory/contradiction/{source_id}/dismiss", "/api/memory/entities",
     "/api/memory/relations", "/api/memory/observations", "/api/memory/link-entity", "/api/spaces/{name}",
     "/api/spaces/{from}/move-to/{to}", "/api/pages/{id}/archive", "/api/pages/{id}/review",
+    "/api/pages/{id}/review-required",
     "/api/pages/drafts", "/api/pages/drafts/{id}", "/api/pages/drafts/{id}/publish",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
@@ -414,6 +415,7 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
     (RegisteredMethod::Patch, "/api/brief"),
     (RegisteredMethod::Put, "/api/profile"),
+    (RegisteredMethod::Post, "/api/agents"),
     (RegisteredMethod::Put, "/api/agents/{name}"),
     (RegisteredMethod::Delete, "/api/agents/{name}"),
     (RegisteredMethod::Post, "/api/spaces"),

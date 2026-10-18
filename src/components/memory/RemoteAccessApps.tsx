@@ -109,7 +109,7 @@ export function ConnectedApps({ revision, enabled }: { revision: string; enabled
       {grants.isPending && enabled && <p className={secondaryText}>{t("remoteAccess.loadingGrants")}</p>}
       {grants.error && <RemoteErrorMessage error={grants.error} />}
       {grants.data?.items.length === 0 && <p className={secondaryText}>{t("remoteAccess.noGrants")}</p>}
-      <ul className="divide-y divide-[var(--mem-border)]">
+      <ul className="space-y-5">
         {grants.data?.items.map((grant) => (
           <GrantRow key={grant.id} grant={grant} language={language}
             busy={remove.isPending} confirming={removing?.id === grant.id}
@@ -148,7 +148,7 @@ function GrantRow({ grant, language, busy, confirming, onAskRemove, onCancelRemo
   const ends = Number.isFinite(grant.expiresAt)
     ? t("remoteAccess.ends", { date: new Date(grant.expiresAt).toLocaleDateString(language) }) : null;
   return (
-    <li className="py-3 min-w-0 space-y-2">
+    <li className="min-w-0 space-y-2">
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex-1 min-w-0 basis-40 space-y-1">
           <p className="text-sm font-medium break-words">{name}</p>
@@ -157,7 +157,7 @@ function GrantRow({ grant, language, busy, confirming, onAskRemove, onCancelRemo
             : <p className={secondaryText + " break-words"}>{reasonKey ? t(reasonKey) : t("remoteAccess.ended")}</p>}
           {grant.cleanupPending && <p className={secondaryText}>{t("remoteAccess.cleanupPending")}</p>}
         </div>
-        {active && !confirming && <Button variant="secondary" size="sm" disabled={busy} onClick={onAskRemove}>{t("remoteAccess.remove")}</Button>}
+        {active && !confirming && <Button variant="ghost" size="sm" className="-mr-[10px]" disabled={busy} onClick={onAskRemove}>{t("remoteAccess.remove")}</Button>}
         {!active && grant.cleanupPending && <Button variant="secondary" size="sm" disabled={busy} onClick={onRetryCleanup}>{t("remoteAccess.retry")}</Button>}
       </div>
       {confirming && (

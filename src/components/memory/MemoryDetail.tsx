@@ -156,6 +156,7 @@ export default function MemoryDetail({
   const [actionsOpen, setActionsOpen] = useState(false);
   const [keyboardNavigation, setKeyboardNavigation] = useState(false);
   const { open: infoOpen, setOpen: setInfoOpen, toggle: toggleInfo } = useDetailInfoOpen(sourceId);
+  const infoToggleRef = useRef<HTMLButtonElement>(null);
   const actionsId = useId();
   const actionsRef = useRef<HTMLDivElement>(null);
   const actionsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -461,7 +462,7 @@ export default function MemoryDetail({
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
         </WorkspaceBackButton>
         {fetchedMemory !== null && <div className="memory-detail-actions">
-          <InfoToggle open={infoOpen} onClick={toggleInfo} />
+          <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
 
           <div
             className="page-detail-actions-anchor"
@@ -581,7 +582,7 @@ export default function MemoryDetail({
       </section>
       </DetailReadingFrame>
 
-      <PageInfoDrawer docked inspector focusOnOpen={false} open={infoOpen && fetchedMemory !== null} onClose={() => setInfoOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
+      <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef} open={infoOpen && fetchedMemory !== null} onClose={() => setInfoOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
         <DetailInfoContent className="memory-detail-context-content">
           <InfoAction
             label={t(isConfirmed ? "infoActions.contentConfirmed" : "infoActions.confirmContent")}

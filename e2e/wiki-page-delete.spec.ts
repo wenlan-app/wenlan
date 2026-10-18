@@ -17,8 +17,8 @@ async function openFixturePage(page: Page): Promise<void> {
 
 async function requestDelete(page: Page): Promise<void> {
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Page actions" }).click();
-  await page.getByRole("menuitem", { name: "Delete page" }).click();
+  await page.getByRole("button", { name: "Note actions" }).click();
+  await page.getByRole("menuitem", { name: "Delete note" }).click();
 }
 
 test("deletes a Wiki Page and removes it from the inventory", async ({ page }) => {
@@ -42,7 +42,7 @@ test("keeps a failed Wiki Page deletion visible and retryable", async ({ page })
 
   await requestDelete(page);
 
-  await expect(page.getByRole("alert")).toHaveText("Could not delete this page. Try again.");
+  await expect(page.getByRole("alert")).toHaveText("Could not delete this note. Try again.");
   await expect(page.getByRole("heading", { level: 1, name: "Fixture architecture" })).toBeVisible();
 
   await requestDelete(page);
@@ -71,13 +71,13 @@ test("deleting a Page from the right group removes only that tab", async ({ page
   await expect(secondary.getByRole("tab", { name: "Why fixtures stay deterministic", exact: true })).toBeVisible();
   await expect(primary.getByRole("tab", { name: "Fixture architecture", exact: true })).toBeVisible();
 
-  const editor = secondary.getByRole("textbox", { name: "Page editor", exact: true });
+  const editor = secondary.getByRole("textbox", { name: "Note editor", exact: true });
   await expect(editor).toBeVisible();
   await editor.press("Escape");
   await expect(editor).toHaveCount(0);
   page.once("dialog", (dialog) => dialog.accept());
-  await secondary.getByRole("button", { name: "Page actions" }).click();
-  await secondary.getByRole("menuitem", { name: "Delete page" }).click();
+  await secondary.getByRole("button", { name: "Note actions" }).click();
+  await secondary.getByRole("menuitem", { name: "Delete note" }).click();
 
   await expect(secondary).toHaveCount(0);
   await expect(primary.getByRole("tab", { name: "Fixture architecture", exact: true })).toBeVisible();

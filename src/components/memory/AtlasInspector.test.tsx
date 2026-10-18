@@ -40,7 +40,7 @@ describe("AtlasInspector", () => {
     renderInspector();
     const sections = screen.getAllByRole("region");
     expect(sections.map((section) => within(section).getByRole("heading").textContent?.replace(/\s+\d+$/, ""))).toEqual([
-      "Wiki pages", "Topics", "Memories",
+      "Notes", "Topics", "Memories",
     ]);
     expect(within(sections[0]).getByText("documents")).toBeInTheDocument();
     expect(within(sections[1]).getByText("inspired")).toBeInTheDocument();
@@ -65,12 +65,12 @@ describe("AtlasInspector", () => {
     ];
     renderInspector({ neighbors: many, edges: [] });
     const summary = screen.getByRole("navigation", { name: "Connections" });
-    expect(within(summary).getByRole("button", { name: "Wiki pages 5" })).toBeInTheDocument();
+    expect(within(summary).getByRole("button", { name: "Notes 5" })).toBeInTheDocument();
     expect(within(summary).getByRole("button", { name: "Topics 5" })).toBeInTheDocument();
     expect(within(summary).getByRole("button", { name: "Memories 5" })).toBeInTheDocument();
     const sections = screen.getAllByRole("region");
     expect(sections.map((section) => within(section).getByRole("heading").textContent?.replace(/\s+\d+$/, ""))).toEqual([
-      "Wiki pages", "Topics", "Memories",
+      "Notes", "Topics", "Memories",
     ]);
   });
 

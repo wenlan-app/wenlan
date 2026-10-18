@@ -1,0 +1,238 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Getting-started checklist under the Wiki reading start. One card, flat rows
+   inside it (no nested cards); color and type come from --mem-* tokens. */
+
+.getting-started {
+  margin: 0 auto;
+  max-width: min(100%, 520px);
+  padding: 14px 20px 4px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-lg);
+  background-color: var(--mem-surface);
+  width: 100%;
+}
+
+.getting-started-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.getting-started-header h2 {
+  margin: 0;
+  color: var(--mem-text);
+  font: 600 16px/1.35 var(--mem-font-body);
+}
+
+.getting-started-hide {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--mem-radius-sm);
+  background: none;
+  color: var(--mem-text-tertiary);
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.getting-started-hide:hover {
+  background-color: var(--mem-hover);
+  color: var(--mem-text);
+}
+
+.getting-started-progress {
+  margin: 2px 0 2px;
+  color: var(--mem-text-tertiary);
+  font: 12px/1.5 var(--mem-font-body);
+}
+
+.getting-started-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.getting-started-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.getting-started-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--mem-radius-sm);
+  background-color: var(--mem-indigo-bg);
+  color: var(--mem-accent-indigo);
+  font-size: 16px;
+}
+
+.getting-started-steps li[data-done="true"] .getting-started-icon {
+  background: none;
+  color: var(--mem-accent-sage-text);
+  font-size: 20px;
+}
+
+.getting-started-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.getting-started-step-title {
+  margin: 4px 0 0;
+  color: var(--mem-text);
+  font: 500 14px/1.4 var(--mem-font-body);
+}
+
+.getting-started-steps li[data-done="true"] .getting-started-step-title {
+  color: var(--mem-text-tertiary);
+}
+
+.getting-started-step-body {
+  margin: 2px 0 0;
+  color: var(--mem-text-secondary);
+  font: 13px/1.5 var(--mem-font-body);
+  overflow-wrap: anywhere;
+}
+
+.getting-started-action {
+  flex-shrink: 0;
+  align-self: center;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-md);
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: 500 13px/1.3 var(--mem-font-body);
+  padding: 7px 12px;
+  white-space: nowrap;
+}
+
+.getting-started-action:hover {
+  background-color: var(--mem-hover);
+}
+
+.getting-started-hide:focus-visible,
+.getting-started-action:focus-visible,
+.getting-started-reopen:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.getting-started-reopen {
+  align-self: center;
+  margin: 0 auto;
+  border: none;
+  background: none;
+  color: var(--mem-text-tertiary);
+  cursor: pointer;
+  font: 13px/1.5 var(--mem-font-body);
+  padding: 4px 0;
+}
+
+.getting-started-reopen:hover {
+  color: var(--mem-text);
+}
+
+@media (max-width: 639px) {
+  .getting-started {
+    padding: 16px 14px 6px;
+  }
+
+  .getting-started-steps li {
+    flex-wrap: wrap;
+  }
+
+  .getting-started-copy {
+    flex-basis: calc(100% - 40px);
+  }
+
+  .getting-started-action {
+    align-self: flex-start;
+    margin-left: 40px;
+  }
+}
+
+.getting-started-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--mem-border);
+  text-underline-offset: 3px;
+}
+
+.getting-started-link:hover {
+  color: var(--mem-text);
+}
+
+.getting-started-extra {
+  margin: 0 0 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mem-border);
+  color: var(--mem-text-secondary);
+  font: 12px/1.5 var(--mem-font-body);
+}
+
+.getting-started-link:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+/* With the directory gone the checklist is the whole screen, so it is sized
+   for that screen: wider, larger type and more room per step. It sits in the
+   upper third, where the eye lands first. */
+.wiki-reading-start[data-onboarding="true"] .getting-started {
+  max-width: min(100%, 640px);
+  margin-top: clamp(32px, 14vh, 128px);
+  padding: 24px 28px 10px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-header h2 {
+  font-size: 22px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-progress {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-steps li {
+  gap: 14px;
+  padding: 12px 0;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-icon {
+  width: 32px;
+  height: 32px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-step-title {
+  font-size: 16px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-step-body {
+  font-size: 14px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-action {
+  font-size: 14px;
+  padding: 8px 14px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-extra {
+  font-size: 13px;
+}

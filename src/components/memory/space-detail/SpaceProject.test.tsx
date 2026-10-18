@@ -29,11 +29,11 @@ beforeEach(() => {
 describe("Space notes and sources", () => {
   it("defaults to notes, creates in the current Space and never fetches standalone memories or topics", async () => {
     const result = workspace();
-    expect(await screen.findByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(listIndexedFiles).not.toHaveBeenCalled();
     expect(listEntities).not.toHaveBeenCalled(); expect(listMemoriesRich).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "New page" }));
+    fireEvent.click(screen.getByRole("button", { name: "New note" }));
     expect(result.onCreatePage).toHaveBeenCalledExactlyOnceWith(a.name);
   });
   it("uses canonical Space scope and only document source kinds", async () => {
@@ -59,7 +59,7 @@ describe("Space notes and sources", () => {
     await screen.findByText("Readme.md");
     expect(screen.getByRole("button", { name: "Cards" })).toHaveAttribute("aria-pressed", "true");
     expect(document.querySelector(".space-project-sources")).toHaveAttribute("data-lens", "cards");
-    fireEvent.click(screen.getByRole("tab", { name: "Pages" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
     expect(await screen.findByRole("button", { name: /Project note/ })).toBeInTheDocument();
     expect(document.querySelector(".space-dossier-page-list")).toHaveAttribute("data-lens", "cards");
   });
@@ -125,7 +125,7 @@ describe("Space notes and sources", () => {
     await screen.findByRole("dialog"); result.switchSpace();
     await screen.findByRole("heading", { name: b.name });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
     await act(async () => pending.resolve([chunk("Stale project body.")]));
     expect(screen.queryByText("Stale project body.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Sources" }));
@@ -145,15 +145,15 @@ describe("Space notes and sources", () => {
     expect(screen.queryByText("Old.pdf")).not.toBeInTheDocument();
   });
   it("uses keyboard tabs and keeps review only in the overflow menu", async () => {
-    const result = workspace(); const notes = await screen.findByRole("tab", { name: "Pages" });
+    const result = workspace(); const notes = await screen.findByRole("tab", { name: "Notes" });
     notes.focus(); fireEvent.keyDown(notes, { key: "ArrowRight" });
     expect(screen.getByRole("tab", { name: "Sources" })).toHaveFocus();
     fireEvent.keyDown(screen.getByRole("tab", { name: "Sources" }), { key: "Home" });
     expect(notes).toHaveFocus();
     const more = screen.getByRole("button", { name: `Actions for ${a.name}` });
     more.focus(); fireEvent.keyDown(more, { key: "ArrowDown" });
-    expect(await screen.findByRole("menuitem", { name: "Review page changes" })).toHaveFocus();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Review page changes" }));
+    expect(await screen.findByRole("menuitem", { name: "Review note changes" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Review note changes" }));
     expect(result.onReviewAll).toHaveBeenCalledExactlyOnceWith();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });

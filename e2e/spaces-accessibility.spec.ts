@@ -411,7 +411,7 @@ test("reaches management, dossier, graph, ledger, observation, and linked-memory
   await page.keyboard.press("Enter");
   await expect(page.locator(".space-dossier")).toBeVisible();
   const sourcesTab = page.getByRole("tab", { name: "Sources" });
-  const notesTab = page.getByRole("tab", { name: "Pages" });
+  const notesTab = page.getByRole("tab", { name: "Notes" });
   await tabTo(page, notesTab);
   await assertFocusOutline(page);
   await page.keyboard.press("ArrowRight");
@@ -572,7 +572,7 @@ test("preserves the Entity signature and CJK dossiers at 200 percent zoom", asyn
   const selectedNoteTab = zoomPage.getByRole("tab", { name: "Independent research", exact: true });
   await expect(selectedNoteTab).toBeVisible();
   await assertNotClipped(selectedNoteTab);
-  const pageEditor = zoomPage.getByRole("textbox", { name: "頁面編輯器", exact: true });
+  const pageEditor = zoomPage.getByRole("textbox", { name: "筆記編輯器", exact: true });
   await expect(pageEditor).toBeVisible();
   await expect(pageEditor).toContainText("Independent research");
   const editorBounds = await pageEditor.evaluate((node) => { const box = node.getBoundingClientRect(); const element = node as HTMLElement; return { left: box.left, right: box.right, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }; });
@@ -687,5 +687,5 @@ test("removes non-essential transitions under reduced motion", async ({ page }) 
   await expect(newSpace).toHaveCSS("transition-duration", "0s");
   await spaceOverviewButton(page).click();
   await expect(page.locator(".space-dossier-archive-trigger")).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "Pages" })).toHaveCSS("transition-duration", "0s");
+  await expect(page.getByRole("tab", { name: "Notes" })).toHaveCSS("transition-duration", "0s");
 });

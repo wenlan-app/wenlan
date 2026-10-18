@@ -59,7 +59,7 @@ test("N is group-local and does not capture note editing",async({page},info) => 
  await right.locator(".page-canvas-surface").focus();await page.keyboard.press("n");
  await expect(right.getByRole("textbox",{name:"Name this node",exact:true})).toBeVisible();await expect(left.getByRole("textbox",{name:"Name this node",exact:true})).toHaveCount(0);await page.keyboard.press("Escape");
  await left.getByRole("tab",{name:"Info",exact:true}).click();await expect(left.locator(".page-canvas-surface")).toHaveCount(0);await expect(right.locator(".page-canvas-surface")).toBeVisible();
- const editor=left.getByRole("textbox",{name:"Page editor",exact:true});await editor.click();await page.keyboard.press("n");
+ const editor=left.getByRole("textbox",{name:"Note editor",exact:true});await editor.click();await page.keyboard.press("n");
  await expect(page.getByRole("textbox",{name:"Name this node",exact:true})).toHaveCount(0);await page.keyboard.press("Backspace");
  await page.screenshot({path:info.outputPath("local-controls.png")});expect(runtime.calls().filter(c=>c.command==="create_page_map_node")).toHaveLength(0);
  expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);

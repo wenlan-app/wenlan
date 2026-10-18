@@ -116,6 +116,22 @@
   font: 12px/1.55 var(--mem-font-body);
 }
 
+.wiki-recent-notes-empty p { margin: 0; }
+
+.wiki-recent-notes-empty button {
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mem-text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.wiki-recent-notes-empty button:hover { color: var(--mem-text-primary, var(--mem-text-secondary)); }
+
 @media (prefers-reduced-motion: reduce) {
   .wiki-recent-note-grip { transition: none; }
   .wiki-recent-notes-list:has(.is-dragging) > .wiki-recent-note-row { transition: none; }

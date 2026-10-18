@@ -39,13 +39,14 @@ export async function installTauriMock(
     options.delays,
   );
   await page.exposeBinding("__wenlanTauriInvoke", (_source, command: string, args?: unknown) => runtime.invoke(command, args));
-  await page.addInitScript(({ locale, localeStorageKey, storageEntries, preserveLocalStorage }) => {
+  await page.addInitScript(({ locale, localeStorageKey, storageEntries, preserveLocalStorage, showGettingStarted }) => {
     if (!preserveLocalStorage) window.localStorage.clear();
     const initializePreference = (key: string, value: string) => {
       if (!preserveLocalStorage || window.localStorage.getItem(key) === null) window.localStorage.setItem(key, value);
     };
     initializePreference(localeStorageKey, locale);
     initializePreference("wenlan-sidebar-collapsed", "false");
+    if (!showGettingStarted) initializePreference("onboarding:gettingStartedDismissed", "1");
     for (const [key, value] of storageEntries) initializePreference(key, value);
 
     const callbacks = new Map<number, (...args: unknown[]) => unknown>();
@@ -93,6 +94,7 @@ export async function installTauriMock(
     localeStorageKey: APP_LOCALE_STORAGE_KEY,
     storageEntries: Object.entries(options.localStorage ?? {}),
     preserveLocalStorage: options.preserveLocalStorage ?? false,
+    showGettingStarted: options.gettingStarted ?? false,
   });
   return {
     calls: () => runtime.calls(),

@@ -31,7 +31,7 @@ const localeCases: Record<Exclude<AppLocale, "en">, {
     action: "动作",
     spaces: "空间",
     actionLabels: [
-      "跳过页面更新",
+      "跳过笔记更新",
       "新增观察",
       "新增实体",
       "新增关系",
@@ -46,7 +46,7 @@ const localeCases: Record<Exclude<AppLocale, "en">, {
     action: "動作",
     spaces: "空間",
     actionLabels: [
-      "略過頁面更新",
+      "略過筆記更新",
       "新增觀察",
       "新增實體",
       "新增關聯",

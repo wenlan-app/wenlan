@@ -3,7 +3,6 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Space } from "../../lib/tauri";
 import { Button, Field, Select } from "./settings/primitives";
-import { secondaryText } from "./remoteAccessParts";
 import { wholeLibrary, type RemoteScope } from "./remoteScope";
 
 /**
@@ -52,8 +51,6 @@ export function RemoteScopeChooser({ spaces, defaultSpace, current = null, busy 
           {t("remoteAccess.shareOneSpace")}
         </Button>
       </div>
-      <p className={secondaryText}>{t("remoteAccess.wholeLibraryHint")}</p>
-      {spaces.length === 0 && <p className={secondaryText}>{t("remoteAccess.noSpacesForOne")}</p>}
       {picking && offered.length > 0 && (
         <div className="flex flex-wrap items-end gap-2">
           <div className="min-w-0 w-full max-w-xs">

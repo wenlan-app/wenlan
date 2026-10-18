@@ -9,6 +9,7 @@ test('allowlisted redirect hosts are the only known clients', () => {
     ['https://claude.com/api/mcp/auth_callback', 'Claude'],
     ['https://chatgpt.com/connector_platform_oauth_redirect', 'ChatGPT'],
     ['https://chat.openai.com/aip/callback', 'ChatGPT'],
+    ['https://agent.meta.ai/oauth/callback', 'Muse'],
     ['https://CLAUDE.AI/callback', 'Claude'],
   ] as const) {
     assert.equal(knownClientName(uri), name, uri);
@@ -25,6 +26,8 @@ test('look-alike, subdomain, non-https, port and userinfo redirects are unknown'
     'https://www.claude.ai/callback',
     'https://claude.ai.example/callback',
     'https://chatgpt.com.attacker.example/callback',
+    'https://meta.ai/callback',
+    'https://evil.agent.meta.ai/callback',
     'https://xn--claud-0ra.ai/callback',
     'http://claude.ai/callback',
     'https://claude.ai:8443/callback',

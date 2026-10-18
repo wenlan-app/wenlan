@@ -19,6 +19,71 @@ use anyhow::Result;
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
 
+/// `wenlan pages lock|unlock <page-id>`: the page review lock.
+#[derive(Debug, clap::Subcommand)]
+pub enum PagesAction {
+    /// Require review for every machine write to a page: agent and pipeline
+    /// updates are staged as revision cards. Your own edits still apply.
+    Lock {
+        /// The page's id (see `wenlan pages <query> --resolve-id`).
+        page_id: String,
+    },
+    /// Clear a page's review lock.
+    Unlock {
+        /// The page's id (see `wenlan pages <query> --resolve-id`).
+        page_id: String,
+    },
+}
+
+/// Page ids are opaque ASCII tokens; refuse anything that could change the
+/// request path before it reaches the daemon.
+fn validate_page_id(page_id: &str) -> Result<()> {
+    let ok = !page_id.is_empty()
+        && page_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !ok {
+        anyhow::bail!(
+            "invalid page id {page_id:?}: use the id printed by `wenlan pages <query> --resolve-id`"
+        );
+    }
+    Ok(())
+}
+
+pub async fn run_action(
+    client: &WenlanClient,
+    format: ResolvedFormat,
+    quiet: bool,
+    action: PagesAction,
+) -> Result<()> {
+    let (page_id, required) = match action {
+        PagesAction::Lock { page_id } => (page_id, true),
+        PagesAction::Unlock { page_id } => (page_id, false),
+    };
+    validate_page_id(&page_id)?;
+    let receipt = client.set_page_review_required(&page_id, required).await?;
+    if quiet {
+        return Ok(());
+    }
+    match format {
+        ResolvedFormat::Json => print_json(&receipt)?,
+        ResolvedFormat::Table => {
+            if receipt.review_required {
+                println!(
+                    "Locked page {}: agent and pipeline updates now wait for your review.",
+                    receipt.page_id
+                );
+            } else {
+                println!(
+                    "Unlocked page {}: updates apply under the usual rules again.",
+                    receipt.page_id
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One distilled page on disk.
 #[derive(Debug, Clone)]
 pub struct PageEntry {

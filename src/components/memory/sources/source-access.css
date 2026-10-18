@@ -41,3 +41,6 @@
 .source-add-option-copy strong { font-size:14px; font-weight:500; color:var(--mem-text); }
 .source-add-option--vault { background:var(--mem-indigo-bg); margin-bottom:8px; }
 .source-add-option:disabled { cursor:wait; opacity:.6; }
+
+.source-chat-export-steps { margin:8px 0 14px; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; font-size:13px; line-height:1.5; color:var(--mem-text-secondary); }
+.source-chat-export-steps strong { color:var(--mem-text); font-weight:500; margin-right:6px; }

@@ -7,7 +7,10 @@ import { WikiWorkspace } from "./WikiWorkspace";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
 
 vi.mock("./PageInventoryPanel", () => ({
-  PageInventoryPanel: () => <div data-testid="wiki-directory" />,
+  PageInventoryPanel: ({ onNoteCountChange }: { onNoteCountChange?: (count: number | null) => void }) => {
+    useEffect(() => { onNoteCountChange?.(145); }, [onNoteCountChange]);
+    return <div data-testid="wiki-directory" />;
+  },
 }));
 
 describe("WikiWorkspace", () => {
@@ -32,6 +35,19 @@ describe("WikiWorkspace", () => {
     fireEvent.change(mode, { target: { value: "recent" } });
     expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
     expect(getByTestId("active-editor")).toBe(editor);
+  });
+
+  it("shows the Folders note count as a number beside the title, and only in folders mode", () => {
+    render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
+    const mode = screen.getByRole("combobox");
+    expect(screen.queryByText("145 notes")).not.toBeInTheDocument();
+    fireEvent.change(mode, { target: { value: "folders" } });
+    const count = screen.getByTitle("145 notes");
+    expect(count).toHaveTextContent("145");
+    expect(count.previousElementSibling).toBe(mode.closest("label"));
+    expect(screen.getByText("145 notes")).toHaveClass("sr-only");
+    fireEvent.change(mode, { target: { value: "recent" } });
+    expect(screen.queryByTitle("145 notes")).not.toBeInTheDocument();
   });
 
   it("restores the chosen custom mode after remount without entering the folder tree", () => {
@@ -158,5 +174,21 @@ describe("WikiWorkspace", () => {
 
     expect(container.querySelector(".wiki-recent-notes-empty")).toBeInTheDocument();
     expect(container.querySelector(".wiki-recent-notes-list")).not.toBeInTheDocument();
+  });
+
+  it("marks the workspace only while the directory is hidden so CSS can drop it", () => {
+    const props = { onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
+    const { container, rerender } = render(<WikiWorkspace {...props}><textarea /></WikiWorkspace>);
+    const workspace = container.querySelector(".wiki-workspace");
+    expect(workspace).not.toHaveAttribute("data-directory-hidden");
+
+    rerender(<WikiWorkspace {...props} directoryHidden><textarea /></WikiWorkspace>);
+    expect(workspace).toHaveAttribute("data-directory-hidden", "true");
+    // The folders toggle and directory stay mounted (CSS hides them) so the
+    // two-column layout returns without remounting the reading column.
+    expect(container.querySelector(".wiki-workspace-directory")).toBeInTheDocument();
+
+    rerender(<WikiWorkspace {...props} directoryHidden={false}><textarea /></WikiWorkspace>);
+    expect(workspace).not.toHaveAttribute("data-directory-hidden");
   });
 });

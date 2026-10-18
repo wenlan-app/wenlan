@@ -335,6 +335,13 @@ pub struct UpdateAgentRequest {
     pub display_name: Option<String>,
 }
 
+/// `POST /api/agents` — register a tool the user has just connected so its
+/// first read already sees what a trusted agent sees.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RegisterAgentRequest {
+    pub name: String,
+}
+
 // ===== Spaces =====
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -851,9 +858,25 @@ pub struct UpdatePageRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RefreshPageRequest {
     pub content: String,
+    /// May be empty only when the existing page has no sources (an authored
+    /// page written from a conversation); a sourced page refuses an empty set.
+    #[serde(default)]
     pub source_memory_ids: Vec<String>,
     #[serde(default)]
     pub summary: Option<String>,
+    /// The `version` the caller read. When set and the page has moved on, the
+    /// write is refused with 409; when set and current, an agent may update a
+    /// human-owned page directly (only the review lock still stages a card).
+    #[serde(default)]
+    pub expected_version: Option<i64>,
+}
+
+/// Request body for `PUT /api/pages/{id}/review-required`: set or clear the
+/// review lock that makes every machine write stage a revision card.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetPageReviewRequiredRequest {
+    pub required: bool,
 }
 
 /// Explicit metadata edit, separate from content refresh. A caller must have

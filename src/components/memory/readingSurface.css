@@ -11,10 +11,6 @@
   --reading-frame-padding-block: 72px;
   --reading-frame-padding-block-end: 40px;
   --reading-compact-measure: 560px;
-  --reading-anchor-width: calc(var(--reading-compact-measure) + 2 * var(--reading-frame-padding-inline));
-  --reading-leading-ratio: 0.26;
-  --reading-frame-min-width: 460px;
-  --reading-info-width: 320px;
   --reading-tools-clearance: calc(var(--mem-icon-action-size) + 12px);
   --reading-frame-padding-inline: 32px;
   --reading-frame-padding-block-narrow: 24px;
@@ -26,14 +22,10 @@
   position: relative;
   display: flex;
   box-sizing: border-box;
-  /* Reserve a useful line length even with the folder list and Info open.
-     Both bounds use the unobstructed lane, so toggling Info cannot move it. */
-  --reading-leading-gutter: min(
-    max(0px, calc((var(--reading-unobstructed-width, 100%) - var(--reading-anchor-width)) * var(--reading-leading-ratio))),
-    max(0px, calc(var(--reading-unobstructed-width, 100%) - var(--reading-info-width) - var(--reading-frame-min-width)))
-  );
-  width: min(var(--reading-frame-max-width), calc(100% - var(--reading-leading-gutter)));
-  margin-inline: var(--reading-leading-gutter) auto;
+  /* The column centres in the lane beside the list and Info, so the space
+     on its two sides matches. */
+  width: min(var(--reading-frame-max-width), 100%);
+  margin-inline: auto;
   padding: var(--reading-frame-padding-block) var(--reading-frame-padding-inline) var(--reading-frame-padding-block-end);
   flex-direction: column;
   gap: 22px;

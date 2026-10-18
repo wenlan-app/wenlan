@@ -11,7 +11,7 @@ test('new note autosaves while typing, finalizes on switch and stays editable',a
  await expect(f.getByRole('textbox',{name:'Content',exact:true})).toBeFocused();await page.screenshot({path:info.outputPath('writing.png')});
  await f.getByRole('tab',{name:'Fixture architecture',exact:true}).click();await expect(f.getByRole('heading',{name:'Fixture architecture',exact:true})).toBeVisible();
  await f.getByRole('tab',{name:'A normal note',exact:true}).click();await expect(f.locator('.page-detail')).toContainText('Keep this first paragraph.');await expect(f.locator('.page-draft-editor')).toHaveCount(0);
- await f.getByRole('textbox',{name:'Page editor',exact:true}).fill('Keep this first paragraph. More writing.');await expect.poll(()=>runtime.calls().filter(c=>c.command==='update_page').length).toBeGreaterThan(0);await page.screenshot({path:info.outputPath('saved-editable.png')});
+ await f.getByRole('textbox',{name:'Note editor',exact:true}).fill('Keep this first paragraph. More writing.');await expect.poll(()=>runtime.calls().filter(c=>c.command==='update_page').length).toBeGreaterThan(0);await page.screenshot({path:info.outputPath('saved-editable.png')});
  expect(runtime.calls().filter(c=>c.command==='publish_page_draft')).toHaveLength(1);expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
 });
 test('title-only and body-only notes finalize across both groups and close',async({page},info)=>{
@@ -26,7 +26,7 @@ test('title-only and body-only notes finalize across both groups and close',asyn
 test('failed automatic save keeps text and retry returns an editable note',async({page},info)=>{
  const {errors,runtime}=await start(page);await create(page);await g(page).getByRole('textbox',{name:'Title',exact:true}).fill('Recovered note');await g(page).getByRole('textbox',{name:'Content',exact:true}).fill('Never lose this text.');runtime.failNext('publish_page_draft','simulated interruption');
  await g(page).getByRole('tab',{name:'Fixture architecture',exact:true}).click();await expect(g(page).getByRole('alert')).toContainText('Your text is still here');await expect(g(page).getByRole('textbox',{name:'Content',exact:true})).toHaveValue('Never lose this text.');await page.screenshot({path:info.outputPath('save-error.png')});
- await g(page).getByRole('button',{name:'Retry save',exact:true}).click();await expect(g(page).locator('.page-detail')).toContainText('Never lose this text.');await expect(g(page).getByRole('textbox',{name:'Page editor',exact:true})).toBeEditable();expect(errors.pageErrors).toEqual([]);
+ await g(page).getByRole('button',{name:'Retry save',exact:true}).click();await expect(g(page).locator('.page-detail')).toContainText('Never lose this text.');await expect(g(page).getByRole('textbox',{name:'Note editor',exact:true})).toBeEditable();expect(errors.pageErrors).toEqual([]);
 });
 test('explicit title conflict preserves note; rename resolves; blank tabs do not persist',async({page},info)=>{
  const {errors,runtime}=await start(page);await create(page);await g(page).locator('.note-tab[data-active="true"] .note-tab-close').click();expect(runtime.calls().filter(c=>c.command==='create_page_draft')).toHaveLength(0);

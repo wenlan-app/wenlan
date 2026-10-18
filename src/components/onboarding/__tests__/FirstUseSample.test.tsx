@@ -17,9 +17,8 @@ const mockedClipboardWrite = vi.mocked(clipboardWrite);
 function renderSample(props = {}) {
   return render(
     <FirstUseSample
-      onBackToGuide={vi.fn()}
-      onBringData={vi.fn()}
-      onConnect={vi.fn()}
+      onBack={vi.fn()}
+      onFinish={vi.fn()}
       {...props}
     />,
   );
@@ -84,8 +83,8 @@ describe("FirstUseSample demo isolation", () => {
     fireEvent.click(screen.getByTestId("sample-citation-sample-cite-2"));
     expect(screen.getByTestId("sample-citation-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open related page" }));
-    expect(screen.getByTestId("sample-related-dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
+    expect(screen.getByText("Let AI use your knowledge")).toBeInTheDocument();
     // The only daemon-adjacent call allowed on the sample path is clipboard.
     expect(mockedInvoke).not.toHaveBeenCalled();
   });
@@ -139,28 +138,25 @@ describe("FirstUseSample demo isolation", () => {
 });
 
 describe("FirstUseSample source rack and page flow", () => {
-  it("keeps the three-source rack visible from import through the final page", () => {
+  it("leads with the page, shows where it came from, then an AI answering from it", () => {
     renderSample();
-    for (const testId of [
-      "sample-source-sample-memory",
-      "sample-source-sample-file",
-      "sample-source-sample-page",
-    ]) {
-      expect(screen.getByTestId(testId)).toBeInTheDocument();
-    }
+    expect(screen.getByText("An unhurried Tainan weekend")).toBeInTheDocument();
+    expect(screen.getByTestId("sample-source-sample-memory")).toBeInTheDocument();
+    expect(screen.getByTestId("sample-source-sample-file")).toBeInTheDocument();
+    expect(screen.queryByTestId("sample-source-sample-page")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("sample-phase-1"));
+    expect(screen.getByTestId("sample-source-sample-memory")).toHaveAttribute("data-lit", "true");
+    expect(screen.getByTestId("sample-source-sample-file")).toHaveAttribute("data-dimmed", "true");
+
+    fireEvent.click(screen.getByTestId("sample-phase-2"));
+    expect(screen.getByTestId("sample-source-sample-file")).toHaveAttribute("data-lit", "true");
+    expect(screen.getByTestId("sample-source-sample-memory")).toHaveAttribute("data-dimmed", "true");
+
     skipToResult();
-    for (const testId of [
-      "sample-source-sample-memory",
-      "sample-source-sample-file",
-      "sample-source-sample-page",
-    ]) {
-      expect(screen.getByTestId(testId)).toBeInTheDocument();
-    }
-    expect(
-      screen.getByText("Weekend trip decision"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("packing-list.md")).toBeInTheDocument();
-    expect(screen.getByText("Slow travel")).toBeInTheDocument();
+    expect(screen.getByText("An unhurried Tainan weekend")).toBeInTheDocument();
+    expect(screen.queryByTestId("sample-source-sample-memory")).not.toBeInTheDocument();
+    expect(screen.getByText("What's left before the Tainan weekend?")).toBeInTheDocument();
   });
 
   it("opens the file original with path and line context", () => {
@@ -193,25 +189,6 @@ describe("FirstUseSample source rack and page flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens the related internal sample page and returns", () => {
-    renderSample();
-    skipToResult();
-    fireEvent.click(screen.getByRole("button", { name: "Open related page" }));
-    const dialog = screen.getByTestId("sample-related-dialog");
-    expect(
-      within(dialog).getByText("Two things left before departure"),
-    ).toBeInTheDocument();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Back to the page" }),
-    );
-    expect(
-      screen.queryByTestId("sample-related-dialog"),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText("An unhurried Tainan weekend"),
-    ).toBeInTheDocument();
-  });
-
   it("reveals the AI step only through Use with AI, with a way back", () => {
     renderSample();
     skipToResult();
@@ -222,7 +199,7 @@ describe("FirstUseSample source rack and page flow", () => {
     expect(
       screen.getByText("Let AI use your knowledge"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to the page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to the note" }));
     expect(
       screen.queryByText("Let AI use your knowledge"),
     ).not.toBeInTheDocument();
@@ -253,21 +230,17 @@ describe("FirstUseSample dialogs", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("traps Tab and Shift+Tab inside the dialog", () => {
+  it("keeps Tab and Shift+Tab inside the dialog", () => {
     renderSample();
     skipToResult();
-    fireEvent.click(screen.getByRole("button", { name: "Open related page" }));
-    const dialog = screen.getByTestId("sample-related-dialog");
+    fireEvent.click(screen.getByTestId("sample-citation-sample-cite-2"));
+    const dialog = screen.getByTestId("sample-citation-dialog");
     const closeButton = within(dialog).getByRole("button", { name: "Close" });
-    const backButton = within(dialog).getByRole("button", {
-      name: "Back to the page",
-    });
-    backButton.focus();
+    closeButton.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(document.activeElement).toBe(closeButton);
-    closeButton.focus();
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(document.activeElement).toBe(backButton);
+    expect(document.activeElement).toBe(closeButton);
   });
 });
 
@@ -294,7 +267,7 @@ describe("FirstUseSample AI-use panel", () => {
     renderSample();
     openAiPanel();
     expect(
-      screen.getByText(/ChatGPT can read your memories here but cannot write them back/),
+      screen.getByText(/ChatGPT can read but not write/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/note today's decisions/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
@@ -340,13 +313,13 @@ describe("FirstUseSample AI-use panel", () => {
     fireEvent.click(
       within(panel).getByRole("button", { name: "Copy command" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Copy command: Leave progress behind" }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy command: Save progress" }));
     await act(async () => {
       resolvers[1]!();
     });
-    const handoffRow = screen.getByRole("button", { name: "Copy command: Leave progress behind" }).closest("li")!;
+    const handoffRow = screen.getByRole("button", { name: "Copy command: Save progress" }).closest("li")!;
     expect(within(handoffRow).getByTestId("copy-ok")).toBeInTheDocument();
-    expect(within(handoffRow).getByRole("status")).toHaveTextContent("Leave progress behind: Copied");
+    expect(within(handoffRow).getByRole("status")).toHaveTextContent("Save progress: Copied");
     await act(async () => {
       resolvers[0]!();
     });
@@ -376,26 +349,30 @@ describe("FirstUseSample AI-use panel", () => {
     expect(screen.queryByText(/Copy failed/)).not.toBeInTheDocument();
   });
 
-  it("routes CTAs to the genuine setup route and the own-data chooser", () => {
-    const onConnect = vi.fn();
-    const onBringData = vi.fn();
-    renderSample({ onConnect, onBringData });
+  it("ends the AI panel with exactly one primary CTA that calls onFinish, and no connect or import CTAs", () => {
+    const onFinish = vi.fn();
+    const onBack = vi.fn();
+    renderSample({ onFinish, onBack });
     openAiPanel();
-    fireEvent.click(screen.getByRole("button", { name: "Connect my AI" }));
-    fireEvent.click(screen.getByRole("button", { name: "Bring my data" }));
-    expect(onConnect).toHaveBeenCalledTimes(1);
-    expect(onConnect).toHaveBeenCalledWith("chatgpt");
-    expect(onBringData).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Connect my AI" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bring my data" })).not.toBeInTheDocument();
+    const panel = screen.getByRole("tab", { name: "ChatGPT" }).closest("section")!;
+    const primary = panel.querySelectorAll("button.fug-button-primary");
+    expect(primary).toHaveLength(1);
+    expect(primary[0]).toHaveTextContent("Back to home");
+    expect(screen.getByText(i18n.t("firstUse.sample.notInLibrary"))).toBeVisible();
+    fireEvent.click(primary[0]!);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(onBack).not.toHaveBeenCalled();
   });
 
-  it("passes the selected client to onConnect", () => {
-    const onConnect = vi.fn();
-    renderSample({ onConnect });
+  it("uses the header back button for onBack and honours custom labels", () => {
+    const onBack = vi.fn();
+    renderSample({ onBack, backLabel: "Custom back", finishLabel: "Custom finish" });
+    fireEvent.click(screen.getByRole("button", { name: "Custom back" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
     openAiPanel();
-    fireEvent.click(screen.getByRole("tab", { name: "Claude" }));
-    fireEvent.click(screen.getByRole("button", { name: "Connect my AI" }));
-    expect(onConnect).toHaveBeenCalledTimes(1);
-    expect(onConnect).toHaveBeenCalledWith("claude");
+    expect(screen.getByRole("button", { name: "Custom finish" })).toBeInTheDocument();
   });
 
   it("explains read-only ChatGPT without a handoff command but keeps writes for local clients", () => {
@@ -403,42 +380,42 @@ describe("FirstUseSample AI-use panel", () => {
     openAiPanel();
     // Default client is ChatGPT: explain the limitation, never offer a save action.
     expect(
-      screen.getByText(/ChatGPT can read your memories here but cannot write them back/),
+      screen.getByText(/ChatGPT can read but not write/),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy command: Leave progress behind" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy command: Save progress" })).not.toBeInTheDocument();
     expect(screen.queryByText("/handoff")).not.toBeInTheDocument();
     expect(
       screen.getByText(/@wenlan recall the decisions/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
-    expect(screen.getByText(/Leave progress behind/)).toBeInTheDocument();
+    expect(screen.getByText(/Save progress/)).toBeInTheDocument();
     expect(screen.getByText("/handoff")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Claude" }));
-    expect(screen.getByText(/Leave progress behind/)).toBeInTheDocument();
+    expect(screen.getByText(/Save progress/)).toBeInTheDocument();
   });
 
   it("shows the ChatGPT read-only note only for ChatGPT", () => {
     renderSample();
     openAiPanel();
     expect(
-      screen.getByText(/read-only web access to the selected project/),
+      screen.getByText(/through the web relay/),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
     expect(
-      screen.queryByText(/read-only web access to the selected project/),
+      screen.queryByText(/through the web relay/),
     ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Claude" }));
     expect(
-      screen.queryByText(/read-only web access to the selected project/),
+      screen.queryByText(/through the web relay/),
     ).not.toBeInTheDocument();
   });
 
   it("announces which secondary command was copied and reports its failure", async () => {
     renderSample();
     openAiPanel();
-    const copy = screen.getByRole("button", { name: "Copy command: Brief a new conversation" });
+    const copy = screen.getByRole("button", { name: "Copy command: Brief a new chat" });
     fireEvent.click(copy);
-    expect(await within(copy.closest("li")!).findByText("Brief a new conversation: Copied")).toHaveAttribute("role", "status");
+    expect(await within(copy.closest("li")!).findByText("Brief a new chat: Copied")).toHaveAttribute("role", "status");
     mockedClipboardWrite.mockRejectedValueOnce(new Error("denied"));
     fireEvent.click(copy);
     expect(await within(copy.closest("li")!).findByRole("alert")).toHaveTextContent("Copy failed");
@@ -470,15 +447,17 @@ describe("FirstUseSample AI-use panel", () => {
 
   it.each(["en", "zh-Hant", "zh-Hans"])("renders capability-aware setup in %s", async (locale) => {
     await i18n.changeLanguage(locale);
-    const onConnect = vi.fn();
-    renderSample({ onConnect });
+    const onFinish = vi.fn();
+    renderSample({ onFinish });
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.sample.skipToResult") }));
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.sample.useWithAi") }));
     expect(screen.getByText(i18n.t("firstUse.sample.chatgptNote"))).toBeVisible();
-    expect(screen.getByText(i18n.t("firstUse.sample.connectHint"))).toBeVisible();
+    expect(screen.getByText(i18n.t("firstUse.sample.useBody"))).toBeVisible();
     expect(screen.queryByText("/handoff")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.sample.connectCta") }));
-    expect(onConnect).toHaveBeenCalledWith("chatgpt");
+    // Header back and the final button share the label; the final one is last.
+    const finishButtons = screen.getAllByRole("button", { name: i18n.t("firstUse.sample.finish") });
+    fireEvent.click(finishButtons[finishButtons.length - 1]!);
+    expect(onFinish).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
     expect(screen.queryByText(i18n.t("firstUse.sample.chatgptNote"))).not.toBeInTheDocument();
     expect(screen.getByText("/handoff")).toBeVisible();

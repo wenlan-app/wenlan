@@ -35,7 +35,7 @@
   border: none;
   cursor: pointer;
   font-family: var(--mem-font-body);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--mem-text-secondary);
   padding: 4px 0;
 }
@@ -65,65 +65,6 @@
   line-height: 1.6;
   margin: 0;
   max-width: 62ch;
-}
-
-.fug-steps,
-.fug-options {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.fug-steps li,
-.fug-options li {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
-  border: 1px solid var(--mem-border);
-  border-radius: 12px;
-  background-color: var(--mem-surface);
-}
-
-.fug-options li {
-  align-items: center;
-}
-
-.fug-options li div {
-  flex: 1;
-  min-width: 0;
-}
-
-.fug-step-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  background-color: var(--mem-indigo-bg);
-  color: var(--mem-accent-indigo);
-  font-size: 18px;
-}
-
-.fug-step-title {
-  font-family: var(--mem-font-body);
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--mem-text);
-  margin: 0 0 4px;
-}
-
-.fug-step-body {
-  font-family: var(--mem-font-body);
-  font-size: 13px;
-  color: var(--mem-text-secondary);
-  line-height: 1.6;
-  margin: 0;
 }
 
 .fug-button-primary,
@@ -191,18 +132,24 @@
   gap: 16px;
 }
 
-.fus-animation-label {
-  font-family: var(--mem-font-mono);
-  font-size: 11px;
-  color: var(--mem-text-tertiary);
-  white-space: nowrap;
+.fus-top,
+.fus-step-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.fus-exit {
+  margin-left: auto;
 }
 
 .fus-phases {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   margin: 0;
   padding: 0;
 }
@@ -212,12 +159,13 @@
   align-items: center;
   gap: 8px;
   font-family: var(--mem-font-body);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--mem-text-secondary);
   background-color: var(--mem-surface);
   border: 1px solid var(--mem-border);
   border-radius: 999px;
-  padding: 6px 12px 6px 6px;
+  padding: 5px 12px 5px 5px;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -240,7 +188,7 @@
 
 .fus-phase-body {
   font-family: var(--mem-font-body);
-  font-size: 13px;
+  font-size: 15px;
   color: var(--mem-text-secondary);
   margin: 0;
 }
@@ -251,30 +199,11 @@
   gap: 8px;
 }
 
-.fus-workbench {
-  display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-@media (max-width: 640px) {
-  .fus-workbench {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.fus-rack {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
 .fus-rack-heading {
-  font-family: var(--mem-font-mono);
-  font-size: 11px;
-  color: var(--mem-text-tertiary);
+  font-family: var(--mem-font-body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mem-text-secondary);
   margin: 0;
 }
 
@@ -292,8 +221,18 @@
   font-family: var(--mem-font-body);
 }
 
-.fus-rack-card[data-linked="true"] {
-  border-color: color-mix(in srgb, var(--mem-accent-sage) 38%, var(--mem-border));
+.fus-rack-card,
+.fus-result-paragraph {
+  transition: opacity 0.3s ease, border-color 0.3s ease;
+}
+
+.fus-rack-card[data-lit="true"] {
+  border-color: color-mix(in srgb, var(--mem-accent-amber) 45%, var(--mem-border));
+}
+
+.fus-rack-card[data-dimmed="true"],
+.fus-result-paragraph[data-dimmed="true"] {
+  opacity: 0.45;
 }
 
 .fus-rack-copy {
@@ -305,32 +244,102 @@
 
 .fus-rack-title {
   font-family: var(--mem-font-heading);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   color: var(--mem-text);
 }
 
-.fus-rack-excerpt,
 .fus-rack-point {
-  font-size: 13px;
+  display: block;
+  font-size: 14px;
   color: var(--mem-text-secondary);
   line-height: 1.55;
 }
 
-.fus-doc {
-  border: 1px solid var(--mem-border);
-  border-radius: 12px;
-  background-color: var(--mem-surface);
-  padding: 20px;
-  min-height: 220px;
+/* The page leads the walkthrough; below it, either where its lines came
+   from or an AI answering from it. */
+.fus-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   min-width: 0;
 }
 
-.fus-doc > div,
-.fus-doc > ul,
-.fus-doc > article,
-.fus-doc > p {
+.fus-origins,
+.fus-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   animation: fus-fade-in 0.4s ease both;
+}
+
+.fus-origin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .fus-origin-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fus-chat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fus-chat-turn {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  border: 1px solid var(--mem-border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  background-color: var(--mem-surface);
+}
+
+.fus-chat-turn[data-role="user"] {
+  background-color: var(--mem-bg);
+}
+
+.fus-chat-who {
+  flex-shrink: 0;
+  min-width: 24px;
+  font-family: var(--mem-font-body);
+  font-size: 12px;
+  color: var(--mem-text-tertiary);
+}
+
+.fus-chat-turn p {
+  margin: 0;
+  font-family: var(--mem-font-body);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--mem-text);
+}
+
+.fus-own {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.fus-own p {
+  margin: 0;
+  font-family: var(--mem-font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--mem-text-secondary);
+}
+
+.fus-own button {
+  flex-shrink: 0;
 }
 
 @keyframes fus-fade-in {
@@ -344,49 +353,16 @@
   }
 }
 
-.fus-doc mark,
+/* The quoted line gets a soft warm wash, like a light highlighter on
+   paper, rather than a saturated fill or a coloured line. */
+.fus-result-page mark,
 .fus-rack-card mark,
 .fus-dialog mark {
-  background-color: color-mix(in srgb, var(--mem-accent-warm) 25%, transparent);
-  color: inherit;
-  border-radius: 3px;
-  padding: 0 2px;
-}
-
-.fus-forming {
-  font-family: var(--mem-font-body);
-  font-size: 13px;
-  color: var(--mem-text-tertiary);
-  line-height: 1.6;
-  margin: 0;
-}
-
-.fus-doc-heading {
-  font-family: var(--mem-font-body);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--mem-text-secondary);
-  margin: 0 0 10px;
-}
-
-.fus-marker {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--mem-font-body);
-  font-size: 12px;
-  color: var(--mem-text-secondary);
-  border: 1px solid var(--mem-border);
-  border-radius: 999px;
-  padding: 2px 10px;
-  margin-top: 6px;
-  background: none;
-  cursor: default;
-}
-
-button.fus-marker {
-  cursor: pointer;
-  margin-top: 0;
+  color: var(--mem-text);
+  background: color-mix(in srgb, var(--mem-accent-amber) 22%, transparent);
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 
 .fus-source-icon {
@@ -411,71 +387,30 @@ button.fus-marker {
   background-color: color-mix(in srgb, var(--mem-accent-warm) 12%, transparent);
 }
 
-[data-source-type="page"] .fus-source-icon {
-  color: var(--mem-accent-sage);
-  background-color: color-mix(in srgb, var(--mem-accent-sage) 12%, transparent);
-}
-
 [data-source-type="text"] .fus-source-icon {
   color: var(--mem-accent-glow);
   background-color: color-mix(in srgb, var(--mem-accent-glow) 12%, transparent);
 }
 
 .fus-source-kind {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: var(--mem-font-body);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--mem-text-tertiary);
 }
 
-.fus-extract-list,
-.fus-connect-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.fus-extract-list li {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  font-family: var(--mem-font-body);
-  font-size: 13px;
-  color: var(--mem-text);
-  line-height: 1.6;
-  padding: 10px 12px;
+.fus-result-page {
   border: 1px solid var(--mem-border);
-  border-radius: 10px;
-  background-color: var(--mem-bg);
-}
-
-.fus-connect-list li {
-  padding: 10px 12px;
-  border: 1px solid var(--mem-border);
-  border-radius: 10px;
-  background-color: var(--mem-bg);
-}
-
-.fus-connect-list p {
-  font-family: var(--mem-font-body);
-  font-size: 13px;
-  color: var(--mem-text);
-  line-height: 1.6;
-  margin: 0 0 8px;
-}
-
-.fus-connect-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  border-radius: 12px;
+  background-color: var(--mem-surface);
+  padding: 16px 24px 8px;
 }
 
 .fus-result-page h2 {
   font-family: var(--mem-font-heading);
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 500;
   color: var(--mem-text);
   margin: 0 0 4px;
@@ -483,7 +418,7 @@ button.fus-marker {
 
 .fus-result-subtitle {
   font-family: var(--mem-font-body);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--mem-text-secondary);
   margin: 0 0 12px;
 }
@@ -495,10 +430,10 @@ button.fus-marker {
 
 .fus-result-paragraph {
   font-family: var(--mem-font-body);
-  font-size: 14px;
+  font-size: 15px;
   color: var(--mem-text);
-  line-height: 1.7;
-  margin: 0 0 12px;
+  line-height: 1.65;
+  margin: 0 0 10px;
 }
 
 .fus-citation {
@@ -506,7 +441,7 @@ button.fus-marker {
   align-items: center;
   gap: 4px;
   font-family: var(--mem-font-body);
-  font-size: 12px;
+  font-size: 13px;
   border-radius: 999px;
   padding: 1px 10px;
   margin-left: 6px;
@@ -515,39 +450,6 @@ button.fus-marker {
   border: 1px solid var(--mem-border);
   background-color: var(--mem-bg);
   color: var(--mem-text-secondary);
-}
-
-.fus-related-card {
-  margin-top: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--mem-border);
-  border-radius: 10px;
-  background-color: var(--mem-bg);
-}
-
-.fus-related-eyebrow {
-  font-family: var(--mem-font-body);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--mem-text-tertiary);
-  margin: 0 0 4px;
-}
-
-.fus-related-title {
-  font-family: var(--mem-font-heading);
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--mem-text);
-  margin: 0 0 4px;
-}
-
-.fus-related-body {
-  font-family: var(--mem-font-body);
-  font-size: 13px;
-  color: var(--mem-text-secondary);
-  line-height: 1.6;
-  margin: 0 0 8px;
 }
 
 /* ── Dialogs ────────────────────────────────────────── */
@@ -844,10 +746,52 @@ button.fus-marker {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fus-doc > div,
-  .fus-doc > ul,
-  .fus-doc > article,
-  .fus-doc > p {
+  .fus-origins,
+  .fus-chat,
+  .fus-rack-card,
+  .fus-result-paragraph {
     animation: none;
+    transition: none;
+  }
+}
+
+/* The sample walkthrough should fit one window without scrolling, so it
+   drops the generous page padding the reading views use and takes the
+   window's height. A window too short for the last step scrolls inside the
+   walkthrough itself instead of the whole page. */
+.memory-main-content:has(> .fug-root[data-view="sample"]) {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 40px 20px;
+}
+
+.fug-root[data-view="sample"] {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+.fug-root[data-view="sample"] .fug-sample {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.fug-root[data-view="sample"] .fus-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+@media (max-width: 640px) {
+  .memory-main-content:has(> .fug-root[data-view="sample"]) {
+    display: block;
+    padding-inline: 20px;
+  }
+
+  .fug-root[data-view="sample"] .fus-stage {
+    overflow: visible;
   }
 }
