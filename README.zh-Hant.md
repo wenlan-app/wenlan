@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=f2c3639c067ffbeefc0236d4d9427af7c558891871bbf060bec23ab80287e259 -->
+<!-- README_SYNC: source=README.md sha256=192107cce85004570e0e6f5ec05860975aaa91c5d0eeec5e041de1029a429d22 -->
 
 <p align="center">
   <picture>
@@ -52,6 +52,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 ### 1. 下載並開啟 Wenlan
 
 [下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安裝後開啟。
+
+可選用[本地模型](docs/setup-and-data.zh-Hant.md#models)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。
 
 [安裝說明與其他使用方式](docs/setup-and-data.zh-Hant.md#installation) · [隱私說明](docs/PRIVACY.md)
 
