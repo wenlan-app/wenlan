@@ -150,7 +150,15 @@ Sources and memories can be retrieved directly; turning them into pages is optio
 
 ## Put your knowledge to work with AI
 
-Use the same knowledge base across AI tools. **Plugins** guide when to retrieve earlier context and save new decisions; **MCP-only connections** let your AI call these tools as needed or at your request.
+An agent can already read files and write text. Wenlan adds a **shared, maintained knowledge layer**: indexed sources, reusable memories, editable pages, and tracked links to their supporting evidence. With [Steep](docs/steep.md) enabled, eligible pages can be refreshed as that evidence changes, so later work across AI tools can build on what you have already learned.
+
+**Use it for:**
+
+- **Development:** Bring earlier technical decisions, lessons, and acceptance criteria into implementation and debugging.
+- **Products and websites:** Use customer research, positioning, and design principles to draft specifications or build pages.
+- **Research and learning:** Turn reading material and saved findings into cited reports or study notes you can reuse.
+
+**Retrieval and connections:** Plugins guide retrieval and saving; MCP connections expose the tools for your AI to call.
 
 - **[Local hybrid retrieval](docs/technical-foundations.md#retrieval-pipeline):** Find exact terms and similar meaning with SQLite FTS5 and BGE embeddings, fused by weighted Reciprocal Rank Fusion (RRF); base search needs no API key.
 - **Graph-assisted ranking:** Use entity links to rank related memories higher; optionally compare each candidate with the question to refine the order (cross-encoder reranking).

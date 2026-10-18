@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=d1804308a36a989962f39429d704f7477e27d2c22dfc4fce6a275a732fd838c1 -->
+<!-- README_SYNC: source=README.md sha256=999312f18870df2b491d802d9d99b9201cc09f1114f5b9c57a401b1f7ab4e174 -->
 
 <p align="center">
   <picture>
@@ -154,7 +154,15 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ## 讓 AI 接續已有知識
 
-在不同 AI 工具間共用同一個知識庫。**插件**引導 AI 何時取回先前脈絡、保存新決定；**僅連接 MCP** 則讓 AI 可按需或依你的要求呼叫這些工具。
+Agent 本來就能讀檔、寫文章。Wenlan 多承擔了<strong>跨工具共用、持續維護知識</strong>的工作：建立搜尋索引、保存可重用的記憶與可編輯頁面，並追蹤頁面的引用依據。啟用 [Steep（沉澱）](docs/steep.zh-Hant.md) 後，符合條件的頁面可隨依據變動更新，讓不同 AI 工具的下一次工作接上已累積的知識。
+
+**可以用在：**
+
+- **開發**：把先前的技術決定、經驗與驗收條件，用於功能實作與除錯。
+- **產品與網站**：依據使用者研究、產品定位與設計原則，撰寫規格或製作網頁。
+- **研究與學習**：把閱讀資料與保存的發現整理成帶引用的報告或學習筆記，供後續重用。
+
+**檢索與連接方式：** 插件引導 AI 取用與保存知識；MCP 連接提供可供 AI 呼叫的工具。
 
 - **[本地混合檢索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同詞句、BGE 向量找出相近語意，再以加權 RRF 合併排名；基礎搜尋不需 API key。
 - **圖譜輔助排序**：利用實體連結提高相關記憶的排名；也可逐一比對問題與候選內容，精排結果（cross-encoder reranking）。
