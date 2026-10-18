@@ -51,8 +51,6 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 [Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon or Windows x64), install it, and open it.
 
-First launch needs an internet connection to download the local search model.
-
 [Installation and other ways to use Wenlan](docs/setup-and-data.md#installation) · [Privacy](docs/PRIVACY.md)
 
 ### 2. Create a page or import existing material

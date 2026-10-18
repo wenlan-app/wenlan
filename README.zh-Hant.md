@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=34623570d43f4b3dfbae9dee9c5e8900748cacc5d8744e985dab1bf72cd790ac -->
+<!-- README_SYNC: source=README.md sha256=f2c3639c067ffbeefc0236d4d9427af7c558891871bbf060bec23ab80287e259 -->
 
 <p align="center">
   <picture>
@@ -52,8 +52,6 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 ### 1. 下載並開啟 Wenlan
 
 [下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安裝後開啟。
-
-首次啟動需連網下載本地搜尋模型。
 
 [安裝說明與其他使用方式](docs/setup-and-data.zh-Hant.md#installation) · [隱私說明](docs/PRIVACY.md)
 
