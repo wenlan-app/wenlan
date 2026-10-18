@@ -53,7 +53,7 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-data.md#installation).
 
-You can optionally use a [local model](docs/setup-and-data.md#models) to enable Steep for background memory organization and knowledge-page updates. It adds search cues and knowledge links to help AI find and reuse what you already know.
+Optionally enable Steep with a [local model](docs/setup-and-data.md#models) to organize memories and update knowledge pages in the background.
 
 ### 2. Create a page or import existing material
 
@@ -212,14 +212,17 @@ These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI a
 
 - [Get started and install](docs/setup-and-data.md#installation)
 - [Connect an AI tool](docs/setup-with-ai.md)
-- [Sources and imports](docs/knowledge-guide.md#sources-and-pages) · [Local files, backups, and offline use](docs/setup-and-data.md)
+- [Sources and imports](docs/import-guide.md)
+- [Local files, backups, and offline use](docs/setup-and-data.md)
 - [Privacy](docs/PRIVACY.md)
 - [Doctor and issue reports](https://wenlan.app/docs/diagnostics-and-issue-reports)
 - [Full documentation index](docs/README.md)
 
 ## Contributing
 
-Join the [Discord community](https://discord.gg/nmzVTTU3HG). Report bugs or request features in [GitHub issues](https://github.com/wenlan-app/wenlan/issues); issues are public, so redact secrets and personal information. For code and docs, see [Contributing](.github/CONTRIBUTING.md), [Security](.github/SECURITY.md), and the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
+Join the [Discord community](https://discord.gg/nmzVTTU3HG). Report bugs or request features in [GitHub issues](https://github.com/wenlan-app/wenlan/issues); issues are public, so redact secrets and personal information.
+
+For code and docs, see [Contributing](.github/CONTRIBUTING.md), [Security](.github/SECURITY.md), and the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
 
 <a id="code-signing-policy"></a>
 

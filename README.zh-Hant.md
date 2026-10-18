@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=812180885527ce5fd218a467d7b557ba942b5a203559bab491d3c789349340f3 -->
+<!-- README_SYNC: source=README.md sha256=3588bd6ea620e09e063c7a24a34a4d737a667837e55c1f6c75fff59417808a0f -->
 
 <p align="center">
   <picture>
@@ -55,7 +55,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 偏好終端機？[透過 CLI 或 AI 工具使用 Wenlan](docs/setup-and-data.zh-Hant.md#installation)。
 
-可選用[本地模型](docs/setup-and-data.zh-Hant.md#models)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。補上搜尋線索與知識關聯，讓 AI 更容易找回和使用已有知識。
+可選用[本地模型](docs/setup-and-data.zh-Hant.md#models)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。
 
 ### 2. 建立頁面或匯入既有資料
 
@@ -217,14 +217,17 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 - [開始使用與安裝](docs/setup-and-data.zh-Hant.md#installation)
 - [連接 AI 工具](docs/setup-with-ai.md)
-- [來源與匯入](docs/knowledge-guide.zh-Hant.md#sources-and-pages) · [本地檔案、備份與離線使用](docs/setup-and-data.zh-Hant.md)
+- [來源與匯入](docs/import-guide.zh-Hant.md)
+- [本地檔案、備份與離線使用](docs/setup-and-data.zh-Hant.md)
 - [隱私](docs/PRIVACY.md)
 - [Doctor 與問題回報](https://wenlan.app/docs/diagnostics-and-issue-reports)
 - [完整文件索引](docs/README.md)
 
 ## 貢獻
 
-歡迎加入 [Discord 社群](https://discord.gg/nmzVTTU3HG)。請在 [GitHub issues](https://github.com/wenlan-app/wenlan/issues) 回報問題或提出功能建議；Issue 是公開的，分享前請遮蔽密鑰與個人資料。程式碼與文件貢獻請見[貢獻指南](.github/CONTRIBUTING.md)、[安全性回報](.github/SECURITY.md)與[行為準則](.github/CODE_OF_CONDUCT.md)。
+歡迎加入 [Discord 社群](https://discord.gg/nmzVTTU3HG)。請在 [GitHub issues](https://github.com/wenlan-app/wenlan/issues) 回報問題或提出功能建議；Issue 是公開的，分享前請遮蔽密鑰與個人資料。
+
+程式碼與文件貢獻請見[貢獻指南](.github/CONTRIBUTING.md)、[安全性回報](.github/SECURITY.md)與[行為準則](.github/CODE_OF_CONDUCT.md)。
 
 <a id="code-signing-policy"></a>
 
