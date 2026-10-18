@@ -129,7 +129,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 來源與記憶都能直接取用，不必先整理成頁面。掃描版 PDF 須先擷取文字；對話附件不會匯入。[匯入教學](docs/import-guide.zh-Hant.md)。
 
-**主題與知識群集：** 設定整理模型後，對同一人物、專案或概念的重複提及會連到共同的**主題節點（實體）**。**知識群集（communities）**透過標籤傳播演算法，將互有連結的主題分組，幫助你發現散落資料間的關聯。[圖譜技術說明](docs/technical-foundations.md#graph-data-and-entity-resolution)。
+**主題與知識群集：** 設定整理模型後，對同一人物、專案或概念的重複提及會連到共同的<strong>主題節點（實體）</strong>。<strong>知識群集（communities）</strong>透過標籤傳播演算法，將互有連結的主題分組，幫助你發現散落資料間的關聯。[圖譜技術說明](docs/technical-foundations.md#graph-data-and-entity-resolution)。
 
 <a id="探索你的個人知識圖譜"></a>
 
