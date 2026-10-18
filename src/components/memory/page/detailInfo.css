@@ -119,7 +119,7 @@
 .page-detail-actions-menu[data-keyboard-navigation="false"] button:focus { outline: none; }
 .page-detail-actions-menu[data-keyboard-navigation="true"] button:focus { outline: 2px solid var(--mem-accent-page); outline-offset: 2px; }
 .page-detail-actions-menu { max-width: calc(100vw - 32px); }
-.page-detail-actions-menu button[role="menuitemcheckbox"] { display: flex; align-items: center; gap: 8px; }
+.page-detail-actions-menu button[role="menuitemcheckbox"] { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 
 .page-info-drawer .detail-info-content .note-info-sections { margin: 0; gap: var(--detail-info-section-gap); }
 

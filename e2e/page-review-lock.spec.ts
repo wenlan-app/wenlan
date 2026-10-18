@@ -47,6 +47,15 @@ for (const locale of ["en", "zh-Hant", "zh-Hans"] as const) {
     expect(iconBox && toggleBox).toBeTruthy();
     expect(Math.abs((iconBox!.y + iconBox!.height / 2) - (toggleBox!.y + toggleBox!.height / 2))).toBeLessThan(3);
     expect(toggleBox!.height).toBeLessThan(40);
+    // The label stays on one line in every locale.
+    const labelLines = await toggle.evaluate((el) => {
+      const text = Array.from(el.childNodes).find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+      if (!text) return 0;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      return new Set(Array.from(range.getClientRects(), (rect) => Math.round(rect.top))).size;
+    });
+    expect(labelLines).toBe(1);
     await page.screenshot({ path: testInfo.outputPath(`menu-${locale}.png`) });
     await toggle.click();
     await expect(notice).toBeVisible();
