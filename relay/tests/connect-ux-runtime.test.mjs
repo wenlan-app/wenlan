@@ -202,7 +202,11 @@ test('one-click pairing contract through the Worker entry', { timeout: 90_000 },
     });
 
     await t.test('/mcp is limited per grant with Retry-After', async () => {
-      const call = () => post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, mcpHeaders);
+      // One address, as when an AI app calls from its own servers: accepted
+      // tokens are refunded from the address's credential budget, so only the
+      // per-grant limit applies.
+      const call = () => post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        { ...mcpHeaders, 'cf-connecting-ip': '198.51.100.99' });
       let served = 0;
       let limited;
       // 120 per grant per minute; a minute boundary mid-loop at most doubles the budget.

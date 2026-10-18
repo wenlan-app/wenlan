@@ -57,7 +57,11 @@ function assertRuntimeConfig(parsed, expected) {
   assert.equal(parsed.vars?.PUBLIC_ORIGIN, expected.origin, 'runtime origin must match its worker name');
   assert.equal(Object.hasOwn(parsed.vars ?? {}, 'SAMPLE_ACCOUNT'), false,
     'runtime vars must not configure a sample account');
-  assert.equal(parsed.observability?.enabled, false, 'runtime observability must be disabled');
+  // Workers Logs keep only the relay's own content-free request lines.
+  assert.equal(parsed.observability?.enabled, true, 'runtime request logs must be enabled');
+  assert.equal(parsed.observability?.logs?.invocation_logs, false,
+    'invocation logs would record request URLs and headers');
+  assert.equal(parsed.observability?.traces?.enabled ?? false, false, 'traces must stay disabled');
   if (expected.previewUrls !== undefined) {
     assert.equal(parsed.preview_urls, expected.previewUrls, 'staging preview URLs must be disabled');
   }

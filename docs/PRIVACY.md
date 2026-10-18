@@ -158,8 +158,16 @@ The relay's control-plane records include:
   token records, and grant receipts containing client/device/route/Space
   bindings, authorization IDs, status, timestamps, expiry and cleanup state.
 - Session and abuse-control state: opaque public-to-backend MCP session
-  mappings, backend session IDs, binding hashes, status and expiry, plus a
-  hash of the connecting IP with request rate-window counters and expiry.
+  mappings, backend session IDs, binding hashes, status and expiry, plus
+  request rate-window counters and expiry keyed by a hash of the connecting
+  IP, of the device identifier, or of the OAuth grant.
+- Request log lines in Cloudflare Workers Logs: for each request, its route
+  (with identifiers replaced by `:id`), method, status, duration, whether it
+  presented an app or device credential, which limit refused it, the name of
+  an allowlisted AI app or `other`, a 12-character hash of the device
+  identifier, and the error type of an internal failure. They contain no IP
+  address, token, Space name, request or response body, query or result.
+  Cloudflare keeps them for its Workers Logs retention period.
 
 Technical expiry denies access; it is not a physical deletion time. Pairing and
 authorization requests and pending reverse enrollments expire after 5 minutes,
@@ -195,8 +203,9 @@ shared copies and backups require their own deletion controls. Do not connect
 a Space containing credentials or other restricted information: the connector
 does not classify or redact sensitive text embedded in knowledge.
 
-Abuse-control counters use fixed calendar windows: per-IP-hash counters expire
-at the end of the current minute or hour, depending on the endpoint; aggregate
+Abuse-control counters use fixed calendar windows: per-IP-hash, per-device and
+per-grant counters expire at the end of the current minute or hour, depending
+on the endpoint; aggregate
 daily enrollment and client-registration counters expire at the end of the UTC
 day. The application stores a hash rather than the raw connecting IP in these
 counters. Expired rows are removed in batches of at most 256 by background
@@ -256,8 +265,9 @@ the database on your machine, regardless of this optional statistics setting.
 The desktop app also keeps the diagnostic log described above. The standalone
 relay separately keeps the
 authorization, routing, session and abuse-control records described above.
-Its candidate deployment configuration disables Workers observability logs;
-this setting is not a promise that Cloudflare retains no service-level data.
+Its deployment configuration keeps only the request log lines described above
+in Workers Logs and turns Cloudflare's own invocation logs off; this is not a
+promise that Cloudflare retains no service-level data.
 
 Opening a window starts the update check listed in the table above about three seconds later. On a first run it also triggers the search model download in that table, and if you left Web access on, it connects to Wenlan's web service again. Beyond those, see "Images in your notes reach their host" above, because the note you open can reach the network on its own.
 

@@ -513,10 +513,17 @@ test('actual Worker reverse enrollment, OAuth routing, reconnect and revocation 
     });
 
     await t.test('tunnel and reverse preparation share the same enrollment quota', async () => {
-      assert.equal((await post('/devices', {})).status, 400);
-      assert.equal((await post('/devices/reverse', { ...candidate, backendToken: 'short' })).status, 422);
-      const limited = await post('/devices', {});
-      assert.equal(limited.status, 429);
+      // Ten per address per hour across both routes: alternating them reaches
+      // the limit within eleven attempts, which separate quotas would not.
+      let limited;
+      for (let n = 0; n < 11 && !limited; n++) {
+        const reverse = n % 2 === 1;
+        const response = reverse ? await post('/devices/reverse', { ...candidate, backendToken: 'short' })
+          : await post('/devices', {});
+        if (response.status === 429) limited = response;
+        else assert.equal(response.status, reverse ? 422 : 400);
+      }
+      assert(limited, 'the shared enrollment quota was never reached');
       assert(Number(limited.headers.get('retry-after')) > 0);
     });
     assert.equal(outboundCalls, 0);
