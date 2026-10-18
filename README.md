@@ -116,7 +116,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 
 - **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
 - **Shared topics:** With an enrichment model configured, repeated mentions of a person, project, or concept link to one topic node (entity), with typed relations connecting topics.
-- **Knowledge communities:** Label Propagation groups connected topics, revealing related knowledge across your material. A community contains multiple topic nodes. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
+- **Knowledge communities:** Group connected topics to reveal related knowledge across your material. Label Propagation runs by default; Leiden is available as an opt-in algorithm. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
 ### Sources and imports
 

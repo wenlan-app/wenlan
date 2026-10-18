@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=61ae41cfe112e6db2dd744aee219c04d9b02939f16341e74461a03945a197161 -->
+<!-- README_SYNC: source=README.md sha256=f4fcad520dd1b4bd0c85bc38c6cca2e46efcee6f98d00a65ba2dbd0207b7c00d -->
 
 <p align="center">
   <picture>
@@ -119,7 +119,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 - **原子記憶**：延續 [Zettelkasten（卡片盒筆記法）的原子化原則](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，讓每筆發現能獨立找回、重用，不必載入整段對話或整個頁面。
 - **共同主題**：設定整理模型後，對同一人物、專案或概念的重複提及會連到同一個主題節點（實體），主題之間以具類型的關係連結。
-- **知識群集（communities）**：透過 Label Propagation（標籤傳播）演算法，將互有連結的主題分組，呈現散落資料間的關聯；一個群集包含多個主題節點。[圖譜技術說明](docs/technical-foundations.md#graph-data-and-entity-resolution)。
+- **知識群集（communities）**：將互有連結的主題分組，呈現散落資料間的關聯；預設使用 Label Propagation（標籤傳播），另有可選啟用的 Leiden 群集演算法。[圖譜技術說明](docs/technical-foundations.md#graph-data-and-entity-resolution)。
 
 ### 資料來源與匯入
 
