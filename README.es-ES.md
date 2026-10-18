@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=31796730782ab485d70881ce8030086708a0a6e853adf4c18acb7f36935746d2 -->
+<!-- README_SYNC: source=README.md sha256=9809dead3f88992c7c07e54e5d4684ca5cc036ad489e5fc78fea39c1f6c5a119 -->
 
 <p align="center">
   <picture>
@@ -29,14 +29,11 @@
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
 </p>
 
-<!-- R113 walkthrough: 1080p GitHub delivery; original masters retained. -->
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/6e55ae64-be35-4aae-8845-d5407b9ce3fc">
-    <img src="./docs/assets/wenlan-personal-knowledge.png" alt="Notas, memorias y fuentes conectadas en Wenlan" width="100%">
-  </a>
-  <br><a href="https://github.com/user-attachments/assets/6e55ae64-be35-4aae-8845-d5407b9ce3fc">▶ Ver el vídeo</a>
-</p>
-<p>Composición de vistas reales con datos de ejemplo; el grafo es ilustrativo, no una vista nativa de tres columnas.</p>
+<!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
+
+https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
+
+<p>Portada: composición de vistas reales con datos de ejemplo; el grafo es ilustrativo, no una vista nativa de tres columnas.</p>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

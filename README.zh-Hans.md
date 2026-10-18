@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=31796730782ab485d70881ce8030086708a0a6e853adf4c18acb7f36935746d2 -->
+<!-- README_SYNC: source=README.md sha256=9809dead3f88992c7c07e54e5d4684ca5cc036ad489e5fc78fea39c1f6c5a119 -->
 
 <p align="center">
   <picture>
@@ -29,14 +29,11 @@
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
 </p>
 
-<!-- R113 walkthrough: 1080p GitHub delivery; original masters retained. -->
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/26cfdbda-aa3a-4cda-9842-a8c1fe318ff6">
-    <img src="./docs/assets/wenlan-personal-knowledge-zh-Hans.png" alt="Wenlan 中彼此连接的笔记、记忆与来源" width="100%">
-  </a>
-  <br><a href="https://github.com/user-attachments/assets/26cfdbda-aa3a-4cda-9842-a8c1fe318ff6">▶ 观看影片</a>
-</p>
-<p>实机画面与示范数据的翻译合成图；图谱为示意，非 App 原生三栏版面。</p>
+<!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
+
+https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
+
+<p>封面为实机画面与示范数据的翻译合成图；图谱为示意，非 App 原生三栏版面。</p>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

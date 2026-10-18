@@ -27,14 +27,11 @@
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
 </p>
 
-<!-- R113 walkthrough: 1080p GitHub delivery; original masters retained. -->
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/6e55ae64-be35-4aae-8845-d5407b9ce3fc">
-    <img src="./docs/assets/wenlan-personal-knowledge.png" alt="Connected notes, memories, and sources in Wenlan" width="100%">
-  </a>
-  <br><a href="https://github.com/user-attachments/assets/6e55ae64-be35-4aae-8845-d5407b9ce3fc">▶ Watch the video</a>
-</p>
-<p>Localized composite of App views with demo data; the graph is illustrative, not a native three-column layout.</p>
+<!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
+
+https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
+
+<p>Cover: localized composite of App views with demo data; the graph is illustrative, not a native three-column layout.</p>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
