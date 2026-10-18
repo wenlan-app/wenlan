@@ -43,6 +43,8 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 <a id="mcp-setup"></a>
 <a id="mcp-clients"></a>
 
+<br>
+
 ## Get started
 
 Save your material in Wenlan so your everyday AI tools can use it to answer questions and get work done.
@@ -75,6 +77,8 @@ Then ask your AI:
 
 <a id="daily-workflow"></a>
 
+<br>
+
 ## In everyday use
 
 Save new findings and progress as you work, then pick up where you left off next time.
@@ -104,6 +108,8 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 
 <a id="connect-your-knowledge"></a>
 
+<br>
+
 ## Organize scattered material into knowledge
 
 **Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
@@ -128,6 +134,8 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 <a id="retrieval-across-words-meaning-and-connections"></a>
 
 <a id="use-your-knowledge-with-ai"></a>
+
+<br>
 
 ## Put your knowledge to work with AI
 
@@ -155,6 +163,8 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 <a id="keep-knowledge-current-and-preserve-history"></a>
 
+<br>
+
 ## Keep knowledge current, with its history
 
 **Updates follow citations.** Changing or removing a cited source or memory in Wenlan marks the pages that use it for refresh. With background AI enabled and a model available, eligible pages rebuild from current evidence; drafts with insufficient citations are rejected.
@@ -171,6 +181,8 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 <a id="architecture"></a>
 
+<br>
+
 ## Architecture
 
 **One local knowledge base.** App, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL.
@@ -183,6 +195,8 @@ Architecture overview. [Retrieval, evidence, and models](docs/technical-foundati
 
 <a id="models-and-privacy"></a>
 
+<br>
+
 ## Data and privacy
 
 A cloud AI client may send retrieved knowledge to its provider, and a cloud model receives the material it processes. Local storage does not keep those interactions local. Usage statistics are off by default.
@@ -190,6 +204,8 @@ A cloud AI client may send retrieved knowledge to its provider, and a cloud mode
 [File locations, backup, and removal](docs/setup-and-data.md#backup-and-removal) · [Network and privacy details](docs/PRIVACY.md#when-wenlan-reaches-the-network).
 
 <a id="evaluation"></a>
+
+<br>
 
 ## Evaluation
 
@@ -208,6 +224,8 @@ These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI a
 
 <a id="offline-queue-outbox"></a>
 
+<br>
+
 ## Learn more
 
 - [Get started and install](docs/setup-and-data.md#installation)
@@ -218,6 +236,8 @@ These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI a
 - [Doctor and issue reports](https://wenlan.app/docs/diagnostics-and-issue-reports)
 - [Full documentation index](docs/README.md)
 
+<br>
+
 ## Contributing
 
 Join the [Discord community](https://discord.gg/nmzVTTU3HG). Report bugs or request features in [GitHub issues](https://github.com/wenlan-app/wenlan/issues); issues are public, so redact secrets and personal information.
@@ -226,17 +246,23 @@ For code and docs, see [Contributing](.github/CONTRIBUTING.md), [Security](.gith
 
 <a id="code-signing-policy"></a>
 
+<br>
+
 ## Code signing policy
 
 See the [platform signing and notarization details](docs/code-signing.md).
 
 <a id="license"></a>
 
+<br>
+
 ## License
 
 The local runtime, CLI, MCP server, shared types, and plugins use [Apache-2.0](LICENSE). The desktop app and its frontend use [AGPL-3.0-only](app/LICENSE); modified versions run as a network service must offer their source to users.
 
 <a id="acknowledgments"></a>
+
+<br>
 
 ## Lineage and peers
 

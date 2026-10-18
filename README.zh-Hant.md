@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=3588bd6ea620e09e063c7a24a34a4d737a667837e55c1f6c75fff59417808a0f -->
+<!-- README_SYNC: source=README.md sha256=4c54225c4317ec115a85df8b83a7c6d58ea17281aff5efdf90e343049fe91a17 -->
 
 <p align="center">
   <picture>
@@ -45,6 +45,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 <a id="mcp-setup"></a>
 <a id="mcp-clients"></a>
 
+<br>
+
 ## 開始使用
 
 把資料保存在 Wenlan，讓你常用的 AI 用上這些知識，回答問題、完成工作。
@@ -77,6 +79,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="daily-workflow"></a>
 
+<br>
+
 ## 日常使用
 
 工作中留下新發現與進度，下次直接接著用。
@@ -107,6 +111,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="讓知識彼此連結"></a>
 
+<br>
+
 ## 把散落的資料整理成知識
 
 **來源**保留你讀過的資料；**記憶**留下你的發現與判斷理由。將兩者整理成**帶有引用的 Markdown 頁面**，讓你閱讀、編輯，用 `[[wikilinks]]` 連結相關內容，也能沿引用查回原始資料。
@@ -132,6 +138,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 <a id="retrieval-across-words-meaning-and-connections"></a>
 
 <a id="用-ai-延續已有知識"></a>
+
+<br>
 
 ## 讓 AI 接續已有知識
 
@@ -160,6 +168,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="持續更新知識並保留歷史"></a>
 
+<br>
+
 ## 更新知識，保留歷史
 
 **依引用關係更新。** Wenlan 中的來源或記憶變更、移除時，引用它的頁面會被標記為待更新。啟用背景 AI 並有可用模型後，符合條件的頁面會依最新資料重新整理；引用不足的草稿不會採用。
@@ -176,6 +186,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="architecture"></a>
 
+<br>
+
 ## 系統架構
 
 **共用本地知識庫。** App、CLI 與 AI 工具透過 Wenlan 本地服務讀寫。頁面以 Markdown 保存；記憶、關係與搜尋索引由本地 libSQL 管理。
@@ -188,6 +200,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="models-and-privacy"></a>
 
+<br>
+
 ## 資料與隱私
 
 雲端 AI 用戶端可能會把找回的知識傳給其服務商，雲端模型也會收到它處理所需的內容。本地儲存不代表這些互動都留在本機。使用統計預設關閉。
@@ -195,6 +209,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 [檔案位置、備份與移除](docs/setup-and-data.zh-Hant.md#backup-and-removal) · [連網與隱私詳情](docs/PRIVACY.md#when-wenlan-reaches-the-network)。
 
 <a id="evaluation"></a>
+
+<br>
 
 ## 評估
 
@@ -213,6 +229,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="離線佇列outbox"></a>
 
+<br>
+
 ## 進一步了解
 
 - [開始使用與安裝](docs/setup-and-data.zh-Hant.md#installation)
@@ -223,6 +241,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 - [Doctor 與問題回報](https://wenlan.app/docs/diagnostics-and-issue-reports)
 - [完整文件索引](docs/README.md)
 
+<br>
+
 ## 貢獻
 
 歡迎加入 [Discord 社群](https://discord.gg/nmzVTTU3HG)。請在 [GitHub issues](https://github.com/wenlan-app/wenlan/issues) 回報問題或提出功能建議；Issue 是公開的，分享前請遮蔽密鑰與個人資料。
@@ -231,17 +251,23 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <a id="code-signing-policy"></a>
 
+<br>
+
 ## 程式碼簽章政策
 
 請見[各平台簽章與公證說明](docs/code-signing.md)。
 
 <a id="license"></a>
 
+<br>
+
 ## 授權
 
 本地 runtime、CLI、MCP server、shared types 與 plugins 採用 [Apache-2.0](LICENSE)。桌面 app 與其前端採用 [AGPL-3.0-only](app/LICENSE)；若將修改版作為網路服務運行，須向使用者提供其原始碼。
 
 <a id="acknowledgments"></a>
+
+<br>
 
 ## 源流與同類專案
 
