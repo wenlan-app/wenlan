@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=cc2d5cd7095df23eedfae13a7f0256375f3d98e987b4fbb474266ac866e83220 -->
+<!-- README_SYNC: source=README.md sha256=bb09d46a7e82483244078f7bdf6d1a8b0e078d9323b7360707e9443a5260dad1 -->
 
 <p align="center">
   <picture>
@@ -210,7 +210,7 @@ Wenlan 把整理成筆記、追蹤來源變動、更新相關內容和保留修�
 - **[原詞與語意搜尋](docs/technical-foundations.md#retrieval-pipeline)：** 結合精確比對與本地語意搜尋，圖譜關係可補上相關脈絡。
 - **[需要時，搜尋得更細](docs/technical-foundations.md#optional-channels-and-defaults)：** 可選擇搜尋筆記與更細緻的記憶，並重新排序結果。
 - **[不同專案，分開管理](https://wenlan.app/docs/spaces)：** 用空間選擇 AI 這次要搜尋的工作、個人、客戶或程式庫知識。
-- **網頁 AI 存取（實驗性）：** 電腦保持連線時，讓支援的網頁 AI 用戶端連到你的整個資料庫，或你選擇的一個空間。查詢與結果會經過中繼服務，詳見[連接方式與隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
+- **網頁存取（實驗性）：** 電腦保持連線時，讓 Claude、ChatGPT、Muse 等網頁 AI 用戶端連到你的整個資料庫，或你選擇的一個空間。在設定裡打開「網頁存取」開關即可。查詢與結果會經過中繼服務，詳見[連接方式與隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 - **接入自己的工具：** 透過本地 HTTP API 傳入準備好的文字、網頁內容或記憶；它接收內容，不會代為抓取網址。
 
 ### 持續更新與維護
@@ -331,7 +331,7 @@ AI 工具連接好後，可以直接這樣說：
 
 - [開始使用](https://wenlan.app/docs/get-started)：安裝並驗證第一個本地循環。
 - [日常工作流程](https://wenlan.app/docs/daily-workflow)：brief、capture、recall、handoff、distill、lint 與 curate。
-- [MCP 用戶端](https://wenlan.app/docs/mcp-clients)：連接 Claude Code、Codex、Cursor、Claude Desktop 與其他工具。
+- [MCP 用戶端](https://wenlan.app/docs/mcp-clients)：連接 Claude Code、Codex、Cursor、Claude Desktop、Muse Code 與其他工具。
 
 ### 工作流程指南
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=cc2d5cd7095df23eedfae13a7f0256375f3d98e987b4fbb474266ac866e83220 -->
+<!-- README_SYNC: source=README.md sha256=bb09d46a7e82483244078f7bdf6d1a8b0e078d9323b7360707e9443a5260dad1 -->
 
 <p align="center">
   <picture>
@@ -209,7 +209,7 @@ Conecta tu bóveda de Obsidian como fuente de solo lectura sin mover tus archivo
 - **[Busca por palabras y significado](docs/technical-foundations.md#retrieval-pipeline):** Combina coincidencias exactas con búsqueda semántica local; las conexiones del grafo pueden aportar contexto.
 - **[Búsqueda avanzada opcional](docs/technical-foundations.md#optional-channels-and-defaults):** Busca en Notas y Memorias más detalladas, con reordenación opcional para afinar los resultados.
 - **[Separa tus proyectos](https://wenlan.app/docs/spaces):** Usa Espacios para elegir qué conocimiento laboral, personal, de clientes o de repositorios busca tu IA.
-- **Acceso web (experimental):** Conecta un cliente web de IA compatible a toda tu biblioteca, o a un Espacio que elijas, mientras tu ordenador está conectado. Las consultas y los resultados pasan por un relay; consulta el [funcionamiento del acceso y sus límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
+- **Acceso web (experimental):** Conecta un cliente web de IA como Claude, ChatGPT o Muse a toda tu biblioteca, o a un Espacio que elijas, mientras tu ordenador está conectado. Actívalo en Ajustes con el interruptor de acceso web. Las consultas y los resultados pasan por un relay; consulta el [funcionamiento del acceso y sus límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 - **Conecta tus propias herramientas:** Envía texto preparado, contenido web o Memorias mediante la API HTTP local. Acepta contenido, no URL para descargar.
 
 ### Mantén el conocimiento al día
@@ -330,7 +330,7 @@ Documentación más detallada, conceptos y comparaciones:
 
 - [Primeros pasos](https://wenlan.app/docs/get-started): instala y verifica el primer bucle local.
 - [Flujo diario](https://wenlan.app/docs/daily-workflow): brief, capture, recall, handoff, distill, lint y curate.
-- [Clientes MCP](https://wenlan.app/docs/mcp-clients): conecta Claude Code, Codex, Cursor, Claude Desktop y otros clientes.
+- [Clientes MCP](https://wenlan.app/docs/mcp-clients): conecta Claude Code, Codex, Cursor, Claude Desktop, Muse Code y otros clientes.
 
 ### Guías de flujo de trabajo
 
