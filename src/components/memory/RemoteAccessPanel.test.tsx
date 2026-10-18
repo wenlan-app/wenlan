@@ -255,18 +255,27 @@ describe("turning on", () => {
 });
 
 describe("a connection that is on", () => {
-  it("shows status, the Space, and two plain steps that add Wenlan for you", async () => {
+  it("shows status, the Space, and one short instruction that adds Wenlan for you", async () => {
     await connectedPanel();
     expect(screen.getByText("Sharing: review")).toBeInTheDocument();
-    const steps = screen.getAllByRole("listitem").slice(0, 2);
-    expect(steps[0]).toHaveTextContent("Add Wenlan to your AI app.");
-    expect(within(steps[0]).getByRole("button", { name: "Add to Claude" })).toBeInTheDocument();
-    expect(within(steps[0]).getByRole("button", { name: "Copy link and open ChatGPT" })).toBeInTheDocument();
-    expect(steps[0]).toHaveTextContent("Another app? Add this link as a custom connector:");
-    expect(steps[0]).toHaveTextContent(relayUrl);
-    expect(steps[1]).toHaveTextContent("When Wenlan asks, click Allow.");
-    expect(screen.getByText(/like Codex or Claude Code, use Add a tool above/)).toBeInTheDocument();
+    expect(screen.getByText("Add Wenlan to your AI app, then click Allow when Wenlan asks.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to Claude" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy link and open ChatGPT" })).toBeInTheDocument();
+    expect(screen.getByText("Another app? Add this link as a custom connector:")).toBeInTheDocument();
+    expect(screen.getByText(relayUrl)).toBeInTheDocument();
+    expect(screen.queryByText(/use Add a tool above/)).not.toBeInTheDocument();
     expect(await screen.findByText("No apps connected yet")).toBeInTheDocument();
+  });
+
+  it("separates its sections by space, never by horizontal rules", async () => {
+    await connectedPanel();
+    await screen.findByText("No apps connected yet");
+    // The card's own divider under the toggle row stays; everything in the body below it has none.
+    const body = screen.getByText("Connected").closest(".px-5.py-4") as HTMLElement;
+    expect(body).not.toBeNull();
+    expect(body.querySelector("ol")).toBeNull();
+    expect(body.querySelector("[class*='divide-y']")).toBeNull();
+    expect(body.querySelector(".border-t")).toBeNull();
   });
 
   it("says the whole library in words, never the stored value", async () => {

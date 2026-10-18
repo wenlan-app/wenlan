@@ -163,101 +163,97 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   } else {
     const failed = status?.status === "error";
     body = (
-      <div className="min-w-0 space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          {connected && <StatusChip state={{ kind: "up" }} label={t("remoteAccess.statusConnected")} />}
-          {status?.status === "starting" && <StatusChip state={{ kind: "probing" }} label={t("remoteAccess.statusConnecting")} />}
-          {!connected && status?.status === "off" && <StatusChip state={{ kind: "idle" }} label={t("remoteAccess.statusOff")} />}
-          {profile && <span className="text-sm break-words">{t("remoteAccess.sharing", { space: scopeLabel(t, profile.space) })}</span>}
-        </div>
-
-        {failed && <RemoteErrorMessage error={status.error} />}
-
-        {expiringSoon && (
-          <div role="status" className="space-y-2 rounded border border-[var(--mem-status-warning-border)] bg-[var(--mem-status-warning-bg)] p-3 text-sm text-[var(--mem-status-warning-text)]">
-            <p className="break-words">{t("remoteAccess.expiringSoon", { date: new Date(expiresAt!).toLocaleDateString(language) })}</p>
-            {confirming?.kind === "renew"
-              ? <InlineConfirm message={t("remoteAccess.renewConfirm")} confirmLabel={t("remoteAccess.renew")} busy={busy}
-                  onConfirm={renew} onCancel={() => setConfirming(null)} />
-              : <Button variant="secondary" size="sm" disabled={busy} onClick={() => setConfirming({ kind: "renew" })}>{t("remoteAccess.renew")}</Button>}
+      <div className="min-w-0 space-y-6">
+        <div className="min-w-0 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <div className="flex flex-wrap items-center gap-3 min-w-0">
+              {connected && <StatusChip state={{ kind: "up" }} label={t("remoteAccess.statusConnected")} />}
+              {status?.status === "starting" && <StatusChip state={{ kind: "probing" }} label={t("remoteAccess.statusConnecting")} />}
+              {!connected && status?.status === "off" && <StatusChip state={{ kind: "idle" }} label={t("remoteAccess.statusOff")} />}
+              {profile && <span className="text-sm break-words">{t("remoteAccess.sharing", { space: scopeLabel(t, profile.space) })}</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-1 -mx-[10px]">
+              {profile?.enabled && (
+                <Button variant="ghost" size="sm" disabled={busy || !ready} onClick={() => run(async () => { await remote.reconnect(profile.revision); })}>
+                  <ArrowClockwise size={14} aria-hidden="true" />{t("remoteAccess.reconnect")}
+                </Button>
+              )}
+              {connected && (
+                <Button variant="ghost" size="sm" disabled={busy} onClick={testConnection}>
+                  {t("remoteAccess.testConnection")}
+                </Button>
+              )}
+              {failed
+                ? stopButton
+                : <Button variant="ghost" size="sm" aria-expanded={confirming?.kind === "choose" || confirming?.kind === "change"}
+                    disabled={busy || spacesFailed || !ready || (scope?.kind === "wholeLibrary" && spaces.length === 0)}
+                    onClick={() => setConfirming({ kind: "choose" })}>{t("remoteAccess.changeSpace")}</Button>}
+            </div>
           </div>
-        )}
 
-        <div className="flex flex-wrap items-center gap-2">
-          {profile?.enabled && (
-            <Button variant="secondary" size="sm" disabled={busy || !ready} onClick={() => run(async () => { await remote.reconnect(profile.revision); })}>
-              <ArrowClockwise size={14} aria-hidden="true" />{t("remoteAccess.reconnect")}
-            </Button>
+          {failed && <RemoteErrorMessage error={status.error} />}
+
+          {expiringSoon && (
+            <div role="status" className="space-y-2 rounded border border-[var(--mem-status-warning-border)] bg-[var(--mem-status-warning-bg)] p-3 text-sm text-[var(--mem-status-warning-text)]">
+              <p className="break-words">{t("remoteAccess.expiringSoon", { date: new Date(expiresAt!).toLocaleDateString(language) })}</p>
+              {confirming?.kind === "renew"
+                ? <InlineConfirm message={t("remoteAccess.renewConfirm")} confirmLabel={t("remoteAccess.renew")} busy={busy}
+                    onConfirm={renew} onCancel={() => setConfirming(null)} />
+                : <Button variant="secondary" size="sm" disabled={busy} onClick={() => setConfirming({ kind: "renew" })}>{t("remoteAccess.renew")}</Button>}
+            </div>
           )}
-          {connected && (
-            <Button variant="secondary" size="sm" disabled={busy} onClick={testConnection}>
-              {t("remoteAccess.testConnection")}
-            </Button>
+
+          {probe?.ok && <p role="status" className={secondaryText}>{t("remoteAccess.testOk", { ms: probe.latency_ms ?? "?" })}</p>}
+          {probe && !probe.ok && (
+            <div className="space-y-1">
+              <p role="alert" className={errorText}>{t("remoteAccess.connectionFailed")}</p>
+              {probe.error && <Disclosure label={t("remoteAccess.details")}><p className="text-xs break-words text-[var(--mem-text-secondary)]">{probe.error}</p></Disclosure>}
+            </div>
           )}
-          {failed
-            ? stopButton
-            : <Button variant="secondary" size="sm" aria-expanded={confirming?.kind === "choose" || confirming?.kind === "change"}
-                disabled={busy || spacesFailed || !ready || (scope?.kind === "wholeLibrary" && spaces.length === 0)}
-                onClick={() => setConfirming({ kind: "choose" })}>{t("remoteAccess.changeSpace")}</Button>}
+
+          {confirming?.kind === "choose" && (
+            <div className="min-w-0 space-y-2">
+              <RemoteScopeChooser spaces={spaces} defaultSpace={remote.defaultSpace} current={scope} busy={busy}
+                onChoose={(target) => setConfirming({ kind: "change", scope: target })} />
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>{t("remoteAccess.cancel")}</Button>
+            </div>
+          )}
+          {confirming?.kind === "change" && (
+            <InlineConfirm message={confirming.scope.kind === "wholeLibrary"
+              ? t("remoteAccess.changeConfirmWholeLibrary")
+              : t("remoteAccess.changeConfirm", { space: confirming.scope.name })} confirmLabel={t("remoteAccess.change")}
+              busy={busy} onConfirm={() => changeScope(confirming.scope)} onCancel={() => setConfirming(null)} />
+          )}
         </div>
-
-        {probe?.ok && <p role="status" className={secondaryText}>{t("remoteAccess.testOk", { ms: probe.latency_ms ?? "?" })}</p>}
-        {probe && !probe.ok && (
-          <div className="space-y-1">
-            <p role="alert" className={errorText}>{t("remoteAccess.connectionFailed")}</p>
-            {probe.error && <Disclosure label={t("remoteAccess.details")}><p className="text-xs break-words text-[var(--mem-text-secondary)]">{probe.error}</p></Disclosure>}
-          </div>
-        )}
-
-        {confirming?.kind === "choose" && (
-          <div className="min-w-0 space-y-2">
-            <RemoteScopeChooser spaces={spaces} defaultSpace={remote.defaultSpace} current={scope} busy={busy}
-              onChoose={(target) => setConfirming({ kind: "change", scope: target })} />
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>{t("remoteAccess.cancel")}</Button>
-          </div>
-        )}
-        {confirming?.kind === "change" && (
-          <InlineConfirm message={confirming.scope.kind === "wholeLibrary"
-            ? t("remoteAccess.changeConfirmWholeLibrary")
-            : t("remoteAccess.changeConfirm", { space: confirming.scope.name })} confirmLabel={t("remoteAccess.change")}
-            busy={busy} onConfirm={() => changeScope(confirming.scope)} onCancel={() => setConfirming(null)} />
-        )}
 
         {connected && relayUrl && (
-          <div className="border-t border-[var(--mem-border)] pt-4 space-y-2">
-            <ol className="list-decimal pl-5 space-y-2 text-sm">
-              <li className="min-w-0 space-y-2">
-                <span className="block">{t("remoteAccess.howTo1")}</span>
-                <span className="flex flex-wrap gap-2">
-                  <Button variant="primary" size="sm" disabled={busy} onClick={() => addToClaude(relayUrl)}>
-                    {t("remoteAccess.addToClaude")}<ArrowSquareOut size={14} aria-hidden="true" />
-                  </Button>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToChatGPT(relayUrl)}>
-                    {t("remoteAccess.addToChatGPT")}<ArrowSquareOut size={14} aria-hidden="true" />
-                  </Button>
-                </span>
-                {chatgptOpened && <p role="status" className={secondaryText}>{t("remoteAccess.chatgptHint")}</p>}
-                <span className="block text-[var(--mem-text-secondary)]">{t("remoteAccess.otherAppsHint")}</span>
-                <span className="flex items-start gap-2 min-w-0">
-                  <code className="flex-1 min-w-0 break-all text-xs py-1">{relayUrl}</code>
-                  <button type="button" className="p-2 shrink-0 rounded border border-[var(--mem-border)]"
-                    title={t("connectMatrix.copyUrl")} aria-label={copied ? t("remoteAccess.linkCopied") : t("connectMatrix.copyUrl")}
-                    disabled={busy} onClick={() => copyUrl(relayUrl)}>
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                  </button>
-                </span>
-              </li>
-              <li>{t("remoteAccess.howTo2")}</li>
-            </ol>
-            <p className={secondaryText}>{t("remoteAccess.localAppsHint")}</p>
+          <div className="min-w-0 space-y-3">
+            <p className={secondaryText}>{t("remoteAccess.addHint")}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="primary" size="sm" disabled={busy} onClick={() => addToClaude(relayUrl)}>
+                {t("remoteAccess.addToClaude")}<ArrowSquareOut size={14} aria-hidden="true" />
+              </Button>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToChatGPT(relayUrl)}>
+                {t("remoteAccess.addToChatGPT")}<ArrowSquareOut size={14} aria-hidden="true" />
+              </Button>
+            </div>
+            {chatgptOpened && <p role="status" className={secondaryText}>{t("remoteAccess.chatgptHint")}</p>}
+            <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 ${secondaryText}`}>
+              <span>{t("remoteAccess.otherAppsHint")}</span>
+              <code className="min-w-0 break-all text-xs text-[var(--mem-text)]">{relayUrl}</code>
+              <button type="button"
+                className="p-1 shrink-0 rounded-[var(--mem-radius-sm)] text-[var(--mem-text-secondary)] hover:text-[var(--mem-text)] hover:bg-[var(--mem-hover)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] disabled:opacity-45"
+                title={t("connectMatrix.copyUrl")} aria-label={copied ? t("remoteAccess.linkCopied") : t("connectMatrix.copyUrl")}
+                disabled={busy} onClick={() => copyUrl(relayUrl)}>
+                {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+              </button>
+            </div>
           </div>
         )}
 
         {/* Only while connected: asking the relay otherwise would only fail, and an empty header reads as broken. */}
         {profile?.enabled && connected && Boolean(profile.credential_expires_at) && (
-          <div className="border-t border-[var(--mem-border)] pt-4">
-            <ConnectedApps key={profile.revision} revision={profile.revision} enabled />
-          </div>
+          <ConnectedApps key={profile.revision} revision={profile.revision} enabled />
         )}
       </div>
     );
@@ -303,11 +299,11 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
           unknownState={loading ? "loading" : cannotTurnOn ? "unavailable" : "saving"}
         />
         {hasContent && (
-          <div className="min-w-0 px-5 py-4 space-y-4">
+          <div className="min-w-0 px-5 py-4 space-y-6">
             {offConfirm}
             {body}
             {actionError}
-            {showCodeEntry && <CodeEntry bordered={Boolean(body || offConfirm || actionError)} />}
+            {showCodeEntry && <CodeEntry />}
           </div>
         )}
       </Card>
@@ -316,14 +312,14 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
 }
 
 /** For when the browser's link did not open Wenlan: type what the page shows. */
-function CodeEntry({ bordered }: { bordered: boolean }) {
+function CodeEntry() {
   const { t } = useTranslation();
   const id = useId();
   const [value, setValue] = useState("");
   const classified = classifyPairingCode(value);
   const invalid = value.trim() !== "" && classified.kind === "invalid";
   return (
-    <div className={bordered ? "border-t border-[var(--mem-border)] pt-4" : undefined}>
+    <div>
       <Disclosure label={t("remoteAccess.haveCode")}>
         <form className="space-y-3 max-w-sm" onSubmit={(event) => {
           event.preventDefault();
