@@ -261,8 +261,11 @@ describe("a connection that is on", () => {
     expect(screen.getByText("Add Wenlan to your AI app, then click Allow when Wenlan asks.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add to Claude" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy link and open ChatGPT" })).toBeInTheDocument();
-    expect(screen.getByText("Another app? Add this link as a custom connector:")).toBeInTheDocument();
-    expect(screen.getByText(relayUrl)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Other apps" })).toBeInTheDocument();
+    // The link is not in the card; it lives in the Other apps guide.
+    expect(screen.queryByText(relayUrl)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Another app/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
     expect(screen.queryByText(/use Add a tool above/)).not.toBeInTheDocument();
     expect(await screen.findByText("No apps connected yet")).toBeInTheDocument();
   });
@@ -308,10 +311,78 @@ describe("a connection that is on", () => {
     expect(await screen.findByText(/Link copied\. In ChatGPT, click Add, then Add custom MCP server\./)).toBeInTheDocument();
   });
 
-  it("copies only the relay URL", async () => {
+  it("Other apps opens a three step guide with the link; the card itself never shows the link", async () => {
     await connectedPanel();
-    fireEvent.click(button("Copy URL"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog", { name: "Add Wenlan to another AI app" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    const steps = within(dialog).getAllByRole("listitem");
+    expect(steps).toHaveLength(3);
+    expect(steps[0]).toHaveTextContent("In the app's settings, open Connectors and add a custom connector.");
+    expect(steps[1]).toHaveTextContent("Paste this link.");
+    expect(steps[1]).toHaveTextContent(relayUrl);
+    expect(steps[2]).toHaveTextContent("When Wenlan asks, click Allow.");
+    expect(within(dialog).getByText("Works with apps that support custom MCP connectors, such as Muse.")).toBeInTheDocument();
+    expect(dialog.textContent).not.toMatch(/[\u2013\u2014]/);
+    expect(dialog.querySelector("hr, .border-t, [class*='divide-']")).toBeNull();
+    // The dialog holds focus; the card behind it keeps no second copy of the link.
+    expect(dialog).toHaveFocus();
+    expect(screen.getAllByText(relayUrl)).toHaveLength(1);
+  });
+
+  it("Copy in the guide copies only the relay URL and says so", async () => {
+    await connectedPanel();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copy URL" }));
     await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledWith(relayUrl));
+    expect(mocks.clipboardWrite).toHaveBeenCalledTimes(1);
+    expect(await within(dialog).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("a failed copy is not reported as copied", async () => {
+    await connectedPanel();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog");
+    mocks.clipboardWrite.mockRejectedValue(new Error("denied"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copy URL" }));
+    await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalled());
+    expect(within(dialog).getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Copied" })).not.toBeInTheDocument();
+  });
+
+  it("Escape closes the guide and returns focus to Other apps", async () => {
+    await connectedPanel();
+    const trigger = button("Other apps");
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("Done closes the guide and returns focus to Other apps", async () => {
+    await connectedPanel();
+    const trigger = button("Other apps");
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+  });
+
+  it("the guide keeps Tab inside it", async () => {
+    await connectedPanel();
+    fireEvent.click(button("Other apps"));
+    const dialog = await screen.findByRole("dialog");
+    const done = within(dialog).getByRole("button", { name: "Done" });
+    done.focus();
+    fireEvent.keyDown(done, { key: "Tab" });
+    expect(within(dialog).getByRole("button", { name: "Copy URL" })).toHaveFocus();
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(done).toHaveFocus();
   });
 
   it("has nothing to copy, and no steps, when the relay URL is missing", async () => {
@@ -319,7 +390,7 @@ describe("a connection that is on", () => {
     mocks.getRemoteAccessStatus.mockResolvedValue({ ...connected, relay_url: null });
     panel();
     await screen.findByText("Connected");
-    expect(screen.queryByRole("button", { name: "Copy URL" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Other apps" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to Claude" })).not.toBeInTheDocument();
     expect(screen.queryByText("Add Wenlan to your AI app.")).not.toBeInTheDocument();
   });
@@ -723,7 +794,7 @@ describe("in every language", () => {
     await screen.findByRole("button", { name: i18n.t("remoteAccess.testConnection") });
     expect(screen.getByRole("button", { name: addToClaude })).toBeInTheDocument();
     expect(screen.getByText(sharingWhole)).toBeInTheDocument();
-    expect(screen.queryByText(/Connected|Add Wenlan|Add to Claude|Another app|Sharing|Test connection|Turn off|Change/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Connected|Add Wenlan|Add to Claude|Other apps|Sharing|Test connection|Turn off|Change/)).not.toBeInTheDocument();
   });
 });
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ArrowClockwise, ArrowSquareOut, Check, Copy } from "@phosphor-icons/react";
+import { ArrowClockwise, ArrowSquareOut } from "@phosphor-icons/react";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import {
   clipboardWrite, testRemoteMcpConnection, type RemoteConnectionTest,
@@ -14,6 +14,7 @@ import {
   Disclosure, InlineConfirm, RemoteErrorMessage, errorText, secondaryText,
 } from "./remoteAccessParts";
 import { ConnectedApps } from "./RemoteAccessApps";
+import { RemoteOtherAppsGuide } from "./RemoteOtherAppsGuide";
 import { RemoteScopeChooser } from "./RemoteScopeChooser";
 import { scopeLabel, wholeLibrary, type RemoteScope } from "./remoteScope";
 import { useRemoteAccess } from "./useRemoteAccess";
@@ -60,7 +61,9 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
   // The switch was flipped on while Spaces exist: the one question is showing,
   // and nothing is turned on until it is answered.
   const [choosing, setChoosing] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // The "Other apps" guide, and the button that opened it (which gets focus back).
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideOpener = useRef<HTMLElement | null>(null);
   const [chatgptOpened, setChatgptOpened] = useState(false);
   const [probe, setProbe] = useState<RemoteConnectionTest | null>(null);
 
@@ -82,6 +85,9 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
     mutationFn: (operation: () => Promise<void>) => operation(),
     onSettled: () => remote.refresh(),
   });
+  // The guide only makes sense while there is a link to give.
+  const guideAvailable = connected && Boolean(relayUrl);
+  useEffect(() => { if (!guideAvailable) setGuideOpen(false); }, [guideAvailable]);
   // Once it is on (or the question is no longer needed), there is nothing left to ask.
   useEffect(() => { if (isOn) setChoosing(false); }, [isOn]);
   const busy = action.isPending;
@@ -109,11 +115,9 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
     setProbe(null);
     setProbe(await testRemoteMcpConnection());
   });
-  const copyUrl = (url: string) => run(async () => { await clipboardWrite(url); setCopied(true); });
   const addToClaude = (url: string) => run(async () => { await openExternal(claudeAddConnectorUrl(url)); });
   const addToChatGPT = (url: string) => run(async () => {
     await clipboardWrite(url);
-    setCopied(true);
     setChatgptOpened(true);
     await openExternal(CHATGPT_URL);
   });
@@ -236,18 +240,12 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
               <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToChatGPT(relayUrl)}>
                 {t("remoteAccess.addToChatGPT")}<ArrowSquareOut size={14} aria-hidden="true" />
               </Button>
+              <Button variant="ghost" size="sm" aria-haspopup="dialog" disabled={busy}
+                onClick={(event) => { guideOpener.current = event.currentTarget; setGuideOpen(true); }}>
+                {t("remoteAccess.otherApps")}
+              </Button>
             </div>
             {chatgptOpened && <p role="status" className={secondaryText}>{t("remoteAccess.chatgptHint")}</p>}
-            <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 ${secondaryText}`}>
-              <span>{t("remoteAccess.otherAppsHint")}</span>
-              <code className="min-w-0 break-all text-xs text-[var(--mem-text)]">{relayUrl}</code>
-              <button type="button"
-                className="p-1 shrink-0 rounded-[var(--mem-radius-sm)] text-[var(--mem-text-secondary)] hover:text-[var(--mem-text)] hover:bg-[var(--mem-hover)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] disabled:opacity-45"
-                title={t("connectMatrix.copyUrl")} aria-label={copied ? t("remoteAccess.linkCopied") : t("connectMatrix.copyUrl")}
-                disabled={busy} onClick={() => copyUrl(relayUrl)}>
-                {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
-              </button>
-            </div>
           </div>
         )}
 
@@ -307,6 +305,9 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
           </div>
         )}
       </Card>
+      {guideOpen && relayUrl && guideAvailable && (
+        <RemoteOtherAppsGuide relayUrl={relayUrl} returnFocus={guideOpener.current} onClose={() => setGuideOpen(false)} />
+      )}
     </div>
   );
 }

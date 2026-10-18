@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.remote-guide-panel { width: min(500px, 100%); }
+.remote-guide-steps { margin: 20px 0 0; padding: 0; list-style: none; counter-reset: guide; display: grid; gap: 16px; }
+.remote-guide-steps > li { position: relative; counter-increment: guide; padding-left: 30px; color: var(--mem-text); overflow-wrap: anywhere; }
+.remote-guide-steps > li::before { content: counter(guide); position: absolute; left: 0; top: 2px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 999px; background: var(--mem-hover); color: var(--mem-text-secondary); font: 500 12px/1 var(--mem-font-body); }
+.remote-guide-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.remote-guide-link code { min-width: 0; flex: 1 1 auto; font: 12.5px/1.5 var(--mem-font-mono); color: var(--mem-text); overflow-wrap: anywhere; }
+.remote-guide-link button { flex: none; }
+.remote-guide-example { margin: 20px 0 0; color: var(--mem-text-secondary); font-size: 13px; }
