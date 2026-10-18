@@ -45,6 +45,8 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 ## Get started
 
+Save your material in Wenlan so your everyday AI tools can use it to answer questions and get work done.
+
 ### 1. Download and open Wenlan
 
 [Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest), then open it:
@@ -57,9 +59,9 @@ First launch downloads the local search model. Keep an internet connection until
 
 You can also [use Wenlan without the desktop app](docs/setup-and-data.md#installation) through AI tools or the CLI, with the same local knowledge base.
 
-### 2. Open a sample or create a note
+### 2. Save your first page
 
-Choose **Get started**, then explore the sample or write your own note. No import or additional language model setup is required.
+Choose **Get started** to enter Wenlan, then create or import a page and save it. You can also explore the welcome sample.
 
 ### 3. Connect an AI tool when you want
 
@@ -71,11 +73,9 @@ Choose **Get started**, then explore the sample or write your own note. No impor
 
 After installing a plugin, start a new AI session and run `/setup`. Connecting your AI needs no additional local language model.
 
-Create or import a note in Wenlan and save it, then ask:
+Then ask your AI:
 
-> Find my note “[title]” in Wenlan and cite it.
-
-**First success:** Your AI finds that note and provides a citation you can open and check.
+> Use the page “Page title” in Wenlan to help me with this task: …
 
 <a id="daily-workflow"></a>
 

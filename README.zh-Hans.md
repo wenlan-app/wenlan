@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9809dead3f88992c7c07e54e5d4684ca5cc036ad489e5fc78fea39c1f6c5a119 -->
+<!-- README_SYNC: source=README.md sha256=c577ff92a2d459e1aa449f29ab8148cf794573f2e50ed6a12c08c1bd2b5b100b -->
 
 <p align="center">
   <picture>
@@ -47,6 +47,8 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 开始使用
 
+把资料保存在 Wenlan，让你常用的 AI 用上这些知识，回答问题、完成工作。
+
 ### 1. 下载并打开 Wenlan
 
 [下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，安装后打开：
@@ -59,9 +61,9 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 也可[不安装桌面应用](docs/setup-and-data.zh-Hans.md#installation)，通过 AI 或 CLI 使用同一个本地知识库。
 
-### 2. 打开示例或创建笔记
+### 2. 保存你的第一个页面
 
-选择“开始使用”进入 Wenlan，可先看欢迎页中的示例，也可以创建自己的笔记。无需先导入资料或额外配置语言模型。
+选择“开始使用”进入 Wenlan，创建或导入一个页面并保存。也可以先看看欢迎页中的示例。
 
 ### 3. 需要时再连接 AI 工具
 
@@ -73,11 +75,9 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 安装插件后，开启新的 AI 对话并运行 `/setup`。连接 AI 无需另装本地语言模型。
 
-先在 Wenlan 创建或导入并保存一篇笔记，再问 AI：
+连接后，就可以问 AI：
 
-> 找回 Wenlan 里的“［标题］”笔记，附上引用。
-
-**首次使用成功的标准：** AI 找回那份笔记，且你能打开引用核对内容。
+> 用 Wenlan 里的“页面标题”，帮我完成这个任务：……
 
 <a id="daily-workflow"></a>
 

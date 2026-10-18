@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9809dead3f88992c7c07e54e5d4684ca5cc036ad489e5fc78fea39c1f6c5a119 -->
+<!-- README_SYNC: source=README.md sha256=c577ff92a2d459e1aa449f29ab8148cf794573f2e50ed6a12c08c1bd2b5b100b -->
 
 <p align="center">
   <picture>
@@ -47,6 +47,8 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 ## Primeros pasos
 
+Guarda tu material en Wenlan para que tus herramientas de IA habituales lo usen para responder preguntas y ayudarte a completar tareas.
+
 ### 1. Descarga y abre Wenlan
 
 [Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) y ábrela:
@@ -59,9 +61,9 @@ Al iniciar por primera vez se descarga el modelo de búsqueda local. Mantén la 
 
 También puedes [usar Wenlan sin la aplicación de escritorio](docs/setup-and-data.es-ES.md#installation) mediante herramientas de IA o la CLI, con la misma base de conocimiento local.
 
-### 2. Abre un ejemplo o crea una nota
+### 2. Guarda tu primera página
 
-Elige **Get started** para entrar en Wenlan. Explora el ejemplo de bienvenida o crea una nota propia. No hace falta importar nada ni configurar un modelo de lenguaje adicional.
+Elige **Get started** para entrar en Wenlan; después, crea o importa una página y guárdala. También puedes explorar el ejemplo de bienvenida.
 
 ### 3. Conecta una herramienta de IA cuando quieras
 
@@ -73,11 +75,9 @@ Elige **Get started** para entrar en Wenlan. Explora el ejemplo de bienvenida o 
 
 Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/setup`. Conectar tu IA no requiere otro modelo de lenguaje local.
 
-Crea o importa una nota en Wenlan, guárdala y pregunta:
+Después, pídele a tu IA:
 
-> Busca mi nota «[título]» en Wenlan y cítala.
-
-**Primera prueba superada:** Tu IA encuentra esa nota y proporciona una cita que puedes abrir y comprobar.
+> Usa la página «Título de la página» de Wenlan para ayudarme con esta tarea: …
 
 <a id="daily-workflow"></a>
 
