@@ -55,7 +55,7 @@ You can optionally use a [local model](docs/setup-and-data.md#models) to enable 
 
 ### 2. Create a page or import existing material
 
-Create a page in Wenlan, or import earlier AI conversations or memories. In **Settings → Sources**, import a ChatGPT or Claude conversation export ZIP, or paste existing memories as text.
+Create a page in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
 
 ### 3. Connect an AI tool when you want
 

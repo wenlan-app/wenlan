@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=ea2268ddf2fb7be528c92ccbde00ea146156dedf099bce9f6f5a5f0e1f969ed0 -->
+<!-- README_SYNC: source=README.md sha256=b04998d723ff0f2ef90648cfa5ac4dbdd55c6425cf348abe6668c23c9456ecb7 -->
 
 <p align="center">
   <picture>
@@ -57,7 +57,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ### 2. 建立頁面或匯入既有資料
 
-在 Wenlan 建立一個頁面，或匯入之前的 AI 對話或記憶。在「設定 → 來源」匯入 ChatGPT／Claude 的對話匯出 ZIP，或貼上文字匯入記憶。
+在 Wenlan 建立一個頁面、連接 Obsidian vault，或匯入之前的 AI 對話與記憶。[匯入教學](docs/import-guide.zh-Hant.md)。
 
 ### 3. 想使用時再連接 AI 工具
 
