@@ -314,7 +314,7 @@ Wenlan's legacy relay, at `origin-relay.originmemory.workers.dev`, is run by thi
 
 ## Data deletion
 
-- Delete individual memories: `/forget` skill.
+- Delete individual memories: `/wenlan forget <id>` in the plugin.
 - Delete everything: remove `~/.wenlan/` and your platform data directory (`~/Library/Application Support/wenlan/` on macOS, `~/.local/share/wenlan/` on Linux, `%LOCALAPPDATA%\wenlan\` on Windows). An install upgraded from Origin still holds a full copy of its data in `~/.origin/` and in the sibling `origin` data folder (`~/Library/Application Support/origin/` on macOS, `~/.local/share/origin/` on Linux, `%LOCALAPPDATA%\origin\` on Windows); delete or copy those two as well. Three things sit outside all of those:
 
   - `~/.config/wenlan-mcp/` holds the Remote Access identifier, which doubles as that feature's shared secret, and the MCP bearer token if you generated one. Neither is removed with the folders above.

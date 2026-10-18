@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=03ecad8214286bf39fb28e2ea91a757d30bb497cb58783f1771add7fc0ff4709 -->
+<!-- README_SYNC: source=README.md sha256=82625dd31a0057659fa9d7bcd41bd7dfa3f3f976ce6f85bffec57cfe31acafc2 -->
 
 <p align="center">
   <picture>
@@ -71,7 +71,7 @@ Crea una página en Wenlan, conecta una bóveda de Obsidian o importa conversaci
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Guía de Codex](docs/setup-with-ai.md#codex) |
 | Cursor, VS Code, Gemini CLI, Muse Code | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/setup`.
+Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/wenlan` (`$wenlan` en Codex). Comprueba que Wenlan funciona y lo configura si hace falta. Para todo lo demás, escribe lo que quieres a continuación, por ejemplo `/wenlan abre mi nota sobre el plan de lanzamiento`.
 
 El material importado ya está listo para usar; no hace falta crear una página primero. Pregunta a tu IA:
 
@@ -96,7 +96,7 @@ Flujo simplificado. Los comandos del plugin y la organización de páginas son o
 - **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o a través de tu IA (`/capture`).
 - **Pausa y retoma.** Guarda hallazgos y un registro de la sesión, actualiza las páginas afectadas y anota el progreso y los siguientes pasos en el Brief del proyecto (`/handoff`). La próxima vez, recupera ese contexto para continuar (`/brief`).
 
-**Organiza las memorias acumuladas cuando lo necesites:** Sintetiza o actualiza páginas con citas a partir de memorias relacionadas (`/distill`); no es necesario para escribir una página nueva. [Comandos del plugin](plugin/skills/README.md).
+**Organiza las memorias acumuladas cuando lo necesites:** Sintetiza o actualiza páginas con citas a partir de memorias relacionadas (`/wenlan distill`); no es necesario para escribir una página nueva. [Comandos del plugin](plugin/skills/README.md).
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>

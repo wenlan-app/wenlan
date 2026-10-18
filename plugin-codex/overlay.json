@@ -1,6 +1,26 @@
 {
   "$comment": "Input to scripts/gen-codex-plugin.mjs. Each Codex skill is generated from plugin/skills/<skill>/SKILL.md; this file holds only what Codex does differently. `openai` renders agents/openai.yaml. `description` replaces the frontmatter description. `sections` maps an exact heading line to replacement lines (null drops the section through the line before the next heading). `replace` entries swap one exact contiguous run of Claude lines (`from`, must match once) for `to` (null deletes). Prefix swaps, the resolver block, plugin paths and host words are applied by the script afterwards; write `to` text in its final Codex form.",
   "skills": {
+    "wenlan": {
+      "openai": {
+        "display_name": "Wenlan",
+        "short_description": "Say what you want from Wenlan, or check that it is working"
+      },
+      "replace": [
+        {
+          "from": [
+            "Invoke the chosen workflow's skill with the Skill tool (`wenlan:<workflow>`),",
+            "then follow that skill to the end. Its arguments:"
+          ],
+          "to": [
+            "For setup, distill, pages, lint, curate and forget, read",
+            "`references/<workflow>.md` beside this SKILL.md and follow it to the end,",
+            "treating the arguments below as what the user typed after that workflow word.",
+            "For brief, capture, recall and handoff, use that Wenlan skill. Arguments:"
+          ]
+        }
+      ]
+    },
     "brief": {
       "openai": {
         "display_name": "Wenlan Brief",
@@ -14,10 +34,6 @@
       }
     },
     "curate": {
-      "openai": {
-        "display_name": "Wenlan Curate",
-        "short_description": "Review pending Wenlan captures or revisions from Codex"
-      },
       "sections": {
         "## Decide in native cards, not prose": [
           "## Safety protocol",
@@ -89,7 +105,7 @@
             "- **Accept** → the revision replaces the original memory. (carries the `diff` preview)",
             "- **Dismiss** → it was NOT an edit: unstage the false revision link and keep BOTH",
             "  memories as independent rows. (Non-destructive — nothing is deleted. To delete a",
-            "  genuinely unwanted capture, use `/curate captures` → Reject.)",
+            "  genuinely unwanted capture, use `/wenlan curate captures` → Reject.)",
             "- **Skip** → nothing.",
             "",
             "After the card returns, apply the picks in ONE Bash call (skips run nothing):"
@@ -112,7 +128,7 @@
             "- `accept` → the revision replaces the original memory.",
             "- `dismiss` → it was NOT an edit: unstage the false revision link and keep BOTH",
             "  memories as independent rows. (Non-destructive — nothing is deleted. To delete a",
-            "  genuinely unwanted capture, use `/curate captures` → reject.)",
+            "  genuinely unwanted capture, use `/wenlan curate captures` → reject.)",
             "- `skip` → nothing.",
             "",
             "Apply only explicit actions, in ONE Bash call (skips run nothing):"
@@ -172,83 +188,16 @@
         }
       ]
     },
-    "distill": {
-      "openai": {
-        "display_name": "Wenlan Distill",
-        "short_description": "Synthesize or refresh source-backed Wenlan pages"
-      }
-    },
-    "forget": {
-      "openai": {
-        "display_name": "Wenlan Forget",
-        "short_description": "Delete a Wenlan memory by exact id with confirmation"
-      }
-    },
     "handoff": {
       "openai": {
         "display_name": "Wenlan Handoff",
         "short_description": "End a Codex session with captures and a typed Brief update"
       }
     },
-    "help": {
-      "openai": {
-        "display_name": "Wenlan Help",
-        "short_description": "Show the Codex Wenlan command reference"
-      },
-      "replace": [
-        {
-          "from": [
-            "  1. start session  →  hook auto-checks runtime, silent if up"
-          ],
-          "to": [
-            "  1. /setup         →  once after install, or when Wenlan looks broken"
-          ]
-        },
-        {
-          "from": [
-            "  3. work normally  →  Claude proactively /captures durable facts"
-          ],
-          "to": [
-            "  3. work normally  →  Codex proactively /captures durable facts"
-          ]
-        },
-        {
-          "from": [
-            "The local runtime must run at 127.0.0.1:7878. Hook prints \"Wenlan is not running\" and \"/wenlan:setup\" if down."
-          ],
-          "to": [
-            "The local runtime must run at 127.0.0.1:7878. If it or the MCP bridge is down, run /setup."
-          ]
-        },
-        {
-          "from": [
-            "<!-- generated from plugin/skills/verbs.json by scripts/gen-plugin-verbs.mjs; do not edit -->"
-          ],
-          "to": [
-            "<!-- generated from the Claude help card by scripts/gen-codex-plugin.mjs; edit plugin/skills/verbs.json -->"
-          ]
-        }
-      ]
-    },
-    "lint": {
-      "openai": {
-        "display_name": "Wenlan Lint",
-        "short_description": "Diagnose and resolve every finding without hidden mutation"
-      }
-    },
     "pages": {
-      "openai": {
-        "display_name": "Wenlan Pages",
-        "short_description": "List or open distilled Wenlan pages from Codex"
-      },
-      "description": [
-        "List or open distilled pages by delegating to the local `wenlan pages` CLI.",
-        "`/pages <query>` opens the page when one matches, or prints the matches when",
-        "several do. `/pages` lists recent pages. Invoked as `/pages [query]`."
-      ],
       "sections": {
-        "## `/pages <query>` — open, or pick when ambiguous": [
-          "## `/pages <query>` — open, or print the matches",
+        "## `/wenlan pages <query>` — open, or pick when ambiguous": [
+          "## `/wenlan pages <query>` — open, or print the matches",
           "",
           "Run ONE Bash block:",
           "",
@@ -261,10 +210,10 @@
           "",
           "- **`Opened <path>`** → one page matched and is now open. Print that line. Done.",
           "- **A bare path** → print it and say the OS launcher did not open it automatically.",
-          "- **`no page matches: …`** → print it; suggest `/distill <query>`.",
+          "- **`no page matches: …`** → print it; suggest `/wenlan distill <query>`.",
           "- **`N matches for … `** followed by `title · filename` lines → several matched.",
           "  If several pages match, print the CLI output verbatim and ask the user to rerun",
-          "  `/pages` with one of the filenames or a narrower query (titles can repeat, so",
+          "  `/wenlan pages` with one of the filenames or a narrower query (titles can repeat, so",
           "  the filename is the real handle).",
           "",
           "Do not use a picker. Do not re-fetch, list again, or read any page file.",
@@ -286,11 +235,11 @@
         },
         {
           "from": [
-            "tell the user to `/pages <query>` to open one. No picker over the whole set —",
+            "tell the user to `/wenlan pages <query>` to open one. No picker over the whole set —",
             "that's the lossy, 4-cap case the CLI list avoids."
           ],
           "to": [
-            "tell the user to `/pages <query>` to open one."
+            "tell the user to `/wenlan pages <query>` to open one."
           ]
         },
         {
@@ -312,15 +261,6 @@
       }
     },
     "setup": {
-      "openai": {
-        "display_name": "Wenlan Setup",
-        "short_description": "Set up and verify the local Wenlan runtime and MCP bridge"
-      },
-      "description": [
-        "Frictionless Wenlan setup for Codex. Detects a missing local runtime, installs",
-        "or repairs it, and verifies the plugin to MCP to local runtime round-trip. Run",
-        "when the user says \"set up wenlan\", \"is wenlan working\", or \"fix wenlan\"."
-      ],
       "replace": [
         {
           "from": [
@@ -365,7 +305,7 @@
             "platform, or when `npx` is missing or the command fails, do not fetch or run an",
             "installer yourself. Stop and tell the user to install the runtime by following",
             "<https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,",
-            "then run `/wenlan:setup` again."
+            "then run `/wenlan` again."
           ],
           "to": [
             "If absent, install and configure local memory:",
@@ -379,7 +319,7 @@
             "",
             "If the installer fails, stop and tell the user to install the runtime by following",
             "<https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,",
-            "then run `/wenlan:setup` again."
+            "then run `/wenlan` again."
           ]
         },
         {

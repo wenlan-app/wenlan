@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Generates every Codex skill (plugin-codex/skills/<skill>/SKILL.md and
 // agents/openai.yaml) from the Claude skill of the same name plus
-// plugin-codex/overlay.json. The Claude file is the only hand-written prose;
+// plugin-codex/overlay.json. A `hidden_routed` skill (hidden from the Claude
+// menu, reached through /wenlan) becomes a reference file instead,
+// plugin-codex/skills/<codex_reference>, with no frontmatter and no
+// openai.yaml: Codex cannot hide a skill from the user, so the wenlan skill
+// reads the reference rather than invoking a separate skill. The Claude file is the only hand-written prose;
 // the overlay carries the structural differences (sections or line runs that
 // Codex replaces or drops, the per-skill `agents/openai.yaml` metadata, and a
 // description override). `--check` exits 1 when a generated file differs;
@@ -11,18 +15,23 @@
 //   1. overlay `sections`  : heading -> replacement lines, or null to drop
 //   2. overlay `replace`   : exact contiguous line runs -> replacement, or null
 //   3. MCP tool prefix     : claude prefix -> codex prefix (from plugin-contract.json)
-//   4. frontmatter         : drop AskUserQuestion, Bash first, user-invocable: true,
-//                            optional `description` override
+//   4. frontmatter         : drop AskUserQuestion and Skill, Bash first,
+//                            user-invocable: true, optional `description`
+//                            override; a reference drops the frontmatter
 //   5. resolver line       : "$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" -> the
 //                            Codex locator block
 //   6. plugin paths        : ${CLAUDE_PLUGIN_ROOT:-plugin}/.claude-plugin/plugin.json and
 //                            /scripts/version-drift.sh -> Codex paths
-//   7. host words          : "caller_id": "claude-code" -> "codex"; Claude Code -> Codex
+//   7. host words          : "caller_id": "claude-code" -> "codex"; Claude Code -> Codex;
+//                            `/wenlan` -> `$wenlan`
 //   8. leftover guard      : fail on CLAUDE_PLUGIN_ROOT, .claude-plugin, the Claude
 //                            MCP prefix, AskUserQuestion
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+//
+// `--check` also fails on a file under plugin-codex/skills that no skill
+// generates, so a removed or folded skill cannot leave a stale copy behind.
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 
 const OVERLAY_PATH = "plugin-codex/overlay.json";
 const CONTRACT_PATH = "plugin-contract.json";
@@ -33,11 +42,11 @@ const CODEX_RESOLVER_BLOCK = [
   "resolver=\"$(find \"$HOME/.codex/plugins/cache\" -path '*/wenlan/*/bin/resolve-space.sh' 2>/dev/null | head -1)\"",
 ];
 const CLAUDE_RESOLVER_RE =
-  /^resolved="\$\("\$CLAUDE_PLUGIN_ROOT\/scripts\/resolve-space\.sh"(.*)\)"$/;
+  /^(\s*)resolved="\$\("\$CLAUDE_PLUGIN_ROOT\/scripts\/resolve-space\.sh"(.*)\)"$/;
 
 // Any of these in a generated skill means the overlay or a swap rule missed a
 // Claude-only detail. `/wenlan:` is the Claude namespaced slash form (Codex
-// skills are bare `/setup`); `npx -y wenlan@` is the Claude installer.
+// skills are bare, such as `/brief`); `npx -y wenlan@` is the Claude installer.
 const LEFTOVER_TOKENS = [
   "CLAUDE_PLUGIN_ROOT",
   ".claude-plugin",
@@ -159,11 +168,20 @@ function renderFrontmatter(fields) {
   return out;
 }
 
+function checkHiddenFrontmatter(skill, lines) {
+  const fields = parseFrontmatter(skill, lines);
+  const byKey = (k) => fields.find((f) => f.key === k);
+  if (byKey("name")?.value[0] !== skill) fail(skill, "frontmatter name mismatch");
+  if (byKey("user-invocable")?.value[0] !== "false") {
+    fail(skill, "a hidden_routed Claude skill must set user-invocable: false");
+  }
+}
+
 function transformFrontmatter(skill, lines, overlay) {
   const fields = parseFrontmatter(skill, lines);
   const byKey = (k) => fields.find((f) => f.key === k);
   if (byKey("name")?.value[0] !== skill) fail(skill, "frontmatter name mismatch");
-  if (byKey("user-invocable")) fail(skill, "Claude skill must not set user-invocable; the generator adds it");
+  if (byKey("user-invocable")) fail(skill, "a shared Claude skill must not set user-invocable; the generator adds it");
 
   if (overlay.description !== undefined) {
     const d = byKey("description");
@@ -183,7 +201,7 @@ function transformFrontmatter(skill, lines, overlay) {
       fail(skill, "allowed-tools must be a JSON array");
     }
     if (!Array.isArray(parsed)) fail(skill, "allowed-tools must be a JSON array");
-    const rest = parsed.filter((t) => t !== "AskUserQuestion" && t !== "Bash");
+    const rest = parsed.filter((t) => t !== "AskUserQuestion" && t !== "Skill" && t !== "Bash");
     const codex = parsed.includes("Bash") ? ["Bash", ...rest] : rest;
     tools.value = [`[${codex.map((t) => JSON.stringify(t)).join(", ")}]`];
     fields.splice(fields.indexOf(tools) + 1, 0, { key: "user-invocable", value: ["true"] });
@@ -203,9 +221,10 @@ function swapResolver(skill, lines, codexRoot) {
       out.push(line);
       continue;
     }
+    const [, indent, rest] = m;
     out.push(
-      ...CODEX_RESOLVER_BLOCK,
-      `resolved="$("\${resolver:-${codexRoot}/bin/resolve-space.sh}"${m[1]})"`,
+      ...CODEX_RESOLVER_BLOCK.map((l) => indent + l),
+      `${indent}resolved="$("\${resolver:-${codexRoot}/bin/resolve-space.sh}"${rest})"`,
     );
   }
   return out;
@@ -227,9 +246,12 @@ function swapHostWords(text) {
   return text
     .replaceAll('"caller_id": "claude-code"', '"caller_id": "codex"')
     .replaceAll("Claude Code", "Codex")
-    // Claude invokes plugin skills namespaced (`/wenlan:setup`); Codex skills
-    // are bare (`/setup`), as plugin-codex/README.md documents.
-    .replaceAll("/wenlan:", "/");
+    // Claude invokes plugin skills namespaced (`/wenlan:brief`); Codex skills
+    // are bare (`/brief`), as plugin-codex/README.md documents.
+    .replaceAll("/wenlan:", "/")
+    // The front door is a plugin mention in Codex: `$wenlan` (or the exact
+    // `$wenlan:wenlan`). Paths such as `~/.wenlan/` are not commands.
+    .replace(/(?<![\w.~/$-])\/wenlan(?![\w/:-]|\.\w)/g, "$$wenlan");
 }
 
 function guardLeftovers(skill, text, claudePrefix, codexPrefix) {
@@ -266,46 +288,104 @@ function renderOpenai(skill, openai) {
 
 // --- driver ----------------------------------------------------------------
 
-export function generateSkill(skill, claudeText, overlay, contract) {
-  const claude = contract.surfaces.claude;
+function transformBody(skill, body, overlay, contract) {
   const codex = contract.surfaces.codex;
-  const { frontmatter, body } = splitFrontmatter(skill, claudeText);
-
   let lines = body;
   if (overlay.sections) lines = applySections(skill, lines, overlay.sections);
   if (overlay.replace) lines = applyReplace(skill, lines, overlay.replace);
-  lines = swapResolver(skill, lines, codex.plugin_root);
+  return swapResolver(skill, lines, codex.plugin_root);
+}
 
+function finish(skill, text, contract) {
+  const claude = contract.surfaces.claude;
+  const codex = contract.surfaces.codex;
+  let out = text.replaceAll(claude.skill_mcp_tool_prefix, codex.skill_mcp_tool_prefix);
+  out = swapPluginPaths(out, claude.plugin_root, codex.plugin_root);
+  out = swapHostWords(out);
+  guardLeftovers(skill, out, claude.skill_mcp_tool_prefix, codex.skill_mcp_tool_prefix);
+  return out;
+}
+
+export function generateSkill(skill, claudeText, overlay, contract) {
+  const { frontmatter, body } = splitFrontmatter(skill, claudeText);
+  const lines = transformBody(skill, body, overlay, contract);
   const fm = transformFrontmatter(skill, frontmatter, overlay);
-  let text = ["---", ...fm, "---", ...lines].join("\n");
-  text = text.replaceAll(claude.skill_mcp_tool_prefix, codex.skill_mcp_tool_prefix);
-  text = swapPluginPaths(text, claude.plugin_root, codex.plugin_root);
-  text = swapHostWords(text);
-  guardLeftovers(skill, text, claude.skill_mcp_tool_prefix, codex.skill_mcp_tool_prefix);
+  const text = finish(skill, ["---", ...fm, "---", ...lines].join("\n"), contract);
   return { skill: text, openai: renderOpenai(skill, overlay.openai) };
+}
+
+// A hidden_routed skill becomes a plain reference file: the Claude body with
+// the same transforms, no frontmatter, no openai.yaml.
+export function generateReference(skill, claudeText, overlay, contract) {
+  if (overlay.openai !== undefined || overlay.description !== undefined) {
+    fail(skill, "a hidden_routed skill is a reference file; drop its overlay openai and description");
+  }
+  const { frontmatter, body } = splitFrontmatter(skill, claudeText);
+  checkHiddenFrontmatter(skill, frontmatter);
+  let lines = transformBody(skill, body, overlay, contract);
+  while (lines.length && lines[0] === "") lines = lines.slice(1);
+  return finish(skill, lines.join("\n"), contract);
 }
 
 export function generateAll(root) {
   const contract = JSON.parse(readFileSync(resolve(root, CONTRACT_PATH), "utf8"));
   const overlayAll = JSON.parse(readFileSync(resolve(root, OVERLAY_PATH), "utf8"));
   const skills = contract.skills.filter((s) => s.status === "shared_now").map((s) => s.name);
+  const hidden = contract.skills.filter((s) => s.status === "hidden_routed");
   const overlaySkills = Object.keys(overlayAll.skills ?? {});
-  const unknown = overlaySkills.filter((s) => !skills.includes(s));
-  if (unknown.length) throw new GenError(`${OVERLAY_PATH} names skills not shared in ${CONTRACT_PATH}: ${unknown.join(", ")}`);
+  const known = [...skills, ...hidden.map((s) => s.name)];
+  const unknown = overlaySkills.filter((s) => !known.includes(s));
+  if (unknown.length) throw new GenError(`${OVERLAY_PATH} names skills not generated from ${CONTRACT_PATH}: ${unknown.join(", ")}`);
   const missing = skills.filter((s) => !overlaySkills.includes(s));
   if (missing.length) throw new GenError(`${OVERLAY_PATH} is missing skills: ${missing.join(", ")} (every shared skill needs at least an openai entry)`);
 
   const claudeRoot = contract.surfaces.claude.plugin_root;
   const codexRoot = contract.surfaces.codex.plugin_root;
+  const source = (skill) => readFileSync(resolve(root, claudeRoot, "skills", skill, "SKILL.md"), "utf8");
   const outputs = [];
   for (const skill of skills) {
-    const src = resolve(root, claudeRoot, "skills", skill, "SKILL.md");
-    const claudeText = readFileSync(src, "utf8");
-    const gen = generateSkill(skill, claudeText, overlayAll.skills[skill], contract);
+    const gen = generateSkill(skill, source(skill), overlayAll.skills[skill], contract);
     outputs.push({ path: `${codexRoot}/skills/${skill}/SKILL.md`, text: gen.skill });
     outputs.push({ path: `${codexRoot}/skills/${skill}/agents/openai.yaml`, text: gen.openai });
   }
+  for (const { name, codex_reference: ref } of hidden) {
+    if (typeof ref !== "string" || !/^[a-z-]+\/references\/[a-z-]+\.md$/.test(ref)) {
+      throw new GenError(`${CONTRACT_PATH}: ${name} needs codex_reference "<skill>/references/<name>.md"`);
+    }
+    if (!skills.includes(ref.split("/")[0])) {
+      throw new GenError(`${CONTRACT_PATH}: ${name} codex_reference must sit under a shared skill`);
+    }
+    const text = generateReference(name, source(name), overlayAll.skills[name] ?? {}, contract);
+    outputs.push({ path: `${codexRoot}/skills/${ref}`, text });
+  }
   return outputs;
+}
+
+// Every file under <codexRoot>/skills that no output claims.
+export function strayFiles(root, outputs, codexRoot) {
+  const dir = resolve(root, codexRoot, "skills");
+  if (!existsSync(dir)) return [];
+  const claimed = new Set(outputs.map((o) => o.path));
+  const out = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = resolve(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else {
+        const rel = relative(root, p).split("\\").join("/");
+        if (!claimed.has(rel)) out.push(rel);
+      }
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+function pruneEmptyDirs(dir) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isDirectory()) pruneEmptyDirs(resolve(dir, e.name));
+  }
+  if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
 }
 
 function diffHint(path, actual, expected) {
@@ -364,6 +444,21 @@ function main() {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, text);
       console.log(`updated ${path}`);
+    }
+  }
+  const codexRoot = JSON.parse(readFileSync(resolve(root, CONTRACT_PATH), "utf8")).surfaces.codex.plugin_root;
+  for (const path of strayFiles(root, outputs, codexRoot)) {
+    if (check) {
+      stale++;
+      console.error(`${path} is not generated by any skill; delete it`);
+    } else {
+      rmSync(resolve(root, path));
+      console.log(`deleted ${path}`);
+    }
+  }
+  if (!check && existsSync(resolve(root, codexRoot, "skills"))) {
+    for (const e of readdirSync(resolve(root, codexRoot, "skills"), { withFileTypes: true })) {
+      if (e.isDirectory()) pruneEmptyDirs(resolve(root, codexRoot, "skills", e.name));
     }
   }
   if (stale) {

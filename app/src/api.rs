@@ -3530,7 +3530,7 @@ mod tests {
 
     #[tokio::test]
     async fn distill_review_posts_empty_global_request_to_daemon() {
-        let body = r#"{"pages_created":0,"scoped":false,"created_ids":[],"pending":[],"stale_pages":[],"stale_truncated":false,"orphan_topics":[],"clusters_found":0,"hint":"No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan:setup` also links memories to topics automatically, which helps them group."}"#;
+        let body = r#"{"pages_created":0,"scoped":false,"created_ids":[],"pending":[],"stale_pages":[],"stale_truncated":false,"orphan_topics":[],"clusters_found":0,"hint":"No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan setup` also links memories to topics automatically, which helps them group."}"#;
         let (base_url, request) = serve_json_once(body).await;
         let client = WenlanClient {
             client: reqwest::Client::new(),
@@ -3544,7 +3544,7 @@ mod tests {
         assert_eq!(resp.clusters_found, Some(0));
         assert_eq!(
             resp.hint.as_deref(),
-            Some("No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan:setup` also links memories to topics automatically, which helps them group.")
+            Some("No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan setup` also links memories to topics automatically, which helps them group.")
         );
         let request = request.await.unwrap();
         assert_eq!(

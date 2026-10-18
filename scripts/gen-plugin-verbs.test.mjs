@@ -12,7 +12,6 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const script = join(repo, "scripts/gen-plugin-verbs.mjs");
 const FILES = [
   "plugin/skills/verbs.json",
-  "plugin/skills/help/SKILL.md",
   "plugin/README.md",
   "plugin/skills/README.md",
 ];
@@ -61,7 +60,7 @@ test("--check fails on a hand edit inside the markers", () => {
 
 test("every skill dir has a verb entry and vice versa", () => {
   const verbs = JSON.parse(readFileSync(join(repo, "plugin/skills/verbs.json"), "utf8"));
-  const fromVerbs = verbs.map((v) => v.verb.replace(/^\//, "")).sort();
+  const fromVerbs = verbs.map((v) => v.skill).sort();
   const dirs = readdirSync(join(repo, "plugin/skills"), { withFileTypes: true })
     .filter((e) => e.isDirectory())
     .map((e) => e.name)
@@ -75,9 +74,19 @@ test("a bare --root is a usage error, not a crash", () => {
   assert.match(res.stderr, /usage:/);
 });
 
-test("the real tree is in sync and the help card keeps the lint grammar", () => {
+test("menu entries are exactly the user-invocable skills", () => {
+  const verbs = JSON.parse(readFileSync(join(repo, "plugin/skills/verbs.json"), "utf8"));
+  for (const v of verbs) {
+    const text = readFileSync(join(repo, "plugin/skills", v.skill, "SKILL.md"), "utf8");
+    const hidden = /^user-invocable: false$/m.test(text);
+    assert.equal(hidden, !v.menu, `${v.skill}: menu=${v.menu} but hidden=${hidden}`);
+    assert.equal(v.verb.startsWith("/wenlan "), !v.menu, `${v.skill}: hidden verbs are reached through /wenlan`);
+  }
+});
+
+test("the real tree is in sync and the docs keep the lint grammar", () => {
   assert.equal(run(repo, "--check").status, 0);
-  for (const f of ["plugin/skills/help/SKILL.md", "plugin-codex/skills/help/SKILL.md"]) {
-    assert.ok(readFileSync(join(repo, f), "utf8").includes("/lint [deep|repair] [scope]"), f);
+  for (const f of ["plugin/README.md", "plugin/skills/README.md"]) {
+    assert.ok(readFileSync(join(repo, f), "utf8").includes("/wenlan lint [deep"), f);
   }
 });

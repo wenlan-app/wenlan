@@ -13,7 +13,7 @@ mkdir -p \
     "$TMPDIR_TEST/plugin/skills/setup" \
     "$TMPDIR_TEST/plugin-codex/.codex-plugin" \
     "$TMPDIR_TEST/plugin-codex/bin" \
-    "$TMPDIR_TEST/plugin-codex/skills/setup" \
+    "$TMPDIR_TEST/plugin-codex/skills/wenlan/references" \
     "$TMPDIR_TEST/app"
 echo "0.5.0" > "$TMPDIR_TEST/version.txt"
 cat > "$TMPDIR_TEST/Cargo.toml" <<EOF
@@ -71,7 +71,7 @@ EOF
 cat > "$TMPDIR_TEST/plugin/skills/setup/SKILL.md" <<EOF
 npx -y wenlan@0.5.0 setup
 EOF
-cat > "$TMPDIR_TEST/plugin-codex/skills/setup/SKILL.md" <<EOF
+cat > "$TMPDIR_TEST/plugin-codex/skills/wenlan/references/setup.md" <<EOF
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.5.0/install.sh | bash
 EOF
 
@@ -165,13 +165,13 @@ if (cd "$TMPDIR_TEST" && RELEASE_TAG="v0.5.0" bash "$OLDPWD/scripts/validate-ver
 fi
 echo "PASS test 6b: Codex runner without plugin.json derivation rejected"
 perl -0pi -e 's|\.codex-plugin/other\.json|.codex-plugin/plugin.json|g' "$TMPDIR_TEST/plugin-codex/bin/wenlan-mcp-runner.sh"
-perl -0pi -e 's|/v0\.5\.0/install\.sh|/v0.4.9/install.sh|g' "$TMPDIR_TEST/plugin-codex/skills/setup/SKILL.md"
+perl -0pi -e 's|/v0\.5\.0/install\.sh|/v0.4.9/install.sh|g' "$TMPDIR_TEST/plugin-codex/skills/wenlan/references/setup.md"
 if (cd "$TMPDIR_TEST" && RELEASE_TAG="v0.5.0" bash "$OLDPWD/scripts/validate-versions.sh") 2>/dev/null; then
     echo "FAIL test 7: should have detected Codex setup install tag drift"
     exit 1
 fi
 echo "PASS test 7: Codex setup install tag drift detected"
-perl -0pi -e 's|/v0\.4\.9/install\.sh|/v0.5.0/install.sh|g' "$TMPDIR_TEST/plugin-codex/skills/setup/SKILL.md"
+perl -0pi -e 's|/v0\.4\.9/install\.sh|/v0.5.0/install.sh|g' "$TMPDIR_TEST/plugin-codex/skills/wenlan/references/setup.md"
 
 # Test 8: Claude runner exact pin must equal the tag
 perl -0pi -e 's/wenlan-mcp\@0\.5\.0/wenlan-mcp\@0.4.9/' "$TMPDIR_TEST/plugin/scripts/wenlan-mcp-runner.sh"

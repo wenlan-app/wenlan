@@ -1,16 +1,9 @@
----
-name: setup
-description: >
-  Frictionless Wenlan setup for Codex. Detects a missing local runtime, installs
-  or repairs it, and verifies the plugin to MCP to local runtime round-trip. Run
-  when the user says "set up wenlan", "is wenlan working", or "fix wenlan".
-allowed-tools: ["Bash", "mcp__wenlan__brief"]
-user-invocable: true
----
+# Setup
 
-# /setup
+Reached through `$wenlan`: bare `$wenlan` starts this when Wenlan is not
+ready, and so does asking to set up or fix it.
 
-Self-healing setup. Goal: two user actions max: install plugin, type `/setup`.
+Self-healing setup. Goal: two user actions max: install plugin, type `$wenlan`.
 Default backend is local memory: no local model, no API key, no prompts.
 
 ## Steps
@@ -46,7 +39,7 @@ comparing numerically per component with build metadata (`+g<sha>`) stripped.
 - `result=same`: continue to doctor.
 - If the probe cannot run because the runtime is down: continue to bootstrap.
 - `result=unknown` with a healthy runtime (manifest unreadable or no version
-  reported): continue to doctor; the next `/setup` will report the mismatch
+  reported): continue to doctor; the next `$wenlan` will report the mismatch
   again if one exists.
 - If mismatch, check the direction before repairing. `result=newer`: the
   daemon release is newer than the plugin release, so the plugin cache is
@@ -88,7 +81,7 @@ wenlan background on
 
 If the installer fails, stop and tell the user to install the runtime by following
 <https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,
-then run `/setup` again.
+then run `$wenlan` again.
 
 If present but the local runtime is down:
 
@@ -134,7 +127,7 @@ Once healthy, rerun the step 2 command. If `result` is still `older` or
 
 ```text
 Runtime and plugin versions still differ after repair; update the Wenlan plugin,
-restart Codex, then run /setup again.
+restart Codex, then run $wenlan again.
 ```
 
 This usually means the runtime is newer than the plugin cached by the current
@@ -175,11 +168,11 @@ Wenlan ready.
   Mode:     <mode from CLI doctor>
   MCP:      connected
   Data:     ~/.wenlan/  (pages, sessions; database location in docs/setup-and-data.md)
-  Try:      /brief, /capture <thing>, /recall <query>, /help
+  Try:      $wenlan <what you want>, /capture <thing>, /recall <query>
 ```
 
-If this was the first `/setup` invocation in the session, dispatch `/help` once
-so the user sees the verb cheat sheet without asking.
+End here. Do not invoke `$wenlan` or any other skill after the report; the
+`Try:` line is the whole orientation.
 
 ## Optional upgrades
 
@@ -196,7 +189,7 @@ without deleting the model or key.
 
 - Right after installing the Wenlan plugin.
 - The plugin reported "Wenlan is not running" or a version mismatch and named
-  `/setup` as the fix.
+  `$wenlan` as the fix.
 - User says "set up wenlan", "is it working", "reinstall wenlan".
 
 ## When NOT to use

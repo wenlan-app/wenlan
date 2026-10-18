@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SessionStart hook: probe the local Wenlan daemon and surface two issues:
-#   1. Daemon not running → point user at /wenlan:setup (it auto-installs).
+#   1. Daemon not running → point user at /wenlan (it auto-installs).
 #   2. Daemon version mismatches the plugin manifest → point user at
-#      /wenlan:setup (it upgrades/restarts and verifies the runtime).
+#      /wenlan (it upgrades/restarts and verifies the runtime).
 # Hook never blocks (always exit 0) and never prints command soup.
 set -u
 
@@ -37,7 +37,7 @@ done
 
 if [ -z "$RESP" ]; then
   cat <<MSG
-[wenlan] Wenlan is not running. Handoff notes are saved locally and sync when it starts; run /wenlan:setup or \`wenlan background on\`.
+[wenlan] Wenlan is not running. Handoff notes are saved locally and sync when it starts; run /wenlan or \`wenlan background on\`.
 MSG
   report_outbox
   exit 0
@@ -62,7 +62,7 @@ EXPECTED_VER=$(field expected)
 if [ "$RESULT" = older ] || [ "$RESULT" = newer ]; then
   cat <<MSG
 [wenlan] daemon v${DAEMON_VER}, plugin expects v${EXPECTED_VER}.
-  Run /wenlan:setup to repair: it updates an older runtime, or says when the plugin cache is stale, then verifies MCP.
+  Run /wenlan to repair: it updates an older runtime, or says when the plugin cache is stale, then verifies MCP.
 MSG
 fi
 

@@ -6,7 +6,7 @@ Wenlan is local-first. Memories, pages, and session notes live on your machine u
 
 ## What the plugin contains
 
-- **Skills**: `/wenlan:setup`, `/brief`, `/capture`, `/recall`, `/lint`, `/distill`, `/pages`, `/curate`, `/forget`, `/handoff`, and `/help`. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
+- **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, notes, distill, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
 - **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools (capture, recall, brief, distill, and friends) to Claude Code and Cowork. Claude chat on the web ignores local MCP servers.
 - **One `SessionStart` hook** (`plugin/hooks/check-daemon.sh`). It probes the local daemon and prints at most a few lines: a reminder if the daemon is not running, a count of handoff notes waiting to sync (from the local `wenlan outbox status` command, parsed with `python3`), and a notice if the daemon and plugin versions have drifted apart. It never blocks a session and never installs anything.
 
@@ -19,7 +19,7 @@ Install from the Claude directory, or from the Claude Code marketplace:
 /plugin install wenlan@7xuanlu-wenlan
 ```
 
-Then restart Claude Code and run `/wenlan:setup`. The skill installs the local runtime if it is missing (macOS Apple Silicon; elsewhere it links the install guide), configures local memory, verifies the MCP round trip, and prints "Wenlan ready". After that, `/capture <something to remember>` or `/brief` is the daily loop.
+Then restart Claude Code and run `/wenlan`. When Wenlan is not ready yet it starts setup, which installs the local runtime if it is missing (macOS Apple Silicon; elsewhere it links the install guide), configures local memory, verifies the MCP round trip, and prints "Wenlan ready". After that, `/capture <something to remember>` or `/brief` is the daily loop.
 
 The first run downloads an embedding model of roughly 210 MB, so allow a few minutes.
 
@@ -30,7 +30,7 @@ Everything the plugin does is listed here so you can decide whether to install i
 | Component | What it runs | Network destination |
 |---|---|---|
 | Skills and MCP server | Read and write memories, pages, and session notes | `127.0.0.1:7878` (the local Wenlan daemon on your machine) |
-| `/wenlan:setup` | When the runtime is missing, runs `npx -y wenlan@<pinned version> setup` (macOS Apple Silicon). On other platforms it stops and points you to the install guide | `registry.npmjs.org` (npm package `wenlan`), which downloads release binaries from `github.com/wenlan-app/wenlan/releases` (GitHub serves the files from `objects.githubusercontent.com`) |
+| `/wenlan` setup | When the runtime is missing, runs `npx -y wenlan@<pinned version> setup` (macOS Apple Silicon). On other platforms it stops and points you to the install guide | `registry.npmjs.org` (npm package `wenlan`), which downloads release binaries from `github.com/wenlan-app/wenlan/releases` (GitHub serves the files from `objects.githubusercontent.com`) |
 | MCP runner fallback | If no local `wenlan-mcp` binary exists, runs `npx -y wenlan-mcp@<pinned version>` | `registry.npmjs.org` (npm package `wenlan-mcp`) |
 | `SessionStart` hook | One health probe of the local daemon, plus the local outbox and version checks above | `127.0.0.1:7878` only |
 | Local daemon, first start | Downloads the search embedding model (about 210 MB, `Qdrant/bge-base-en-v1.5-onnx-Q`) once | `huggingface.co`. No memory content is sent. If a Hugging Face token is already saved on the machine, the download library attaches it |
@@ -54,13 +54,13 @@ Browse with any editor, or symlink `~/.wenlan/pages/` into an Obsidian vault for
 
 ## Local memory and agent-side model phases
 
-By default `/wenlan:setup` configures local memory: no model download beyond the embedder, no API key, no prompts. The daemon stores, embeds, dedupes, and serves hybrid search. Where the daemon would normally call a model, the skill asks Claude itself to do the equivalent step and posts the result back over HTTP:
+By default setup configures local memory: no model download beyond the embedder, no API key, no prompts. The daemon stores, embeds, dedupes, and serves hybrid search. Where the daemon would normally call a model, the skill asks Claude itself to do the equivalent step and posts the result back over HTTP:
 
 | Phase | Model-equipped daemon | Local memory plus skill |
 |---|---|---|
 | Pick `memory_type` | daemon classifier | `/capture` picks one of 6 types from content |
 | Extract entities and relations | daemon `extract.rs` | `/capture` posts to `/api/memory/entities` and `/api/memory/relations` |
-| Synthesize a page | daemon distill cycles | `/distill` reads the cluster, writes the page, posts to `/api/pages` |
+| Synthesize a page | daemon distill cycles | `/wenlan distill` reads the cluster, writes the page, posts to `/api/pages` |
 | Expand a query or rerank hits | daemon expansion and rerank | `/recall` rewrites the query before search and reorders hits after |
 
 The daemon stays the single writer and storage owner. Claude does the thinking.
@@ -70,17 +70,17 @@ The daemon stays the single writer and storage owner. Claude does the thinking.
 <!-- verbs:start -->
 <!-- generated from plugin/skills/verbs.json by scripts/gen-plugin-verbs.mjs; do not edit -->
 
-- `/setup` - set up or repair Wenlan (installs the local runtime)
+- `/wenlan [what you want]` - the front door: say what you want, or type it bare for status and setup
 - `/brief [topic]` - load the Brief for the current Space (optional; not a boot step)
-- `/capture <x>` - save one durable memory in flow
+- `/capture <x>` - save one durable memory in flow, or this conversation as one note on request
 - `/recall <q>` - search local memory
-- `/lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
-- `/distill [t]` - synthesize or refresh source-backed pages for the active Space
-- `/pages [q]` - browse and open distilled pages
-- `/curate <surface>` - deep audit of captures, revisions or refinements
-- `/forget <id>` - delete one memory by ID, after confirmation
 - `/handoff` - end-of-session debrief: captures, session log, Brief update
-- `/help` - one-screen quick reference
+- `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
+- `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
+- `/wenlan distill [t]` - synthesize or refresh source-backed pages for the active Space
+- `/wenlan pages [q]` - browse and open distilled pages
+- `/wenlan curate <surface>` - deep audit of captures, revisions or refinements
+- `/wenlan forget <id>` - delete one memory by ID, after confirmation
 <!-- verbs:end -->
 
 Skill instructions live in [`skills/`](skills/). Plugin metadata is in [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json), the MCP declaration in [`.mcp.json`](.mcp.json), and the marketplace entry in [`../.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json) at the repository root.

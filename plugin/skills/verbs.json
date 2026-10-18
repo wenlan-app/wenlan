@@ -1,13 +1,13 @@
 [
-  { "verb": "/setup", "line": "set up or repair Wenlan (installs the local runtime)" },
-  { "verb": "/brief", "args": "[topic]", "line": "load the Brief for the current Space (optional; not a boot step)" },
-  { "verb": "/capture", "args": "<x>", "line": "save one durable memory in flow" },
-  { "verb": "/recall", "args": "<q>", "line": "search local memory" },
-  { "verb": "/lint", "args": "[deep|repair] [scope]", "line": "diagnose, or resolve all findings safely" },
-  { "verb": "/distill", "args": "[t]", "line": "synthesize or refresh source-backed pages for the active Space" },
-  { "verb": "/pages", "args": "[q]", "line": "browse and open distilled pages" },
-  { "verb": "/curate", "args": "<surface>", "line": "deep audit of captures, revisions or refinements" },
-  { "verb": "/forget", "args": "<id>", "line": "delete one memory by ID, after confirmation" },
-  { "verb": "/handoff", "line": "end-of-session debrief: captures, session log, Brief update" },
-  { "verb": "/help", "line": "one-screen quick reference" }
+  { "verb": "/wenlan", "args": "[what you want]", "skill": "wenlan", "menu": true, "line": "the front door: say what you want, or type it bare for status and setup" },
+  { "verb": "/brief", "args": "[topic]", "skill": "brief", "menu": true, "line": "load the Brief for the current Space (optional; not a boot step)" },
+  { "verb": "/capture", "args": "<x>", "skill": "capture", "menu": true, "line": "save one durable memory in flow, or this conversation as one note on request" },
+  { "verb": "/recall", "args": "<q>", "skill": "recall", "menu": true, "line": "search local memory" },
+  { "verb": "/handoff", "skill": "handoff", "menu": true, "line": "end-of-session debrief: captures, session log, Brief update" },
+  { "verb": "/wenlan setup", "skill": "setup", "menu": false, "line": "set up or repair Wenlan (installs the local runtime)" },
+  { "verb": "/wenlan lint", "args": "[deep|repair] [scope]", "skill": "lint", "menu": false, "line": "diagnose, or resolve all findings safely" },
+  { "verb": "/wenlan distill", "args": "[t]", "skill": "distill", "menu": false, "line": "synthesize or refresh source-backed pages for the active Space" },
+  { "verb": "/wenlan pages", "args": "[q]", "skill": "pages", "menu": false, "line": "browse and open distilled pages" },
+  { "verb": "/wenlan curate", "args": "<surface>", "skill": "curate", "menu": false, "line": "deep audit of captures, revisions or refinements" },
+  { "verb": "/wenlan forget", "args": "<id>", "skill": "forget", "menu": false, "line": "delete one memory by ID, after confirmation" }
 ]

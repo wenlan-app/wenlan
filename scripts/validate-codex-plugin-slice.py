@@ -15,6 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugin-codex"
 REQUIRED_SKILL_INTERFACE = {
+    "wenlan": {
+        "display_name": "Wenlan",
+        "short_description": "Say what you want from Wenlan, or check that it is working",
+    },
     "brief": {
         "display_name": "Wenlan Brief",
         "short_description": "Read the Space Brief and optional related context",
@@ -23,44 +27,19 @@ REQUIRED_SKILL_INTERFACE = {
         "display_name": "Wenlan Capture",
         "short_description": "Save a durable memory to Wenlan from the current conversation",
     },
-    "curate": {
-        "display_name": "Wenlan Curate",
-        "short_description": "Review pending Wenlan captures or revisions from Codex",
-    },
-    "distill": {
-        "display_name": "Wenlan Distill",
-        "short_description": "Synthesize or refresh source-backed Wenlan pages",
-    },
-    "forget": {
-        "display_name": "Wenlan Forget",
-        "short_description": "Delete a Wenlan memory by exact id with confirmation",
-    },
     "handoff": {
         "display_name": "Wenlan Handoff",
         "short_description": "End a Codex session with captures and a typed Brief update",
-    },
-    "help": {
-        "display_name": "Wenlan Help",
-        "short_description": "Show the Codex Wenlan command reference",
-    },
-    "lint": {
-        "display_name": "Wenlan Lint",
-        "short_description": "Diagnose and resolve every finding without hidden mutation",
-    },
-    "pages": {
-        "display_name": "Wenlan Pages",
-        "short_description": "List or open distilled Wenlan pages from Codex",
     },
     "recall": {
         "display_name": "Wenlan Recall",
         "short_description": "Search Wenlan memories from Codex",
     },
-    "setup": {
-        "display_name": "Wenlan Setup",
-        "short_description": "Set up and verify the local Wenlan runtime and MCP bridge",
-    },
 }
-SKILLS_WITHOUT_MCP_REFERENCE = {"handoff", "help", "pages"}
+# Workflows hidden from the Claude menu are reference files under the wenlan
+# skill in Codex (plugin-contract.json `hidden_routed`), not separate skills.
+REQUIRED_REFERENCES = {"setup", "pages", "lint", "curate", "forget", "distill"}
+SKILLS_WITHOUT_MCP_REFERENCE = {"handoff", "pages"}
 SKILLS_USING_RESOLVER = {"brief", "capture", "distill", "handoff", "lint", "recall"}
 # Installed plugins live under ~/.codex/plugins/cache/<marketplace>/wenlan/<version>/;
 # the checkout-relative `plugin-codex/bin/...` path only resolves inside this repo.
@@ -68,6 +47,12 @@ RESOLVER_LOCATOR = (
     "find \"$HOME/.codex/plugins/cache\" -path '*/wenlan/*/bin/resolve-space.sh'"
 )
 REQUIRED_GUARDRAILS = {
+    "wenlan": [
+        "Load the workflow's instructions before calling any of its MCP tools",
+        "Never add `repair`, `rebuild`, `--yes`, or an id the user did not give.",
+        "read `references/<workflow>.md` beside this SKILL.md and follow it to the end",
+        "Unclear**: ask one question",
+    ],
     "forget": [
         "cannot be undone",
         "delete <id>",
@@ -146,19 +131,6 @@ def assert_no_claude_tokens(path: Path) -> None:
             fail(f"{path.relative_to(ROOT)} contains Claude-only token {token!r}")
 
 
-def frontmatter_value(text: str, key: str) -> str | None:
-    lines = text.splitlines()
-    if not lines or lines[0] != "---":
-        return None
-    prefix = f"{key}:"
-    for line in lines[1:]:
-        if line == "---":
-            return None
-        if line.startswith(prefix):
-            return line[len(prefix) :].strip().strip('"')
-    return None
-
-
 def shared_codex_skills() -> tuple[str, ...]:
     contract = read_json(ROOT / "plugin-contract.json")
     skills: list[str] = []
@@ -223,6 +195,62 @@ def validate_resolver() -> None:
     assert_no_claude_tokens(resolver)
 
 
+def hidden_codex_references() -> dict[str, str]:
+    contract = read_json(ROOT / "plugin-contract.json")
+    refs: dict[str, str] = {}
+    for item in contract.get("skills", []):
+        if isinstance(item, dict) and item.get("status") == "hidden_routed":
+            name = item.get("name")
+            ref = item.get("codex_reference")
+            if not isinstance(name, str) or not isinstance(ref, str):
+                fail("hidden_routed plugin-contract entries need name and codex_reference")
+            if ref != f"wenlan/references/{name}.md":
+                fail(f"hidden skill {name} must fold into wenlan/references/{name}.md")
+            refs[name] = ref
+    return refs
+
+
+def check_content(path: Path, skill: str, text: str, *, reference: bool = False) -> None:
+    normalized_text = " ".join(text.split())
+    # A reference has no allowed-tools frontmatter, so it names tools bare.
+    if not reference and skill not in SKILLS_WITHOUT_MCP_REFERENCE and "mcp__wenlan__" not in text:
+        fail(f"{path.relative_to(ROOT)} must use Codex wenlan MCP tool names")
+    if skill in SKILLS_USING_RESOLVER:
+        if "plugin-codex/bin/resolve-space.sh" not in text:
+            fail(f"{path.relative_to(ROOT)} must use plugin-codex/bin/resolve-space.sh")
+        if RESOLVER_LOCATOR not in text:
+            fail(
+                f"{path.relative_to(ROOT)} must locate the installed resolver with "
+                f"{RESOLVER_LOCATOR}"
+            )
+    for needle in REQUIRED_GUARDRAILS.get(skill, []):
+        if " ".join(needle.split()) not in normalized_text:
+            fail(f"{path.relative_to(ROOT)} must contain guardrail {needle!r}")
+
+
+def validate_references() -> None:
+    refs = hidden_codex_references()
+    if set(refs) != REQUIRED_REFERENCES:
+        fail(f"REQUIRED_REFERENCES must exactly match hidden_routed skills: {sorted(refs)}")
+    for skill, ref in sorted(refs.items()):
+        path = PLUGIN / "skills" / ref
+        assert_file(path)
+        assert_no_claude_tokens(path)
+        if (PLUGIN / "skills" / skill).exists():
+            fail(f"{(PLUGIN / 'skills' / skill).relative_to(ROOT)} must not exist; {skill} is a wenlan reference")
+        text = path.read_text(encoding="utf-8")
+        if text.startswith("---"):
+            fail(f"{path.relative_to(ROOT)} is a reference file and must not carry frontmatter")
+        check_content(path, skill, text, reference=True)
+    stray = sorted(
+        p.relative_to(ROOT).as_posix()
+        for p in (PLUGIN / "skills" / "wenlan" / "references").rglob("*")
+        if p.is_file() and p.name not in {f"{s}.md" for s in refs}
+    )
+    if stray:
+        fail(f"unexpected files under the wenlan references: {stray}")
+
+
 def validate_skills() -> None:
     required_skills = shared_codex_skills()
     if set(REQUIRED_SKILL_INTERFACE) != set(required_skills):
@@ -230,6 +258,9 @@ def validate_skills() -> None:
             "REQUIRED_SKILL_INTERFACE must exactly match shared Codex skills: "
             f"{sorted(required_skills)}"
         )
+    present = sorted(p.name for p in (PLUGIN / "skills").iterdir() if p.is_dir())
+    if present != list(required_skills):
+        fail(f"plugin-codex/skills must hold exactly the shared skills {list(required_skills)}, found {present}")
     for skill in required_skills:
         path = PLUGIN / "skills" / skill / "SKILL.md"
         metadata_path = PLUGIN / "skills" / skill / "agents" / "openai.yaml"
@@ -238,28 +269,11 @@ def validate_skills() -> None:
         assert_no_claude_tokens(path)
         assert_no_claude_tokens(metadata_path)
         text = path.read_text(encoding="utf-8")
-        normalized_text = " ".join(text.split())
         if f"name: {skill}" not in text:
             fail(f"{path.relative_to(ROOT)} frontmatter must name {skill}")
-        if skill == "lint" and frontmatter_value(text, "argument-hint") != (
-            "[deep|repair] [global|uncategorized|space:<name>]"
-        ):
-            fail(f"{path.relative_to(ROOT)} exposes the wrong lint argument grammar")
         if "user-invocable: true" not in text:
             fail(f"{path.relative_to(ROOT)} must be marked user-invocable for slash autocomplete")
-        if skill not in SKILLS_WITHOUT_MCP_REFERENCE and "mcp__wenlan__" not in text:
-            fail(f"{path.relative_to(ROOT)} must use Codex wenlan MCP tool names")
-        if skill in SKILLS_USING_RESOLVER:
-            if "plugin-codex/bin/resolve-space.sh" not in text:
-                fail(f"{path.relative_to(ROOT)} must use plugin-codex/bin/resolve-space.sh")
-            if RESOLVER_LOCATOR not in text:
-                fail(
-                    f"{path.relative_to(ROOT)} must locate the installed resolver with "
-                    f"{RESOLVER_LOCATOR}"
-                )
-        for needle in REQUIRED_GUARDRAILS.get(skill, []):
-            if " ".join(needle.split()) not in normalized_text:
-                fail(f"{path.relative_to(ROOT)} must contain guardrail {needle!r}")
+        check_content(path, skill, text)
         metadata = metadata_path.read_text(encoding="utf-8")
         expected = REQUIRED_SKILL_INTERFACE[skill]
         if "interface:" not in metadata:
@@ -271,14 +285,14 @@ def validate_skills() -> None:
 
 
 def validate_pages_skill() -> None:
-    path = PLUGIN / "skills" / "pages" / "SKILL.md"
+    path = PLUGIN / "skills" / "wenlan" / "references" / "pages.md"
     text = path.read_text(encoding="utf-8")
     required = [
         "wenlan pages",
         "Do not read a page body unless the user asks to see it here",
         "Do not use a picker",
         "If several pages match, print the CLI output",
-        "If `wenlan` is not found, tell the user to run `/setup`",
+        "If `wenlan` is not found, tell the user to run `$wenlan`",
     ]
     for needle in required:
         if needle not in text:
@@ -300,6 +314,7 @@ def main() -> None:
     validate_runner()
     validate_resolver()
     validate_skills()
+    validate_references()
     validate_pages_skill()
     print("Codex plugin slice validation passed")
 

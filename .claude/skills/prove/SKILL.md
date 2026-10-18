@@ -18,7 +18,7 @@ prefixed (macOS mktemp gotcha).
 | `daemon` | read `references/daemon.md` | HTTP behavior on an isolated daemon |
 | `cli` | `attest.sh bash scripts/smoke-cli.sh` | shipped CLI black-box round-trip |
 | `mcp` | `attest.sh bash scripts/smoke-mcp.sh` | stdio JSON-RPC round-trip |
-| `plugin` | `/wenlan:setup` verify path | plugin → MCP → daemon wiring |
+| `plugin` | `/wenlan` setup verify path | plugin → MCP → daemon wiring |
 | `suite` | breadth: `cargo mutants -f <file>` (auto-generated mutants, lib-test oracle); depth: read `references/mutprove.md` | tests can actually go red (mutation audit) |
 | `behaviors` | `attest.sh python3 scripts/check-behavior-trace.py <plan.md> <tests...>` | tests trace to intent, both directions |
 | `sweep` | read `references/sweep.md` | weekly verify-the-verifier |

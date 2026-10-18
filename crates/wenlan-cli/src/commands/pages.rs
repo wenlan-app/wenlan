@@ -300,7 +300,7 @@ pub async fn run(
             }
             QueryMatch::None => {
                 eprintln!("no page matches: {q}");
-                eprintln!("run `wenlan pages` to list, or `/distill {q}` to synthesize one");
+                eprintln!("run `wenlan pages` to list, or `/wenlan distill {q}` to synthesize one");
             }
             QueryMatch::One(p) => {
                 if resolve_id || print {

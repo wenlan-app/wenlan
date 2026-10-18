@@ -1,11 +1,12 @@
 ---
 name: capture
 description: >
-  Save a memory to Wenlan in flow. Active capture verb — use proactively
-  when the user states a preference, makes a decision, corrects you, or
-  shares a durable fact. Invoked as `/capture <content>`.
+  Save a memory to Wenlan in flow, or save something from this conversation as
+  one note when the user asks for a note. Use proactively when the user states
+  a preference, makes a decision, corrects you, or shares a durable fact.
+  Invoked as `/capture <content>`.
 argument-hint: "<content>"
-allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__list_rejections", "Bash"]
+allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__list_rejections", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "Bash"]
 ---
 
 # /capture
@@ -42,6 +43,17 @@ binary, or omit `space` to store uncategorized:
 W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 "$W" spaces add <space>
 ```
+
+## Memory or note
+
+Default to one memory. Save a note instead only when the user asks for one in
+their own words: "save this as a note", "write this up", "存成筆記",
+"寫成一篇筆記", or `/capture` text that starts with "note:". Proactive
+captures are always memories; never create a note on your own initiative, and
+never save the same thing as both a memory and a note in one turn. Turning many
+memories into notes is a different job: that is `/wenlan distill`.
+
+To save a note, follow "Save a note" below and skip the memory steps.
 
 ## How to invoke
 
@@ -114,6 +126,24 @@ For a durable named entity explicitly established by the user, `create_entity`
 may also be used alone when its stable id is needed. Its `Entity <id> ready`
 result does not imply that a new row was created.
 
+## Save a note
+
+1. Resolve the Space exactly as above.
+2. New note: call `write_page` with a short noun-phrase `title`, the note as
+   Markdown `content` written from this conversation, and `space` when it is
+   non-empty. `source_memory_ids` are optional; pass them only when the note
+   is built from memories you can name by id.
+3. Updating a note the user named: confirm the exact title with `list_pages`
+   for the Space (never fuzzy-match), call `read_page`, keep `page.version`
+   and `page.source_memory_ids`, edit the current body, then call
+   `write_page` with `page_id`, the edited `content`, `expected_version` set
+   to that version, and the existing `source_memory_ids`.
+4. A refusal saying the page moved means it changed after your read: read it
+   again and redo the edit once. A refusal that the user wrote or edited the
+   page, or a `gated` result, means it is protected: stop and tell the user it
+   is waiting for their review, not that it was saved.
+5. Report the note's title and the path or id the result returns.
+
 ## What to capture, what to skip, how to write it
 
 The `capture` tool description is the single source for this policy: what to
@@ -124,6 +154,7 @@ wording. Follow it as written; do not keep a second copy here.
 ## When to use
 
 - User explicitly says "remember this", "save that", "capture this".
+- User asks to save something from this conversation as a note.
 - User states a durable preference / decision / correction proactively (no
   ask required — that's the floor, not the trigger).
 
@@ -147,7 +178,7 @@ The result opens with `Staged <id> for review. Not live yet.` This happens only
 when the call carried `supersedes` and this agent's trust level is below full.
 The memory it would replace keeps answering searches. Tell the user in one line
 that the correction is waiting in the review queue (`/brief` shows the top
-three; `/curate revisions` walks the full queue). Do not accept or dismiss the
+three; `/wenlan curate revisions` walks the full queue). Do not accept or dismiss the
 staged revision from this skill: the gate exists because a person downgraded
 this agent, so the decision is theirs.
 

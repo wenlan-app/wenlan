@@ -13,16 +13,6 @@ const NOTE =
 
 const cmd = (v) => (v.args ? `${v.verb} ${v.args}` : v.verb);
 
-function card(verbs) {
-  const width = Math.max(...verbs.map((v) => cmd(v).length));
-  return [
-    NOTE,
-    ...verbs.map(
-      (v) => `  ${cmd(v).padEnd(width)}  ${v.line}`,
-    ),
-  ];
-}
-
 const list = (verbs) => [
   NOTE,
   "",
@@ -40,9 +30,6 @@ const table = (verbs) => [
 ];
 
 const TARGETS = [
-  // plugin-codex/skills/help/SKILL.md is generated from the Claude card by
-  // scripts/gen-codex-plugin.mjs, so it is not a target here.
-  { path: "plugin/skills/help/SKILL.md", render: card },
   { path: "plugin/README.md", render: list },
   { path: "plugin/skills/README.md", render: table },
 ];

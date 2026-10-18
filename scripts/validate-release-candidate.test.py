@@ -1234,7 +1234,7 @@ class ValidateReleaseCandidateTests(unittest.TestCase):
         self.assertEqual((version, base_sha), ("0.15.4", BASE_SHA))
         self.assertEqual(paths, VALIDATOR.REQUIRED_RELEASE_PATHS)
 
-        new["plugin-codex/skills/setup/SKILL.md"] += "unrelated executable instruction\n"
+        new["plugin-codex/skills/wenlan/references/setup.md"] += "unrelated executable instruction\n"
         with self.assertRaisesRegex(VALIDATOR.CandidateError, "exact version-only"):
             VALIDATOR.validate_release_pr_content(
                 FakeContentApi(old, new), "wenlan-app/wenlan", candidate_pr()

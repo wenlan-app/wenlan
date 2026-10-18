@@ -45,7 +45,7 @@ CODEX_RUNNER_DERIVES_PIN=$(grep -c '\.codex-plugin/plugin\.json' plugin-codex/bi
 # the Claude directory rejects a download piped into a shell and unpinned packages.
 CLAUDE_SETUP_TAGS=$(grep -Eo 'npx -y wenlan@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)? setup' plugin/skills/setup/SKILL.md | sed -E 's/.*@([^ ]+) setup/\1/' | sort -u || true)
 CLAUDE_SETUP_UNPINNED=$(grep -Ec 'npx -y wenlan(@(latest|\^|~)[^ ]*)? setup|install\.sh' plugin/skills/setup/SKILL.md || true)
-CODEX_SETUP_TAGS=$(grep -Eo '/v[0-9]+\.[0-9]+\.[0-9]+/install\.sh' plugin-codex/skills/setup/SKILL.md | sed -E 's|/v([^/]+)/install\.sh|\1|' | sort -u || true)
+CODEX_SETUP_TAGS=$(grep -Eo '/v[0-9]+\.[0-9]+\.[0-9]+/install\.sh' plugin-codex/skills/wenlan/references/setup.md | sed -E 's|/v([^/]+)/install\.sh|\1|' | sort -u || true)
 
 echo "Tag:         $TAG_VER"
 echo "version.txt: $VTXT_VER"

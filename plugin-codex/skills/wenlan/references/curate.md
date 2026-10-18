@@ -1,31 +1,17 @@
----
-name: curate
-description: >
-  Power-user audit of Wenlan's pending surfaces: accept or dismiss pending
-  revisions (conflicts/merges), or audit pending captures (not yet confirmed).
-  Most users want `/brief` for revisions; that handles the daily flow. Use
-  `/curate` only for explicit deep-walk audits after bulk imports, or to walk
-  the full queue rather than the top 3 shown in /brief.
-  Invoked as `/curate captures`, `/curate revisions`, or `/curate refinements`.
-argument-hint: "captures | revisions | refinements"
-allowed-tools: ["Bash", "mcp__wenlan__list_pending", "mcp__wenlan__confirm_memory", "mcp__wenlan__forget", "mcp__wenlan__capture", "mcp__wenlan__recall", "mcp__wenlan__list_refinements", "mcp__wenlan__accept_refinement", "mcp__wenlan__reject_refinement"]
-user-invocable: true
----
+# $wenlan curate
 
-# /curate
-
-Power-user audit lever. Most users do not need /curate in daily flow:
+Power-user audit lever. Most users do not need $wenlan curate in daily flow:
 
 - **Pending revisions** surface in `/brief` automatically (top 3 with inline accept/dismiss).
 - **Pending captures from this session** surface in `/handoff`'s preview block (top 3).
-- **Orphan wikilinks** surface in `/distill`'s topic-suggestion block.
+- **Orphan wikilinks** surface in `$wenlan distill`'s topic-suggestion block.
 
-Use /curate only when you want the deep walk those skills intentionally do not force.
+Use $wenlan curate only when you want the deep walk those skills intentionally do not force.
 
 **Captures are meant to decay.** A capture lands pending (not yet confirmed) and, if nothing
 ever conflicts with it, it quietly fades — that is by design, not a backlog you owe the
 system. The only items that *need* a human are genuine conflicts (a contradiction,
-or a richer re-capture worth merging); those surface as pending revisions. `/curate
+or a richer re-capture worth merging); those surface as pending revisions. `$wenlan curate
 captures` is an **opt-in audit** for when you *want* to seal a batch (e.g. after a
 bulk import), not a daily chore to zero out.
 
@@ -47,7 +33,7 @@ syntax:
 Do not rely on hidden pagination state across turns. After applying a batch,
 re-list before showing another batch.
 
-## `/curate revisions` (and bare `/curate`) → via the `wenlan` CLI
+## `$wenlan curate revisions` (and bare `$wenlan curate`) → via the `wenlan` CLI
 
 Revisions go through the **CLI**, not MCP, because revision actions must key on
 the exact `revision_source_id`. Resolve the binary once, then list:
@@ -97,7 +83,7 @@ Reply with: 1 accept, 1 dismiss, 1 skip
 - `accept` → the revision replaces the original memory.
 - `dismiss` → it was NOT an edit: unstage the false revision link and keep BOTH
   memories as independent rows. (Non-destructive — nothing is deleted. To delete a
-  genuinely unwanted capture, use `/curate captures` → reject.)
+  genuinely unwanted capture, use `$wenlan curate captures` → reject.)
 - `skip` → nothing.
 
 Apply only explicit actions, in ONE Bash call (skips run nothing):
@@ -108,13 +94,13 @@ Apply only explicit actions, in ONE Bash call (skips run nothing):
 ```
 
 If the array is empty, say so in one line ("Nothing needs you — no pending
-conflicts.") and stop. Captures are meant to decay; mention `/curate captures`
+conflicts.") and stop. Captures are meant to decay; mention `$wenlan curate captures`
 only as an opt-in deep audit the user can run if they *want* to, never as a backlog.
 
 The list now carries the `original` and a ready-made `diff` alongside the revised
 `content`, so the user can see what changed without a separate lookup.
 
-## `/curate captures` (opt-in audit, MCP)
+## `$wenlan curate captures` (opt-in audit, MCP)
 
 The captures path is the rare opt-in audit, so it stays on MCP. `list_pending`
 lists every pending capture (pass `space` only if the user named one, e.g.
@@ -134,9 +120,9 @@ or `edit: <replacement text>`. Per item:
 Reject and edit delete the original pending capture, so require the numbered
 item and action verb in the same reply.
 
-## `/curate refinements` (explicit proposal audit, MCP)
+## `$wenlan curate refinements` (explicit proposal audit, MCP)
 
-Use `/curate refinements` only when the user explicitly asks to inspect or
+Use `$wenlan curate refinements` only when the user explicitly asks to inspect or
 review the daemon proposal/refinement queue. Never poll the refinement queue
 ambiently.
 
@@ -155,7 +141,7 @@ reject decision. Apply only numbered item decisions:
 - `skip` → nothing.
 
 Skip or cancel is a no-op. A generic accept does not apply
-`lint_repair_review`; route that action through `/lint repair` instead. Apply
+`lint_repair_review`; route that action through `$wenlan lint repair` instead. Apply
 only the explicit item decisions, then re-list. Re-list after every mutation
 batch.
 

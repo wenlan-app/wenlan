@@ -691,7 +691,7 @@ async fn handle_distill_inner(
                         "force": true,
                         "page_id": page_id,
                         "updated": false,
-                        "hint": "force rebuild needs an LLM in the daemon — install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan:setup`",
+                        "hint": "force rebuild needs an LLM in the daemon — install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan setup`",
                     })));
                 }
                 let outcome = wenlan_core::refinery::force_redistill_single(
@@ -953,7 +953,7 @@ async fn handle_distill_inner(
             let hint = if model_available {
                 "No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Capture more related memories, or check the daemon log for dropped clusters."
             } else {
-                "No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan:setup` also links memories to topics automatically, which helps them group."
+                "No page-sized cluster formed in this scope: nothing grouped into 3 or more related memories that fit one page. Distilling does not need a model. Capture more related memories on the same topic, then distill again. Choosing a model source in `wenlan setup` / `/wenlan setup` also links memories to topics automatically, which helps them group."
             };
             map.insert("hint".into(), serde_json::json!(hint));
         }
@@ -1039,7 +1039,7 @@ async fn handle_redistill_inner(
         Ok(Json(serde_json::json!({
             "status": "skipped",
             "updated": false,
-            "hint": "page re-distill needs an LLM in the daemon — install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan:setup`",
+            "hint": "page re-distill needs an LLM in the daemon — install an on-device model, connect a local server (Ollama, LM Studio), or set an Anthropic key via `wenlan setup` / `/wenlan setup`",
         })))
     }
 }

@@ -69,7 +69,7 @@ Create a page in Wenlan, connect an Obsidian vault, or import earlier AI convers
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-After installing a plugin, start a new AI session and run `/setup`.
+After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed. Type what you want after it, such as `/wenlan open my note on the release plan`, to reach everything else.
 
 Imported material is ready to use; you do not need to create a page first. Ask your AI:
 
@@ -94,7 +94,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 - **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
 - **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
 
-**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
+**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/wenlan distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>

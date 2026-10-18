@@ -2,15 +2,16 @@
 name: pages
 description: >
   Browse, open, or print distilled pages, reusing the `wenlan pages` CLI for the
-  actual open (one implementation on your PATH, no setup). `/pages <query>` opens
+  actual open (one implementation on your PATH, no setup). `/wenlan pages <query>` opens
   the page when one matches, or shows a small native picker when 2-4 match.
-  `/pages <query> --print` reads the page here instead of opening an editor.
-  `/pages` lists recent pages. Invoked as `/pages [query] [--print]`.
+  `/wenlan pages <query> --print` reads the page here instead of opening an editor.
+  `/wenlan pages` lists recent pages. Invoked as `/wenlan pages [query] [--print]`.
 argument-hint: "[query] [--print]"
 allowed-tools: ["Bash", "AskUserQuestion", "mcp__plugin_wenlan_wenlan__get_page_revisions"]
+user-invocable: false
 ---
 
-# /pages
+# /wenlan pages
 
 Open a distilled page fast. The **`wenlan pages`** CLI does the open (one local
 command on your PATH — nothing to register, source, or install). This skill only
@@ -27,7 +28,7 @@ Resolve the binary once (the agent shell's PATH may omit `~/.wenlan/bin`):
 W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 ```
 
-## `/pages <query>` — open, or pick when ambiguous
+## `/wenlan pages <query>` — open, or pick when ambiguous
 
 Run ONE Bash block **with the command sandbox DISABLED** (opening calls the OS
 launcher `open`/`xdg-open`, which a sandboxed shell can't reach, and would else
@@ -41,7 +42,7 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 Act on its output — do NOT re-fetch, list again, or read bodies:
 
 - **`Opened <path>`** → one page matched and is now open. Print that line. Done.
-- **`no page matches: …`** → print it; suggest `/distill <query>`.
+- **`no page matches: …`** → print it; suggest `/wenlan distill <query>`.
 - **`N matches for … `** followed by `title · filename` lines → several matched:
   - **2-4 matches** → present them with `AskUserQuestion`, one option each:
     **label** = title, **description** = filename (titles can repeat, so the
@@ -57,7 +58,7 @@ Act on its output — do NOT re-fetch, list again, or read bodies:
 The picker stays small by construction: ≤4 short options, no page bodies, and
 the open is a single CLI call that prints one line.
 
-## `/pages <query> --print` — read it here
+## `/wenlan pages <query> --print` — read it here
 
 When the user passes `--print`, or asks to see the page in chat because there is
 no editor or GUI at hand, print instead of opening. Sandbox can stay on; nothing
@@ -72,7 +73,7 @@ It prints the matched page's text followed by its sources. Show that output.
 The `N matches` and `no page matches` cases work exactly as above; once one
 filename is chosen, rerun with it and `--print`.
 
-## `/pages` — list recent
+## `/wenlan pages` — list recent
 
 ```bash
 W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
@@ -80,10 +81,10 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 ```
 
 Prints the newest ~20 titles (CLI-capped; `--limit 0` for all). Show them and
-tell the user to `/pages <query>` to open one. No picker over the whole set —
+tell the user to `/wenlan pages <query>` to open one. No picker over the whole set —
 that's the lossy, 4-cap case the CLI list avoids.
 
-If `wenlan` is not found, tell the user to run `/setup`; the CLI is not installed.
+If `wenlan` is not found, tell the user to run `/wenlan`; the CLI is not installed.
 
 ## Explicit changelog lookup
 
@@ -97,9 +98,9 @@ with `wenlan pages "<query-or-filename>" --resolve-id`.
 
 If several pages match, use the same picker/narrowing flow above and rerun with
 the selected filename. Then call `get_page_revisions(page_id="<resolved-id>")`.
-Do not fetch changelogs during ordinary `/pages` list/open flows.
+Do not fetch changelogs during ordinary `/wenlan pages` list/open flows.
 
 ## When NOT to use
 
 - Raw memory lookups → `/recall`.
-- Synthesize a new page → `/distill`.
+- Synthesize a new page → `/wenlan distill`.

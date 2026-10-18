@@ -1,15 +1,4 @@
----
-name: forget
-description: >
-  Delete a memory from Wenlan by ID. Destructive and cannot be undone —
-  prefer `/capture` with `supersedes` for corrections. Invoked as
-  `/forget <source_id>`.
-argument-hint: "<source_id>"
-allowed-tools: ["Bash", "mcp__wenlan__forget", "mcp__wenlan__recall"]
-user-invocable: true
----
-
-# /forget
+# $wenlan forget
 
 Permanently delete a memory by its `source_id`.
 
@@ -39,7 +28,7 @@ After confirmation, call:
 forget(memory_id="<source_id>")
 ```
 
-Delete only one memory per tool call. For bulk cleanup, use `/curate captures`
+Delete only one memory per tool call. For bulk cleanup, use `$wenlan curate captures`
 so each item has its own decision.
 
 ## When to use
@@ -54,5 +43,5 @@ so each item has its own decision.
   at the old one. That preserves history. Use `/capture` with the
   `supersedes` arg instead. If your agent's trust level is below full, that
   write may stage for human review instead of taking effect immediately.
-- Bulk deletions: use `/curate captures` so each item has its own decision.
-- Page rebuilds: use `/distill rebuild <page-id>`.
+- Bulk deletions: use `$wenlan curate captures` so each item has its own decision.
+- Page rebuilds: use `$wenlan distill rebuild <page-id>`.

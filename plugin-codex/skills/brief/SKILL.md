@@ -79,7 +79,7 @@ If non-empty, show at most the top three with `target_source_id`,
   `mcp__wenlan__dismiss_revision(target_source_id="<id>")`
 - skip: no call
 
-If more than three exist, point to `/curate revisions`.
+If more than three exist, point to `$wenlan curate revisions`.
 
 ## Boundary
 

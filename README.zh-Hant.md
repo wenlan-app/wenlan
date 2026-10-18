@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=03ecad8214286bf39fb28e2ea91a757d30bb497cb58783f1771add7fc0ff4709 -->
+<!-- README_SYNC: source=README.md sha256=82625dd31a0057659fa9d7bcd41bd7dfa3f3f976ce6f85bffec57cfe31acafc2 -->
 
 <p align="center">
   <picture>
@@ -71,7 +71,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-安裝插件後，開啟新的 AI 對話並執行 `/setup`。
+安裝插件後，開啟新的 AI 對話並執行 `/wenlan`（Codex 中為 `$wenlan`）。它會確認 Wenlan 是否正常，需要時自動完成設定。其他功能只要在後面直接說，例如 `/wenlan 打開發布計畫那篇筆記`。
 
 匯入的資料可以直接使用，不必先建立頁面。連接後，就可以問 AI：
 
@@ -96,7 +96,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 - **留下你的新發現。** 保存決定或心得，以及其理由與來源；可在 App 操作，或請 AI 代存（`/capture`）。
 - **告一段落，下次接續。** 保存發現與工作階段紀錄，更新受影響的頁面，將進度與下一步寫進專案摘要 Brief（`/handoff`）。下次讀取摘要，接著工作（`/brief`）。
 
-**按需整理累積的記憶：** 將相關記憶整理或更新為帶引用的頁面（`/distill`），不是撰寫新頁面的必要步驟。[插件指令](plugin/skills/README.md)。
+**按需整理累積的記憶：** 將相關記憶整理或更新為帶引用的頁面（`/wenlan distill`），不是撰寫新頁面的必要步驟。[插件指令](plugin/skills/README.md)。
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>

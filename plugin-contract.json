@@ -57,6 +57,12 @@
   },
   "skills": [
     {
+      "name": "wenlan",
+      "status": "shared_now",
+      "codex_user_invocable": true,
+      "codex_openai_interface": true
+    },
+    {
       "name": "brief",
       "status": "shared_now",
       "codex_user_invocable": true,
@@ -69,43 +75,7 @@
       "codex_openai_interface": true
     },
     {
-      "name": "curate",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
-    },
-    {
-      "name": "distill",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
-    },
-    {
-      "name": "forget",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
-    },
-    {
       "name": "handoff",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
-    },
-    {
-      "name": "help",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
-    },
-    {
-      "name": "lint",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
-    },
-    {
-      "name": "pages",
       "status": "shared_now",
       "codex_user_invocable": true,
       "codex_openai_interface": true
@@ -118,9 +88,33 @@
     },
     {
       "name": "setup",
-      "status": "shared_now",
-      "codex_user_invocable": true,
-      "codex_openai_interface": true
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/setup.md"
+    },
+    {
+      "name": "pages",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/pages.md"
+    },
+    {
+      "name": "lint",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/lint.md"
+    },
+    {
+      "name": "curate",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/curate.md"
+    },
+    {
+      "name": "forget",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/forget.md"
+    },
+    {
+      "name": "distill",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/distill.md"
     }
   ]
 }

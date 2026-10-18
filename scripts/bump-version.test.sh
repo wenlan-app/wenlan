@@ -14,7 +14,7 @@ mkdir -p "$TMPDIR_TEST/plugin/scripts"
 mkdir -p "$TMPDIR_TEST/plugin/skills/setup"
 mkdir -p "$TMPDIR_TEST/plugin-codex/.codex-plugin"
 mkdir -p "$TMPDIR_TEST/plugin-codex/bin"
-mkdir -p "$TMPDIR_TEST/plugin-codex/skills/setup"
+mkdir -p "$TMPDIR_TEST/plugin-codex/skills/wenlan/references"
 mkdir -p "$TMPDIR_TEST/app"
 
 cat > "$TMPDIR_TEST/version.txt" <<EOF
@@ -74,7 +74,7 @@ cat > "$TMPDIR_TEST/plugin/skills/setup/SKILL.md" <<EOF
 Bash: npx -y wenlan@0.4.1 setup
 EOF
 
-cat > "$TMPDIR_TEST/plugin-codex/skills/setup/SKILL.md" <<EOF
+cat > "$TMPDIR_TEST/plugin-codex/skills/wenlan/references/setup.md" <<EOF
 Bash: curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.4.1/install.sh | bash
 EOF
 
@@ -160,7 +160,7 @@ grep -q 'exec npx -y wenlan-mcp@0.5.0 "\$@"' "$TMPDIR_TEST/plugin/scripts/wenlan
 grep -q 'wenlan-mcp@0\.4\.1' "$TMPDIR_TEST/plugin/scripts/wenlan-mcp-runner.sh" && { echo "FAIL: Claude runner still carries the old pin"; exit 1; }
 grep -q 'wenlan-mcp@\^\${ver}' "$TMPDIR_TEST/plugin-codex/bin/wenlan-mcp-runner.sh" || { echo "FAIL: Codex runner must keep deriving its pin from plugin.json"; exit 1; }
 grep -Eq 'wenlan-mcp@\^[0-9]' "$TMPDIR_TEST/plugin-codex/bin/wenlan-mcp-runner.sh" && { echo "FAIL: bump-version.sh must not hardcode a Codex runner pin"; exit 1; }
-grep -q '/v0.5.0/install.sh' "$TMPDIR_TEST/plugin-codex/skills/setup/SKILL.md" || { echo "FAIL: Codex setup skill installer not bumped"; exit 1; }
+grep -q '/v0.5.0/install.sh' "$TMPDIR_TEST/plugin-codex/skills/wenlan/references/setup.md" || { echo "FAIL: Codex setup skill installer not bumped"; exit 1; }
 grep -q 'npx -y wenlan@0.5.0 setup' "$TMPDIR_TEST/plugin-codex/overlay.json" || { echo "FAIL: Codex overlay Claude-side npm pin not bumped"; exit 1; }
 grep -q '/v0.5.0/install.sh' "$TMPDIR_TEST/plugin-codex/overlay.json" || { echo "FAIL: Codex overlay install.sh tag pin not bumped"; exit 1; }
 grep -q '0\.4\.1' "$TMPDIR_TEST/plugin-codex/overlay.json" && { echo "FAIL: Codex overlay still carries the old pin"; exit 1; }

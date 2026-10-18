@@ -37,7 +37,7 @@ fn frontmatter_value(text: &str, key: &str) -> Option<String> {
 #[test]
 fn plugin_setup_repairs_stale_daemon_versions() {
     let setup = read_text("plugin/skills/setup/SKILL.md");
-    let codex_setup = read_text("plugin-codex/skills/setup/SKILL.md");
+    let codex_setup = read_text("plugin-codex/skills/wenlan/references/setup.md");
     let hook = read_text("plugin/hooks/check-daemon.sh");
 
     for text in [&setup, &codex_setup] {
@@ -84,8 +84,8 @@ fn plugin_setup_repairs_stale_daemon_versions() {
     );
 
     assert!(
-        hook.contains("Run /wenlan:setup to repair"),
-        "SessionStart hook should direct version mismatches to the self-healing /setup entrypoint"
+        hook.contains("Run /wenlan to repair"),
+        "SessionStart hook should direct version mismatches to the self-healing /wenlan entry"
     );
     assert!(
         !hook.contains("/wenlan:init"),
@@ -105,7 +105,7 @@ fn plugin_setup_repairs_stale_daemon_versions() {
 fn plugin_skill_inventory_uses_setup_and_no_deprecated_aliases() {
     for path in [
         "plugin/skills/setup/SKILL.md",
-        "plugin-codex/skills/setup/SKILL.md",
+        "plugin-codex/skills/wenlan/references/setup.md",
     ] {
         assert!(
             repo_root().join(path).is_file(),
@@ -145,7 +145,7 @@ fn pages_skill_replaces_read() {
     );
 
     for doc in [
-        "plugin/skills/help/SKILL.md",
+        "plugin/skills/wenlan/SKILL.md",
         "plugin/skills/README.md",
         "plugin/README.md",
     ] {
@@ -155,8 +155,8 @@ fn pages_skill_replaces_read() {
             "{doc} still advertises the removed /read command"
         );
         assert!(
-            text.contains("/pages"),
-            "{doc} should advertise the /pages command"
+            text.contains("/wenlan pages"),
+            "{doc} should advertise `/wenlan pages`"
         );
     }
 }
@@ -213,7 +213,7 @@ fn both_lint_skills_spell_out_every_check_code_in_plain_english() {
 
     for path in [
         "plugin/skills/lint/SKILL.md",
-        "plugin-codex/skills/lint/SKILL.md",
+        "plugin-codex/skills/wenlan/references/lint.md",
     ] {
         let text = read_text(path);
         for (code, sentence) in &expected {
@@ -235,14 +235,20 @@ fn both_lint_skills_spell_out_every_check_code_in_plain_english() {
 
 #[test]
 fn lint_is_the_only_public_repair_flow_on_both_surfaces() {
-    for path in [
-        "plugin/skills/lint/SKILL.md",
-        "plugin-codex/skills/lint/SKILL.md",
+    // Claude reaches lint as `/wenlan lint`; Codex reads the same workflow
+    // from the `wenlan` skill's references and says `$wenlan lint`.
+    for (path, entry) in [
+        ("plugin/skills/lint/SKILL.md", "/wenlan"),
+        ("plugin-codex/skills/wenlan/references/lint.md", "$wenlan"),
     ] {
         let text = read_text(path);
+        let repair = format!("{entry} lint repair");
+        let read_only = format!(
+            "Plain `{entry} lint`, `{entry} lint deep`, the lint MCP tool, and `/api/lint` are fully"
+        );
         for needle in [
-            "/lint repair",
-            "Plain `/lint`, `/lint deep`, the lint MCP tool, and `/api/lint` are fully",
+            repair.as_str(),
+            read_only.as_str(),
             "If zero or multiple",
             "types remain plausible, do not prepare",
             "only one target",
@@ -258,11 +264,13 @@ fn lint_is_the_only_public_repair_flow_on_both_surfaces() {
         ] {
             assert!(text.contains(needle), "{path} missing guardrail: {needle}");
         }
-        assert_eq!(
-            frontmatter_value(&text, "argument-hint").as_deref(),
-            Some("[deep|repair] [global|uncategorized|space:<name>]"),
-            "{path} exposes the wrong public argument grammar",
-        );
+        if path.starts_with("plugin/") {
+            assert_eq!(
+                frontmatter_value(&text, "argument-hint").as_deref(),
+                Some("[deep|repair] [global|uncategorized|space:<name>]"),
+                "{path} exposes the wrong public argument grammar",
+            );
+        }
         assert!(
             !text.contains("profile:deep"),
             "{path} exposes profile:deep"
@@ -275,6 +283,7 @@ fn lint_is_the_only_public_repair_flow_on_both_surfaces() {
     for removed in [
         "plugin/skills/lint-repair/SKILL.md",
         "plugin-codex/skills/lint-repair/SKILL.md",
+        "plugin-codex/skills/lint/SKILL.md",
     ] {
         assert!(
             !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

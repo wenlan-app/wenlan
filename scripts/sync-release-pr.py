@@ -34,7 +34,7 @@ VERSION_SYNCED_PATHS = frozenset(
         "package.json",
         "plugin-codex/.codex-plugin/plugin.json",
         "plugin-codex/overlay.json",
-        "plugin-codex/skills/setup/SKILL.md",
+        "plugin-codex/skills/wenlan/references/setup.md",
         "plugin/.claude-plugin/plugin.json",
         "plugin/scripts/wenlan-mcp-runner.sh",
         "plugin/skills/setup/SKILL.md",

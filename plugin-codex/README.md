@@ -20,9 +20,11 @@ codex plugin add wenlan@7xuanlu-wenlan
 ```
 
 Start a new Codex thread after installing so the skills and MCP server load.
-Then try `/setup`, `/brief`, `/capture <memory>`, `/recall <query>`,
-`/lint [deep|repair] [scope]`, `/pages <query>`, `/distill`, `/curate`,
-`/forget`, `/help`, or `/handoff`.
+Then type `$wenlan` (or the exact form `$wenlan:wenlan`) to check that Wenlan
+works, or `$wenlan` followed by what you want in plain words, such as
+`$wenlan open my note on the release plan` or `$wenlan lint`. Saving, looking
+things up, catching up and ending a session also have their own skills:
+`/capture <memory>`, `/recall <query>`, `/brief`, and `/handoff`.
 
 ## Development
 
@@ -39,7 +41,9 @@ to the pinned `npx` version in
 `--agent-name codex` so captures are labeled as Codex writes.
 
 The skills under `skills/` are generated. Edit the Claude skill of the same
-name in `plugin/skills/<skill>/SKILL.md`; put anything Codex does differently
+name in `plugin/skills/<skill>/SKILL.md`. Workflows hidden from the Claude menu
+(setup, distill, pages, lint, curate, forget) are generated as reference files
+under `skills/wenlan/references/`, because Codex cannot hide a skill; put anything Codex does differently
 (a dropped section, a replaced paragraph, the `agents/openai.yaml` text) in
 [`overlay.json`](overlay.json); then run:
 

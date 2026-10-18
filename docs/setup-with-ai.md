@@ -12,7 +12,7 @@ Setup is complete only when:
 
 Do not report success after editing configuration alone. A live round trip is the proof.
 
-On the Claude Code plugin path, `/wenlan:setup` already proves the round trip with a read-only `brief` call, which satisfies step 3.
+On the Claude Code plugin path, `/wenlan` (which runs setup when Wenlan is not ready) already proves the round trip with a read-only `brief` call, which satisfies step 3.
 
 ## Install the runtime
 
@@ -54,7 +54,7 @@ claude plugin marketplace add wenlan-app/wenlan
 claude plugin install wenlan@7xuanlu-wenlan
 ```
 
-Start a new Claude Code session if requested, then run `/setup`. The setup skill installs or repairs the local runtime and verifies the MCP round trip. Detailed workflows: [Claude Code plugin](../plugin/README.md).
+Start a new Claude Code session if requested, then run `/wenlan`. When Wenlan is not ready it runs setup, which installs or repairs the local runtime and verifies the MCP round trip. Detailed workflows: [Claude Code plugin](../plugin/README.md).
 
 ## Codex
 
@@ -65,7 +65,7 @@ codex plugin marketplace add wenlan-app/wenlan
 codex plugin add wenlan@7xuanlu-wenlan
 ```
 
-Start a new Codex task so the plugin and MCP server load, then run `/setup`. Detailed workflows: [Codex plugin](../plugin-codex/README.md).
+Start a new Codex task so the plugin and MCP server load, then type `$wenlan` (or the exact form `$wenlan:wenlan`). Detailed workflows: [Codex plugin](../plugin-codex/README.md).
 
 ## MCP-only setup and other clients
 

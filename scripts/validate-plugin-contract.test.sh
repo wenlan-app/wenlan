@@ -99,19 +99,19 @@ assert_rejects "claude skill copied into codex" \
 
 assert_rejects "missing destructive confirmation wording" \
     perl -0pi -e 's/cannot be undone/cannot be reversed/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/forget/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/forget.md"
 
 assert_rejects "missing curate ambiguity guardrail" \
     perl -0pi -e 's/Ambiguous replies do not mutate/Ambiguous replies are clarified/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "claude curate refinements explicit-only drift" \
-    perl -0pi -e 's/Use `\/curate refinements` only when the user explicitly asks to inspect or\s+review the daemon proposal\/refinement queue\./Inspect refinements whenever useful./' \
+    perl -0pi -e 's/Use `\/wenlan curate refinements` only when the user explicitly asks to inspect or\s+review the daemon proposal\/refinement queue\./Inspect refinements whenever useful./' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
 
 assert_rejects "codex curate refinements explicit-only drift" \
-    perl -0pi -e 's/Use `\/curate refinements` only when the user explicitly asks to inspect or\s+review the daemon proposal\/refinement queue\./Inspect refinements whenever useful./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
+    perl -0pi -e 's/Use `\$wenlan curate refinements` only when the user explicitly asks to inspect or\s+review the daemon proposal\/refinement queue\./Inspect refinements whenever useful./' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "claude curate refinements mutation gate drift" \
     perl -0pi -e 's/Perform no mutation until the user gives an unambiguous item-level accept or\s+reject decision\./Apply likely decisions immediately./' \
@@ -119,7 +119,7 @@ assert_rejects "claude curate refinements mutation gate drift" \
 
 assert_rejects "codex curate refinements mutation gate drift" \
     perl -0pi -e 's/Perform no mutation until the user gives an unambiguous item-level accept or\s+reject decision\./Apply likely decisions immediately./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "claude curate refinements skip drift" \
     perl -0pi -e 's/Skip or cancel is a no-op\./Skip accepts the proposal./' \
@@ -127,39 +127,27 @@ assert_rejects "claude curate refinements skip drift" \
 
 assert_rejects "codex curate refinements skip drift" \
     perl -0pi -e 's/Skip or cancel is a no-op\./Skip accepts the proposal./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "claude curate missing refinement accept permission" \
     perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__accept_refinement"//' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
 
-assert_rejects "codex curate missing refinement reject permission" \
-    perl -0pi -e 's/, "mcp__wenlan__reject_refinement"//' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
-
 assert_rejects "claude curate missing existing capture permission" \
     perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__capture"//' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
-
-assert_rejects "codex curate missing existing list permission" \
-    perl -0pi -e 's/, "mcp__wenlan__list_pending"//' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
 
 assert_rejects "claude curate added unintended mutation permission" \
     perl -0pi -e 's/"Bash",/"Bash", "mcp__plugin_wenlan_wenlan__delete_page",/' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
 
-assert_rejects "codex curate added unintended mutation permission" \
-    perl -0pi -e 's/"Bash",/"Bash", "mcp__wenlan__delete_page",/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
-
 assert_rejects "claude curate lint repair review route drift" \
-    perl -0pi -e 's/A generic accept does not apply\s+`lint_repair_review`; route that action through `\/lint repair` instead\./A generic accept applies `lint_repair_review` directly./' \
+    perl -0pi -e 's/A generic accept does not apply\s+`lint_repair_review`; route that action through `\/wenlan lint repair` instead\./A generic accept applies `lint_repair_review` directly./' \
     "$TMPDIR_TEST/root/plugin/skills/curate/SKILL.md"
 
 assert_rejects "codex curate lint repair review route drift" \
-    perl -0pi -e 's/A generic accept does not apply\s+`lint_repair_review`; route that action through `\/lint repair` instead\./A generic accept applies `lint_repair_review` directly./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/curate/SKILL.md"
+    perl -0pi -e 's/A generic accept does not apply\s+`lint_repair_review`; route that action through `\$wenlan lint repair` instead\./A generic accept applies `lint_repair_review` directly./' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/curate.md"
 
 assert_rejects "codex skill hand-edited instead of generated" \
     perl -0pi -e 's/Capture a single memory in the moment\./Capture a memory./' \
@@ -171,18 +159,14 @@ assert_rejects "codex overlay no longer matches the Claude skill" \
 
 assert_rejects "codex skill carries a Claude-only token" \
     perl -0pi -e 's/Permanently delete a memory by its `source_id`\./Permanently delete a memory by its `source_id` (never via AskUserQuestion)./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/forget/SKILL.md"
-
-assert_rejects "setup autocomplete drift" \
-    perl -0pi -e 's/user-invocable: true/user-invocable: false/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/setup/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/forget.md"
 
 assert_rejects "codex background-consent command drift" \
     perl -0pi -e 's/wenlan steep disable/wenlan background off/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/setup/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/setup.md"
 
-assert_rejects "codex README setup command drift" \
-    perl -0pi -e 's|/setup|/init|g' \
+assert_rejects "codex README entry command drift" \
+    perl -0pi -e 's|\$wenlan|\$init|g' \
     "$TMPDIR_TEST/root/plugin-codex/README.md"
 
 assert_rejects "codex resolver parity drift" \
@@ -239,7 +223,7 @@ assert_rejects "claude lint general-call drift" \
 
 assert_rejects "codex lint agent-submit drift" \
     perl -0pi -e 's/submit verdicts exactly once/submit verdicts when useful/g' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude capture relation order drift" \
     perl -0pi -e 's/for both named endpoints first/for both named endpoints after capture/' \
@@ -279,7 +263,7 @@ assert_rejects "claude lint counterevidence authorization drift" \
 
 assert_rejects "codex lint counterevidence authorization drift" \
     perl -0pi -e 's/authorized\s+record refs \(`evidence_refs` plus `counterevidence_refs`\)/unbounded record refs/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint bounded semantic completion drift" \
     perl -0pi -e 's/Population truncation is honest coverage metadata/Population truncation is always incomplete/' \
@@ -287,7 +271,7 @@ assert_rejects "claude lint bounded semantic completion drift" \
 
 assert_rejects "codex lint bounded semantic completion drift" \
     perl -0pi -e 's/Population truncation is honest coverage metadata/Population truncation is always incomplete/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint outcome-funnel drift" \
     perl -0pi -e 's/Lead repair output with exactly one compact typed-count funnel/Render the repair totals/' \
@@ -295,7 +279,7 @@ assert_rejects "claude lint outcome-funnel drift" \
 
 assert_rejects "codex lint outcome-funnel drift" \
     perl -0pi -e 's/Lead repair output with exactly one compact typed-count funnel/Render the repair totals/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint multi-approval drift" \
     perl -0pi -e 's/one or more exact approval lines/one exact approval line/' \
@@ -303,7 +287,7 @@ assert_rejects "claude lint multi-approval drift" \
 
 assert_rejects "codex lint multi-approval drift" \
     perl -0pi -e 's/one or more exact approval lines/one exact approval line/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint prevalidation drift" \
     perl -0pi -e 's/Validate the complete reply before the first apply/Validate after applying the first manifest/' \
@@ -311,7 +295,7 @@ assert_rejects "claude lint prevalidation drift" \
 
 assert_rejects "codex lint prevalidation drift" \
     perl -0pi -e 's/Validate the complete reply before the first apply/Validate after applying the first manifest/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint cross-plan approval drift" \
     perl -0pi -e 's/ready tuples from the same displayed plan/ready tuples from any displayed plan/' \
@@ -319,7 +303,7 @@ assert_rejects "claude lint cross-plan approval drift" \
 
 assert_rejects "codex lint cross-plan approval drift" \
     perl -0pi -e 's/ready tuples from the same displayed plan/ready tuples from any displayed plan/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint ready-only approval drift" \
     perl -0pi -e 's/contain only ready tuples/contain ready tuples/' \
@@ -327,7 +311,7 @@ assert_rejects "claude lint ready-only approval drift" \
 
 assert_rejects "codex lint ready-only approval drift" \
     perl -0pi -e 's/contain only ready tuples/contain ready tuples/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint mixed-content approval drift" \
     perl -0pi -e 's/no duplicates, blank\s+lines, prose, or code fences/duplicates and prose are accepted/' \
@@ -335,7 +319,7 @@ assert_rejects "claude lint mixed-content approval drift" \
 
 assert_rejects "codex lint mixed-content approval drift" \
     perl -0pi -e 's/no duplicates, blank\s+lines, prose, or code fences/duplicates and prose are accepted/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint single-line compatibility drift" \
     perl -0pi -e 's/A single\s+line remains valid/A single line is rejected/' \
@@ -343,7 +327,7 @@ assert_rejects "claude lint single-line compatibility drift" \
 
 assert_rejects "codex lint single-line compatibility drift" \
     perl -0pi -e 's/A single\s+line remains valid/A single line is rejected/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint fresh-per-manifest drift" \
     perl -0pi -e 's/Immediately rerun\s+fresh General once/Reuse the prepared lint reports/' \
@@ -351,7 +335,7 @@ assert_rejects "claude lint fresh-per-manifest drift" \
 
 assert_rejects "codex lint fresh-per-manifest drift" \
     perl -0pi -e 's/Immediately rerun\s+fresh General once/Reuse the prepared lint reports/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint verify-before-next drift" \
     perl -0pi -e 's/Only after one manifest is `verified` may the next approved\s+manifest begin/Start the next manifest before verification/' \
@@ -359,7 +343,7 @@ assert_rejects "claude lint verify-before-next drift" \
 
 assert_rejects "codex lint verify-before-next drift" \
     perl -0pi -e 's/Only after one manifest is `verified` may the next approved\s+manifest begin/Start the next manifest before verification/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint result-state drift" \
     perl -0pi -e 's/`verified`,\s+`applied_unverified`,\s+`failed`, or `not_attempted`/`done`/' \
@@ -367,7 +351,7 @@ assert_rejects "claude lint result-state drift" \
 
 assert_rejects "codex lint result-state drift" \
     perl -0pi -e 's/`verified`,\s+`applied_unverified`,\s+`failed`, or\s+`not_attempted`/`done`/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint ready-order drift" \
     perl -0pi -e 's/in\s+the\s+order\s+they\s+appear among ready tuples in the displayed plan/in any order/g' \
@@ -375,7 +359,7 @@ assert_rejects "claude lint ready-order drift" \
 
 assert_rejects "codex lint ready-order drift" \
     perl -0pi -e 's/in\s+the\s+order\s+they\s+appear among ready tuples in the displayed plan/in any order/g' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint copy-block drift" \
     perl -0pi -e 's/one contiguous\s+copy-pasteable block/individual scattered lines/' \
@@ -383,7 +367,7 @@ assert_rejects "claude lint copy-block drift" \
 
 assert_rejects "codex lint copy-block drift" \
     perl -0pi -e 's/one contiguous\s+copy-pasteable block/individual scattered lines/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint stop-before-next drift" \
     perl -0pi -e 's/Do not\s+apply any later\s+approved manifest/Continue with later approved manifests/' \
@@ -391,7 +375,7 @@ assert_rejects "claude lint stop-before-next drift" \
 
 assert_rejects "codex lint stop-before-next drift" \
     perl -0pi -e 's/Do not\s+apply any later\s+approved manifest/Continue with later approved manifests/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint daemon handoff drift" \
     perl -0pi -e 's/`next_apply`/`next_hint`/g' \
@@ -399,7 +383,7 @@ assert_rejects "claude lint daemon handoff drift" \
 
 assert_rejects "codex lint daemon handoff drift" \
     perl -0pi -e 's/`next_apply`/`next_hint`/g' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint fallback drift" \
     perl -0pi -e 's/CLI fallback: `wenlan lint --profile deep --agent-assist`/There is no CLI fallback./g' \
@@ -411,11 +395,11 @@ assert_rejects "claude pages revision-id resolver drift" \
 
 assert_rejects "codex pages revision-id resolver drift" \
     perl -0pi -e 's/--resolve-id/--show-id/g' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/pages/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/pages.md"
 
 assert_rejects "codex lint repair mode drift" \
-    perl -0pi -e 's|/lint repair|/lint-repair|g' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    perl -0pi -e 's|\$wenlan lint repair|\$wenlan lint-repair|g' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint exact approval drift" \
     perl -0pi -e 's/Match every\s+line byte-for-byte/Accept the later reply semantically/' \
@@ -423,27 +407,23 @@ assert_rejects "claude lint exact approval drift" \
 
 assert_rejects "codex lint exact approval drift" \
     perl -0pi -e 's/Match every\s+line byte-for-byte/Accept the later reply semantically/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "codex lint read-only boundary drift" \
-    perl -0pi -e 's|Plain `/lint`, `/lint deep`, the lint MCP tool, and `/api/lint` are fully\s+read-only|Plain `/lint` may write|' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    perl -0pi -e 's|Plain `\$wenlan lint`, `\$wenlan lint deep`, the lint MCP tool, and `/api/lint` are fully\s+read-only|Plain `\$wenlan lint` may write|' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "codex lint stale-general fallback drift" \
     perl -0pi -e 's/If Deep is incomplete, its producer receipt differs from General, or its DB\s+analysis digest differs from General, rerun fresh General exactly once after\s+Deep before prepare; do not rerun Deep\./Reuse the original General after Deep./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "codex lint cross-profile Page receipt drift" \
     perl -0pi -e 's/Do not compare General and Deep Page\s+digests across profiles because their Page scan coverage intentionally\s+differs\./Compare every General and Deep receipt./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
 assert_rejects "claude lint appended fix argument" \
     perl -0pi -e 's/(argument-hint: "[^"]+)"/$1 --fix"/' \
     "$TMPDIR_TEST/root/plugin/skills/lint/SKILL.md"
-
-assert_rejects "codex lint appended agent argument" \
-    perl -0pi -e 's/(argument-hint: "[^"]+)"/$1 agent"/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
 
 assert_rejects "claude lint dropped repair permission" \
     perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__lint_repair_apply"//' \
@@ -455,16 +435,46 @@ assert_rejects "claude lint dropped prepare permission" \
 
 assert_rejects "codex lint review-choice flow drift" \
     perl -0pi -e 's/Lint creates durable Review Items for choices that are not yet exact\./Lint silently resolves every Review Item./' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/lint.md"
 
-assert_rejects "codex lint added undeclared permission" \
+assert_rejects "codex entry added undeclared permission" \
     perl -0pi -e 's/"Bash"/"Bash", "mcp__wenlan__unknown"/' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/lint/SKILL.md"
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/SKILL.md"
 
-assert_rejects "claude help omitted lint" \
-    perl -0pi -e 's|  /lint \[deep\|repair\] \[scope\].*\n||' \
-    "$TMPDIR_TEST/root/plugin/skills/help/SKILL.md"
+assert_rejects "claude entry dropped workflow-first guardrail" \
+    perl -0pi -e 's/Load the workflow.s\s+instructions before calling any of its MCP tools/Call MCP tools directly/' \
+    "$TMPDIR_TEST/root/plugin/skills/wenlan/SKILL.md"
 
-assert_rejects "codex help omitted lint" \
-    perl -0pi -e 's|  /lint \[deep\|repair\] \[scope\].*\n||' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/help/SKILL.md"
+assert_rejects "codex entry dropped pass-through guardrail" \
+    perl -0pi -e 's/Never add `repair`, `rebuild`, `--yes`, or an id the user did not give\./Add flags when helpful./' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/SKILL.md"
+
+assert_rejects "claude entry missing ambiguity guardrail" \
+    perl -0pi -e 's/Do not guess\./Guess the closest./' \
+    "$TMPDIR_TEST/root/plugin/skills/wenlan/SKILL.md"
+
+assert_rejects "claude hidden workflow shown in menu" \
+    perl -0pi -e 's/user-invocable: false\n//' \
+    "$TMPDIR_TEST/root/plugin/skills/lint/SKILL.md"
+
+assert_rejects "claude front skill hidden from menu" \
+    perl -0pi -e 's/(allowed-tools: .*\n)/$1user-invocable: false\n/' \
+    "$TMPDIR_TEST/root/plugin/skills/recall/SKILL.md"
+
+assert_rejects "codex hidden reference gained frontmatter" \
+    perl -0pi -e 's/\A/---\nname: setup\n---\n/' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/setup.md"
+
+assert_rejects "codex stale hidden skill dir left behind" \
+    bash -c 'mkdir -p "$(dirname "$1")" && cp "$2" "$1"' _ \
+    "$TMPDIR_TEST/root/plugin-codex/skills/forget/SKILL.md" \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/forget.md"
+
+assert_rejects "codex hidden reference missing" \
+    rm "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/distill.md"
+
+assert_rejects "contract hidden workflow without codex reference" \
+    python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); [s.pop("codex_reference",None) for s in d["skills"] if s.get("name")=="forget"] if isinstance(d["skills"],list) else d["skills"]["forget"].pop("codex_reference"); json.dump(d,open(p,"w"),indent=2)' \
+    "$TMPDIR_TEST/root/plugin-contract.json"
+
+echo "PASS all plugin contract drift cases"

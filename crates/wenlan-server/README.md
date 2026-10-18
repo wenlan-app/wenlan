@@ -4,7 +4,7 @@ Local daemon for Wenlan. It owns the database, embeddings, search, distill cycle
 
 ## Headless install
 
-Most users install Wenlan through the [Claude Code plugin](../../plugin/README.md), which auto-runs the install script the first time `/setup` runs. This page is for daemon internals. On macOS Apple Silicon, terminal setup uses the product CLI package:
+Most users install Wenlan through the [Claude Code plugin](../../plugin/README.md), which auto-runs the install script the first time `/wenlan` runs. This page is for daemon internals. On macOS Apple Silicon, terminal setup uses the product CLI package:
 
 ```bash
 npx -y wenlan setup

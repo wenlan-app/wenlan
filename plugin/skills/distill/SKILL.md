@@ -4,15 +4,16 @@ description: >
   Synthesize wiki pages from related memories. One endpoint, one flow:
   daemon clusters and synthesizes what it can; agent finishes whatever
   the daemon couldn't (no LLM or cluster too big). Invoked as
-  `/distill [target]`.
+  `/wenlan distill [target]`.
 argument-hint: "[target | rebuild <page-id> | deep]"
 allowed-tools: ["mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__distill", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__delete_page", "mcp__plugin_wenlan_wenlan__get_page_sources", "Bash"]
+user-invocable: false
 ---
 
-# /distill
+# /wenlan distill
 
 Force a distillation pass now. The daemon's background distill cycles run
-on its own clock; `/distill` is the explicit user-triggered pass.
+on its own clock; `/wenlan distill` is the explicit user-triggered pass.
 
 ## Mental model
 
@@ -43,12 +44,12 @@ clusters when it can't synthesize; whoever called fills in the rest.
 
 ## Resolve the active space
 
-The `/distill` skill accepts one optional inline token of the form
+The `/wenlan distill` skill accepts one optional inline token of the form
 `space:<name>` anywhere in the argument string. The bundled resolver strips it
 and returns the rest as the target. It prints the resolved Space line itself:
 
 ```bash
-raw_args="<the full argument string passed to /distill>"
+raw_args="<the full argument string passed to /wenlan distill>"
 resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 source_layer="$(printf '%s\n' "$resolved" | cut -f2)"
@@ -75,11 +76,11 @@ Use exactly one target rule:
   `{"status": "ok", "force": true, "page_id": ..., "updated": true}`.
   Report verbatim.
 - Reserved keyword `deep` → no target (global pass).
-- `/distill <arg>` after removing any `space:<name>` token → forward `<arg>`
+- `/wenlan distill <arg>` after removing any `space:<name>` token → forward `<arg>`
   to `target`.
-- Bare `/distill` with a non-empty resolved space → use the resolved space as
+- Bare `/wenlan distill` with a non-empty resolved space → use the resolved space as
   `target`.
-- Bare `/distill` with no resolved space → omit `target`.
+- Bare `/wenlan distill` with no resolved space → omit `target`.
 
 ### 2. Call the MCP tool
 
@@ -223,7 +224,7 @@ For each stale page:
 - **`user_edited == true`** → never auto-rewrite. The user touched
   the page; the upstream memories also changed. Surface in the
   "Conflict" report block and stop. The user resolves by hand, OR
-  runs `/distill rebuild <page-id>` to wipe their edits and
+  runs `/wenlan distill rebuild <page-id>` to wipe their edits and
   regenerate from sources.
 - **`user_edited == false`** → fetch source memories via
   `get_page_sources(page_id="<id>")`, run the same coherence check
@@ -238,7 +239,7 @@ write_page(page_id=stale.page_id,
 ```
 
 When `stale_truncated == true`, tell the user "more stale pages
-remain — re-run `/distill` after this pass to continue."
+remain — re-run `/wenlan distill` after this pass to continue."
 
 ### 3.6 Resolve markdown paths for the report
 
@@ -276,7 +277,7 @@ signal — other pages are asking for this page.
 Do **not** auto-create pages from this list — the agent doesn't have
 the source memories at hand, and an empty-stub page is worse than no
 page. Surface them in the report so the user can choose to run
-`/distill <label>` intentionally:
+`/wenlan distill <label>` intentionally:
 
 ```
 Topic suggestions (other pages link here, no page yet):
@@ -379,7 +380,7 @@ just too low quality.
 Rules:
 - **Titles, not page ids.** Ids visually truncate; titles read clean.
 - Every synthesized or refreshed page gets its own `Open:` line with
-  the daemon-resolved markdown path. No page body in chat — `/pages
+  the daemon-resolved markdown path. No page body in chat — `/wenlan pages
   "<title>"` to preview one.
 - `<total>` = sum of `source_ids.len()` across the clusters that were
   actually synthesized.
@@ -392,7 +393,7 @@ Rules:
 - User says "distill", "synthesize", "rebuild the page on X".
 - After a bulk import — daemon distill cycles handle this in the background;
   user can force a pass for immediate visibility.
-- `/distill rebuild <page-id>` when you want to wipe a page you
+- `/wenlan distill rebuild <page-id>` when you want to wipe a page you
   previously edited and have the daemon regenerate from current
   sources. Destructive: your prose goes away. Use after you are
   done curating a page and want it back on the auto-refresh path.

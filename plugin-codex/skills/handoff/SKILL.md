@@ -112,7 +112,7 @@ Best-effort; skip silently when `daemon_down=1` or the command fails:
 ```
 
 Filter by `created_at >= last_handoff_at`, or 12 hours ago when absent. Show
-at most three when any match, then continue automatically; `/curate captures`
+at most three when any match, then continue automatically; `$wenlan curate captures`
 remains opt-in.
 
 For a repository, inspect a bounded recent log, short status, diff stat, and
@@ -204,7 +204,7 @@ action, or genuine durability ambiguity.
 Skip this step when `daemon_down=1` or `space` is empty.
 
 List the wiki pages this session read, quoted, or changed. Recall them from the
-conversation: pages opened with `read_page`, `/pages`, or `recall` results the
+conversation: pages opened with `read_page`, `$wenlan pages`, or `recall` results the
 work relied on. Confirm each title against
 `mcp__wenlan__list_pages` for the Space; drop any title that does
 not match a listed page exactly. Never fuzzy-match.

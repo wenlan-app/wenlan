@@ -3,11 +3,12 @@ name: lint
 description: Lint Wenlan memory quality and hygiene, check vocabulary, or resolve every finding into a ready repair, review item, system action, or blocker.
 argument-hint: "[deep|repair] [global|uncategorized|space:<name>]"
 allowed-tools: ["Bash", "mcp__plugin_wenlan_wenlan__lint", "mcp__plugin_wenlan_wenlan__lint_repair_prepare", "mcp__plugin_wenlan_wenlan__lint_repair_apply", "mcp__plugin_wenlan_wenlan__lint_repair_verify"]
+user-invocable: false
 ---
 
-# /lint
+# /wenlan lint
 
-The public forms are `/lint [scope]`, `/lint deep [scope]`, and `/lint repair
+The public forms are `/wenlan lint [scope]`, `/wenlan lint deep [scope]`, and `/wenlan lint repair
 [scope]`. Accept at most one mutually exclusive `deep|repair` mode and one
 scope selector: `global`, `uncategorized`, or `space:<name>`. Reject unknown or
 repeated tokens and mixed scope selectors before any tool call. Public
@@ -20,7 +21,7 @@ scope, run the resolver once and use a non-empty `space`, otherwise omit
 `space`. Bash is allowed only for this resolver block:
 
 ```bash
-raw_args="<the full argument string passed to /lint>"
+raw_args="<the full argument string passed to /wenlan lint>"
 resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 ```
@@ -29,8 +30,8 @@ CLI fallback: `wenlan lint --profile deep --agent-assist`
 (submissions via `--agent-submission <file>`); the MCP repair-manifest tools
 have no CLI equivalent yet.
 
-Plain `/lint`, `/lint deep`, the lint MCP tool, and `/api/lint` are fully
-read-only. `/lint repair` begins with the same read-only diagnostics;
+Plain `/wenlan lint`, `/wenlan lint deep`, the lint MCP tool, and `/api/lint` are fully
+read-only. `/wenlan lint repair` begins with the same read-only diagnostics;
 preparation writes only private contract artifacts, and only a later exact
 `apply repair ...` approval may mutate canonical memory. Although this skill
 statically lists repair tools, plain and deep modes may call only
@@ -40,7 +41,7 @@ statically lists repair tools, plain and deep modes may call only
 
 General uses exactly one lint MCP call with the resolved scope; it returns the
 same text `wenlan lint` prints, whose `Lint:` line carries the check, finding,
-advisory and incomplete counts. `/lint deep` uses the Agent-assisted Deep
+advisory and incomplete counts. `/wenlan lint deep` uses the Agent-assisted Deep
 protocol below and returns the typed report. Render only the final canonical
 report in canonical order. State is `incomplete` when `complete` is false,
 otherwise `findings` when actionable findings are nonzero, otherwise `clean`.
@@ -123,7 +124,7 @@ chosen a model source yet is the common case -- `kg.substrate_liveness` and
 `serving.channel.graph` both come back as passing, expected-empty checks asking
 for a model source, and that report is `clean`.
 
-## `/lint repair`: resolve the complete plan
+## `/wenlan lint repair`: resolve the complete plan
 
 There is no live-data auto-repair or automatic rollback.
 

@@ -13,17 +13,17 @@ These files are also the source for the Codex plugin: `scripts/gen-codex-plugin.
 
 | Command | Purpose |
 | --- | --- |
-| `/setup` | set up or repair Wenlan (installs the local runtime) |
+| `/wenlan [what you want]` | the front door: say what you want, or type it bare for status and setup |
 | `/brief [topic]` | load the Brief for the current Space (optional; not a boot step) |
-| `/capture <x>` | save one durable memory in flow |
+| `/capture <x>` | save one durable memory in flow, or this conversation as one note on request |
 | `/recall <q>` | search local memory |
-| `/lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
-| `/distill [t]` | synthesize or refresh source-backed pages for the active Space |
-| `/pages [q]` | browse and open distilled pages |
-| `/curate <surface>` | deep audit of captures, revisions or refinements |
-| `/forget <id>` | delete one memory by ID, after confirmation |
 | `/handoff` | end-of-session debrief: captures, session log, Brief update |
-| `/help` | one-screen quick reference |
+| `/wenlan setup` | set up or repair Wenlan (installs the local runtime) |
+| `/wenlan lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
+| `/wenlan distill [t]` | synthesize or refresh source-backed pages for the active Space |
+| `/wenlan pages [q]` | browse and open distilled pages |
+| `/wenlan curate <surface>` | deep audit of captures, revisions or refinements |
+| `/wenlan forget <id>` | delete one memory by ID, after confirmation |
 <!-- verbs:end -->
 
 Plugin metadata lives in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json); the listing README is [`../README.md`](../README.md).

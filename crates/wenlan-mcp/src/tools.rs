@@ -7722,18 +7722,25 @@ mod tests {
         for tree in ["plugin/skills", "plugin-codex/skills"] {
             let dir = root.join(tree);
             for entry in std::fs::read_dir(&dir).unwrap().flatten() {
-                let file = entry.path().join("SKILL.md");
-                let Ok(text) = std::fs::read_to_string(&file) else {
-                    continue;
-                };
-                for prefix in ["mcp__plugin_wenlan_wenlan__", "mcp__wenlan__"] {
-                    for (start, _) in text.match_indices(prefix) {
-                        let name: String = text[start + prefix.len()..]
-                            .chars()
-                            .take_while(|ch| ch.is_ascii_lowercase() || *ch == '_')
-                            .collect();
-                        if !name.is_empty() && !live.contains(name.as_str()) {
-                            stale.push(format!("{}: {name}", file.display()));
+                // A skill's own SKILL.md, plus the workflow references the
+                // Codex `wenlan` skill carries in `references/`.
+                let mut files = vec![entry.path().join("SKILL.md")];
+                if let Ok(refs) = std::fs::read_dir(entry.path().join("references")) {
+                    files.extend(refs.flatten().map(|r| r.path()));
+                }
+                for file in files {
+                    let Ok(text) = std::fs::read_to_string(&file) else {
+                        continue;
+                    };
+                    for prefix in ["mcp__plugin_wenlan_wenlan__", "mcp__wenlan__"] {
+                        for (start, _) in text.match_indices(prefix) {
+                            let name: String = text[start + prefix.len()..]
+                                .chars()
+                                .take_while(|ch| ch.is_ascii_lowercase() || *ch == '_')
+                                .collect();
+                            if !name.is_empty() && !live.contains(name.as_str()) {
+                                stale.push(format!("{}: {name}", file.display()));
+                            }
                         }
                     }
                 }

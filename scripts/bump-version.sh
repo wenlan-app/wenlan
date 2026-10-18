@@ -83,7 +83,7 @@ fi
 grep -q "npx -y wenlan@${NEW_VERSION} setup" "$SETUP_SKILL" || { echo "ERROR: $SETUP_SKILL has no exact wenlan pin to rewrite" >&2; exit 1; }
 echo "  Updated $SETUP_SKILL (exact wenlan npm pin)"
 
-CODEX_SETUP_SKILL="plugin-codex/skills/setup/SKILL.md"
+CODEX_SETUP_SKILL="plugin-codex/skills/wenlan/references/setup.md"
 if [[ "$(uname)" == "Darwin" ]]; then
     sed -i '' -E "s|(raw\\.githubusercontent\\.com/wenlan-app/wenlan/)(main\|v[0-9]+\\.[0-9]+\\.[0-9]+)(/install\\.sh)|\\1v${NEW_VERSION}\\3|g" "$CODEX_SETUP_SKILL"
 else

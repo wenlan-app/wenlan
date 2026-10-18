@@ -84,7 +84,7 @@ The refinement trio remains because this review queue has no CLI or replacement
 path. Remote HTTP clients can list it, but `accept_refinement` and
 `reject_refinement` are hidden and hard-rejected remotely.
 
-Lint repair is three tools behind `/lint repair`: `lint_repair_prepare` opens
+Lint repair is three tools behind `/wenlan lint repair`: `lint_repair_prepare` opens
 and pages a plan or turns one Review Item into a manifest, `lint_repair_apply`
 applies one approved manifest, and `lint_repair_verify` records the follow-up
 check. All three are local stdio only. The agent-assisted Deep work packet is
