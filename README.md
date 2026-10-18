@@ -62,7 +62,7 @@ You can also [use Wenlan without the desktop app](docs/setup-and-data.md#install
 
 ### 2. Open a sample or create a note
 
-Choose **Get started**, then explore the sample or write your own note. No import or AI model setup is required.
+Choose **Get started**, then explore the sample or write your own note. No import or additional language model setup is required.
 
 ### 3. Connect an AI tool when you want
 
@@ -74,7 +74,7 @@ Choose **Get started**, then explore the sample or write your own note. No impor
 
 After installing a plugin, start a new AI session and run `/setup`. Connecting your AI needs no additional local language model.
 
-Ask about the note you just opened or saved:
+Create or import a note in Wenlan and save it, then ask:
 
 > Find my note “[title]” in Wenlan and cite it.
 

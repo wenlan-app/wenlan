@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b2887d5aa7c93f0e81477a0eaf2cb140997d0a682f02d4af5af87ee9c4acc631 -->
+<!-- README_SYNC: source=README.md sha256=31796730782ab485d70881ce8030086708a0a6e853adf4c18acb7f36935746d2 -->
 
 <p align="center">
   <picture>
@@ -64,7 +64,7 @@ También puedes [usar Wenlan sin la aplicación de escritorio](docs/setup-and-da
 
 ### 2. Abre un ejemplo o crea una nota
 
-Elige **Get started** para entrar en Wenlan. Explora el ejemplo de bienvenida o crea una nota propia. No hace falta importar nada ni configurar un modelo de IA.
+Elige **Get started** para entrar en Wenlan. Explora el ejemplo de bienvenida o crea una nota propia. No hace falta importar nada ni configurar un modelo de lenguaje adicional.
 
 ### 3. Conecta una herramienta de IA cuando quieras
 
@@ -76,7 +76,7 @@ Elige **Get started** para entrar en Wenlan. Explora el ejemplo de bienvenida o 
 
 Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/setup`. Conectar tu IA no requiere otro modelo de lenguaje local.
 
-Prueba con la nota que acabas de abrir o guardar:
+Crea o importa una nota en Wenlan, guárdala y pregunta:
 
 > Busca mi nota «[título]» en Wenlan y cítala.
 
