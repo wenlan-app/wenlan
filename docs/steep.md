@@ -12,7 +12,7 @@ A memory holds one decision, lesson, preference, or fact. It can be retrieved on
 |---|---|
 | **Capture** | Save a self-contained finding with its available source context. |
 | **Classify and enrich** | With the assigned model, add a type, structured details, and retrieval cues. An explicit type supplied by the caller remains authoritative. |
-| **Link** | With enrichment enabled, extract people, projects, and concepts, and try to match them to existing entities by alias, name, or similarity. Memories from different material can then connect around the same subject while retaining their sources. |
+| **Link** | With enrichment enabled, match people, projects, and concepts by alias, name, or similarity, connecting memories from different material to the same entity while retaining their sources. |
 | **Revise or reconcile** | An explicit replacement links the new memory to the earlier one through `supersedes`. The optional model-backed conflict-reconciliation pass is off by default. |
 
 A newer document does not automatically replace an earlier memory. Once a replacement takes effect, its mode determines whether the earlier memory is hidden from ordinary retrieval or remains visible as archived; the replacement link is retained. See the [memory review rules](knowledge-guide.md#atomic-memory).
