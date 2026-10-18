@@ -260,7 +260,7 @@ describe("a connection that is on", () => {
     expect(screen.getByText("Sharing: review")).toBeInTheDocument();
     expect(screen.getByText("Add Wenlan to your AI app, then click Allow when Wenlan asks.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add to Claude" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Copy link and open ChatGPT" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to ChatGPT" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Other apps" })).toBeInTheDocument();
     // The link is not in the card; it lives in the Other apps guide.
     expect(screen.queryByText(relayUrl)).not.toBeInTheDocument();
@@ -304,7 +304,7 @@ describe("a connection that is on", () => {
   it("ChatGPT copies the link first, opens ChatGPT, and says where to paste it", async () => {
     await connectedPanel();
     expect(screen.queryByText(/Developer mode/)).not.toBeInTheDocument();
-    fireEvent.click(button("Copy link and open ChatGPT"));
+    fireEvent.click(button("Add to ChatGPT"));
     await waitFor(() => expect(openExternal).toHaveBeenCalledWith("https://chatgpt.com/plugins"));
     expect(mocks.clipboardWrite).toHaveBeenCalledWith(relayUrl);
     expect(mocks.clipboardWrite.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(openExternal).mock.invocationCallOrder[0]);
@@ -331,23 +331,24 @@ describe("a connection that is on", () => {
     expect(screen.getAllByText(relayUrl)).toHaveLength(1);
   });
 
-  it("Copy in the guide copies only the relay URL and says so", async () => {
+  it("opening the guide copies the relay URL, like Add to ChatGPT, and Copy copies it again", async () => {
     await connectedPanel();
     fireEvent.click(button("Other apps"));
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Copy URL" }));
     await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledWith(relayUrl));
     expect(mocks.clipboardWrite).toHaveBeenCalledTimes(1);
     expect(await within(dialog).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Copied" }));
+    await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalledTimes(2));
+    expect(mocks.clipboardWrite).toHaveBeenLastCalledWith(relayUrl);
     expect(openExternal).not.toHaveBeenCalled();
   });
 
   it("a failed copy is not reported as copied", async () => {
+    mocks.clipboardWrite.mockRejectedValue(new Error("denied"));
     await connectedPanel();
     fireEvent.click(button("Other apps"));
     const dialog = await screen.findByRole("dialog");
-    mocks.clipboardWrite.mockRejectedValue(new Error("denied"));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Copy URL" }));
     await waitFor(() => expect(mocks.clipboardWrite).toHaveBeenCalled());
     expect(within(dialog).getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Copied" })).not.toBeInTheDocument();
@@ -377,10 +378,12 @@ describe("a connection that is on", () => {
     await connectedPanel();
     fireEvent.click(button("Other apps"));
     const dialog = await screen.findByRole("dialog");
+    // Opening copied the link already, so the first control reads Copied.
+    const copyAgain = await within(dialog).findByRole("button", { name: "Copied" });
     const done = within(dialog).getByRole("button", { name: "Done" });
     done.focus();
     fireEvent.keyDown(done, { key: "Tab" });
-    expect(within(dialog).getByRole("button", { name: "Copy URL" })).toHaveFocus();
+    expect(copyAgain).toHaveFocus();
     fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
     expect(done).toHaveFocus();
   });

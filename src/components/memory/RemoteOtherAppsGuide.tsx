@@ -9,7 +9,7 @@ import "./remoteOtherAppsGuide.css";
 
 /**
  * A short first-time guide for AI apps Wenlan has no button for: three steps
- * and the link to paste. It uses the approval dialog's modal shell (backdrop,
+ * and the link to paste, already copied when it opens. It uses the approval dialog's modal shell (backdrop,
  * focus trap, Escape), and hands focus back to the button that opened it.
  */
 export function RemoteOtherAppsGuide({ relayUrl, returnFocus, onClose }: {
@@ -33,6 +33,10 @@ export function RemoteOtherAppsGuide({ relayUrl, returnFocus, onClose }: {
     // A failed copy leaves the link on screen to select; nothing claims it was copied.
     try { await clipboardWrite(relayUrl); setCopied(true); } catch { setCopied(false); }
   };
+
+  // Opening the guide copies the link, the same as Add to ChatGPT does.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void copy(); }, []);
 
   return (
     <div className="pairing-approval-backdrop">

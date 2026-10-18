@@ -234,13 +234,13 @@ export function RemoteAccessPanel({ currentSpace }: { currentSpace?: string }) {
           <div className="min-w-0 space-y-3">
             <p className={secondaryText}>{t("remoteAccess.addHint")}</p>
             <div className="flex flex-wrap gap-2">
-              <Button variant="primary" size="sm" disabled={busy} onClick={() => addToClaude(relayUrl)}>
+              <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToClaude(relayUrl)}>
                 {t("remoteAccess.addToClaude")}<ArrowSquareOut size={14} aria-hidden="true" />
               </Button>
               <Button variant="secondary" size="sm" disabled={busy} onClick={() => addToChatGPT(relayUrl)}>
                 {t("remoteAccess.addToChatGPT")}<ArrowSquareOut size={14} aria-hidden="true" />
               </Button>
-              <Button variant="ghost" size="sm" aria-haspopup="dialog" disabled={busy}
+              <Button variant="secondary" size="sm" aria-haspopup="dialog" disabled={busy}
                 onClick={(event) => { guideOpener.current = event.currentTarget; setGuideOpen(true); }}>
                 {t("remoteAccess.otherApps")}
               </Button>
