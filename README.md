@@ -114,6 +114,10 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 
 **Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
 
+- **Atomic memories:** Retrieve an individual finding without loading an entire conversation or page.
+- **Shared topics:** With an enrichment model configured, repeated mentions of a person, project, or concept link to one topic node (entity), with typed relations connecting topics.
+- **Knowledge communities:** Label propagation groups connected topics, revealing related knowledge across your material. A community contains multiple topic nodes. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
+
 ### Sources and imports
 
 | Bring in | How you can use it |
@@ -122,11 +126,9 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 | An Obsidian vault | Search and cite existing notes through a read-only connection. Refresh on demand; nothing is written back. |
 | Web excerpts with a URL | Paste the text and its URL to save searchable material with a link to the original. |
 | ChatGPT or Claude export ZIPs | Retrieve earlier conversation text and cite it as context; imports are snapshots, not live account connections. |
-| Existing memories as text | Import preferences, decisions, or lessons as atomic memories you can retrieve without loading a whole conversation. |
+| Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
 
 Sources and memories can be retrieved directly; turning them into pages is optional. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
-
-**Topics and knowledge communities:** With an enrichment model configured, repeated mentions of the same person, project, or concept link to a shared **topic node (entity)**. **Communities** group connected topics using label propagation, helping you discover related knowledge across your material. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
 <a id="explore-your-personal-knowledge-graph"></a>
 

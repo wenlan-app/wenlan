@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=64f75df35d6fcfe42e79902e95a66a31fb98524bc8e8c02af3d582ab1e39d35a -->
+<!-- README_SYNC: source=README.md sha256=87ff5afb8193961c84de8bff9476684fc1082747fe7d4c638a46f35e55428313 -->
 
 <p align="center">
   <picture>
@@ -117,6 +117,10 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 **來源**保留你讀過的資料；**記憶**留下你的發現與判斷理由。將兩者整理成**帶有引用的 Markdown 頁面**，讓你閱讀、編輯，用 `[[wikilinks]]` 連結相關內容，也能沿引用查回原始資料。
 
+- **原子記憶**：單獨找回一筆發現，不必載入整段對話或整個頁面。
+- **共同主題**：設定整理模型後，對同一人物、專案或概念的重複提及會連到同一個主題節點（實體），主題之間以具類型的關係連結。
+- **知識群集（communities）**：透過標籤傳播演算法，將互有連結的主題分組，呈現散落資料間的關聯；一個群集包含多個主題節點。[圖譜技術說明](docs/technical-foundations.md#graph-data-and-entity-resolution)。
+
 ### 資料來源與匯入
 
 | 可以帶入什麼 | 匯入後怎麼用 |
@@ -125,11 +129,9 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 | Obsidian 儲存庫 | 透過唯讀連接搜尋、引用既有筆記；按需重新整理，不寫回原始檔案。 |
 | 網頁摘錄與網址 | 貼上文字及網址，保存可搜尋的內容，並保留原文連結。 |
 | ChatGPT 或 Claude 匯出的 ZIP | 找回先前對話文字，作為可引用的脈絡；保留匯入當時的紀錄，不持續連接帳戶。 |
-| 既有記憶文字 | 將偏好、決定或心得匯入為原子記憶，不必載入整段對話就能取用。 |
+| 既有記憶文字 | 將偏好、決定或心得保存為獨立記憶。 |
 
 來源與記憶都能直接取用，不必先整理成頁面。掃描版 PDF 須先擷取文字；對話附件不會匯入。[匯入教學](docs/import-guide.zh-Hant.md)。
-
-**主題與知識群集：** 設定整理模型後，對同一人物、專案或概念的重複提及會連到共同的<strong>主題節點（實體）</strong>。<strong>知識群集（communities）</strong>透過標籤傳播演算法，將互有連結的主題分組，幫助你發現散落資料間的關聯。[圖譜技術說明](docs/technical-foundations.md#graph-data-and-entity-resolution)。
 
 <a id="探索你的個人知識圖譜"></a>
 
