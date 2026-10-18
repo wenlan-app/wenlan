@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=eca59145e71e49b0ca634fdd925a7e4067a89099953dd25e006834b292bbbd72 -->
+<!-- README_SYNC: source=README.md sha256=cddb62af2134a877db1646a0196030fb4257af25cb5c8604259d2ca406097a22 -->
 
 <p align="center">
   <picture>
@@ -51,7 +51,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ### 1. 下載並開啟 Wenlan
 
-[下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安裝後開啟。
+[下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安裝後開啟。偏好終端機？也可[不安裝桌面 App，透過 CLI 或 AI 工具使用](docs/setup-and-data.zh-Hant.md#installation)。
 
 可選用[本地模型](docs/setup-and-data.zh-Hant.md#models)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。補上搜尋線索與知識關聯，讓 AI 更容易找回和使用已有知識。
 
