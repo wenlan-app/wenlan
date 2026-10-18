@@ -55,7 +55,7 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-data.md#installation).
 
-Optionally enable Steep with a [local model](docs/setup-and-data.md#models) to organize memories and update knowledge pages in the background.
+Optionally enable Steep with a [local model](docs/steep.md#enable-steep) to organize memories and update knowledge pages in the background.
 
 ### 2. Create a page or import existing material
 
@@ -165,14 +165,16 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 <br>
 
-## Keep knowledge current, with its history
+## Steep: keep knowledge useful as it changes
 
-**Updates follow citations.** Changing or removing a cited source or memory in Wenlan marks the pages that use it for refresh. With background AI enabled and a model available, eligible pages rebuild from current evidence; drafts with insufficient citations are rejected.
+Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
 
-- **Steep: organize now, reuse later.** Background enrichment adds types, structured details, search cues, and graph links to memories; optional synthesis and refresh keep cited pages current. This gives AI reusable context instead of repeatedly working through the original material.
-- **[Revision review and history](docs/knowledge-guide.md#updates-and-history):** See who changed a page, compare versions, and trace memory replacements. Background refresh proposes revisions for pages you created or edited; a review lock also holds explicit AI edits for approval.
-- **Wiki export:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
-- **[Optional background models](docs/setup-and-data.md#models):** Enable enrichment, synthesis, and automatic refresh with on-device Qwen (llama.cpp), local OpenAI-compatible servers such as Ollama or LM Studio, or configured cloud providers.
+- **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
+- **Update from current evidence:** Changes to cited sources or memories mark dependent pages for refresh. With background processing enabled and a model available, eligible pages rebuild with citations; drafts that fail the citation check are not applied.
+- **Keep control and history:** Background refresh can update AI-maintained pages directly. Pages you created or edited receive proposed revisions; version history and memory replacement links remain inspectable.
+- **Export your wiki:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
+
+[Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a note that is either updated automatically or sent for review." width="100%">

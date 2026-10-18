@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=4c54225c4317ec115a85df8b83a7c6d58ea17281aff5efdf90e343049fe91a17 -->
+<!-- README_SYNC: source=README.md sha256=b3bdc28ec70e847a47c1808f234b4dc533b97afc7f59557e0a1645f0c2a988b2 -->
 
 <p align="center">
   <picture>
@@ -57,7 +57,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 偏好終端機？[透過 CLI 或 AI 工具使用 Wenlan](docs/setup-and-data.zh-Hant.md#installation)。
 
-可選用[本地模型](docs/setup-and-data.zh-Hant.md#models)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。
+可選用[本地模型](docs/steep.zh-Hant.md#enable-steep)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。
 
 ### 2. 建立頁面或匯入既有資料
 
@@ -170,14 +170,16 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 <br>
 
-## 更新知識，保留歷史
+## Steep（沉澱）：讓知識持續更新
 
-**依引用關係更新。** Wenlan 中的來源或記憶變更、移除時，引用它的頁面會被標記為待更新。啟用背景 AI 並有可用模型後，符合條件的頁面會依最新資料重新整理；引用不足的草稿不會採用。
+保存資料只是開始。**沉澱讓資料更容易重用，也讓引用它的知識頁跟上新發現**，讓你和 AI 延續已有的理解，不必每次重新翻閱原始內容。
 
-- **Steep（沉澱）：先整理，之後反覆使用。** 在背景為記憶補上類型、結構化資訊、搜尋線索與圖譜連結，也可合成、更新帶引用的知識頁，讓 AI 重用整理好的脈絡，減少重讀原始資料與反覆交代。
-- **[修訂審核與歷史](docs/knowledge-guide.zh-Hant.md#updates-and-history)**：查看頁面由誰修改、比較版本並追溯記憶的取代關係；背景更新會為你建立或編輯過的頁面提出修訂，而設為需審核的頁面也會攔下 AI 主動修改，等待你確認。
-- **維基匯出**：將符合條件的頁面匯出為 Open Knowledge Format（OKF）維基。
-- **[選配的背景模型](docs/setup-and-data.zh-Hant.md#models)**：用裝置端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 相容本地服務，或已設定的雲端供應商啟用整理、頁面合成與自動更新。
+- **整理記憶**：補上類型、結構化資訊、搜尋線索與圖譜連結，讓單筆發現更容易連同脈絡被找回。
+- **依據最新資料更新**：引用的來源或記憶改變後，相關頁面會被標記為待更新。啟用背景處理並有可用模型時，符合條件的頁面會重新整理並附引用；未通過引用檢查的草稿不會套用。
+- **保留控制與歷史**：背景刷新可直接更新 AI 維護的頁面；你建立或編輯過的頁面則提出待審修訂。版本紀錄與記憶取代關係仍可查閱。
+- **匯出知識庫**：將符合條件的頁面匯出為 Open Knowledge Format（OKF）維基。
+
+[沉澱指南：觸發條件、審核規則與模型設定](docs/steep.zh-Hant.md)。可選裝置端模型、本地服務或雲端供應商；模型驅動的背景處理為選配。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
