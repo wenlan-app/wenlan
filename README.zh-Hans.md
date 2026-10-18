@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=242205b349b100ea70d6d1cbe0e6c7c396df7b9f2f6bcf922b817f3d9b9e0866 -->
+<!-- README_SYNC: source=README.md sha256=03ecad8214286bf39fb28e2ea91a757d30bb497cb58783f1771add7fc0ff4709 -->
 
 <p align="center">
   <picture>
@@ -45,37 +45,41 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 <a id="mcp-setup"></a>
 <a id="mcp-clients"></a>
 
+<br>
+
 ## 开始使用
 
-把资料保存在 Wenlan，让你常用的 AI 用上这些知识，回答问题、完成工作。
+把资料保存在 Wenlan，让你常用的 AI 工具用这些知识回答问题、完成工作。
 
 ### 1. 下载并打开 Wenlan
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安装后打开。
+[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon 或 Windows x64），安装并打开。
 
-首次启动需联网下载本地搜索模型。另可[选配模型启用 Steep（沉淀）](docs/setup-and-data.zh-Hans.md#models)，整理记忆、更新知识页，让 AI 复用这些上下文。
+更喜欢终端？[通过 CLI 或 AI 工具使用 Wenlan](docs/setup-and-data.zh-Hans.md#installation)。
 
-[安装说明与其他使用方式](docs/setup-and-data.zh-Hans.md#installation) · [隐私说明](docs/PRIVACY.md)
+也可以选用[本地模型启用 Steep](docs/steep.md#enable-steep)，在后台整理记忆并更新知识页。
 
-### 2. 保存你的第一个页面
+### 2. 新建页面或导入现有资料
 
-选择“开始使用”进入 Wenlan，创建或导入一个页面并保存。也可以先看看欢迎页中的示例。
+在 Wenlan 中新建页面、连接 Obsidian 仓库，或导入过去的 AI 对话与记忆。[导入指南](docs/import-guide.md)。
 
 ### 3. 需要时再连接 AI 工具
 
 | AI 工具 | 连接方式 | 设置入口 |
 |---|---|---|
-| Claude Code | 插件 | [Claude Code 指南](docs/setup-with-ai.md#claude-code) |
-| Codex | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、Claude Desktop、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Claude Code / Claude Desktop | 插件 / MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
+| ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
+| Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-安装插件后，开启新的 AI 对话并运行 `/setup`。连接 AI 无需另装本地语言模型。
+安装插件后，开启新的 AI 会话并运行 `/setup`。
 
-连接后，就可以问 AI：
+导入的资料可以直接使用，无需先创建页面。可以这样问 AI：
 
-> 用 Wenlan 里的“页面标题”，帮我完成这个任务：……
+> 用我保存在 Wenlan 中的资料帮我完成这个任务：……
 
 <a id="daily-workflow"></a>
+
+<br>
 
 ## 日常使用
 
@@ -87,10 +91,10 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 简化流程示意；插件指令与页面整理均按需使用，没有固定顺序。
 
-- **从你的资料开始。** 导入文档和选定的对话作为来源，或在 App 编写页面。你也能编辑内容、查看引用来源、审核修订，无需连接 AI。
+- **在 App 中使用。** 添加资料、撰写或编辑页面、查看引用来源与审核修订，无需连接 AI。
 - **运用知识、编写新页面。** 请 AI 找回相关来源与记忆，用于当前任务（`/recall`）；也能编写带引用的新页面，或依据现有版本更新页面，再存回 Wenlan。
 - **留下你的新发现。** 保存决定或心得，以及其理由和来源；可在 App 操作，或请 AI 代存（`/capture`）。
-- **告一段落，下次继续。** 保存记忆、会话记录和下一步，并在新发现影响本次用到的页面时一并更新（`/handoff`）。下次读取项目摘要，接回上下文（`/brief`）。
+- **告一段落，下次继续。** 保存发现与会话记录，更新受影响的页面，并将进度和下一步写进项目摘要 Brief（`/handoff`）。下次读取这些上下文继续工作（`/brief`）。
 
 **按需整理积累的记忆：** 将相关记忆整理或更新为带引用的页面（`/distill`），不是编写新页面的必要步骤。[插件指令](plugin/skills/README.md)。
 
@@ -107,14 +111,27 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 <a id="让知识彼此连接"></a>
 
+<br>
+
 ## 把散落的资料整理成知识
 
-**来源**保留你读过的资料；**记忆**留下你的发现与判断理由。将两者整理成**带有引用的 Markdown 页面**，供你阅读、编辑，用 `[[wikilinks]]` 连接相关内容，也能通过引用查回原始资料。
+**来源**保留文档与对话；**记忆**记录值得重用的决定、经验与理由。将两者整理成可编辑的**带引用 Markdown 页面**，用 `[[wikilinks]]` 连接页面，并沿引用回到原始资料。
 
-- **文件与对话导入**：导入 Markdown、文本文件、文本型 PDF、文件夹，以及 ChatGPT 或 Claude 导出的 ZIP，保留来源引用。扫描版 PDF 需先提取文本再导入。对话导入保留当时记录；已注册的文件来源可刷新为最新内容。
-- **Obsidian 只读连接**：读取已有仓库并按需刷新，不修改原始文件，也不将变化同步回去。
-- **原子记忆**：单独找回一条发现，不必加载整段对话或整个页面。
-- **知识图谱**：通过不同类型的实体、关系与知识群集（communities），发现相关主题；配置整理模型后，将重复提及连接到同一实体。
+- **原子记忆：** 遵循 [Zettelkasten 的原子性原则](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，让每条发现都能独立检索和重用，无需加载整段对话或页面。
+- **共享主题：** 配置整理模型后，LLM 实体提取与实体消歧会将文档和对话中对同一人物、项目或概念的提及关联起来，并保留其记忆与来源。
+- **知识群集：** 将相连主题分组，发现资料中的相关知识。默认使用 Label Propagation；Leiden 可作为选配算法。[图谱详情](docs/technical-foundations.md#graph-data-and-entity-resolution)。
+
+### 来源与导入
+
+| 导入内容 | 用途 |
+| --- | --- |
+| Markdown、文本、文本型 PDF 或文件夹 | 搜索和引用导入文本；从磁盘刷新已连接的文件来源。 |
+| Obsidian 仓库 | 通过只读连接搜索和引用现有笔记；按需刷新，不会写回。 |
+| 带 URL 的网页摘录 | 粘贴文本与 URL，保存可搜索内容及原文链接。 |
+| ChatGPT 或 Claude 导出 ZIP | 检索过去的对话文本并作为上下文引用；导入是快照，不会连接实时账户。 |
+| 文本形式的现有记忆 | 将偏好、决定或经验保存为单条记忆。 |
+
+扫描版 PDF 需先提取文本；聊天附件不会导入。[导入指南（英文）](docs/import-guide.md)。
 
 <a id="探索你的个人知识图谱"></a>
 
@@ -133,13 +150,25 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 <a id="用-ai-延续已有知识"></a>
 
+<br>
+
 ## 让 AI 接续已有知识
 
-在不同 AI 工具间共用同一个知识库。**插件**引导 AI 何时检索先前上下文、保存新决定；**仅连接 MCP** 则让 AI 可按需或根据你的要求调用这些工具。
+智能体可以读取文件、撰写文字。Wenlan 增加了一个**跨任务与 AI 工具持续维护的共享知识库**：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
+
+**适用场景：**
+
+- **开发：** 将先前的技术决定、经验与验收标准带入实现和调试。
+- **产品与网站：** 运用客户研究、定位与设计原则撰写规格或构建页面。
+- **研究与学习：** 将阅读资料与保存的发现整理成带引用的报告或可复用学习笔记。
+
+**检索与连接：** 插件会引导检索和保存；MCP 连接则提供工具供 AI 调用。
 
 - **[本地混合检索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义，再以加权 RRF 合并排名；基础搜索无需 API key。
-- **图谱辅助排序**：有可用的实体连接时，提高相关记忆的排名，也可选用 cross-encoder reranking 精排结果。
-- **Spaces 范围检索**：选定 Space，将返回的知识限制在相关项目或个人资料集合内。
+- **图谱辅助排序：** 共享实体链接可提升相关记忆的排名，即使措辞不同也能关联。可选的 cross-encoder 重排会比较每条候选内容与问题，以调整顺序。
+- **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
+
+**即将推出：** Space 中的代码仓库支持。
 
 <p align="center">
   <img src="./docs/assets/wenlan-knowledge-to-work-zh-Hans.png" alt="AI 接着做，不必从头交代：关键词、语义与图谱检索" width="100%">
@@ -160,14 +189,17 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 <a id="持续更新知识并保留历史"></a>
 
-## 更新知识，保留历史
+<br>
 
-**依据引用关系更新。** Wenlan 中的来源或记忆变更、移除时，引用它的页面会被标记为待更新。启用后台 AI 并有可用模型后，符合条件的页面会根据最新资料重新生成；引用不足的草稿不会采用。
+## Steep（沉淀）：让知识跟上新发现
 
-- **Steep 后台整理**：为已保存的记忆补上类型、结构化信息、搜索线索与图谱连接；也可选择将记忆与来源合成为带有引用的页面。
-- **[修订审核与历史](docs/knowledge-guide.zh-Hans.md#updates-and-history)**：查看页面由谁修改、比较版本并追溯记忆的替代关系；后台更新会为你创建或编辑过的页面提出修订，而设为需审核的页面也会拦下 AI 主动修改，等待你确认。
-- **维基导出**：将符合条件的页面导出为 Open Knowledge Format（OKF）维基。
-- **[可选的后台模型](docs/setup-and-data.zh-Hans.md#models)**：用设备端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 兼容本地服务，或已配置的云端提供商启用整理、页面合成和自动更新。
+保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的页面保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
+
+- **整理记忆：** 添加类型、结构化细节、搜索线索和图谱链接，让单条发现更容易在上下文中检索。
+- **让依据带动更新：** 来源或记忆变化时，依赖它们的页面会标记待刷新；新记忆也可以丰富符合条件的页面。如果草稿未通过引用检查，刷新会保留已保存页面。通过检查并不代表事实正确。
+- **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护页面；你撰写或编辑的页面会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。页面修订可供检查。
+
+[Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
 
 <p align="center">
   <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
@@ -175,6 +207,8 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 <p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
 <a id="architecture"></a>
+
+<br>
 
 ## 系统架构
 
@@ -188,13 +222,19 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 <a id="models-and-privacy"></a>
 
+<br>
+
 ## 数据与隐私
+
+**导出维基：** 将符合条件的页面导出为 Open Knowledge Format（OKF）维基。
 
 云端 AI 客户端可能会把找回的知识传给其服务商，云端模型也会收到它处理所需的内容。本地存储不代表这些交互都留在本机。使用统计默认关闭。
 
 [文件位置、备份与卸载](docs/setup-and-data.zh-Hans.md#backup-and-removal) · [联网与隐私详情](docs/PRIVACY.md#when-wenlan-reaches-the-network)。
 
 <a id="evaluation"></a>
+
+<br>
 
 ## 评估
 
@@ -212,20 +252,29 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 <a id="learn-more"></a>
 <a id="离线队列outbox"></a>
 
+<br>
+
 ## 进一步了解
 
 - [开始使用与安装](docs/setup-and-data.zh-Hans.md#installation)
 - [连接 AI 工具](docs/setup-with-ai.md)
-- [来源与导入](docs/knowledge-guide.zh-Hans.md#sources-and-pages) · [本地文件、备份与离线使用](docs/setup-and-data.zh-Hans.md)
+- [来源与导入](docs/import-guide.md)
+- [本地文件、备份与离线使用](docs/setup-and-data.zh-Hans.md)
 - [隐私](docs/PRIVACY.md)
 - [Doctor 与问题反馈](https://wenlan.app/docs/diagnostics-and-issue-reports)
 - [完整文档索引](docs/README.md)
 
+<br>
+
 ## 贡献
 
-欢迎加入 [Discord 社区](https://discord.gg/nmzVTTU3HG)。请在 [GitHub issues](https://github.com/wenlan-app/wenlan/issues) 反馈问题或提出功能建议；Issue 公开可见，分享前请遮盖密钥和个人资料。代码与文档贡献请见[贡献指南](.github/CONTRIBUTING.md)、[安全问题反馈](.github/SECURITY.md)和[行为准则](.github/CODE_OF_CONDUCT.md)。
+欢迎加入 [Discord 社区](https://discord.gg/nmzVTTU3HG)。请在 [GitHub issues](https://github.com/wenlan-app/wenlan/issues) 反馈问题或提出功能建议；Issue 公开可见，分享前请遮盖密钥和个人资料。
+
+代码与文档贡献请见[贡献指南](.github/CONTRIBUTING.md)、[安全问题反馈](.github/SECURITY.md)和[行为准则](.github/CODE_OF_CONDUCT.md)。
 
 <a id="code-signing-policy"></a>
+
+<br>
 
 ## 代码签名政策
 
@@ -233,11 +282,15 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 <a id="license"></a>
 
+<br>
+
 ## 许可
 
 本地 runtime、CLI、MCP server、shared types 和 plugins 使用 [Apache-2.0](LICENSE)。桌面 app 及其前端使用 [AGPL-3.0-only](app/LICENSE)；修改版若作为网络服务运行，须向用户提供其源代码。
 
 <a id="acknowledgments"></a>
+
+<br>
 
 ## 源流与同类项目
 

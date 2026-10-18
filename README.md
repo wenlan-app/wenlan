@@ -92,7 +92,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 - **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
 - **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
 - **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
-- **Pause and resume.** Save findings and a session log, update affected pages, and refresh the Space’s project Brief (`/handoff`). Next time, see where work stopped and what remains (`/brief`).
+- **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
 
 **Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
 
@@ -150,7 +150,7 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 
 ## Put your knowledge to work with AI
 
-An agent can already read files and write text. Wenlan adds a **shared, maintained knowledge layer**: indexed sources, reusable memories, editable pages, and tracked links to their supporting evidence. With [Steep](docs/steep.md) enabled, eligible pages can be refreshed as that evidence changes, so later work across AI tools can build on what you have already learned.
+An agent can read files and write text. Wenlan adds a **shared knowledge base maintained across tasks and AI tools**: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
 
 **Use it for:**
 
@@ -191,7 +191,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
 
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
-- **Follow the evidence:** Wenlan tracks the sources and memories supporting each page. Changes mark dependent pages for refresh; new memories can also enrich eligible pages. With background processing and a model enabled, refresh uses current support and keeps the saved page if the draft fails its citation check. This check does not establish factual correctness.
+- **Follow the evidence:** Changed sources or memories flag dependent pages for refresh; new memories can enrich eligible pages. Refresh keeps the saved page if a draft fails citation checks. Passing these checks does not establish factual correctness.
 - **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
 
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
