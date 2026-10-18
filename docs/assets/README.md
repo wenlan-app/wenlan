@@ -26,13 +26,15 @@ The final consistency pass aligns the three explanatory titles (46px, semibold, 
 | Asset | Export | Provenance |
 | --- | --- | --- |
 | `wenlan-personal-knowledge.png`, `-zh-Hant.png`, `-zh-Hans.png` | 6000 × 3600 | Actual App directory/header captures and a high-resolution render of the actual editor and memory-preview DOM/styles, combined with an editorial graph layout. All 33 graph nodes and 80 typed relationships retain their verified demo identities. Not a native three-column screen; App behavior is unchanged. |
-| `wenlan-personal-graph.png`, `-zh-Hant.png`, `-zh-Hans.png` | 3600 × 2488 | Actual graph capture; the original nodes and connections are preserved, with localized legend and text layers. Region names and boundaries are editorial annotations, not verified source-node identities or detected communities. |
+| `wenlan-personal-graph.png`, `-zh-Hant.png`, `-zh-Hans.png` | 3600 × 2062 | Actual graph capture; the original nodes and connections are preserved, with localized legend and text layers. Region names and boundaries are editorial annotations, not verified source-node identities or detected communities. |
 | `wenlan-knowledge-to-work.png`, `-zh-Hant.png`, `-zh-Hans.png`, `-es-ES.png` | 5400 × 3480 each | Fictional Claude conversations and FORMA homepage, using the film’s unchanged hero-image asset. Keyword, semantic, and graph paths point to the matching headline, primary action, and image. Concept illustration, not a measured comparison; Wenlan context complements Claude’s native capabilities. |
 | `wenlan-updates-history.png`, `-zh-Hant.png`, `-zh-Hans.png` | 4800 × 2160 | Native SVG explanatory illustration synchronized unchanged from the website artwork. A source change enters Steep and informs versioned memories and automatic updates to eligible notes; user-created or edited notes await review during background refresh. Not an App screenshot. Matching SVG files preserve editable text and geometry. |
 
+The personal graph omits its former in-image heading and subtitle because the README section already introduces it. Only that header and its reserved space were removed; the graph image, labels, nodes, connections, and geometry are unchanged. Editable sources and 900px proofs are retained in `graph-without-heading-20261017`. Spanish continues to use the English graph.
+
 The graph uses the website's September 6, 2026 capture, `wenlan-live-knowledge-graph-20260906.webp` (source SHA-256 `63ab14b444c9cfd8527f9fc80440d7fb2507856b745c1d83b10e52e61df0b5f9`). Original graph nodes, colors, and connections remain intact. Urban history, Genetics and evolution, and Human–AI collaboration research are illustrative region names.
 
-The localization sources are retained in the `readme-locales-final` production package. Panorama exports are 6000 × 3600; graph exports are 3600 × 2488; update-history exports are 4800 × 2160. Each was inspected at 900px reading width. The Traditional Chinese panorama remains byte-identical to its approved version; its graph changes only the native English legend and footer text to Traditional Chinese. Longer translations wrap inside the existing composition.
+The localization sources are retained in the `readme-locales-final` production package. Panorama exports are 6000 × 3600; graph exports are 3600 × 2062; update-history exports are 4800 × 2160. Each was inspected at 900px reading width. The Traditional Chinese panorama remains byte-identical to its approved version; its graph changes only the native English legend and footer text to Traditional Chinese. Longer translations wrap inside the existing composition.
 
 Composition sources: `cover-polish-title` (6000px `cover-polish-hd` master; approved `cover-polish-v2` layout), `real-graph-polish-v7`, `ai-source-card-type-unified-20261017` / `ai-work-publish-locales-20261017`, and the website’s `render-update-visuals.cjs` / `shared-updates-history-20261017` for the current history artwork (`lifecycle-polish-v26` is the previous composite), retained in their corresponding production packages, including `cover-polish-title`, `cover-polish-hd`, `readme-final-consistency`, and `ai-work-film-case-v7-localized`. The final title pass reduces only the article heading from 28.16px to 26px; every pixel outside that heading area is identical to the 6000px master. The cover package includes read-only snapshots of the actual editor and hover-preview DOM/styles, original pseudo-element icon CSS, the approved composition, export instructions, and SHA-256 verification. Text and graph labels are rendered at high resolution rather than enlarged from the former small article crop. Heading font fallback is normalized to match the approved capture. Directory/header raster inputs remain unchanged; their detail is limited by the original captures. Browser capture uses JPEG transport; the published PNG adds no further lossy encoding. No generative enhancement or invented UI content is used in the product cover. The AI-work comparison remains an authored concept as noted above.
 
@@ -41,7 +43,7 @@ The older `wenlan-lifecycle*` and `wenlan-knowledge-network*` illustrations and 
 ### Current export hashes
 
 - `wenlan-personal-knowledge-zh-Hant.png`: `328e4bf032d5dcf16cad24658d7d12a51d694fdd2b3d00f5b1e44f94b22246e5`
-- `wenlan-personal-graph-zh-Hant.png`: `65a4588af858c942060477578ef2340a0ff967bf6bebde67ebf6d8de66aafc97`
+- `wenlan-personal-graph-zh-Hant.png`: `8cbb19f01f55dd27234bb53c4852e590209052ff9914fbaa9bd8f4f0def4023c`
 - `wenlan-knowledge-to-work-zh-Hant.png`: `c8e0e70a1ba4c502b5d48fada885074305761f35fba892c50ea612a2a78a9352`
 - `wenlan-knowledge-to-work-zh-Hans.png`: `b8aea4a7fcda8cb3e5e7230a010182d49cfe5e6d538e1c7ba71e2019e8100107`
 - `wenlan-knowledge-to-work.png`: `14e34fb772ce8f4ac6ce20516f136b9c1aead3fdef7304426445ebc3009307e6`
@@ -49,8 +51,8 @@ The older `wenlan-lifecycle*` and `wenlan-knowledge-network*` illustrations and 
 - `wenlan-updates-history-zh-Hant.png`: `bdbf253296b9962500c58bbfc5959246ca88f17bcc49ddf9e2c56d81a3325949`
 - `wenlan-personal-knowledge.png`: `6aa9bd21bb7e5b746ec1c1545570f0f5df9539fb81ffcf4dc1f915295b2de0e9`
 - `wenlan-personal-knowledge-zh-Hans.png`: `96736638a3611964a0b63888e41777f98d07f93e8f9db7b39c964df43dc4eeba`
-- `wenlan-personal-graph.png`: `a06050ed7a3a5bb3d43ef31e5a7982b9a640ac328167487b3490bb5da70cccf2`
-- `wenlan-personal-graph-zh-Hans.png`: `46330eb6094ca49b149bf05acc6d234d93b5ca3b14d9574fe72d5b9c23607696`
+- `wenlan-personal-graph.png`: `17d65ff5749464c96f7a5b34ffa2e780a0b5d7fd81f90b45107d474b8242e5e0`
+- `wenlan-personal-graph-zh-Hans.png`: `e9936e86d7550404c4886c91e1a0cec9436c2252fa8c3be958188e0fa8c1fc11`
 - `wenlan-updates-history.png`: `b8674e6f37f2178263e65d97a732aaa9c2a19cc5424086ef50e076de50fb93a0`
 - `wenlan-updates-history-zh-Hans.png`: `0bf421529d9eda0b3cced0e3a57fc6c74b0b1746cd8cdd8004048ff7919a5e42`
 
