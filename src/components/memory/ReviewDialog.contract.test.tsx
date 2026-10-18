@@ -82,9 +82,15 @@ describe("Review decision contracts", () => {
       <ReviewDialog items={items} openId={reviewItemId(item)} onOpenChange={onOpenChange}
         onResolve={vi.fn()} isResolving={false} />
     </QueryClientProvider>;
-    const view = render(content([item]));
+    const view = render(content([item, archive]));
     await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Skip" })).toBeDisabled();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Skip" }));
+    screen.getByRole("dialog").querySelector<HTMLElement>('[tabindex="-1"]')?.focus();
+    await userEvent.setup().keyboard("{ArrowRight}");
+    expect(onOpenChange).not.toHaveBeenCalled();
     view.rerender(content([]));
+    expect(screen.queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
     expect(screen.getByText(i18n.t("sourceRepair.duplicateHint"))).toBeVisible();
     expect(screen.getByText(i18n.t("sourceRepair.inspecting"))).toBeVisible();
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();

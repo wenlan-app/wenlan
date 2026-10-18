@@ -8,7 +8,7 @@ import { i18n } from "../../i18n";
 import { RECENT_PAGES_STORAGE_KEY } from "../../lib/recentPages";
 import { RECENT_SPACES_STORAGE_KEY } from "../../lib/recentSpaces";
 import type { Page, SearchResult, Space } from "../../lib/tauri";
-import { createPageDraft, getPage, publishPageDraft, updatePageDraft } from "../../lib/tauri";
+import { createPageDraft, getPage, publishPageDraft, searchPages, updatePageDraft } from "../../lib/tauri";
 import { clearPendingPairingCode } from "../../lib/pairingLink";
 import Main from "./Main";
 import ActivityStatus from "./activity/ActivityStatus";
@@ -516,6 +516,8 @@ describe("Main search", () => {
     openSearchResultMock.mockReset();
     openSearchResultMock.mockResolvedValue(undefined);
     setSearchQueryMock.mockReset();
+    vi.mocked(searchPages).mockReset();
+    vi.mocked(searchPages).mockResolvedValue([]);
     takeRemotePairingLinkMock.mockReset();
     takeRemotePairingLinkMock.mockResolvedValue(null);
     clearPendingPairingCode();
@@ -530,6 +532,25 @@ describe("Main search", () => {
     localStorage.clear();
     vi.unstubAllGlobals();
     await i18n.changeLanguage("en");
+  });
+
+  it("shows returned page excerpts and opens the same page from search", async () => {
+    vi.mocked(searchPages).mockResolvedValue([{
+      id: "page-recovery", title: "Recovery", domain: "Wenlan", summary: null,
+      content: `${"Introduction. ".repeat(30)}Rollback preserves the original source.`,
+    } as Page]);
+    useSearchMock.mockImplementation(() => {
+      const [query, setQuery] = useState("rollback");
+      setSearchQueryMock.mockImplementation(setQuery);
+      return { query, setQuery: setSearchQueryMock, debouncedQuery: query, results: [] };
+    });
+    const user = userEvent.setup();
+    renderMain();
+    await user.click(screen.getByRole("button", { name: i18n.t("main.searchButton") }));
+    const row = await screen.findByRole("button", { name: /Recovery.*Rollback preserves the original source/ });
+    expect(searchPages).toHaveBeenCalledWith("rollback", 5);
+    await user.click(row);
+    expect(screen.getByTestId("page-detail")).toHaveAttribute("data-page-id", "page-recovery");
   });
 
   it("keeps the Wiki directory inside the workspace instead of the header", () => {

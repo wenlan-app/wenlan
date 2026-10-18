@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useTranslation } from "react-i18next";
+import PageSearchResult from "./PageSearchResult";
 import { highlightTerms } from "../../lib/highlight";
 import type { EntitySearchResult, Page, SearchResult } from "../../lib/tauri";
 
@@ -41,14 +42,7 @@ export function SearchResults({
       {conceptResults.length > 0 && <>
         <p className="search-results-heading">{t("main.search.pages")}</p>
         {conceptResults.map((page) => (
-          <button className="search-result-button" key={page.id} onClick={() => onOpenPage(page.id)} type="button">
-            <span className="search-result-line">
-              <span className="search-result-dot" />
-              <span className="search-result-title">{highlightTerms(page.title, query, "search-result-match")}</span>
-              {page.domain && <span className="search-result-domain">{page.domain}</span>}
-            </span>
-            {page.summary && <span className="search-result-summary">{highlightTerms(page.summary, query, "search-result-match")}</span>}
-          </button>
+          <PageSearchResult key={page.id} page={page} query={query} onClick={() => onOpenPage(page.id)} />
         ))}
       </>}
       {memoryResults.length > 0 && <>

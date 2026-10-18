@@ -8,7 +8,7 @@
 // that the memory queries never fire for a page card.
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n";
@@ -18,7 +18,7 @@ import {
   getPage,
   getPageRevisions,
 } from "../../lib/tauri";
-import ReviewDialog from "./ReviewDialog";
+import ReviewDialog, { useReviewItemSummary } from "./ReviewDialog";
 import { reviewItemId, type ReviewItem } from "./useReviewQueue";
 
 vi.mock("../../lib/tauri", async (importOriginal) => ({
@@ -151,6 +151,46 @@ describe("ReviewDialog page-target revision card", () => {
     expect(within(dialog).queryByRole("heading", { name: /Neo4j/ })).toBeNull();
     expect(within(dialog).getByText("Note revision")).toBeVisible();
     expect(within(dialog).queryByText("Memory revision")).toBeNull();
+  });
+
+  it.each([
+    ["en", "page", "page_write", "Page update"],
+    ["zh-Hant", "page", "page_write", "頁面更新"],
+    ["zh-Hans", "page", "page_write", "页面更新"],
+    ["en", "page", "claude-code", "proposed by claude-code"],
+    ["zh-Hant", "page", "claude-code", "由 claude-code 提議"],
+    ["zh-Hans", "page", "claude-code", "由 claude-code 提议"],
+    ["en", "memory", "page_write", "proposed by page_write"],
+    ["zh-Hant", "memory", "page_write", "由 page_write 提議"],
+    ["zh-Hans", "memory", "page_write", "由 page_write 提议"],
+  ] as const)("labels %s %s revision source %s in the list and dialog", async (locale, targetKind, agent, label) => {
+    await i18n.changeLanguage(locale);
+    const item = { ...pageItem, targetKind, agent };
+    if (targetKind === "memory") {
+      vi.mocked(getMemoryDetail).mockResolvedValue({
+        source_id: PAGE_ID, title: PAGE_TITLE, content: PAGE_BODY,
+      } as never);
+      vi.mocked(getMemoryRevisions).mockResolvedValue({ entries: [] } as never);
+    }
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(() => useReviewItemSummary(item), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+    expect(result.current.reason).toBe(label);
+
+    const dialog = await openDialog(item);
+    expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
+    if (targetKind === "page" && agent === "page_write") {
+      expect(within(dialog).queryByText(i18n.t("review.proposedBy", { agent }), {
+        exact: true,
+      })).toBeNull();
+    }
   });
 
   it("diffs the page's current body against the proposed prose", async () => {

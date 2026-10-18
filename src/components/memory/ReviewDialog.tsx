@@ -332,7 +332,9 @@ export function useReviewItemSummary(item: ReviewItem | null): {
   let reason: string | null = null;
   if (item.kind === "revision") {
     title = short(a.data?.name, 96) ?? short(item.content, 96);
-    reason = item.agent ? t("review.proposedBy", { agent: item.agent }) : null;
+    reason = item.targetKind === "page" && item.agent === "page_write"
+      ? t("review.pageUpdate")
+      : item.agent ? t("review.proposedBy", { agent: item.agent }) : null;
   } else if (item.kind === "capture") {
     title = short(item.title, 96);
     reason = short(item.snippet, 96);
@@ -1199,7 +1201,7 @@ export default function ReviewDialog({
               >
                 {item.kind === "revision"
                   ? <>
-                      {item.agent ? t("review.proposedBy", { agent: item.agent }) : ""}
+                      {summary.reason}
                       {revisionReasonText(t, item.reviewReason) && (
                         <span data-testid="review-reason" style={{ display: "block" }}>
                           {revisionReasonText(t, item.reviewReason)}
@@ -1826,14 +1828,16 @@ export default function ReviewDialog({
                   </button>
                 )}
               <span style={{ flex: 1 }} />
-              <button
-                type="button"
-                disabled={repairBusy || items.length < 2}
-                onClick={() => goTo(1)}
-                style={actionButtonStyle}
-              >
-                {t("review.skip")}
-              </button>
+              {items.length > 1 && (
+                <button
+                  type="button"
+                  disabled={repairBusy}
+                  onClick={() => goTo(1)}
+                  style={actionButtonStyle}
+                >
+                  {t("review.skip")}
+                </button>
+              )}
               {item.kind === "refinement" && item.action === "lint_repair_review" && <div className="source-repair-actions" ref={setRepairActionHost} />}
               {!reviewApproveBlocked(item) && (
                 <button

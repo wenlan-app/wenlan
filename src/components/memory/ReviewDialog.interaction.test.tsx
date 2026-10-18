@@ -77,6 +77,33 @@ describe("ReviewDialog interaction safety", () => {
     } as never);
   });
 
+  it("omits Skip for a single item and leaves its decision actions available", async () => {
+    const user = userEvent.setup();
+    render(<ReviewHarness item={validCleanupItem} onResolve={vi.fn().mockResolvedValue(undefined)} />);
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("button", { name: "Skip" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: i18n.t("review.keepPage") })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Archive" })).toBeEnabled();
+  });
+
+  it("keeps Skip and arrow navigation for multiple items without resolving them", async () => {
+    const nextItem: ReviewItem = { ...validCleanupItem, id: "cleanup-next" };
+    const onResolve = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<ReviewHarness item={validCleanupItem} items={[validCleanupItem, nextItem]} onResolve={onResolve} />);
+    await user.click(screen.getByRole("button", { name: "Open review" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Skip" }));
+    expect(screen.getByText("2 of 2")).toBeVisible();
+    dialog.querySelector<HTMLElement>('[tabindex="-1"]')?.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByText("1 of 2")).toBeVisible();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByText("2 of 2")).toBeVisible();
+    expect(onResolve).not.toHaveBeenCalled();
+  });
+
   it("lets a focused Keep page button own Enter without also archiving", async () => {
     const onResolve = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
