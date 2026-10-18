@@ -49,15 +49,11 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 ### 1. Download and open Wenlan
 
-[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest), then open it:
+[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon or Windows x64), install it, and open it.
 
-- **macOS (Apple Silicon):** Open the `.dmg` and drag Wenlan to Applications. The app is signed and notarized.
-- **Windows x64:** Run the `-setup.exe`; it is not signed yet. If SmartScreen warns you, confirm it came from the official Releases page before choosing “More info” → “Run anyway.”
-- **Linux:** There is no desktop app yet; use the [AI setup guide](docs/setup-with-ai.md#install-the-runtime) to install the runtime.
+First launch needs an internet connection to download the local search model. Separately, an [optional model for Steep](docs/setup-and-data.md#models) can organize memories and refresh knowledge pages so your AI can reuse that context.
 
-First launch downloads the local search model. Keep an internet connection until setup finishes. [Download and privacy details](docs/PRIVACY.md#when-wenlan-reaches-the-network).
-
-You can also [use Wenlan without the desktop app](docs/setup-and-data.md#installation) through AI tools or the CLI, with the same local knowledge base.
+[Installation and other ways to use Wenlan](docs/setup-and-data.md#installation) · [Privacy](docs/PRIVACY.md)
 
 ### 2. Save your first page
 

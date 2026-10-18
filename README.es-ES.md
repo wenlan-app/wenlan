@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=f4a302ed8126b6736a97378fc9e4549a2b846faed02cc518a5b69d90ef58b631 -->
+<!-- README_SYNC: source=README.md sha256=242205b349b100ea70d6d1cbe0e6c7c396df7b9f2f6bcf922b817f3d9b9e0866 -->
 
 <p align="center">
   <picture>
@@ -51,15 +51,11 @@ Guarda tu material en Wenlan para que tus herramientas de IA habituales lo usen 
 
 ### 1. Descarga y abre Wenlan
 
-[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) y ábrela:
+[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon o Windows x64), instálala y ábrela.
 
-- **macOS (Apple Silicon):** abre el `.dmg` y arrastra Wenlan a Aplicaciones. La aplicación está firmada y notarizada.
-- **Windows x64:** ejecuta el `-setup.exe`; todavía no está firmado. Si SmartScreen avisa, confirma que procede de la página oficial de Releases antes de elegir «Más información» → «Ejecutar de todas formas».
-- **Linux:** aún no hay aplicación de escritorio; sigue la [guía de configuración de IA](docs/setup-with-ai.md#install-the-runtime) para instalar el runtime.
+El primer inicio requiere internet para descargar el modelo de búsqueda local. Por separado, un [modelo opcional para Steep](docs/setup-and-data.es-ES.md#models) permite organizar recuerdos y actualizar páginas para que tu IA reutilice ese contexto.
 
-Al iniciar por primera vez se descarga el modelo de búsqueda local. Mantén la conexión hasta terminar la configuración. [Detalles de descarga y privacidad](docs/PRIVACY.md#when-wenlan-reaches-the-network).
-
-También puedes [usar Wenlan sin la aplicación de escritorio](docs/setup-and-data.es-ES.md#installation) mediante herramientas de IA o la CLI, con la misma base de conocimiento local.
+[Instalación y otras formas de usar Wenlan](docs/setup-and-data.es-ES.md#installation) · [Privacidad](docs/PRIVACY.md)
 
 ### 2. Guarda tu primera página
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=f4a302ed8126b6736a97378fc9e4549a2b846faed02cc518a5b69d90ef58b631 -->
+<!-- README_SYNC: source=README.md sha256=242205b349b100ea70d6d1cbe0e6c7c396df7b9f2f6bcf922b817f3d9b9e0866 -->
 
 <p align="center">
   <picture>
@@ -51,15 +51,11 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ### 1. 下载并打开 Wenlan
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，安装后打开：
+[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安装后打开。
 
-- **macOS（Apple Silicon）：** 打开 `.dmg`，把 Wenlan 拖进“应用程序”。App 已签名并通过公证。
-- **Windows x64：** 运行 `-setup.exe`，安装包尚未签名。若 SmartScreen 警告，请先确认文件来自官方 Releases 页面，再选“更多信息”→“仍要运行”。
-- **Linux：** 暂无桌面版；请按[AI 设置指南](docs/setup-with-ai.md#install-the-runtime)安装 runtime。
+首次启动需联网下载本地搜索模型。另可[选配模型启用 Steep（沉淀）](docs/setup-and-data.zh-Hans.md#models)，整理记忆、更新知识页，让 AI 复用这些上下文。
 
-首次启动会下载本地搜索模型，设置完成前请保持联网。[下载与隐私说明](docs/PRIVACY.md#when-wenlan-reaches-the-network)。
-
-也可[不安装桌面应用](docs/setup-and-data.zh-Hans.md#installation)，通过 AI 或 CLI 使用同一个本地知识库。
+[安装说明与其他使用方式](docs/setup-and-data.zh-Hans.md#installation) · [隐私说明](docs/PRIVACY.md)
 
 ### 2. 保存你的第一个页面
 
