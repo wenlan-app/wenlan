@@ -285,7 +285,8 @@ export class TauriMockRuntime {
         const required = requiredBoolean(command, args, "required");
         const index = this.pages.findIndex((entry) => entry.id === pageId);
         const page = this.pages[index];
-        if (index < 0 || !page) throw new TauriMockArgumentError(command, "pageId");
+        // The daemon never matches an entity shadow page.
+        if (index < 0 || !page || page.creation_kind === "entity") throw new TauriMockArgumentError(command, "pageId");
         // The daemon omits the field while false; keep that shape.
         const { review_required: _previous, ...rest } = page;
         this.pages[index] = required ? { ...rest, review_required: true } : rest;

@@ -1725,6 +1725,9 @@ export default function PageDetail({
 
   const storedActionBlocked = storedActionPending || renaming || renameMutation.isPending || showCanvas || canvasSwitchPending ||
     (editing && (editGate.kind !== "editor" || !editorStatus?.ready || editorStatus.compositionActive));
+  // PageDetail is reused across pages; a slow request for another page must
+  // not disable this page's toggle.
+  const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
   const canRenamePage = page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
@@ -1886,9 +1889,10 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
-                    <button
+                    {/* The daemon refuses to lock an entity shadow page. */}
+                    {page.creation_kind !== "entity" ? <button
                       aria-checked={page.review_required === true}
-                      disabled={storedActionBlocked || reviewRequiredMutation.isPending}
+                      disabled={storedActionBlocked || reviewLockPending}
                       onClick={() => {
                         closeActionMenu();
                         setActionErrorMessage(null);
@@ -1899,7 +1903,7 @@ export default function PageDetail({
                     >
                       <LockIcon filled={page.review_required === true} size={12} />
                       {t("pageDetail.requireReview")}
-                    </button>
+                    </button> : null}
                     {obsidianSources.length === 0 ? (
                       <button
                         className="page-detail-mobile-menu-item"

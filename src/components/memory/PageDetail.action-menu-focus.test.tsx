@@ -110,8 +110,31 @@ describe("PageDetail action menu focus", () => {
 
     act(() => editor.reportReady!());
     await waitFor(() => expect(toggle).toBeEnabled());
-    expect(menu.contains(document.activeElement)).toBe(true);
-    expect(document.activeElement).not.toBe(menu);
-    expect(document.activeElement).toHaveAttribute("role", expect.stringMatching(/^menuitem/));
+    const enabled = Array.from(menu.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)'));
+    expect(enabled.length).toBeGreaterThan(1);
+    expect(document.activeElement).toBe(enabled[0]);
+  });
+
+  it("moves focus to the last item once items enable after an early ArrowUp open", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <PageDetail pageId="page-1" initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(editor.reportReady).not.toBeNull());
+
+    screen.getByRole("button", { name: i18n.t("pageDetail.actions") }).focus();
+    await user.keyboard("{ArrowUp}");
+    const menu = screen.getByRole("menu", { name: i18n.t("pageDetail.actions") });
+    expect(menu).toHaveFocus();
+
+    act(() => editor.reportReady!());
+    const toggle = screen.getByRole("menuitemcheckbox", { name: i18n.t("pageDetail.requireReview") });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    const enabled = Array.from(menu.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)'));
+    expect(enabled.length).toBeGreaterThan(1);
+    expect(document.activeElement).toBe(enabled[enabled.length - 1]);
   });
 });

@@ -119,6 +119,35 @@ describe("PageDetail review lock", () => {
     await waitFor(() => expect(screen.queryByText(i18n.t("pageDetail.reviewLockedNotice"))).toBeNull());
   });
 
+  it("offers no lock on an entity shadow page", async () => {
+    current = { ...PAGE, creation_kind: "entity" } as typeof current;
+    const { user } = renderPage();
+    await user.click(await screen.findByRole("button", { name: i18n.t("pageDetail.actions") }));
+    expect(screen.getByRole("menu", { name: i18n.t("pageDetail.actions") })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: i18n.t("pageDetail.requireReview") })).toBeNull();
+  });
+
+  it("keeps the toggle enabled on a page opened while another page's request is in flight", async () => {
+    tauriMocks.getPage.mockImplementation(async (id: string) => ({ ...current, id }));
+    tauriMocks.setPageReviewRequired.mockImplementation(() => new Promise(() => {}));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    const view = (pageId: string) => (
+      <QueryClientProvider client={client}>
+        <PageDetail pageId={pageId} onBack={vi.fn()} onMemoryClick={vi.fn()} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view("page-1"));
+    await user.click(await openMenu(user));
+    expect(tauriMocks.setPageReviewRequired).toHaveBeenCalledWith("page-1", true);
+    expect(await openMenu(user)).toBeDisabled();
+    await user.keyboard("{Escape}");
+
+    rerender(view("page-2"));
+    await waitFor(() => expect(tauriMocks.getPage).toHaveBeenCalledWith("page-2", "explicit"));
+    await waitFor(async () => expect(await openMenu(user)).toBeEnabled());
+  });
+
   it("reports a failure and leaves the page unlocked", async () => {
     tauriMocks.setPageReviewRequired.mockRejectedValue(new Error("offline"));
     const { user } = renderPage();
