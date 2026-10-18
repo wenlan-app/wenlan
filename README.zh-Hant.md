@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=242205b349b100ea70d6d1cbe0e6c7c396df7b9f2f6bcf922b817f3d9b9e0866 -->
+<!-- README_SYNC: source=README.md sha256=085cb3190f4370c5811219dbbdb3d1ca637720e4d9e8e81ea38c015e1962add4 -->
 
 <p align="center">
   <picture>
@@ -53,21 +53,21 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 [下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安裝後開啟。
 
-首次啟動需連網下載本地搜尋模型。另可[選配模型啟用 Steep（沉澱）](docs/setup-and-data.zh-Hant.md#models)，整理記憶、更新知識頁，讓 AI 重用這些脈絡。
+首次啟動需連網下載本地搜尋模型。
 
 [安裝說明與其他使用方式](docs/setup-and-data.zh-Hant.md#installation) · [隱私說明](docs/PRIVACY.md)
 
-### 2. 保存你的第一個頁面
+### 2. 建立頁面或匯入既有資料
 
-選擇「開始使用」進入 Wenlan，建立或匯入一個頁面並保存。也可以先看看歡迎畫面的範例。
+在 Wenlan 建立一個頁面，或匯入之前的 AI 對話或記憶。在「設定 → 來源」匯入 ChatGPT／Claude 的對話匯出 ZIP，或貼上文字匯入記憶。
 
 ### 3. 想使用時再連接 AI 工具
 
 | AI 工具 | 連接方式 | 設定入口 |
 |---|---|---|
-| Claude Code | 插件 | [Claude Code 指南](docs/setup-with-ai.md#claude-code) |
-| Codex | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、Claude Desktop、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Claude Code／Claude Desktop | 插件（Code）／MCP（Desktop） | [Code 設定](docs/setup-with-ai.md#claude-code) · [Desktop 設定](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
+| Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
 安裝插件後，開啟新的 AI 對話並執行 `/setup`。連接 AI 不必另裝本地語言模型。
 
@@ -164,7 +164,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 **依引用關係更新。** Wenlan 中的來源或記憶變更、移除時，引用它的頁面會被標記為待更新。啟用背景 AI 並有可用模型後，符合條件的頁面會依最新資料重新整理；引用不足的草稿不會採用。
 
-- **Steep 背景整理**：為已保存的記憶補上類型、結構化資訊、搜尋線索與圖譜連結；也可選擇將記憶與來源合成為帶有引用的頁面。
+- **Steep（沉澱）：先整理，之後反覆使用。** 在背景為記憶補上類型、結構化資訊、搜尋線索與圖譜連結，也可合成、更新帶引用的知識頁，讓 AI 重用整理好的脈絡，減少重讀原始資料與反覆交代。
 - **[修訂審核與歷史](docs/knowledge-guide.zh-Hant.md#updates-and-history)**：查看頁面由誰修改、比較版本並追溯記憶的取代關係；背景更新會為你建立或編輯過的頁面提出修訂，而設為需審核的頁面也會攔下 AI 主動修改，等待你確認。
 - **維基匯出**：將符合條件的頁面匯出為 Open Knowledge Format（OKF）維基。
 - **[選配的背景模型](docs/setup-and-data.zh-Hant.md#models)**：用裝置端 Qwen（llama.cpp）、Ollama 或 LM Studio 等 OpenAI 相容本地服務，或已設定的雲端供應商啟用整理、頁面合成與自動更新。

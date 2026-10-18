@@ -51,21 +51,21 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 [Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon or Windows x64), install it, and open it.
 
-First launch needs an internet connection to download the local search model. Separately, an [optional model for Steep](docs/setup-and-data.md#models) can organize memories and refresh knowledge pages so your AI can reuse that context.
+First launch needs an internet connection to download the local search model.
 
 [Installation and other ways to use Wenlan](docs/setup-and-data.md#installation) · [Privacy](docs/PRIVACY.md)
 
-### 2. Save your first page
+### 2. Create a page or import existing material
 
-Choose **Get started** to enter Wenlan, then create or import a page and save it. You can also explore the welcome sample.
+Create a page in Wenlan, or import earlier AI conversations or memories. In **Settings → Sources**, import a ChatGPT or Claude conversation export ZIP, or paste existing memories as text.
 
 ### 3. Connect an AI tool when you want
 
 | AI tool | Connection | Setup |
 |---|---|---|
-| Claude Code | Plugin | [Claude Code guide](docs/setup-with-ai.md#claude-code) |
-| Codex | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
-| Cursor, Claude Desktop, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Claude Code / Claude Desktop | Plugin (Code) / MCP (Desktop) | [Code setup](docs/setup-with-ai.md#claude-code) · [Desktop setup](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
+| Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
 After installing a plugin, start a new AI session and run `/setup`. Connecting your AI needs no additional local language model.
 
@@ -159,7 +159,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 **Updates follow citations.** Changing or removing a cited source or memory in Wenlan marks the pages that use it for refresh. With background AI enabled and a model available, eligible pages rebuild from current evidence; drafts with insufficient citations are rejected.
 
-- **Steep background enrichment:** Add types, structured details, search cues, and graph links to captured memories; optional page synthesis combines them with sources into cited pages.
+- **Steep: organize now, reuse later.** Background enrichment adds types, structured details, search cues, and graph links to memories; optional synthesis and refresh keep cited pages current. This gives AI reusable context instead of repeatedly working through the original material.
 - **[Revision review and history](docs/knowledge-guide.md#updates-and-history):** See who changed a page, compare versions, and trace memory replacements. Background refresh proposes revisions for pages you created or edited; a review lock also holds explicit AI edits for approval.
 - **Wiki export:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
 - **[Optional background models](docs/setup-and-data.md#models):** Enable enrichment, synthesis, and automatic refresh with on-device Qwen (llama.cpp), local OpenAI-compatible servers such as Ollama or LM Studio, or configured cloud providers.
