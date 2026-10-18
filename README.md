@@ -73,7 +73,7 @@ After installing a plugin, start a new AI session and run `/setup`.
 
 Then ask your AI:
 
-> Use the page “Page title” in Wenlan to help me with this task: …
+> Use what I’ve saved in Wenlan to help me with this task: …
 
 <a id="daily-workflow"></a>
 
@@ -89,7 +89,7 @@ Save new findings and progress as you work, then pick up where you left off next
 
 Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
 
-- **Start with your material.** Import documents and selected conversations as sources, or write pages in the App. You can edit, follow citations, and review proposed changes there without connecting AI.
+- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
 - **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
 - **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
 - **Pause and resume.** Save memories, a session log, and next steps, and update pages used in the session when new findings change them (`/handoff`). Next time, load the project brief to resume (`/brief`).
@@ -117,7 +117,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 - **File and conversation imports:** Import Markdown, text, text-based PDFs, folders, and ChatGPT or Claude export ZIPs while retaining source references. Scanned PDFs need text extraction before import. Chat imports preserve a snapshot; registered file sources can refresh from disk.
 - **Read-only Obsidian connection:** Read an existing vault and refresh it on demand without modifying its files or syncing changes back.
 - **Atomic memories:** Retrieve individual findings without loading an entire conversation or page.
-- **Knowledge graph:** Discover related topics through typed entities, relations, and knowledge clusters (communities); a configured enrichment model links repeated mentions to the same entity (mention resolution).
+- **Knowledge graph:** Bring scattered findings about the same people, projects, and concepts together. With an enrichment model configured, repeated mentions link to shared entities; typed relations and clusters (communities) reveal related topics.
 
 <a id="explore-your-personal-knowledge-graph"></a>
 
@@ -142,7 +142,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 Use the same knowledge base across AI tools. **Plugins** guide when to retrieve earlier context and save new decisions; **MCP-only connections** let your AI call these tools as needed or at your request.
 
 - **[Local hybrid retrieval](docs/technical-foundations.md#retrieval-pipeline):** Find exact terms and similar meaning with SQLite FTS5 and BGE embeddings, fused by weighted Reciprocal Rank Fusion (RRF); base search needs no API key.
-- **Graph-assisted ranking:** Rank related memories higher when entity links are available, with optional cross-encoder reranking to refine relevance.
+- **Graph-assisted ranking:** Use entity links to rank related memories higher; optionally compare each candidate with the question to refine the order (cross-encoder reranking).
 - **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
 
 <p align="center">
@@ -170,9 +170,8 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
 
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
-- **Update from current evidence:** Memory and page lifecycles connect through citations: a changed source or memory marks the pages that depend on it for refresh. With background processing enabled and a model available, eligible pages rebuild with citations; drafts that fail the citation check are not applied.
+- **Build on new findings:** With background processing and a model enabled, new memories can enrich eligible AI-maintained pages. Changes to cited sources or memories mark dependent pages for refresh; refresh drafts that fail the citation check are not applied.
 - **Keep control and history:** Background refresh can update AI-maintained pages directly. Pages you created or edited receive proposed revisions; version history and memory replacement links remain inspectable.
-- **Export your wiki:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
 
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
@@ -200,6 +199,8 @@ Architecture overview. [Retrieval, evidence, and models](docs/technical-foundati
 <br>
 
 ## Data and privacy
+
+**Export your wiki:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
 
 A cloud AI client may send retrieved knowledge to its provider, and a cloud model receives the material it processes. Local storage does not keep those interactions local. Usage statistics are off by default.
 
