@@ -12,10 +12,10 @@ A memory holds one decision, lesson, preference, or fact. It can be retrieved on
 |---|---|
 | **Capture** | Save a self-contained finding with its available source context. |
 | **Classify and enrich** | With the assigned model, add a type, structured details, and retrieval cues. An explicit type supplied by the caller remains authoritative. |
-| **Link** | Preserve provenance and, when enrichment is enabled, connect the memory to entities and relations in the graph. |
+| **Link** | With enrichment enabled, extract people, projects, and concepts, and try to match them to existing entities by alias, name, or similarity. Memories from different material can then connect around the same subject while retaining their sources. |
 | **Revise or reconcile** | An explicit replacement links the new memory to the earlier one through `supersedes`. The optional model-backed conflict-reconciliation pass is off by default. |
 
-A newer document does not automatically replace an earlier memory. Explicit replacements and optional conflict reconciliation have their own [memory review rules](knowledge-guide.md#atomic-memory).
+A newer document does not automatically replace an earlier memory. Once a replacement takes effect, its mode determines whether the earlier memory is hidden from ordinary retrieval or remains visible as archived; the replacement link is retained. See the [memory review rules](knowledge-guide.md#atomic-memory).
 
 ## Page lifecycle: maintain an editable synthesis
 
@@ -29,7 +29,9 @@ A page combines related sources and memories into cited Markdown that you can re
 | **Apply or review** | Update an AI-maintained page directly, or stage a revision when its ownership or review lock requires it; the exact rules are below. |
 | **Keep history** | Retain a bounded change history for the page, separate from the replacement links between memories. |
 
-**How they connect:** when a cited memory changes or is replaced, pages that depend on it are marked for refresh. One memory may support several pages; each page follows its own update and review rules. Changes to cited sources can trigger the same path without creating a replacement memory. Sources and memories remain directly retrievable throughout.
+**New findings can grow an existing page.** With background processing and its assigned model enabled, Wenlan matches an eligible new memory to a generated page in the same Space, using a shared entity or semantic similarity. It combines the page’s existing support with the new memory to update the content and citations. This automatic growth skips pages you created or edited, and review-locked pages; no suitable match means no page update from this step.
+
+**Changed evidence follows a different path.** A change to a cited source or memory marks dependent pages for refresh. One item may support several pages; each follows its own update and review rules below. Sources and memories can also be retrieved directly without a page.
 
 ## When it runs
 
@@ -77,4 +79,4 @@ Use Activity to check processing status, and the affected page’s revision and 
 
 Reusable memories and cited pages can reduce repeated context gathering and rereading of originals. Local models can handle background tasks without per-request cloud API charges. Results depend on the material, model, and task; Steep does not guarantee lower total cost, faster responses, or more accurate answers.
 
-Implementation references: [background scheduling](../crates/wenlan-server/src/scheduler.rs), [page refresh and citation checks](../crates/wenlan-core/src/synthesis/distill.rs), [page ownership and review rules](../crates/wenlan-core/src/post_write/page_update.rs).
+Implementation references: [background scheduling](../crates/wenlan-server/src/scheduler.rs), [new-memory page growth](../crates/wenlan-core/src/post_ingest.rs), [entity matching](../crates/wenlan-core/src/post_write/entity_graph.rs), [page refresh and citation checks](../crates/wenlan-core/src/synthesis/distill.rs), [page ownership and review rules](../crates/wenlan-core/src/post_write/page_update.rs).
