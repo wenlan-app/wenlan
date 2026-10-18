@@ -170,7 +170,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
 
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
-- **Update from current evidence:** Changes to cited sources or memories mark dependent pages for refresh. With background processing enabled and a model available, eligible pages rebuild with citations; drafts that fail the citation check are not applied.
+- **Update from current evidence:** Memory and page lifecycles connect through citations: a changed source or memory marks the pages that depend on it for refresh. With background processing enabled and a model available, eligible pages rebuild with citations; drafts that fail the citation check are not applied.
 - **Keep control and history:** Background refresh can update AI-maintained pages directly. Pages you created or edited receive proposed revisions; version history and memory replacement links remain inspectable.
 - **Export your wiki:** Export eligible pages as an Open Knowledge Format (OKF) wiki.
 

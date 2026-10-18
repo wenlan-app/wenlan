@@ -4,13 +4,32 @@
 
 Steep is Wenlan’s optional background upkeep. It prepares saved material for retrieval and maintains pages from their supporting evidence, so later work can reuse what you already learned. You do not have to run a daily sequence of commands.
 
-## What it adds
+## Memory lifecycle: preserve and refine individual findings
 
-- **Memories with context.** Classification and enrichment add types, structured details, retrieval cues, and links to entities and relations. A decision can be found as an individual memory, with its supporting context, rather than by rereading a whole conversation.
-- **Pages built from accumulated knowledge.** With page synthesis configured, eligible related material can become cited pages or contribute to existing ones. Not every import creates a page; sources and memories can be retrieved directly.
-- **Updates that follow evidence.** When supporting material changes in Wenlan, affected pages can be refreshed from current evidence. One changed memory may support several pages; the relationship is tracked per page.
+A memory holds one decision, lesson, preference, or fact. It can be retrieved on its own; it does not need to become a page first.
 
-For example, a saved decision may say that passing tests is enough to ship. A later review records that mobile layouts also need checking. A replacement memory can preserve the earlier decision, while pages that cite the changed evidence become candidates for refresh. This is an illustration of the relationship, not a promise that every new document automatically replaces an earlier decision.
+| Stage | What changes |
+|---|---|
+| **Capture** | Save a self-contained finding with its available source context. |
+| **Classify and enrich** | With the assigned model, add a type, structured details, and retrieval cues. An explicit type supplied by the caller remains authoritative. |
+| **Link** | Preserve provenance and, when enrichment is enabled, connect the memory to entities and relations in the graph. |
+| **Revise or reconcile** | An explicit replacement links the new memory to the earlier one through `supersedes`. The optional model-backed conflict-reconciliation pass is off by default. |
+
+A newer document does not automatically replace an earlier memory. Explicit replacements and optional conflict reconciliation have their own [memory review rules](knowledge-guide.md#atomic-memory).
+
+## Page lifecycle: maintain an editable synthesis
+
+A page combines related sources and memories into cited Markdown that you can read and edit. You can write it in the App, ask your AI to write it, or synthesize accumulated material with `/distill`; `/distill` is not a prerequisite for writing a new page.
+
+| Stage | What changes |
+|---|---|
+| **Write or synthesize** | Save a page, or let configured page synthesis organize eligible related material. Not every import creates a page. |
+| **Cite and track** | Record the sources and memories supporting the page, so changes to that evidence can mark it for refresh. |
+| **Refresh** | Rebuild an eligible page from current support. A draft that fails the citation-support check is not applied. |
+| **Apply or review** | Update an AI-maintained page directly, or stage a revision when its ownership or review lock requires it; the exact rules are below. |
+| **Keep history** | Retain a bounded change history for the page, separate from the replacement links between memories. |
+
+**How they connect:** when a cited memory changes or is replaced, pages that depend on it are marked for refresh. One memory may support several pages; each page follows its own update and review rules. Changes to cited sources can trigger the same path without creating a replacement memory. Sources and memories remain directly retrievable throughout.
 
 ## When it runs
 
@@ -21,7 +40,7 @@ For example, a saved decision may say that passing tests is enough to ship. A la
 | Background work is enabled and its assigned model is available | The local service processes eligible work in bounded turns, subject to resource and scheduling limits. Saving does not imply an immediate refresh. |
 | Background work is off or its model is unavailable | That model-backed work does not run; existing material remains available for reading, editing, and retrieval. |
 
-The background-organization and page-synthesis tasks have separate model assignments. Configuring one does not guarantee that the other can run. Optional conflict reconciliation is off by default; Steep does not silently resolve every disagreement.
+The background-organization and page-synthesis tasks have separate model assignments. Configuring one does not guarantee that the other can run.
 
 ## Automatic update or review?
 
@@ -34,7 +53,7 @@ These are the rules for **background page refresh**, not every possible edit:
 | Review lock enabled | Machine edits wait for approval, including explicit AI edits. |
 | Draft fails the citation-support check | The draft is not applied; the saved page stays unchanged. |
 
-A pending revision applies to its named page, not every page touched by the same source. You can inspect the change and accept or skip it. Page history records revisions; explicit memory replacements retain a link to the earlier memory. These records help you inspect a change, but do not guarantee that an AI conclusion is correct.
+A pending revision applies to its named page, not every page touched by the same source. You can inspect the change and accept or skip it. Citation checks and history help you inspect a change; they do not guarantee that an AI conclusion is correct.
 
 **Explicit edits differ:** a connected AI that reads the current page and submits a matching version can update it directly unless review is locked. Your manual edits do not enter this queue. An explicitly forced rebuild can replace an edited generated page; authored pages still require review. [Full update and history reference](knowledge-guide.md#updates-and-history).
 
@@ -53,8 +72,6 @@ wenlan steep disable          # Stop model-backed background work; keep provider
 ```
 
 Use Activity to check processing status, and the affected page’s revision and history views to inspect changes. If a page has not updated, check whether its source change has reached Wenlan, its assigned model is ready, or a revision is waiting for review.
-
-You can still ask your connected AI to write a cited page and save it to Wenlan without first running `/distill`. Use `/distill` when you want to synthesize accumulated memories on demand.
 
 ## Why prepare knowledge ahead of time?
 
