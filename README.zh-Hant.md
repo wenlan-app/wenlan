@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=51e0e69bb175710d5556395ab566d3d962119436c8b8fdee84ed24131b6ea5db -->
+<!-- README_SYNC: source=README.md sha256=3957ae567f586df88a364f380ba2ff25463ec0f0bb0ae84ea9c1d350fc146098 -->
 
 <p align="center">
   <picture>
@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-安裝插件後，開啟新的 AI 對話並執行 `/setup`。連接 AI 不必另裝本地語言模型。
+安裝插件後，開啟新的 AI 對話並執行 `/setup`。
 
 連接後，就可以問 AI：
 

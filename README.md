@@ -65,7 +65,7 @@ Create a page in Wenlan, connect an Obsidian vault, or import earlier AI convers
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-After installing a plugin, start a new AI session and run `/setup`. Connecting your AI needs no additional local language model.
+After installing a plugin, start a new AI session and run `/setup`.
 
 Then ask your AI:
 
