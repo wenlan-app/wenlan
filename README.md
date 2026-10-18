@@ -53,8 +53,6 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 You can optionally use a [local model](docs/setup-and-data.md#models) to enable Steep for background memory organization and knowledge-page updates. It adds search cues and knowledge links to help AI find and reuse what you already know.
 
-[Installation and other ways to use Wenlan](docs/setup-and-data.md#installation) · [Privacy](docs/PRIVACY.md)
-
 ### 2. Create a page or import existing material
 
 Create a page in Wenlan, or import earlier AI conversations or memories. In **Settings → Sources**, import a ChatGPT or Claude conversation export ZIP, or paste existing memories as text.
