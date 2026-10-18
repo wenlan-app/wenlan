@@ -114,10 +114,19 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 
 **Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
 
-- **File and conversation imports:** Import Markdown, text, text-based PDFs, folders, and ChatGPT or Claude export ZIPs while retaining source references. Scanned PDFs need text extraction before import. Chat imports preserve a snapshot; registered file sources can refresh from disk.
-- **Read-only Obsidian connection:** Read an existing vault and refresh it on demand without modifying its files or syncing changes back.
-- **Atomic memories:** Retrieve individual findings without loading an entire conversation or page.
-- **Knowledge graph:** Bring scattered findings about the same people, projects, and concepts together. With an enrichment model configured, repeated mentions link to shared entities; typed relations and clusters (communities) reveal related topics.
+### Sources and imports
+
+| Bring in | How you can use it |
+| --- | --- |
+| Markdown, text, text-based PDFs, or a folder | Search and cite the imported text; refresh connected file sources from disk. |
+| An Obsidian vault | Search and cite existing notes through a read-only connection. Refresh on demand; nothing is written back. |
+| Web excerpts with a URL | Paste the text and its URL to save searchable material with a link to the original. |
+| ChatGPT or Claude export ZIPs | Retrieve earlier conversation text and cite it as context; imports are snapshots, not live account connections. |
+| Existing memories as text | Import preferences, decisions, or lessons as atomic memories you can retrieve without loading a whole conversation. |
+
+Sources and memories can be retrieved directly; turning them into pages is optional. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
+
+**Topics and knowledge communities:** With an enrichment model configured, repeated mentions of the same person, project, or concept link to a shared **topic node (entity)**. **Communities** group connected topics using label propagation, helping you discover related knowledge across your material. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
 <a id="explore-your-personal-knowledge-graph"></a>
 
