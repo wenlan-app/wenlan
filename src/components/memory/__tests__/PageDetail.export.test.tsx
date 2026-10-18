@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "../PageDetail";
@@ -99,7 +99,8 @@ describe("PageDetail export", () => {
     window.addEventListener("keydown", observer);
     try {
       const { user, menu, trigger } = await renderMenu();
-      const items = within(menu).getAllByRole("menuitem").filter((item) => !item.hasAttribute("disabled"));
+      const items = Array.from(menu.querySelectorAll<HTMLElement>('[role^="menuitem"]'))
+        .filter((item) => !item.hasAttribute("disabled"));
       expect(items[0]).toHaveFocus();
       for (let index = 1; index < items.length; index++) {
         await user.keyboard("{ArrowDown}");

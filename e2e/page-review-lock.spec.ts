@@ -12,9 +12,9 @@ const recentChanges = [{
 }];
 
 const COPY: Record<AppLocale, { actions: string; toggle: string; notice: string }> = {
-  en: { actions: "Page actions", toggle: "Require review for changes", notice: "Machine changes to this page wait for your review." },
-  "zh-Hant": { actions: "頁面操作", toggle: "改動要審核", notice: "這頁的機器改動會先等你審核。" },
-  "zh-Hans": { actions: "页面操作", toggle: "改动要审核", notice: "这页的机器改动会先等你审核。" },
+  en: { actions: "Note actions", toggle: "Review every change", notice: "AI edits to this note wait for your review." },
+  "zh-Hant": { actions: "筆記操作", toggle: "改動要審核", notice: "AI 改這篇筆記時，會先等你審核。" },
+  "zh-Hans": { actions: "笔记操作", toggle: "改动要审核", notice: "AI 改这篇笔记时，会先等你审核。" },
 };
 
 async function openFixturePage(page: Page, actionsLabel: string): Promise<void> {
@@ -36,6 +36,18 @@ for (const locale of ["en", "zh-Hant", "zh-Hans"] as const) {
     await actions.click();
     const toggle = page.getByRole("menuitemcheckbox", { name: copy.toggle, exact: true });
     await expect(toggle).toHaveAttribute("aria-checked", "false");
+    // A mouse open focuses the first item without drawing a focus ring.
+    const menu = page.getByRole("menu", { name: copy.actions, exact: true });
+    const focusedItem = menu.locator('[role^="menuitem"]:focus');
+    await expect(focusedItem).toHaveCount(1);
+    await expect(focusedItem).toHaveCSS("outline-style", "none");
+    // The lock icon sits on the same line as the label.
+    const iconBox = await toggle.locator("svg").boundingBox();
+    const toggleBox = await toggle.boundingBox();
+    expect(iconBox && toggleBox).toBeTruthy();
+    expect(Math.abs((iconBox!.y + iconBox!.height / 2) - (toggleBox!.y + toggleBox!.height / 2))).toBeLessThan(3);
+    expect(toggleBox!.height).toBeLessThan(40);
+    await page.screenshot({ path: testInfo.outputPath(`menu-${locale}.png`) });
     await toggle.click();
     await expect(notice).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`locked-${locale}.png`) });
@@ -48,6 +60,12 @@ for (const locale of ["en", "zh-Hant", "zh-Hans"] as const) {
     await expect(page.getByRole("menuitemcheckbox", { name: copy.toggle, exact: true })).toHaveAttribute("aria-checked", "true");
     await page.getByRole("menuitemcheckbox", { name: copy.toggle, exact: true }).click();
     await expect(notice).toHaveCount(0);
+    // A keyboard open keeps the focus ring.
+    await actions.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(focusedItem).toHaveCount(1);
+    await expect(focusedItem).not.toHaveCSS("outline-style", "none");
+    await page.keyboard.press("Escape");
     const unlocked = await page.evaluate(async () => window.__TAURI_INTERNALS__!.invoke("get_page", { id: "page-architecture" })) as { review_required?: boolean };
     expect(unlocked.review_required).toBeUndefined();
 

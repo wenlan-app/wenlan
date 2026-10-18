@@ -391,6 +391,8 @@ export default function PageDetail({
   const actionMenuRef = useRef<HTMLDivElement>(null);
   const actionMenuListRef = useRef<HTMLDivElement>(null);
   const actionMenuInitialFocusRef = useRef<MenuInitialFocus>("first");
+  // Mouse opens skip the focus ring; keyboard opens keep it, like the Memory menu.
+  const [actionMenuKeyboardNavigation, setActionMenuKeyboardNavigation] = useState(false);
   const activePageIdRef = useRef(pageId);
   activePageIdRef.current = pageId;
   // Canonical versions advance during autosave without remounting the editor.
@@ -1554,6 +1556,16 @@ export default function PageDetail({
     focusMenuBoundary(actionMenuListRef.current, actionMenuInitialFocusRef.current);
   }, [actionMenuOpen]);
 
+  // Opened while every item was still disabled (editor not ready yet): focus
+  // fell back to the menu itself, so move it to an item once one enables.
+  useEffect(() => {
+    const menu = actionMenuListRef.current;
+    if (!actionMenuOpen || !menu || document.activeElement !== menu) return;
+    if (enabledMenuItems(menu).length > 0) {
+      focusMenuBoundary(menu, actionMenuInitialFocusRef.current);
+    }
+  });
+
   useEffect(() => {
     if (!actionMenuOpen) return;
     const closeOnOutsideClick = (event: MouseEvent) => {
@@ -1800,8 +1812,12 @@ export default function PageDetail({
                   aria-haspopup="menu"
                   aria-label={t("pageDetail.actions")}
                   title={t("pageDetail.actions")}
-                  onKeyDown={(event) => handleMenuTriggerKeyDown(event, openActionMenu)}
-                  onClick={() => {
+                  onKeyDown={(event) => {
+                    setActionMenuKeyboardNavigation(true);
+                    handleMenuTriggerKeyDown(event, openActionMenu);
+                  }}
+                  onClick={(event) => {
+                    setActionMenuKeyboardNavigation(event.detail === 0);
                     if (actionMenuOpen) {
                       setActionMenuOpen(false);
                     } else {
@@ -1820,7 +1836,9 @@ export default function PageDetail({
                   <div
                     aria-label={t("pageDetail.actions")}
                     className="mem-popover-surface page-detail-actions-menu"
+                    data-keyboard-navigation={actionMenuKeyboardNavigation ? "true" : "false"}
                     onKeyDown={(event) => {
+                      setActionMenuKeyboardNavigation(true);
                       handleMenuKeyDown(
                         event,
                         actionMenuListRef.current,
@@ -1870,7 +1888,6 @@ export default function PageDetail({
                     </button> : null}
                     <button
                       aria-checked={page.review_required === true}
-                      className="page-detail-mobile-menu-item"
                       disabled={storedActionBlocked || reviewRequiredMutation.isPending}
                       onClick={() => {
                         closeActionMenu();
