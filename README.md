@@ -73,7 +73,7 @@ After installing a plugin, start a new AI session and run `/setup`.
 
 Then ask your AI:
 
-> Use what I’ve saved in Wenlan to help me with this task: …
+> Use the “page title” page in Wenlan to help me with this task: …
 
 <a id="daily-workflow"></a>
 
@@ -155,6 +155,8 @@ Use the same knowledge base across AI tools. **Plugins** guide when to retrieve 
 - **[Local hybrid retrieval](docs/technical-foundations.md#retrieval-pipeline):** Find exact terms and similar meaning with SQLite FTS5 and BGE embeddings, fused by weighted Reciprocal Rank Fusion (RRF); base search needs no API key.
 - **Graph-assisted ranking:** Use entity links to rank related memories higher; optionally compare each candidate with the question to refine the order (cross-encoder reranking).
 - **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
+
+**Coming soon:** Coding repository support in Spaces.
 
 <p align="center">
   <img src="./docs/assets/wenlan-knowledge-to-work.png" alt="Let AI continue from what you already know: keyword, semantic and Graph retrieval" width="100%">

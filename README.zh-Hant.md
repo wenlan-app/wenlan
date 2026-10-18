@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6f63d5561b9857658ed219bae0766989a64d5482ddd6b6529bd2e0406de1737c -->
+<!-- README_SYNC: source=README.md sha256=d1804308a36a989962f39429d704f7477e27d2c22dfc4fce6a275a732fd838c1 -->
 
 <p align="center">
   <picture>
@@ -75,7 +75,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 連接後，就可以問 AI：
 
-> 用我保存在 Wenlan 的資料，幫我完成這個任務：……
+> 用 Wenlan 裡的「頁面名稱」，幫我完成這個任務：……
 
 <a id="daily-workflow"></a>
 
@@ -159,6 +159,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 - **[本地混合檢索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同詞句、BGE 向量找出相近語意，再以加權 RRF 合併排名；基礎搜尋不需 API key。
 - **圖譜輔助排序**：利用實體連結提高相關記憶的排名；也可逐一比對問題與候選內容，精排結果（cross-encoder reranking）。
 - **Spaces 範圍檢索**：選定 Space，將回傳的知識限制在相關專案或個人資料集合內。
+
+**即將推出（Coming soon）：** Spaces 的程式碼儲存庫（coding repo）支援。
 
 <p align="center">
   <img src="./docs/assets/wenlan-knowledge-to-work-zh-Hant.png" alt="AI 接著做，不必從頭交代：關鍵詞、語義與圖譜檢索" width="100%">
