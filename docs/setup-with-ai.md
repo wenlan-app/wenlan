@@ -45,6 +45,8 @@ wenlan status
 
 ## Claude Code
 
+For Claude Code or Claude Desktop, use the plugin instructions below or [connect through MCP](#mcp-only-setup-and-other-clients).
+
 Install the Wenlan plugin from the Claude directory (claude.ai, Cowork, or Claude Code) or from its public marketplace:
 
 ```bash

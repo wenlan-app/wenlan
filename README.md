@@ -61,7 +61,7 @@ Create a page in Wenlan, connect an Obsidian vault, or import earlier AI convers
 
 | AI tool | Connection | Setup |
 |---|---|---|
-| Claude Code / Claude Desktop | Plugin / MCP | [Plugin setup](docs/setup-with-ai.md#claude-code) · [MCP setup](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Claude Code / Claude Desktop | Plugin / MCP | [Claude guide](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 

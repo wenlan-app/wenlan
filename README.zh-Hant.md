@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b04998d723ff0f2ef90648cfa5ac4dbdd55c6425cf348abe6668c23c9456ecb7 -->
+<!-- README_SYNC: source=README.md sha256=51e0e69bb175710d5556395ab566d3d962119436c8b8fdee84ed24131b6ea5db -->
 
 <p align="center">
   <picture>
@@ -63,7 +63,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 | AI 工具 | 連接方式 | 設定入口 |
 |---|---|---|
-| Claude Code／Claude Desktop | 插件／MCP | [插件設定](docs/setup-with-ai.md#claude-code) · [MCP 設定](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Claude Code／Claude Desktop | 插件／MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
