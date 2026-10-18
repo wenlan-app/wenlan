@@ -1310,6 +1310,22 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
+    pub async fn set_page_review_required(
+        &self,
+        page_id: &str,
+        required: bool,
+    ) -> Result<wenlan_types::responses::PageReviewRequiredResponse, String> {
+        let path = format!(
+            "/api/pages/{}/review-required",
+            percent_encode_path_segment(page_id)
+        );
+        self.put_json(
+            &path,
+            &wenlan_types::requests::SetPageReviewRequiredRequest { required },
+        )
+        .await
+    }
+
     pub async fn get_page_revisions(&self, page_id: &str) -> Result<serde_json::Value, String> {
         let path = format!(
             "/api/pages/{}/revisions",
@@ -3874,6 +3890,7 @@ mod tests {
     fn wenlan_client_exposes_page_link_methods() {
         let _get = WenlanClient::get_page_links;
         let _list = WenlanClient::list_orphan_links;
+        let _lock = WenlanClient::set_page_review_required;
     }
 
     #[test]

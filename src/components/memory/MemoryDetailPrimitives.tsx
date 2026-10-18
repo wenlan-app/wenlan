@@ -41,6 +41,25 @@ export function PinIcon({ filled, size = 16 }: PinIconProps) {
   );
 }
 
+export function LockIcon({ filled, size = 16 }: PinIconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5" y="11" width="14" height="9" rx="2" fill={filled ? "currentColor" : "none"} />
+      <path d={filled ? "M8 11V8a4 4 0 0 1 8 0v3" : "M8 11V8a4 4 0 0 1 7.5-1.9"} />
+    </svg>
+  );
+}
+
 export function RailPanelTitle({ children }: RailPanelTitleProps) {
   return <h3 className="memory-detail-rail-title">{children}</h3>;
 }

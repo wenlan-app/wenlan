@@ -1422,6 +1422,8 @@ export interface Page {
    */
   refresh_blocked_reason?: string | null;
   user_edited?: boolean;
+  /** Review lock: machine writes wait as revision cards. Omitted while false. */
+  review_required?: boolean;
   citations?: PageCitation[];
   /**
    * Both M5 truth axes, present only when this page was fetched via an
@@ -1750,6 +1752,18 @@ export async function getConceptSources(
 
 export async function getPageLinks(pageId: string): Promise<PageLinksResponse> {
   return invoke("get_page_links", { pageId });
+}
+
+export interface PageReviewRequiredResponse {
+  page_id: string;
+  review_required: boolean;
+}
+
+export async function setPageReviewRequired(
+  pageId: string,
+  required: boolean,
+): Promise<PageReviewRequiredResponse> {
+  return invoke("set_page_review_required", { pageId, required });
 }
 
 export async function listOrphanLinks(minCount?: number): Promise<OrphanLinksResponse> {

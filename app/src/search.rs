@@ -4769,6 +4769,16 @@ pub async fn get_page_links(
 }
 
 #[tauri::command]
+pub async fn set_page_review_required(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    required: bool,
+) -> Result<responses::PageReviewRequiredResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.set_page_review_required(&page_id, required).await
+}
+
+#[tauri::command]
 pub async fn get_page_revisions(
     state: tauri::State<'_, State>,
     page_id: String,

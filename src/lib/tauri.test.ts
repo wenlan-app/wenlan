@@ -1215,6 +1215,14 @@ describe('page links wrappers', () => {
     expect(mockInvoke).toHaveBeenCalledWith('get_page_links', { pageId: 'page-1' });
   });
 
+  it('setPageReviewRequired invokes the review lock command', async () => {
+    mockInvoke.mockResolvedValue({ page_id: 'page-1', review_required: true });
+
+    await tauri.setPageReviewRequired('page-1', true);
+
+    expect(mockInvoke).toHaveBeenCalledWith('set_page_review_required', { pageId: 'page-1', required: true });
+  });
+
   it('listOrphanLinks invokes the daemon orphan link command with minCount', async () => {
     mockInvoke.mockResolvedValue({ min_count: 2, orphan_labels: [] });
 

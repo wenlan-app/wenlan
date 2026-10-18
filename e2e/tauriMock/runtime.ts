@@ -280,6 +280,17 @@ export class TauriMockRuntime {
           inbound: [],
         };
       }
+      case "set_page_review_required": {
+        const pageId = requiredString(command, args, "pageId");
+        const required = requiredBoolean(command, args, "required");
+        const index = this.pages.findIndex((entry) => entry.id === pageId);
+        const page = this.pages[index];
+        if (index < 0 || !page) throw new TauriMockArgumentError(command, "pageId");
+        // The daemon omits the field while false; keep that shape.
+        const { review_required: _previous, ...rest } = page;
+        this.pages[index] = required ? { ...rest, review_required: true } : rest;
+        return { page_id: pageId, review_required: required };
+      }
       case "get_page_sources": {
         const pageId = requiredString(command, args, "pageId");
         const page = this.pages.find((entry) => entry.id === pageId);

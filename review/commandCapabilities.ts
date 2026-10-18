@@ -81,6 +81,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "review_page",
     "page_review_supported",
     "get_page_links",
+    "set_page_review_required",
     "get_page_revisions",
     "get_page_sources",
     "list_registered_sources",

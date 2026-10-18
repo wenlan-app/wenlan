@@ -15,6 +15,7 @@ import {
   getPageRevisions,
   getEntityDetail,
   redistillPage,
+  setPageReviewRequired,
   updatePage,
   renamePage,
   getDaemonVersion,
@@ -49,7 +50,7 @@ import { InfoAction } from "./page/InfoAction";
 import "./page/pageDocumentTools.css";
 import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
-import { RailPanelTitle } from "./MemoryDetailPrimitives";
+import { LockIcon, RailPanelTitle } from "./MemoryDetailPrimitives";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
@@ -172,7 +173,7 @@ type ConflictLatestSource =
 function enabledMenuItems(menu: HTMLDivElement | null): HTMLElement[] {
   if (!menu) return [];
   const items = Array.from(
-    menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)'),
+    menu.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)'),
   );
   const renderedItems = items.filter((item) => item.getClientRects().length > 0);
   return renderedItems.length > 0 ? renderedItems : items;
@@ -909,6 +910,25 @@ export default function PageDetail({
         message: t("pageDetail.reviewFailed"),
         offerReload: false,
       });
+    },
+  });
+
+  const reviewRequiredMutation = useMutation({
+    mutationFn: ({ id, required }: { id: string; required: boolean }) => setPageReviewRequired(id, required),
+    onSuccess: (receipt, { id }) => {
+      // The receipt is the daemon's answer; write it into the cached page so
+      // the menu and notice flip at once, then let the refetch confirm it.
+      queryClient.setQueryData<Page | null>(["page", id], (current) => {
+        if (!current) return current;
+        const { review_required: _previous, ...rest } = current;
+        return receipt.review_required ? { ...rest, review_required: true } : rest;
+      });
+      queryClient.invalidateQueries({ queryKey: ["page", id] });
+      queryClient.invalidateQueries({ queryKey: ["pages"] });
+    },
+    onError: (_error, { id }) => {
+      if (activePageIdRef.current !== id) return;
+      setActionErrorMessage(t("pageDetail.requireReviewFailed"));
     },
   });
 
@@ -1848,6 +1868,21 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
+                    <button
+                      aria-checked={page.review_required === true}
+                      className="page-detail-mobile-menu-item"
+                      disabled={storedActionBlocked || reviewRequiredMutation.isPending}
+                      onClick={() => {
+                        closeActionMenu();
+                        setActionErrorMessage(null);
+                        reviewRequiredMutation.mutate({ id: page.id, required: page.review_required !== true });
+                      }}
+                      role="menuitemcheckbox"
+                      type="button"
+                    >
+                      <LockIcon filled={page.review_required === true} size={12} />
+                      {t("pageDetail.requireReview")}
+                    </button>
                     {obsidianSources.length === 0 ? (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -1959,6 +1994,12 @@ export default function PageDetail({
           onShowSources={() => void requestPageInfo()}
           disabled={storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}
         />}
+
+        {page.review_required === true && (
+          <div className="note-review-notice" data-testid="page-review-lock-notice" role="status">
+            <p className="note-review-notice__message">{t("pageDetail.reviewLockedNotice")}</p>
+          </div>
+        )}
 
         {projectionIssue && !inventoryPageFilename(page) && <PageProjectionNotice key={`${pageId}:${projectionIssue.expectedVersion}`} pageId={pageId} issue={projectionIssue} disabled={editDirty || saveState.phase !== "idle" || !!editorStatus?.compositionActive} onResolved={onProjectionResolved} />}
 
