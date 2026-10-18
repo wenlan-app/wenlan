@@ -115,7 +115,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 **Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
 
 - **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
-- **Shared topics:** With an enrichment model configured, repeated mentions of a person, project, or concept link to one topic node (entity), with typed relations connecting topics.
+- **Shared topics:** With an enrichment model configured, LLM entity extraction and entity resolution identify people, projects, and concepts, link different mentions to the same topic, and retain the associated memories and sources.
 - **Knowledge communities:** Group connected topics to reveal related knowledge across your material. Label Propagation runs by default; Leiden is available as an opt-in algorithm. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
 ### Sources and imports
