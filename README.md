@@ -51,7 +51,7 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 [Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon or Windows x64), install it, and open it.
 
-You can optionally use a [local model](docs/setup-and-data.md#models) to enable Steep for background memory organization and knowledge-page updates.
+You can optionally use a [local model](docs/setup-and-data.md#models) to enable Steep for background memory organization and knowledge-page updates. It adds search cues and knowledge links to help AI find and reuse what you already know.
 
 [Installation and other ways to use Wenlan](docs/setup-and-data.md#installation) · [Privacy](docs/PRIVACY.md)
 
