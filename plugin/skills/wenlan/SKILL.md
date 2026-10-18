@@ -22,7 +22,9 @@ that workflow says. Reply in the user's language.
 
 ## 1. No words: status
 
-When the argument is empty, report status. Read only; change nothing.
+When the argument is empty, report status. Read only; change nothing. Run
+all four checks in order; only a failed runtime check stops early. A problem
+in a later check becomes its line, and the remaining checks still run.
 
 1. Runtime: `curl -fsS -m 3 http://127.0.0.1:7878/api/health`. If it fails,
    say Wenlan is not running yet and run the **setup** workflow (step 3). Setup
@@ -36,8 +38,9 @@ When the argument is empty, report status. Read only; change nothing.
 
 3. Connection: call `brief` with `space` when non-empty. Success means the
    tool connection works. If it fails, say the AI tool cannot reach Wenlan and
-   offer setup. If the result is `space_not_resolved`, say which folder could
-   not be matched to a project instead of guessing one.
+   offer setup. If it says the Space is not resolved, the connection still
+   works: the project line names the current folder as not matched to a
+   project, without guessing one.
 4. Waiting items: call `list_pending_revisions(limit=10)`. Name the kind
    ("changes waiting for your OK"). If exactly 10 come back, say "at least 10".
    Skip the line when there are none.
