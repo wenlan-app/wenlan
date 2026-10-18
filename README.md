@@ -71,9 +71,9 @@ Create a page in Wenlan, connect an Obsidian vault, or import earlier AI convers
 
 After installing a plugin, start a new AI session and run `/setup`.
 
-Then ask your AI:
+Imported material is ready to use; you do not need to create a page first. Ask your AI:
 
-> Use the “page title” page in Wenlan to help me with this task: …
+> Use what I’ve saved in Wenlan to help me with this task: …
 
 <a id="daily-workflow"></a>
 
@@ -92,7 +92,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 - **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
 - **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
 - **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
-- **Pause and resume.** Save memories, a session log, and next steps, and update pages used in the session when new findings change them (`/handoff`). Next time, load the project brief to resume (`/brief`).
+- **Pause and resume.** Save findings and a session log, update affected pages, and refresh the Space’s project Brief (`/handoff`). Next time, see where work stopped and what remains (`/brief`).
 
 **Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
 
@@ -112,10 +112,10 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 
 ## Organize scattered material into knowledge
 
-**Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
+**Sources** preserve documents and conversations; **memories** keep the decisions, lessons, and reasons worth reusing. Combine them in editable **Markdown pages with citations**, connect pages with `[[wikilinks]]`, and follow citations back to the originals.
 
 - **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
-- **Shared topics:** With an enrichment model configured, LLM entity extraction and entity resolution identify people, projects, and concepts, link different mentions to the same topic, and retain the associated memories and sources.
+- **Shared topics:** With an enrichment model configured, LLM entity extraction and entity resolution link mentions of the same person, project, or concept across documents and conversations, retaining their memories and sources.
 - **Knowledge communities:** Group connected topics to reveal related knowledge across your material. Label Propagation runs by default; Leiden is available as an opt-in algorithm. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
 ### Sources and imports
@@ -128,7 +128,7 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 | ChatGPT or Claude export ZIPs | Retrieve earlier conversation text and cite it as context; imports are snapshots, not live account connections. |
 | Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
 
-Sources and memories can be retrieved directly; turning them into pages is optional. Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
+Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 
 <a id="explore-your-personal-knowledge-graph"></a>
 
@@ -161,7 +161,7 @@ An agent can already read files and write text. Wenlan adds a **shared, maintain
 **Retrieval and connections:** Plugins guide retrieval and saving; MCP connections expose the tools for your AI to call.
 
 - **[Local hybrid retrieval](docs/technical-foundations.md#retrieval-pipeline):** Find exact terms and similar meaning with SQLite FTS5 and BGE embeddings, fused by weighted Reciprocal Rank Fusion (RRF); base search needs no API key.
-- **Graph-assisted ranking:** Use entity links to rank related memories higher; optionally compare each candidate with the question to refine the order (cross-encoder reranking).
+- **Graph-assisted ranking:** Shared-entity links boost related memories even when their wording differs. Optional cross-encoder reranking compares each candidate with the question to refine the order.
 - **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
 
 **Coming soon:** Coding repository support in Spaces.
@@ -192,7 +192,7 @@ Saving material is only the start. **Steep prepares it for reuse and keeps suppo
 
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
 - **Follow the evidence:** Wenlan tracks the sources and memories supporting each page. Changes mark dependent pages for refresh; new memories can also enrich eligible pages. With background processing and a model enabled, refresh uses current support and keeps the saved page if the draft fails its citation check. This check does not establish factual correctness.
-- **Keep control and history:** Background refresh can update AI-maintained pages directly. Pages you created or edited receive proposed revisions; version history and memory replacement links remain inspectable.
+- **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
 
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
