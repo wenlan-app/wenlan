@@ -25,13 +25,19 @@ A page combines related sources and memories into cited Markdown that you can re
 |---|---|
 | **Write or synthesize** | Save a page, or let configured page synthesis organize eligible related material. Not every import creates a page. |
 | **Cite and track** | Record the sources and memories supporting the page, so changes to that evidence can mark it for refresh. |
-| **Refresh** | Rebuild an eligible page from current support. A draft that fails the citation-support check is not applied. |
+| **Refresh** | Rebuild an eligible page from current support and check its citations. |
 | **Apply or review** | Update an AI-maintained page directly, or stage a revision when its ownership or review lock requires it; the exact rules are below. |
 | **Keep history** | Retain a bounded change history for the page, separate from the replacement links between memories. |
 
 **New findings can grow an existing page.** With background processing and its assigned model enabled, Wenlan matches an eligible new memory to a generated page in the same Space, using a shared entity or semantic similarity. It combines the page’s existing support with the new memory to update the content and citations. This automatic growth skips pages you created or edited, and review-locked pages; no suitable match means no page update from this step.
 
-**Changed evidence follows a different path.** A change to a cited source or memory marks dependent pages for refresh. One item may support several pages; each follows its own update and review rules below. Sources and memories can also be retrieved directly without a page.
+### How evidence drives a page update
+
+Wenlan records which sources and memories support a page. When a tracked item changes in Wenlan, dependent pages are marked for refresh and their previous citation-check results are cleared. An external file change must first reach Wenlan through its source refresh path.
+
+With background processing and the assigned model available, refresh builds a draft from current support and checks its numbered citations. A rejected draft leaves the saved page intact; a passing draft follows the ownership and review rules below. One changed item can affect several pages, each handled separately. Sources and memories remain directly retrievable without a page.
+
+The check compares cited sentences, or their enclosing paragraphs, with supplied source text. It is a text-overlap check, not a factual or logical proof, and does not check every uncited statement. [Citation-check scope and limits](citation-checks.md).
 
 ## When it runs
 
@@ -55,7 +61,7 @@ These are the rules for **background page refresh**, not every possible edit:
 | Review lock enabled | Machine edits wait for approval, including explicit AI edits. |
 | Draft fails the citation-support check | The draft is not applied; the saved page stays unchanged. |
 
-A pending revision applies to its named page, not every page touched by the same source. You can inspect the change and accept or skip it. Citation checks and history help you inspect a change; they do not guarantee that an AI conclusion is correct.
+A pending revision applies to its named page, not every page touched by the same source. You can inspect the change and accept or skip it. History remains available to inspect earlier changes.
 
 **Explicit edits differ:** a connected AI that reads the current page and submits a matching version can update it directly unless review is locked. Your manual edits do not enter this queue. An explicitly forced rebuild can replace an edited generated page; authored pages still require review. [Full update and history reference](knowledge-guide.md#updates-and-history).
 

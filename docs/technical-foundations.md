@@ -172,7 +172,9 @@ deterministic retrieval cues.
 This is a typed Memory schema, not a claim that every Page has a user-editable
 schema. Page structure is governed separately by the synthesis prompts,
 canonical Page write path, provenance records, citation processing, and review
-rules.
+rules. The [citation-check reference](citation-checks.md) ([繁體中文](citation-checks.zh-Hant.md))
+details sentence/paragraph support checks, source-change invalidation, and
+what a `verified` status does and does not establish.
 
 ## Model roles
 

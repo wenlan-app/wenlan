@@ -191,7 +191,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
 
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
-- **Build on new findings:** With background processing and a model enabled, new memories can enrich eligible AI-maintained pages. Changes to cited sources or memories mark dependent pages for refresh; refresh drafts that fail the citation check are not applied.
+- **Follow the evidence:** Wenlan tracks the sources and memories supporting each page. Changes mark dependent pages for refresh; new memories can also enrich eligible pages. With background processing and a model enabled, refresh uses current support and keeps the saved page if the draft fails its citation check. This check does not establish factual correctness.
 - **Keep control and history:** Background refresh can update AI-maintained pages directly. Pages you created or edited receive proposed revisions; version history and memory replacement links remain inspectable.
 
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
