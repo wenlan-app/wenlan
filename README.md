@@ -114,9 +114,9 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 
 **Sources** preserve the material you read; **memories** capture findings and the reasoning behind them. Bring both together in **Markdown pages with citations** you can read, edit, and connect with `[[wikilinks]]`. Follow citations back to the supporting material.
 
-- **Atomic memories:** Retrieve an individual finding without loading an entire conversation or page.
+- **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
 - **Shared topics:** With an enrichment model configured, repeated mentions of a person, project, or concept link to one topic node (entity), with typed relations connecting topics.
-- **Knowledge communities:** Label propagation groups connected topics, revealing related knowledge across your material. A community contains multiple topic nodes. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
+- **Knowledge communities:** Label Propagation groups connected topics, revealing related knowledge across your material. A community contains multiple topic nodes. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
 ### Sources and imports
 
