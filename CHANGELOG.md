@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.19.2](https://github.com/wenlan-app/wenlan/compare/v0.19.1...v0.19.2) (2026-10-19)
+
+
+### Features
+
+* **app:** connect Muse Code, recognize Muse, and simplify the Web access card ([#884](https://github.com/wenlan-app/wenlan/issues/884)) ([34985f3](https://github.com/wenlan-app/wenlan/commit/34985f392cb582a9c8af6b8d18d8c363ed1dcab2))
+* **app:** guide new users with a self-checking getting-started home ([#876](https://github.com/wenlan-app/wenlan/issues/876)) ([465e2fd](https://github.com/wenlan-app/wenlan/commit/465e2fd8c7ef57893fab802bac83107f8c92cd28))
+* **app:** toggle a note's review lock from the note menu ([#887](https://github.com/wenlan-app/wenlan/issues/887)) ([5b7ad89](https://github.com/wenlan-app/wenlan/commit/5b7ad890e63ceaec708f98dd637b2a2648a3e6e8))
+* **brief:** record Brief history and read past versions ([#878](https://github.com/wenlan-app/wenlan/issues/878)) ([195eab3](https://github.com/wenlan-app/wenlan/commit/195eab3a1174618672e40fe0987b95d7e94a5cde))
+* **pages:** agents edit pages directly; manual review lock ([#879](https://github.com/wenlan-app/wenlan/issues/879)) ([5938d7e](https://github.com/wenlan-app/wenlan/commit/5938d7e104c5ba4b6729f67be6592f812358838f))
+* **pages:** say why a revision card needs review and who wrote each version ([#882](https://github.com/wenlan-app/wenlan/issues/882)) ([b863529](https://github.com/wenlan-app/wenlan/commit/b863529f677fcc725239b1f75b4aef9c6c13b3e3))
+* **plugin:** handoff brings the pages a session used up to date ([#880](https://github.com/wenlan-app/wenlan/issues/880)) ([91e6239](https://github.com/wenlan-app/wenlan/commit/91e6239640543f417b9c3e430d9c379eae80e313))
+* **plugin:** one /wenlan entry for every Wenlan workflow ([#889](https://github.com/wenlan-app/wenlan/issues/889)) ([1b4e3ca](https://github.com/wenlan-app/wenlan/commit/1b4e3ca661f64c3e89d9814114e0ae39d5888a5a))
+
+
+### Bug Fixes
+
+* **app:** call Wiki documents notes everywhere in the app UI ([#883](https://github.com/wenlan-app/wenlan/issues/883)) ([a09cafe](https://github.com/wenlan-app/wenlan/commit/a09cafee771527c51b4a175339b8294900fbe9ce))
+* **relay:** limit by app and device instead of shared address, and log each request ([#886](https://github.com/wenlan-app/wenlan/issues/886)) ([28db8f7](https://github.com/wenlan-app/wenlan/commit/28db8f70d74c2a74819d63e85ae687f8c2ad36d6))
+* **ui:** improve page search snippets and review labels ([#890](https://github.com/wenlan-app/wenlan/issues/890)) ([6e3fc15](https://github.com/wenlan-app/wenlan/commit/6e3fc1553cecf8d26bf47dd4229c142bc058ad1f))
+
 ## [0.19.1](https://github.com/wenlan-app/wenlan/compare/v0.19.0...v0.19.1) (2026-10-14)
 
 
