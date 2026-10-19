@@ -1438,6 +1438,7 @@ pub async fn handle_update_page(
                 actor: "human".to_string(),
                 marks: Vec::new(),
                 confirm: confirm_basis.map(|c| (c.basis_page_id, c.version)),
+                confirm_snapshot: Vec::new(),
             },
         },
     )
@@ -1698,6 +1699,7 @@ async fn handle_refresh_page_inner(
                     .map(|b| (b.page_id.clone(), b.version))
                     .collect(),
                 confirm: None,
+                confirm_snapshot: Vec::new(),
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {

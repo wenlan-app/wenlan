@@ -213,6 +213,7 @@ pub async fn stage_page_revision_card_proposed_by(
         edited_by,
         proposer,
         retry,
+        None,
     )
     .await?
     .ok_or_else(|| {
@@ -244,6 +245,35 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         edited_by,
         None,
         retry,
+        None,
+    )
+    .await
+}
+
+/// The preview card of an "Update from sources" run on a note that relies on
+/// other notes (R9). Staged exactly like [`stage_page_revision_card_at_fence`],
+/// plus `basis_snapshot`: what each basis note looked like when the body was
+/// written, so accepting the card confirms only the ones that still match.
+pub(crate) async fn stage_basis_preview_card(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    content: &str,
+    source_memory_ids: &[String],
+    fence: &PageFence,
+    edited_by: &str,
+    basis_snapshot: &[crate::db::BasisSnapshotEntry],
+) -> Result<Option<WriteResult>, WenlanError> {
+    stage_page_revision_card_inner(
+        db,
+        page,
+        content,
+        source_memory_ids,
+        fence.source_revision,
+        Some(fence),
+        edited_by,
+        None,
+        None,
+        Some(basis_snapshot),
     )
     .await
 }
@@ -259,6 +289,7 @@ async fn stage_page_revision_card_inner(
     edited_by: &str,
     proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
+    basis_snapshot: Option<&[crate::db::BasisSnapshotEntry]>,
 ) -> Result<Option<WriteResult>, WenlanError> {
     crate::export::provenance::validate_canonical_page_content(content)?;
     // Who the human sees on the card. Never the internal `page_write` kind:
@@ -291,7 +322,7 @@ async fn stage_page_revision_card_inner(
     } else {
         "owned"
     };
-    let structured = serde_json::json!({
+    let mut structured = serde_json::json!({
         "revision_kind": "page_write",
         "target_kind": "page",
         "revises_page": page.id,
@@ -300,8 +331,12 @@ async fn stage_page_revision_card_inner(
         "edited_by": edited_by,
         "source_memory_ids": source_memory_ids,
         "review_reason": review_reason,
-    })
-    .to_string();
+    });
+    // Only an update-from-sources card carries the notes it was written from.
+    if let Some(snapshot) = basis_snapshot {
+        structured["basis_snapshot"] = serde_json::to_value(snapshot)?;
+    }
+    let structured = structured.to_string();
     let title: String = format!("Revision: {}", page.title)
         .chars()
         .take(80)

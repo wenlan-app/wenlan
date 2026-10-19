@@ -4880,9 +4880,14 @@ async fn accept_of_a_card_consumed_concurrently_is_not_reported_as_outdated() {
         .unwrap();
     assert!(first.wrote);
 
-    let err = super::page_revision::accept_page_revision_card(&db, loaded_by_second_caller, None)
-        .await
-        .unwrap_err();
+    let err = super::page_revision::accept_page_revision_card(
+        &db,
+        loaded_by_second_caller,
+        None,
+        "human",
+    )
+    .await
+    .unwrap_err();
     match err {
         WenlanError::NotFound(msg) => assert!(
             !msg.starts_with(crate::post_write::PAGE_REVISION_OUTDATED),

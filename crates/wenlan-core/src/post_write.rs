@@ -33,6 +33,7 @@ pub use self::page_revision::{
     dismiss_pending_revision, PAGE_REVISION_OUTDATED,
 };
 pub(crate) use self::page_update::merge_shrink_threshold;
+pub(crate) use self::page_update::stage_basis_preview_card;
 #[cfg(test)]
 pub(crate) use self::page_update::PRE_WRITE_GATE;
 pub use self::page_update::{

@@ -28,7 +28,7 @@
 use super::{MemoryDB, UNFILED_SPACE_ID};
 use crate::error::WenlanError;
 use crate::provenance::basis_text_digest;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub(super) const PAGE_BASIS_DDL: &str = "
@@ -832,6 +832,31 @@ pub struct BasisWrite {
     /// R11: confirm one basis in the save's own transaction, only if it is
     /// still at that version.
     pub confirm: Option<(String, i64)>,
+    /// R9: the basis notes an "update from sources" card was written from.
+    /// Each one is confirmed in this write's transaction only if it still
+    /// matches what the card read (same incarnation, same normalized text;
+    /// the version may have moved by a formatting-only edit); one whose text
+    /// changed, that was removed, or that became unreadable is left as it is.
+    /// Nothing is ever added.
+    pub confirm_snapshot: Vec<BasisSnapshotEntry>,
+}
+
+/// One basis note as an "update from sources" run read it, recorded on the
+/// revision card it staged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BasisSnapshotEntry {
+    pub basis_page_id: String,
+    pub incarnation: String,
+    pub version: i64,
+    pub digest: String,
+}
+
+/// A basis note's current text, as context for an "update from sources" run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BasisContext {
+    pub title: String,
+    pub content: String,
+    pub snapshot: BasisSnapshotEntry,
 }
 
 /// What `BasisWrite::confirm` did, when the write carried one.
@@ -867,7 +892,46 @@ pub(super) async fn apply_basis_write_on_conn(
             },
         );
     }
+    for entry in &basis.confirm_snapshot {
+        confirm_snapshot_entry_on_conn(conn, page_id, entry, &basis.actor).await?;
+    }
     Ok(outcome)
+}
+
+/// R9: confirm one basis only if it is exactly what the card read. Returns
+/// whether it was confirmed. A basis that is no longer a basis of the note
+/// (removed after the card was made), moved on, changed text, or became
+/// unreadable stays as it is; this never inserts a row.
+async fn confirm_snapshot_entry_on_conn(
+    conn: &libsql::Connection,
+    page_id: &str,
+    entry: &BasisSnapshotEntry,
+    confirmed_by: &str,
+) -> Result<bool, BasisError> {
+    let Some(basis) = load_facts(conn, &entry.basis_page_id, true).await? else {
+        return Ok(false);
+    };
+    // The text decides, not the version: a formatting-only edit moves the
+    // version but not the digest, and costs the user no extra confirm. A match
+    // confirms at the basis' CURRENT version.
+    if basis.incarnation != entry.incarnation || basis_text_digest(&basis.content) != entry.digest {
+        return Ok(false);
+    }
+    match confirm_page_basis_on_conn(
+        conn,
+        page_id,
+        &entry.basis_page_id,
+        basis.version,
+        confirmed_by,
+    )
+    .await
+    {
+        Ok(_) => Ok(true),
+        Err(
+            BasisError::NotABasis | BasisError::MovedOn { .. } | BasisError::BasisUnavailable(_),
+        ) => Ok(false),
+        Err(other) => Err(other),
+    }
 }
 
 const ENTRY_SELECT: &str = "SELECT b.basis_page_id, b.basis_title, b.state, b.confirmed_version, \
@@ -1001,6 +1065,70 @@ impl MemoryDB {
             );
         }
         Ok(out)
+    }
+
+    /// R9: the bases a note may read when it is updated from its sources: state
+    /// `ok` or `pending`, active, in the note's own Space, and still the same
+    /// incarnation that was marked. Each carries the text and the snapshot a
+    /// revision card records. One consistent read per basis (text, version and
+    /// incarnation come from the same row). Oldest first.
+    pub async fn list_basis_context(
+        &self,
+        page_id: &str,
+    ) -> Result<Vec<BasisContext>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT p.id, p.title, p.content, p.version, COALESCE(p.incarnation, '') \
+                 FROM page_basis b \
+                 JOIN pages c ON c.id = b.page_id \
+                 JOIN pages p ON p.id = b.basis_page_id AND p.incarnation = b.basis_incarnation \
+                 WHERE b.page_id = ?1 AND b.state IN ('ok', 'pending') \
+                   AND p.status = 'active' \
+                   AND COALESCE(p.space, ?2) = COALESCE(c.space, ?2) \
+                 ORDER BY b.added_at, b.basis_page_id",
+                libsql::params![page_id, UNFILED_SPACE_ID],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_basis_context: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_basis_context row: {e}")))?
+        {
+            let decode =
+                |e: libsql::Error| WenlanError::VectorDb(format!("list_basis_context decode: {e}"));
+            let content: String = row.get(2).map_err(decode)?;
+            out.push(BasisContext {
+                title: row.get(1).map_err(decode)?,
+                snapshot: BasisSnapshotEntry {
+                    basis_page_id: row.get(0).map_err(decode)?,
+                    incarnation: row.get(4).map_err(decode)?,
+                    version: row.get(3).map_err(decode)?,
+                    digest: basis_text_digest(&content),
+                },
+                content,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Whether the note has any basis row at all, whatever its state.
+    pub async fn page_has_basis(&self, page_id: &str) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT 1 FROM page_basis WHERE page_id = ?1 LIMIT 1",
+                libsql::params![page_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page_has_basis: {e}")))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("page_has_basis row: {e}")))?
+            .is_some())
     }
 
     /// Notes waiting on a basis that is not `ok`, grouped by basis note and

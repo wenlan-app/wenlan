@@ -102,9 +102,10 @@ pub(crate) use maintenance_retro_scan::AutomaticRetroPageScan;
 pub(crate) use memory_point_reads::PendingMemoryRevisionPayload;
 pub use okf_concepts::OkfConceptRecord;
 pub use page_basis::{
-    BasisDiff, BasisDiffOutcome, BasisEdit, BasisError, BasisPendingCiter, BasisPendingGroup,
-    BasisUnavailableReason, BasisWrite, BasisWriteOutcome, PageBasisEntry, BASIS_STATE_ARCHIVED,
-    BASIS_STATE_DELETED, BASIS_STATE_OK, BASIS_STATE_PENDING, BASIS_STATE_UNAVAILABLE,
+    BasisContext, BasisDiff, BasisDiffOutcome, BasisEdit, BasisError, BasisPendingCiter,
+    BasisPendingGroup, BasisSnapshotEntry, BasisUnavailableReason, BasisWrite, BasisWriteOutcome,
+    PageBasisEntry, BASIS_STATE_ARCHIVED, BASIS_STATE_DELETED, BASIS_STATE_OK, BASIS_STATE_PENDING,
+    BASIS_STATE_UNAVAILABLE,
 };
 pub use presence_review::ReviewOutcome;
 pub use truth_exposure::{
@@ -162,6 +163,8 @@ mod maintenance_retro_scan_test;
 mod memory_point_reads_test;
 #[cfg(test)]
 mod page_basis_test;
+#[cfg(test)]
+mod page_basis_update_test;
 #[cfg(test)]
 mod page_drafts_test;
 #[cfg(test)]
@@ -52588,6 +52591,7 @@ impl MemoryDB {
         expected_version: Option<i64>,
         expected_source_revision: Option<i64>,
         revision_source_id: &str,
+        basis: &BasisWrite,
     ) -> Result<bool, WenlanError> {
         self.try_update_page_content(
             id,
@@ -52605,7 +52609,7 @@ impl MemoryDB {
             None,
             false,
             false,
-            &BasisWrite::default(),
+            basis,
         )
         .await
         .map(|landed| landed.is_some())
