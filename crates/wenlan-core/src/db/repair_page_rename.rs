@@ -297,6 +297,12 @@ where
         if affected != 1 {
             return Err(WenlanError::Conflict("repair_target_stale".to_string()));
         }
+        // Notes relying on this page keep their snapshot of its title in step.
+        // Run before the delta capture below so the refresh is part of the
+        // target write's observed effect, not an escaped change.
+        super::page_basis::refresh_basis_state(&conn, page_id.as_str())
+            .await
+            .map_err(|error| WenlanError::VectorDb(format!("repair page title basis: {error}")))?;
         // The canonical Page UPDATE fires the Page FTS maintenance triggers.
         // Treat that statement's complete observed delta as the target write,
         // then require every later proof/projection step to remain DB-read-only.
