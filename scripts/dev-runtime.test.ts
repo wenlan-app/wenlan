@@ -654,10 +654,11 @@ describe("scoped dev runtime", () => {
   });
 
   it("documents dev:all as the supported isolated app entry point", () => {
-    const readme = readFileSync(resolve(root, "README.md"), "utf8");
+    // The README is for users; the development workflow lives in CONTRIBUTING.
+    const guide = readFileSync(resolve(root, ".github/CONTRIBUTING.md"), "utf8");
 
-    expect(readme).toContain("pnpm dev:all");
-    expect(readme).not.toContain("pnpm tauri dev");
+    expect(guide).toContain("pnpm dev:all");
+    expect(guide).not.toContain("pnpm tauri dev");
   });
 });
 

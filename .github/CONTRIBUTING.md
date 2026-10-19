@@ -35,6 +35,15 @@ cargo build --release -p wenlan -p wenlan-server
 
 > First build can take several minutes while `llama.cpp` compiles for Metal.
 
+Run the desktop app:
+
+```bash
+pnpm install
+pnpm dev:all
+```
+
+`pnpm dev:all` is the supported development entry point for the desktop app. It keeps development ports, data, process ownership, app identity, MCP sockets, and Remote Access state separate from the installed production runtime; a debug app started without that isolation refuses to run. See [app/AGENTS.md](../app/AGENTS.md) for the complete workflow.
+
 ### Running Tests
 
 ```bash
