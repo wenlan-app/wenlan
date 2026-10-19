@@ -19,7 +19,7 @@ A newer document does not automatically replace an earlier memory. Once a replac
 
 ## Page lifecycle: maintain an editable synthesis
 
-A page combines related sources and memories into cited Markdown that you can read and edit. You can write it in the App, ask your AI to write it, or synthesize accumulated material with `/distill`; `/distill` is not a prerequisite for writing a new page.
+A page combines related sources and memories into cited Markdown that you can read and edit. You can write it in the App, ask your AI to write it, or synthesize accumulated material with `/wenlan distill`; `/wenlan distill` is not a prerequisite for writing a new page.
 
 | Stage | What changes |
 |---|---|

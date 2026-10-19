@@ -4,7 +4,7 @@ Claude Code workflow skills installed by the Wenlan plugin.
 
 The skills do not store data themselves. They guide Claude Code to use the local `wenlan-mcp` tools, which talk to the Wenlan daemon on `127.0.0.1:7878`.
 
-These files are also the source for the Codex plugin: `scripts/gen-codex-plugin.mjs` turns each `SKILL.md` here into `plugin-codex/skills/<skill>/SKILL.md`, applying `plugin-codex/overlay.json` for the parts Codex does differently. Edit here, then regenerate.
+These files are also the source for the Codex plugin: `scripts/gen-codex-plugin.mjs` turns each menu skill here into `plugin-codex/skills/<skill>/SKILL.md` and each workflow reached through `/wenlan` into `plugin-codex/skills/wenlan/references/<skill>.md`, applying `plugin-codex/overlay.json` for the parts Codex does differently. Edit here, then regenerate.
 
 ## Commands
 

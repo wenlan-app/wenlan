@@ -16,7 +16,7 @@ The npm installer downloads `wenlan`, `wenlan-server`, and `wenlan-mcp` into `~/
 
 ```bash
 wenlan setup                  # interactive (1=local memory, 2=on-device model, 3=Anthropic key)
-wenlan setup --basic          # non-interactive local memory setup used by the plugin's /setup
+wenlan setup --basic          # non-interactive local memory setup used by the plugin's /wenlan setup
 wenlan models install         # opt into a local Qwen model (llama.cpp + Metal)
 wenlan keys set anthropic     # opt into Anthropic-backed extraction (BYOK)
 wenlan doctor                 # diagnose runtime, model, and key state

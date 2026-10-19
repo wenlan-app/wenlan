@@ -19,7 +19,7 @@
 
 ## Page lifecycle：維護可編輯的知識頁
 
-知識頁把相關來源與記憶整理成帶引用的 Markdown，供你閱讀、編輯。你可以在 App 撰寫、請 AI 撰寫，或用 `/distill` 合成累積的資料；撰寫新頁面不必先跑 `/distill`。
+知識頁把相關來源與記憶整理成帶引用的 Markdown，供你閱讀、編輯。你可以在 App 撰寫、請 AI 撰寫，或用 `/wenlan distill` 合成累積的資料；撰寫新頁面不必先跑 `/wenlan distill`。
 
 | 階段 | 會發生什麼 |
 |---|---|
