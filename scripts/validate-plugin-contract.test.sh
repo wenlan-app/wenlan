@@ -82,9 +82,9 @@ assert_rejects "claude handoff dropped page_basis permission" \
     perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__page_basis"//' \
     "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
 
-assert_rejects "codex distill dropped page_basis permission" \
-    perl -0pi -e 's/, "mcp__wenlan__page_basis"//' \
-    "$TMPDIR_TEST/root/plugin-codex/skills/distill/SKILL.md"
+assert_rejects "codex distill forgot to confirm a pending basis" \
+    perl -0pi -e 's/`action="confirm"`/`action="accept"`/g' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/distill.md"
 
 assert_rejects "claude handoff forgot the pending-basis diff" \
     perl -0pi -e 's/`action: "diff"`/`action: "look"`/g' \
