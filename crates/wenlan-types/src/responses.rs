@@ -437,6 +437,9 @@ pub struct CreatePageResponse {
     pub space_source: Option<WriteSpaceSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_outcome: Option<WriteOutcome>,
+    /// Every basis of the new note after the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisRef>,
 }
 
 /// Result of an explicit page-title change. Does not expose page prose.
@@ -518,6 +521,9 @@ pub struct PageInventoryEntry {
     /// Durable initial placement for a draft; active files use storage_path.
     #[serde(default)]
     pub folder_path: Option<String>,
+    /// The bases of this note that are not `ok`; empty for most notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisRef>,
 }
 
 /// `GET /api/pages` inventory response. Search keeps `SearchPagesResponse`.
@@ -544,6 +550,13 @@ pub struct PageReadResponse {
     pub page: PageInventoryEntry,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub okf: Option<OkfConceptRef>,
+    /// Every basis of this note, in any state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisRef>,
+    /// Notes this note links to that changed after this note was last
+    /// modified. Computed on read, never stored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_changed: Vec<crate::page_basis::LinkedChanged>,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed
@@ -727,6 +740,10 @@ pub struct PageWriteResponse {
     pub revision_card_id: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub gated: bool,
+    /// Every basis of the written note after the write, in the same shape
+    /// `read_page` uses, so the agent sees pending versus ok directly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisRef>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.
@@ -744,6 +761,10 @@ pub struct ManualPageWriteResponse {
     pub projection_status: PageProjectionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projection_error: Option<String>,
+    /// Present only when the save carried `confirm_basis`: whether that basis
+    /// was confirmed with the save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_confirm: Option<crate::page_basis::BasisConfirmOutcome>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -2152,6 +2173,7 @@ mod manual_page_projection_compatibility_tests {
     #[test]
     fn committed_save_with_pending_projection_decodes_as_saved_for_existing_clients() {
         let response = ManualPageWriteResponse {
+            basis_confirm: None,
             ok: true,
             projection_status: PageProjectionStatus::Pending,
             projection_error: Some("external edit preserved".into()),

@@ -925,7 +925,7 @@ pub struct WritePageParams {
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
     #[schemars(
-        description = "Memory source_ids the page is distilled from. Optional: pass them when the page is built from captured memories, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
+        description = "Memory source_ids the page is distilled from. Memories only: a note's page id is refused here, pass it in `basis`. Optional: pass them when the page is built from captured memories, because they are its traceability (the daemon attaches provenance from them). Omit them for a page written from the conversation itself. On refresh, carry the page's existing list through; a page that has sources refuses an empty list."
     )]
     #[serde(default)]
     pub source_memory_ids: Vec<String>,
@@ -934,6 +934,67 @@ pub struct WritePageParams {
     )]
     #[serde(default)]
     pub expected_version: Option<i64>,
+    #[schemars(
+        description = "Other notes (wiki pages) this page relies on, each as {page_id, version} where version is that note's page.version from your read_page. Use it for notes only; memories go in source_memory_ids and a note's page id never does. A listed note counts as confirmed only if it is still at that version; if it changed after your read it is recorded as pending instead. Existing bases of the page stay as they are. The reply lists the page's bases after the write."
+    )]
+    #[serde(default)]
+    pub basis: Vec<BasisParam>,
+    #[schemars(
+        description = "Refresh only: true marks this write as a small edit (typo, formatting, a one-word fix), so pages relying on this one are told the change was minor. It never hides the change from them."
+    )]
+    #[serde(default)]
+    pub minor: Option<bool>,
+}
+
+/// Schema mirror of `wenlan_types::BasisInput`, so the advertised tool schema
+/// is stable without giving the wire crate a schema dependency.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct BasisParam {
+    #[schemars(description = "Page id of the note this page relies on.")]
+    pub page_id: String,
+    #[schemars(description = "That note's page.version as your read_page returned it.")]
+    pub version: i64,
+}
+
+impl From<BasisParam> for wenlan_types::BasisInput {
+    fn from(value: BasisParam) -> Self {
+        Self {
+            page_id: value.page_id,
+            version: value.version,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PageBasisAction {
+    /// Record that the page relies on the basis note, as of `version`.
+    Mark,
+    /// Show the text the page relied on next to the basis note's text now.
+    Diff,
+    /// Say the page still holds after the basis note's change, as of `version`.
+    Confirm,
+    /// Stop the page relying on the basis note.
+    Remove,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct PageBasisParams {
+    #[schemars(
+        description = "The page that relies on the other note (the one that would be rewritten or confirmed). Opaque page id."
+    )]
+    pub page_id: String,
+    #[schemars(description = "The note it relies on. Opaque page id; never a memory id.")]
+    pub basis_page_id: String,
+    #[schemars(
+        description = "mark: record the reliance. diff: show what the basis note said when you last confirmed it and what it says now. confirm: say the page still holds after the basis note's change. remove: drop the reliance."
+    )]
+    pub action: PageBasisAction,
+    #[schemars(
+        description = "Required for mark and confirm: the basis note's page.version from your read_page (not the citing page's). If the basis note has moved on since, the call is refused and nothing changes. Ignored by diff and remove."
+    )]
+    #[serde(default)]
+    pub version: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1302,6 +1363,46 @@ fn page_write_conflict_result(
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
+/// A `page_basis` call the daemon refused, in words that say what to do next.
+/// The client withholds daemon free text from agents, so the wording is fixed
+/// per HTTP status and action.
+fn page_basis_error_result(error: WenlanError, action: PageBasisAction) -> CallToolResult {
+    let WenlanError::Api { status, .. } = &error else {
+        return tool_error(error, "page_basis");
+    };
+    let text = match (*status, action) {
+        (404, _) => "page_basis refused, nothing changed: one of the two notes was not found, \
+                     or this page does not rely on that note. Check both ids with read_page."
+            .to_string(),
+        (409, PageBasisAction::Diff) => {
+            "No comparison is available for this basis: the basis note was deleted or \
+             archived, or the text this page relied on is no longer stored. Read the basis \
+             note with read_page and rewrite this page, or remove the basis."
+                .to_string()
+        }
+        (409, _) => "page_basis refused, nothing changed: the basis note moved on since your \
+                     read, or it is archived or deleted. Read it again with read_page and \
+                     retry with its current page.version."
+            .to_string(),
+        (422, _) => "page_basis refused, nothing changed: a page cannot rely on itself, a \
+                     draft, an entity page, or a note in another Space, and a version must be \
+                     one the basis note has had."
+            .to_string(),
+        _ => return tool_error(error, "page_basis"),
+    };
+    CallToolResult::error(vec![ContentBlock::text(text)])
+}
+
+/// A refresh the daemon refused because a note listed in `basis` cannot be
+/// relied on. Nothing was written, including the page text.
+fn page_write_basis_refused_result(page_id: &str) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(format!(
+        "write_page refused, nothing was written: a note listed in `basis` for page {page_id} \
+         cannot be relied on (it is archived, deleted, or in another Space). Check each \
+         basis note with read_page, drop the one that is gone, and retry."
+    ))])
+}
+
 fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
     let msg = match &e {
         WenlanError::Unreachable(_) => format!(
@@ -1378,6 +1479,10 @@ struct RecallHit<'a> {
     merged_from: Option<&'a [String]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_delta_summary: Option<&'a str>,
+    /// For a note hit: the notes it relies on that are not `ok`. Absent for
+    /// memories and for notes with nothing outstanding.
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    basis: &'a [wenlan_types::BasisRef],
 }
 
 fn is_empty_str(value: &&str) -> bool {
@@ -1403,6 +1508,7 @@ impl<'a> From<&'a wenlan_types::SearchResult> for RecallHit<'a> {
             pending_revision: hit.pending_revision,
             merged_from: hit.merged_from.as_deref(),
             last_delta_summary: hit.last_delta_summary.as_deref(),
+            basis: &hit.basis,
         }
     }
 }
@@ -2389,7 +2495,11 @@ impl WenlanMcpServer {
                     )]));
                 }
                 let sent_version = params.expected_version.is_some();
+                let params_expected = params.expected_version;
+                let sent_basis = !params.basis.is_empty();
                 let req = wenlan_types::requests::RefreshPageRequest {
+                    minor: params.minor,
+                    basis: params.basis.into_iter().map(Into::into).collect(),
                     content: params.content,
                     source_memory_ids: params.source_memory_ids,
                     summary: params.summary,
@@ -2415,6 +2525,13 @@ impl WenlanMcpServer {
                                 .await
                                 .ok()
                                 .map(|page| page.page.page.version);
+                            // The page is still at the version the caller read,
+                            // so the refusal came from a note listed in `basis`
+                            // (archived, deleted, in another Space), not from a
+                            // concurrent edit.
+                            if sent_basis && current.is_some() && current == params_expected {
+                                return Ok(page_write_basis_refused_result(&page_id));
+                            }
                             return Ok(page_write_conflict_result(&page_id, current, sent_version));
                         }
                         Err(e) => return Ok(tool_error(e, "write_page")),
@@ -2431,20 +2548,111 @@ impl WenlanMcpServer {
                         "title is required when creating a page (no page_id given)".to_string(),
                     )]));
                 };
-                let req = CreateConceptRequest {
-                    title,
-                    content: params.content,
-                    summary: params.summary,
-                    entity_id: params.entity_id,
-                    space: (effective_space(&params.space)).into(),
-                    source_memory_ids: params.source_memory_ids,
-                    creation_kind: None,
-                    workspace: None,
+                let req = wenlan_types::requests::CreatePageWithBasisRequest {
+                    create: CreateConceptRequest {
+                        title,
+                        content: params.content,
+                        summary: params.summary,
+                        entity_id: params.entity_id,
+                        space: (effective_space(&params.space)).into(),
+                        source_memory_ids: params.source_memory_ids,
+                        creation_kind: None,
+                        workspace: None,
+                    },
+                    basis: params.basis.into_iter().map(Into::into).collect(),
                 };
                 let resp: CreatePageResponse =
                     try_call!(self.client.post("/api/pages", &req), "write_page");
                 let text = format_create_page_response(resp);
                 Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+            }
+        }
+    }
+
+    pub async fn page_basis_impl(
+        &self,
+        params: PageBasisParams,
+    ) -> Result<CallToolResult, McpError> {
+        for (label, id) in [
+            ("page_id", &params.page_id),
+            ("basis_page_id", &params.basis_page_id),
+        ] {
+            if !is_opaque_page_id(id) {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Invalid {label}. Use the page's opaque identifier, not a URL or file path."
+                ))]));
+            }
+        }
+        let action = params.action;
+        // Only a diff leaves the pages as they are; the rest change what the
+        // page relies on, so they stay on the machine running Wenlan.
+        if action != PageBasisAction::Diff && self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Changing what a page relies on is not available over remote connections. \
+                 Use local MCP on the machine running Wenlan."
+                    .to_string(),
+            )]));
+        }
+        let path = format!(
+            "/api/pages/{}/basis/{}",
+            url_encode_simple(&params.page_id),
+            url_encode_simple(&params.basis_page_id)
+        );
+        let encode = |error: serde_json::Error| {
+            McpError::internal_error(format!("page_basis encode: {error}"), None)
+        };
+        match action {
+            PageBasisAction::Mark | PageBasisAction::Confirm => {
+                let Some(version) = params.version else {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                        "version is required to {}: pass the basis note's page.version from read_page.",
+                        if action == PageBasisAction::Mark {
+                            "mark"
+                        } else {
+                            "confirm"
+                        }
+                    ))]));
+                };
+                let body = wenlan_types::BasisVersionRequest { version };
+                let result = if action == PageBasisAction::Mark {
+                    self.client
+                        .put::<_, wenlan_types::BasisRef>(&path, &body)
+                        .await
+                } else {
+                    self.client
+                        .post::<_, wenlan_types::BasisRef>(&format!("{path}/confirm"), &body)
+                        .await
+                };
+                match result {
+                    Ok(basis) => Ok(CallToolResult::structured(
+                        serde_json::to_value(&basis).map_err(encode)?,
+                    )),
+                    Err(error) => Ok(page_basis_error_result(error, action)),
+                }
+            }
+            PageBasisAction::Diff => {
+                match self
+                    .client
+                    .get::<wenlan_types::BasisDiffResponse>(&format!("{path}/diff"))
+                    .await
+                {
+                    Ok(diff) => Ok(CallToolResult::structured(
+                        serde_json::to_value(&diff).map_err(encode)?,
+                    )),
+                    Err(error) => Ok(page_basis_error_result(error, action)),
+                }
+            }
+            PageBasisAction::Remove => {
+                match self
+                    .client
+                    .delete::<wenlan_types::BasisRemoveResponse>(&path)
+                    .await
+                {
+                    Ok(done) => Ok(CallToolResult::structured(
+                        serde_json::to_value(&done).map_err(encode)?,
+                    )),
+                    Err(error) => Ok(page_basis_error_result(error, action)),
+                }
             }
         }
     }
@@ -2562,12 +2770,34 @@ impl WenlanMcpServer {
         if let Some(object) = page_value.as_object_mut() {
             object.insert("review_required".into(), review_required.into());
             object.insert("source_count".into(), source_count.into());
+            // Notes this page relies on, counted beside (not inside)
+            // `source_count`, which stays memory-only.
+            object.insert("basis_count".into(), page.basis.len().into());
         }
-        let value = serde_json::json!({
+        let mut value = serde_json::json!({
             "page": page_value,
             "okf": page.okf,
             "sources": visible,
         });
+        if let Some(object) = value.as_object_mut() {
+            // Absent when empty, like the daemon wire: most notes have neither.
+            if !page.basis.is_empty() {
+                object.insert(
+                    "basis".into(),
+                    serde_json::to_value(&page.basis).map_err(|error| {
+                        McpError::internal_error(format!("read_page encode: {error}"), None)
+                    })?,
+                );
+            }
+            if !page.linked_changed.is_empty() {
+                object.insert(
+                    "linked_changed".into(),
+                    serde_json::to_value(&page.linked_changed).map_err(|error| {
+                        McpError::internal_error(format!("read_page encode: {error}"), None)
+                    })?,
+                );
+            }
+        }
         Ok(CallToolResult::structured(value))
     }
 
@@ -2609,7 +2839,7 @@ impl WenlanMcpServer {
             .pages
             .iter()
             .map(|entry| {
-                serde_json::json!({
+                let mut row = serde_json::json!({
                     "page_id": entry.page.id,
                     "title": entry.page.title,
                     "summary": entry.page.summary,
@@ -2621,7 +2851,18 @@ impl WenlanMcpServer {
                     "creation_kind": entry.page.creation_kind,
                     "source_count": entry.page.source_memory_ids.len(),
                     "review_required": entry.page.review_required,
-                })
+                });
+                // Only the bases that need a look; most notes have none.
+                if !entry.basis.is_empty() {
+                    if let Some(object) = row.as_object_mut() {
+                        object.insert("basis_pending".into(), entry.basis.len().into());
+                        object.insert(
+                            "basis".into(),
+                            serde_json::to_value(&entry.basis).unwrap_or_default(),
+                        );
+                    }
+                }
+                row
             })
             .collect();
         let count = pages.len();
@@ -2812,7 +3053,7 @@ fn format_update_page_response(
     page_id: &str,
     resp: wenlan_types::responses::PageWriteResponse,
 ) -> String {
-    if resp.gated {
+    let mut text = if resp.gated {
         match resp.revision_card_id {
             Some(card) => format!(
                 "Page {page_id} needs review before machine changes land; staged a revision card, prose left unchanged.\ngated: true\nrevision_card_id: {card}"
@@ -2823,6 +3064,20 @@ fn format_update_page_response(
         }
     } else {
         format!("Refreshed page {page_id}")
+    };
+    append_basis(&mut text, &resp.basis);
+    text
+}
+
+/// The page's bases after a write, as one JSON line in the shape `read_page`
+/// uses, so the agent sees pending versus ok directly. Nothing when empty.
+fn append_basis(text: &mut String, basis: &[wenlan_types::BasisRef]) {
+    if basis.is_empty() {
+        return;
+    }
+    if let Ok(json) = serde_json::to_string(basis) {
+        text.push_str("\nbasis: ");
+        text.push_str(&json);
     }
 }
 
@@ -2844,6 +3099,7 @@ fn format_create_page_response(resp: CreatePageResponse) -> String {
     for warning in resp.warnings {
         text.push_str(&format!("\nwarning: {warning}"));
     }
+    append_basis(&mut text, &resp.basis);
     text
 }
 
@@ -3219,7 +3475,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required); with enough cited sources it lands as a distilled page, otherwise as an authored page. The daemon writes the DB row and the on-disk <pages dir>/<slug>.md projection atomically (default ~/.wenlan/pages/, slug made unique on collision). Pass page_id (from the `stale_pages` block in distill output) to refresh that page in place — replaces content + source_memory_ids + optional summary, clears stale_reason, preserves page_id and created_at, bumps version monotonically so external [[wikilinks]] keep working. Never delete_page + recreate to refresh: that churns ids and loses version history. To change an existing page's title at the user's explicit request, use rename_page; refresh keeps the existing title. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user. Refresh is not available over remote HTTP MCP transport (local stdio only).",
+        description = "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required); with enough cited sources it lands as a distilled page, otherwise as an authored page. The daemon writes the DB row and the on-disk <pages dir>/<slug>.md projection atomically (default ~/.wenlan/pages/, slug made unique on collision). Pass page_id (from the `stale_pages` block in distill output) to refresh that page in place — replaces content + source_memory_ids + optional summary, clears stale_reason, preserves page_id and created_at, bumps version monotonically so external [[wikilinks]] keep working. Never delete_page + recreate to refresh: that churns ids and loses version history. To change an existing page's title at the user's explicit request, use rename_page; refresh keeps the existing title. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user. `basis` [{page_id, version}] lists notes relied on (versions from read_page); a changed one lands pending (see page_basis). `minor: true` = small edit. Refresh is not available over remote HTTP MCP transport (local stdio only).",
         annotations(
             title = "Write page",
             read_only_hint = false,
@@ -3233,6 +3489,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<WritePageParams>,
     ) -> Result<CallToolResult, McpError> {
         self.write_page_impl(params).await
+    }
+
+    #[tool(
+        description = "Track what a wiki page relies on another page for. Use when read_page, list_pages or recall shows a `pending` basis. `mark`/`confirm` need `version` (the basis note's page.version from read_page) and fail if it moved on. `diff` shows the text relied on next to the text now. `remove` drops it. Changes are local stdio only.",
+        annotations(
+            title = "Page basis",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn page_basis(
+        &self,
+        Parameters(params): Parameters<PageBasisParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.page_basis_impl(params).await
     }
 
     #[tool(
@@ -5762,6 +6035,8 @@ mod tests {
             entity_id: None,
             space: None,
             expected_version: None,
+            basis: Vec::new(),
+            minor: None,
         };
         let result = server.write_page_impl(params).await.unwrap();
         let content = &result.content[0];
@@ -5785,6 +6060,8 @@ mod tests {
             entity_id: None,
             space: None,
             expected_version: None,
+            basis: Vec::new(),
+            minor: None,
         };
         let result = server.write_page_impl(params).await.unwrap();
         assert!(
@@ -5796,6 +6073,7 @@ mod tests {
     #[test]
     fn create_page_reports_attached_to_existing_page_truthfully() {
         let text = format_create_page_response(CreatePageResponse {
+            basis: Vec::new(),
             id: "page_existing".into(),
             attached_to: Some("page_existing".into()),
             warnings: Vec::new(),
@@ -5882,6 +6160,8 @@ mod tests {
                 entity_id: None,
                 space: None,
                 expected_version: Some(3),
+                basis: Vec::new(),
+                minor: None,
             })
             .await
             .unwrap();
@@ -5928,6 +6208,8 @@ mod tests {
                 entity_id: None,
                 space: None,
                 expected_version: Some(4),
+                basis: Vec::new(),
+                minor: None,
             })
             .await
             .unwrap();
@@ -6021,6 +6303,507 @@ mod tests {
         assert_eq!(value["page"]["source_count"], 2);
     }
 
+    fn basis_ref_json(page_id: &str, state: &str, from: i64, to: i64) -> serde_json::Value {
+        serde_json::json!({
+            "page_id": page_id,
+            "title": "Release notes",
+            "state": state,
+            "from_version": from,
+            "to_version": to,
+            "minor_only": false,
+        })
+    }
+
+    fn text_of(result: &CallToolResult) -> String {
+        match &result.content[0] {
+            rmcp::model::ContentBlock::Text(text) => text.text.clone(),
+            other => panic!("expected text content, got {other:?}"),
+        }
+    }
+
+    fn stdio_server(uri: String) -> WenlanMcpServer {
+        WenlanMcpServer::new(
+            WenlanClient::new(uri),
+            TransportMode::Stdio,
+            "agent".into(),
+            None,
+        )
+    }
+
+    fn write_params(page_id: Option<&str>) -> WritePageParams {
+        WritePageParams {
+            page_id: page_id.map(String::from),
+            title: Some("Plan".into()),
+            content: "body".into(),
+            source_memory_ids: Vec::new(),
+            summary: None,
+            entity_id: None,
+            space: None,
+            expected_version: Some(3),
+            basis: vec![BasisParam {
+                page_id: "page_a".into(),
+                version: 7,
+            }],
+            minor: Some(true),
+        }
+    }
+
+    /// R7 on the wire: a refresh carries `basis` and `minor`, and the reply
+    /// lists the page's bases after the write in the shape `read_page` uses,
+    /// so a pending one is visible without another call.
+    #[tokio::test]
+    async fn write_page_refresh_sends_basis_and_minor_and_shows_the_bases_after_the_write() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .and(body_json(serde_json::json!({
+                "content": "body",
+                "source_memory_ids": [],
+                "summary": null,
+                "expected_version": 3,
+                "basis": [{"page_id": "page_a", "version": 7}],
+                "minor": true
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "basis": [basis_ref_json("page_a", "pending", 7, 8)]
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .write_page_impl(write_params(Some("page_x")))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false), "{result:?}");
+        let text = text_of(&result);
+        assert!(text.starts_with("Refreshed page page_x"), "{text}");
+        let line = text
+            .lines()
+            .find_map(|line| line.strip_prefix("basis: "))
+            .expect("a basis line");
+        let rows: Vec<wenlan_types::BasisRef> = serde_json::from_str(line).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, "pending");
+        assert_eq!(rows[0].to_version, Some(8));
+    }
+
+    /// A create carries `basis` flat beside the page fields, and no basis line
+    /// is added when the new page has none.
+    #[tokio::test]
+    async fn write_page_create_sends_basis_beside_the_page_fields() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages"))
+            .and(body_json(serde_json::json!({
+                "title": "Plan",
+                "content": "body",
+                "summary": null,
+                "entity_id": null,
+                "source_memory_ids": [],
+                "creation_kind": null,
+                "workspace": null,
+                "basis": [{"page_id": "page_a", "version": 7}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "page_new",
+                "basis": [basis_ref_json("page_a", "ok", 7, 7)]
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .write_page_impl(write_params(None))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false), "{result:?}");
+        let text = text_of(&result);
+        assert!(text.starts_with("Created page page_new"), "{text}");
+        assert!(text.contains("\nbasis: [{"), "{text}");
+    }
+
+    /// A 409 while the page is still at the version the agent read came from a
+    /// note listed in `basis`, not from a concurrent edit: say that, not
+    /// "the page moved".
+    #[tokio::test]
+    async fn write_page_refresh_refused_for_a_basis_does_not_blame_a_concurrent_edit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": "the basis note is archived"
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_x"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page": page_wire_json("page_x", 3, false)
+            })))
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .write_page_impl(write_params(Some("page_x")))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = text_of(&result);
+        assert!(text.contains("nothing was written"), "{text}");
+        assert!(text.contains("`basis`"), "{text}");
+        assert!(!text.contains("moved to"), "{text}");
+    }
+
+    fn basis_params(action: PageBasisAction, version: Option<i64>) -> PageBasisParams {
+        PageBasisParams {
+            page_id: "page_b".into(),
+            basis_page_id: "page_a".into(),
+            action,
+            version,
+        }
+    }
+
+    /// `mark` and `confirm` name the version the agent read; the daemon call
+    /// carries exactly that and nothing else, and the typed receipt comes back.
+    #[tokio::test]
+    async fn page_basis_mark_and_confirm_send_the_version_and_return_the_basis() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/api/pages/page_b/basis/page_a"))
+            .and(body_json(serde_json::json!({"version": 7})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(basis_ref_json("page_a", "ok", 7, 7)),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_b/basis/page_a/confirm"))
+            .and(body_json(serde_json::json!({"version": 8})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(basis_ref_json("page_a", "ok", 8, 8)),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+        let marked = server
+            .page_basis_impl(basis_params(PageBasisAction::Mark, Some(7)))
+            .await
+            .unwrap();
+        assert_eq!(marked.is_error, Some(false), "{marked:?}");
+        assert_eq!(marked.structured_content.unwrap()["state"], "ok");
+        let confirmed = server
+            .page_basis_impl(basis_params(PageBasisAction::Confirm, Some(8)))
+            .await
+            .unwrap();
+        assert_eq!(confirmed.is_error, Some(false), "{confirmed:?}");
+        assert_eq!(confirmed.structured_content.unwrap()["from_version"], 8);
+    }
+
+    /// Without a version there is nothing to compare, so no call is made.
+    #[tokio::test]
+    async fn page_basis_mark_and_confirm_require_a_version() {
+        for action in [PageBasisAction::Mark, PageBasisAction::Confirm] {
+            // Nothing listens on this address: reaching the daemon would give
+            // a connection error, not the version message.
+            let result = make_server(TransportMode::Stdio, "agent", None)
+                .page_basis_impl(basis_params(action, None))
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            assert!(text_of(&result).starts_with("version is required to"));
+        }
+    }
+
+    /// A confirm against a basis that moved on is refused with the recovery
+    /// step; a diff that cannot be made says so in its own words.
+    #[tokio::test]
+    async fn page_basis_conflicts_explain_what_to_do_next() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/pages/page_b/basis/page_a/confirm"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": "the basis note moved on: it is now at version 9"
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_b/basis/page_a/diff"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(serde_json::json!({
+                "error": "the comparison is not available: the basis note was deleted",
+                "reason": "deleted"
+            })))
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+        let confirm = server
+            .page_basis_impl(basis_params(PageBasisAction::Confirm, Some(8)))
+            .await
+            .unwrap();
+        assert_eq!(confirm.is_error, Some(true));
+        let text = text_of(&confirm);
+        assert!(text.contains("nothing changed"), "{text}");
+        assert!(text.contains("moved on"), "{text}");
+        assert!(text.contains("read_page"), "{text}");
+        let diff = server
+            .page_basis_impl(basis_params(PageBasisAction::Diff, None))
+            .await
+            .unwrap();
+        assert_eq!(diff.is_error, Some(true));
+        assert!(text_of(&diff).starts_with("No comparison is available"));
+    }
+
+    /// `diff` hands the agent both texts and the edits between them; `remove`
+    /// returns the typed receipt.
+    #[tokio::test]
+    async fn page_basis_diff_and_remove_return_typed_results() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_b/basis/page_a/diff"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "from_version": 7,
+                "to_version": 8,
+                "from_content": "ships on Monday",
+                "to_content": "ships on Friday",
+                "edits": [{
+                    "version": 8, "edited_by": "human", "at": 1_700_000_000,
+                    "minor": false, "delta_summary": "moved the date"
+                }]
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/pages/page_b/basis/page_a"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"removed": true})),
+            )
+            .mount(&mock)
+            .await;
+        let server = stdio_server(mock.uri());
+        let diff = server
+            .page_basis_impl(basis_params(PageBasisAction::Diff, None))
+            .await
+            .unwrap();
+        let value = diff.structured_content.expect("structured diff");
+        assert_eq!(value["from_content"], "ships on Monday");
+        assert_eq!(value["to_content"], "ships on Friday");
+        assert_eq!(value["edits"][0]["delta_summary"], "moved the date");
+        let removed = server
+            .page_basis_impl(basis_params(PageBasisAction::Remove, None))
+            .await
+            .unwrap();
+        assert_eq!(removed.structured_content.unwrap()["removed"], true);
+    }
+
+    /// Changing what a page relies on stays local; reading the comparison does
+    /// not.
+    #[tokio::test]
+    async fn page_basis_changes_are_blocked_on_http_but_diff_is_not() {
+        for action in [
+            PageBasisAction::Mark,
+            PageBasisAction::Confirm,
+            PageBasisAction::Remove,
+        ] {
+            let result = make_server(TransportMode::Http, "agent", None)
+                .page_basis_impl(basis_params(action, Some(1)))
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            assert!(text_of(&result).contains("not available over remote connections"));
+        }
+        let diff = make_server(TransportMode::Http, "agent", None)
+            .page_basis_impl(basis_params(PageBasisAction::Diff, None))
+            .await
+            .unwrap();
+        assert!(
+            !text_of(&diff).contains("not available over remote connections"),
+            "diff must reach the daemon on a remote transport"
+        );
+    }
+
+    /// A page id that is a path or URL never becomes part of a daemon path.
+    #[tokio::test]
+    async fn page_basis_rejects_ids_that_are_not_opaque_page_ids() {
+        let mut params = basis_params(PageBasisAction::Diff, None);
+        params.basis_page_id = "../etc".into();
+        let result = make_server(TransportMode::Stdio, "agent", None)
+            .page_basis_impl(params)
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        assert!(text_of(&result).starts_with("Invalid basis_page_id"));
+    }
+
+    /// `read_page` carries every basis, the count beside `source_count`, and
+    /// the plain links that changed.
+    #[tokio::test]
+    async fn read_page_carries_basis_basis_count_and_linked_changed() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_b"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page": page_wire_json("page_b", 4, false),
+                "basis": [
+                    basis_ref_json("page_a", "pending", 7, 8),
+                    basis_ref_json("page_c", "ok", 2, 2),
+                ],
+                "linked_changed": [{"page_id": "page_d", "title": "Roadmap", "version": 5}]
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_b/sources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .read_page_impl("page_b")
+            .await
+            .unwrap();
+        let value = result.structured_content.expect("structured page");
+        assert_eq!(value["page"]["basis_count"], 2);
+        assert_eq!(value["page"]["source_count"], 2);
+        assert_eq!(value["basis"][0]["state"], "pending");
+        assert_eq!(value["basis"][0]["to_version"], 8);
+        assert_eq!(value["basis"][1]["state"], "ok");
+        assert_eq!(value["linked_changed"][0]["page_id"], "page_d");
+    }
+
+    /// A page with nothing to report keeps the old shape: no `basis`, no
+    /// `linked_changed`, and a zero count.
+    #[tokio::test]
+    async fn read_page_without_bases_adds_only_a_zero_count() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_b"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "page": page_wire_json("page_b", 4, false)
+            })))
+            .mount(&mock)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/pages/page_b/sources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .read_page_impl("page_b")
+            .await
+            .unwrap();
+        let value = result.structured_content.expect("structured page");
+        assert_eq!(value["page"]["basis_count"], 0);
+        assert!(value.get("basis").is_none());
+        assert!(value.get("linked_changed").is_none());
+    }
+
+    /// `list_pages` shows a page's non-ok bases and how many there are, and
+    /// stays silent for pages without any.
+    #[tokio::test]
+    async fn list_pages_shows_basis_pending_only_for_pages_that_have_some() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        let mut waiting = page_wire_json("page_b", 2, false);
+        waiting["basis"] = serde_json::json!([basis_ref_json("page_a", "pending", 7, 8)]);
+        Mock::given(method("GET"))
+            .and(path("/api/pages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "pages": [waiting, page_wire_json("page_c", 1, false)]
+            })))
+            .mount(&mock)
+            .await;
+        let result = stdio_server(mock.uri())
+            .list_pages_impl(ListPagesParams {
+                status: None,
+                limit: None,
+                offset: None,
+                space: None,
+            })
+            .await
+            .unwrap();
+        let value = result.structured_content.expect("structured list");
+        let pages = value["pages"].as_array().unwrap();
+        assert_eq!(pages[0]["basis_pending"], 1);
+        assert_eq!(pages[0]["basis"][0]["page_id"], "page_a");
+        assert!(pages[1].get("basis_pending").is_none());
+        assert!(pages[1].get("basis").is_none());
+    }
+
+    /// A recalled note carries its non-ok bases; a memory hit does not grow a
+    /// field.
+    #[test]
+    fn a_recall_hit_for_a_note_carries_its_outstanding_basis() {
+        let hit: wenlan_types::SearchResult = serde_json::from_value(serde_json::json!({
+            "id": "chunk-1",
+            "content": "Ships Friday.",
+            "source": "page",
+            "source_id": "page_b",
+            "title": "Plan",
+            "chunk_index": 0,
+            "last_modified": 1_700_000_000,
+            "score": 0.5,
+            "raw_score": 0.9,
+            "chunk_type": "text",
+            "source_text": "Ships Friday.",
+            "content_hash": "abc",
+            "basis": [basis_ref_json("page_a", "pending", 7, 8)]
+        }))
+        .unwrap();
+        let value = serde_json::to_value(RecallHit::from(&hit)).unwrap();
+        assert_eq!(value["basis"][0]["state"], "pending");
+        assert_eq!(value["basis"][0]["page_id"], "page_a");
+    }
+
+    /// The advertised schema names the four actions, and the new tool is
+    /// registered once.
+    #[test]
+    fn page_basis_is_registered_with_four_actions() {
+        let schema = serde_json::to_value(schemars::schema_for!(PageBasisParams)).unwrap();
+        let rendered = schema.to_string();
+        for action in ["mark", "diff", "confirm", "remove"] {
+            assert!(rendered.contains(&format!("\"{action}\"")), "{rendered}");
+        }
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .map(|r| r.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        assert!(
+            !required.contains(&"version"),
+            "version is optional in the schema"
+        );
+        let count = WenlanMcpServer::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| tool.name == "page_basis")
+            .count();
+        assert_eq!(count, 1);
+    }
+
     /// The schema tells agents sources are optional and expected_version
     /// comes from read_page; the tool description carries the
     /// conversation-to-page usage.
@@ -6068,6 +6851,7 @@ mod tests {
         let text = format_update_page_response(
             "page_x",
             wenlan_types::responses::PageWriteResponse {
+                basis: Vec::new(),
                 ok: true,
                 gated: true,
                 revision_card_id: Some("mem_page_card_1".to_string()),
@@ -7288,6 +8072,7 @@ mod tests {
             ("list_pending_revisions", (true, false, false)),
             ("list_refinements", (true, false, false)),
             ("list_rejections", (true, false, false)),
+            ("page_basis", (false, false, false)),
             ("read_page", (true, false, false)),
             ("recall", (false, false, false)),
             ("rename_page", (false, true, false)),
@@ -7681,6 +8466,7 @@ mod tests {
             "list_pending_revisions",
             "list_refinements",
             "list_rejections",
+            "page_basis",
             "read_page",
             "recall",
             "rename_page",

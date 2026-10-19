@@ -7738,6 +7738,7 @@ async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
     let result = page_write(
         &db,
         PageWrite::AgentUpdate {
+            basis: crate::db::BasisWrite::default(),
             page_id: &page_id,
             req: UpdatePageRequest {
                 content: "gated source, refreshed".to_string(),
@@ -7779,6 +7780,7 @@ async fn changelog_entry_records_agent_and_numeric_delta() {
             page_write(
                 db,
                 PageWrite::AgentUpdate {
+                    basis: crate::db::BasisWrite::default(),
                     page_id: &page_id,
                     req: UpdatePageRequest {
                         content: content.to_string(),

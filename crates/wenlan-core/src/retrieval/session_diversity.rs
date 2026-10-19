@@ -140,6 +140,7 @@ mod tests {
     /// inspects (source_id, score, source, id) need real values.
     fn sr(id: &str, source_id: &str, score: f32) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: id.to_string(),
             content: String::new(),
             source: "memory".to_string(),

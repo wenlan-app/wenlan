@@ -611,6 +611,7 @@ fn post_write_facade_contract_compiles_and_preserves_result_shape() {
     let _ = std::mem::size_of::<Option<crate::post_write::PageWrite<'static>>>();
 
     let result = crate::post_write::WriteResult {
+        basis_confirm: None,
         id: "page_1".into(),
         attached_to: None,
         warnings: Vec::new(),

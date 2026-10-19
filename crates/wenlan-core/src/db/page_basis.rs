@@ -185,6 +185,9 @@ pub struct BasisEdit {
     pub edited_by: String,
     pub at: i64,
     pub minor: bool,
+    /// The edit's one-line summary from the basis' changelog; empty when that
+    /// version recorded none (a plain human save, or a trimmed changelog).
+    pub delta_summary: String,
 }
 
 /// The text the citer relied on next to the basis' text now.
@@ -555,6 +558,50 @@ pub(super) async fn carry_bases_into_survivor(
     Ok(())
 }
 
+/// A SOURCE note keeps its content but changes id (the document it mirrors was
+/// renamed): the rows it holds and the rows that rely on it follow it, in the
+/// caller's transaction. Content and digests are unchanged, so confirmations
+/// stay valid; `basis_incarnation` is re-pointed at the clone's own generation
+/// (the clone is a new row, so it has a new one).
+pub(super) async fn retarget_page_identity(
+    conn: &libsql::Connection,
+    old_page_id: &str,
+    new_page_id: &str,
+) -> Result<(), libsql::Error> {
+    conn.execute(
+        "UPDATE page_basis SET basis_page_id = ?2, \
+             basis_incarnation = COALESCE((SELECT incarnation FROM pages WHERE id = ?2), \
+                                          basis_incarnation) \
+         WHERE basis_page_id = ?1",
+        libsql::params![old_page_id, new_page_id],
+    )
+    .await?;
+    conn.execute(
+        "UPDATE pages SET basis_revision = basis_revision + 1 \
+         WHERE id IN (SELECT page_id FROM page_basis WHERE basis_page_id = ?1)",
+        libsql::params![new_page_id],
+    )
+    .await?;
+    let held = conn
+        .execute(
+            "UPDATE page_basis SET page_id = ?2 WHERE page_id = ?1",
+            libsql::params![old_page_id, new_page_id],
+        )
+        .await?;
+    if held > 0 {
+        // The clone does not copy `basis_revision`; carry it over and bump it,
+        // so projections see the list as changed.
+        conn.execute(
+            "UPDATE pages SET basis_revision = \
+                 (SELECT basis_revision FROM pages WHERE id = ?1) + 1 \
+             WHERE id = ?2",
+            libsql::params![old_page_id, new_page_id],
+        )
+        .await?;
+    }
+    refresh_basis_state(conn, new_page_id).await
+}
+
 async fn bump_basis_revision(
     conn: &libsql::Connection,
     page_id: &str,
@@ -580,6 +627,34 @@ async fn known_deleted_basis(
         )
         .await?;
     Ok(rows.next().await?.is_some())
+}
+
+/// R6: the rules about the BASIS side of a mark (the citer's own rules are
+/// checked separately): an ordinary active note, in the citer's Space, at a
+/// version it really has.
+fn check_basis_facts(
+    basis: &PageFacts,
+    citer_space: &str,
+    read_version: i64,
+) -> Result<(), BasisError> {
+    if basis.kind == "entity" {
+        return Err(BasisError::BasisIsEntityPage);
+    }
+    match basis.status.as_str() {
+        "active" => {}
+        "draft" => return Err(BasisError::BasisIsDraft),
+        _ => return Err(BasisError::BasisArchived),
+    }
+    if basis.space != citer_space {
+        return Err(BasisError::DifferentSpace);
+    }
+    if read_version < 1 || read_version > basis.version {
+        return Err(BasisError::InvalidVersion {
+            requested: read_version,
+            current: basis.version,
+        });
+    }
+    Ok(())
 }
 
 /// R5-R7: mark `basis_page_id` as a basis of `page_id`, on the caller's open
@@ -614,23 +689,7 @@ pub(super) async fn mark_page_basis_on_conn(
             BasisError::BasisNotFound
         });
     };
-    if basis.kind == "entity" {
-        return Err(BasisError::BasisIsEntityPage);
-    }
-    match basis.status.as_str() {
-        "active" => {}
-        "draft" => return Err(BasisError::BasisIsDraft),
-        _ => return Err(BasisError::BasisArchived),
-    }
-    if basis.space != citer.space {
-        return Err(BasisError::DifferentSpace);
-    }
-    if read_version < 1 || read_version > basis.version {
-        return Err(BasisError::InvalidVersion {
-            requested: read_version,
-            current: basis.version,
-        });
-    }
+    check_basis_facts(&basis, &citer.space, read_version)?;
 
     let now_ts = chrono::Utc::now().timestamp();
     let current = read_version == basis.version;
@@ -755,6 +814,60 @@ pub(super) async fn confirm_page_basis_on_conn(
     entry_for(conn, page_id, basis_page_id)
         .await?
         .ok_or(BasisError::NotABasis)
+}
+
+/// What a page write also does to the note's bases, inside the write's own
+/// transaction. The default (nothing to mark, nothing to confirm, a major
+/// edit) is what every writer that predates the page basis passes.
+#[derive(Debug, Clone, Default)]
+pub struct BasisWrite {
+    /// The history row is flagged as a minor edit (typo, formatting).
+    pub minor: bool,
+    /// Who marks and confirms: `human`, or the agent's name.
+    pub actor: String,
+    /// R7: bases this write relied on, as `(basis_page_id, version read)`.
+    /// A basis still at that version is confirmed; one that moved on lands
+    /// `pending`. A mark that is refused rolls the whole write back.
+    pub marks: Vec<(String, i64)>,
+    /// R11: confirm one basis in the save's own transaction, only if it is
+    /// still at that version.
+    pub confirm: Option<(String, i64)>,
+}
+
+/// What `BasisWrite::confirm` did, when the write carried one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BasisWriteOutcome {
+    pub confirm: Option<wenlan_types::BasisConfirmOutcome>,
+}
+
+/// Apply a write's marks and confirm on the caller's open transaction, after
+/// the note's own row and history row are written. A basis that cannot be
+/// confirmed because it moved on (or is no longer readable) is reported, not
+/// raised: the save itself must still land. Anything else is a caller error
+/// and fails the write.
+pub(super) async fn apply_basis_write_on_conn(
+    conn: &libsql::Connection,
+    page_id: &str,
+    basis: &BasisWrite,
+) -> Result<BasisWriteOutcome, BasisError> {
+    for (basis_page_id, version) in &basis.marks {
+        mark_page_basis_on_conn(conn, page_id, basis_page_id, *version, &basis.actor).await?;
+    }
+    let mut outcome = BasisWriteOutcome::default();
+    if let Some((basis_page_id, version)) = &basis.confirm {
+        outcome.confirm = Some(
+            match confirm_page_basis_on_conn(conn, page_id, basis_page_id, *version, &basis.actor)
+                .await
+            {
+                Ok(_) => wenlan_types::BasisConfirmOutcome::Confirmed,
+                Err(BasisError::MovedOn { .. } | BasisError::BasisUnavailable(_)) => {
+                    wenlan_types::BasisConfirmOutcome::MovedOn
+                }
+                Err(other) => return Err(other),
+            },
+        );
+    }
+    Ok(outcome)
 }
 
 const ENTRY_SELECT: &str = "SELECT b.basis_page_id, b.basis_title, b.state, b.confirmed_version, \
@@ -971,6 +1084,20 @@ impl MemoryDB {
         Ok(groups)
     }
 
+    /// [`Self::list_basis_pending`] for a read scope: `Global` lists every
+    /// Space, `Uncategorized` the unfiled notes.
+    pub async fn list_basis_pending_in_scope(
+        &self,
+        scope: &crate::read_scope::ReadScope,
+    ) -> Result<Vec<BasisPendingGroup>, WenlanError> {
+        use crate::read_scope::ReadScope;
+        match scope {
+            ReadScope::Global => self.list_basis_pending(None).await,
+            ReadScope::Space(space) => self.list_basis_pending(Some(space)).await,
+            ReadScope::Uncategorized => self.list_basis_pending(Some(UNFILED_SPACE_ID)).await,
+        }
+    }
+
     /// What changed in the basis since the citer last confirmed it: both texts
     /// and the versions in between. `Unavailable` when the basis was deleted
     /// (or its id reused), now sits in another Space, or the version the
@@ -1012,6 +1139,28 @@ impl MemoryDB {
         };
         let from_content: String = from_row.get(0)?;
         drop(rows);
+        let mut summaries: HashMap<i64, String> = HashMap::new();
+        let mut changelog_rows = conn
+            .query(
+                "SELECT changelog FROM pages WHERE id = ?1",
+                libsql::params![basis_page_id],
+            )
+            .await?;
+        if let Some(changelog_row) = changelog_rows.next().await? {
+            let json: Option<String> = changelog_row.get(0)?;
+            let entries: Vec<serde_json::Value> = json
+                .and_then(|j| serde_json::from_str(&j).ok())
+                .unwrap_or_default();
+            for entry in entries {
+                if let (Some(version), Some(summary)) = (
+                    entry.get("version").and_then(|v| v.as_i64()),
+                    entry.get("delta_summary").and_then(|v| v.as_str()),
+                ) {
+                    summaries.insert(version, summary.to_string());
+                }
+            }
+        }
+        drop(changelog_rows);
         let mut edit_rows = conn
             .query(
                 "SELECT version, edited_by, created_at, minor FROM page_history \
@@ -1021,11 +1170,13 @@ impl MemoryDB {
             .await?;
         let mut edits = Vec::new();
         while let Some(edit) = edit_rows.next().await? {
+            let version: i64 = edit.get(0)?;
             edits.push(BasisEdit {
-                version: edit.get(0)?,
+                version,
                 edited_by: edit.get(1)?,
                 at: edit.get(2)?,
                 minor: edit.get::<i64>(3)? != 0,
+                delta_summary: summaries.get(&version).cloned().unwrap_or_default(),
             });
         }
         Ok(BasisDiffOutcome::Available(BasisDiff {
@@ -1037,5 +1188,144 @@ impl MemoryDB {
             to_content: basis.content,
             edits,
         }))
+    }
+
+    /// R7, before a NEW note exists: would every `(basis_page_id, version)`
+    /// be an acceptable basis for a note in `space`? Same rules as a mark,
+    /// checked up front so a create is refused whole rather than created
+    /// without the basis the agent said it relied on.
+    pub async fn check_basis_candidates(
+        &self,
+        space: Option<&str>,
+        marks: &[(String, i64)],
+    ) -> Result<(), BasisError> {
+        let conn = self.conn.lock().await;
+        let space = space.unwrap_or(UNFILED_SPACE_ID);
+        for (basis_page_id, version) in marks {
+            let Some(basis) = load_facts(&conn, basis_page_id, false).await? else {
+                return Err(if known_deleted_basis(&conn, basis_page_id).await? {
+                    BasisError::BasisDeleted
+                } else {
+                    BasisError::BasisNotFound
+                });
+            };
+            check_basis_facts(&basis, space, *version)?;
+        }
+        Ok(())
+    }
+
+    /// Which of `ids` are the id of a note (in any status). A source list is
+    /// for memories; this is how a note id slipped into one is caught.
+    pub async fn page_ids_present(&self, ids: &[String]) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut found = Vec::new();
+        for chunk in ids.chunks(400) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!("SELECT id FROM pages WHERE id IN ({placeholders})");
+            let params: Vec<libsql::Value> = chunk
+                .iter()
+                .map(|id| libsql::Value::Text(id.clone()))
+                .collect();
+            let mut rows = conn
+                .query(&sql, libsql::params_from_iter(params))
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("page_ids_present: {e}")))?;
+            while let Some(row) = rows
+                .next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("page_ids_present row: {e}")))?
+            {
+                found.push(
+                    row.get::<String>(0)
+                        .map_err(|e| WenlanError::VectorDb(format!("page_ids_present id: {e}")))?,
+                );
+            }
+        }
+        Ok(found)
+    }
+
+    /// The bases of many notes that are NOT `ok`, keyed by citer. Notes with
+    /// nothing to look at are absent, so a list of mostly-quiet notes stays
+    /// small.
+    pub async fn list_non_ok_basis(
+        &self,
+        page_ids: &[String],
+    ) -> Result<HashMap<String, Vec<PageBasisEntry>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut out: HashMap<String, Vec<PageBasisEntry>> = HashMap::new();
+        let select =
+            ENTRY_SELECT.replacen(" FROM page_basis b", ", b.page_id FROM page_basis b", 1);
+        for chunk in page_ids.chunks(400) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            // `p.id IS NULL` keeps a basis whose note is gone: it reads as
+            // deleted whatever state the row last stored.
+            let sql = format!(
+                "{select} WHERE b.page_id IN ({placeholders}) \
+                 AND (b.state <> 'ok' OR p.id IS NULL) \
+                 ORDER BY b.added_at, b.basis_page_id"
+            );
+            let params: Vec<libsql::Value> = chunk
+                .iter()
+                .map(|id| libsql::Value::Text(id.clone()))
+                .collect();
+            let mut rows = conn
+                .query(&sql, libsql::params_from_iter(params))
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("list_non_ok_basis: {e}")))?;
+            while let Some(row) = rows
+                .next()
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("list_non_ok_basis row: {e}")))?
+            {
+                let decode = |e: libsql::Error| {
+                    WenlanError::VectorDb(format!("list_non_ok_basis decode: {e}"))
+                };
+                let entry = entry_from(&row).map_err(decode)?;
+                let citer: String = row.get(12).map_err(decode)?;
+                out.entry(citer).or_default().push(entry);
+            }
+        }
+        Ok(out)
+    }
+
+    /// R12 (agents only): the notes `page_id` links to that changed after it
+    /// did. Computed from the link index and the two `last_modified` stamps at
+    /// read time; nothing is stored.
+    pub async fn linked_changed(
+        &self,
+        page_id: &str,
+    ) -> Result<Vec<(String, String, i64)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT t.id, t.title, t.version \
+                 FROM edges l \
+                 JOIN pages c ON c.id = l.src_id \
+                 JOIN pages t ON t.id = l.dst_id \
+                 WHERE l.edge_type = 'links' AND l.src_kind = 'page' AND l.dst_kind = 'page' \
+                   AND l.valid_until IS NULL \
+                   AND l.src_id = ?1 AND t.id <> c.id \
+                   AND t.status = 'active' AND COALESCE(t.kind, 'concept') <> 'entity' \
+                   AND julianday(t.last_modified) > julianday(c.last_modified) \
+                 ORDER BY lower(t.title), t.id",
+                libsql::params![page_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("linked_changed: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("linked_changed row: {e}")))?
+        {
+            let decode =
+                |e: libsql::Error| WenlanError::VectorDb(format!("linked_changed decode: {e}"));
+            out.push((
+                row.get(0).map_err(decode)?,
+                row.get(1).map_err(decode)?,
+                row.get(2).map_err(decode)?,
+            ));
+        }
+        Ok(out)
     }
 }

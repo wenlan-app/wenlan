@@ -41,6 +41,7 @@ fn text_of(result: &rmcp::model::CallToolResult) -> String {
 
 fn alpha_search_result() -> SearchResult {
     SearchResult {
+        basis: Vec::new(),
         id: "1".into(),
         content: "alpha fact one".into(),
         source: "memory".into(),

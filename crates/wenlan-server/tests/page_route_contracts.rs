@@ -151,6 +151,8 @@ fn page_routes(id: &str) -> Vec<RouteCase> {
             method: Method::PUT,
             uri: format!("/api/pages/{id}"),
             body: encoded(&RefreshPageRequest {
+                basis: Vec::new(),
+                minor: None,
                 content: "Refreshed route probe".to_string(),
                 source_memory_ids: vec!["route-probe-source".to_string()],
                 summary: None,
@@ -468,6 +470,8 @@ async fn page_routes_preserve_typed_contracts() {
     assert!(updated.ok);
 
     let refresh = RefreshPageRequest {
+        basis: Vec::new(),
+        minor: None,
         content: "Refresh content after, grounded in its source memory.".to_string(),
         source_memory_ids: vec!["page-route-source".to_string()],
         summary: Some("Refreshed Page route".to_string()),

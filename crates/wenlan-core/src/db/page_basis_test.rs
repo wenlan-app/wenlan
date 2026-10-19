@@ -51,11 +51,14 @@ async fn edit(db: &MemoryDB, id: &str, content: &str, minor: bool) {
             None,
             false,
             false,
-            minor,
+            &BasisWrite {
+                minor,
+                ..BasisWrite::default()
+            },
         )
         .await
         .unwrap();
-    assert!(updated, "the fixture edit of {id} must land");
+    assert!(updated.is_some(), "the fixture edit of {id} must land");
 }
 
 async fn entry(db: &MemoryDB, citer: &str, basis: &str) -> PageBasisEntry {
@@ -1038,4 +1041,627 @@ async fn the_diff_says_unavailable_when_the_confirmed_version_is_no_longer_store
         db.basis_diff("a", "b").await.unwrap_err(),
         BasisError::NotABasis
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Identity moves
+// ---------------------------------------------------------------------------
+
+/// A SOURCE note keeps its content but changes its id when its document is
+/// renamed. The rows that name it (as the basis of another note, and as the
+/// citer of its own bases) follow it in the same transaction.
+#[tokio::test]
+async fn rebinding_a_source_note_identity_retargets_both_basis_columns() {
+    let (db, _dir) = test_db().await;
+    db.upsert_documents(vec![crate::sources::RawDocument {
+        source: "memory".to_string(),
+        source_id: "old-doc".to_string(),
+        title: "memory-old-doc".to_string(),
+        content: "A document that will be renamed.".to_string(),
+        last_modified: 1,
+        memory_type: Some("fact".to_string()),
+        space: Some("sp".to_string()),
+        source_agent: Some("folder".to_string()),
+        confidence: Some(0.9),
+        confirmed: Some(false),
+        supersede_mode: "hide".to_string(),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "b", "Beta", "Plans built on the source note.", "sp").await;
+    db.insert_page_with_kind(
+        "src_old",
+        "Renamed Source Note",
+        None,
+        "Source body.",
+        None,
+        Some("sp"),
+        &[],
+        T0,
+        "source",
+        "unconfirmed",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    // Both directions: `b` relies on the source note, the source note relies on `a`.
+    db.mark_page_basis("b", "src_old", 1, "human")
+        .await
+        .unwrap();
+    db.mark_page_basis("src_old", "a", 1, "human")
+        .await
+        .unwrap();
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    assert_eq!(
+        entry(&db, "src_old", "a").await.state,
+        BASIS_STATE_PENDING,
+        "fixture: the source note's own basis is pending before the rebind"
+    );
+    let revision_before = basis_revision(&db, "src_old").await;
+
+    db.rebind_source_id_with_source_page("memory", "old-doc", "new-doc", "src_old", "src_new")
+        .await
+        .unwrap();
+
+    for (column, id) in [("page_id", "src_old"), ("basis_page_id", "src_old")] {
+        let n = scalar(
+            &db,
+            &format!("SELECT COUNT(*) FROM page_basis WHERE {column} = ?1"),
+            id,
+        )
+        .await;
+        assert_eq!(n, 0, "no row may still name the old id in {column}");
+    }
+
+    // The note that relied on the source note now relies on the new id, still ok.
+    let held = entry(&db, "b", "src_new").await;
+    assert_eq!(held.state, BASIS_STATE_OK);
+    assert_eq!(held.current_version, Some(1));
+    // The source note's own pending basis moved with it and stayed pending.
+    assert_eq!(entry(&db, "src_new", "a").await.state, BASIS_STATE_PENDING);
+    assert!(
+        basis_revision(&db, "src_new").await > revision_before,
+        "the basis revision carries over and moves on"
+    );
+
+    // The incarnation followed too: confirming still works, and a real edit of
+    // the renamed note is seen by its citer.
+    db.confirm_page_basis("src_new", "a", 2, "human")
+        .await
+        .unwrap();
+    assert_eq!(entry(&db, "src_new", "a").await.state, BASIS_STATE_OK);
+    edit(&db, "src_new", "Source body, changed.", false).await;
+    assert_eq!(entry(&db, "b", "src_new").await.state, BASIS_STATE_PENDING);
+}
+
+// ---------------------------------------------------------------------------
+// Write paths: R7 (marks carried by an agent write) and R11 (a human's confirm)
+// ---------------------------------------------------------------------------
+
+/// A history-bearing write of `id` carrying `basis`, returning what the write
+/// reported (`None` = it did not land).
+async fn write_with(
+    db: &MemoryDB,
+    id: &str,
+    content: &str,
+    basis: &BasisWrite,
+) -> Result<Option<BasisWriteOutcome>, WenlanError> {
+    db.try_update_page_content(
+        id,
+        content,
+        &[],
+        "manual_edit",
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        false,
+        false,
+        basis,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn r7_a_write_confirms_a_basis_still_at_the_read_version_and_holds_a_moved_one_pending() {
+    let (db, _dir) = test_db().await;
+    page(&db, "moved", "Moved", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "steady", "Steady", "Nothing changes here.", "sp").await;
+    page(&db, "citer", "Citer", "Plans.", "sp").await;
+    edit(&db, "moved", "The launch is on 2026-04-01.", false).await;
+
+    let written = write_with(
+        &db,
+        "citer",
+        "Plans, revised.",
+        &BasisWrite {
+            actor: "claude-code".into(),
+            // The agent read both notes at version 1; "moved" is at 2 now.
+            marks: vec![("moved".into(), 1), ("steady".into(), 1)],
+            ..BasisWrite::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(written.is_some(), "the write itself lands");
+
+    let moved = entry(&db, "citer", "moved").await;
+    assert_eq!(moved.state, BASIS_STATE_PENDING);
+    assert_eq!(moved.changed_version, Some(2));
+    assert_eq!(moved.confirmed_version, 1);
+    let steady = entry(&db, "citer", "steady").await;
+    assert_eq!(steady.state, BASIS_STATE_OK);
+    assert_eq!(steady.confirmed_by, "claude-code");
+    assert_eq!(version_of(&db, "citer").await, 2);
+}
+
+#[tokio::test]
+async fn r7_a_refused_mark_rolls_the_whole_write_back() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "text", "sp").await;
+    page(&db, "citer", "Citer", "Original body.", "sp").await;
+    let history = history_rows(&db, "citer").await;
+
+    let error = write_with(
+        &db,
+        "citer",
+        "Changed body.",
+        &BasisWrite {
+            actor: "claude-code".into(),
+            // The first mark is fine; the second names a note that is not there.
+            marks: vec![("a".into(), 1), ("ghost".into(), 1)],
+            ..BasisWrite::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, WenlanError::NotFound(_)), "{error:?}");
+
+    let stored = db.get_page("citer").await.unwrap().unwrap();
+    assert_eq!(stored.content, "Original body.", "the body is untouched");
+    assert_eq!(version_of(&db, "citer").await, 1);
+    assert_eq!(history_rows(&db, "citer").await, history);
+    assert!(
+        db.list_page_basis("citer").await.unwrap().is_empty(),
+        "the mark before the refused one rolled back too"
+    );
+}
+
+#[tokio::test]
+async fn r11_a_save_confirms_only_a_basis_still_at_the_version_the_human_looked_at() {
+    let (db, _dir) = pair().await;
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_PENDING);
+
+    // The human looked at version 2 and saved: confirmed in the save.
+    let landed = write_with(
+        &db,
+        "b",
+        "Plans, rechecked.",
+        &BasisWrite {
+            actor: "human".into(),
+            confirm: Some(("a".into(), 2)),
+            ..BasisWrite::default()
+        },
+    )
+    .await
+    .unwrap()
+    .expect("the save lands");
+    assert_eq!(
+        landed.confirm,
+        Some(wenlan_types::BasisConfirmOutcome::Confirmed)
+    );
+    let confirmed = entry(&db, "b", "a").await;
+    assert_eq!(confirmed.state, BASIS_STATE_OK);
+    assert_eq!(confirmed.confirmed_version, 2);
+    assert_eq!(confirmed.confirmed_by, "human");
+
+    // The basis moves on while the human is still looking at version 2.
+    edit(&db, "a", "The launch is on 2026-05-01.", false).await;
+    let version_before = version_of(&db, "b").await;
+    let landed = write_with(
+        &db,
+        "b",
+        "Plans, rechecked again.",
+        &BasisWrite {
+            actor: "human".into(),
+            confirm: Some(("a".into(), 2)),
+            ..BasisWrite::default()
+        },
+    )
+    .await
+    .unwrap()
+    .expect("the save still lands");
+    assert_eq!(
+        landed.confirm,
+        Some(wenlan_types::BasisConfirmOutcome::MovedOn)
+    );
+    assert_eq!(
+        version_of(&db, "b").await,
+        version_before + 1,
+        "the human's edit is kept"
+    );
+    let held = entry(&db, "b", "a").await;
+    assert_eq!(
+        held.state, BASIS_STATE_PENDING,
+        "the stale look confirms nothing"
+    );
+    assert_eq!(held.confirmed_version, 2);
+    assert_eq!(held.changed_version, Some(3));
+}
+
+#[tokio::test]
+async fn r11_a_confirm_for_a_note_that_is_not_a_basis_fails_the_save() {
+    let (db, _dir) = pair().await;
+    page(&db, "c", "Gamma", "text", "sp").await;
+    let error = write_with(
+        &db,
+        "b",
+        "Plans, changed.",
+        &BasisWrite {
+            actor: "human".into(),
+            confirm: Some(("c".into(), 1)),
+            ..BasisWrite::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, WenlanError::NotFound(_)), "{error:?}");
+    assert_eq!(version_of(&db, "b").await, 1, "nothing was saved");
+}
+
+#[tokio::test]
+async fn r11_the_confirm_rolls_back_with_a_save_that_fails_before_commit() {
+    let (db, _dir) = test_db().await;
+    page(
+        &db,
+        "r11-basis",
+        "Basis",
+        "The launch is on 2026-03-01.",
+        "sp",
+    )
+    .await;
+    page(&db, "r11-citer", "Citer", "Plans.", "sp").await;
+    db.mark_page_basis("r11-citer", "r11-basis", 1, "human")
+        .await
+        .unwrap();
+    edit(&db, "r11-basis", "The launch is on 2026-04-01.", false).await;
+    assert_eq!(
+        entry(&db, "r11-citer", "r11-basis").await.state,
+        BASIS_STATE_PENDING
+    );
+
+    // Everything is staged (row, history, confirm) when the save fails.
+    *crate::db::FAIL_BEFORE_COMMIT.lock().unwrap() = Some("r11-citer".to_string());
+    let error = write_with(
+        &db,
+        "r11-citer",
+        "Plans, rechecked.",
+        &BasisWrite {
+            actor: "human".into(),
+            confirm: Some(("r11-basis".into(), 2)),
+            ..BasisWrite::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("injected failure"),
+        "the fault fired: {error:?}"
+    );
+
+    assert_eq!(
+        entry(&db, "r11-citer", "r11-basis").await.state,
+        BASIS_STATE_PENDING,
+        "a confirm never outlives the save it rode on"
+    );
+    assert_eq!(version_of(&db, "r11-citer").await, 1);
+}
+
+#[tokio::test]
+async fn the_minor_flag_lands_on_the_history_row_of_the_write() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "Teh launch.", "sp").await;
+    edit(&db, "a", "The launch.", true).await;
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    let flag = |version: i64| {
+        let db = &db;
+        async move {
+            let conn = db.conn.lock().await;
+            let mut rows = conn
+                .query(
+                    "SELECT minor FROM page_history WHERE page_id = 'a' AND version = ?1",
+                    libsql::params![version],
+                )
+                .await
+                .unwrap();
+            rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap()
+        }
+    };
+    assert_eq!(flag(2).await, 1, "the typo fix is minor");
+    assert_eq!(flag(3).await, 0, "the real edit is not");
+}
+
+// ---------------------------------------------------------------------------
+// Diff details
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_diff_lists_each_edit_since_the_confirmed_version_with_its_summary() {
+    let (db, _dir) = pair().await;
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    edit(&db, "a", "The launch is on 2026-04-01 .", true).await;
+    {
+        // The changelog on the note carries the edit summaries; version 3 has none.
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE pages SET changelog = ?1 WHERE id = 'a'",
+            libsql::params![
+                r#"[{"version":2,"delta_summary":"Moved the launch to April."},{"version":9,"delta_summary":"unrelated"}]"#
+            ],
+        )
+        .await
+        .unwrap();
+    }
+    let BasisDiffOutcome::Available(diff) = db.basis_diff("b", "a").await.unwrap() else {
+        panic!("the diff must be available");
+    };
+    assert_eq!((diff.from_version, diff.to_version), (1, 3));
+    assert_eq!(diff.from_content, "The launch is on 2026-03-01.");
+    assert_eq!(diff.to_content, "The launch is on 2026-04-01 .");
+    assert_eq!(diff.edits.len(), 2, "one per version in between");
+    assert_eq!(diff.edits[0].version, 2);
+    assert_eq!(diff.edits[0].delta_summary, "Moved the launch to April.");
+    assert!(!diff.edits[0].minor);
+    assert_eq!(diff.edits[1].version, 3);
+    assert_eq!(diff.edits[1].delta_summary, "", "no summary recorded");
+    assert!(diff.edits[1].minor);
+}
+
+// ---------------------------------------------------------------------------
+// Read helpers
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_non_ok_basis_returns_only_notes_with_something_to_look_at() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "y", "Yotta", "Healthy.", "sp").await;
+    page(&db, "z", "Zeta", "Another basis.", "sp").await;
+    for citer in ["quiet", "waiting", "orphaned"] {
+        page(&db, citer, citer, "text", "sp").await;
+    }
+    db.mark_page_basis("quiet", "y", 1, "human").await.unwrap();
+    db.mark_page_basis("waiting", "a", 1, "human")
+        .await
+        .unwrap();
+    db.mark_page_basis("orphaned", "z", 1, "human")
+        .await
+        .unwrap();
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    db.delete_page("z").await.unwrap();
+
+    let ids: Vec<String> = ["quiet", "waiting", "orphaned", "no-such-note"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let found = db.list_non_ok_basis(&ids).await.unwrap();
+    assert!(!found.contains_key("quiet"), "an ok basis is not listed");
+    assert!(!found.contains_key("no-such-note"));
+    assert_eq!(found["waiting"].len(), 1);
+    assert_eq!(found["waiting"][0].state, BASIS_STATE_PENDING);
+    assert_eq!(found["orphaned"].len(), 1);
+    assert_eq!(found["orphaned"][0].state, BASIS_STATE_DELETED);
+    assert_eq!(found["orphaned"][0].title, "Zeta", "the title survives");
+    assert!(db.list_non_ok_basis(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn page_ids_present_finds_notes_in_any_status_and_across_chunks() {
+    let (db, _dir) = test_db().await;
+    page(&db, "first", "First", "text", "sp").await;
+    page(&db, "last", "Last", "text", "sp").await;
+    set_status(&db, "last", "archived").await;
+
+    let mut ids: Vec<String> = vec!["first".into()];
+    ids.extend((0..450).map(|n| format!("memory-{n}")));
+    ids.push("last".into());
+    let mut found = db.page_ids_present(&ids).await.unwrap();
+    found.sort();
+    assert_eq!(found, vec!["first".to_string(), "last".to_string()]);
+    assert!(db.page_ids_present(&[]).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn check_basis_candidates_applies_the_mark_rules_before_a_note_exists() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "text", "sp").await;
+    page(&db, "gone", "Gone", "text", "sp").await;
+    page(&db, "ent", "Entity", "text", "sp").await;
+    // Only a note someone relied on is remembered as deleted; any other
+    // missing id is simply not found.
+    page(&db, "reader", "Reader", "text", "sp").await;
+    db.mark_page_basis("reader", "gone", 1, "human")
+        .await
+        .unwrap();
+    db.delete_page("gone").await.unwrap();
+    set_kind(&db, "ent", "entity").await;
+
+    let marks = |marks: &[(&str, i64)]| {
+        marks
+            .iter()
+            .map(|(id, v)| (id.to_string(), *v))
+            .collect::<Vec<_>>()
+    };
+    db.check_basis_candidates(Some("sp"), &marks(&[("a", 1)]))
+        .await
+        .unwrap();
+    db.check_basis_candidates(Some("sp"), &[]).await.unwrap();
+    assert!(matches!(
+        db.check_basis_candidates(Some("other"), &marks(&[("a", 1)]))
+            .await
+            .unwrap_err(),
+        BasisError::DifferentSpace
+    ));
+    assert!(matches!(
+        db.check_basis_candidates(None, &marks(&[("a", 1)]))
+            .await
+            .unwrap_err(),
+        BasisError::DifferentSpace
+    ));
+    assert!(matches!(
+        db.check_basis_candidates(Some("sp"), &marks(&[("a", 4)]))
+            .await
+            .unwrap_err(),
+        BasisError::InvalidVersion {
+            requested: 4,
+            current: 1
+        }
+    ));
+    assert!(matches!(
+        db.check_basis_candidates(Some("sp"), &marks(&[("ghost", 1)]))
+            .await
+            .unwrap_err(),
+        BasisError::BasisNotFound
+    ));
+    assert!(matches!(
+        db.check_basis_candidates(Some("sp"), &marks(&[("gone", 1)]))
+            .await
+            .unwrap_err(),
+        BasisError::BasisDeleted
+    ));
+    assert!(matches!(
+        db.check_basis_candidates(Some("sp"), &marks(&[("ent", 1)]))
+            .await
+            .unwrap_err(),
+        BasisError::BasisIsEntityPage
+    ));
+    // One bad mark refuses the lot.
+    assert!(db
+        .check_basis_candidates(Some("sp"), &marks(&[("a", 1), ("ghost", 1)]))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn list_basis_pending_in_scope_follows_the_read_scope() {
+    use crate::read_scope::ReadScope;
+    let (db, _dir) = test_db().await;
+    for (basis, citer, space) in [("a1", "c1", "sp"), ("a2", "c2", "sp2")] {
+        page(&db, basis, basis, "The date is 2026-03-01.", space).await;
+        page(&db, citer, citer, "text", space).await;
+        db.mark_page_basis(citer, basis, 1, "human").await.unwrap();
+        edit(&db, basis, "The date is 2026-04-01.", false).await;
+    }
+    for id in ["u1", "u2"] {
+        db.insert_page_with_kind(
+            id,
+            id,
+            None,
+            "The date is 2026-03-01.",
+            None,
+            None,
+            &[],
+            T0,
+            "authored",
+            "confirmed",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    db.mark_page_basis("u2", "u1", 1, "human").await.unwrap();
+    edit(&db, "u1", "The date is 2026-04-01.", false).await;
+
+    let citers = |groups: Vec<BasisPendingGroup>| -> Vec<String> {
+        let mut out: Vec<String> = groups
+            .into_iter()
+            .flat_map(|g| g.citers.into_iter().map(|c| c.page_id))
+            .collect();
+        out.sort();
+        out
+    };
+    assert_eq!(
+        citers(
+            db.list_basis_pending_in_scope(&ReadScope::Global)
+                .await
+                .unwrap()
+        ),
+        vec!["c1", "c2", "u2"]
+    );
+    assert_eq!(
+        citers(
+            db.list_basis_pending_in_scope(&ReadScope::Space("sp".into()))
+                .await
+                .unwrap()
+        ),
+        vec!["c1"]
+    );
+    assert_eq!(
+        citers(
+            db.list_basis_pending_in_scope(&ReadScope::Uncategorized)
+                .await
+                .unwrap()
+        ),
+        vec!["u2"]
+    );
+}
+
+/// Resolved wikilinks live in the `edges` table, not `page_links`.
+#[tokio::test]
+async fn linked_changed_lists_linked_notes_edited_after_the_note_itself() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "text", "sp").await;
+    page(&db, "b", "Beta", "See [[Alpha]].", "sp").await;
+    db.replace_page_links(
+        "b",
+        &[crate::synthesis::wikilinks::Wikilink {
+            label: "Alpha".into(),
+            target_page_id: Some("a".into()),
+        }],
+    )
+    .await
+    .unwrap();
+    let stamp = |id: &'static str, at: &'static str| {
+        let db = &db;
+        async move {
+            let conn = db.conn.lock().await;
+            conn.execute(
+                "UPDATE pages SET last_modified = ?2 WHERE id = ?1",
+                libsql::params![id, at],
+            )
+            .await
+            .unwrap();
+        }
+    };
+
+    // The linked note is older than the one that links to it: nothing to report.
+    stamp("b", "2026-01-03T00:00:00Z").await;
+    stamp("a", "2026-01-02T00:00:00Z").await;
+    assert!(db.linked_changed("b").await.unwrap().is_empty());
+
+    // It changed after: reported with its title and current version.
+    stamp("a", "2026-01-04T00:00:00Z").await;
+    assert_eq!(
+        db.linked_changed("b").await.unwrap(),
+        vec![("a".to_string(), "Alpha".to_string(), 1)]
+    );
+    // Nobody links to "b", and the link is one-way.
+    assert!(db.linked_changed("a").await.unwrap().is_empty());
+
+    // An archived or entity target is not a note to go and read.
+    set_status(&db, "a", "archived").await;
+    assert!(db.linked_changed("b").await.unwrap().is_empty());
+    set_status(&db, "a", "active").await;
+    set_kind(&db, "a", "entity").await;
+    assert!(db.linked_changed("b").await.unwrap().is_empty());
 }

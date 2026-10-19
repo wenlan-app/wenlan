@@ -103,8 +103,8 @@ pub(crate) use memory_point_reads::PendingMemoryRevisionPayload;
 pub use okf_concepts::OkfConceptRecord;
 pub use page_basis::{
     BasisDiff, BasisDiffOutcome, BasisEdit, BasisError, BasisPendingCiter, BasisPendingGroup,
-    BasisUnavailableReason, PageBasisEntry, BASIS_STATE_ARCHIVED, BASIS_STATE_DELETED,
-    BASIS_STATE_OK, BASIS_STATE_PENDING, BASIS_STATE_UNAVAILABLE,
+    BasisUnavailableReason, BasisWrite, BasisWriteOutcome, PageBasisEntry, BASIS_STATE_ARCHIVED,
+    BASIS_STATE_DELETED, BASIS_STATE_OK, BASIS_STATE_PENDING, BASIS_STATE_UNAVAILABLE,
 };
 pub use presence_review::ReviewOutcome;
 pub use truth_exposure::{
@@ -26524,6 +26524,7 @@ impl MemoryDB {
             None
         };
         Ok(SearchResult {
+            basis: Vec::new(),
             id: row
                 .get::<String>(0)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
@@ -31380,6 +31381,7 @@ impl MemoryDB {
             let source_id = format!("obs_{}", id);
 
             results.push(SearchResult {
+                basis: Vec::new(),
                 id,
                 content,
                 source: "knowledge_graph".to_string(),
@@ -31451,6 +31453,7 @@ impl MemoryDB {
             .map(|dt| dt.timestamp())
             .unwrap_or(0);
         SearchResult {
+            basis: Vec::new(),
             id: page.id.clone(),
             content: page.content,
             source: "page".to_string(),
@@ -31925,6 +31928,7 @@ impl MemoryDB {
     /// score; they ride the prelude, never the rerank pool).
     fn search_result_from_summary(node: SummaryNode) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: node.id.clone(),
             content: node.body,
             source: "summary".to_string(),
@@ -33140,6 +33144,11 @@ impl MemoryDB {
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("rebind SOURCE Page proposals: {e}")))?;
+        // Notes that rely on this one, and the notes it relies on, follow the
+        // new id (same transaction), before the old row goes.
+        page_basis::retarget_page_identity(conn, old_page_id, new_page_id)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("rebind SOURCE Page basis: {e}")))?;
         conn.execute(
             "DELETE FROM pages WHERE id = ?1",
             libsql::params![old_page_id],
@@ -52198,7 +52207,7 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            &BasisWrite::default(),
         )
         .await
         .map(|_| ())
@@ -52234,9 +52243,10 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -52253,10 +52263,45 @@ impl MemoryDB {
         expected_version: Option<i64>,
         receipt: Option<OperationReceipt<'_>>,
     ) -> Result<bool, WenlanError> {
+        self.try_update_page_content_with_changelog_at_source_revision_and_basis(
+            id,
+            content,
+            source_memory_ids,
+            link_reason,
+            require_stale,
+            changelog,
+            citations_json,
+            expected_source_revision,
+            expected_version,
+            receipt,
+            &BasisWrite::default(),
+        )
+        .await
+        .map(|landed| landed.is_some())
+    }
+
+    /// The agent-refresh write, also marking the notes the agent relied on in
+    /// the same transaction. `None` means the write did not land.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn try_update_page_content_with_changelog_at_source_revision_and_basis(
+        &self,
+        id: &str,
+        content: &str,
+        source_memory_ids: &[&str],
+        link_reason: &str,
+        require_stale: bool,
+        changelog: &str,
+        citations_json: Option<&str>,
+        expected_source_revision: i64,
+        expected_version: Option<i64>,
+        receipt: Option<OperationReceipt<'_>>,
+        basis: &BasisWrite,
+    ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         // This entry point's guard is the source revision. `expected_version`
         // is `Some` only for an agent refresh that proved it read the current
         // version; the UPDATE then fences on both, and the inner fn refuses
-        // that combination for any other writer.
+        // that combination for any other writer. `None` means the write did
+        // not land.
         self.try_update_page_content(
             id,
             content,
@@ -52273,7 +52318,7 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            basis,
         )
         .await
     }
@@ -52313,9 +52358,10 @@ impl MemoryDB {
             None,
             false,
             true,
-            false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Capability-fn variant: like `try_update_page_content_if_stale` but also
@@ -52361,9 +52407,10 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Version-CAS variant for non-stale Page writes. Returns `false` when the
@@ -52381,6 +52428,37 @@ impl MemoryDB {
         expected_version: i64,
         receipt: Option<OperationReceipt<'_>>,
     ) -> Result<bool, WenlanError> {
+        self.try_update_page_content_with_changelog_at_version_and_basis(
+            id,
+            content,
+            source_memory_ids,
+            link_reason,
+            changelog,
+            citations_json,
+            expected_version,
+            receipt,
+            &BasisWrite::default(),
+        )
+        .await
+        .map(|landed| landed.is_some())
+    }
+
+    /// The human-save write, also carrying a `minor` flag and an optional
+    /// confirm of one basis in the same transaction. `None` means the version
+    /// moved and nothing was written.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn try_update_page_content_with_changelog_at_version_and_basis(
+        &self,
+        id: &str,
+        content: &str,
+        source_memory_ids: &[&str],
+        link_reason: &str,
+        changelog: &str,
+        citations_json: Option<&str>,
+        expected_version: i64,
+        receipt: Option<OperationReceipt<'_>>,
+        basis: &BasisWrite,
+    ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         self.try_update_page_content(
             id,
             content,
@@ -52397,7 +52475,7 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            basis,
         )
         .await
     }
@@ -52446,9 +52524,10 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Page-growth commit variant: the Page body, source/evidence links, fresh
@@ -52490,9 +52569,10 @@ impl MemoryDB {
             Some((source_id, expected_memory_version)),
             true,
             false,
-            false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Apply a staged Page revision and consume its pending card in the same
@@ -52525,9 +52605,10 @@ impl MemoryDB {
             None,
             false,
             false,
-            false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Internal implementation. `require_stale` gates on `stale_reason IS NOT NULL`.
@@ -52556,8 +52637,8 @@ impl MemoryDB {
         page_growth_guard: Option<(&str, i64)>,
         machine_owned_only: bool,
         user_forced: bool,
-        minor: bool,
-    ) -> Result<bool, WenlanError> {
+        basis: &BasisWrite,
+    ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         // A user-forced rebuild releases edit protection in this UPDATE, so it
         // only rides the one shape that fences it: a machine changelog write
         // under a source-revision AND incarnation CAS, with no stale
@@ -52689,7 +52770,7 @@ impl MemoryDB {
             drop(rows);
             if !current {
                 let _ = conn.execute("ROLLBACK", ()).await;
-                return Ok(false);
+                return Ok(None);
             }
         }
 
@@ -53074,7 +53155,7 @@ impl MemoryDB {
             // returning — an empty txn, but the connection must not be left in
             // an open-transaction state.
             let _ = conn.execute("ROLLBACK", ()).await;
-            return Ok(false);
+            return Ok(None);
         }
 
         let embedding_result = match page_embedding_sql.as_deref() {
@@ -53248,13 +53329,25 @@ impl MemoryDB {
 
         // Append the immutable history row for the version this write produced.
         if let Err(e) =
-            Self::append_page_history_with_minor(&conn, id, link_reason, now_ts, minor).await
+            Self::append_page_history_with_minor(&conn, id, link_reason, now_ts, basis.minor).await
         {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!(
                 "update_page_content history: {e}"
             )));
         }
+
+        // The bases this write relied on, and a human's confirm, ride the same
+        // transaction: a mark or confirm never outlives a write that rolled
+        // back, and a confirm can only land if the basis is still at the
+        // version the human looked at.
+        let outcome = match page_basis::apply_basis_write_on_conn(&conn, id, basis).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error.into());
+            }
+        };
 
         // Record the retry receipt in the same transaction as the write it
         // describes. Committed together or not at all — a receipt that
@@ -53309,7 +53402,7 @@ impl MemoryDB {
         if let Err(e) = self.refresh_page_wikilinks(id, content).await {
             log::warn!("[page-links] refresh failed for {id}: {e}");
         }
-        Ok(true)
+        Ok(Some(outcome))
     }
 
     /// Extract wikilinks from `content`, resolve them against current page

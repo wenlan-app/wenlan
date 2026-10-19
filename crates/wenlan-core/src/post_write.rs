@@ -76,6 +76,10 @@ pub struct WriteResult {
     /// logs and will get reworded.
     #[serde(default)]
     pub outcome: WriteOutcome,
+    /// What a `confirm_basis` that rode along with a human save did. Present
+    /// only when the request carried one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub basis_confirm: Option<wenlan_types::BasisConfirmOutcome>,
 }
 
 /// The distinguishable ends of a page write.

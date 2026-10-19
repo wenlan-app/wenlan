@@ -6,7 +6,10 @@ use super::{
     page_update::update_page_impl,
     WriteResult,
 };
-use crate::{db::MemoryDB, error::WenlanError};
+use crate::{
+    db::{BasisWrite, MemoryDB},
+    error::WenlanError,
+};
 use std::path::Path;
 use wenlan_types::requests::{CreateConceptRequest, UpdatePageRequest};
 
@@ -44,6 +47,9 @@ pub enum PageWrite<'a> {
         agent: Option<&'a str>,
         expected_source_revision: i64,
         knowledge_path: Option<&'a Path>,
+        /// The notes this write relied on (R7) and the `minor` flag. Applied
+        /// in the write's own transaction, only if the write lands.
+        basis: BasisWrite,
     },
     /// Explicit user-forced rebuild of a Page body (Re-distill). Like `Update`
     /// under a source-revision fence with no stale requirement, except a
@@ -70,6 +76,9 @@ pub enum PageWrite<'a> {
         req: UpdatePageRequest,
         edited_by: &'a str,
         knowledge_path: Option<&'a Path>,
+        /// `minor`, and a `confirm` (R11) that lands only in this save's
+        /// transaction.
+        basis: BasisWrite,
     },
     ReplaceSource {
         page_id: &'a str,
@@ -157,6 +166,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 false,
                 None,
                 None,
+                &BasisWrite::default(),
             )
             .await
         }
@@ -166,6 +176,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             agent,
             expected_source_revision,
             knowledge_path,
+            basis,
         } => {
             update_page_impl(
                 db,
@@ -181,6 +192,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 false,
                 None,
                 agent,
+                &basis,
             )
             .await
         }
@@ -206,6 +218,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 true,
                 Some(expected_fence),
                 None,
+                &BasisWrite::default(),
             )
             .await
         }
@@ -214,6 +227,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             req,
             edited_by,
             knowledge_path,
+            basis,
         } => {
             update_page_impl(
                 db,
@@ -229,6 +243,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 false,
                 None,
                 None,
+                &basis,
             )
             .await
         }
@@ -410,6 +425,7 @@ pub async fn update_page_preserving_sources(
             req,
             edited_by,
             knowledge_path,
+            basis: BasisWrite::default(),
         },
     )
     .await
@@ -481,6 +497,7 @@ pub(crate) async fn update_page_growth_at_versions(
         false,
         None,
         None,
+        &BasisWrite::default(),
     )
     .await
 }

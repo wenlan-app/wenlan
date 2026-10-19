@@ -77,6 +77,10 @@ pub struct SearchResult {
     pub merged_from: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_delta_summary: Option<String>,
+    /// For a note hit: its bases that are not `ok`. Empty for memories and for
+    /// notes with nothing outstanding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisRef>,
 }
 
 /// A full memory item with all metadata.
