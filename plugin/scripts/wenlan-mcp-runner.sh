@@ -73,4 +73,4 @@ case "${path_bin}" in
 esac
 
 # wenlan-mcp-pin: kept in lockstep by scripts/bump-version.sh
-exec npx -y wenlan-mcp@0.19.1 "$@"
+exec npx -y wenlan-mcp@0.19.2 "$@"

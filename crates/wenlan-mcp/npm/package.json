@@ -1,6 +1,6 @@
 {
   "name": "wenlan-mcp",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "description": "MCP server for Wenlan, a living knowledge base your agents build as they work",
   "keywords": [
     "mcp",
