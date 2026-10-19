@@ -193,6 +193,26 @@ pub(crate) async fn refuse_note_ids_in_sources(
     )))
 }
 
+/// Every note a write names as a basis must be visible to the caller, or it
+/// reads as absent. This runs before the rule checks, so a refusal about a
+/// version or a Space can never confirm that a note the caller cannot see
+/// exists.
+pub(crate) async fn require_basis_visible(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    marks: &[(String, i64)],
+) -> Result<(), ServerError> {
+    if marks.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<String> = marks.iter().map(|(id, _)| id.clone()).collect();
+    let visible = visible_ids(db, &MUTATION_GRANT, scope, &ids).await?;
+    match ids.iter().find(|id| !visible.contains(*id)) {
+        Some(id) => Err(ServerError::NotFound(format!("page {id} not found"))),
+        None => Ok(()),
+    }
+}
+
 /// Both notes of a basis pair must be visible, or the pair reads as absent.
 async fn require_pair_visible(
     db: &MemoryDB,

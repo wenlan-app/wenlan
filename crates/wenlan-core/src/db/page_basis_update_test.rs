@@ -489,6 +489,90 @@ async fn the_automatic_refresh_skips_a_note_with_a_basis_and_a_user_run_clears_t
     assert_eq!(cleared.stale_reason, None);
 }
 
+/// The skip marker belongs to the basis rows: when the last one goes, the
+/// marker goes with it and the note is back in the stale queue.
+#[tokio::test]
+async fn removing_the_last_basis_clears_the_skip_marker_and_requeues_the_note() {
+    let (db, _dir) = pair().await;
+    let llm = provider(BODY);
+    let dyn_llm: Arc<dyn LlmProvider> = llm.clone();
+    refresh_page(
+        &db,
+        &dyn_llm,
+        &PromptRegistry::default(),
+        "b",
+        RefreshReason::SourceChanged,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db.get_page("b")
+            .await
+            .unwrap()
+            .unwrap()
+            .refresh_blocked_reason
+            .as_deref(),
+        Some(REFRESH_BLOCKED_HAS_BASIS)
+    );
+    assert!(
+        db.get_stale_page_after("source_updated", None)
+            .await
+            .unwrap()
+            .is_none(),
+        "precondition: the skipped note is out of the stale queue"
+    );
+
+    assert!(db.unmark_page_basis("b", "a").await.unwrap());
+
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.refresh_blocked_reason, None);
+    let queued = db
+        .get_stale_page_after("source_updated", None)
+        .await
+        .unwrap()
+        .expect("the note is back in the stale queue");
+    assert_eq!(queued.id, "b");
+}
+
+/// Only the has_basis marker is released, and only with the last basis.
+#[tokio::test]
+async fn removing_one_of_two_bases_or_another_reason_keeps_the_marker() {
+    let (db, _dir) = pair().await;
+    page(&db, "c", "Gamma", "Another note.", "authored", &[]).await;
+    db.mark_page_basis("b", "c", 1, "human").await.unwrap();
+    db.set_page_refresh_blocked_reason("b", REFRESH_BLOCKED_HAS_BASIS)
+        .await
+        .unwrap();
+
+    db.unmark_page_basis("b", "a").await.unwrap();
+    assert_eq!(
+        db.get_page("b")
+            .await
+            .unwrap()
+            .unwrap()
+            .refresh_blocked_reason
+            .as_deref(),
+        Some(REFRESH_BLOCKED_HAS_BASIS),
+        "a basis remains"
+    );
+
+    db.set_page_refresh_blocked_reason("b", "citation gate: no verified claims")
+        .await
+        .unwrap();
+    db.unmark_page_basis("b", "c").await.unwrap();
+    assert_eq!(
+        db.get_page("b")
+            .await
+            .unwrap()
+            .unwrap()
+            .refresh_blocked_reason
+            .as_deref(),
+        Some("citation gate: no verified claims"),
+        "a discard reason is not this marker"
+    );
+}
+
 /// A note with no basis is still refreshed automatically: the skip is keyed
 /// on the basis row, nothing else.
 #[tokio::test]
@@ -528,4 +612,89 @@ async fn the_automatic_refresh_still_rebuilds_a_note_without_a_basis() {
             .refresh_blocked_reason,
         None
     );
+}
+
+/// Marks `b` as relying on `a` while it is asked to write, as another request
+/// would between the refresh's early check and its write.
+struct MarkingProvider {
+    db: Arc<MemoryDB>,
+    reply: String,
+}
+
+#[async_trait::async_trait]
+impl LlmProvider for MarkingProvider {
+    async fn generate(&self, _request: LlmRequest) -> Result<String, LlmError> {
+        self.db.mark_page_basis("b", "a", 1, "human").await.unwrap();
+        Ok(self.reply.clone())
+    }
+
+    fn is_available(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "marking"
+    }
+
+    fn backend(&self) -> LlmBackend {
+        LlmBackend::OnDevice
+    }
+
+    fn kind(&self) -> &'static str {
+        "mock"
+    }
+}
+
+/// A basis marked while the automatic refresh is generating is not missed:
+/// the write itself refuses, the body stays, and the skip is recorded.
+#[tokio::test]
+async fn a_basis_marked_during_the_automatic_refresh_blocks_its_write() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    let db = Arc::new(db);
+    memory(&db, "mem_src", SOURCE_TEXT).await;
+    page(&db, "a", "Alpha", A_V1, "authored", &[]).await;
+    page(
+        &db,
+        "b",
+        "Beta",
+        "Old beta body.",
+        "distilled",
+        &["mem_src"],
+    )
+    .await;
+    db.set_page_stale("b", "source_updated").await.unwrap();
+    assert!(
+        !db.page_has_basis("b").await.unwrap(),
+        "precondition: no basis when the refresh starts"
+    );
+    let before = db.get_page("b").await.unwrap().unwrap();
+    let llm: Arc<dyn LlmProvider> = Arc::new(MarkingProvider {
+        db: db.clone(),
+        reply: BODY.to_string(),
+    });
+
+    let outcome = refresh_page(
+        &db,
+        &llm,
+        &PromptRegistry::default(),
+        "b",
+        RefreshReason::SourceChanged,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(db.page_has_basis("b").await.unwrap(), "the mark landed");
+    assert!(
+        !outcome.wrote && !outcome.gated && outcome.revision_card_id.is_none(),
+        "{outcome:?}"
+    );
+    let after = db.get_page("b").await.unwrap().unwrap();
+    assert_eq!(after.content, "Old beta body.");
+    assert_eq!(after.version, before.version, "no version was written");
+    assert_eq!(
+        after.refresh_blocked_reason.as_deref(),
+        Some(REFRESH_BLOCKED_HAS_BASIS)
+    );
+    assert!(cards(&db, "b").await.is_empty());
 }

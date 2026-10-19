@@ -587,6 +587,11 @@ async fn handle_create_page_inner(
         .iter()
         .map(|b| (b.page_id.clone(), b.version))
         .collect();
+    if !marks.is_empty() {
+        let scope =
+            crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+        crate::page_basis_routes::require_basis_visible(&db, &scope, &marks).await?;
+    }
     db.check_basis_candidates(resolved.space_name.as_deref(), &marks)
         .await
         .map_err(crate::page_basis_routes::basis_error)?;
@@ -609,6 +614,7 @@ async fn handle_create_page_inner(
     // Marks go on the note this call created. A create that attached to an
     // existing note wrote nothing of its own, so it marks nothing.
     let mut written_basis = Vec::new();
+    let mut warnings = result.warnings;
     if !attached_existing {
         for (basis_page_id, version) in &marks {
             if let Err(error) = db
@@ -619,6 +625,9 @@ async fn handle_create_page_inner(
                     "[create_page] {} created; basis {basis_page_id} not recorded: {error}",
                     result.id
                 );
+                // The note stays; the agent is told which basis did not land
+                // and can mark it with the basis route.
+                warnings.push(format!("basis {basis_page_id} was not recorded: {error}"));
             }
         }
         written_basis = crate::page_basis_routes::written_basis(&db, &result.id).await?;
@@ -627,7 +636,7 @@ async fn handle_create_page_inner(
         basis: written_basis,
         id: result.id,
         attached_to: result.attached_to,
-        warnings: result.warnings,
+        warnings,
         space: persisted_space.clone(),
         space_source: Some(if attached_existing {
             WriteSpaceSource::Existing
@@ -1586,6 +1595,19 @@ async fn handle_refresh_page_inner(
     // A note id in the source list is a mistake the agent can fix right now:
     // say which field takes notes.
     crate::page_basis_routes::refuse_note_ids_in_sources(&db, &req.source_memory_ids).await?;
+    // This route carries no Space header, so the visibility check is the
+    // truth grant alone; the same-Space rule in core bounds the rest.
+    let basis_marks: Vec<(String, i64)> = req
+        .basis
+        .iter()
+        .map(|b| (b.page_id.clone(), b.version))
+        .collect();
+    crate::page_basis_routes::require_basis_visible(
+        &db,
+        &wenlan_core::read_scope::ReadScope::Global,
+        &basis_marks,
+    )
+    .await?;
 
     // Read the staleness fence before the fields it protects (same
     // fence-first discipline as the refresh/growth path): a source attached

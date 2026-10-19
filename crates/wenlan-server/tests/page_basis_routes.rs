@@ -639,6 +639,181 @@ async fn creating_a_note_with_basis_marks_it_and_refuses_a_bad_basis_before_crea
     );
 }
 
+/// Make `page_id` hidden from an automatic reader, the way a failed support
+/// judgement does after the truth cutover.
+async fn hide_from_automatic_readers(tmp: &tempfile::TempDir, db: &Arc<MemoryDB>, page_id: &str) {
+    let page = db.get_page(page_id).await.unwrap().unwrap();
+    let fixture = libsql::Builder::new_local(tmp.path().join("origin_memory.db"))
+        .build()
+        .await
+        .unwrap();
+    let conn = fixture.connect().unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO page_truth_state
+            (page_id,page_version,support_status,human_reviewed,updated_at,evaluated_at)
+         VALUES (?1,?2,'provisional',0,1,1)",
+        libsql::params![page_id, page.version],
+    )
+    .await
+    .unwrap();
+    conn.execute(
+        "INSERT OR REPLACE INTO claim_derivation_markers
+            (page_id,page_version,page_version_digest,extractor_version,inventory_count,created_at)
+         VALUES (?1,?2,?3,?4,1,0)",
+        libsql::params![
+            page_id,
+            page.version,
+            wenlan_core::provenance::revision_content_digest(&page.content),
+            wenlan_core::db::EXTRACTOR_VERSION
+        ],
+    )
+    .await
+    .unwrap();
+    db.set_app_metadata("claim_promoter_enforcement", "1")
+        .await
+        .unwrap();
+    db.set_truth_cutover_generation(1).await.unwrap();
+    let seen = db
+        .page_visibility(
+            &wenlan_core::truth_contract::TruthGrant::Automatic,
+            std::slice::from_ref(&page_id.to_string()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        seen.get(page_id),
+        Some(&wenlan_core::truth_contract::Visibility::Hidden),
+        "the fixture must be genuinely hidden"
+    );
+}
+
+#[tokio::test]
+async fn the_comparison_with_an_archived_basis_is_409_archived() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let basis = note(&db, "Launch Plan", "The launch is on 2026-03-01.", None).await;
+    let citer = note(&db, "Roadmap", "Built on the launch plan.", None).await;
+    mark(&router, &citer, &basis, 1).await;
+    person_edits(&router, &basis, "The launch is on 2026-04-01.").await;
+    db.archive_page(&basis).await.unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        &format!("{}/diff", basis_uri(&citer, &basis)),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["reason"], "archived");
+}
+
+#[tokio::test]
+async fn a_basis_the_caller_cannot_see_reads_as_absent_on_create_and_on_agent_update() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, tmp, db) = common::test_app_no_gate().await;
+    let hidden = note(&db, "Secret Plan", "Not for automatic readers.", None).await;
+    let citer = note(&db, "Roadmap", "Original plans.", None).await;
+    db.create_space("other", None, false).await.unwrap();
+    let version = version_of(&read_note(&router, &citer).await);
+
+    // A Space-scoped create cannot see a note outside that Space: absent (404),
+    // not the 422 the same-Space rule would give for a note that exists.
+    let (status, body) = {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/pages")
+                    .header("content-type", "application/json")
+                    .header("x-agent-name", "claude-code")
+                    .header("x-wenlan-space", "other")
+                    .body(Body::from(
+                        json!({
+                            "title": "Derived Plan",
+                            "content": "Derived from a note in no Space.",
+                            "creation_kind": "authored",
+                            "basis": [{ "page_id": hidden, "version": 1 }],
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"], format!("page {hidden} not found"));
+
+    hide_from_automatic_readers(&tmp, &db, &hidden).await;
+
+    // A hidden basis reads as absent whatever version is claimed, so a probe
+    // cannot learn whether the note exists or what version it is at.
+    for claimed in [1, 9] {
+        let (status, body) = call(
+            &router,
+            Method::POST,
+            "/api/pages",
+            Some(json!({
+                "title": "Derived Plan",
+                "content": "Derived from a hidden note.",
+                "creation_kind": "authored",
+                "basis": [{ "page_id": hidden, "version": claimed }],
+            })),
+            Caller::Agent("claude-code"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "create, v{claimed}: {body}");
+        assert_eq!(body["error"], format!("page {hidden} not found"));
+
+        let (status, body) = call(
+            &router,
+            Method::PUT,
+            &format!("/api/pages/{citer}"),
+            Some(json!({
+                "content": "Changed plans.",
+                "source_memory_ids": [],
+                "expected_version": version,
+                "basis": [{ "page_id": hidden, "version": claimed }],
+            })),
+            Caller::Agent("claude-code"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "update, v{claimed}: {body}");
+        assert_eq!(body["error"], format!("page {hidden} not found"));
+    }
+
+    // Nothing was written by either refusal.
+    let read = read_note(&router, &citer).await;
+    assert_eq!(read["page"]["content"], "Original plans.");
+    assert_eq!(version_of(&read), version);
+    let (_, listed) = call(
+        &router,
+        Method::GET,
+        "/api/pages?limit=50",
+        None,
+        Caller::Reader,
+    )
+    .await;
+    assert!(
+        listed["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["title"] != "Derived Plan"),
+        "a refused create left a note behind: {listed}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // R11: a person's save confirms in its own transaction
 // ---------------------------------------------------------------------------

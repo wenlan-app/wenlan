@@ -781,6 +781,49 @@ async fn acceptance_11_moving_the_basis_to_another_space_is_unavailable_and_movi
     assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_PENDING);
 }
 
+/// The title a citer keeps for a deleted basis is the last one it could read.
+/// A note renamed while it sat in another Space does not reveal the new name
+/// once it is deleted.
+#[tokio::test]
+async fn a_rename_in_another_space_does_not_reach_the_title_kept_for_a_deleted_basis() {
+    let (db, _dir) = pair().await;
+    db.set_page_workspace("a", Some("sp2")).await.unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("UPDATE pages SET title = 'Secret plan' WHERE id = 'a'", ())
+            .await
+            .unwrap();
+    }
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
+
+    db.delete_page("a").await.unwrap();
+
+    let deleted = entry(&db, "b", "a").await;
+    assert_eq!(deleted.state, BASIS_STATE_DELETED);
+    assert_eq!(
+        deleted.title, "Alpha",
+        "the title from when the citer could last read the note"
+    );
+}
+
+/// The same holds once the note is back: a rename made while it was away
+/// shows up only after it can be read again.
+#[tokio::test]
+async fn the_kept_title_follows_a_rename_again_once_the_basis_is_back_in_the_citers_space() {
+    let (db, _dir) = pair().await;
+    db.set_page_workspace("a", Some("sp2")).await.unwrap();
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("UPDATE pages SET title = 'Renamed' WHERE id = 'a'", ())
+            .await
+            .unwrap();
+    }
+    db.set_page_workspace("a", Some("sp")).await.unwrap();
+    db.delete_page("a").await.unwrap();
+    assert_eq!(entry(&db, "b", "a").await.title, "Renamed");
+}
+
 #[tokio::test]
 async fn moving_the_citer_or_both_notes_follows_the_same_rule() {
     let (db, _dir) = pair().await;
@@ -1043,6 +1086,17 @@ async fn the_diff_says_unavailable_when_the_confirmed_version_is_no_longer_store
     ));
 }
 
+#[tokio::test]
+async fn the_diff_says_unavailable_when_the_basis_is_archived() {
+    let (db, _dir) = pair().await;
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    db.archive_page("a").await.unwrap();
+    assert!(matches!(
+        db.basis_diff("b", "a").await.unwrap(),
+        BasisDiffOutcome::Unavailable(BasisUnavailableReason::Archived)
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // Identity moves
 // ---------------------------------------------------------------------------
@@ -1296,6 +1350,73 @@ async fn r11_a_save_confirms_only_a_basis_still_at_the_version_the_human_looked_
     );
     assert_eq!(held.confirmed_version, 2);
     assert_eq!(held.changed_version, Some(3));
+}
+
+/// A human save carrying a confirm and a retry id: the receipt stores what the
+/// confirm really did, so a replay reports the same outcome and writes nothing.
+async fn save_with_confirm(
+    db: &MemoryDB,
+    content: &str,
+    operation_id: &str,
+    version: i64,
+) -> crate::post_write::WriteResult {
+    crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::UpdatePreservingSources {
+            page_id: "b",
+            req: wenlan_types::requests::UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: None,
+                caller_id: Some("app".to_string()),
+                operation_id: Some(operation_id.to_string()),
+            },
+            edited_by: "manual_edit",
+            knowledge_path: None,
+            basis: BasisWrite {
+                actor: "human".into(),
+                confirm: Some(("a".into(), version)),
+                ..BasisWrite::default()
+            },
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn replaying_a_save_that_confirmed_a_basis_reports_the_same_outcome() {
+    let (db, _dir) = pair().await;
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+
+    let first = save_with_confirm(&db, "Plans, rechecked.", "op-confirmed", 2).await;
+    assert!(first.wrote);
+    assert_eq!(
+        first.basis_confirm,
+        Some(wenlan_types::BasisConfirmOutcome::Confirmed)
+    );
+    let version_after_first = version_of(&db, "b").await;
+
+    let replay = save_with_confirm(&db, "Plans, rechecked.", "op-confirmed", 2).await;
+    assert_eq!(
+        replay.basis_confirm, first.basis_confirm,
+        "the replay carries the first call's confirm outcome"
+    );
+    assert_eq!(
+        version_of(&db, "b").await,
+        version_after_first,
+        "a replay writes nothing"
+    );
+
+    // The basis moves on; the human's confirm of version 2 now misses.
+    edit(&db, "a", "The launch is on 2026-05-01.", false).await;
+    let missed = save_with_confirm(&db, "Plans, again.", "op-moved", 2).await;
+    assert_eq!(
+        missed.basis_confirm,
+        Some(wenlan_types::BasisConfirmOutcome::MovedOn)
+    );
+    let replay = save_with_confirm(&db, "Plans, again.", "op-moved", 2).await;
+    assert_eq!(replay.basis_confirm, missed.basis_confirm);
 }
 
 #[tokio::test]

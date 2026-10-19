@@ -52747,6 +52747,77 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_page_content begin: {e}")))?;
 
+        // The automatic refresh never writes over a note that relies on other
+        // notes. `refresh_page` checks this before generating, but a basis can
+        // be marked while the model runs, so the check is repeated here, in
+        // the write's own transaction. A refused write leaves the body alone
+        // and records the skip like the early check does.
+        if link_reason == "re_distill" {
+            let has_basis = match conn
+                .query(
+                    "SELECT 1 FROM page_basis WHERE page_id = ?1 LIMIT 1",
+                    libsql::params![id],
+                )
+                .await
+            {
+                Ok(mut rows) => match rows.next().await {
+                    Ok(row) => row.is_some(),
+                    Err(e) => {
+                        let _ = conn.execute("ROLLBACK", ()).await;
+                        return Err(WenlanError::VectorDb(format!(
+                            "update_page_content basis row: {e}"
+                        )));
+                    }
+                },
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content basis check: {e}"
+                    )));
+                }
+            };
+            if has_basis {
+                // Fenced like the early marker: a source change that landed
+                // since the compile began already re-armed the retry.
+                let marked = match expected_source_revision {
+                    Some(revision) => {
+                        conn.execute(
+                            "UPDATE pages SET refresh_blocked_reason = ?1 \
+                             WHERE id = ?2 AND status = 'active' \
+                               AND COALESCE(source_revision, 0) = ?3",
+                            libsql::params![
+                                crate::synthesis::distill::REFRESH_BLOCKED_HAS_BASIS,
+                                id,
+                                revision
+                            ],
+                        )
+                        .await
+                    }
+                    None => {
+                        conn.execute(
+                            "UPDATE pages SET refresh_blocked_reason = ?1 \
+                             WHERE id = ?2 AND status = 'active'",
+                            libsql::params![
+                                crate::synthesis::distill::REFRESH_BLOCKED_HAS_BASIS,
+                                id
+                            ],
+                        )
+                        .await
+                    }
+                };
+                if let Err(e) = marked {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content basis marker: {e}"
+                    )));
+                }
+                commit_or_rollback(&conn).await.map_err(|e| {
+                    WenlanError::VectorDb(format!("update_page_content basis commit: {e}"))
+                })?;
+                return Ok(None);
+            }
+        }
+
         if let Some((source_id, expected_memory_version)) = page_growth_guard {
             let mut rows = conn
                 .query(
@@ -53363,6 +53434,29 @@ impl MemoryDB {
         // rolling back is the correct answer — the caller re-reads the
         // receipt and replays what actually landed.
         if let Some(r) = receipt {
+            // The receipt was serialized before the write ran, so it cannot
+            // know what a carried confirm did. Record the real outcome, or a
+            // replay of this save would report one that never happened.
+            let response = match outcome.confirm {
+                Some(confirm) => {
+                    match serde_json::from_str::<serde_json::Value>(r.response)
+                        .ok()
+                        .and_then(|mut stored| {
+                            stored["basis_confirm"] = serde_json::to_value(confirm).ok()?;
+                            serde_json::to_string(&stored).ok()
+                        }) {
+                        Some(patched) => patched,
+                        None => {
+                            let _ = conn.execute("ROLLBACK", ()).await;
+                            return Err(WenlanError::VectorDb(format!(
+                                "receipt for {}/{} is unreadable",
+                                r.caller_id, r.operation_id
+                            )));
+                        }
+                    }
+                }
+                None => r.response.to_string(),
+            };
             if let Err(e) = conn
                 .execute(
                     "INSERT INTO operation_receipts \
@@ -53372,7 +53466,7 @@ impl MemoryDB {
                         r.caller_id,
                         r.operation_id,
                         r.request_digest,
-                        r.response,
+                        response,
                         now_ts
                     ],
                 )

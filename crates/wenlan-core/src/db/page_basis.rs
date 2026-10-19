@@ -359,7 +359,14 @@ async fn evaluate_row(
     if basis.incarnation != row.basis_incarnation {
         return Ok(unchanged(BASIS_STATE_DELETED));
     }
-    let title = basis.title.clone();
+    // The stored title is what the citer shows once the basis is deleted, so
+    // it only follows the basis' name while the citer could read the basis. A
+    // note renamed in another Space must not reveal its new name later.
+    let title = if citer_space.is_none_or(|space| space == basis.space) {
+        basis.title.clone()
+    } else {
+        row.basis_title.clone()
+    };
     if basis.status != "active" {
         return Ok(Evaluated {
             title,
@@ -1019,6 +1026,18 @@ impl MemoryDB {
             .await?;
         if removed > 0 {
             bump_basis_revision(&tx, page_id).await?;
+            // The automatic refresh skipped this note only because it relied
+            // on other notes; with the last one gone, it is refreshable again.
+            tx.execute(
+                "UPDATE pages SET refresh_blocked_reason = NULL \
+                 WHERE id = ?1 AND refresh_blocked_reason = ?2 \
+                   AND NOT EXISTS (SELECT 1 FROM page_basis WHERE page_id = ?1)",
+                libsql::params![
+                    page_id,
+                    crate::synthesis::distill::REFRESH_BLOCKED_HAS_BASIS
+                ],
+            )
+            .await?;
         }
         tx.commit().await?;
         Ok(removed > 0)
@@ -1228,8 +1247,8 @@ impl MemoryDB {
 
     /// What changed in the basis since the citer last confirmed it: both texts
     /// and the versions in between. `Unavailable` when the basis was deleted
-    /// (or its id reused), now sits in another Space, or the version the
-    /// citer relied on is no longer stored.
+    /// (or its id reused), is archived, now sits in another Space, or the
+    /// version the citer relied on is no longer stored.
     pub async fn basis_diff(
         &self,
         page_id: &str,
@@ -1249,6 +1268,9 @@ impl MemoryDB {
         }
         if row.state == BASIS_STATE_DELETED {
             return unavailable(BasisUnavailableReason::Deleted);
+        }
+        if basis.status != "active" {
+            return unavailable(BasisUnavailableReason::Archived);
         }
         let citer = load_facts(&conn, page_id, false)
             .await?
