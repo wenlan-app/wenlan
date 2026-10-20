@@ -751,7 +751,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/tags/{name}` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/ws/updates` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 
-## MCP — all 31 `#[tool(` declarations
+## MCP — all 32 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and

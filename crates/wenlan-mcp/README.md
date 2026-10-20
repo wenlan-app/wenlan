@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 31 tools. The table below calls
+The local stdio surface is locked at exactly 32 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 

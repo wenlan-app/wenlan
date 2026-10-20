@@ -113,9 +113,10 @@ pub enum ToolProfile {
 const QUERY_ONLY_TOOL_NAMES: &[&str] = &["brief", "recall", "get_page_sources"];
 /// Ceiling for the summed length of every visible stdio tool description:
 /// the total measured by `scripts/measure-mcp-surface.py` when the 30-tool
-/// surface was cut, plus ten percent.
+/// surface was cut, plus ten percent (15,078), then raised by the length of
+/// `save_source`'s description when that tool was added.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 15_078;
+const DESCRIPTION_BUDGET_CHARS: usize = 15_440;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 
@@ -3330,7 +3331,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Save a document the user wants to keep from another app or the web (email, Notion or Drive page, Slack thread, article) with a permanent link to the original, so notes citing it link back. Use instead of capture when the content comes from elsewhere and has a link. Pass the text as read, not a summary; never bulk-copy an inbox or channel. It is a snapshot: Wenlan does not fetch or sync the original. Saving the same url replaces the copy and marks notes built on it for refresh.",
+        description = "Save a document from another app or the web (email, Notion or Drive page, Slack thread, article) with a permanent link to the original. Use this instead of capture when the content has a link. Pass the text as read, not a summary; never bulk-copy an inbox or channel. It is a snapshot: Wenlan does not fetch or sync the original; saving the same url replaces it.",
         annotations(
             title = "Save Source",
             read_only_hint = false,
