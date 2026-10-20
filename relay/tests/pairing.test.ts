@@ -132,3 +132,37 @@ test('expired identity and nonfinite route expiry cannot approve', async () => {
   assert.equal(await approvePairing(store, pair.pairingId,
     { ...device, credentialExpiresAt: 1000 }, consent, clock), false);
 });
+
+test('approval access decides the granted scopes: query by default, write only when chosen', async () => {
+  const grantOf = async (access?: 'query' | 'write') => {
+    const { store, pair } = await setup();
+    assert.equal(await approvePairing(store, pair.pairingId, device,
+      access === undefined ? consent : { ...consent, access }, clock), true);
+    return { store, pair, consumed: await consumePairing(store, pair.pairingId, pair.browserSecret, clock) };
+  };
+  for (const access of [undefined, 'query' as const]) {
+    assert.deepEqual((await grantOf(access)).consumed!.grant.scopes, ['wenlan:query']);
+  }
+  const { consumed } = await grantOf('write');
+  assert.deepEqual(consumed!.grant, { subject: device.subject, connectorId: device.id, space: route.space,
+    generation: 3, scopes: ['wenlan:query', 'wenlan:write'] });
+  assert(!('access' in consumed!.grant), 'access is not copied into the OAuth props');
+  // The pairing's own request scope is never widened by approval.
+  const { store, pair } = await setup();
+  await approvePairing(store, pair.pairingId, device, { ...consent, access: 'write' }, clock);
+  assert.deepEqual((store.data.get(`pairing:${pair.pairingId}`) as { scopes: string[] }).scopes, ['wenlan:query']);
+});
+
+test('an approval stored before access existed, or with an unknown value, grants search only', async () => {
+  for (const mutate of [(approval: Record<string, unknown>) => { delete approval.access; },
+    (approval: Record<string, unknown>) => { approval.access = 'admin'; }]) {
+    const { store, pair } = await setup();
+    await approvePairing(store, pair.pairingId, device, { ...consent, access: 'write' }, clock);
+    const key = `pairing:${pair.pairingId}`;
+    const record = store.data.get(key) as { approval: Record<string, unknown> };
+    mutate(record.approval);
+    const consumed = await consumePairing(store, pair.pairingId, pair.browserSecret, clock);
+    assert.deepEqual(consumed!.grant.scopes, ['wenlan:query']);
+    assert(!('access' in consumed!.grant));
+  }
+});

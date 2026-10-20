@@ -252,3 +252,13 @@ test('encodeFrame validates runtime objects and wire bounds', () => {
   });
   assert.throws(() => encodeFrame(tooLarge), /Invalid reverse frame/);
 });
+
+test('request frames may carry x-wenlan-access, response frames may not', () => {
+  const marked = request({ headers: { 'x-wenlan-access': 'write' } });
+  assert.deepEqual(decodeFrame(encodeFrame(marked)), marked);
+  assertInvalid(JSON.stringify(response({ headers: { 'x-wenlan-access': 'write' } })));
+  // Other names stay refused, including near-misses.
+  for (const name of ['x-wenlan-access-extra', 'x-wenlan-space', 'x-wenlan-acces']) {
+    assertInvalid(JSON.stringify(request({ headers: { [name]: 'write' } })));
+  }
+});

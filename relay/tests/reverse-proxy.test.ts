@@ -12,12 +12,12 @@ const grant: QueryGrant = { subject: 'owner', connectorId: 'device', space: 'rev
   scopes: ['wenlan:query'], expiresAt: Date.now() + 60_000 };
 const route: ConnectorRoute = { id: 'device', subject: 'owner', space: 'review', generation: 1,
   enabled: true, expiresAt: Date.now() + 120_000, backendToken: 'b'.repeat(43), reverseConnectionId: 'r'.repeat(43) };
-function rpc(method = 'tools/call', args: object = {}, session?: string) {
+function rpc(method = 'tools/call', args: object = {}, session?: string, name = 'brief', extra: Record<string, string> = {}) {
   const headers = new Headers({ 'content-type': 'application/json', authorization: 'Bearer PRIVATE_OAUTH',
-    cookie: 'PRIVATE_COOKIE', 'x-wenlan-space': 'private' });
+    cookie: 'PRIVATE_COOKIE', 'x-wenlan-space': 'private', ...extra });
   if (session) headers.set('mcp-session-id', session);
   return new Request(`${origin}/mcp`, { method: 'POST', headers, body: JSON.stringify({
-    jsonrpc: '2.0', id: 1, method, params: { name: 'brief', arguments: args },
+    jsonrpc: '2.0', id: 1, method, params: { name, arguments: args },
   }) });
 }
 function setup() {
@@ -63,6 +63,27 @@ test('reverse transport retains query policy and replaces OAuth with the local b
     assert.equal((await forwardQuery(request, grant, s.options)).status, 403);
   }
   assert.equal(s.calls.length, 1);
+});
+
+test('reverse transport carries x-wenlan-access for a write grant only, never from the client', async t => {
+  const s = setup(); t.after(() => s.transport.disconnect());
+  const writeGrant = { ...grant, scopes: ['wenlan:query', 'wenlan:write'] };
+  const spoof = { 'x-wenlan-access': 'write' };
+  const send = async (as: QueryGrant, name: string, extra: Record<string, string> = {}) => {
+    const response = await forwardQuery(rpc('tools/call', {}, undefined, name, extra), as, s.options);
+    await response.text();
+    return response.status;
+  };
+  assert.equal(await send(writeGrant, 'capture'), 200);
+  assert.equal(s.calls.at(-1)!.headers['x-wenlan-access'], 'write');
+  assert.equal(await send(writeGrant, 'capture', { 'x-wenlan-access': 'admin' }), 200);
+  assert.equal(s.calls.at(-1)!.headers['x-wenlan-access'], 'write');
+  assert.equal(await send(grant, 'brief', spoof), 200);
+  assert.equal(s.calls.at(-1)!.headers['x-wenlan-access'], undefined);
+  const before = s.calls.length;
+  assert.equal(await send(grant, 'capture', spoof), 403);
+  assert.equal(s.calls.length, before);
+  assert.equal(s.tunnelCalls, 0);
 });
 
 test('missing channels and ambiguous or invalid route transports never fall back to a tunnel', async t => {

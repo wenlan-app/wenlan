@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ConnectorRoute, QueryGrant } from './proxy.ts';
+import { WRITE_SCOPE, type ConnectorRoute, type QueryGrant } from './proxy.ts';
 import { validSecret as validId, randomSecret, hashSecret as hash, sameHash } from './secrets.ts';
 import { clientIdentity, displayName, type ClientIdentity } from './client-identity.ts';
 
@@ -35,11 +35,16 @@ export interface DeviceIdentity {
   credentialExpiresAt: number;
 }
 
+/** What the user let the app do, chosen on the desktop. Records approved
+ * before this existed have no access and read as 'query'.
+ */
+export type WebAccess = 'query' | 'write';
 interface Approval {
   subject: string;
   connectorId: string;
   space: string;
   generation: number;
+  access?: WebAccess;
 }
 // Identity fields and userCode are optional so records written before they
 // existed still read as unknown clients without a short code.
@@ -234,7 +239,7 @@ export async function browserPairingView(store: PairingStore, pairingId: string,
 /** Called only after trusted identity authentication AND explicit consent. */
 export async function approvePairing(
   store: PairingStore, pairingId: string, device: DeviceIdentity,
-  consent: { clientId: string; resource: string; space: string }, clock = Date.now,
+  consent: { clientId: string; resource: string; space: string; access?: WebAccess }, clock = Date.now,
 ): Promise<boolean> {
   if (!validId(pairingId) || !validId(device.id)) return false;
   return store.transaction(async tx => {
@@ -252,7 +257,7 @@ export async function approvePairing(
       || !Number.isSafeInteger(route.generation) || route.generation < 0) return false;
     await tx.put(pairingKey(pairingId), { ...record, status: 'approved', approval: {
       subject: route.subject, connectorId: route.id, space: route.space,
-      generation: route.generation,
+      generation: route.generation, access: consent.access === 'write' ? 'write' : 'query',
     } } satisfies PairingRecord);
     return true;
   });
@@ -284,9 +289,12 @@ export async function consumePairing(
     if (!live(record, now) || !matchingRoute(route, record.approval, now)) return null;
     await dropCode(tx, record, pairingId);
     await tx.put(pairingKey(pairingId), { ...record, status: 'consumed' } satisfies PairingRecord);
+    // The request scope is always wenlan:query; the user's choice adds write.
+    const { access, ...approval } = record.approval;
     return {
       authorizationId: record.authorizationId, clientId: record.clientId, resource: record.resource,
-      grant: { ...record.approval, scopes: [...record.scopes] }, client: identityOf(record),
+      grant: { ...approval, scopes: access === 'write' ? [...record.scopes, WRITE_SCOPE] : [...record.scopes] },
+      client: identityOf(record),
     };
   });
 }

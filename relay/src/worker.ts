@@ -2,9 +2,9 @@
 import icon from '../../app/icons/128x128.png';
 import { DurableObject } from 'cloudflare:workers';
 import { boundedRequest, deviceCredential, failure, handlePublicRequest, HttpFailure, pairingCSS, pairingJS, type PublicEnv } from './http.ts';
-import { createOAuthProvider, forwardOAuthQuery } from './oauth.ts';
+import { createOAuthProvider, forwardOAuthQuery, LIMIT_HEADER } from './oauth.ts';
 import { connectorKey } from './pairing.ts';
-import type { ConnectorRoute, ReverseQueryRequest } from './proxy.ts';
+import { ACCESS_HEADER, type ConnectorRoute, type ReverseQueryRequest } from './proxy.ts';
 import { hashSecret, validSecret } from './secrets.ts';
 import { maintainAuthority } from './cleanup.ts';
 import { boundedStore } from './bounded-store.ts';
@@ -25,6 +25,10 @@ const RATE_WINDOW_CAP = 4096;
  * limit. Bounds one connected client regardless of its IPs.
  */
 const GRANT_REQUESTS_PER_MINUTE = 120;
+/** Write tool calls (tools/call outside the query set) per write grant per
+ * hour, on top of the per-minute grant limit. Bounds a runaway or misled agent.
+ */
+const GRANT_WRITES_PER_HOUR = 60;
 /** Requests per paired device per minute on the device API. */
 const DEVICE_REQUESTS_PER_MINUTE = 120;
 /** Requests that present a credential skip the per-address window, because
@@ -137,7 +141,7 @@ export class RelayAuthority extends DurableObject<Env> {
     }, {
       fetch: (request, env) => forwardOAuthQuery(request, env.OAUTH_PROVIDER, env.PUBLIC_ORIGIN, loadRoute, this.store,
         undefined, (id, request, deviceId) => this.reverseFetch(deviceId, id, request),
-        { limitGrant: grantId => this.limitGrant(grantId) }),
+        { limitGrant: grantId => this.limitGrant(grantId), limitWrite: grantId => this.limitGrantWrite(grantId) }),
     }, loadRoute, this.store);
   }
 
@@ -198,7 +202,8 @@ export class RelayAuthority extends DurableObject<Env> {
     if (path === '/mcp' && ['GET', 'POST', 'DELETE'].includes(request.method)) {
       const buffered = await boundedRequest(request, 64 * 1024);
       const headers = new Headers();
-      for (const name of ['authorization', 'accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id']) {
+      // x-wenlan-access is set only by forwardQuery from a verified write grant.
+      for (const name of ['authorization', 'accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id', ACCESS_HEADER]) {
         const value = request.headers.get(name);
         if (value !== null) headers.set(name, value);
       }
@@ -298,6 +303,15 @@ export class RelayAuthority extends DurableObject<Env> {
     const grant = await hashSecret(grantId.slice(0, 256));
     return (await this.consume([windowOf(`grant:${grant}:${minute}`, 'grant-minute', GRANT_REQUESTS_PER_MINUTE,
       (minute + 1) * 60_000)], now)).retryAfter;
+  }
+
+  /** Write tool calls of a write grant, after the token is verified. */
+  private async limitGrantWrite(grantId: string): Promise<number> {
+    const now = Date.now();
+    const hour = Math.floor(now / 3_600_000);
+    const grant = await hashSecret(grantId.slice(0, 256));
+    return (await this.consume([windowOf(`grant-write:${grant}:${hour}`, 'grant-write-hour', GRANT_WRITES_PER_HOUR,
+      (hour + 1) * 3_600_000)], now)).retryAfter;
   }
 
   /** Admits only when every window has room, then counts the request in each.
@@ -431,6 +445,9 @@ export class RelayAuthority extends DurableObject<Env> {
           const id = request.headers.get('x-wenlan-device-id') ?? '';
           await this.shard(id).closeReverseDevice(id);
         }
+        // The write limiter names its window here; the client never sees it.
+        const refused = response.headers.get(LIMIT_HEADER);
+        if (refused !== null) { response.headers.delete(LIMIT_HEADER); if (entry) entry.limit = refused.slice(0, 64); }
         response.headers.set('x-content-type-options', 'nosniff');
         response.headers.set('referrer-policy', 'no-referrer');
         return response;

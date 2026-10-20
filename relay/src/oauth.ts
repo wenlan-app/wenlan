@@ -2,7 +2,7 @@
 import { OAuthProvider, OAuthError, authorizationErrorRedirect, getOAuthApi, type AuthRequest, type OAuthHelpers, type OAuthProviderOptions } from '@cloudflare/workers-oauth-provider';
 import { cleanupKV } from './cleanup-kv.ts';
 import { beginPairing, cancelPairingRequest, consumePairing, type PairingStore } from './pairing.ts';
-import { authorizationChallenge, type ConnectorRoute, type QueryGrant, type ProxyOptions } from './proxy.ts';
+import { authorizationChallenge, isWriteGrant, isWriteToolCall, QUERY_SCOPE, readQueryBody, WRITE_SCOPE, type ConnectorRoute, type QueryGrant, type ProxyOptions } from './proxy.ts';
 import { forwardSessionQuery } from './sessions.ts';
 import { authorizationGrantActive, authorizationGrantEnd, claimAuthorizationGrant, replaceClientAuthorization, touchGrant } from './grants.ts';
 import { randomSecret, validSecret } from './secrets.ts';
@@ -13,7 +13,10 @@ export interface OAuthEnv {
 }
 interface StoredAuthorization { request: AuthRequest; expiresAt: number }
 const authorizationKey = (id: string) => `oauth-request:${id}`;
-export const QUERY_SCOPE = 'wenlan:query';
+export { QUERY_SCOPE };
+/** Scopes a grant may carry: the request is always query; write is the user's choice. */
+const grantedScopes = (scope: readonly string[]) => scope.includes(QUERY_SCOPE) && new Set(scope).size === scope.length
+  && scope.every(item => item === QUERY_SCOPE || item === WRITE_SCOPE);
 const IDLE_REFRESH_SECONDS = 30 * 24 * 60 * 60;
 
 function canonicalOrigin(value: string): string {
@@ -72,7 +75,8 @@ export async function finishOAuthPairing(
   await replaceClientAuthorization(store, consumed.grant.subject, consumed.clientId, consumed.authorizationId, consumed.client);
   const result = await oauth.completeAuthorization({
     request: saved.request, userId: consumed.grant.subject,
-    metadata: { scope: QUERY_SCOPE }, scope: [QUERY_SCOPE], props: { ...consumed.grant, authorizationId: consumed.authorizationId },
+    metadata: { scope: consumed.grant.scopes.join(' ') }, scope: [...consumed.grant.scopes],
+    props: { ...consumed.grant, authorizationId: consumed.authorizationId },
   });
   return result.redirectTo;
 }
@@ -93,6 +97,8 @@ export async function cancelOAuthPairing(
 }
 
 const challenge = authorizationChallenge;
+/** Internal: names the window that refused a request so the Worker can log it. Stripped before the response leaves. */
+export const LIMIT_HEADER = 'x-wenlan-limit';
 
 /** Must run behind OAuthProvider. The helper supplies the actual token's scope
  * and expiry, not the authorization-time props (which survive token refresh).
@@ -103,7 +109,7 @@ export async function forwardOAuthQuery(
   store: PairingStore,
   fetcher?: typeof globalThis.fetch,
   fetchReverse?: ProxyOptions['fetchReverse'],
-  limits: { limitGrant?: (grantId: string) => Promise<number> } = {},
+  limits: { limitGrant?: (grantId: string) => Promise<number>; limitWrite?: (grantId: string) => Promise<number> } = {},
 ): Promise<Response> {
   const origin = canonicalOrigin(publicOrigin);
   const bearer = request.headers.get('authorization');
@@ -130,6 +136,17 @@ export async function forwardOAuthQuery(
     if (retryAfter > 0) {
       return Response.json({ error: 'Request limit reached' }, { status: 429,
         headers: { 'cache-control': 'no-store', 'retry-after': String(retryAfter) } });
+    }
+  }
+  // A write grant's tool calls outside the query set also spend a separate
+  // hourly budget. Only the verified token's scope decides; a query grant's
+  // write call is refused by the policy later and costs nothing here.
+  if (limits.limitWrite && isWriteGrant(queryGrant) && request.method === 'POST'
+    && isWriteToolCall(await readQueryBody(request.clone()).catch(() => new Uint8Array()))) {
+    const retryAfter = await limits.limitWrite(token.grantId);
+    if (retryAfter > 0) {
+      return Response.json({ error: 'Request limit reached' }, { status: 429,
+        headers: { 'cache-control': 'no-store', 'retry-after': String(retryAfter), [LIMIT_HEADER]: 'grant-write-hour' } });
     }
   }
   const authorize = async () => {
@@ -171,8 +188,8 @@ export function createOAuthProvider<Env extends OAuthEnv>(
     allowTokenExchangeGrant: false, clientIdMetadataDocumentEnabled: false,
     resourceMetadata: { resource: `${origin}/mcp`, authorization_servers: [origin],
       bearer_methods_supported: ['header'], resource_name: 'Wenlan' },
-    tokenExchangeCallback: async ({ props, userId, requestedScope, grantType, grantId, clientId }) => {
-      if (requestedScope.length !== 1 || requestedScope[0] !== QUERY_SCOPE) {
+    tokenExchangeCallback: async ({ props, userId, scope, requestedScope, grantType, grantId, clientId }) => {
+      if (!grantedScopes(requestedScope) || !grantedScopes(scope)) {
         throw new OAuthError('invalid_scope', { description: 'Wenlan query permission is required' });
       }
       const bound = props as (Partial<QueryGrant> & { authorizationId?: string }) | null;
@@ -188,19 +205,20 @@ export function createOAuthProvider<Env extends OAuthEnv>(
         throw new OAuthError('invalid_grant', { description: 'Wenlan authorization has been revoked' });
       }
       const identity = { grantId, clientId };
-      const grant = { subject: userId, connectorId: bound.connectorId, space: route.space, generation: route.generation };
+      const grant = { subject: userId, connectorId: bound.connectorId, space: route.space, generation: route.generation, scopes: scope };
       // The library revokes the grant on invalid_grant, so only permanent
       // denials may use it; storage failures surface as server errors instead.
       const invalid = () => new OAuthError('invalid_grant', { description: 'Wenlan authorization is no longer valid' });
       if (grantType === 'authorization_code') {
         if (!await claimAuthorizationGrant(store, identity, grant, bound.authorizationId)) throw invalid();
-        return;
+        // The user's choice outlives a client asking for a narrower scope.
+        return { accessTokenScope: [...scope] };
       }
       const end = await authorizationGrantEnd(store, identity, grant);
       const remaining = end === null ? 0 : Math.floor((end - Date.now()) / 1000);
       // The provider refuses idle TTLs under 60 seconds; the grant is spent by then.
       if (remaining < 60) throw invalid();
-      return { refreshTokenIdleTTL: Math.min(IDLE_REFRESH_SECONDS, remaining) };
+      return { refreshTokenIdleTTL: Math.min(IDLE_REFRESH_SECONDS, remaining), accessTokenScope: [...scope] };
     },
     // Avoid the library's default warning logs containing request error details.
     onError: () => {},

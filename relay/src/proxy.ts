@@ -50,7 +50,15 @@ export interface ProxyOptions {
   grantActive?: (route: ConnectorRoute) => Promise<boolean>;
 }
 
+export const QUERY_SCOPE = 'wenlan:query';
+export const WRITE_SCOPE = 'wenlan:write';
+/** Header telling the local MCP side this grant may write. Only forwardQuery
+ * sets it; it is never in REQUEST_HEADERS, so a client cannot supply it.
+ */
+export const ACCESS_HEADER = 'x-wenlan-access';
 const QUERY_TOOLS = new Set(['brief', 'recall', 'get_page_sources']);
+/** Extra tools a write grant may call, beyond QUERY_TOOLS. */
+export const WEB_WRITE_TOOLS = new Set(['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page']);
 const REQUEST_HEADERS = ['accept', 'content-type', 'mcp-session-id', 'mcp-protocol-version', 'last-event-id'];
 const RESPONSE_HEADERS = ['content-type', 'mcp-session-id', 'mcp-protocol-version'];
 const MAX_BODY_BYTES = 64 * 1024;
@@ -93,8 +101,11 @@ function validGrant(grant: QueryGrant | null, now: number): grant is QueryGrant 
     && typeof grant.space === 'string' && !!grant.space.trim()
     && Number.isSafeInteger(grant.generation) && grant.generation >= 0
     && Number.isFinite(grant.expiresAt) && grant.expiresAt > now
-    && Array.isArray(grant.scopes) && grant.scopes.includes('wenlan:query');
+    && Array.isArray(grant.scopes) && grant.scopes.includes(QUERY_SCOPE);
 }
+
+/** A write grant also carries wenlan:write; every grant needs wenlan:query. */
+export const isWriteGrant = (grant: Pick<QueryGrant, 'scopes'>) => grant.scopes.includes(WRITE_SCOPE);
 
 /** 401 that sends an MCP client back through OAuth discovery. */
 export function authorizationChallenge(origin: string): Response {
@@ -350,12 +361,26 @@ function toolUnavailable(id: string | number): Response {
     { status: 200, headers: { 'cache-control': 'no-store' } });
 }
 
-function allowedRpc(bytes: Uint8Array, space: string): boolean {
+/** True for a tools/call of a tool outside the query set: what the separate
+ * per-grant write limit counts. Anything unparseable is not a write call.
+ */
+export function isWriteToolCall(bytes: Uint8Array): boolean {
+  try {
+    const rpc = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes));
+    return !!rpc && !Array.isArray(rpc) && rpc.method === 'tools/call'
+      && typeof rpc.params?.name === 'string' && !QUERY_TOOLS.has(rpc.params.name);
+  } catch {
+    return false;
+  }
+}
+
+function allowedRpc(bytes: Uint8Array, space: string, write = false): boolean {
   try {
     const rpc = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes));
     if (!rpc || Array.isArray(rpc) || rpc.jsonrpc !== '2.0') return false;
     if (['initialize', 'notifications/initialized', 'ping', 'tools/list'].includes(rpc.method)) return true;
-    if (rpc.method !== 'tools/call' || !QUERY_TOOLS.has(rpc.params?.name)) return false;
+    const name = rpc.params?.name;
+    if (rpc.method !== 'tools/call' || !(QUERY_TOOLS.has(name) || (write && WEB_WRITE_TOOLS.has(name)))) return false;
     const args = rpc.params.arguments ?? {};
     if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
     for (const key of ['space', 'domain']) {
@@ -392,7 +417,7 @@ export async function forwardQuery(
     } catch {
       return failure(413, 'Invalid or oversized request body');
     }
-    if (!allowedRpc(body, grant.space)) return failure(403, 'Operation is not authorized');
+    if (!allowedRpc(body, grant.space, isWriteGrant(grant))) return failure(403, 'Operation is not authorized');
   }
 
   // Check revocation after reading the body, not against a pre-upload snapshot.
@@ -432,6 +457,8 @@ export async function forwardQuery(
   }
   // Never forward the client's OAuth bearer, cookies or identity/Space headers.
   headers.set('authorization', `Bearer ${route.backendToken}`);
+  // Set from the verified grant only; a client-supplied value was never copied.
+  if (isWriteGrant(grant)) headers.set(ACCESS_HEADER, 'write');
   const lease = responseLease(request, grant, route, options, authorizedAt);
   let upstream: Response;
   try {

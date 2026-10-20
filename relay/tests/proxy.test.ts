@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { forwardQuery, routeDenial, TOOL_UNAVAILABLE_TEXT, tunnelOrigin, WHOLE_LIBRARY_SPACE, type QueryGrant, type ConnectorRoute } from '../src/proxy.ts';
+import { forwardQuery, isWriteGrant, isWriteToolCall, routeDenial, TOOL_UNAVAILABLE_TEXT, tunnelOrigin, WEB_WRITE_TOOLS, WHOLE_LIBRARY_SPACE, type QueryGrant, type ConnectorRoute } from '../src/proxy.ts';
 
 const publicOrigin = 'https://relay.example';
 const now = 1_000;
@@ -276,4 +276,100 @@ test('authorization-store latency cannot dispatch a credential that expired whil
     authorize: async () => { clock = grant.expiresAt; return true; } });
   assert.equal(response.status, 401);
   assert.equal(state.calls.length, 0);
+});
+
+const writeGrant: QueryGrant = { ...grant, scopes: ['wenlan:query', 'wenlan:write'] };
+const WRITE_TOOLS = ['read_page', 'list_pages', 'capture', 'write_page', 'rename_page', 'forget', 'delete_page'];
+
+test('a write grant is one that also carries wenlan:write, and still needs wenlan:query', async () => {
+  assert.deepEqual([...WEB_WRITE_TOOLS].sort(), [...WRITE_TOOLS].sort());
+  assert.equal(isWriteGrant(grant), false);
+  assert.equal(isWriteGrant(writeGrant), true);
+  // Write alone is not a grant: the query scope is always required.
+  const state = setup();
+  assert.equal((await forwardQuery(request(), { ...grant, scopes: ['wenlan:write'] }, state.options)).status, 401);
+  assert.equal(state.loads, 0);
+});
+
+test('query grants keep exactly the three query tools; write grants add the web write tools', async () => {
+  const statusOf = async (as: QueryGrant, name: string, args: object = {}, selected = route) => {
+    const state = setup(selected);
+    const response = await forwardQuery(request('tools/call', args, name), as, state.options);
+    return { status: response.status, forwarded: state.calls.length };
+  };
+  for (const name of WRITE_TOOLS) {
+    assert.deepEqual(await statusOf(grant, name), { status: 403, forwarded: 0 }, `query grant: ${name}`);
+    assert.deepEqual(await statusOf(writeGrant, name), { status: 200, forwarded: 1 }, `write grant: ${name}`);
+  }
+  for (const name of ['brief', 'recall', 'get_page_sources']) {
+    assert.deepEqual(await statusOf(writeGrant, name), { status: 200, forwarded: 1 }, name);
+  }
+  // Nothing else opens up, including near-miss and admin-looking names.
+  for (const name of ['search', 'update_page', 'delete_all', 'set_agent_trust', 'export', 'Capture', 'capture ', '']) {
+    assert.deepEqual(await statusOf(writeGrant, name), { status: 403, forwarded: 0 }, `write grant: ${name}`);
+  }
+  // The same Space and domain rule applies to every allowed tool.
+  for (const name of [...WRITE_TOOLS, 'recall']) {
+    for (const args of [{ space: 'personal' }, { domain: 'personal' }, { space: null }, { space: 5 }]) {
+      assert.deepEqual(await statusOf(writeGrant, name, args), { status: 403, forwarded: 0 }, `${name} ${JSON.stringify(args)}`);
+    }
+    assert.deepEqual(await statusOf(writeGrant, name, { space: 'shared', domain: 'shared' }), { status: 200, forwarded: 1 });
+  }
+  // A whole-library write grant may name any Space, as a query grant does.
+  const whole = { grant: { ...writeGrant, space: WHOLE_LIBRARY_SPACE }, route: { ...route, space: WHOLE_LIBRARY_SPACE } };
+  for (const name of WRITE_TOOLS) {
+    assert.deepEqual(await statusOf(whole.grant, name, { space: 'work' }, whole.route), { status: 200, forwarded: 1 });
+    assert.deepEqual(await statusOf(whole.grant, name, { space: 5 }, whole.route), { status: 403, forwarded: 0 });
+  }
+  // Protocol methods outside tools/call stay as they were.
+  for (const method of ['resources/read', 'prompts/get', 'tools/call/extra']) {
+    const state = setup();
+    assert.equal((await forwardQuery(request(method, {}, 'capture'), writeGrant, state.options)).status, 403);
+  }
+});
+
+test('write tool calls are told apart from query tools and protocol methods', () => {
+  const bytes = (value: unknown) => new TextEncoder().encode(typeof value === 'string' ? value : JSON.stringify(value));
+  const call = (name: unknown) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: {} } });
+  for (const name of WRITE_TOOLS) assert.equal(isWriteToolCall(bytes(call(name))), true, name);
+  assert.equal(isWriteToolCall(bytes(call('unknown_tool'))), true, 'anything outside the query set counts');
+  for (const name of ['brief', 'recall', 'get_page_sources']) assert.equal(isWriteToolCall(bytes(call(name))), false, name);
+  for (const value of [call(5), call(undefined), { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+    { jsonrpc: '2.0', id: 1, method: 'initialize' }, [call('capture')], null, 'not json', '', '\u0000']) {
+    assert.equal(isWriteToolCall(bytes(value)), false, JSON.stringify(value));
+  }
+});
+
+test('only a write grant gets x-wenlan-access, and a client can never supply it', async () => {
+  const spoofed = (name = 'brief', value = 'write') => {
+    const req = request('tools/call', {}, name);
+    req.headers.set('x-wenlan-access', value);
+    return req;
+  };
+  // Write grant: the relay sets it from the verified grant.
+  const written = setup();
+  assert.equal((await forwardQuery(request('tools/call', {}, 'capture'), writeGrant, written.options)).status, 200);
+  assert.equal(new Headers(written.calls[0].init.headers).get('x-wenlan-access'), 'write');
+  // A write grant cannot be talked into another value either.
+  const overridden = setup();
+  await forwardQuery(spoofed('capture', 'admin'), writeGrant, overridden.options);
+  assert.equal(new Headers(overridden.calls[0].init.headers).get('x-wenlan-access'), 'write');
+  // Query grant: not set, and a client-supplied value is not forwarded.
+  for (const value of ['write', 'WRITE', 'query', '']) {
+    const state = setup();
+    assert.equal((await forwardQuery(spoofed('brief', value), grant, state.options)).status, 200);
+    assert.equal(state.calls.length, 1);
+    assert.equal(new Headers(state.calls[0].init.headers).has('x-wenlan-access'), false, `spoofed "${value}"`);
+  }
+  // GET and DELETE for a query grant carry none either.
+  for (const method of ['GET', 'DELETE']) {
+    const state = setup();
+    await forwardQuery(new Request(`${publicOrigin}/mcp`, { method, headers: { 'x-wenlan-access': 'write' } }), grant, state.options);
+    assert.equal(state.calls.length, 1);
+    assert.equal(new Headers(state.calls[0].init.headers).has('x-wenlan-access'), false, method);
+  }
+  // A spoof plus a write call on a query grant is refused before anything is forwarded.
+  const refused = setup();
+  assert.equal((await forwardQuery(spoofed('capture'), grant, refused.options)).status, 403);
+  assert.equal(refused.calls.length, 0);
 });

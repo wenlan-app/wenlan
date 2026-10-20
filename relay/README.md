@@ -383,6 +383,33 @@ the same strict `WENLAN_SPACE` pin. A whole-library grant stores the Space value
 refuses `*` as a Space name, so one Space can never claim it. The client OAuth
 token is never forwarded.
 
+### Per-app write access
+
+The user chooses per app, in the desktop approval dialog, between search only
+and search and write. The desktop sends it as the optional `access`
+(`"query"` or `"write"`) on `POST /pairings/:id/approve`. A missing value means
+`"query"` so older desktop builds keep working; any other value is a 400 and
+leaves the pairing pending. The OAuth request still has to be exactly
+`wenlan:query` (clients do not change). The issued token scope carries the
+choice: `wenlan:query`, or `wenlan:query wenlan:write` for a write grant, and a
+refresh keeps it even when the client asks for `wenlan:query` alone. Protected
+resource metadata keeps advertising only `wenlan:query`: the library publishes
+that list as the scopes clients request first, and requesting `wenlan:write`
+would be refused at `/authorize`.
+
+Every grant needs `wenlan:query`; it is a write grant only when its scopes also
+include `wenlan:write`. Grant receipts and the device grants list carry
+`access` (`"query"` or `"write"`; receipts written before it read as `"query"`).
+Query grants keep exactly `brief`, `recall` and `get_page_sources`. Write
+grants also allow `read_page`, `list_pages`, `capture`, `write_page`,
+`rename_page`, `forget` and `delete_page`, under the same `space`/`domain`
+argument rule. For a write grant only, the relay sets `x-wenlan-access: write`
+on the request it forwards, over both the tunnel and the reverse channel (the
+reverse wire protocol allows that one extra request header). The header is not
+in the forwarded-header allowlist, so a client-supplied value is never passed
+on. Write tool
+calls have their own hourly limit (see Limits and request logs).
+
 `verifyConnector` in `src/connector-check.ts` verifies the authenticated local
 `/connector-info` contract before a future enrollment handler stores a route.
 It rejects an anonymous success, a different Space, standard mode, redirects,
@@ -607,6 +634,7 @@ address:
 | Every request | 600 per minute in total |
 | Anonymous (no credential) | 120 per minute per address |
 | `/mcp` with a bearer token | 120 per minute per OAuth grant, after the token is verified |
+| `/mcp` `tools/call` of a tool outside the query set, on a write grant | 60 per hour per OAuth grant (`grant-write-hour`), in addition to the per-minute limit; search-only grants never reach it |
 | Device API with a device credential | 120 per minute per device |
 | Credentials the relay rejects | 60 per minute per address; each credentialed request counts until it is verified and is then refunded, so concurrent guesses stay bounded |
 | `/devices`, `/devices/reverse` (turning Web access on) | 10 per hour per address, 100 per day in total |
@@ -623,7 +651,8 @@ Each request to the central authority writes one JSON line,
 (the window that refused it), `app` (allowlisted AI app name or `other`, on
 `/authorize` and `/oauth/register`), `device` (12 hex characters of the device
 identifier's hash) and `error` (the error type of a 503). A 429 without `limit`
-came from the per-grant or pairing-lookup limit. Lines never contain addresses,
+came from the per-minute grant or pairing-lookup limit; the write-call limit
+logs `limit: "grant-write-hour"`. Lines never contain addresses,
 tokens, Space names or bodies; `tests/limits-logs-runtime.test.mjs` checks this.
 
 Workers Logs keep these lines; invocation logs stay off so Cloudflare does not
