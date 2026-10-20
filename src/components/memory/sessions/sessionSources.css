@@ -60,7 +60,9 @@
 .session-card-subheading { margin: 0 0 2px; color: var(--mem-text-secondary); font: 400 12px/1.4 var(--mem-font-body); }
 .session-card-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .session-card-row {
-  display: block;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   width: 100%;
   padding: 6px 8px;
   margin-inline: -8px;
@@ -74,6 +76,8 @@
   overflow-wrap: anywhere;
 }
 .session-card-row:hover { background: var(--mem-hover); }
+.session-card-row-icon { display: inline-flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-text-tertiary); }
+.session-card-row-title { min-width: 0; }
 .session-card-resume { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 20px; }
 .session-card-resume-button,
 .session-card-close {

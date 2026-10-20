@@ -10,6 +10,7 @@ import {
   sessionToolLabel,
   shortCommit,
 } from "../../../lib/sessionSource";
+import { ReferenceTypeIcon } from "../links/ReferenceTypeIcon";
 import { SessionResumeAction } from "./SessionResumeAction";
 import "./sessionSources.css";
 
@@ -85,9 +86,11 @@ function PlaceLine({ session }: { session: AgentSession }) {
 
 function CappedList({
   label,
+  kind,
   items,
 }: {
   label: string;
+  kind: "memory" | "page";
   items: ReadonlyArray<{ key: string; title: string; onOpen: () => void }>;
 }) {
   const { t } = useTranslation();
@@ -100,7 +103,8 @@ function CappedList({
         {shown.map((item) => (
           <li key={item.key}>
             <button type="button" className="session-card-row" onClick={item.onOpen}>
-              {item.title}
+              <span className="session-card-row-icon"><ReferenceTypeIcon kind={kind} size={14} /></span>
+              <span className="session-card-row-title">{item.title}</span>
             </button>
           </li>
         ))}
@@ -174,12 +178,14 @@ function CardBody({
           {memoryItems.length > 0 && (
             <CappedList
               label={t("sessionSource.memories", { count: memoryItems.length })}
+              kind="memory"
               items={memoryItems}
             />
           )}
           {pageItems.length > 0 && (
             <CappedList
               label={t("sessionSource.notes", { count: pageItems.length })}
+              kind="page"
               items={pageItems}
             />
           )}
