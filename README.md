@@ -39,10 +39,10 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 ## Why Wenlan
 
-- **Notes that keep up:** When a source changes, notes built on it update. Notes you wrote get a suggested edit instead.
-- **Every claim traceable:** Notes cite their sources. Before saving an AI rewrite, Wenlan checks its citations against the original text.
-- **One knowledge base for every AI tool:** Start in Claude Code, pick up in Codex or Cursor. Claude and ChatGPT on the web can join too (experimental).
-- **Works with your Obsidian vault:** Connect it read-only; Wenlan never writes to it. Wenlan's own notes are Markdown files you can open in Obsidian too.
+- **Notes that keep up:** With Steep on, when a source changes, notes built on it update. Notes you wrote get a suggested edit instead.
+- **Every claim traceable:** Notes cite their sources, so you can open the original. When Wenlan refreshes a note in the background, it checks the citations before replacing the note.
+- **Pick up where you left off, in any AI tool:** Save progress with `/handoff` and resume with `/brief` in Claude Code or Codex; Cursor and other MCP clients use the same wiki. Claude and ChatGPT on the web can search it too (experimental).
+- **Plain files on your computer:** Notes are Markdown files on your disk, and you can export your wiki in an open format. Open them in Obsidian, or connect an existing vault read-only; Wenlan never writes to it.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -68,9 +68,9 @@ Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-dat
 
 Optionally enable Steep with a [local model](docs/steep.md#enable-steep) to organize memories and update knowledge pages in the background.
 
-### 2. Create a page or import existing material
+### 2. Create a note or import existing material
 
-Create a page in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
+Create a note in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
 
 ### 3. Connect an AI tool when you want
 
@@ -82,7 +82,7 @@ Create a page in Wenlan, connect an Obsidian vault, or import earlier AI convers
 
 After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed. Type what you want after it, such as `/wenlan open my note on the release plan`, to reach everything else.
 
-Imported material is ready to use; you do not need to create a page first. Ask your AI:
+Imported material is ready to use; you do not need to create a note first. Ask your AI:
 
 > Use what I’ve saved in Wenlan to help me with this task: …
 

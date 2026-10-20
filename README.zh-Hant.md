@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=835726f3149b47023e52edeb989e23b014f9f62512ecf938a9c22a6044ebde9a -->
+<!-- README_SYNC: source=README.md sha256=a8b5a2d7b965326c17a8671766d1deb6e4bb3a7b672b2de9f8fbbcd90358aaa1 -->
 
 <p align="center">
   <picture>
@@ -41,10 +41,10 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ## 為什麼用文瀾
 
-- **筆記會自己跟上：** 來源變了，根據它寫的筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
-- **每句話都查得到出處：** 筆記附上引用；AI 改寫筆記後，文瀾會先核對引用和原文，才存進去。
-- **所有 AI 工具共用一份知識：** 在 Claude Code 開始，換到 Codex 或 Cursor 接著做；網頁版 Claude 和 ChatGPT 也能用（實驗功能）。
-- **和 Obsidian 一起用：** 以唯讀方式連接你的 vault，文瀾不會寫回去；文瀾自己的筆記也是 Markdown 檔，可以用 Obsidian 打開。
+- **筆記會自己跟上：** 開啟後台沉澱（Steep）後，來源變了，根據它寫的筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
+- **每句話都查得到出處：** 筆記附上引用，可以直接打開原文。文瀾在後台更新筆記時，會先核對引用，才取代原本的筆記。
+- **在任何 AI 工具接著做：** 在 Claude Code 或 Codex 用 `/handoff` 存下進度，下次用 `/brief` 接上；Cursor 等 MCP 工具也讀寫同一個知識庫。網頁版 Claude 和 ChatGPT 也能搜尋（實驗功能）。
+- **資料留在你的電腦：** 筆記是你電腦上的 Markdown 檔，也能用開放格式匯出。可以用 Obsidian 打開，也可以唯讀連接你現有的 Obsidian vault，文瀾不會寫回去。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -70,9 +70,9 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 可選用[本地模型](docs/steep.zh-Hant.md#enable-steep)啟用 Steep（沉澱），在背景整理記憶與更新知識頁。
 
-### 2. 建立頁面或匯入既有資料
+### 2. 建立筆記或匯入既有資料
 
-在 Wenlan 建立一個頁面、連接 Obsidian vault，或匯入之前的 AI 對話與記憶。[匯入教學](docs/import-guide.zh-Hant.md)。
+在 Wenlan 建立一篇筆記、連接 Obsidian vault，或匯入之前的 AI 對話與記憶。[匯入教學](docs/import-guide.zh-Hant.md)。
 
 ### 3. 想使用時再連接 AI 工具
 
@@ -84,7 +84,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 安裝插件後，開啟新的 AI 對話並執行 `/wenlan`（Codex 中為 `$wenlan`）。它會確認 Wenlan 是否正常，需要時自動完成設定。其他功能只要在後面直接說，例如 `/wenlan 打開發布計畫那篇筆記`。
 
-匯入的資料可以直接使用，不必先建立頁面。連接後，就可以問 AI：
+匯入的資料可以直接使用，不必先建立筆記。連接後，就可以問 AI：
 
 > 用我保存在 Wenlan 的內容，幫我完成這個任務：……
 
