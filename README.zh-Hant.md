@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=c2a5a9e80713410f3a8dabda66099e983831e51a0e79d97e6905e15f4ac1697a -->
+<!-- README_SYNC: source=README.md sha256=374de619a892302bc19a3959a337e38573efca92296064ae3a69b7e072d9dc3a -->
 
 <p align="center">
   <picture>
@@ -88,7 +88,9 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 匯入的資料可以直接使用，不必先建立筆記。連接後，就可以問 AI：
 
-> 用我保存在 Wenlan 的內容，幫我完成這個任務：……
+> 我上個月對定價頁做了什麼決定？先查文瀾，再照著寫新的首頁文案。
+
+> 在文瀾找出我關於資料庫遷移的筆記，改程式碼前先列出還沒解決的問題。
 
 <a id="daily-workflow"></a>
 
