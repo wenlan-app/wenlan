@@ -68,7 +68,7 @@ export default defineConfig({
             // Glob, not a regex: a project-level regex testMatch silently
             // matched nothing here, and the run reported "No tests found",
             // which reads a lot like the suite having passed.
-            testMatch: ["**/page-canvas-*.spec.ts", "**/page-slash-editor.spec.ts", "**/page-wikilinks.spec.ts", "**/editor-references.spec.ts", "**/reference-links.spec.ts", "**/info-escape-focus.spec.ts"],
+            testMatch: ["**/page-canvas-*.spec.ts", "**/page-slash-editor.spec.ts", "**/page-wikilinks.spec.ts", "**/editor-references.spec.ts", "**/reference-links.spec.ts", "**/info-escape-focus.spec.ts", "**/page-basis.spec.ts"],
             use: {
               ...devices["Desktop Safari"],
               timezoneId: "America/Los_Angeles",
