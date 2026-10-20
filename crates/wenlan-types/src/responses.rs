@@ -757,6 +757,10 @@ pub struct PageWriteResponse {
     /// shape `read_page` uses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
+    /// Things the agent should know about a write that landed, or was staged,
+    /// differently than asked (for example code bases that were not recorded).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.
@@ -2218,4 +2222,24 @@ pub struct CreateKnowledgeFolderResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MovePageResponse {
     pub storage_path: String,
+}
+
+#[cfg(test)]
+mod page_write_response_warnings_tests {
+    use super::*;
+
+    #[test]
+    fn warnings_are_omitted_when_empty_and_old_bodies_still_parse() {
+        let old: PageWriteResponse = serde_json::from_str(r#"{"ok":true}"#).unwrap();
+        assert!(old.warnings.is_empty());
+        let quiet = serde_json::to_value(&old).unwrap();
+        assert!(quiet.get("warnings").is_none(), "{quiet}");
+
+        let warned = PageWriteResponse {
+            warnings: vec!["code_basis was not recorded".into()],
+            ..old
+        };
+        let value = serde_json::to_value(&warned).unwrap();
+        assert_eq!(value["warnings"][0], "code_basis was not recorded");
+    }
 }

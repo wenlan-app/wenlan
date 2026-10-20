@@ -4363,6 +4363,7 @@ mod update_page_outcome_tests {
             gated: false,
             basis: Vec::new(),
             code_basis: Vec::new(),
+            warnings: Vec::new(),
         }));
 
         assert_eq!(result, Ok(UpdatePageOutcome::Saved));

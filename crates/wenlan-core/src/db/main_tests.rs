@@ -492,7 +492,7 @@ pub async fn test_db() -> (MemoryDB, tempfile::TempDir) {
         lint_freshness,
         page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
         derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-        embedder: None,
+        embedder: Some(shared_embedder()),
         // Token-aware chunker matching production; falls back to char-based
         // when the BGE tokenizer isn't in the resolved cache.
         chunker: build_chunker(std::path::Path::new(".nonexistent")),
@@ -563,7 +563,7 @@ pub async fn test_db_at(ceiling: i64) -> (MemoryDB, tempfile::TempDir) {
         lint_freshness,
         page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
         derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
-        embedder: None,
+        embedder: Some(shared_embedder()),
         chunker: build_chunker(std::path::Path::new(".nonexistent")),
         embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
         community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),

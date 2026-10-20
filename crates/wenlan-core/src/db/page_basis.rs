@@ -850,7 +850,7 @@ pub struct BasisWrite {
     /// the file as it reads now (`crate::code_basis::prepare_code_basis`).
     /// Recorded in this write's transaction, only if the write lands. A span
     /// the note already has is re-anchored and `ok`; others are untouched.
-    pub code_basis: Vec<(wenlan_types::CodeBasisInput, crate::code_anchor::CodeAnchor)>,
+    pub code_basis: Vec<crate::code_basis::PreparedCodeBasis>,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the

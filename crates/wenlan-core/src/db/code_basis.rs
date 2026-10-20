@@ -28,12 +28,12 @@
 use super::{MemoryDB, UNFILED_SPACE_ID};
 use crate::code_anchor::{CodeAnchor, LineSpan};
 use crate::code_basis::{
-    CodeBasisError, CODE_BASIS_STATE_MOVED, CODE_BASIS_STATE_OK, CODE_BASIS_STATE_PENDING,
-    CODE_BASIS_STATE_UNAVAILABLE,
+    CodeBasisError, FileStamp, PreparedCodeBasis, CODE_BASIS_STATE_MOVED, CODE_BASIS_STATE_OK,
+    CODE_BASIS_STATE_PENDING, CODE_BASIS_STATE_UNAVAILABLE,
 };
 use crate::error::WenlanError;
 use std::collections::HashMap;
-use wenlan_types::{CodeBasisInput, CodeBasisLocator, CodeBasisRef};
+use wenlan_types::{CodeBasisLocator, CodeBasisRef};
 
 pub(super) const PAGE_CODE_BASIS_DDL: &str = "
     CREATE TABLE IF NOT EXISTS page_code_basis (
@@ -49,6 +49,8 @@ pub(super) const PAGE_CODE_BASIS_DDL: &str = "
         state TEXT NOT NULL CHECK(state IN ('ok','moved','pending','unavailable')),
         unavailable_reason TEXT,
         changed_at INTEGER,
+        file_len INTEGER,
+        file_mtime_ns INTEGER,
         added_by TEXT NOT NULL,
         added_at INTEGER NOT NULL,
         PRIMARY KEY (page_id, repo_root, path, line_start, line_end)
@@ -66,15 +68,23 @@ pub struct CodeBasisRow {
     /// The anchor exactly as stored. A verdict is applied only while the row
     /// still holds it, so a check that raced a write cannot undo the write.
     pub anchor_json: String,
+    /// The file's length and modification time when the row was last written,
+    /// confirmed or checked. A check that finds both unchanged on an `ok` or
+    /// `moved` row skips reading the file.
+    pub stamp: Option<FileStamp>,
 }
 
 /// What a check of one row decided.
 #[derive(Debug, Clone)]
 pub enum CodeBasisVerdict {
     /// The lines are where they were and read the same.
-    Unchanged,
+    Unchanged { stamp: Option<FileStamp> },
     /// The same content now sits at `span`; `anchor` is its fresh fingerprint.
-    Moved { span: LineSpan, anchor: CodeAnchor },
+    Moved {
+        span: LineSpan,
+        anchor: CodeAnchor,
+        stamp: Option<FileStamp>,
+    },
     /// The content changed, or the lines could not be found.
     Pending,
     /// The file could not be read; the word is the reason.
@@ -116,8 +126,16 @@ fn decode(context: &'static str) -> impl Fn(libsql::Error) -> WenlanError {
 /// The row-with-anchor shape used by checks: `REF_COLUMNS`, then anchor_json,
 /// page id and the note's title.
 const ROW_SELECT: &str = "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
-    b.unavailable_reason, b.changed_at, b.anchor_json, b.page_id, c.title \
+    b.unavailable_reason, b.changed_at, b.anchor_json, b.page_id, c.title, \
+    b.file_len, b.file_mtime_ns \
     FROM page_code_basis b JOIN pages c ON c.id = b.page_id";
+
+fn stamp_from(len: Option<i64>, mtime_ns: Option<i64>) -> Option<FileStamp> {
+    Some(FileStamp {
+        len: len?,
+        mtime_ns: mtime_ns?,
+    })
+}
 
 fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
     let anchor_json: String = row.get(7)?;
@@ -132,6 +150,7 @@ fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
         anchor_json,
         page_id: row.get(8)?,
         title: row.get(9)?,
+        stamp: stamp_from(row.get::<Option<i64>>(10)?, row.get::<Option<i64>>(11)?),
     }))
 }
 
@@ -173,7 +192,7 @@ async fn require_citer(conn: &libsql::Connection, page_id: &str) -> Result<(), C
 pub(super) async fn upsert_code_basis_on_conn(
     conn: &libsql::Connection,
     page_id: &str,
-    entries: &[(CodeBasisInput, CodeAnchor)],
+    entries: &[PreparedCodeBasis],
     by: &str,
     now: i64,
 ) -> Result<(), CodeBasisError> {
@@ -181,19 +200,25 @@ pub(super) async fn upsert_code_basis_on_conn(
         return Ok(());
     }
     require_citer(conn, page_id).await?;
-    for (input, anchor) in entries {
+    for PreparedCodeBasis {
+        input,
+        anchor,
+        stamp,
+    } in entries
+    {
         let anchor_json = serde_json::to_string(anchor)?;
         conn.execute(
             "INSERT INTO page_code_basis \
                (page_id, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
                 confirmed_by, confirmed_at, state, unavailable_reason, changed_at, \
-                added_by, added_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'ok', NULL, NULL, ?8, ?9) \
+                file_len, file_mtime_ns, added_by, added_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'ok', NULL, NULL, ?10, ?11, ?8, ?9) \
              ON CONFLICT(page_id, repo_root, path, line_start, line_end) DO UPDATE SET \
                anchor_json = excluded.anchor_json, \
                confirmed_digest = excluded.confirmed_digest, \
                confirmed_by = excluded.confirmed_by, \
                confirmed_at = excluded.confirmed_at, \
+               file_len = excluded.file_len, file_mtime_ns = excluded.file_mtime_ns, \
                state = 'ok', unavailable_reason = NULL, changed_at = NULL",
             libsql::params![
                 page_id,
@@ -204,7 +229,9 @@ pub(super) async fn upsert_code_basis_on_conn(
                 anchor_json,
                 anchor.digest.as_str(),
                 by,
-                now
+                now,
+                stamp.map(|s| s.len),
+                stamp.map(|s| s.mtime_ns)
             ],
         )
         .await?;
@@ -238,9 +265,11 @@ pub(super) async fn carry_code_basis_into_survivor(
     conn.execute(
         "INSERT OR IGNORE INTO page_code_basis \
            (page_id, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
-            confirmed_by, confirmed_at, state, unavailable_reason, changed_at, added_by, added_at) \
+            confirmed_by, confirmed_at, state, unavailable_reason, changed_at, \
+            file_len, file_mtime_ns, added_by, added_at) \
          SELECT ?2, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
-                confirmed_by, confirmed_at, state, unavailable_reason, changed_at, added_by, added_at \
+                confirmed_by, confirmed_at, state, unavailable_reason, changed_at, \
+                file_len, file_mtime_ns, added_by, added_at \
          FROM page_code_basis WHERE page_id = ?1",
         libsql::params![absorbed_id, survivor_id],
     )
@@ -262,29 +291,38 @@ pub(super) async fn retarget_code_basis(
     delete_code_basis_for_page(conn, old_page_id).await
 }
 
-/// Move `row`'s key to `span`, removing any other row of the same note that
-/// already sits there (same file, same lines: one reliance, not two).
-async fn move_row_key(
+/// Check that `span` is free for `reference`'s row to move to. Another row of
+/// the same note already sitting there is a conflict, never deleted: the
+/// caller says so and the person decides which reliance to keep.
+async fn ensure_span_free(
     conn: &libsql::Connection,
     page_id: &str,
     reference: &CodeBasisRef,
     span: LineSpan,
-) -> Result<(), libsql::Error> {
+) -> Result<(), CodeBasisError> {
     if span.start == reference.line_start && span.end == reference.line_end {
         return Ok(());
     }
-    conn.execute(
-        "DELETE FROM page_code_basis \
-         WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 AND line_start = ?4 AND line_end = ?5",
-        libsql::params![
-            page_id,
-            reference.repo_root.as_str(),
-            reference.path.as_str(),
-            i64::from(span.start),
-            i64::from(span.end)
-        ],
-    )
-    .await?;
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM page_code_basis \
+             WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+               AND line_start = ?4 AND line_end = ?5",
+            libsql::params![
+                page_id,
+                reference.repo_root.as_str(),
+                reference.path.as_str(),
+                i64::from(span.start),
+                i64::from(span.end)
+            ],
+        )
+        .await?;
+    if rows.next().await?.is_some() {
+        return Err(CodeBasisError::Conflict(format!(
+            "{}: another reliance of this note already covers lines {}-{}; remove one of them",
+            reference.path, span.start, span.end
+        )));
+    }
     Ok(())
 }
 
@@ -295,7 +333,7 @@ impl MemoryDB {
     pub async fn upsert_page_code_basis(
         &self,
         page_id: &str,
-        entries: &[(CodeBasisInput, CodeAnchor)],
+        entries: &[PreparedCodeBasis],
         by: &str,
     ) -> Result<(), CodeBasisError> {
         let conn = self.conn.lock().await;
@@ -528,10 +566,15 @@ impl MemoryDB {
         // retried after the others. A move still blocked when nothing else
         // progresses lands on lines the note already relies on (the same
         // reliance stated twice), and that row is dropped.
-        let mut blocked: Vec<(&CodeBasisRow, LineSpan, &CodeAnchor)> = Vec::new();
+        let mut blocked: Vec<(&CodeBasisRow, LineSpan, &CodeAnchor, Option<FileStamp>)> =
+            Vec::new();
         for (row, verdict) in verdicts {
             match verdict {
-                CodeBasisVerdict::Moved { span, anchor } => blocked.push((row, *span, anchor)),
+                CodeBasisVerdict::Moved {
+                    span,
+                    anchor,
+                    stamp,
+                } => blocked.push((row, *span, anchor, *stamp)),
                 other => apply_verdict(&tx, row, other, now)
                     .await
                     .map_err(decode("apply_code_basis_verdicts"))?,
@@ -540,12 +583,12 @@ impl MemoryDB {
         loop {
             let before = blocked.len();
             let mut still = Vec::new();
-            for (row, span, anchor) in blocked {
-                let moved = try_move_row(&tx, row, span, anchor)
+            for (row, span, anchor, stamp) in blocked {
+                let moved = try_move_row(&tx, row, span, anchor, stamp)
                     .await
                     .map_err(decode("apply_code_basis_verdicts"))?;
                 if !moved {
-                    still.push((row, span, anchor));
+                    still.push((row, span, anchor, stamp));
                 }
             }
             blocked = still;
@@ -553,7 +596,7 @@ impl MemoryDB {
                 break;
             }
         }
-        for (row, _, _) in blocked {
+        for (row, _, _, _) in blocked {
             tx.execute(
                 "DELETE FROM page_code_basis \
                  WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
@@ -587,6 +630,7 @@ impl MemoryDB {
         seen_anchor_json: &str,
         span: LineSpan,
         anchor: &CodeAnchor,
+        stamp: Option<FileStamp>,
         by: &str,
         now: i64,
     ) -> Result<CodeBasisRef, CodeBasisError> {
@@ -645,12 +689,13 @@ impl MemoryDB {
                 CodeBasisError::NotFound
             });
         }
-        move_row_key(&tx, page_id, &current, span).await?;
+        ensure_span_free(&tx, page_id, &current, span).await?;
         tx.execute(
             "UPDATE page_code_basis \
              SET line_start = ?6, line_end = ?7, anchor_json = ?8, confirmed_digest = ?9, \
                  confirmed_by = ?10, confirmed_at = ?11, state = 'ok', \
-                 unavailable_reason = NULL, changed_at = NULL \
+                 unavailable_reason = NULL, changed_at = NULL, \
+                 file_len = ?12, file_mtime_ns = ?13 \
              WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                AND line_start = ?4 AND line_end = ?5",
             libsql::params![
@@ -664,7 +709,9 @@ impl MemoryDB {
                 serde_json::to_string(anchor)?,
                 anchor.digest.as_str(),
                 by,
-                now
+                now,
+                stamp.map(|s| s.len),
+                stamp.map(|s| s.mtime_ns)
             ],
         )
         .await?;
@@ -712,6 +759,7 @@ async fn try_move_row(
     row: &CodeBasisRow,
     span: LineSpan,
     anchor: &CodeAnchor,
+    stamp: Option<FileStamp>,
 ) -> Result<bool, libsql::Error> {
     let r = &row.reference;
     let still_there = {
@@ -758,7 +806,7 @@ async fn try_move_row(
     conn.execute(
         "UPDATE page_code_basis \
          SET line_start = ?7, line_end = ?8, anchor_json = ?9, state = ?10, \
-             unavailable_reason = NULL, changed_at = NULL \
+             unavailable_reason = NULL, changed_at = NULL, file_len = ?11, file_mtime_ns = ?12 \
          WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
            AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
         libsql::params![
@@ -771,7 +819,9 @@ async fn try_move_row(
             i64::from(span.start),
             i64::from(span.end),
             serde_json::to_string(anchor).unwrap_or_else(|_| row.anchor_json.clone()),
-            CODE_BASIS_STATE_MOVED
+            CODE_BASIS_STATE_MOVED,
+            stamp.map(|s| s.len),
+            stamp.map(|s| s.mtime_ns)
         ],
     )
     .await?;
@@ -786,25 +836,28 @@ async fn apply_verdict(
     now: i64,
 ) -> Result<(), libsql::Error> {
     let r = &row.reference;
-    let key = libsql::params![
-        row.page_id.as_str(),
-        r.repo_root.as_str(),
-        r.path.as_str(),
-        i64::from(r.line_start),
-        i64::from(r.line_end),
-        row.anchor_json.as_str()
-    ];
     match verdict {
-        CodeBasisVerdict::Unchanged => {
+        CodeBasisVerdict::Unchanged { stamp } => {
             // A `moved` row stays `moved` until confirmed; anything else that
-            // reads the same again is `ok`.
+            // reads the same again is `ok`. The row takes the file's current
+            // stamp, so the next check can skip it.
             conn.execute(
                 "UPDATE page_code_basis \
                  SET state = CASE WHEN state = 'moved' THEN 'moved' ELSE 'ok' END, \
-                     unavailable_reason = NULL, changed_at = NULL \
+                     unavailable_reason = NULL, changed_at = NULL, \
+                     file_len = ?7, file_mtime_ns = ?8 \
                  WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                    AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
-                key,
+                libsql::params![
+                    row.page_id.as_str(),
+                    r.repo_root.as_str(),
+                    r.path.as_str(),
+                    i64::from(r.line_start),
+                    i64::from(r.line_end),
+                    row.anchor_json.as_str(),
+                    stamp.map(|s| s.len),
+                    stamp.map(|s| s.mtime_ns)
+                ],
             )
             .await?;
         }

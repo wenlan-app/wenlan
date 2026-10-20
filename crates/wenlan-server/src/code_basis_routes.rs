@@ -49,7 +49,11 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 /// right now.
 pub(crate) fn code_basis_error(error: CodeBasisError) -> ServerError {
     match error {
-        CodeBasisError::Invalid(message) => ServerError::BadRequest(message),
+        // The stable prefix lets an MCP client tell a bad `code_basis` entry from
+        // any other 400 without the daemon's free text crossing to the agent.
+        CodeBasisError::Invalid(message) => {
+            ServerError::BadRequest(format!("code_basis_invalid: {message}"))
+        }
         CodeBasisError::NotFound => ServerError::NotFound(error.to_string()),
         CodeBasisError::Conflict(message) => ServerError::Conflict(message),
         CodeBasisError::Db(inner) => ServerError::from(inner),

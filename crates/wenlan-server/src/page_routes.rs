@@ -1648,13 +1648,6 @@ async fn handle_refresh_page_inner(
         &basis_marks,
     )
     .await?;
-    // Lines of code the write relies on: read and fingerprinted now, so a bad
-    // path, span or unreadable file refuses the request before anything is
-    // staged or written.
-    let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&req.code_basis)
-        .await
-        .map_err(crate::code_basis_routes::code_basis_error)?;
-
     // Read the staleness fence before the fields it protects (same
     // fence-first discipline as the refresh/growth path): a source attached
     // between this read and the page read below is then either fully
@@ -1719,12 +1712,20 @@ async fn handle_refresh_page_inner(
     // directly. The page prose stays byte-unchanged until the human accepts a
     // card. The core gate re-runs the same rule inside its CAS loop, which
     // still stages a card if the page turns human-owned mid-write.
-    if wenlan_core::post_write::machine_write_requires_review(
+    let requires_review = wenlan_core::post_write::machine_write_requires_review(
         wenlan_core::post_write::Writer::classify("agent_refresh"),
         &existing,
         req.expected_version.is_some(),
         false,
-    ) {
+    );
+    // Lines of code the write relies on: read and fingerprinted only now that
+    // the cheap refusals (404, 409, ownership) are behind us, so those never
+    // touch the disk. A bad path, span or unreadable file still refuses the
+    // request before anything is staged or written.
+    let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&req.code_basis)
+        .await
+        .map_err(crate::code_basis_routes::code_basis_error)?;
+    if requires_review {
         let result = wenlan_core::post_write::stage_page_revision_card_proposed_by(
             &db,
             &existing,
@@ -1745,6 +1746,7 @@ async fn handle_refresh_page_inner(
                 ok: true,
                 revision_card_id: result.revision_card_id,
                 gated: true,
+                warnings: gated_code_basis_warning(&prepared_code_basis),
             },
         ));
     }
@@ -1833,8 +1835,29 @@ async fn handle_refresh_page_inner(
             ok: true,
             revision_card_id: result.revision_card_id,
             gated: result.gated,
+            warnings: if result.gated {
+                gated_code_basis_warning(&prepared_code_basis)
+            } else {
+                Vec::new()
+            },
         },
     ))
+}
+
+/// A refresh staged as a revision card records no code bases: the prose the
+/// lines were read for has not landed yet. Say so when the write carried any,
+/// so the agent re-sends them after the card is accepted.
+fn gated_code_basis_warning(
+    prepared: &[wenlan_core::code_basis::PreparedCodeBasis],
+) -> Vec<String> {
+    if prepared.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        "code_basis was not recorded: this write was staged as a revision card, so the card \
+         must be accepted first and the write re-sent with code_basis"
+            .to_string(),
+    ]
 }
 
 // ===== Revision history endpoints =====
@@ -2987,3 +3010,31 @@ mod entity_page_guard_tests;
 #[cfg(test)]
 #[path = "page_routes/real_folder_page_routes_test.rs"]
 mod real_folder_page_route_tests;
+
+#[cfg(test)]
+mod gated_code_basis_warning_tests {
+    use super::*;
+    use wenlan_core::code_anchor::{anchor, LineSpan};
+    use wenlan_core::code_basis::PreparedCodeBasis;
+
+    #[test]
+    fn a_staged_write_warns_only_when_it_carried_code_basis() {
+        assert!(gated_code_basis_warning(&[]).is_empty());
+        let input = wenlan_types::CodeBasisInput {
+            repo_root: "/repo".into(),
+            path: "a.rs".into(),
+            line_start: 1,
+            line_end: 1,
+        };
+        let prepared = PreparedCodeBasis {
+            anchor: anchor("one\n", LineSpan { start: 1, end: 1 }).unwrap(),
+            input,
+            stamp: None,
+        };
+        let warnings = gated_code_basis_warning(&[prepared]);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("code_basis was not recorded"));
+        assert!(warnings[0].contains("accepted first"));
+        assert!(warnings[0].contains("re-sent with code_basis"));
+    }
+}

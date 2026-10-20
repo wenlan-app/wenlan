@@ -1486,6 +1486,18 @@ fn page_code_basis_error_result(error: WenlanError, action: PageCodeBasisAction)
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
+/// Whether the daemon's 400 to a write that carried `code_basis` was about a
+/// `code_basis` entry. The daemon marks those refusals with the reason
+/// `code_basis_invalid`; any other 400 (a bad source list, content the daemon
+/// does not accept) is not blamed on `code_basis` and is shown as it came.
+fn is_code_basis_refusal(error: &WenlanError, sent_code_basis: bool) -> bool {
+    sent_code_basis
+        && matches!(
+            error,
+            WenlanError::Api { status: 400, reason: Some(reason) } if reason == "code_basis_invalid"
+        )
+}
+
 /// A write the daemon refused because a `code_basis` entry cannot be relied
 /// on. Nothing was written, including the page text.
 fn page_write_code_basis_refused_result() -> CallToolResult {
@@ -1793,9 +1805,17 @@ impl WenlanMcpServer {
                 render_brief_items(&mut output, "Active", &brief.active);
                 render_brief_items(&mut output, "Backlog", &brief.backlog);
                 if let Some(count) = response.code_basis_pending.filter(|count| *count > 0) {
-                    output.push_str(&format!(
-                        "\n{count} notes rely on code that changed; /wenlan map rechecks them\n"
-                    ));
+                    // The recheck already ran inside this read; nothing for the
+                    // agent to run.
+                    let line = if count == 1 {
+                        "1 note relies on code that changed; read_page shows which lines"
+                            .to_string()
+                    } else {
+                        format!(
+                            "{count} notes rely on code that changed; read_page shows which lines"
+                        )
+                    };
+                    output.push_str(&format!("\n{line}\n"));
                 }
                 if let Some(related) = response.related_context.as_ref() {
                     let results_json = if related.results.is_empty() {
@@ -2651,7 +2671,7 @@ impl WenlanMcpServer {
                             }
                             return Ok(page_write_conflict_result(&page_id, current, sent_version));
                         }
-                        Err(WenlanError::Api { status: 400, .. }) if sent_code_basis => {
+                        Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
                             return Ok(page_write_code_basis_refused_result());
                         }
                         Err(e) => return Ok(tool_error(e, "write_page")),
@@ -2684,7 +2704,7 @@ impl WenlanMcpServer {
                 };
                 let resp: CreatePageResponse = match self.client.post("/api/pages", &req).await {
                     Ok(resp) => resp,
-                    Err(WenlanError::Api { status: 400, .. }) if sent_code_basis => {
+                    Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
                         return Ok(page_write_code_basis_refused_result());
                     }
                     Err(e) => return Ok(tool_error(e, "write_page")),
@@ -3052,7 +3072,16 @@ impl WenlanMcpServer {
                 // Only the code bases that need a look (changed, moved, missing).
                 if !entry.code_basis.is_empty() {
                     if let Some(object) = row.as_object_mut() {
-                        object.insert("code_basis_pending".into(), entry.code_basis.len().into());
+                        // Counted the way the Brief counts: a moved row is
+                        // listed below but is not waiting on anyone.
+                        let waiting = entry
+                            .code_basis
+                            .iter()
+                            .filter(|row| matches!(row.state.as_str(), "pending" | "unavailable"))
+                            .count();
+                        if waiting > 0 {
+                            object.insert("code_basis_pending".into(), waiting.into());
+                        }
                         object.insert(
                             "code_basis".into(),
                             serde_json::to_value(&entry.code_basis).unwrap_or_default(),
@@ -3272,6 +3301,9 @@ fn format_update_page_response(
     } else {
         format!("Refreshed page {page_id}")
     };
+    for warning in &resp.warnings {
+        text.push_str(&format!("\nwarning: {warning}"));
+    }
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
     text
@@ -7025,7 +7057,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/pages"))
             .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-                "error": "src/gone.rs: file_missing"
+                "error": "code_basis_invalid: src/gone.rs: file_missing"
             })))
             .mount(&mock)
             .await;
@@ -7039,6 +7071,36 @@ mod tests {
         let text = text_of(&result);
         assert!(text.contains("nothing was written"), "{text}");
         assert!(text.contains("`code_basis`"), "{text}");
+    }
+
+    /// A 400 that is not about a `code_basis` entry is not blamed on one, on
+    /// create or on refresh: the daemon's own refusal is shown.
+    #[tokio::test]
+    async fn write_page_400_unrelated_to_code_basis_is_shown_as_it_came() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        for verb in ["POST", "PUT"] {
+            Mock::given(method(verb))
+                .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "error": "too_short"
+                })))
+                .mount(&mock)
+                .await;
+        }
+        for page_id in [None, Some("page_x")] {
+            let mut params = write_params(page_id);
+            params.code_basis = vec![code_basis_entry()];
+            let result = stdio_server(mock.uri())
+                .write_page_impl(params)
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            let text = text_of(&result);
+            assert!(text.contains("HTTP 400: too_short"), "{text}");
+            assert!(!text.contains("`code_basis`"), "{text}");
+        }
     }
 
     /// Code bases read files on the machine running Wenlan: not for a remote
@@ -7349,10 +7411,12 @@ mod tests {
         let mock = MockServer::start().await;
         let mut waiting = page_wire_json("page_b", 2, false);
         waiting["code_basis"] = serde_json::json!([code_basis_json("pending", 10, 20)]);
+        let mut only_moved = page_wire_json("page_d", 3, false);
+        only_moved["code_basis"] = serde_json::json!([code_basis_json("moved", 11, 21)]);
         Mock::given(method("GET"))
             .and(path("/api/pages"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "pages": [waiting, page_wire_json("page_c", 1, false)]
+                "pages": [waiting, page_wire_json("page_c", 1, false), only_moved]
             })))
             .mount(&mock)
             .await;
@@ -7371,6 +7435,9 @@ mod tests {
         assert_eq!(pages[0]["code_basis"][0]["path"], "src/lib.rs");
         assert!(pages[1].get("code_basis_pending").is_none());
         assert!(pages[1].get("code_basis").is_none());
+        // A moved row is listed but is not counted as waiting, as in the Brief.
+        assert!(pages[2].get("code_basis_pending").is_none(), "{}", pages[2]);
+        assert_eq!(pages[2]["code_basis"][0]["state"], "moved");
     }
 
     /// A recalled note carries its non-ok bases; a memory hit does not grow a
@@ -7472,6 +7539,7 @@ mod tests {
             wenlan_types::responses::PageWriteResponse {
                 basis: Vec::new(),
                 code_basis: Vec::new(),
+                warnings: Vec::new(),
                 ok: true,
                 gated: true,
                 revision_card_id: Some("mem_page_card_1".to_string()),

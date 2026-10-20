@@ -678,3 +678,103 @@ async fn acceptance_9_deleting_a_note_removes_its_code_bases() {
     assert!(status.is_success(), "{status}: {body}");
     assert!(db.list_page_code_basis(&id).await.unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Review fixes: gated refresh, and refusals that never touch the disk
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_refresh_staged_as_a_card_says_the_code_basis_was_not_recorded() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let repo = Repo::new("a.rs", &numbered(40));
+    let page = common::create_page_fixture(
+        &db,
+        "Locked",
+        "Original text.",
+        Some(SPACE),
+        &[],
+        "authored",
+    )
+    .await;
+    assert!(db.set_page_review_required(&page, true).await.unwrap());
+
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        &format!("/api/pages/{page}"),
+        Some(json!({
+            "content": "Replacement text.",
+            "source_memory_ids": [],
+            "expected_version": 1,
+            "code_basis": [repo.span("a.rs", 1, 5)],
+        })),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let written: PageWriteResponse = typed(body);
+    assert!(written.gated);
+    assert!(written.code_basis.is_empty());
+    assert!(
+        written
+            .warnings
+            .iter()
+            .any(|w| w.contains("code_basis was not recorded") && w.contains("accepted first")),
+        "{:?}",
+        written.warnings
+    );
+    assert!(db.list_page_code_basis(&page).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_stale_version_is_refused_with_409_before_any_file_is_read() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let page =
+        common::create_page_fixture(&db, "Moved", "Text.", Some(SPACE), &[], "authored").await;
+
+    // The file does not exist: were it read first this would be a 400.
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        &format!("/api/pages/{page}"),
+        Some(json!({
+            "content": "Replacement text.",
+            "source_memory_ids": [],
+            "expected_version": 99,
+            "code_basis": [{
+                "repo_root": "/nonexistent-repo-root",
+                "path": "gone.rs",
+                "line_start": 1,
+                "line_end": 2,
+            }],
+        })),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    // A bad entry on a write that is allowed to proceed is still a 400.
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        &format!("/api/pages/{page}"),
+        Some(json!({
+            "content": "Replacement text.",
+            "source_memory_ids": [],
+            "expected_version": 1,
+            "code_basis": [{
+                "repo_root": "/nonexistent-repo-root",
+                "path": "gone.rs",
+                "line_start": 1,
+                "line_end": 2,
+            }],
+        })),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}

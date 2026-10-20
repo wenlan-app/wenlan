@@ -371,6 +371,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "embedding_unavailable"
             | "duplicate"
             | "unknown"
+            | "code_basis_invalid"
     );
     safe.then(|| code.to_string())
 }

@@ -586,7 +586,10 @@ fn page_write_digest(
     if !basis.code_basis.is_empty() {
         field(b"code_basis");
         field(&(basis.code_basis.len() as u64).to_le_bytes());
-        for (input, anchor) in &basis.code_basis {
+        // The file stamp is left out: a retry of the same request must hash
+        // the same however the file's mtime has moved since.
+        for prepared in &basis.code_basis {
+            let (input, anchor) = (&prepared.input, &prepared.anchor);
             field(input.repo_root.as_bytes());
             field(input.path.as_bytes());
             field(&input.line_start.to_le_bytes());

@@ -42,6 +42,40 @@ pub const CODE_BASIS_STATE_MOVED: &str = "moved";
 pub const CODE_BASIS_STATE_PENDING: &str = "pending";
 pub const CODE_BASIS_STATE_UNAVAILABLE: &str = "unavailable";
 
+/// What a file looked like to `stat` when it was last read: length and
+/// modification time. A check whose file still shows the same stamp skips
+/// reading and hashing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp {
+    pub len: i64,
+    pub mtime_ns: i64,
+}
+
+impl FileStamp {
+    /// The stamp of `metadata`, or `None` when the platform cannot say when
+    /// the file was last modified (such a row is always read).
+    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+        let modified = metadata.modified().ok()?;
+        let since_epoch = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+        Some(Self {
+            len: i64::try_from(metadata.len()).ok()?,
+            mtime_ns: i64::try_from(since_epoch.as_nanos()).ok()?,
+        })
+    }
+}
+
+/// One code basis ready to be written: what the agent named, the fingerprint
+/// of those lines, and the stamp of the file they were read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedCodeBasis {
+    pub input: CodeBasisInput,
+    pub anchor: CodeAnchor,
+    pub stamp: Option<FileStamp>,
+}
+
+/// A file as read: its text and the stamp taken before it was read.
+pub type CodeFileRead = Result<(String, Option<FileStamp>), CodeFileProblem>;
+
 /// Typed refusals for the code-basis operations. The server maps each kind to
 /// a status: `Invalid` 400, `NotFound` 404, `Conflict` 409.
 #[derive(Debug, thiserror::Error)]
@@ -163,6 +197,20 @@ fn validate_relative_path(path: &str) -> Result<(), CodeBasisError> {
 /// `repo_root`. Symlinks are handled where the file is read
 /// ([`read_code_file`]).
 pub fn resolve_code_path(repo_root: &str, path: &str) -> Result<PathBuf, CodeBasisError> {
+    check_repo_root(repo_root)?;
+    let root = Path::new(repo_root);
+    validate_relative_path(path)?;
+    let normalized: PathBuf = root.join(path).components().collect();
+    if !normalized.starts_with(root) {
+        return Err(CodeBasisError::Invalid(format!(
+            "path {path:?} leads outside repo_root"
+        )));
+    }
+    Ok(normalized)
+}
+
+/// `repo_root` must be absolute and free of `.` and `..` segments.
+fn check_repo_root(repo_root: &str) -> Result<(), CodeBasisError> {
     let root = Path::new(repo_root);
     if repo_root.is_empty() || repo_root.contains('\0') || !root.is_absolute() {
         return Err(CodeBasisError::Invalid(
@@ -179,18 +227,20 @@ pub fn resolve_code_path(repo_root: &str, path: &str) -> Result<PathBuf, CodeBas
             "repo_root must not contain `.` or `..`".into(),
         ));
     }
-    validate_relative_path(path)?;
-    let normalized: PathBuf = root.join(path).components().collect();
-    if !normalized.starts_with(root) {
-        return Err(CodeBasisError::Invalid(format!(
-            "path {path:?} leads outside repo_root"
-        )));
-    }
-    Ok(normalized)
+    Ok(())
 }
 
-/// The blocking half of [`read_code_file`].
-fn read_code_file_blocking(repo_root: &str, path: &str) -> Result<String, CodeFileProblem> {
+/// Find the file `repo_root` + `path` names and `stat` it, without reading it.
+/// Every refusal here is a [`CodeFileProblem`]: a `repo_root` that is not a
+/// usable absolute folder is `repo_missing`; `outside_repo` is for a `path`
+/// that escapes a valid root (directly or through a symlink).
+fn locate_code_file(
+    repo_root: &str,
+    path: &str,
+) -> Result<(PathBuf, std::fs::Metadata), CodeFileProblem> {
+    if check_repo_root(repo_root).is_err() {
+        return Err(CodeFileProblem::RepoMissing);
+    }
     let resolved = resolve_code_path(repo_root, path).map_err(|_| CodeFileProblem::OutsideRepo)?;
     let root = match std::fs::canonicalize(repo_root) {
         Ok(root) if root.is_dir() => root,
@@ -223,16 +273,31 @@ fn read_code_file_blocking(repo_root: &str, path: &str) -> Result<String, CodeFi
     if metadata.len() > MAX_CODE_FILE_BYTES {
         return Err(CodeFileProblem::TooLarge);
     }
+    Ok((file, metadata))
+}
+
+/// The blocking half of [`read_code_file`]. The stamp is taken before the
+/// bytes are read, so a file that changes in between looks changed next time.
+fn read_code_file_blocking(repo_root: &str, path: &str) -> CodeFileRead {
+    let (file, metadata) = locate_code_file(repo_root, path)?;
+    let stamp = FileStamp::of(&metadata);
     let bytes = std::fs::read(&file).map_err(|_| CodeFileProblem::Unreadable)?;
     if bytes.len() as u64 > MAX_CODE_FILE_BYTES {
         return Err(CodeFileProblem::TooLarge);
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), stamp))
 }
 
 /// Read one file of a repository for a code-basis check, off the async
 /// runtime's worker threads.
 pub async fn read_code_file(repo_root: &str, path: &str) -> Result<String, CodeFileProblem> {
+    read_code_file_stamped(repo_root, path)
+        .await
+        .map(|(text, _)| text)
+}
+
+/// [`read_code_file`] that also returns the file's stamp.
+pub async fn read_code_file_stamped(repo_root: &str, path: &str) -> CodeFileRead {
     let (repo_root, path) = (repo_root.to_string(), path.to_string());
     tokio::task::spawn_blocking(move || read_code_file_blocking(&repo_root, &path))
         .await
@@ -241,14 +306,29 @@ pub async fn read_code_file(repo_root: &str, path: &str) -> Result<String, CodeF
 
 /// Read many files at once, one blocking task for the lot. Each distinct
 /// `(repo_root, path)` is read once however many rows point at it.
-async fn read_code_files(
-    keys: Vec<(String, String)>,
-) -> HashMap<(String, String), Result<String, CodeFileProblem>> {
+async fn read_code_files(keys: Vec<(String, String)>) -> HashMap<(String, String), CodeFileRead> {
     tokio::task::spawn_blocking(move || {
         keys.into_iter()
             .map(|key| {
                 let read = read_code_file_blocking(&key.0, &key.1);
                 (key, read)
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// `stat` many files at once (no reading), one blocking task for the lot.
+async fn stat_code_files(
+    keys: Vec<(String, String)>,
+) -> HashMap<(String, String), Option<FileStamp>> {
+    tokio::task::spawn_blocking(move || {
+        keys.into_iter()
+            .filter_map(|key| {
+                let (_, metadata) = locate_code_file(&key.0, &key.1).ok()?;
+                let stamp = FileStamp::of(&metadata);
+                Some((key, stamp))
             })
             .collect()
     })
@@ -263,7 +343,7 @@ async fn read_code_files(
 /// `unavailable` row. Identical entries collapse into one.
 pub async fn prepare_code_basis(
     inputs: &[CodeBasisInput],
-) -> Result<Vec<(CodeBasisInput, CodeAnchor)>, CodeBasisError> {
+) -> Result<Vec<PreparedCodeBasis>, CodeBasisError> {
     if inputs.is_empty() {
         return Ok(Vec::new());
     }
@@ -296,8 +376,8 @@ pub async fn prepare_code_basis(
     let files = read_code_files(keys).await;
     let mut prepared = Vec::with_capacity(unique.len());
     for input in unique {
-        let text = match files.get(&(input.repo_root.clone(), input.path.clone())) {
-            Some(Ok(text)) => text,
+        let (text, stamp) = match files.get(&(input.repo_root.clone(), input.path.clone())) {
+            Some(Ok((text, stamp))) => (text, *stamp),
             Some(Err(problem)) => {
                 return Err(CodeBasisError::Invalid(format!(
                     "cannot read {}: {problem} ({})",
@@ -318,15 +398,28 @@ pub async fn prepare_code_basis(
         };
         let anchor = code_anchor::anchor(text, span)
             .map_err(|error| CodeBasisError::Invalid(format!("{}: {error}", input.path)))?;
-        prepared.push((input, anchor));
+        prepared.push(PreparedCodeBasis {
+            input,
+            anchor,
+            stamp,
+        });
     }
     Ok(prepared)
 }
 
+/// Only a row that is `ok` or `moved` and carries a stamp may skip the read.
+fn can_skip_by_stamp(row: &CodeBasisRow) -> bool {
+    row.stamp.is_some()
+        && matches!(
+            row.reference.state.as_str(),
+            CODE_BASIS_STATE_OK | CODE_BASIS_STATE_MOVED
+        )
+}
+
 /// What a check of one row decided, given the file as it reads now.
-fn verdict_for(row: &CodeBasisRow, file: &Result<String, CodeFileProblem>) -> CodeBasisVerdict {
-    let text = match file {
-        Ok(text) => text,
+fn verdict_for(row: &CodeBasisRow, file: &CodeFileRead) -> CodeBasisVerdict {
+    let (text, stamp) = match file {
+        Ok((text, stamp)) => (text, *stamp),
         Err(problem) => return CodeBasisVerdict::Unavailable(problem.as_str()),
     };
     let hint = LineSpan {
@@ -334,9 +427,13 @@ fn verdict_for(row: &CodeBasisRow, file: &Result<String, CodeFileProblem>) -> Co
         end: row.reference.line_end,
     };
     match code_anchor::relocate(text, Some(hint), &row.anchor) {
-        Relocation::Unchanged { .. } => CodeBasisVerdict::Unchanged,
+        Relocation::Unchanged { .. } => CodeBasisVerdict::Unchanged { stamp },
         Relocation::Moved { span } => match code_anchor::anchor(text, span) {
-            Ok(anchor) => CodeBasisVerdict::Moved { span, anchor },
+            Ok(anchor) => CodeBasisVerdict::Moved {
+                span,
+                anchor,
+                stamp,
+            },
             Err(_) => CodeBasisVerdict::Pending,
         },
         Relocation::Changed { .. } | Relocation::Unresolved => CodeBasisVerdict::Pending,
@@ -363,19 +460,49 @@ pub async fn recheck_code_basis(db: &MemoryDB, space: Option<&str>) -> Result<us
     // row of the note is leaving.
     let mut verdicts: Vec<(&CodeBasisRow, CodeBasisVerdict)> = Vec::with_capacity(rows.len());
     for batch in rows.chunks(RECHECK_BATCH) {
-        let keys: Vec<(String, String)> = batch
+        let key_of =
+            |row: &CodeBasisRow| (row.reference.repo_root.clone(), row.reference.path.clone());
+        // A row that was `ok` or `moved` and whose file still shows the stamp
+        // it was last read with is left alone: no read, no hash.
+        let stat_keys: Vec<(String, String)> = batch
             .iter()
-            .map(|row| (row.reference.repo_root.clone(), row.reference.path.clone()))
+            .filter(|row| can_skip_by_stamp(row))
+            .map(key_of)
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
-        let files = read_code_files(keys).await;
+        let stamps = if stat_keys.is_empty() {
+            HashMap::new()
+        } else {
+            stat_code_files(stat_keys).await
+        };
+        let unchanged_on_disk = |row: &CodeBasisRow| {
+            can_skip_by_stamp(row)
+                && matches!(
+                    (stamps.get(&key_of(row)), row.stamp),
+                    (Some(Some(now)), Some(stored)) if *now == stored
+                )
+        };
+        let keys: Vec<(String, String)> = batch
+            .iter()
+            .filter(|row| !unchanged_on_disk(row))
+            .map(key_of)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let files = if keys.is_empty() {
+            HashMap::new()
+        } else {
+            read_code_files(keys).await
+        };
         let unreadable = Err(CodeFileProblem::Unreadable);
         for row in batch {
-            let key = (row.reference.repo_root.clone(), row.reference.path.clone());
+            if unchanged_on_disk(row) {
+                continue;
+            }
             verdicts.push((
                 row,
-                verdict_for(row, files.get(&key).unwrap_or(&unreadable)),
+                verdict_for(row, files.get(&key_of(row)).unwrap_or(&unreadable)),
             ));
         }
     }
@@ -427,8 +554,8 @@ pub async fn brief_code_basis_pending(
 /// Settle one code basis: "I have accounted for the code as it reads now."
 ///
 /// The file is read again, the lines are found where they are now (a changed
-/// block is found between its unchanged neighbours; failing that, the span the
-/// row already has is taken as meant), the anchor is recomputed from the
+/// block is found between its unchanged neighbours; lines that cannot be found
+/// at all are a conflict), the anchor is recomputed from the
 /// current text, and the row returns to `ok`.
 pub async fn confirm_code_basis(
     db: &MemoryDB,
@@ -440,7 +567,7 @@ pub async fn confirm_code_basis(
         .get_code_basis_row(page_id, locator)
         .await?
         .ok_or(CodeBasisError::NotFound)?;
-    let text = read_code_file(&locator.repo_root, &locator.path)
+    let (text, stamp) = read_code_file_stamped(&locator.repo_root, &locator.path)
         .await
         .map_err(|problem| {
             CodeBasisError::Conflict(format!(
@@ -453,11 +580,19 @@ pub async fn confirm_code_basis(
         start: locator.line_start,
         end: locator.line_end,
     };
+    // The lines are taken where they are found now. When they cannot be found
+    // at all nothing is confirmed: the stored line numbers may by now hold
+    // unrelated text, and re-anchoring them would call that text "reliable".
     let span = match code_anchor::relocate(&text, Some(stored), &row.anchor) {
         Relocation::Unchanged { span }
         | Relocation::Moved { span }
         | Relocation::Changed { span } => span,
-        Relocation::Unresolved => stored,
+        Relocation::Unresolved => {
+            return Err(CodeBasisError::Conflict(format!(
+                "{}: lines cannot be located; rewrite the note or remove this reliance",
+                locator.path
+            )))
+        }
     };
     let anchor = code_anchor::anchor(&text, span).map_err(|error| {
         CodeBasisError::Conflict(format!(
@@ -472,6 +607,7 @@ pub async fn confirm_code_basis(
         &row.anchor_json,
         span,
         &anchor,
+        stamp,
         by,
         chrono::Utc::now().timestamp(),
     )

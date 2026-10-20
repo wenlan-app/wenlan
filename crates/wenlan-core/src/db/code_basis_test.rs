@@ -4,8 +4,8 @@
 //! The numbered tests follow the acceptance list of the code-basis spec
 //! (`2026-10-20-code-basis-spec.md`, 验收) and the PR 2a brief.
 
-use super::tests::{test_db, test_db_at};
-use super::{BasisWrite, MemoryDB};
+use super::{build_chunker, BasisWrite, MemoryDB, FTS_SCHEMA, FTS_TRIGGERS, SCHEMA};
+use crate::cache::EmbeddingCache;
 use crate::code_anchor::{self, LineSpan};
 use crate::code_basis::{
     brief_code_basis_pending, confirm_code_basis, prepare_code_basis, recheck_code_basis,
@@ -13,8 +13,69 @@ use crate::code_basis::{
     CODE_BASIS_STATE_OK, CODE_BASIS_STATE_PENDING, CODE_BASIS_STATE_UNAVAILABLE,
 };
 use crate::read_scope::ReadScope;
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 use wenlan_types::{CodeBasisInput, CodeBasisLocator, CodeBasisRef};
+
+/// A migrated scratch database with no embedder: nothing here embeds text, so
+/// the code-basis tests run without the ONNX model the shared fixture loads.
+/// `ceiling` stops the migration chain at a historical schema state.
+async fn build_db(ceiling: Option<i64>) -> (MemoryDB, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let db_file = dir.path().join("origin_memory.db");
+    let db = libsql::Builder::new_local(db_file.to_str().unwrap())
+        .build()
+        .await
+        .expect("libsql open");
+    let conn = db.connect().expect("libsql connect");
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        .await
+        .unwrap();
+    conn.execute_batch(SCHEMA).await.unwrap();
+    let _ = conn.execute_batch(FTS_SCHEMA).await;
+    let _ = conn.execute_batch(FTS_TRIGGERS).await;
+    let lint_freshness = Arc::new(
+        crate::lint::snapshot::LintFreshnessClock::new(&db).expect("lint freshness observer"),
+    );
+    let memory_db = MemoryDB {
+        _db: db,
+        conn: Arc::new(tokio::sync::Mutex::new(conn)),
+        entity_resolution_lock: tokio::sync::Mutex::new(()),
+        space_write_lock: tokio::sync::Mutex::new(()),
+        lint_freshness,
+        page_projection_tracker: crate::page_projection_tracker::PageProjectionTracker::new(),
+        derived_artifact_state: crate::derived_artifact_state::DerivedArtifactState::new(),
+        embedder: None,
+        chunker: build_chunker(Path::new(".nonexistent")),
+        embedding_cache: std::sync::Mutex::new(EmbeddingCache::new(200)),
+        community_dirty_nodes: std::sync::Mutex::new(BTreeMap::new()),
+        community_grouping_runtime: std::sync::Mutex::new(
+            crate::community_grouping::CommunityGroupingRuntime::default(),
+        ),
+        opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
+        skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+    };
+    match ceiling {
+        Some(ceiling) => memory_db
+            .run_migrations_up_to(&crate::events::NoopEmitter, ceiling)
+            .await
+            .unwrap(),
+        None => memory_db
+            .run_migrations(&crate::events::NoopEmitter)
+            .await
+            .unwrap(),
+    }
+    (memory_db, dir)
+}
+
+async fn test_db() -> (MemoryDB, tempfile::TempDir) {
+    build_db(None).await
+}
+
+async fn test_db_at(ceiling: i64) -> (MemoryDB, tempfile::TempDir) {
+    build_db(Some(ceiling)).await
+}
 
 const T0: &str = "2026-01-01T00:00:00Z";
 const SPACE: &str = "sp";
@@ -566,32 +627,80 @@ async fn confirm_refuses_an_unknown_row_and_an_unreadable_file() {
 }
 
 #[tokio::test]
-async fn confirm_of_lines_that_cannot_be_found_uses_the_span_it_has_or_conflicts() {
+async fn confirm_of_lines_that_cannot_be_found_conflicts_and_changes_nothing() {
     let (db, _dir) = test_db().await;
     page(&db, "n1", "Note", SPACE).await;
     let repo = Repo::new();
     repo.write("a.rs", &numbered(40));
     rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    let before = db
+        .get_code_basis_row("n1", &repo.locator("a.rs", 10, 20))
+        .await
+        .unwrap()
+        .unwrap();
 
-    // The whole file is rewritten: nothing fences the block any more.
+    // The whole file is rewritten: nothing fences the block any more, and the
+    // stored line numbers now hold unrelated text. Confirming must not bless it.
     let rewritten: String = (1..=40).map(|i| format!("fresh {i}\n")).collect();
     repo.write("a.rs", &rewritten);
     recheck_code_basis(&db, None).await.unwrap();
     assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
-    let confirmed = confirm_code_basis(&db, "n1", &repo.locator("a.rs", 10, 20), "agent")
+    let conflict = confirm_code_basis(&db, "n1", &repo.locator("a.rs", 10, 20), "agent").await;
+    match conflict {
+        Err(CodeBasisError::Conflict(message)) => assert!(
+            message.contains("lines cannot be located; rewrite the note or remove this reliance"),
+            "{message}"
+        ),
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+    let after = db
+        .get_code_basis_row("n1", &repo.locator("a.rs", 10, 20))
         .await
+        .unwrap()
         .unwrap();
-    assert_eq!((confirmed.line_start, confirmed.line_end), (10, 20));
+    assert_eq!(after.reference.state, CODE_BASIS_STATE_PENDING);
+    assert_eq!(after.anchor, before.anchor, "the anchor was not replaced");
 
-    // Now the file shrinks below the span: the lines cannot be located at all.
+    // Now the file shrinks below the span: also a conflict.
     repo.write("a.rs", "only\ntwo\n");
     recheck_code_basis(&db, None).await.unwrap();
-    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
     let conflict = confirm_code_basis(&db, "n1", &repo.locator("a.rs", 10, 20), "agent").await;
     assert!(
         matches!(conflict, Err(CodeBasisError::Conflict(_))),
         "{conflict:?}"
     );
+}
+
+#[tokio::test]
+async fn confirm_does_not_delete_another_row_at_the_span_it_moves_to() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(
+        &db,
+        "n1",
+        &[repo.input("a.rs", 10, 20), repo.input("a.rs", 12, 22)],
+    )
+    .await;
+
+    // Two lines go in above. Confirming the first relocates it onto 12-22,
+    // where the second still sits (no check has run to move that one on).
+    repo.write("a.rs", &format!("// x\n// y\n{}", numbered(40)));
+    let conflict = confirm_code_basis(&db, "n1", &repo.locator("a.rs", 10, 20), "agent").await;
+    match conflict {
+        Err(CodeBasisError::Conflict(message)) => {
+            assert!(message.contains("already covers"), "{message}")
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+    let mut spans: Vec<(u32, u32)> = rows(&db, "n1")
+        .await
+        .iter()
+        .map(|r| (r.line_start, r.line_end))
+        .collect();
+    spans.sort_unstable();
+    assert_eq!(spans, vec![(10, 20), (12, 22)], "both reliances survive");
 }
 
 #[tokio::test]
@@ -1022,4 +1131,135 @@ async fn a_source_note_that_changes_id_takes_its_code_bases_along() {
     }
     assert!(rows(&db, "old").await.is_empty());
     assert_eq!(rows(&db, "new").await.len(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Review fixes: path-resolution reasons, and the stat short-circuit
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_invalid_repo_root_reads_repo_missing_and_only_an_escaping_path_reads_outside_repo() {
+    use crate::code_basis::{read_code_file, CodeFileProblem};
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(3));
+    for root in ["relative/root", "", "/tmp/../etc"] {
+        assert_eq!(
+            read_code_file(root, "a.rs").await.unwrap_err(),
+            CodeFileProblem::RepoMissing,
+            "{root:?}"
+        );
+    }
+    assert_eq!(
+        read_code_file(&repo.root(), "../a.rs").await.unwrap_err(),
+        CodeFileProblem::OutsideRepo
+    );
+    assert_eq!(
+        read_code_file(&repo.root(), "nope.rs").await.unwrap_err(),
+        CodeFileProblem::FileMissing
+    );
+    assert!(read_code_file(&repo.root(), "a.rs").await.is_ok());
+}
+
+/// Pin `path`'s modification time to `time`.
+fn set_mtime(repo: &Repo, path: &str, time: std::time::SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(repo.dir.path().join(path))
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
+fn mtime(repo: &Repo, path: &str) -> std::time::SystemTime {
+    std::fs::metadata(repo.dir.path().join(path))
+        .unwrap()
+        .modified()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_check_skips_a_file_whose_length_and_mtime_are_unchanged() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    let stored = db
+        .get_code_basis_row("n1", &repo.locator("a.rs", 10, 20))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.stamp.is_some(), "a write records the file's stamp");
+    let original = mtime(&repo, "a.rs");
+
+    // Same length, same mtime, different text: only a skipped read can leave
+    // the row `ok`.
+    repo.write("a.rs", &numbered(40).replace("line 15\n", "lXne 15\n"));
+    set_mtime(&repo, "a.rs", original);
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_OK);
+
+    // A new mtime reads the file again and sees the edit.
+    set_mtime(&repo, "a.rs", original + std::time::Duration::from_secs(10));
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+
+    // A different length is read too, even with the old mtime.
+    let (db, _dir) = test_db().await;
+    page(&db, "n2", "Note", SPACE).await;
+    rely(&db, "n2", &[repo.input("a.rs", 10, 20)]).await;
+    let stamp = mtime(&repo, "a.rs");
+    repo.write("a.rs", &numbered(40).replace("line 15\n", "line fifteen\n"));
+    set_mtime(&repo, "a.rs", stamp);
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n2").await.state, CODE_BASIS_STATE_PENDING);
+}
+
+#[tokio::test]
+async fn a_recheck_refreshes_the_stamp_so_the_next_one_can_skip() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+
+    // Touched but identical: read once, still `ok`, stamp now the new one.
+    let later = mtime(&repo, "a.rs") + std::time::Duration::from_secs(30);
+    set_mtime(&repo, "a.rs", later);
+    recheck_code_basis(&db, None).await.unwrap();
+    let row = db
+        .get_code_basis_row("n1", &repo.locator("a.rs", 10, 20))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.reference.state, CODE_BASIS_STATE_OK);
+    let expected = {
+        let m = std::fs::metadata(repo.dir.path().join("a.rs")).unwrap();
+        m.modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64
+    };
+    assert_eq!(row.stamp.unwrap().mtime_ns, expected);
+}
+
+#[tokio::test]
+async fn a_pending_row_is_always_read_even_when_the_file_looks_untouched() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    let original = mtime(&repo, "a.rs");
+    repo.write("a.rs", &numbered(40).replace("line 15\n", "lXne 15\n"));
+    set_mtime(&repo, "a.rs", original + std::time::Duration::from_secs(5));
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+
+    // Reverted with the stamp the pending check saw: the row must not be stuck.
+    repo.write("a.rs", &numbered(40));
+    set_mtime(&repo, "a.rs", original + std::time::Duration::from_secs(5));
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_OK);
 }

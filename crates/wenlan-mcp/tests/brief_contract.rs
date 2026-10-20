@@ -123,7 +123,18 @@ async fn topic_appends_separately_labeled_same_space_context() {
 
 #[tokio::test]
 async fn brief_says_how_many_notes_rely_on_code_that_changed() {
-    for (pending, expect_line) in [(Some(3_u32), true), (Some(0), false), (None, false)] {
+    for (pending, expected) in [
+        (
+            Some(3_u32),
+            Some("3 notes rely on code that changed; read_page shows which lines"),
+        ),
+        (
+            Some(1),
+            Some("1 note relies on code that changed; read_page shows which lines"),
+        ),
+        (Some(0), None),
+        (None, None),
+    ] {
         let mock = MockServer::start().await;
         let mut response = ready_response(None);
         response.code_basis_pending = pending;
@@ -140,11 +151,11 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             .await
             .expect("brief read succeeds");
         let text = text_of(&result);
-        assert_eq!(
-            text.contains("3 notes rely on code that changed; /wenlan map rechecks them"),
-            expect_line,
-            "{text}"
-        );
+        match expected {
+            Some(line) => assert!(text.contains(line), "{text}"),
+            None => assert!(!text.contains("rely on code that changed"), "{text}"),
+        }
+        assert!(!text.contains("/wenlan map"), "{text}");
     }
 }
 
