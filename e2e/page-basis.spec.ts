@@ -156,6 +156,39 @@ for (const locale of LOCALES) {
       expect(errors.consoleErrors).toEqual([]);
     });
 
+    test("links a note while typing [[ and uses it as a source in the same step", async ({ page }, testInfo) => {
+      const errors = collectBrowserErrors(page);
+      const controller = await install(page, locale, {});
+      await openNote(page);
+
+      const editor = page.getByRole("textbox", { name: t("pageDetail.editor.label"), exact: true });
+      await expect(editor).toBeEditable();
+      await editor.click();
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type(" [[pri");
+
+      const menu = page.getByRole("listbox", { name: t("linkCompletion.label"), exact: true });
+      await expect(menu).toBeVisible();
+      const option = menu.getByRole("option", { name: BASIS_TITLE, exact: true });
+      await expect(option).toHaveAttribute("aria-selected", "true");
+      const action = option.getByRole("button", { name: t("noteBasis.useAsSource"), exact: true });
+      await expect(action).toBeVisible();
+      await expect(action).toHaveAttribute("title", t("noteBasis.useAsSourceHint"));
+      await page.screenshot({ path: testInfo.outputPath(`link-menu-${locale}.png`) });
+      await action.click();
+
+      await expect(menu).toHaveCount(0);
+      await expect(editor).toBeFocused();
+      await expect(editor.getByRole("link", { name: BASIS_TITLE, exact: true })).toBeVisible();
+      await expect.poll(() => callsOf(controller, "mark_page_basis"))
+        .toEqual([{ pageId: "page-architecture", basisPageId: "page-history" }]);
+      await expect.poll(() => callsOf(controller, "update_page").some((args) =>
+        String((args as { content?: string }).content ?? "").includes(`[[${BASIS_TITLE}]]`))).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`link-picked-${locale}.png`) });
+      expect(errors.pageErrors).toEqual([]);
+      expect(errors.consoleErrors).toEqual([]);
+    });
+
     test("tells the person a source changed, shows the changes and confirms no impact", async ({ page }, testInfo) => {
       const errors = collectBrowserErrors(page);
       const controller = await install(page, locale, {

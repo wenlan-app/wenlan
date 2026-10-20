@@ -31,6 +31,7 @@ import {
   pageReviewSupported,
   parseEntityGuardError,
   markPageBasis,
+  listPages,
   type Entity,
   type BasisConfirmOutcome,
   type BasisRef,
@@ -77,6 +78,7 @@ import {
   type MarkdownEditorStatus,
   type MarkdownEditorSelection,
 } from "./editor/MarkdownEditor";
+import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
@@ -160,6 +162,7 @@ function localShortcutModifier(): "Cmd" | "Ctrl" {
 }
 
 const PAGE_LINK_ANCHOR_PREFIX = "#concept:";
+const LINK_NOTE_LIMIT = 500;
 type MenuInitialFocus = "first" | "last";
 
 type PageEditGate =
@@ -481,11 +484,37 @@ export default function PageDetail({
     }
     return map;
   }, [pageLinks]);
-  const editorWikiLinkTargets = useMemo(() => new Map(
-    [...outboundTargetByLabel]
+  // Notes linked from the `[[` menu render as links before the save comes back.
+  const [pickedLinkTargets, setPickedLinkTargets] = useState<{ pageId: string; targets: ReadonlyMap<string, string> }>({ pageId, targets: new Map() });
+  const editorWikiLinkTargets = useMemo(() => new Map([
+    ...(pickedLinkTargets.pageId === pageId ? pickedLinkTargets.targets : []),
+    ...[...outboundTargetByLabel]
       .filter(([, target]) => target.id !== pageId)
       .map(([label, target]) => [label, target.id] as const),
-  ), [outboundTargetByLabel, pageId]);
+  ]), [outboundTargetByLabel, pageId, pickedLinkTargets]);
+
+  // A `[[Title]]` link resolves only to a note in the same Space, so the
+  // `[[` menu offers just those.
+  const linkSpace = page?.space ?? null;
+  const { data: linkCandidates } = useQuery({
+    queryKey: ["link-notes", linkSpace],
+    queryFn: () => listPages("active", linkSpace ?? undefined, LINK_NOTE_LIMIT),
+    enabled: editing && !!page,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const linkNotes = useMemo((): LinkCompletionNote[] => {
+    if (!page) return [];
+    const taken = new Set((page.basis ?? []).map((entry) => entry.page_id));
+    const canRely = page.creation_kind !== "entity";
+    return (linkCandidates ?? [])
+      .filter((candidate) => candidate.id !== page.id && candidate.status === "active" && (candidate.space ?? null) === linkSpace)
+      .map((candidate) => ({
+        id: candidate.id,
+        title: candidate.title,
+        canUseAsSource: canRely && candidate.creation_kind !== "entity" && !taken.has(candidate.id),
+      }));
+  }, [linkCandidates, linkSpace, page]);
 
   const showWikiLinkPreview = useCallback((targetId: string, anchor: HTMLAnchorElement, keyboard: boolean) => {
     if (wikiLinkPreviewLeaveTimerRef.current !== null) {
@@ -1699,6 +1728,17 @@ export default function PageDetail({
     }
   };
   const unmarkBasis = (basisPageId: string) => { void basisActions.stop(page.id, basisPageId); };
+  const pickLink = (note: LinkCompletionNote, asSource: boolean) => {
+    const originPageId = page.id;
+    setPickedLinkTargets((current) => ({
+      pageId: originPageId,
+      targets: new Map([...(current.pageId === originPageId ? current.targets : []), [normalizeLinkLabel(note.title), note.id]]),
+    }));
+    if (!asSource) return;
+    void markBasis(note.id).then((ok) => {
+      if (!ok && mountedRef.current && activePageIdRef.current === originPageId) setActionErrorMessage(t("noteBasis.markFailed"));
+    });
+  };
   // An entity's own page cannot rely on, or be, a note.
   const basisEditable = page.creation_kind !== "entity";
 
@@ -2464,6 +2504,8 @@ export default function PageDetail({
                   ariaLabel={t("pageDetail.editor.label")}
                   describedBy="page-markdown-editor-description"
                   wikiLinkTargets={editorWikiLinkTargets}
+                  linkNotes={linkNotes}
+                  onLinkPick={pickLink}
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }

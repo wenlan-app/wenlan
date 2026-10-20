@@ -677,6 +677,10 @@ const en = {
     openFileFailed: "Could not open this file.",
     openLinkFailed: "Could not open this link.",
   },
+  linkCompletion: {
+    label: "Link a note",
+    empty: "No matching notes",
+  },
   slashEditing: {
     label: "Basic editing",
     heading1: "Heading 1",
@@ -3355,6 +3359,10 @@ const zhHans = {
     openFileFailed: "无法打开此文件。",
     openLinkFailed: "无法打开此链接。",
   },
+  linkCompletion: {
+    label: "链接笔记",
+    empty: "没有匹配的笔记",
+  },
   slashEditing: {
     label: "基本编辑",
     heading1: "一级标题",
@@ -5987,6 +5995,10 @@ const zhHant = {
     kind: { memory: "記憶", file: "檔案", url: "連結", authored: "本筆記撰寫" },
     openFileFailed: "無法開啟此檔案。",
     openLinkFailed: "無法開啟此連結。",
+  },
+  linkCompletion: {
+    label: "連結筆記",
+    empty: "沒有相符的筆記",
   },
   slashEditing: {
     label: "基本編輯",
