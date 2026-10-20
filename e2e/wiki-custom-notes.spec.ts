@@ -8,7 +8,7 @@ const orderKey='wenlan:wiki-inventory:v1';
 async function boot(page:Page){await page.setViewportSize({width:1280,height:840});const errors=collectBrowserErrors(page);const runtime=await installTauriMock(page,{locale:'en',rawActions:[],preserveLocalStorage:true,localStorage:{'wenlan-theme':'dark','wenlan:recent-pages:v1':JSON.stringify({version:1,entries:ids.map((id,i)=>({id,title:titles[i],visitedAt:Date.now()-i*1000}))})}});await page.goto('/');return {runtime,errors};}
 async function storedOrder(page:Page){return page.evaluate(key=>JSON.parse(localStorage.getItem(key)??'{}').customOrder,orderKey);}
 const rows=(page:Page)=>page.locator('.wiki-recent-note');
-test('custom keeps the selected lower note in place, supports drag and persists after reload',async({page},info)=>{
+test('custom keeps the selected lower page in place, supports drag and persists after reload',async({page},info)=>{
  const {runtime,errors}=await boot(page);const mode=page.locator('.wiki-workspace-mode select');await mode.selectOption('custom');await expect(rows(page)).toHaveText(titles);
  await rows(page).nth(1).click();await expect(page.locator('.cm-content')).toContainText('Decision: keep review fixtures deterministic.');await expect(rows(page).nth(1)).toHaveAttribute('aria-current','page');await expect(rows(page)).toHaveText(titles);
  const source=page.locator('.wiki-recent-note-row').nth(2),grip=source.locator('.wiki-recent-note-grip');const b=(await grip.boundingBox())!,target=(await page.locator('.wiki-recent-note-row').first().boundingBox())!;const sb=(await source.boundingBox())!;
@@ -23,7 +23,7 @@ test('custom keeps the selected lower note in place, supports drag and persists 
  await page.mouse.move(500,700);await page.screenshot({path:info.outputPath('settled.png')});
  expect(runtime.calls().filter(c=>['update_page','page_move','knowledge_folder_create'].includes(c.command))).toHaveLength(0);expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
 });
-test('custom cancels drag without saving or opening notes',async({page})=>{
+test('custom cancels drag without saving or opening pages',async({page})=>{
  await boot(page);await page.locator('.wiki-workspace-mode select').selectOption('custom');
  for(const cancel of ['Escape','outside','pointercancel','blur','resize','scroll']){
  const grip=page.locator('.wiki-recent-note-grip').first();const b=(await grip.boundingBox())!;const start=await storedOrder(page);

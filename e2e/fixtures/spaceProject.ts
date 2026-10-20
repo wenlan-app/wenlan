@@ -6,11 +6,11 @@ export const SPACE_PROJECT_SOURCE_FOLDER_PATH = "/preview/sources/讀書會資�
 
 export function createSpaceProjectFixture(empty = false): SpacesNavigationFixture {
   const fixture = createSpacesNavigationFixture();
-  const wenlan = { ...fixture.spaces[0], id: "project-wenlan", name: "Wenlan", description: "Notes and references for a simpler writing experience." };
+  const wenlan = { ...fixture.spaces[0], id: "project-wenlan", name: "Wenlan", description: "Pages and references for a simpler writing experience." };
   const reading = { ...wenlan, id: "project-reading", name: "讀書會", description: "一起閱讀，留下自己的理解。" };
   const sourceFolderPath = SPACE_PROJECT_SOURCE_FOLDER_PATH;
   return { ...fixture, spaces: [wenlan, reading], pages: fixture.pages.slice(0, 2).map(page => ({ ...page, domain: "Wenlan", space: "Wenlan" })), documents: empty ? [] : [
-    { file: { source: "file", source_id: "design.md", title: "Writing experience observations", chunk_count: 1, last_modified: 1, domain: "Wenlan", space: "Wenlan" }, content: "# Writing experience observations\n\nStart with the note itself. Keep references close when the reader needs them." },
+    { file: { source: "file", source_id: "design.md", title: "Writing experience observations", chunk_count: 1, last_modified: 1, domain: "Wenlan", space: "Wenlan" }, content: "# Writing experience observations\n\nStart with the page itself. Keep references close when the reader needs them." },
     { file: { source: "webpage", source_id: "https://example.com/reading", title: "A reference for reading", chunk_count: 1, last_modified: 1, domain: "Wenlan", space: "Wenlan" }, content: "Saved reference text for the Wenlan project. This is isolated fixture content." },
     { file: { source: "file", source_id: "design.md", title: "讀書會摘錄", chunk_count: 1, last_modified: 1, domain: "讀書會", space: "讀書會" }, content: "這份文件只屬於讀書會，用來驗證來源讀取不會跨越空間。" },
     { file: { source: "memory", source_id: `${SPACE_PROJECT_SOURCE_FOLDER_ID}::${sourceFolderPath}/閱讀札記.txt`, title: "讀書會・閱讀札記（示範）", source_agent: "folder", chunk_count: 1, last_modified: 1, domain: "讀書會", space: "讀書會" }, content: "讀書會・閱讀札記\n\n這是虛構的文字檔範例。每次討論後，記下最有啟發的一句話，以及它讓我們想到的問題。\n\n本週摘錄：先記錄自己的理解，再回頭核對原文。" },

@@ -250,7 +250,7 @@ describe("HomePage redesign", () => {
     expect(screen.queryByTestId("wiki-context-needs-review")).toBeNull();
     expect(screen.queryByTestId("wiki-space-filter-row")).toBeNull();
     expect(screen.queryByTestId("wiki-recent-spaces")).toBeNull();
-    expect(screen.queryByText("Notes")).toBeNull();
+    expect(screen.queryByText("Pages")).toBeNull();
     expect(screen.queryByText("Compiled pages, links, and sources your agents can traverse.")).toBeNull();
     expect(screen.queryByRole("heading", { name: "Recent Space" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Recently refined" })).toBeNull();
@@ -628,10 +628,10 @@ describe("HomePage redesign", () => {
     vi.mocked(tauri.getResolvedRouting).mockImplementation(() => new Promise(() => {}));
     renderHome({ onCreatePage, onOpenIntelligenceSettings });
     const empty = await screen.findByTestId("wiki-page-empty");
-    expect(empty).toHaveTextContent("No notes yet.");
+    expect(empty).toHaveTextContent("No pages yet.");
     expect(empty).not.toHaveTextContent(/usually within a day|Pages will appear here/);
     const buttons = within(empty).getAllByRole("button");
-    expect(buttons[0]).toHaveTextContent("Write a note");
+    expect(buttons[0]).toHaveTextContent("Write a page");
     await user.click(buttons[0]);
     expect(onCreatePage).toHaveBeenCalledWith(null);
     expect(onOpenIntelligenceSettings).not.toHaveBeenCalled();
@@ -693,7 +693,7 @@ describe("HomePage redesign", () => {
     await screen.findByTestId("wiki-page-list");
     expect(screen.queryByTestId("wiki-page-empty")).toBeNull();
     expect(screen.queryByRole("button", { name: "Turn on a model" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Write a note" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Write a page" })).toBeNull();
     expect(
       screen.getByRole("button", { name: /open Wenlan app architecture/i }),
     ).toBeInTheDocument();

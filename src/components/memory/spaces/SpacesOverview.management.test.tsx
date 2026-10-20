@@ -94,7 +94,7 @@ describe("SpacesOverview management", () => {
     expect(within(inventorySection).queryByRole("heading", { name: labels.confirmedHeading })).not.toBeInTheDocument();
     expect(within(document.querySelector(".spaces-overview-header") as HTMLElement).getByLabelText(labels.filterLabel)).toBeInTheDocument();
     expect(within(inventorySection).queryByRole("columnheader")).not.toBeInTheDocument();
-    expect(within(workRow).getByTestId("space-pages")).toHaveTextContent(/2 notes?/i);
+    expect(within(workRow).getByTestId("space-pages")).toHaveTextContent(/2 pages?/i);
     expect(within(workRow).queryByTestId("space-memories")).not.toBeInTheDocument();
     expect(within(workRow).queryByTestId("space-updated")).not.toBeInTheDocument();
   });

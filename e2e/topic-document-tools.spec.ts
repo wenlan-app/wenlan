@@ -80,10 +80,10 @@ for (const copy of copies) for (const width of [1280, 375]) {
     // Preserve the existing direct edit/blur-save contract and same-page draft.
     await note.click();
     const editor = page.getByRole("textbox", { name: copy.edit, exact: true });
-    await editor.fill("Topic note saved before opening context.");
+    await editor.fill("Topic page saved before opening context.");
     await ensureTopicContext(page);
     await pane.getByRole("button", { name: copy.close, exact: true }).click();
-    await expect(page.getByRole("button", { name: /Edit information — Topic note saved before opening context\./ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Edit information — Topic page saved before opening context\./ })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     expect(errors.pageErrors).toEqual([]);
     expect(errors.consoleErrors).toEqual([]);

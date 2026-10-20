@@ -267,6 +267,7 @@ async fn write_page_and_update_brief_carry_the_session() {
             expected_version: None,
             session: Some("claude-code:abc-123".into()),
             basis: Vec::new(),
+            code_basis: Vec::new(),
             minor: None,
         })
         .await

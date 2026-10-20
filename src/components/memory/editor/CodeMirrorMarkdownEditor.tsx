@@ -204,7 +204,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 { tag: tags.heading, color: "var(--mem-accent-page)", fontWeight: "600" },
                 { tag: tags.strong, color: "var(--mem-text)", fontWeight: "700" },
                 { tag: tags.emphasis, color: "var(--mem-text-secondary)", fontStyle: "italic" },
-                { tag: [tags.link, tags.url], color: "var(--mem-accent-indigo)" },
+                { tag: [tags.link, tags.url], color: "var(--mem-link)" },
                 { tag: tags.monospace, color: "var(--mem-accent-warm)" },
                 { tag: [tags.comment, tags.meta], color: "var(--mem-text-tertiary)" },
                 { tag: [tags.atom, tags.keyword], color: "var(--mem-accent-sage)" },
@@ -243,11 +243,27 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 borderLeftColor: "var(--mem-accent-indigo)",
               },
               ".cm-wiki-page-link": {
-                color: "var(--mem-accent-indigo)",
+                color: "var(--mem-link)",
                 textDecoration: "underline",
-                textDecorationColor: "var(--mem-border)",
+                textDecorationColor: "color-mix(in srgb, currentColor 45%, transparent)",
                 textUnderlineOffset: "2px",
                 cursor: "pointer",
+              },
+              ".cm-wiki-page-link:hover": {
+                color: "var(--mem-link-hover)",
+              },
+              // Syntax highlighting wraps the marker text (the "1" of [1]) in
+              // its own link-coloured span; let the reference decide.
+              ".cm-wiki-page-link *": {
+                color: "inherit",
+              },
+              // Citation markers are footnotes, as in reading mode: grey
+              // until pointed at, so they never outrank the links.
+              ".cm-wiki-page-link.cm-citation-link": {
+                color: "var(--mem-text-tertiary)",
+              },
+              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):is(:hover, :focus-visible)": {
+                color: "var(--mem-link)",
               },
               ".cm-wiki-page-link:focus-visible": {
                 outline: "2px solid var(--mem-accent-indigo)",

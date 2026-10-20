@@ -9,6 +9,7 @@ pub mod activity;
 pub mod brand;
 pub mod brief;
 pub mod briefing;
+pub mod code_basis;
 pub mod communities;
 pub mod entities;
 pub mod events;
@@ -42,6 +43,7 @@ pub mod system_info;
 // Re-export commonly used types at crate root for convenience.
 pub use brief::*;
 pub use briefing::{BriefingResponse, ContradictionItem};
+pub use code_basis::{CodeBasisInput, CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef};
 pub use communities::{
     CommunityListResponse, CommunityMember, CommunityMemberCursor, CommunityMembersResponse,
     CommunityPageAssignment, CommunityPageAssignmentsResponse, CommunityProposalAcceptResponse,
@@ -186,6 +188,7 @@ mod tests {
     fn search_result_serializes() {
         let sr = SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: "1".into(),
             content: "test".into(),
             source: "memory".into(),

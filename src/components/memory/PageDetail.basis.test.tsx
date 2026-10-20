@@ -110,7 +110,7 @@ beforeEach(() => {
 });
 
 async function typeIntoEditor(text: string) {
-  const editor = await screen.findByRole("textbox", { name: "Note editor" });
+  const editor = await screen.findByRole("textbox", { name: "Page editor" });
   act(() => replaceDocument(editorViewFromTextbox(editor), text));
 }
 
@@ -118,7 +118,7 @@ describe("PageDetail with note bases", () => {
   it("saves a human edit with no minor-edit choice", async () => {
     renderPage({}, { initialMode: "edit" });
 
-    await screen.findByRole("textbox", { name: "Note editor" });
+    await screen.findByRole("textbox", { name: "Page editor" });
     expect(screen.queryByRole("checkbox")).toBeNull();
     await typeIntoEditor("The plan costs 11 dollars.");
 
@@ -183,12 +183,12 @@ describe("PageDetail with note bases", () => {
     const { user, onOpenReview } = renderPage();
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(await screen.findByText("Preview ready to review")).toBeInTheDocument();
     expect(onOpenReview).toHaveBeenCalledWith("revision:note_a");
-    expect(screen.queryByText("Note already up to date.")).toBeNull();
+    expect(screen.queryByText("Page already up to date.")).toBeNull();
   });
 
   it("says the note is already up to date when the rebuild changed nothing", async () => {
@@ -196,10 +196,10 @@ describe("PageDetail with note bases", () => {
     const { user, onOpenReview } = renderPage();
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
-    expect(await screen.findByText("Note already up to date.")).toBeInTheDocument();
+    expect(await screen.findByText("Page already up to date.")).toBeInTheDocument();
     expect(onOpenReview).not.toHaveBeenCalled();
   });
 
@@ -208,7 +208,7 @@ describe("PageDetail with note bases", () => {
     const { user } = renderPage({ source_memory_ids: [], basis: [{ ...pendingBasis, state: "ok" }] });
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(screen.getByRole("menuitem", { name: "Update from sources" })).toBeEnabled();
   });
 
@@ -220,8 +220,8 @@ describe("PageDetail with note bases", () => {
     });
 
     await screen.findByText("Pricing summary");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit note" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
     expect(screen.queryByRole("menuitem", { name: "Update from sources" })).toBeNull();
   });
 

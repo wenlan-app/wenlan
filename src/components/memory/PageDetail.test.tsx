@@ -189,7 +189,7 @@ describe("PageDetail", () => {
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
-  it("renames a note with its current version and keeps its content", async () => {
+  it("renames a page with its current version and keeps its content", async () => {
     const { getPage, renamePage } = await import("../../lib/tauri");
     (renamePage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       id: "concept_abc",
@@ -210,9 +210,9 @@ describe("PageDetail", () => {
       title: "Renamed architecture",
       version: 4,
     });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename note" }));
-    const titleInput = screen.getByRole("textbox", { name: "Note title" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    const titleInput = screen.getByRole("textbox", { name: "Page title" });
     await user.clear(titleInput);
     await user.type(titleInput, "Renamed architecture");
     await user.click(screen.getByRole("button", { name: "Save title" }));
@@ -223,37 +223,37 @@ describe("PageDetail", () => {
     expect(screen.getByText(/libSQL is the core database layer powering Origin/)).toBeInTheDocument();
   });
 
-  it("cancels a note rename without changing the title", async () => {
+  it("cancels a page rename without changing the title", async () => {
     const { renamePage } = await import("../../lib/tauri");
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
     await user.click(screen.getByRole("button", { name: "Cancel rename" }));
 
     expect(renamePage).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeInTheDocument();
   });
 
-  it("keeps a failed note rename retryable with the proposed title", async () => {
+  it("keeps a failed page rename retryable with the proposed title", async () => {
     const { renamePage } = await import("../../lib/tauri");
     (renamePage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("daemon offline"));
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename note" }));
-    await user.clear(screen.getByRole("textbox", { name: "Note title" }));
-    await user.type(screen.getByRole("textbox", { name: "Note title" }), "Changed title");
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.clear(screen.getByRole("textbox", { name: "Page title" }));
+    await user.type(screen.getByRole("textbox", { name: "Page title" }), "Changed title");
     await user.click(screen.getByRole("button", { name: "Save title" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not rename this note. Reload and try again.");
-    expect(screen.getByRole("textbox", { name: "Note title" })).toHaveValue("Changed title");
-    expect(screen.getByRole("button", { name: "Reload note" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not rename this page. Reload and try again.");
+    expect(screen.getByRole("textbox", { name: "Page title" })).toHaveValue("Changed title");
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeInTheDocument();
   });
 
-  it("asks for review after a policy denial and retains the original note title", async () => {
+  it("asks for review after a policy denial and retains the original page title", async () => {
     const { renamePage } = await import("../../lib/tauri");
     (renamePage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("page_review_required: review this page before renaming"),
@@ -261,20 +261,20 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename note" }));
-    await user.clear(screen.getByRole("textbox", { name: "Note title" }));
-    await user.type(screen.getByRole("textbox", { name: "Note title" }), "Proposed title");
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.clear(screen.getByRole("textbox", { name: "Page title" }));
+    await user.type(screen.getByRole("textbox", { name: "Page title" }), "Proposed title");
     await user.click(screen.getByRole("button", { name: "Save title" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Review this note before renaming it.");
-    expect(screen.getByRole("textbox", { name: "Note title" })).toHaveValue("Proposed title");
-    expect(screen.queryByRole("button", { name: "Reload note" })).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Review this page before renaming it.");
+    expect(screen.getByRole("textbox", { name: "Page title" })).toHaveValue("Proposed title");
+    expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Cancel rename" }));
     expect(screen.getByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeInTheDocument();
   });
 
-  it("ignores a stale rename reload after navigating to another note", async () => {
+  it("ignores a stale rename reload after navigating to another page", async () => {
     const { getPage, renamePage } = await import("../../lib/tauri");
     const originalPage = (await getPage("concept_abc"))!;
     (renamePage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("version conflict"));
@@ -282,20 +282,20 @@ describe("PageDetail", () => {
     const { user, rerender } = renderWithQuery(<PageDetail {...defaultProps} />, queryClient);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename note" }));
-    await user.clear(screen.getByRole("textbox", { name: "Note title" }));
-    await user.type(screen.getByRole("textbox", { name: "Note title" }), "Old note proposal");
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.clear(screen.getByRole("textbox", { name: "Page title" }));
+    await user.type(screen.getByRole("textbox", { name: "Page title" }), "Old page proposal");
     await user.click(screen.getByRole("button", { name: "Save title" }));
     await screen.findByRole("alert");
 
     const staleReload = deferred<Awaited<ReturnType<typeof getPage>>>();
     (getPage as ReturnType<typeof vi.fn>).mockImplementationOnce(() => staleReload.promise);
-    await user.click(screen.getByRole("button", { name: "Reload note" }));
+    await user.click(screen.getByRole("button", { name: "Reload page" }));
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ...originalPage,
       id: "concept_next",
-      title: "Next note",
+      title: "Next page",
       version: 8,
     });
     rerender(
@@ -303,26 +303,26 @@ describe("PageDetail", () => {
         <PageDetail {...defaultProps} pageId="concept_next" />
       </QueryClientProvider>,
     );
-    await screen.findByRole("heading", { level: 1, name: "Next note" });
+    await screen.findByRole("heading", { level: 1, name: "Next page" });
 
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rename note" }));
-    await user.clear(screen.getByRole("textbox", { name: "Note title" }));
-    await user.type(screen.getByRole("textbox", { name: "Note title" }), "Renamed next note");
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename page" }));
+    await user.clear(screen.getByRole("textbox", { name: "Page title" }));
+    await user.type(screen.getByRole("textbox", { name: "Page title" }), "Renamed next page");
     await act(async () => staleReload.resolve({ ...originalPage, version: 99 }));
     await user.click(screen.getByRole("button", { name: "Save title" }));
-    expect(renamePage).toHaveBeenLastCalledWith("concept_next", "Renamed next note", 8);
+    expect(renamePage).toHaveBeenLastCalledWith("concept_next", "Renamed next page", 8);
   });
 
   it.each(["entity", "source", "imported"] as const)(
-    "does not offer rename for autogenerated %s notes",
+    "does not offer rename for autogenerated %s pages",
     async (creationKind) => {
       const { getPage } = await import("../../lib/tauri");
       (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         id: "concept_abc",
-        title: "Generated note",
+        title: "Generated page",
         summary: null,
-        content: "Generated note body.",
+        content: "Generated page body.",
         entity_id: creationKind === "entity" ? "entity_abc" : null,
         domain: null,
         source_memory_ids: [],
@@ -335,9 +335,9 @@ describe("PageDetail", () => {
       });
       const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
-      await screen.findByRole("heading", { level: 1, name: "Generated note" });
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      expect(screen.queryByRole("menuitem", { name: "Rename note" })).toBeNull();
+      await screen.findByRole("heading", { level: 1, name: "Generated page" });
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      expect(screen.queryByRole("menuitem", { name: "Rename page" })).toBeNull();
     },
   );
 
@@ -355,7 +355,7 @@ describe("PageDetail", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />, client);
 
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     expect(editor).not.toHaveFocus();
     expect(getDaemonVersion).toHaveBeenCalledTimes(1);
     expect(updatePage).not.toHaveBeenCalled();
@@ -364,7 +364,7 @@ describe("PageDetail", () => {
     await act(async () => {
       await client.invalidateQueries({ queryKey: ["page", "concept_abc"] });
     });
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(getDaemonVersion).toHaveBeenCalledTimes(1);
   });
 
@@ -373,7 +373,7 @@ describe("PageDetail", () => {
     renderWithQuery(<PageDetail {...defaultProps} initialMode="read" />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeVisible();
-    expect(screen.queryByRole("textbox", { name: "Note editor" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Page editor" })).toBeNull();
     expect(getDaemonVersion).not.toHaveBeenCalled();
     expect(updatePage).not.toHaveBeenCalled();
   });
@@ -382,7 +382,7 @@ describe("PageDetail", () => {
     const { getPage, updatePage } = await import("../../lib/tauri");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />, client);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     const baseline = client.getQueryData(["page", "concept_abc"]);
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...baseline as object, content: "Draft for the map", version: 4 });
     act(() => replaceDocument(editorViewFromTextbox(editor), "Draft for the map"));
@@ -390,9 +390,9 @@ describe("PageDetail", () => {
 
     await screen.findByRole("region", { name: "Canvas for libSQL Architecture" });
     expect(updatePage).toHaveBeenCalledWith(expect.objectContaining({ content: "Draft for the map", expectedVersion: 3 }));
-    expect(screen.queryByRole("textbox", { name: "Note editor" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Page editor" })).toBeNull();
     await user.click(screen.getByRole("button", { name: i18n.t("common.close") }));
-    const resumed = await screen.findByRole("textbox", { name: "Note editor" });
+    const resumed = await screen.findByRole("textbox", { name: "Page editor" });
     expect(editorViewFromTextbox(resumed).state.doc.toString()).toBe("Draft for the map");
     act(() => replaceDocument(editorViewFromTextbox(resumed), "Continue writing"));
     expect(editorViewFromTextbox(resumed).state.doc.toString()).toBe("Continue writing");
@@ -401,16 +401,16 @@ describe("PageDetail", () => {
   it("dismisses the title menu with Escape without leaving or saving the active draft", async () => {
     const { updatePage } = await import("../../lib/tauri");
     const { user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
-    const trigger = screen.getByRole("button", { name: "Note actions" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
+    const trigger = screen.getByRole("button", { name: "Page actions" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Update from sources" })).toHaveFocus();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("menu", { name: "Note actions" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
     act(() => replaceDocument(editorViewFromTextbox(editor), "Menu Escape draft"));
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Menu Escape draft");
     expect(updatePage).not.toHaveBeenCalled();
   });
@@ -418,7 +418,7 @@ describe("PageDetail", () => {
   it("closes page information on Escape while preserving the editor and unsaved draft", async () => {
     const { updatePage } = await import("../../lib/tauri");
     renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     const trigger = screen.getByRole("button", { name: i18n.t("pageInspector.open") });
     // Control the 650 ms debounce so CI wall-clock load cannot save the draft
     // mid-test. Testing Library's async helpers wait on a setTimeout(0) these
@@ -434,7 +434,7 @@ describe("PageDetail", () => {
       act(() => { pressKey(close, "Escape"); });
       expect(screen.queryByRole("dialog", { name: i18n.t("pageInspector.label") })).toBeNull();
       expect(trigger).toHaveFocus();
-      expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+      expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
       expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Keep writing after information");
       expect(updatePage).not.toHaveBeenCalled();
 
@@ -454,11 +454,11 @@ describe("PageDetail", () => {
     const { updatePage } = await import("../../lib/tauri");
     (updatePage as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("write failed"));
     const { user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     act(() => replaceDocument(editorViewFromTextbox(editor), "Keep this draft"));
     await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
     await screen.findByRole("alert");
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Keep this draft");
     expect(screen.getByRole("tab", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") })).toHaveAttribute("aria-selected", "false");
@@ -468,11 +468,11 @@ describe("PageDetail", () => {
   it("keeps an active composition in the editor when the map is requested", async () => {
     const { updatePage } = await import("../../lib/tauri");
     const { user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     act(() => replaceDocument(editorViewFromTextbox(editor), "Composing draft"));
     fireEvent.compositionStart(editor);
     await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Composing draft");
     expect(updatePage).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
@@ -485,13 +485,13 @@ describe("PageDetail", () => {
     const { getPage, updatePage } = await import("../../lib/tauri");
     const original = await getPage("concept_abc");
     const { user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     (updatePage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ outcome: "conflict", message: "Remote edit" });
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...original, content: "Remote document", version: 4 });
     act(() => replaceDocument(editorViewFromTextbox(editor), "Local conflicting draft"));
     await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
     await screen.findByText("Latest source (version 4)");
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(editorViewFromTextbox(editor).state.doc.toString()).toBe("Local conflicting draft");
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
     expect(screen.getByRole("tab", { name: i18n.t("pageInspector.info") })).toHaveAttribute("aria-selected", "true");
@@ -506,7 +506,7 @@ describe("PageDetail", () => {
     await makeNextPageResolvable();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const { rerender, user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />, client);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     act(() => replaceDocument(editorViewFromTextbox(editor), "Pending map draft"));
     await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));
     const pendingMap = screen.getByRole("tab", { name: i18n.t("pageCanvas.tabCanvas") });
@@ -514,14 +514,14 @@ describe("PageDetail", () => {
     expect(pendingMap).toHaveAttribute("aria-selected", "false");
     expect(pendingMap).toHaveFocus();
     expect(screen.queryByRole("region", { name: "Canvas for libSQL Architecture" })).toBeNull();
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     await user.click(pendingMap);
     expect(updatePage).toHaveBeenCalledTimes(1);
     rerender(<QueryClientProvider client={client}><PageDetail {...defaultProps} pageId="concept_next" initialMode="edit" /></QueryClientProvider>);
-    const nextEditor = await screen.findByRole("textbox", { name: "Note editor" });
+    const nextEditor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editorViewFromTextbox(nextEditor).state.doc.toString()).toBe("Next page content."));
     await act(async () => pending.resolve({ outcome: "saved" }));
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(nextEditor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(nextEditor);
     expect(screen.queryByRole("region", { name: "Canvas for Next Page" })).toBeNull();
     expect(screen.getByRole("button", { name: i18n.t("pageInspector.close") })).toHaveAttribute("aria-expanded", "true");
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValue(original);
@@ -531,7 +531,7 @@ describe("PageDetail", () => {
     const { getDaemonVersion, getPage, updatePage } = await import("../../lib/tauri");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />, client);
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     const baseline = client.getQueryData(["page", "concept_abc"]);
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ ...baseline as object, content: "Revised Page body", version: 4 });
     act(() => {
@@ -540,7 +540,7 @@ describe("PageDetail", () => {
     });
 
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"));
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(updatePage).toHaveBeenCalledWith(expect.objectContaining({
       id: "concept_abc",
       content: "Revised Page body",
@@ -549,7 +549,7 @@ describe("PageDetail", () => {
     await act(async () => {
       await client.invalidateQueries({ queryKey: ["page", "concept_abc"] });
     });
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
     expect(getDaemonVersion).toHaveBeenCalledTimes(1);
   });
 
@@ -558,9 +558,9 @@ describe("PageDetail", () => {
     (getDaemonVersion as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("offline"));
     renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
 
-    expect(await screen.findByText(/Note editing requires stable Wenlan daemon/)).toBeVisible();
+    expect(await screen.findByText(/Page editing requires stable Wenlan daemon/)).toBeVisible();
     expect(screen.getByText(/libSQL is the core database layer/)).toBeVisible();
-    expect(screen.queryByRole("textbox", { name: "Note editor" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Page editor" })).toBeNull();
     expect(updatePage).not.toHaveBeenCalled();
   });
 
@@ -575,7 +575,7 @@ describe("PageDetail", () => {
 
     expect(await screen.findByText(/Line-ending normalization required/)).toBeVisible();
     expect(screen.getByText(/First line/)).toBeVisible();
-    expect(screen.queryByRole("textbox", { name: "Note editor" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Page editor" })).toBeNull();
     expect(updatePage).not.toHaveBeenCalled();
   });
 
@@ -650,7 +650,7 @@ describe("PageDetail", () => {
     const { user, container } = renderWithQuery(<PageDetail {...defaultProps} />);
     await screen.findByText("libSQL Architecture");
     expect(container.querySelector(".page-detail-header-actions")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(screen.queryByRole("menuitem", { name: "Copy as context" })).toBeNull();
     expect(screen.getByRole("menuitem", { name: "Export to Obsidian" })).toBeVisible();
   });
@@ -662,36 +662,36 @@ describe("PageDetail", () => {
     await screen.findByText("libSQL Architecture");
 
     expect(container.querySelector(".page-detail-primary-action")).toBeNull();
-    expect(container.querySelector('button[title="Delete note"]')).toBeNull();
+    expect(container.querySelector('button[title="Delete page"]')).toBeNull();
 
-    const trigger = screen.getByRole("button", { name: "Note actions" });
+    const trigger = screen.getByRole("button", { name: "Page actions" });
     await user.click(trigger);
-    const menu = screen.getByRole("menu", { name: "Note actions" });
+    const menu = screen.getByRole("menu", { name: "Page actions" });
     expect(within(menu).getByRole("menuitem", { name: "Update from sources" })).toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Copy as context" })).toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "Delete note" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete page" })).toBeInTheDocument();
 
     expect(within(menu).queryByRole("menuitem", { name: "Mind map" })).toBeNull();
     expect(within(menu).queryByRole("menuitem", { name: i18n.t("pageInspector.info") })).toBeNull();
-    expect(within(menu).getByRole("menuitem", { name: "Edit note" })).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Edit page" })).toBeVisible();
     // The first enabled page action receives focus.
-    expect(within(menu).getByRole("menuitem", { name: "Edit note" })).toHaveFocus();
+    expect(within(menu).getByRole("menuitem", { name: "Edit page" })).toHaveFocus();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("menu", { name: "Note actions" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
     expect(trigger).toHaveFocus();
 
     await user.click(trigger);
     fireEvent.mouseDown(document.body);
-    expect(screen.queryByRole("menu", { name: "Note actions" })).toBeNull();
+    expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
 
     await user.click(trigger);
-    await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
-    expect(confirmSpy).toHaveBeenCalledWith("Delete this note?");
+    await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
+    expect(confirmSpy).toHaveBeenCalledWith("Delete this page?");
     expect(deletePage).not.toHaveBeenCalled();
 
     confirmSpy.mockReturnValue(true);
     await user.click(trigger);
-    await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
     await waitFor(() => expect(deletePage).toHaveBeenCalledWith("concept_abc"));
 
     const css = readFileSync(resolve("src/index.css"), "utf8");
@@ -710,8 +710,8 @@ describe("PageDetail", () => {
 
     try {
       await screen.findByText("libSQL Architecture");
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
 
       await waitFor(() => expect(deletePage).toHaveBeenCalledWith("concept_abc"));
       await waitFor(() => expect(defaultProps.onBack).toHaveBeenCalledOnce());
@@ -729,16 +729,16 @@ describe("PageDetail", () => {
 
     try {
       await screen.findByText("libSQL Architecture");
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
 
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Could not delete this note. Try again.",
+        "Could not delete this page. Try again.",
       );
       expect(defaultProps.onBack).not.toHaveBeenCalled();
 
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      const retry = screen.getByRole("menuitem", { name: "Delete note" });
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      const retry = screen.getByRole("menuitem", { name: "Delete page" });
       expect(retry).toBeEnabled();
       await user.click(retry);
 
@@ -763,8 +763,8 @@ describe("PageDetail", () => {
 
     try {
       await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
       await waitFor(() => expect(deletePage).toHaveBeenCalledWith("concept_abc"));
 
       rerender(
@@ -794,9 +794,9 @@ describe("PageDetail", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
     act(() => pressKey(editor, "s", { ctrlKey: true }));
@@ -823,7 +823,7 @@ describe("PageDetail", () => {
       pending.reject(new Error("late write failure"));
       await pending.promise.catch(() => undefined);
     });
-    expect(screen.queryByText("Could not save this note. Try again.")).toBeNull();
+    expect(screen.queryByText("Could not save this page. Try again.")).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -847,8 +847,8 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
 
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -875,10 +875,10 @@ describe("PageDetail", () => {
 
     expect(daemonMeetsFloor).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole("textbox", { name: "Note editor" }),
+      screen.queryByRole("textbox", { name: "Page editor" }),
     ).toBeNull();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit note" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
     expect(
       screen.getByRole("heading", {
         level: 1,
@@ -901,15 +901,15 @@ describe("PageDetail", () => {
       level: 1,
       name: "libSQL Architecture",
     });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
     expect(await screen.findByText("Checking editor compatibility…")).toBeVisible();
 
     fireEvent.keyDown(document.body, { key: "Escape" });
 
     expect(defaultProps.onBack).not.toHaveBeenCalled();
-    await user.click(await screen.findByRole("button", { name: "Note actions" }));
-    expect(screen.getByRole("menuitem", { name: "Edit note" })).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: "Page actions" }));
+    expect(screen.getByRole("menuitem", { name: "Edit page" })).toBeVisible();
     expect(
       screen.queryByText("Checking editor compatibility…"),
     ).toBeNull();
@@ -922,7 +922,7 @@ describe("PageDetail", () => {
 
     expect(daemonMeetsFloor).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole("textbox", { name: "Note editor" }),
+      screen.queryByRole("textbox", { name: "Page editor" }),
     ).toBeNull();
   });
 
@@ -933,9 +933,9 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "One serialized Page body"));
 
@@ -975,12 +975,12 @@ describe("PageDetail", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
     await waitFor(() => expect(redistillPage).toHaveBeenCalledWith("concept_abc"));
 
     // While the re-distill promise is still unresolved the button is busy.
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(screen.getByRole("menuitem", { name: "Updating from sources" })).toBeDisabled();
 
     rerender(
@@ -991,7 +991,7 @@ describe("PageDetail", () => {
     await screen.findByRole("heading", { level: 1, name: "Next Page" });
 
     await act(async () => pending.resolve({ status: "ok", updated: true }));
-    expect(screen.queryByText("Note updated from its sources.")).toBeNull();
+    expect(screen.queryByText("Page updated from its sources.")).toBeNull();
   });
 
   it("distinguishes a Page load failure from not found and retries in place", async () => {
@@ -1000,7 +1000,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not load this note.",
+      "Could not load this page.",
     );
     expect(screen.queryByText("Page not found")).toBeNull();
 
@@ -1030,7 +1030,7 @@ describe("PageDetail", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "libSQL Architecture" }),
     ).toBeVisible();
-    expect(screen.queryByText("Could not load this note.")).toBeNull();
+    expect(screen.queryByText("Could not load this page.")).toBeNull();
   });
 
   it("keeps the editor open and retryable when saving fails", async () => {
@@ -1040,9 +1040,9 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
-    const editor = await screen.findByRole("textbox", { name: "Note editor" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
     await waitFor(() => expect(editor).toHaveFocus());
     act(() => replaceDocument(editorViewFromTextbox(editor), "Revised Page body"));
     act(() => pressKey(editor, "s", { ctrlKey: true }));
@@ -1056,7 +1056,7 @@ describe("PageDetail", () => {
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(updatePage).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"));
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(editor);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(editor);
   });
 
   it("surfaces export failures and lets the user retry", async () => {
@@ -1065,16 +1065,16 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Could not export this note. Try again.",
+      "Could not export this page. Try again.",
     );
 
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
     await waitFor(() => expect(exportPageToObsidian).toHaveBeenCalledTimes(2));
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(await screen.findByRole("menuitem", { name: "Exported!" })).toBeVisible();
   });
 
@@ -1086,9 +1086,9 @@ describe("PageDetail", () => {
       const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
       await screen.findByText("libSQL Architecture");
 
-      const trigger = screen.getByRole("button", { name: "Note actions" });
+      const trigger = screen.getByRole("button", { name: "Page actions" });
       await user.click(trigger);
-      const menu = screen.getByRole("menu", { name: "Note actions" });
+      const menu = screen.getByRole("menu", { name: "Page actions" });
       const items = within(menu).getAllByRole("menuitem").filter((item) => !item.hasAttribute("disabled"));
 
       expect(items[0]).toHaveFocus();
@@ -1104,7 +1104,7 @@ describe("PageDetail", () => {
       expect(items[0]).toHaveFocus();
 
       await user.keyboard("{Escape}");
-      expect(screen.queryByRole("menu", { name: "Note actions" })).toBeNull();
+      expect(screen.queryByRole("menu", { name: "Page actions" })).toBeNull();
       expect(trigger).toHaveFocus();
       expect(windowEscapeObserver).not.toHaveBeenCalled();
     } finally {
@@ -1116,16 +1116,16 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
     await screen.findByText("libSQL Architecture");
 
-    const trigger = screen.getByRole("button", { name: "Note actions" });
+    const trigger = screen.getByRole("button", { name: "Page actions" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
-    let menu = screen.getByRole("menu", { name: "Note actions" });
+    let menu = screen.getByRole("menu", { name: "Page actions" });
     let items = within(menu).getAllByRole("menuitem").filter((item) => !item.hasAttribute("disabled"));
     expect(items[0]).toHaveFocus();
 
     await user.keyboard("{Escape}");
     await user.keyboard("{ArrowUp}");
-    menu = screen.getByRole("menu", { name: "Note actions" });
+    menu = screen.getByRole("menu", { name: "Page actions" });
     items = within(menu).getAllByRole("menuitem").filter((item) => !item.hasAttribute("disabled"));
     expect(items[items.length - 1]).toHaveFocus();
   });
@@ -1145,8 +1145,8 @@ describe("PageDetail", () => {
       const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
       await screen.findByText("libSQL Architecture");
 
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      expect(screen.getByRole("menuitem", { name: "Edit note" })).toHaveFocus();
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      expect(screen.getByRole("menuitem", { name: "Edit page" })).toHaveFocus();
     } finally {
       rectsSpy.mockRestore();
     }
@@ -1325,7 +1325,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />, queryClient);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(redistillPage).toHaveBeenCalledWith("concept_abc");
@@ -1346,15 +1346,15 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(
       await screen.findByText(
-        "Note not updated: citation verification failed (8 verified, 13 unverified, 0 stripped)",
+        "Page not updated: citation verification failed (8 verified, 13 unverified, 0 stripped)",
       ),
     ).toBeTruthy();
-    expect(screen.queryByText("Note already up to date.")).toBeNull();
+    expect(screen.queryByText("Page already up to date.")).toBeNull();
   });
 
   it("shows 'update blocked' instead of 'updating...' when the citation gate discarded the refresh", async () => {
@@ -1396,7 +1396,7 @@ describe("PageDetail", () => {
     const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
 
     await screen.findByText("Edited Page");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(confirmSpy).toHaveBeenCalledWith(
@@ -1418,7 +1418,7 @@ describe("PageDetail", () => {
     const { user, rerender } = renderWithQuery(<PageDetail {...defaultProps} />, queryClient);
 
     await screen.findByText("libSQL Architecture");
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
     expect(await screen.findByText(hint)).toBeTruthy();
 
@@ -1551,7 +1551,7 @@ describe("PageDetail", () => {
     async function openPageActions(user: ReturnType<typeof userEvent.setup>) {
       await screen.findByText("libSQL Architecture");
       await openPageInfo(user);
-      return screen.getByRole("button", { name: "Mark note reviewed" });
+      return screen.getByRole("button", { name: "Mark page reviewed" });
     }
 
     it("stays disabled while the daemon cannot record reviews", async () => {
@@ -1566,7 +1566,7 @@ describe("PageDetail", () => {
       expect(action).toBeDisabled();
       expect(action).toHaveAttribute(
         "title",
-        "This version of Wenlan cannot record note reviews yet.",
+        "This version of Wenlan cannot record page reviews yet.",
       );
     });
 
@@ -1586,7 +1586,7 @@ describe("PageDetail", () => {
       await waitFor(() =>
         expect(action).toHaveAttribute(
           "title",
-          "Marking notes reviewed is not available on this platform yet.",
+          "Marking pages reviewed is not available on this platform yet.",
         ),
       );
     });
@@ -1603,7 +1603,7 @@ describe("PageDetail", () => {
       const action = await openPageActions(user);
       await waitFor(() => expect(action).toBeEnabled());
       await user.click(action);
-      await screen.findByText(/This note changed after you opened it/);
+      await screen.findByText(/This page changed after you opened it/);
 
       // Once, not permanently: `clearAllMocks` between tests resets calls but
       // keeps implementations, so a lasting rejection here would fail every
@@ -1613,7 +1613,7 @@ describe("PageDetail", () => {
       );
       await user.click(screen.getByRole("button", { name: "Reload" }));
 
-      await screen.findByText(/Could not reload this note/);
+      await screen.findByText(/Could not reload this page/);
       // Still offered, because trying again is the whole point.
       expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
     });
@@ -1650,7 +1650,7 @@ describe("PageDetail", () => {
       await waitFor(() => expect(action).toBeEnabled());
       await user.click(action);
 
-      await screen.findByText(/This note changed after you opened it/);
+      await screen.findByText(/This page changed after you opened it/);
       const fetchesBefore = (getPage as ReturnType<typeof vi.fn>).mock.calls.length;
       await user.click(screen.getByRole("button", { name: "Reload" }));
 
@@ -1662,7 +1662,7 @@ describe("PageDetail", () => {
           fetchesBefore,
         ),
       );
-      expect(screen.queryByText(/This note changed after you opened it/)).toBeNull();
+      expect(screen.queryByText(/This page changed after you opened it/)).toBeNull();
     });
 
     it("reads an already-recorded review as done rather than as a failure", async () => {
@@ -1675,7 +1675,7 @@ describe("PageDetail", () => {
       await waitFor(() => expect(action).toBeEnabled());
       await user.click(action);
 
-      await screen.findByText("This note was already marked as reviewed.");
+      await screen.findByText("This page was already marked as reviewed.");
       expect(screen.queryByRole("button", { name: "Reload" })).toBeNull();
     });
   });

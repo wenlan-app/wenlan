@@ -11,6 +11,7 @@ pub mod ambient_routes;
 pub mod brief_files;
 pub mod brief_routes;
 pub mod briefing_routes;
+pub mod code_basis_routes;
 pub mod community_routes;
 pub mod config_routes;
 pub mod decisions_routes;

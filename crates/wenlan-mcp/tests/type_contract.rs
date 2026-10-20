@@ -129,6 +129,7 @@ async fn captured_body(mock: &MockServer) -> serde_json::Value {
 fn sample_search_result() -> SearchResult {
     SearchResult {
         basis: Vec::new(),
+        code_basis: Vec::new(),
         id: "1".into(),
         content: "some memory content".into(),
         source: "memory".into(),

@@ -226,7 +226,7 @@ fn manifest_counts_match_the_spec() {
         212,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 31, "#[tool( declarations");
+    assert_eq!(MCP_READERS.len(), 32, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -258,7 +258,7 @@ fn manifest_counts_match_the_spec() {
         .iter()
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
-    assert_eq!(bearing, 82, "page-bearing HTTP routes");
+    assert_eq!(bearing, 83, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -418,7 +418,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        205 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +3: sessions)
+        208 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +3: code basis, +3: sessions)
     );
 }
 

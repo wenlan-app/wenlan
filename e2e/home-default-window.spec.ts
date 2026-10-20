@@ -53,7 +53,7 @@ async function openWiki(page: BrowserPage, fixture: SpacesNavigationFixture, { g
     rawActions: [],
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
   const wiki = page.locator(".wiki-overview");
   await expect(wiki).toBeVisible();
   await expect(page.locator(".note-tab-create")).toBeVisible();
@@ -144,20 +144,20 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   await expect(page.locator(".wiki-reading-start")).not.toHaveAttribute("data-onboarding");
 });
 
-test("empty notes can start writing without AI setup", async ({ page }) => {
+test("empty pages can start writing without AI setup", async ({ page }) => {
   await page.setViewportSize({ ...DEFAULT_WINDOW });
   await openWiki(page, createFirstRunFixture());
   await expect(page.locator("[data-ghost-card]")).toHaveCount(0);
-  await expect(page.locator(".wiki-overview").getByRole("heading", { name: "Open a note", exact: true })).toBeVisible();
+  await expect(page.locator(".wiki-overview").getByRole("heading", { name: "Open a page", exact: true })).toBeVisible();
   await page.locator(".note-tab-create").click();
   await expect(page.getByRole("textbox", { name: "Content", exact: true })).toBeVisible();
 });
 
-test("the home button returns to the Wiki home while the open note keeps its tab", async ({ page }) => {
+test("the home button returns to the Wiki home while the open page keeps its tab", async ({ page }) => {
   await page.setViewportSize({ ...DEFAULT_WINDOW });
   await openWiki(page, createFirstRunFixture());
   const home = page.getByRole("button", { name: "Wiki home", exact: true });
-  const overviewTitle = page.locator(".wiki-overview").getByRole("heading", { name: "Open a note", exact: true });
+  const overviewTitle = page.locator(".wiki-overview").getByRole("heading", { name: "Open a page", exact: true });
   // On the home the button has nowhere to go, so it is not shown.
   await expect(overviewTitle).toBeVisible();
   await expect(home).toBeHidden();
@@ -183,17 +183,17 @@ test("the Space review action opens Review and Back returns to the Space", async
 
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
   await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 
-  await expect(page.getByRole("button", { name: "Review note changes" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Note options", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Review page changes" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Page options", exact: true })).toHaveCount(0);
   await primaryNavigation.getByRole("button", { name: "Spaces", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Spaces", exact: true })).toHaveClass(/sr-only/);
   await expect(page.locator(".spaces-overview-header")).toBeVisible();
   await page.getByRole("button", { name: "Open Wenlan", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Wenlan", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Actions for Wenlan", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Review note changes", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Review page changes", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Review", exact: true })).toBeVisible();
   // Review stays on the Wiki navigation surface. Back returns to the Space
   // dossier where the existing action lives.
@@ -220,14 +220,14 @@ test("review opens from Activity and Back returns to Activity", async ({ page })
 
   const primaryNavigation = page.getByRole("navigation", { name: "Primary navigation" });
   await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 
-  await expect(page.getByRole("button", { name: "Review note changes" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Note options", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Review page changes" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Page options", exact: true })).toHaveCount(0);
   await page.getByTestId("activity-status").click();
   await page.getByTestId("activity-summary-open").click();
   await expect(page.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
-  const reviewEntry = page.getByRole("button", { name: "Review note changes", exact: true });
+  const reviewEntry = page.getByRole("button", { name: "Review page changes", exact: true });
   await reviewEntry.focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Review" })).toBeVisible();

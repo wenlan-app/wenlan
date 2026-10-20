@@ -58,7 +58,7 @@ async function openSourcePage(page: Page, delays?: Record<string, number>) {
   await page.goto("/");
   await openPrimaryDestination(page, "Wiki");
   await openWikiNote(page, SOURCE_TITLE);
-  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor).toBeEditable();
   await page.mouse.move(1, 1);
@@ -134,8 +134,8 @@ test("resolved wikilink previews on hover and opens from the preview card", asyn
   await expect(preview).toBeVisible();
   await preview.getByRole("button", { name: "Open Target Link", exact: true }).click();
   await expect(page.locator(".page-detail")).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Note editor", exact: true })).toBeVisible();
-  await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Note editor", exact: true })))
+  await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();
+  await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Page editor", exact: true })))
     .toContain("# Target Link");
   expect(updateCalls(controller)).toHaveLength(0);
 });
@@ -152,8 +152,8 @@ test("a real wikilink click flushes dirty source before opening its exact target
   const link = page.getByRole("link", { name: "target alias", exact: true });
   await link.click();
 
-  await expect(page.getByRole("textbox", { name: "Note editor", exact: true })).toBeVisible();
-  await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Note editor", exact: true })))
+  await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();
+  await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Page editor", exact: true })))
     .toContain("# Target Link");
   await expectCanonicalSave(controller, dirtySource, 7);
   const calls = controller.calls();
@@ -194,7 +194,7 @@ test("Enter opens a focused wikilink without inserting a newline", async ({ page
   const link = page.getByRole("link", { name: "target alias", exact: true });
   await link.focus();
   await page.keyboard.press("Enter");
-  await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Note editor", exact: true })))
+  await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Page editor", exact: true })))
     .toContain("# Target Link");
   expect(updateCalls(controller)).toHaveLength(0);
   expect(controller.calls().some((call) => call.command === "get_page_explicit_browse"

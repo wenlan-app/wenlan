@@ -53,7 +53,7 @@ async function openEditor(page: Page, source = INITIAL_SOURCE) {
   await page.goto("/");
   await openPrimaryDestination(page, "Wiki");
   await openWikiNote(page, PAGE_TITLE);
-  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor).toBeEditable();
   await expect(editor).toHaveClass(/cm-content/); // Slash is CodeMirror-only.

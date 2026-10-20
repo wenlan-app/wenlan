@@ -18398,6 +18398,7 @@ async fn test_augment_with_graph_merges_observations() {
 fn mk_result(source_id: &str, content: &str, score: f32) -> SearchResult {
     SearchResult {
         basis: Vec::new(),
+        code_basis: Vec::new(),
         id: format!("id_{source_id}"),
         content: content.to_string(),
         source: "memory".to_string(),

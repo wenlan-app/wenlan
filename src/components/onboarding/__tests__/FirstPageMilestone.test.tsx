@@ -62,7 +62,7 @@ describe("FirstPageMilestone passive target lookup", () => {
     expect(getPage).toHaveBeenCalledWith(target.id);
     expect(listPagesExplicitBrowse).not.toHaveBeenCalled();
     expect(milestoneState.acknowledge).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Open note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open page" }));
     expect(view.onSelectPage).toHaveBeenCalledWith(target.id);
     expect(milestoneState.acknowledge).toHaveBeenCalledWith("first-concept");
   });

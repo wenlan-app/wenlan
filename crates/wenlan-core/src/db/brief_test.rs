@@ -599,7 +599,7 @@ async fn brief_history_migration_creates_table_and_stamps_136() {
     }
     db.migrate_136_brief_history().await.unwrap();
     db.migrate_136_brief_history().await.unwrap();
-    // list_brief_history reads session_id, which only migration 139 adds,
+    // list_brief_history reads session_id, which only migration 140 adds,
     // so check the bare 136 table directly.
     let conn = db.conn.lock().await;
     let mut count = conn

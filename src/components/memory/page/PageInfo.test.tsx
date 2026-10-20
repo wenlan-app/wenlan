@@ -91,7 +91,7 @@ describe("PageInfo", () => {
       inbound: [{ source_page_id: "page-uuid-42", label: "Inbound Mention" }],
       revisions: [revision()],
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     const headings = screen.getAllByRole("heading", { level: 4 });
     expect(headings.map((h) => h.textContent)).toEqual([
       "Backlinks",
@@ -106,7 +106,7 @@ describe("PageInfo", () => {
       sourceCount: ids.length,
       sources: ids.map((id) => source(id)),
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.getAllByTestId("page-info-source-row")).toHaveLength(5);
     await user.click(screen.getByRole("button", { name: "Show all 7 sources" }));
     expect(screen.getAllByTestId("page-info-source-row")).toHaveLength(7);
@@ -120,7 +120,7 @@ describe("PageInfo", () => {
         revision({ version: v, delta_summary: `Delta v${v}` }),
       ),
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.getByText("Delta v5")).toBeInTheDocument();
     expect(screen.getByText("Delta v3")).toBeInTheDocument();
     expect(screen.queryByText("Delta v2")).toBeNull();
@@ -139,7 +139,7 @@ describe("PageInfo", () => {
       sources: [source("mem-1")],
     });
     expect(screen.getByText("Title mem-1")).not.toBeVisible();
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.getByText("Title mem-1")).toBeVisible();
   });
 
@@ -154,7 +154,7 @@ describe("PageInfo", () => {
       citations: [cite(1, 1, "mem-b"), cite(2, 2, "mem-a")],
       citationState: "cited",
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     const rows = screen.getAllByTestId("page-info-source-row");
     expect(within(rows[0]).getByText("Title mem-b")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Title mem-a")).toBeInTheDocument();
@@ -168,7 +168,7 @@ describe("PageInfo", () => {
       citations: [cite(1, 1, "mem-a", { status: "unverified" })],
       citationState: "cited",
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     const row = screen.getByTestId("page-info-source-row");
     expect(within(row).getByText("unverified")).toBeInTheDocument();
     await user.click(within(row).getByRole("button"));
@@ -179,7 +179,7 @@ describe("PageInfo", () => {
     const { user, onPageClick } = renderInfo({
       inbound: [{ source_page_id: "page-uuid-42", label: "Inbound Mention" }],
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     await user.click(screen.getByRole("button", { name: "Inbound Mention" }));
     expect(onPageClick).toHaveBeenCalledWith("page-uuid-42");
     expect(screen.queryByText(/page-uuid-42/)).toBeNull();
@@ -189,7 +189,7 @@ describe("PageInfo", () => {
     const { user } = renderInfo({
       revisions: [revision({ citations_summary: "3 verified, 1 unverified" })],
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.getByText("v2")).toBeInTheDocument();
     expect(screen.getByText("Added backlinks")).toBeInTheDocument();
     expect(screen.getByText("3 verified, 1 unverified")).toBeInTheDocument();
@@ -199,7 +199,7 @@ describe("PageInfo", () => {
     const { user } = renderInfo({ revisionsLoading: true });
     expect(screen.getByRole("heading", { name: "Revision history" })).toBeInTheDocument();
     expect(screen.getByText("Loading revision history…")).toBeInTheDocument();
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     expect(screen.getByText("Loading revision history…")).toBeVisible();
   });
 
@@ -211,7 +211,7 @@ describe("PageInfo", () => {
       onRetryRevisions,
     });
 
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     expect(screen.getByText("Previously loaded change")).toBeVisible();
     expect(screen.getByRole("alert")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -245,13 +245,13 @@ describe("PageInfo", () => {
       citations: [cite(1, 1, "mem-a"), cite(2, 2, "mem-b", { status: "unverified" })],
       citationState: "cited",
     });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.getByText("Citations: 2 (1 unverified)")).toBeInTheDocument();
   });
 
   it("explains stripped states", async () => {
     const { user } = renderInfo({ citationState: "stripped-empty" });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(
       screen.getByText("Citations cleared by edit. Rebuild to restore"),
     ).toBeInTheDocument();
@@ -259,7 +259,7 @@ describe("PageInfo", () => {
 
   it("explains mismatch fallback", async () => {
     const { user } = renderInfo({ citationState: "stripped-mismatch" });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(
       screen.getByText("Citation data mismatched. Rebuild to repair"),
     ).toBeInTheDocument();
@@ -267,7 +267,7 @@ describe("PageInfo", () => {
 
   it("omits the diagnosability line when there are no citations and no markers", async () => {
     const { user } = renderInfo({ citationState: "none" });
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.queryByText(/Citations/)).toBeNull();
   });
 });

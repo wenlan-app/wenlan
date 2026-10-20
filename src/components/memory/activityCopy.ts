@@ -44,7 +44,7 @@ export const enActivityStatus = {
   // ── Tier 1, the summary popover ───────────────────────────────────────
   headline: {
     up_to_date: "Everything you have given Wenlan has steeped.",
-    off: "Background steeping is off. Your notes remain available.",
+    off: "Background steeping is off. Your pages remain available.",
     organizing: "Wenlan is steeping what you have given it.",
     // Pairs with lastActivity: an old time under this line is expected, so it
     // must not claim anything is running. It names every reason the scheduler
@@ -56,31 +56,31 @@ export const enActivityStatus = {
   asset: {
     memories: "Memories",
     entities: "Entities",
-    pages: "Notes",
+    pages: "Pages",
   },
   summary: {
-    pagesCurrent: "All notes are current.",
+    pagesCurrent: "All pages are current.",
     memoriesWaiting: "{{count}} awaiting summaries · searchable now",
     entitiesWaiting_one: "{{count}} memory awaiting a scan",
     entitiesWaiting_other: "{{count}} memories awaiting a scan",
   },
-  rowAsset: { memories: "Memories", entities: "Entities", pages: "Notes" },
+  rowAsset: { memories: "Memories", entities: "Entities", pages: "Pages" },
   assetOff: {
-    memories: "Your notes remain available.",
+    memories: "Your pages remain available.",
     entities: "Entity detection is off.",
-    pages: "Automatic note writing is off.",
+    pages: "Automatic page writing is off.",
   },
   assetDone: {
     memories_one: "{{count}} stored, summarized and linked",
     memories_other: "{{count}} stored, all summarized and linked",
     entities: "{{count}} found, {{confirmed}} confirmed in the Wiki",
-    pages_one: "{{count}} note written, current",
-    pages_other: "{{count}} notes written, all current",
+    pages_one: "{{count}} page written, current",
+    pages_other: "{{count}} pages written, all current",
   },
   assetEmpty: {
     memories: "Nothing stored yet",
     entities: "Nothing found yet",
-    pages: "No notes yet",
+    pages: "No pages yet",
   },
   // Every number names its unit. Entities' running and blocked counts are
   // MEMORIES scanned for entities, not entities: one memory can name several
@@ -89,7 +89,7 @@ export const enActivityStatus = {
     memories: "{{done}} of {{total}} summarized and linked",
     entities_one: "{{done}} of {{total}} memory scanned for entities",
     entities_other: "{{done}} of {{total}} memories scanned for entities",
-    pages: "{{done}} of {{total}} notes current, the rest updating",
+    pages: "{{done}} of {{total}} pages current, the rest updating",
   },
   // Rows say only how many are waiting, in their own unit. The cause and the
   // fix are said ONCE, per missing model, by blockedCause: Memories and
@@ -99,21 +99,21 @@ export const enActivityStatus = {
     memories: "{{count}} not yet summarized. All are searchable now.",
     entities_one: "{{count}} memory not yet scanned for entities",
     entities_other: "{{count}} memories not yet scanned for entities",
-    pages_one: "{{count}} note waiting to be updated",
-    pages_other: "{{count}} notes waiting to be updated",
+    pages_one: "{{count}} page waiting to be updated",
+    pages_other: "{{count}} pages waiting to be updated",
   },
   // The popover opens on this, with turnOnModel beside it, so it names what
   // stopped and why; the button carries the fix. turnOnModel repeats Home's
   // empty-state button word for word: one action, one name.
   blockedCause: {
     everyday: "Background organization is paused because no model is set up. Your AI tools can still organize memories.",
-    synthesis: "Notes update when your AI tools write them, because no writing model is set up.",
+    synthesis: "Pages update when your AI tools write them, because no writing model is set up.",
   },
   // A model was chosen but is not serving: still loading, or its server is
   // down. The fix is the same page, so turnOnModel still applies.
   blockedCauseUnavailable: {
     everyday: "Background organization is paused because its model is unavailable.",
-    synthesis: "Note updates are paused because their model is unavailable.",
+    synthesis: "Page updates are paused because their model is unavailable.",
   },
   turnOnModel: "Turn on a model",
   assetBlockedFailed: {
@@ -124,7 +124,7 @@ export const enActivityStatus = {
     entities:
       "{{count}} of {{total}} memories blocked: entity detection failed. Your memories are unaffected.",
     pages:
-      "{{count}} of {{total}} notes blocked: note writing failed. Your sources are unaffected.",
+      "{{count}} of {{total}} pages blocked: page writing failed. Your sources are unaffected.",
   },
   openActivity: "See all activity",
   jobSeparator: " and ",
@@ -154,7 +154,7 @@ export const enActivityStatus = {
     link: "Linking related memories.",
     detect: "Identifying topics in memories.",
     confirm: "Confirming topics.",
-    write: "Updating notes.",
+    write: "Updating pages.",
   },
   failedStep: {
     store_one: "{{count}} memory could not be stored.",
@@ -167,8 +167,8 @@ export const enActivityStatus = {
     detect_other: "{{count}} memories could not be scanned for topics.",
     confirm_one: "{{count}} entity could not be confirmed.",
     confirm_other: "{{count}} entities could not be confirmed.",
-    write_one: "{{count}} note could not be updated.",
-    write_other: "{{count}} notes could not be updated.",
+    write_one: "{{count}} page could not be updated.",
+    write_other: "{{count}} pages could not be updated.",
   },
   failedUnknown: "Some background work has failed.",
   showSteps: "Show steps",
@@ -187,7 +187,7 @@ export const enActivityStatus = {
     link: "connected to related memories and entities",
     detect: "people, projects and tools you mention",
     confirm: "earned enough substance to appear in the Wiki",
-    write: "notes written and refreshed from your sources",
+    write: "pages written and refreshed from your sources",
   },
   stepState: {
     idle: "Idle",
@@ -201,8 +201,8 @@ export const enActivityStatus = {
     memories_other: "{{done}} / {{count}} memories",
     entities_one: "{{done}} / {{count}} entity",
     entities_other: "{{done}} / {{count}} entities",
-    pages_one: "{{done}} / {{count}} note",
-    pages_other: "{{done}} / {{count}} notes",
+    pages_one: "{{done}} / {{count}} page",
+    pages_other: "{{done}} / {{count}} pages",
   },
   moreDetails: "Details",
   processingDetails: "Models and privacy",
@@ -212,8 +212,8 @@ export const enActivityStatus = {
     memories_other: "{{done}} of {{count}} memories",
     entities_one: "{{done}} of {{count}} entity",
     entities_other: "{{done}} of {{count}} entities",
-    pages_one: "{{done}} of {{count}} note",
-    pages_other: "{{done}} of {{count}} notes",
+    pages_one: "{{done}} of {{count}} page",
+    pages_other: "{{done}} of {{count}} pages",
   },
   lane: {
     on_device: "on this machine",
@@ -229,11 +229,11 @@ export const enActivityStatus = {
   routeNoModel: "{{job}}: {{lane}}.",
   jobTitle: {
     everyday: "Everyday work",
-    synthesis: "Note writing",
+    synthesis: "Page writing",
   },
   job: {
     everyday: "everyday work",
-    synthesis: "note writing",
+    synthesis: "page writing",
   },
   openSettings: "Open settings",
   trustLocal: "Runs on this machine. Nothing leaves your device.",

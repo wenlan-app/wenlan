@@ -76,7 +76,7 @@ describe("RelatedPages as sources", () => {
     const badge = screen.getByText("Source");
 
     fireEvent.mouseEnter(badge);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("This note is a source for this one.");
+    expect(screen.getByRole("tooltip")).toHaveTextContent("This page is a source for this one.");
     fireEvent.mouseLeave(badge);
     expect(screen.queryByRole("tooltip")).toBeNull();
 

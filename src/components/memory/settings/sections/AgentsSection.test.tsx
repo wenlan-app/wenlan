@@ -148,7 +148,7 @@ describe("AgentsSection", () => {
     await screen.findByText("Codex");
     await userEvent.click(screen.getByRole("button", { name: "Details: Trust levels" }));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "Full: Sees everything: identity, preferences, lessons, gotchas, decisions, notes, and search results.",
+      "Full: Sees everything: identity, preferences, lessons, gotchas, decisions, pages, and search results.",
     );
     expect(screen.getByRole("tooltip").textContent).toContain("\n");
   });
@@ -168,7 +168,7 @@ describe("AgentsSection", () => {
   // called Wenlan yet folds in as an Added chip and a restart note on that
   // family's row, not a separate pending row. A registered identity is not a
   // sighting: only a call is.
-  it("shows Added and a restart note on the family row while no identity has called yet", async () => {
+  it("shows Added and a restart page on the family row while no identity has called yet", async () => {
     mocks.listAgents.mockResolvedValue([agent("codex", "mcp")]);
     mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
     renderAgentsSection();
@@ -182,7 +182,7 @@ describe("AgentsSection", () => {
   // The old note was shown for a family with stored memories. A tool that
   // already wrote memories is talking to Wenlan: "restart to finish" would be
   // false of it.
-  it("shows no restart note for a family that has already called Wenlan", async () => {
+  it("shows no restart page for a family that has already called Wenlan", async () => {
     mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 3 })]);
     mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
     renderAgentsSection();

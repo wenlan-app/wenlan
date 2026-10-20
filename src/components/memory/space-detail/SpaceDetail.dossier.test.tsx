@@ -67,13 +67,13 @@ describe("SpaceDetail editorial dossier", () => {
     const onCreatePage = vi.fn();
     renderDetail({ onCreatePage });
 
-    const newPage = await screen.findByRole("button", { name: "New note" });
+    const newPage = await screen.findByRole("button", { name: "New page" });
     const overflow = screen.getByRole("button", { name: "Actions for Wenlan" });
     expect(newPage.compareDocumentPosition(overflow) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 
     fireEvent.click(newPage);
     expect(onCreatePage).toHaveBeenCalledWith("Wenlan");
-    expect(screen.queryByRole("dialog", { name: "New note" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "New page" })).not.toBeInTheDocument();
   });
 
   it("loads the active page cap with a notice and starts with 20 pages", async () => {
@@ -83,7 +83,7 @@ describe("SpaceDetail editorial dossier", () => {
     renderDetail();
     await screen.findByRole("heading", { level: 1, name: "Wenlan" });
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(screen.getByRole("status")).toHaveTextContent("1,000+ notes in this space. Only the first 1,000 are loaded here.");
+    expect(screen.getByRole("status")).toHaveTextContent("1,000+ pages in this space. Only the first 1,000 are loaded here.");
     const region = screen.getByRole("region", { name: "Pages" });
     expect(region.querySelectorAll(".space-dossier-page-list > button")).toHaveLength(20);
     fireEvent.click(within(region).getByRole("button", { name: "Show more" }));
@@ -157,21 +157,21 @@ describe("SpaceDetail editorial dossier", () => {
   it("keeps review in overflow and does not read standalone memories or topics", async () => {
     const onReviewAll = vi.fn();
     renderDetail({ onReviewAll });
-    await screen.findByRole("tab", { name: "Notes" });
+    await screen.findByRole("tab", { name: "Pages" });
     expect(screen.queryByRole("region", { name: "Key entities" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Raw memories" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Needs review" })).not.toBeInTheDocument();
     expect(listEntities).not.toHaveBeenCalled();
     expect(listMemoriesRich).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Actions for Wenlan" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Review note changes" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Review page changes" }));
     expect(onReviewAll).toHaveBeenCalledExactlyOnceWith();
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
   it("omits the review action when no callback is available", async () => {
     renderDetail({ onReviewAll: undefined });
     fireEvent.click(await screen.findByRole("button", { name: "Actions for Wenlan" }));
-    expect(screen.queryByRole("menuitem", { name: "Review note changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Review page changes" })).not.toBeInTheDocument();
   });
 
 });

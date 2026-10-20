@@ -263,7 +263,7 @@ describe("SetupWizard", () => {
     (listPendingImports as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
-  it("starts with notes and an optional example, without setup questions", () => {
+  it("starts with pages and an optional example, without setup questions", () => {
     renderWizard();
     expect(screen.getByText("Welcome to Wenlan")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Get started" })).toBeInTheDocument();
@@ -337,7 +337,7 @@ describe("SetupWizard", () => {
     expect(screen.getByRole("button", { name: "开始使用" })).toBeInTheDocument();
   });
 
-  it("opens notes directly without entering intelligence setup", async () => {
+  it("opens pages directly without entering intelligence setup", async () => {
     const { onComplete } = renderWizard();
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
@@ -416,7 +416,7 @@ describe("SetupWizard", () => {
     // VaultConnectCard (Task 6), rendered inline as the second path. It carries
     // its own title — no separate wrapper heading duplicates it.
     expect(screen.getByText("Connect a Markdown folder")).toBeInTheDocument();
-    expect(screen.queryByText("Obsidian vault / notes folder")).not.toBeInTheDocument();
+    expect(screen.queryByText("Obsidian vault / pages folder")).not.toBeInTheDocument();
   });
 
   it("routes chat history to the ZIP flow and keeps wizard actions in the StepShell", async () => {
@@ -967,7 +967,7 @@ describe("SetupWizard", () => {
   // a multi-GB download, the slowest row on the screen.
   it("rows are ordered daemon, config tools, plugin tools, import, then model — ascending by expected duration", async () => {
     (detectObsidianVaults as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { name: "Work Notes", path: "/Users/x/Vaults/Work Notes" },
+      { name: "Work Pages", path: "/Users/x/Vaults/Work Pages" },
     ]);
     (detectMcpClients as ReturnType<typeof vi.fn>).mockResolvedValue([
       {
@@ -1000,8 +1000,8 @@ describe("SetupWizard", () => {
     fireEvent.click(screen.getByText("Continue"));
 
     // Step 3: pick the vault so an import row exists.
-    await waitFor(() => expect(screen.getByText("Work Notes")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Work Notes"));
+    await waitFor(() => expect(screen.getByText("Work Pages")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Work Pages"));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
 
     // Step 4: both detected tools start checked — take both.
@@ -1106,11 +1106,11 @@ describe("SetupWizard", () => {
     expect(screen.queryByText(/^Memories will appear/i)).not.toBeInTheDocument();
     expect(
       screen.getByText(
-        "Use your AI tools normally. As they work, Wenlan turns what they learn into source-cited notes and keeps the memories behind them. You can always return to Settings to connect more tools.",
+        "Use your AI tools normally. As they work, Wenlan turns what they learn into source-cited pages and keeps the memories behind them. You can always return to Settings to connect more tools.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Notes refresh between sessions, so the next one starts where the last ended."),
+      screen.getByText("Pages refresh between sessions, so the next one starts where the last ended."),
     ).toBeInTheDocument();
 
     expect(screen.queryByText("Back")).not.toBeInTheDocument();
@@ -1522,7 +1522,7 @@ describe("SetupWizard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it.each([false, true])("opening notes does not wire providers with background AI consent=%s", async (enabled) => {
+  it.each([false, true])("opening pages does not wire providers with background AI consent=%s", async (enabled) => {
     (getBackgroundAiEnabled as ReturnType<typeof vi.fn>).mockResolvedValue(enabled);
     (getResolvedRouting as ReturnType<typeof vi.fn>).mockResolvedValue({
       everyday: { source: "basic", model: null, mode: "auto", pin: null },
@@ -1565,12 +1565,12 @@ describe("SetupWizard", () => {
 
   it("import step 3 records the vault pick but does not import it — only step 5 does", async () => {
     (detectObsidianVaults as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { name: "Work Notes", path: "/Users/x/Vaults/Work Notes" },
+      { name: "Work Pages", path: "/Users/x/Vaults/Work Pages" },
     ]);
 
     renderWizard({ initialStep: "import" });
-    await waitFor(() => expect(screen.getByText("Work Notes")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Work Notes"));
+    await waitFor(() => expect(screen.getByText("Work Pages")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Work Pages"));
 
     await waitFor(() =>
       expect(screen.getByText("Wenlan will import this when setup finishes.")).toBeInTheDocument(),
@@ -1898,7 +1898,7 @@ describe("SetupWizard", () => {
   // Absence only — the name used to promise a positive check this test never
   // makes, and it passed with the note deleted outright. The presence half is
   // the next test over; this one exists to catch a note that never goes away.
-  it("hides the walk-away note once every row has settled", async () => {
+  it("hides the walk-away page once every row has settled", async () => {
     (getWireState as ReturnType<typeof vi.fn>).mockResolvedValue({
       daemon: { base_url: "http://127.0.0.1:7878", reachable: true, version: "0.12.0", error: null },
       mcp_binary: { command: "wenlan-mcp", args: [], candidates: [] },
@@ -1915,7 +1915,7 @@ describe("SetupWizard", () => {
     expect(screen.queryByTestId("setting-up-walk-away")).not.toBeInTheDocument();
   });
 
-  it("shows the walk-away note while the model row is still downloading", async () => {
+  it("shows the walk-away page while the model row is still downloading", async () => {
     (getOnDeviceModel as ReturnType<typeof vi.fn>).mockResolvedValue({
       loaded: null,
       selected: "qwen3-4b-instruct-2507",
@@ -2047,12 +2047,12 @@ describe("SetupWizard", () => {
 
   it("import: step 5 runs addSource + syncRegisteredSource and shows the real SyncStats it gets back, never a fabricated count", async () => {
     (detectObsidianVaults as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { name: "Work Notes", path: "/Users/x/Vaults/Work Notes" },
+      { name: "Work Pages", path: "/Users/x/Vaults/Work Pages" },
     ]);
     (addSource as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "src-1",
       source_type: "obsidian",
-      path: "/Users/x/Vaults/Work Notes",
+      path: "/Users/x/Vaults/Work Pages",
       status: "idle",
       last_sync: null,
       file_count: 0,
@@ -2067,14 +2067,14 @@ describe("SetupWizard", () => {
 
     renderWizard({ initialStep: "intelligence-choice" });
     fireEvent.click(screen.getByText("Skip")); // skip intelligence — isolate the import row
-    await waitFor(() => expect(screen.getByText("Work Notes")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Work Notes"));
+    await waitFor(() => expect(screen.getByText("Work Pages")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Work Pages"));
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(screen.getByText("Connect your AI tools")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Skip"));
 
     await waitFor(() => {
-      expect(addSource).toHaveBeenCalledWith("obsidian", "/Users/x/Vaults/Work Notes");
+      expect(addSource).toHaveBeenCalledWith("obsidian", "/Users/x/Vaults/Work Pages");
     });
     await waitFor(() => {
       expect(syncRegisteredSource).toHaveBeenCalledWith("src-1");
@@ -2131,7 +2131,7 @@ describe("SetupWizard", () => {
       ["mem_flood-1", "mem_flood-2", "mem_flood-3", "mem_flood-4", "mem_flood-5"].map((id) => ({
         kind: "memory",
         id,
-        title: "Imported note",
+        title: "Imported page",
         snippet: null,
         timestamp_ms: Date.now(),
         badge: { kind: "none" },
@@ -2542,7 +2542,7 @@ describe("SetupWizard", () => {
     // Recovery still describes the notes-first experience without AI setup questions.
     expect(
       screen.getByText(
-        "Start with a note. Connect your AI tools when you need them.",
+        "Start with a page. Connect your AI tools when you need them.",
       ),
     ).toBeInTheDocument();
   });
@@ -2997,7 +2997,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(screen.getByText("4 memories imported")).toBeInTheDocument();
     expect(screen.queryByText("Topics")).not.toBeInTheDocument();
     expect(screen.queryByText("Connections")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Notes will be organized/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pages will be organized/)).not.toBeInTheDocument();
   });
 
   it.each([false, true])("pinned daemon: Done respects background AI consent=%s", async (enabled) => {
@@ -3022,7 +3022,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     await waitFor(() => expect(setSourcePin).toHaveBeenCalledWith("on_device", "anthropic", true));
     expect(
       await screen.findByText(
-        "Everyday tasks: On-device. Note synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: On-device. Page synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
     // Exclusivity: a wired routing shows the summary, never the no-model line.
@@ -3094,7 +3094,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(setSourcePin).toHaveBeenCalledTimes(1);
     expect(
       await screen.findByText(
-        "Everyday tasks: Anthropic. Note synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: Anthropic. Page synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
   });
@@ -3114,7 +3114,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
 
     expect(
       await screen.findByText(
-        "Everyday tasks: On-device. Note synthesis: On-device. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: On-device. Page synthesis: On-device. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
@@ -3166,7 +3166,7 @@ describe("DoneStep onboarding routing wiring (wireRouting=true)", () => {
     expect(getResolvedRouting).toHaveBeenCalledTimes(2);
     expect(
       await screen.findByText(
-        "Everyday tasks: On-device. Note synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
+        "Everyday tasks: On-device. Page synthesis: Anthropic. Change this anytime in Settings → Intelligence.",
       ),
     ).toBeInTheDocument();
     expect(

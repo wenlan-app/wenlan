@@ -81,6 +81,9 @@ pub struct SearchResult {
     /// notes with nothing outstanding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisRef>,
+    /// For a note hit: its code bases that are not `ok`. Empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
 }
 
 /// A full memory item with all metadata.

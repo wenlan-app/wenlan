@@ -4,7 +4,7 @@ import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { openPrimaryDestination } from "./helpers/primaryNavigation";
 
 for (const width of [1280, 375]) {
-  test(`one history entry spans notes, memories and spaces at ${width}px`, async ({ page }, testInfo) => {
+  test(`one history entry spans pages, memories and spaces at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const errors = collectBrowserErrors(page);
     await installTauriMock(page, { locale: "en", rawActions: [] });
@@ -17,7 +17,7 @@ for (const width of [1280, 375]) {
     await openPrimaryDestination(page, "Spaces");
     await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
     await back.click();
-    await expect(page.getByRole("heading", { name: "Open a note", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Open a page", exact: true })).toBeVisible();
     await forward.press("Enter");
     await expect(page.getByRole("heading", { name: "Spaces", exact: true })).toBeVisible();
     await openPrimaryDestination(page, "Memories");

@@ -14,7 +14,7 @@ for (const cfg of configs) test(`Space direct edits ${cfg.locale} ${cfg.theme} $
  await openPrimaryDestination(page,t.sidebar.spaces,t.sidebar.more);
  await page.getByTestId('space-row-project-wenlan').getByRole('button',{name:'Wenlan',exact:true}).click();
  const title=page.getByRole('textbox',{name:t.spaces.overview.nameLabel,exact:true}), description=page.getByRole('textbox',{name:t.spaceDetail.editDescription,exact:true});
- await expect(title).toHaveValue('Wenlan');await expect(description).toHaveValue('Notes and references for a simpler writing experience.');
+ await expect(title).toHaveValue('Wenlan');await expect(description).toHaveValue('Pages and references for a simpler writing experience.');
  await expect(page.getByRole('button',{name:t.spaces.overview.editSpace,exact:true})).toHaveCount(0);
  await expect(page.locator('.space-dossier-identity-editor')).toHaveCount(0);
  await expect(page.locator('[data-navigation-icon=wiki-stack]')).toHaveCount(1);

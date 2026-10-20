@@ -76,7 +76,7 @@ describe("DistillReviewPanel source updates", () => {
     renderPanel();
 
     expect(await screen.findByRole("region", { name: "Source updates" })).toBeInTheDocument();
-    expect(screen.getByText("“Pricing” changed. 1 note to confirm")).toBeInTheDocument();
+    expect(screen.getByText("“Pricing” changed. 1 page to confirm")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "All caught up" })).toBeNull();
   });
 

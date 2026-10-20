@@ -199,7 +199,7 @@ describe("FirstUseSample source rack and page flow", () => {
     expect(
       screen.getByText("Let AI use your knowledge"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back to the note" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to the page" }));
     expect(
       screen.queryByText("Let AI use your knowledge"),
     ).not.toBeInTheDocument();
@@ -263,13 +263,13 @@ describe("FirstUseSample AI-use panel", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a read-only note instead of a handoff command for ChatGPT", () => {
+  it("shows a read-only page instead of a handoff command for ChatGPT", () => {
     renderSample();
     openAiPanel();
     expect(
       screen.getByText(/ChatGPT can read but not write/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/note today's decisions/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/page today's decisions/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
     expect(screen.getByText("/handoff")).toBeInTheDocument();
   });
@@ -394,7 +394,7 @@ describe("FirstUseSample AI-use panel", () => {
     expect(screen.getByText(/Save progress/)).toBeInTheDocument();
   });
 
-  it("shows the ChatGPT read-only note only for ChatGPT", () => {
+  it("shows the ChatGPT read-only page only for ChatGPT", () => {
     renderSample();
     openAiPanel();
     expect(

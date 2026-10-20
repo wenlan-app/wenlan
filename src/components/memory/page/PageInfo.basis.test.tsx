@@ -57,9 +57,9 @@ afterEach(() => {
 describe("PageInfo notes group", () => {
   it("hints that related notes can be sources when there are none", () => {
     setup();
-    const group = screen.getByRole("region", { name: "Notes this note relies on" });
-    expect(within(group).getByRole("heading", { name: "Notes" })).toBeInTheDocument();
-    expect(group).toHaveTextContent("You can also use related notes as sources. You'll be told when they change.");
+    const group = screen.getByRole("region", { name: "Pages this page relies on" });
+    expect(within(group).getByRole("heading", { name: "Pages" })).toBeInTheDocument();
+    expect(group).toHaveTextContent("You can also use related pages as sources. You'll be told when they change.");
   });
 
   it("lists the notes it relies on in plain words and opens or drops them", () => {
@@ -71,8 +71,8 @@ describe("PageInfo notes group", () => {
         basis({ page_id: "basis-d", title: "Elsewhere", state: "unavailable" }),
       ],
     });
-    const group = screen.getByRole("region", { name: "Notes this note relies on" });
-    expect(group).not.toHaveTextContent("You can also use related notes");
+    const group = screen.getByRole("region", { name: "Pages this page relies on" });
+    expect(group).not.toHaveTextContent("You can also use related pages");
     expect(within(group).getByText("Up to date")).toBeInTheDocument();
     expect(within(group).getByText("Has an update to confirm")).toBeInTheDocument();
     expect(within(group).getByText("Archived")).toBeInTheDocument();
@@ -97,8 +97,8 @@ describe("PageInfo notes group", () => {
     ]);
     const { onMarkBasis } = setup({ basis: [basis()] });
 
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    const picker = screen.getByRole("group", { name: "Choose a note to use as a source" });
+    fireEvent.click(screen.getByRole("button", { name: "Add a page" }));
+    const picker = screen.getByRole("group", { name: "Choose a page to use as a source" });
     expect(await within(picker).findByRole("button", { name: "Eligible" })).toBeInTheDocument();
     expect(listPages).toHaveBeenCalledWith("active", "Wenlan", 40);
     for (const hidden of ["Pricing", "Note page-1", "Archived one", "Other space", "Entity page"]) {
@@ -107,7 +107,7 @@ describe("PageInfo notes group", () => {
 
     fireEvent.click(within(picker).getByRole("button", { name: "Eligible" }));
     await waitFor(() => expect(onMarkBasis).toHaveBeenCalledWith("page-9"));
-    await waitFor(() => expect(screen.queryByRole("group", { name: "Choose a note to use as a source" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("group", { name: "Choose a page to use as a source" })).toBeNull());
   });
 
   it("searches when the person types and keeps the picker open after a failure", async () => {
@@ -116,29 +116,29 @@ describe("PageInfo notes group", () => {
     const { onMarkBasis } = setup();
     onMarkBasis.mockResolvedValue(false);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add a note" }));
-    fireEvent.change(screen.getByRole("searchbox", { name: "Search notes" }), { target: { value: "pricing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add a page" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search pages" }), { target: { value: "pricing" } });
     fireEvent.click(await screen.findByRole("button", { name: "Pricing FAQ" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not use it as a source. Try again.");
     expect(searchPages).toHaveBeenCalledWith("pricing", 40);
-    expect(screen.getByRole("group", { name: "Choose a note to use as a source" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Choose a page to use as a source" })).toBeInTheDocument();
   });
 
   it("shows the split count in the summary once the note relies on notes", () => {
     setup({ embedded: false, basis: [basis(), basis({ page_id: "basis-b", title: "Roadmap" })] });
-    expect(screen.getByText(/3 source memories · 2 notes/)).toBeInTheDocument();
+    expect(screen.getByText(/3 source memories · 2 pages/)).toBeInTheDocument();
   });
 
   it("leaves out a zero memory count for a note built only on notes", () => {
     setup({ embedded: false, sourceCount: 0, basis: [basis()] });
-    expect(screen.getByText(/0 revisions · 1 note$/)).toBeInTheDocument();
+    expect(screen.getByText(/0 revisions · 1 page$/)).toBeInTheDocument();
     expect(screen.queryByText(/source memor/)).toBeNull();
   });
 
   it("leaves the old summary and no notes group for a note with no basis controls", () => {
     setup({ embedded: false, basis: undefined, onMarkBasis: undefined, onUnmarkBasis: undefined });
     expect(screen.getByText(/0 backlinks · 0 revisions · 3 sources/)).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Notes this note relies on" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Pages this page relies on" })).toBeNull();
   });
 });

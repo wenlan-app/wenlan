@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ReferenceLink } from "../links/ReferenceLink";
 import { referenceTargetFromHref } from "../links/referenceTypes";
+import { displayUrl, isBareUrlLink } from "../../../lib/displayUrl";
 import "./SourceDocumentContent.css";
 
 interface SourceDocumentContentProps {
@@ -59,8 +60,9 @@ const markdownComponents = {
         href={href}
         target={href?.startsWith("#") ? undefined : "_blank"}
         rel="noopener noreferrer"
+        title={isBareUrlLink(href, children) ? href : undefined}
       >
-        {children}
+        {isBareUrlLink(href, children) ? displayUrl(children) : children}
       </a>
     ),
   img: ({ alt }: { alt?: string }) => (

@@ -672,6 +672,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/pages/{id}/basis/{basis_id}` | main | yes | automatic | `none` | `handle_mark_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `POST` | `/api/pages/{id}/basis/{basis_id}/confirm` | main | yes | automatic | `none` | `handle_confirm_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `DELETE` | `/api/pages/{id}/basis/{basis_id}` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
+| `POST` | `/api/pages/code-basis/recheck` | main | yes | automatic | `none` | `handle_code_basis_recheck` | CodeBasisRecheckEntry.title: visible_ids filter on the notes |
+| `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
+| `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
 | `POST` | `/api/pages/{id}/export` | main | yes | automatic | `none` | `handle_export_page` | EFFECT: writes page prose to the requested vault |
@@ -791,6 +794,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `list_refinements` | yes | automatic | `none` | tool handler |
 | `list_rejections` | yes | automatic | `none` | tool handler |
 | `page_basis` | yes | automatic | `none` | tool handler |
+| `page_code_basis` | yes | automatic | `none` | tool handler |
 | `read_page` | yes | automatic | `none` | tool handler |
 | `recall` | yes | automatic | `none` | tool handler |
 | `reject_refinement` | yes | automatic | `none` | tool handler |

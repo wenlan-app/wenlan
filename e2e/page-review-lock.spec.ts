@@ -12,7 +12,7 @@ const recentChanges = [{
 }];
 
 const COPY: Record<AppLocale, { actions: string; toggle: string; notice: string }> = {
-  en: { actions: "Note actions", toggle: "Review every change", notice: "AI edits to this note wait for your review." },
+  en: { actions: "Page actions", toggle: "Review every change", notice: "AI edits to this page wait for your review." },
   "zh-Hant": { actions: "筆記操作", toggle: "改動要審核", notice: "AI 改這篇筆記時，會先等你審核。" },
   "zh-Hans": { actions: "笔记操作", toggle: "改动要审核", notice: "AI 改这篇笔记时，会先等你审核。" },
 };

@@ -138,7 +138,7 @@ async fn metadata_upsert_overwrites_non_null_and_keeps_absent() {
 
 #[tokio::test]
 async fn migration_backfills_a_session_per_import_conversation() {
-    let (db, _temp) = test_db_at(138).await;
+    let (db, _temp) = test_db_at(139).await;
     {
         let conn = db.conn.lock().await;
         // Conversation one has two chunks; conversation two is ChatGPT; the
@@ -162,9 +162,9 @@ async fn migration_backfills_a_session_per_import_conversation() {
         }
     }
 
-    db.migrate_139_agent_sessions(138).await.unwrap();
+    db.migrate_140_agent_sessions(139).await.unwrap();
     // Replaying a crashed migration is harmless.
-    db.migrate_139_agent_sessions(138).await.unwrap();
+    db.migrate_140_agent_sessions(139).await.unwrap();
 
     let claude = db
         .get_session(&session_row_id(&session("claude-ai:conv-1")))
@@ -202,6 +202,6 @@ async fn migration_backfills_a_session_per_import_conversation() {
     let mut rows = conn.query("PRAGMA user_version", ()).await.unwrap();
     assert_eq!(
         rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
-        139
+        140
     );
 }

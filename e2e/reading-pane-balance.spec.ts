@@ -17,8 +17,8 @@ for (const cfg of [
     const errors = collectBrowserErrors(page);
     const base = createSpacesNavigationFixture();
     await installTauriMock(page, { locale: "en", fixture: { ...base, documents: [{ file: {
-      source: "file", source_id: "/demo/reading.md", title: "Reading notes", chunk_count: 1, last_modified: 1,
-    }, content: "# Reading notes\n\nA familiar reading lane keeps text comfortable when supplementary information is open.\n\n## Context\n\nKeep the original source and the next step clear." }] }, rawActions: [], localStorage: {
+      source: "file", source_id: "/demo/reading.md", title: "Reading pages", chunk_count: 1, last_modified: 1,
+    }, content: "# Reading pages\n\nA familiar reading lane keeps text comfortable when supplementary information is open.\n\n## Context\n\nKeep the original source and the next step clear." }] }, rawActions: [], localStorage: {
       "wenlan-theme": cfg.theme,
       "wenlan-navigation-v1": JSON.stringify({ version: 1, visible: ["pages", "sources", "spaces", "memories", "entities", "graph"], sidebar: { visible: true, mode: cfg.mode, width: 240 } }),
     } });
@@ -69,7 +69,7 @@ for (const cfg of [
       return type;
     }
     await openPrimaryDestination(page, t.sidebar.sources, t.sidebar.more);
-    await page.locator(".source-library-row").filter({ hasText: "Reading notes" }).click();
+    await page.locator(".source-library-row").filter({ hasText: "Reading pages" }).click();
     const pane = page.locator(".page-info-drawer");
     await expect(pane).toBeVisible();
     expect((await pane.boundingBox())!.width).toBe(320);
