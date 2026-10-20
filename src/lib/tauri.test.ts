@@ -1249,7 +1249,7 @@ describe('page links wrappers', () => {
     expect(mockInvoke).toHaveBeenLastCalledWith('list_basis_pending', { space: null });
   });
 
-  it('updatePage forwards the minor flag and the basis to confirm', async () => {
+  it('updatePage forwards the basis to confirm', async () => {
     mockInvoke.mockResolvedValue({ outcome: 'saved', basisConfirm: 'confirmed' });
 
     await tauri.updatePage({
@@ -1258,14 +1258,12 @@ describe('page links wrappers', () => {
       expectedVersion: 2,
       callerId: 'wenlan-app',
       operationId: 'op',
-      minor: true,
       confirmBasis: { basis_page_id: 'basis-1', version: 5 },
     });
 
     expect(mockInvoke).toHaveBeenCalledWith(
       'update_page',
       expect.objectContaining({
-        minor: true,
         confirmBasis: { basis_page_id: 'basis-1', version: 5 },
       }),
     );

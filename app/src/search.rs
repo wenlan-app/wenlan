@@ -3659,14 +3659,11 @@ mod remaining_json_command_type_tests {
 /// fields the daemon added after 0.9.2 (e.g. `citations`); the Rust layer
 /// consumes no Page fields on this path, so TypeScript types the response.
 ///
-/// A note's bases ride beside the page object on the wire (`basis`, and
-/// `basis_citer_count` for the minor-edit box). They belong to the note, so they
-/// are folded into the page the UI receives; the page's own fields win.
+/// A note's bases ride beside the page object on the wire (`basis`). They
+/// belong to the note, so they are folded into the page the UI receives; the
+/// page's own fields win.
 fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
     let basis = wire.get_mut("basis").map(serde_json::Value::take);
-    let citer_count = wire
-        .get_mut("basis_citer_count")
-        .map(serde_json::Value::take);
     let mut page = match wire.get_mut("page") {
         Some(v) if !v.is_null() => v.take(),
         _ => return None,
@@ -3674,9 +3671,6 @@ fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
     if let Some(fields) = page.as_object_mut() {
         if let Some(basis) = basis.filter(|b| !b.is_null()) {
             fields.entry("basis").or_insert(basis);
-        }
-        if let Some(count) = citer_count.filter(|c| !c.is_null()) {
-            fields.entry("basis_citer_count").or_insert(count);
         }
     }
     Some(page)
@@ -3727,16 +3721,13 @@ mod get_page_tests {
     fn page_from_wire_folds_the_bases_into_the_page() {
         let wire = serde_json::json!({
             "page": { "id": "p1" },
-            "basis": [{ "page_id": "b1", "state": "pending" }],
-            "basis_citer_count": 2
+            "basis": [{ "page_id": "b1", "state": "pending" }]
         });
         let page = page_from_wire(wire).expect("page present");
         assert_eq!(page["basis"][0]["page_id"], "b1");
-        assert_eq!(page["basis_citer_count"], 2);
 
         let plain = page_from_wire(serde_json::json!({ "page": { "id": "p2" } })).unwrap();
         assert!(plain.get("basis").is_none());
-        assert!(plain.get("basis_citer_count").is_none());
     }
 
     #[test]
@@ -4495,7 +4486,6 @@ pub async fn update_page(
     expected_version: i64,
     caller_id: String,
     operation_id: String,
-    minor: Option<bool>,
     confirm_basis: Option<wenlan_types::page_basis::ConfirmBasisInput>,
 ) -> Result<UpdatePageOutcome, String> {
     if caller_id != "wenlan-app" {
@@ -4524,7 +4514,7 @@ pub async fn update_page(
             caller_id: Some("wenlan-app".to_string()),
             operation_id: Some(operation_id),
         },
-        minor,
+        minor: None,
         confirm_basis,
     };
     map_page_update_result(client.post_page_update(&id, &req).await)

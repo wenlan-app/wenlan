@@ -286,11 +286,9 @@ pub async fn handle_get_page(
                     version,
                 })
                 .collect();
-            let basis_citer_count = db.count_basis_citers(&id).await?;
             Ok(Json(PageReadResponse {
                 basis,
                 linked_changed,
-                basis_citer_count,
                 // The full list is the top-level `basis`; the entry's own
                 // non-ok list is for inventories.
                 page: PageInventoryEntry {

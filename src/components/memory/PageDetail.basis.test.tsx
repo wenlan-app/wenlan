@@ -115,40 +115,24 @@ async function typeIntoEditor(text: string) {
 }
 
 describe("PageDetail with note bases", () => {
-  it("offers the minor-edit box only when other notes rely on this one, and sends it on save", async () => {
-    renderPage({ basis_citer_count: 2 }, { initialMode: "edit" });
-
-    const box = await screen.findByRole("checkbox", { name: "Minor edit" });
-    expect(box).not.toBeChecked();
-    await userEvent.click(box);
-    await typeIntoEditor("The plan costs 11 dollars.");
-
-    await waitFor(() => expect(updatePage).toHaveBeenCalled(), { timeout: 4000 });
-    expect(vi.mocked(updatePage).mock.calls[0][0]).toMatchObject({
-      content: "The plan costs 11 dollars.",
-      minor: true,
-    });
-  });
-
-  it("does not show the minor-edit box, or send minor, when nothing relies on this note", async () => {
-    renderPage({ basis_citer_count: 0 }, { initialMode: "edit" });
+  it("saves a human edit with no minor-edit choice", async () => {
+    renderPage({}, { initialMode: "edit" });
 
     await screen.findByRole("textbox", { name: "Note editor" });
-    expect(screen.queryByRole("checkbox", { name: "Minor edit" })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
     await typeIntoEditor("The plan costs 11 dollars.");
 
     await waitFor(() => expect(updatePage).toHaveBeenCalled(), { timeout: 4000 });
     expect(vi.mocked(updatePage).mock.calls[0][0]).not.toHaveProperty("minor");
   });
 
-  it("does not carry a minor edit or a basis confirmation over to another note", async () => {
-    const { user, rerender, client } = renderPage({ basis_citer_count: 2, basis: [pendingBasis] });
+  it("does not carry a basis confirmation over to another note", async () => {
+    const { user, rerender, client } = renderPage({ basis: [pendingBasis] });
     await user.click(await screen.findByRole("button", { name: "More actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Edit it yourself" }));
-    await userEvent.click(await screen.findByRole("checkbox", { name: "Minor edit" }));
 
     vi.mocked(getPage).mockImplementation(async (id: string) => notePage({
-      id, title: "Other note", basis_citer_count: 2, basis: [],
+      id, title: "Other note", basis: [],
     }));
     rerender(<QueryClientProvider client={client}>
       <PageDetail
@@ -160,7 +144,6 @@ describe("PageDetail with note bases", () => {
       />
     </QueryClientProvider>);
 
-    expect(await screen.findByRole("checkbox", { name: "Minor edit" })).not.toBeChecked();
     await typeIntoEditor("Something else entirely.");
     await waitFor(() => expect(updatePage).toHaveBeenCalled(), { timeout: 4000 });
     const calls = vi.mocked(updatePage).mock.calls;

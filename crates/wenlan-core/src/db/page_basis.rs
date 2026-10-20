@@ -1150,30 +1150,6 @@ impl MemoryDB {
             .is_some())
     }
 
-    /// How many active notes rely on this note (the note is their basis) in a
-    /// row that is not `deleted`. Drafts and archived citers do not count. The
-    /// desktop app shows its "minor edit" box only when this is above zero.
-    pub async fn count_basis_citers(&self, basis_page_id: &str) -> Result<i64, WenlanError> {
-        let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "SELECT COUNT(*) FROM page_basis b \
-                 JOIN pages c ON c.id = b.page_id \
-                 WHERE b.basis_page_id = ?1 AND b.state <> 'deleted' \
-                   AND c.status = 'active'",
-                libsql::params![basis_page_id],
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("count_basis_citers: {e}")))?;
-        let row = rows
-            .next()
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("count_basis_citers row: {e}")))?
-            .ok_or_else(|| WenlanError::VectorDb("count_basis_citers: no row".into()))?;
-        row.get::<i64>(0)
-            .map_err(|e| WenlanError::VectorDb(format!("count_basis_citers decode: {e}")))
-    }
-
     /// Notes waiting on a basis that is not `ok`, grouped by basis note and
     /// state, optionally limited to one Space (the citer's). Archived, draft
     /// and entity citers are left out: nobody is waiting on their behalf.

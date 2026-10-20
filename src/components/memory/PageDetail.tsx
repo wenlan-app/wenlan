@@ -362,7 +362,6 @@ export default function PageDetail({
   // "Edit it yourself" on a changed basis: the next save also confirms it. The
   // ref is what the (once-built) autosave writer reads; the state drives the UI.
   const confirmIntentRef = useRef<{ pageId: string; basis: BasisRef } | null>(null);
-  const minorEditRef = useRef(false);
   // Opening the review waits for the stored action to finish: while it is
   // pending, the shell refuses to navigate away from this note.
   const openReviewAfterActionRef = useRef<{ pageId: string; itemId: string } | null>(null);
@@ -371,7 +370,6 @@ export default function PageDetail({
     openReviewAfterActionRef.current = null;
     return pending;
   };
-  const [minorEdit, setMinorEdit] = useState(false);
   const basisSaveOutcomeRef = useRef<(outcome: BasisConfirmOutcome) => void>(() => undefined);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasSwitchPending, setCanvasSwitchPending] = useState(false);
@@ -633,8 +631,6 @@ export default function PageDetail({
     editorPageRef.current = null;
     autoEditIntentRef.current = null;
     confirmIntentRef.current = null;
-    minorEditRef.current = false;
-    setMinorEdit(false);
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
@@ -698,11 +694,10 @@ export default function PageDetail({
   if (!autosaveRef.current) {
     autosaveRef.current = new PageAutosave({
       write: async (input) => {
-        // Both save intents belong to the note they were chosen on.
+        // The confirm intent belongs to the note it was chosen on.
         const intent = confirmIntentRef.current?.pageId === input.id ? confirmIntentRef.current : null;
         const outcome = await updatePage({
           ...input,
-          ...(minorEditRef.current ? { minor: true } : {}),
           ...(intent && intent.basis.to_version != null
             ? { confirmBasis: { basis_page_id: intent.basis.page_id, version: intent.basis.to_version } }
             : {}),
@@ -1012,8 +1007,6 @@ export default function PageDetail({
 
   const closeEditor = () => {
     clearConfirmIntent();
-    minorEditRef.current = false;
-    setMinorEdit(false);
     canvasSwitchAttemptRef.current += 1;
     canvasSwitchPendingRef.current = false;
     setCanvasSwitchPending(false);
@@ -2441,19 +2434,6 @@ export default function PageDetail({
                     ? t("pageDetail.editor.unsaved")
                     : t("pageDetail.editor.saved")}
               </div>
-              {(page.basis_citer_count ?? 0) > 0 && (
-                <label className="page-editor-minor-edit">
-                  <input
-                    type="checkbox"
-                    checked={minorEdit}
-                    onChange={(event) => {
-                      minorEditRef.current = event.target.checked;
-                      setMinorEdit(event.target.checked);
-                    }}
-                  />
-                  <span>{t("noteBasis.minorEdit")}</span>
-                </label>
-              )}
               {(saveState.phase === "retryable" || saveState.phase === "failed" || saveState.phase === "upgrade_required") && (
                 <button type="button" className="page-editor-action self-start" onClick={() => void autosave.retry()}>
                   {t("pageDetail.editor.retry")}

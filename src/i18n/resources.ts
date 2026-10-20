@@ -67,7 +67,6 @@ const en = {
       minorEdit: "Minor edit",
       close: "Close",
     },
-    minorEdit: "Minor edit",
     previewReady: "Preview ready to review",
     state: {
       ok: "Up to date",
@@ -2763,7 +2762,6 @@ const zhHans = {
       minorEdit: "小修改",
       close: "关闭",
     },
-    minorEdit: "小修改",
     previewReady: "预览已备好，请确认",
     state: {
       ok: "已是最新",
@@ -5397,7 +5395,6 @@ const zhHant = {
       minorEdit: "小修改",
       close: "關閉",
     },
-    minorEdit: "小修改",
     previewReady: "預覽已備好，請確認",
     state: {
       ok: "已是最新",

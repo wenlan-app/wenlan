@@ -1432,8 +1432,6 @@ export interface Page {
    * when the note relies on nothing and on every inventory/list entry.
    */
   basis?: BasisRef[];
-  /** How many active notes rely on this one. Gates the "Minor edit" box. */
-  basis_citer_count?: number;
   citations?: PageCitation[];
   /**
    * Both M5 truth axes, present only when this page was fetched via an
@@ -2475,8 +2473,6 @@ export interface UpdatePageInput {
   expectedVersion: number;
   callerId: "wenlan-app";
   operationId: string;
-  /** Save as a small edit; notes that rely on this one are told it was minor. */
-  minor?: boolean;
   /** Also confirm one basis of this note, if it is still at `version`. */
   confirmBasis?: { basis_page_id: string; version: number };
 }

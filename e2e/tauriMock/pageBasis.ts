@@ -45,13 +45,6 @@ export class PageBasisStore {
     return this.scenario.redistill?.[pageId] ?? null;
   }
 
-  citerCount(basisPageId: string, pages: readonly KnowledgePage[]): number {
-    return this.rows.filter((row) => {
-      if (row.basisPageId !== basisPageId) return false;
-      return pages.some((page) => page.id === row.pageId && page.status === "active");
-    }).length;
-  }
-
   refsFor(pageId: string, pages: readonly KnowledgePage[]): BasisRef[] {
     return this.rows
       .filter((row) => row.pageId === pageId)

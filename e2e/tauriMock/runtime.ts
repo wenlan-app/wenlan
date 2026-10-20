@@ -511,12 +511,9 @@ export class TauriMockRuntime {
       // not a durable error inferred from a missing file on later reads.
       delete page.projection_status;
       delete page.projection_error;
-      // Like the real GET: the bases ride with the note, and so does the count
-      // of notes that rely on this one (the "small edit" box needs it).
+      // Like the real GET: the bases ride with the note.
       const basis = this.pageBasis.refsFor(page.id, this.pages);
       if (basis.length > 0) page.basis = basis;
-      const citers = this.pageBasis.citerCount(page.id, this.pages);
-      if (citers > 0) page.basis_citer_count = citers;
     }
     return page;
   }
