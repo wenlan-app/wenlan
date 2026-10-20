@@ -522,7 +522,9 @@ async fn cited_by_lists_notes_that_used_the_sessions_memories() {
         let conn = db.conn.lock().await;
         conn.execute(
             "INSERT INTO page_history (page_id, version, title, content, edited_by, created_at, session_id)
-             VALUES ('page_own', 1, 'Written by the session', 'body', 'agent', 50, ?1)",
+             SELECT 'page_own', COALESCE(MAX(version), 0) + 1, 'Written by the session', 'body',
+                    'agent', 50, ?1
+               FROM page_history WHERE page_id = 'page_own'",
             libsql::params![id.as_str()],
         )
         .await
