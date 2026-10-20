@@ -220,10 +220,11 @@ fn manifest_counts_match_the_spec() {
     // lock; a flag receipt, not page-bearing).
     // POST `/api/agents` (register a connected tool) adds another.
     // Then 207 after the agent-session routes: POST `/api/sessions`, GET
-    // `/api/sessions/{id}`, and GET `/api/pages/{id}/sessions`.
+    // `/api/sessions/{id}`, and GET `/api/pages/{id}/sessions`. Then 215
+    // after both those and the three code basis routes landed together.
     assert_eq!(
         HTTP_READERS.len(),
-        212,
+        215,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 32, "#[tool( declarations");
@@ -234,7 +235,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        224,
+        227,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -242,7 +243,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        207,
+        210,
         "main builder entries"
     );
     assert_eq!(

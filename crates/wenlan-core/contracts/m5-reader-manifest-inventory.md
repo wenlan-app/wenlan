@@ -675,6 +675,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/code-basis/recheck` | main | yes | automatic | `none` | `handle_code_basis_recheck` | CodeBasisRecheckEntry.title: visible_ids filter on the notes |
 | `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
+| `POST` | `/api/sessions` | main | no | not_applicable | `none` | — | AgentSession carries no page prose |
+| `GET` | `/api/sessions/{id}` | main | yes | automatic | `none` | `handle_get_session` | SessionPageEntry.title |
+| `GET` | `/api/pages/{id}/sessions` | main | yes | automatic | `none` | `handle_get_page_sessions` | names the page; AgentSession carries no page prose |
 | `POST` | `/api/pages/{id}/archive` | main | yes | automatic | `none` | `handle_archive_page` | opaque response type — fail-closed |
 | `POST` | `/api/pages/{id}/rename` | main | yes | automatic | `none` | `handle_rename_page` | title metadata — core page_write_permit before mutation |
 | `POST` | `/api/pages/{id}/export` | main | yes | automatic | `none` | `handle_export_page` | EFFECT: writes page prose to the requested vault |
