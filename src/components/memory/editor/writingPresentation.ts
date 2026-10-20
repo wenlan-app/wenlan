@@ -529,10 +529,9 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           // Read like the reader shows it: site and path, no "https://".
           // The full address comes back as soon as the caret reaches it.
           if (!constructIsRevealed(state, node.from, node.to, contentFocused)) {
-            addConcealment(
-              node.from,
-              node.from + hiddenUrlPrefixLength(state.sliceDoc(node.from, node.to)),
-            );
+            const url = state.sliceDoc(node.from, node.to);
+            addConcealment(node.from, node.from + hiddenUrlPrefixLength(url));
+            if (url.endsWith("/")) addConcealment(node.to - 1, node.to);
           }
           return;
         }

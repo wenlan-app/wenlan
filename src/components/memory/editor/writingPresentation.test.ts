@@ -193,7 +193,7 @@ describe("writingPresentation", () => {
     const source = [
       "See [docs](https://wenlan.app/docs) and [[Wiki]].",
       "",
-      "Bare https://github.com/wenlan-app/wenlan here.",
+      "Bare https://github.com/wenlan-app/wenlan/ here.",
       "",
       "[local](#concept:p-1)",
     ].join("\n");
