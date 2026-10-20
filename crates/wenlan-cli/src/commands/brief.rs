@@ -357,6 +357,7 @@ mod tests {
                 query: "release".into(),
                 results: vec![result()],
             }),
+            code_basis_pending: None,
         };
 
         let output = format_brief(&response);
@@ -434,6 +435,7 @@ mod tests {
             space: Some("work".into()),
             brief: Some(brief),
             related_context: None,
+            code_basis_pending: None,
         });
 
         assert!(output.starts_with("Version 1 ("));
@@ -448,6 +450,7 @@ mod tests {
             space: Some("work".into()),
             brief: None,
             related_context: None,
+            code_basis_pending: None,
         };
 
         let output = format_brief(&response);
