@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Wenlan turns your scattered documents, AI chats, and coding sessions into one local wiki:<br>
+  Wenlan turns your scattered documents, AI chats, and coding sessions into one local wiki with citations:<br>
   a source of truth for you and your AI tools that keeps up as they change.
 </p>
 
@@ -41,10 +41,12 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 Your notes, documents, and AI chats are scattered everywhere, and they keep changing. Each AI tool remembers its own bits. Wenlan is a knowledge base built for the AI era: one local source of truth that you and your AI tools keep current together. The whole knowledge workflow is built in, from saving and organizing to citing and updating, so there is no maze of plugins to wire up.
 
-- **Pages that keep up:** With Steep on, pages update when their sources change. Pages you wrote get a suggested edit.
-- **Every claim traceable:** Pages cite their sources, so you can open the original.
-- **Pick up where you left off:** Save progress with `/handoff` and resume with `/brief` in Claude Code or Codex.
-- **Plain files on your computer:** Pages are Markdown files on your disk that open in Obsidian.
+- **Pages that keep up:** With Steep on, pages update when their sources change.
+- **Asks before changing your work:** Background updates suggest edits to pages you wrote instead of rewriting them.
+- **Every claim traceable:** Pages cite their sources, and background updates check those citations before replacing a page.
+- **One wiki for all your AI tools:** Claude Code, Codex, Cursor, and other MCP clients share it. In Claude Code or Codex, `/handoff` saves progress and `/brief` resumes it.
+- **Connected, and scoped by project:** With a model set up, the same people, projects, and ideas link across sources. Spaces keep each project separate.
+- **Local and open source:** Pages are Markdown files on your disk that open in Obsidian. No account needed, and basic search needs no API key.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
