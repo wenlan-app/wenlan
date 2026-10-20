@@ -41,6 +41,11 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 Your notes, documents, and AI chats are scattered everywhere, and they keep changing. Each AI tool remembers its own bits. Wenlan is a knowledge base built for the AI era: one local source of truth that you and your AI tools keep current together. The whole knowledge workflow is built in, from saving and organizing to citing and updating, so there is no maze of plugins to wire up.
 
+- **Notes that keep up:** With Steep on, notes update when their sources change. Notes you wrote get a suggested edit.
+- **Every claim traceable:** Notes cite their sources, so you can open the original.
+- **Pick up where you left off:** Save progress with `/handoff` and resume with `/brief` in Claude Code or Codex.
+- **Plain files on your computer:** Notes are Markdown files on your disk that open in Obsidian.
+
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
 <a id="start-with-the-app"></a>
