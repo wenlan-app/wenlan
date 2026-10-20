@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Wenlan turns scattered documents, web clips, and AI chats into a local personal wiki that stays current and cites its sources,<br>
+  Wenlan turns your files, AI chats, and what you've learned into a local personal wiki that stays current and cites its sources,<br>
   so you and AI tools like Claude and Codex can pick up where you left off.
 </p>
 
