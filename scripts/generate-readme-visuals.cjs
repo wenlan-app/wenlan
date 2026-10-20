@@ -19,7 +19,7 @@ const TOOL_DIR = path.join(__dirname, "readme-visuals");
 const visualRequire = createRequire(path.join(TOOL_DIR, "package.json"));
 
 const BANNER_VIEWPORTS = {
-  desktop: { width: 1120, height: 350 },
+  desktop: { width: 1120, height: 260 },
   mobile: { width: 720, height: 256 },
 };
 
@@ -103,7 +103,7 @@ function makeSimpleBanner(viewport, locale) {
   <title id="title">Wenlan README banner</title>
   <desc id="desc">${esc(`Wenlan: ${copy.title.join(" ")}`)}</desc>
   <rect width="${width}" height="${height}" fill="${BANNER.dark}"/>
-  ${mobile ? content : `<g transform="translate(172 0)">${content}</g>`}
+  ${mobile ? content : `<g transform="translate(172 -45)">${content}</g>`}
   <defs>
     ${logoDefs(prefix)}
   </defs>

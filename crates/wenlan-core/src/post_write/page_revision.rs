@@ -17,6 +17,9 @@ pub(super) struct PageRevisionCard {
     source_revision: Option<i64>,
     content: String,
     source_memory_ids: Vec<String>,
+    /// The basis notes an update-from-sources card was written from (R9).
+    /// Empty for every other card.
+    basis_snapshot: Vec<crate::db::BasisSnapshotEntry>,
 }
 
 pub(super) async fn resolve_page_revision_card(
@@ -65,6 +68,10 @@ pub(super) async fn resolve_page_revision_card(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let basis_snapshot = structured
+        .get("basis_snapshot")
+        .and_then(|v| serde_json::from_value::<Vec<crate::db::BasisSnapshotEntry>>(v.clone()).ok())
+        .unwrap_or_default();
     let page_version = structured.get("page_version").and_then(|v| v.as_i64());
     // `stage_page_revision_card` now requires every caller to pass a real
     // counter, so a fresh card always carries a concrete number here. `None`
@@ -92,6 +99,7 @@ pub(super) async fn resolve_page_revision_card(
         // it would panic on both.
         content: payload.full_body.unwrap_or(payload.content),
         source_memory_ids,
+        basis_snapshot,
     }))
 }
 
@@ -104,6 +112,7 @@ pub(super) async fn accept_page_revision_card(
     db: &MemoryDB,
     card: PageRevisionCard,
     knowledge_path: Option<&Path>,
+    actor: &str,
 ) -> Result<wenlan_types::RevisionAcceptResponse, WenlanError> {
     // A card staged before source-revision fencing (PR #598) records no base
     // to check its evidence against. `version` alone cannot stand in: it does
@@ -191,6 +200,11 @@ pub(super) async fn accept_page_revision_card(
             card.page_version,
             card.source_revision,
             &card.revision_id,
+            &crate::db::BasisWrite {
+                actor: actor.to_string(),
+                confirm_snapshot: card.basis_snapshot.clone(),
+                ..crate::db::BasisWrite::default()
+            },
         )
         .await?;
 
@@ -291,7 +305,7 @@ pub async fn accept_pending_revision_with_knowledge_path(
     knowledge_path: Option<&Path>,
 ) -> Result<wenlan_types::RevisionAcceptResponse, WenlanError> {
     if let Some(card) = resolve_page_revision_card(db, id).await? {
-        let result = accept_page_revision_card(db, card, knowledge_path).await?;
+        let result = accept_page_revision_card(db, card, knowledge_path, agent).await?;
         log_activity_best_effort(db, agent, "revision_accept", &result.target_source_id).await;
         return Ok(result);
     }

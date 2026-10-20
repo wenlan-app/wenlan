@@ -405,7 +405,7 @@ describe("PageDetail", () => {
     const trigger = screen.getByRole("button", { name: "Note actions" });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
-    expect(screen.getByRole("menuitem", { name: "Rebuild note" })).toHaveFocus();
+    expect(screen.getByRole("menuitem", { name: "Update from sources" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu", { name: "Note actions" })).toBeNull();
     expect(trigger).toHaveFocus();
@@ -667,7 +667,7 @@ describe("PageDetail", () => {
     const trigger = screen.getByRole("button", { name: "Note actions" });
     await user.click(trigger);
     const menu = screen.getByRole("menu", { name: "Note actions" });
-    expect(within(menu).getByRole("menuitem", { name: "Rebuild note" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Update from sources" })).toBeInTheDocument();
     expect(within(menu).queryByRole("menuitem", { name: "Copy as context" })).toBeNull();
     expect(within(menu).getByRole("menuitem", { name: "Delete note" })).toBeInTheDocument();
 
@@ -976,12 +976,12 @@ describe("PageDetail", () => {
 
     await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" });
     await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rebuild note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
     await waitFor(() => expect(redistillPage).toHaveBeenCalledWith("concept_abc"));
 
     // While the re-distill promise is still unresolved the button is busy.
     await user.click(screen.getByRole("button", { name: "Note actions" }));
-    expect(screen.getByRole("menuitem", { name: "Rebuilding note" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Updating from sources" })).toBeDisabled();
 
     rerender(
       <QueryClientProvider client={queryClient}>
@@ -991,7 +991,7 @@ describe("PageDetail", () => {
     await screen.findByRole("heading", { level: 1, name: "Next Page" });
 
     await act(async () => pending.resolve({ status: "ok", updated: true }));
-    expect(screen.queryByText("Note rebuilt.")).toBeNull();
+    expect(screen.queryByText("Note updated from its sources.")).toBeNull();
   });
 
   it("distinguishes a Page load failure from not found and retries in place", async () => {
@@ -1326,7 +1326,7 @@ describe("PageDetail", () => {
 
     await screen.findByText("libSQL Architecture");
     await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rebuild note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(redistillPage).toHaveBeenCalledWith("concept_abc");
     expect(await screen.findByText(hint)).toBeTruthy();
@@ -1347,7 +1347,7 @@ describe("PageDetail", () => {
 
     await screen.findByText("libSQL Architecture");
     await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rebuild note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(
       await screen.findByText(
@@ -1397,7 +1397,7 @@ describe("PageDetail", () => {
 
     await screen.findByText("Edited Page");
     await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rebuild note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
 
     expect(confirmSpy).toHaveBeenCalledWith(
       i18n.t("pageDetail.redistillEditedConfirm"),
@@ -1419,7 +1419,7 @@ describe("PageDetail", () => {
 
     await screen.findByText("libSQL Architecture");
     await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Rebuild note" }));
+    await user.click(screen.getByRole("menuitem", { name: "Update from sources" }));
     expect(await screen.findByText(hint)).toBeTruthy();
 
     (getPage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

@@ -107,6 +107,16 @@ LINT_SHARED_GUARDRAILS = [
     "Match every line byte-for-byte",
     "the MCP repair-manifest tools have no CLI equivalent yet",
 ]
+# A skill that refreshes pages reads a page's `basis` first and settles a
+# pending one through `page_basis`; the note-id/memory-id split must stay stated.
+PAGE_BASIS_SKILLS = {"handoff", "distill"}
+PAGE_BASIS_GUARDRAILS = [
+    "`pending`",
+    '"diff"',
+    '"confirm"',
+    "`basis`",
+    "`archived`, `deleted` or `unavailable`",
+]
 PAGES_SHARED_GUARDRAILS = [
     'Resolve the page ID first with `wenlan pages "<query-or-filename>" --resolve-id`.',
 ]
@@ -695,6 +705,22 @@ def validate_skill_text(
         )
         if resolver not in text:
             fail(f"{rel(root, skill_path)} must use {resolver}")
+    if name in PAGE_BASIS_SKILLS:
+        normalized_text = " ".join(text.split())
+        if frontmatter is not None:
+            try:
+                skill_tools = json.loads(frontmatter.get("allowed-tools", ""))
+            except json.JSONDecodeError:
+                fail(f"{rel(root, skill_path)} allowed-tools must be a JSON array")
+            for tool_name in ("read_page", "page_basis"):
+                if f"{expected_prefix}{tool_name}" not in skill_tools:
+                    fail(
+                        f"{rel(root, skill_path)} allowed-tools must include "
+                        f"{expected_prefix}{tool_name}"
+                    )
+        for needle in PAGE_BASIS_GUARDRAILS:
+            if needle not in normalized_text:
+                fail(f"{rel(root, skill_path)} must contain page basis guardrail {needle!r}")
     if name == "pages":
         normalized_text = " ".join(text.split())
         for needle in PAGES_SHARED_GUARDRAILS:

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-use super::MemoryDB;
+use super::{page_basis, MemoryDB};
 use crate::{error::WenlanError, post_write::RepairWriteProof};
 use wenlan_types::repair::{RepairManifest, RepairMutation, RepairTarget, RepairWriter};
 
@@ -82,6 +82,7 @@ where
             // Canonical-edge dual-writes made alongside a legacy-store repair
             // (G6 Stage 0); measured per-arm and allowed by the effect guard.
             let mut edge_dual_write_changes: u64 = 0;
+            let mut basis_refresh_changes: u64 = 0;
             let affected = match (manifest.target(), manifest.writer(), manifest.mutation()) {
                 (
                     RepairTarget::Memory { source_id, .. },
@@ -395,7 +396,7 @@ where
                     if !content.trim().is_empty() {
                         return Err(WenlanError::Conflict("repair_target_stale".to_string()));
                     }
-                    conn.execute(
+                    let archived = conn.execute(
                         "UPDATE pages SET status='archived'
                          WHERE id=?1 AND version=?2 AND status='active'
                            AND creation_kind='source' AND review_status='unconfirmed'
@@ -413,7 +414,26 @@ where
                     .await
                     .map_err(|error| {
                         WenlanError::VectorDb(format!("repair archive empty source page: {error}"))
-                    })?
+                    })?;
+                    if archived > 0 {
+                        // Notes relying on the archived page now read
+                        // `archived`. The refresh issues a statement only for
+                        // rows that change, so its effect is exact and is
+                        // counted as an allowed (deterministic) change.
+                        let changes_before_basis = conn.total_changes();
+                        page_basis::refresh_basis_state(&conn, page_id)
+                            .await
+                            .map_err(|error| {
+                                WenlanError::VectorDb(format!("repair archive basis: {error}"))
+                            })?;
+                        basis_refresh_changes = conn
+                            .total_changes()
+                            .checked_sub(changes_before_basis)
+                            .ok_or_else(|| {
+                                WenlanError::VectorDb("repair_effect_counter_underflow".to_string())
+                            })?;
+                    }
+                    archived
                 }
                 _ => {
                     return Err(WenlanError::Validation(
@@ -482,6 +502,7 @@ where
             let allowed_changes = affected
                 .checked_add(allowed_derived_changes)
                 .and_then(|changes| changes.checked_add(edge_dual_write_changes))
+                .and_then(|changes| changes.checked_add(basis_refresh_changes))
                 .ok_or_else(|| WenlanError::VectorDb("repair_effect_counter_overflow".to_string()))?;
             let parity_bump = crate::repair::parity_input_generation_on_connection(&conn)
                 .await?

@@ -109,11 +109,11 @@ describe("PageDetail stored actions in seamless editing", () => {
   const {user}=await start();
   await user.click(screen.getByRole('button',{name:i18n.t('pageDetail.actions')}));
   expect(screen.getByRole('menuitem',{name:'Delete note'})).toBeInTheDocument();
-  expect(screen.queryByRole('menuitem',{name:'Rebuild note'})).toBeNull();
+  expect(screen.queryByRole('menuitem',{name:'Update from sources'})).toBeNull();
  });
  it('exposes existing commands without leaving seamless editing',async()=>{
   const {user}=await start();
-  await expect(action(user,'Rebuild note')).resolves.toBeEnabled();
+  await expect(action(user,'Update from sources')).resolves.toBeEnabled();
   expect(await reviewAction(user)).toBeEnabled();
   expect(await action(user,'Delete note')).toBeEnabled();
  });
@@ -154,7 +154,7 @@ describe("PageDetail stored actions in seamless editing", () => {
   const {user}=await start();
   await user.click(await reviewAction(user));
   await screen.findByText(i18n.t('pageDetail.reviewApplied'));
-  await user.click(await action(user,'Rebuild note'));
+  await user.click(await action(user,'Update from sources'));
   expect(screen.queryByText(i18n.t('pageDetail.reviewApplied'))).not.toBeInTheDocument();
   await waitFor(()=>expect(tauriMocks.redistillPage).toHaveBeenCalledOnce());
   await waitFor(()=>expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Note editor'})).state.doc.toString()).toBe('Fresh rebuilt content'));

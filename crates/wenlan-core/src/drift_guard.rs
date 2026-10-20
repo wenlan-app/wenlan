@@ -13082,3 +13082,216 @@ fn commit_rollback_guard_detects_the_wedge_and_ignores_recovered_shapes() {
         "a longer name must not answer for the one asked about"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Basis refresh: every writer of a note's content, status or Space
+// re-evaluates the basis rows that depend on it, in the same transaction.
+// ---------------------------------------------------------------------------
+
+/// Calls that re-evaluate `page_basis`. `append_page_history*` counts because it
+/// runs `refresh_basis_state` itself, and every content or status change of a
+/// note writes a history row.
+const BASIS_REFRESH_MARKERS: &[&str] = &[
+    "refresh_basis_state(",
+    "refresh_basis_all(",
+    "append_page_history(",
+    "append_page_history_with_minor(",
+];
+
+/// Writers of `pages.content/status/space/workspace` that need no refresh, as
+/// `path::fn` with the reason. Each reason is checked by a reader, not by code,
+/// so keep it specific.
+const BASIS_REFRESH_EXEMPT: &[(&str, &str)] = &[
+    (
+        "crates/wenlan-core/src/db.rs::update_space",
+        "rename only: every note keeps its Space-mates",
+    ),
+    (
+        "crates/wenlan-core/src/db.rs::run_migrations_up_to",
+        "migration 63 workspace backfill, long before page_basis exists",
+    ),
+    (
+        "crates/wenlan-core/src/db.rs::migrate_80_page_scope_fold",
+        "migration 80 space backfill, long before page_basis exists",
+    ),
+    (
+        "crates/wenlan-core/src/db/page_drafts.rs::update_page_draft_impl",
+        "a draft can neither cite another note nor be a basis, so no row depends on it",
+    ),
+    (
+        "crates/wenlan-core/src/db/m5_page_size_snapshot.rs::mutation_probe_for_test",
+        "a `WHERE 0=1` probe that writes no row",
+    ),
+];
+
+/// `UPDATE pages SET ... content|status|space|workspace = ...` statements in
+/// production code whose enclosing function neither calls a basis refresh nor is
+/// on the exempt list, reported as `path::fn`.
+fn page_basis_unrefreshed_writers(path: &str, source: &str) -> Vec<String> {
+    let production = strip_cfg_test_items(source);
+    let strings = mask_lexical(&production, true);
+    let braces = mask_lexical(&production, false);
+    assert_eq!(strings.len(), braces.len());
+
+    let update = regex::Regex::new(r"(?i)UPDATE\s+pages\s*(?:\\\s*)?SET").expect("static regex");
+    let assign = regex::Regex::new(r"(?i)(?:\bSET|,)\s*(?:content|status|space|workspace)\s*=[^=]")
+        .expect("static regex");
+    let where_clause = regex::Regex::new(r"(?i)\bWHERE\b").expect("static regex");
+
+    let mut sites = Vec::new();
+    for found in update.find_iter(&strings) {
+        let rest = &strings[found.start()..];
+        // The statement runs to its WHERE (or, at worst, a bounded window).
+        let mut end = rest.len().min(900);
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        let window = &rest[..end];
+        let statement = where_clause
+            .find(window)
+            .map_or(window, |w| &window[..w.start()]);
+        let statement = statement.replace("\\\n", " ");
+        if !assign.is_match(&statement) {
+            continue;
+        }
+
+        let at = found.start();
+        let name = enclosing_fn_name(&braces, at);
+        let body_refreshes = braces[..at]
+            .rmatch_indices("fn ")
+            .find(|(start, _)| {
+                *start == 0
+                    || !braces[..*start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            })
+            .and_then(|(start, _)| {
+                let open = start + braces[start..].find('{')?;
+                let close = matching_brace(&braces, open)?;
+                (close > at).then(|| &strings[open..close])
+            })
+            .is_some_and(|body| BASIS_REFRESH_MARKERS.iter().any(|m| body.contains(m)));
+        let site = format!("{path}::{name}");
+        let exempt = BASIS_REFRESH_EXEMPT.iter().any(|(key, _)| *key == site);
+        if !body_refreshes && !exempt {
+            sites.push(site);
+        }
+    }
+    sites.sort();
+    sites.dedup();
+    sites
+}
+
+#[test]
+fn every_page_content_status_or_space_writer_refreshes_its_basis_rows() {
+    let root = repo_root();
+    let files: Vec<String> = git_ls_files(&root, "*.rs")
+        .into_iter()
+        .filter(|path| path.starts_with("crates/") && path.contains("/src/"))
+        .filter(|path| {
+            !is_test_only_module(path) && path != "crates/wenlan-core/src/drift_guard.rs"
+        })
+        .collect();
+    assert!(
+        files.len() > 50,
+        "the scan resolved to {} file(s), so it cannot have run",
+        files.len()
+    );
+
+    // The exempt list is only worth what its members are: each key must still
+    // name a function that exists, or the entry is a stale blanket exemption.
+    for (key, reason) in BASIS_REFRESH_EXEMPT {
+        let (path, name) = key.split_once("::").expect("exempt key is path::fn");
+        let source = std::fs::read_to_string(root.join(path))
+            .unwrap_or_else(|_| panic!("exempt writer file {path} is gone ({reason})"));
+        assert!(
+            fn_body(&source, name).is_some(),
+            "exempt writer `{key}` no longer exists; drop the entry ({reason})"
+        );
+    }
+
+    let mut sites = Vec::new();
+    for path in &files {
+        let source = std::fs::read_to_string(root.join(path)).expect("read Rust source");
+        sites.extend(page_basis_unrefreshed_writers(path, &source));
+    }
+    assert!(
+        sites.is_empty(),
+        "these functions write a note's content, status or Space without re-evaluating \
+         its basis rows: {sites:?}. A note that relies on another reads `ok` only while \
+         the facts it was confirmed against still hold, so call `refresh_basis_state` \
+         (or `refresh_basis_all` for a bulk change) in the same transaction -- \
+         `append_page_history` already does for a content or status change -- or add the \
+         function to BASIS_REFRESH_EXEMPT with the reason it cannot matter"
+    );
+}
+
+#[test]
+fn page_basis_refresh_guard_detects_an_unrefreshed_writer() {
+    // Positive control: a status write with no refresh and no history row.
+    assert_eq!(
+        page_basis_unrefreshed_writers(
+            "crates/wenlan-core/src/db.rs",
+            "impl MemoryDB { async fn sneaky(&self, conn: &Connection) { \
+             conn.execute(\"UPDATE pages SET status = 'archived' WHERE id = ?1\", ()).await; } }",
+        ),
+        ["crates/wenlan-core/src/db.rs::sneaky"]
+    );
+    // Content, Space and the multi-line `\` continuation are all seen.
+    for assignment in ["content = ?1", "space = ?1", "title = ?2, workspace = ?1"] {
+        let source = format!(
+            "async fn w(conn: &Connection) {{ conn.execute(\"UPDATE pages \\\n     SET {assignment}, \
+             last_modified = 0 WHERE id = ?3\", ()).await; }}"
+        );
+        assert_eq!(
+            page_basis_unrefreshed_writers("crates/wenlan-core/src/db.rs", &source).len(),
+            1,
+            "{assignment}"
+        );
+    }
+    // Columns that cannot change a basis state are not writers.
+    assert!(page_basis_unrefreshed_writers(
+        "crates/wenlan-core/src/db.rs",
+        "async fn t(conn: &Connection) { conn.execute(\"UPDATE pages SET title = ?1, \
+         last_modified = ?2 WHERE id = ?3\", ()).await; }",
+    )
+    .is_empty());
+    // A refresh, a history row, or an exempt entry satisfies the guard.
+    for call in [
+        "refresh_basis_state(&tx, id).await?;",
+        "page_basis::refresh_basis_all(&tx).await?;",
+        "Self::append_page_history(&conn, id, \"x\", now).await?;",
+    ] {
+        let source = format!(
+            "async fn ok(conn: &Connection) {{ conn.execute(\"UPDATE pages SET status = 'active' \
+             WHERE id = ?1\", ()).await; {call} }}"
+        );
+        assert!(
+            page_basis_unrefreshed_writers("crates/wenlan-core/src/db.rs", &source).is_empty(),
+            "{call}"
+        );
+    }
+    assert!(page_basis_unrefreshed_writers(
+        "crates/wenlan-core/src/db.rs",
+        "async fn update_space(conn: &Connection) { conn.execute(\"UPDATE pages SET space = ?1 \
+         WHERE id = ?2\", ()).await; }",
+    )
+    .is_empty());
+    // A refresh in a different function does not cover this one.
+    assert_eq!(
+        page_basis_unrefreshed_writers(
+            "crates/wenlan-core/src/db.rs",
+            "async fn a(c: &Connection) { refresh_basis_state(c, 1).await; } \
+             async fn b(c: &Connection) { c.execute(\"UPDATE pages SET content = ?1 WHERE id = ?2\", ()).await; }",
+        ),
+        ["crates/wenlan-core/src/db.rs::b"]
+    );
+    // Test-only code is out of scope.
+    assert!(page_basis_unrefreshed_writers(
+        "crates/wenlan-core/src/db.rs",
+        "#[cfg(test)]\nmod tests { async fn fixture(c: &Connection) { \
+         c.execute(\"UPDATE pages SET status = 'archived' WHERE id = ?1\", ()).await; } }",
+    )
+    .is_empty());
+}

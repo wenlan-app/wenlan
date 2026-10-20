@@ -869,6 +869,41 @@ pub struct RefreshPageRequest {
     /// human-owned page directly (only the review lock still stages a card).
     #[serde(default)]
     pub expected_version: Option<i64>,
+    /// Notes this write relied on, each with the version the agent read. A
+    /// listed note is confirmed only if it is still at that version; otherwise
+    /// it lands pending. Memory ids never go here, and note ids never go in
+    /// `source_memory_ids`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisInput>,
+    /// Marks this write as a small edit, so a note relying on this one is told
+    /// the change was minor. It never suppresses the pending notice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minor: Option<bool>,
+}
+
+/// Body for `POST /api/memory/{id}/update-page` (the human save). The edit
+/// itself is an [`UpdatePageRequest`]; the two extra fields are flattened in
+/// so the wire stays one flat object.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ManualPageEditRequest {
+    #[serde(flatten)]
+    pub edit: UpdatePageRequest,
+    /// Save as a small edit (stored on the version's history row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minor: Option<bool>,
+    /// Confirm one basis of this note in the same transaction as the save, and
+    /// only if the basis is still at `version`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_basis: Option<crate::page_basis::ConfirmBasisInput>,
+}
+
+/// Body for `POST /api/pages`: the page itself plus the notes it relies on.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreatePageWithBasisRequest {
+    #[serde(flatten)]
+    pub create: CreateConceptRequest,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub basis: Vec<crate::page_basis::BasisInput>,
 }
 
 /// Request body for `PUT /api/pages/{id}/review-required`: set or clear the

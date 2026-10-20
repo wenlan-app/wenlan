@@ -43,6 +43,7 @@ mod tests {
 
     fn sr(id: &str, content_hash: Option<&str>) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: id.to_string(),
             content: format!("content for {id}"),
             source: "memory".to_string(),

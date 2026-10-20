@@ -18397,6 +18397,7 @@ async fn test_augment_with_graph_merges_observations() {
 /// Minimal base SearchResult for graph-stream tests (source="memory").
 fn mk_result(source_id: &str, content: &str, score: f32) -> SearchResult {
     SearchResult {
+        basis: Vec::new(),
         id: format!("id_{source_id}"),
         content: content.to_string(),
         source: "memory".to_string(),
@@ -54394,6 +54395,7 @@ async fn combine_version_and_source_revision_cas_rejected_for_non_growth_non_bac
             None,
             false,
             false,
+            &crate::db::BasisWrite::default(),
         )
         .await
         .expect_err(

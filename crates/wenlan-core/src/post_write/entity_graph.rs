@@ -53,6 +53,7 @@ pub async fn create_entity(
         .await?;
     if !created {
         return Ok(WriteResult {
+            basis_confirm: None,
             id,
             attached_to: None,
             warnings: vec![],
@@ -131,6 +132,7 @@ pub async fn create_entity(
     }
 
     Ok(WriteResult {
+        basis_confirm: None,
         id,
         attached_to: None,
         warnings,
@@ -195,6 +197,7 @@ pub async fn create_relation_with_span(
         {
             if let Some((existing_id, _)) = existing.into_iter().find(|(_, t)| t == rt) {
                 return Ok(WriteResult {
+                    basis_confirm: None,
                     id: existing_id,
                     attached_to: None,
                     warnings: vec![],
@@ -304,6 +307,7 @@ pub async fn create_relation_with_span(
     }
 
     Ok(WriteResult {
+        basis_confirm: None,
         id,
         attached_to: None,
         warnings,
@@ -383,6 +387,7 @@ pub async fn add_observation(
     }
 
     Ok(WriteResult {
+        basis_confirm: None,
         id,
         attached_to: None,
         warnings,

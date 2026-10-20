@@ -2,6 +2,9 @@
 import type { AppLocale } from "../../src/i18n/locales";
 import type { MemoryItem, PageChange, PageReviewAvailability, PageReviewOutcome } from "../../src/lib/tauri";
 import type { SpacesNavigationFixture } from "../fixtures/spacesNavigation";
+import type { TauriMockBasisScenario } from "./pageBasis";
+
+export type { TauriMockBasisScenario } from "./pageBasis";
 
 export type MockCommandCall = {
   readonly command: string;
@@ -31,6 +34,8 @@ export type TauriMockPageScenario = {
     readonly availability?: PageReviewAvailability;
     readonly outcome?: PageReviewOutcome;
   };
+  /** Notes that rely on other notes; see `pageBasis.ts`. */
+  readonly basis?: TauriMockBasisScenario;
   readonly firstWriteRemoteMutation?: {
     readonly pageId: string;
     readonly content: string;

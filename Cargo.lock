@@ -9213,6 +9213,7 @@ dependencies = [
  "lru",
  "pdf-extract",
  "proc-macro2",
+ "pulldown-cmark",
  "quick-xml",
  "regex",
  "reqwest 0.12.28",

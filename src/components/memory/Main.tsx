@@ -42,6 +42,7 @@ import SettingsSidebar from "./settings/SettingsSidebar";
 import SpaceDetail from "./SpaceDetail";
 import { SpacesOverview } from "./spaces";
 import { PagesOverview } from "./pages/PagesOverview";
+import { BASIS_UPDATES_REVIEW_ID } from "./page/useBasisActions";
 import { WikiWorkspace } from "./pages/WikiWorkspace";
 import { useLibraryInventory } from "./pages/useLibraryInventory";
 import { SecondaryNoteGroup, type SecondaryNoteGroupHandle } from "./pages/SecondaryNoteGroup";
@@ -1384,6 +1385,7 @@ export default function Main({
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
                 onSeeExample={() => navigateTo({ kind: "first-use" })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
+                onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
               />
             </WikiWorkspace>
           ) : view.kind === "entities" ? (

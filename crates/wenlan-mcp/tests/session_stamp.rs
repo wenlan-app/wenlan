@@ -266,6 +266,8 @@ async fn write_page_and_update_brief_carry_the_session() {
             source_memory_ids: vec![],
             expected_version: None,
             session: Some("claude-code:abc-123".into()),
+            basis: Vec::new(),
+            minor: None,
         })
         .await
         .unwrap();

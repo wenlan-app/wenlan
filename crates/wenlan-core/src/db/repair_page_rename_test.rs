@@ -704,6 +704,82 @@ async fn interrupted_rename_recovery_accepts_legacy_post_state_without_projectio
     );
 }
 
+/// A note that relies on the renamed note keeps its snapshot of the title in
+/// step, in the same repair transaction, and still reads `ok`: a title change
+/// is not a change to the words it relied on.
+#[tokio::test]
+#[cfg_attr(not(unix), ignore = "repair artifacts are unix-only")]
+async fn a_repair_rename_re_evaluates_the_notes_that_rely_on_the_renamed_note() {
+    let fixture = rename_fixture().await;
+    // `page-b` relies on `page-a` at its current version.
+    fixture
+        .db
+        .mark_page_basis("page-b", "page-a", 4, "human")
+        .await
+        .unwrap();
+    let before = fixture.db.list_page_basis("page-b").await.unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].title, "Origin");
+    assert_eq!(before[0].current_version, Some(4));
+    assert_eq!(before[0].state, "ok");
+
+    rename_page_title_cas_inner(
+        &fixture.db,
+        &fixture.manifest,
+        &fixture.rollback,
+        fixture.page_root.path(),
+        |_| Ok(()),
+    )
+    .await
+    .expect("the rename applies");
+
+    let renamed = fixture.db.get_page("page-a").await.unwrap().unwrap();
+    assert_eq!(renamed.title, "Origin Git Workflow Gotchas");
+    assert_eq!(renamed.version, 5);
+    let after = fixture.db.list_page_basis("page-b").await.unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(
+        after[0].title, "Origin Git Workflow Gotchas",
+        "the citer's snapshot of the basis title follows the rename"
+    );
+    assert_eq!(
+        after[0].current_version,
+        Some(5),
+        "the re-evaluation saw the bumped version"
+    );
+    assert_eq!(
+        after[0].state, "ok",
+        "same words under a new title is not a change to rely on"
+    );
+    assert_eq!(after[0].confirmed_version, 4);
+
+    // The live join would show the new title whatever was stored, so look at
+    // the stored snapshot itself, and at the one place it is the only source:
+    // once the basis is deleted the citer keeps naming it by its last title.
+    let stored: String = {
+        let conn = fixture.db.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT basis_title FROM page_basis \
+                 WHERE page_id = 'page-b' AND basis_page_id = 'page-a'",
+                (),
+            )
+            .await
+            .unwrap();
+        rows.next()
+            .await
+            .unwrap()
+            .unwrap()
+            .get::<String>(0)
+            .unwrap()
+    };
+    assert_eq!(stored, "Origin Git Workflow Gotchas");
+    fixture.db.delete_page("page-a").await.unwrap();
+    let gone = fixture.db.list_page_basis("page-b").await.unwrap();
+    assert_eq!(gone[0].state, "deleted");
+    assert_eq!(gone[0].title, "Origin Git Workflow Gotchas");
+}
+
 #[tokio::test]
 #[cfg_attr(not(unix), ignore = "repair artifacts are unix-only")]
 async fn interrupted_rename_recovery_refuses_wrong_hash_changed_bytes_and_other_state() {

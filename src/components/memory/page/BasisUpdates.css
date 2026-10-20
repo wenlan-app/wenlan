@@ -1,0 +1,81 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.basis-updates:focus { outline: none; }
+
+.basis-updates__list,
+.basis-updates__citers {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.basis-updates__group {
+  padding: 10px 12px;
+  border: 1px solid var(--mem-border);
+  border-radius: 9px;
+  background: var(--mem-surface);
+}
+
+.basis-updates__summary,
+.basis-updates__citer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+}
+
+.basis-updates__text,
+.basis-updates__note {
+  min-width: 0;
+  margin: 0;
+  color: var(--mem-text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.basis-updates__note { flex: 1 1 100%; color: var(--mem-text-secondary); font-size: 12px; }
+
+.basis-updates__citers {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--mem-border);
+}
+
+.basis-updates__citer-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  color: var(--mem-text);
+  font-size: 13px;
+}
+
+.basis-updates__minor { color: var(--mem-text-secondary); }
+
+.basis-updates__actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+
+.basis-updates__button,
+.basis-updates__link {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mem-text);
+  font: 600 13px/1.4 var(--mem-font-body);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.basis-updates__link { padding: 0; font-weight: 500; text-align: left; }
+
+.basis-updates__button:hover:not(:disabled) { background: var(--mem-hover); }
+.basis-updates__button:disabled { cursor: not-allowed; opacity: 0.55; }
+.basis-updates__button:focus-visible,
+.basis-updates__link:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
+
+/* Home notice: the note review notice's look, with room above the panel. */
+.basis-updates-home { margin: 0 0 16px; }

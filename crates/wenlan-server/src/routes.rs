@@ -590,6 +590,25 @@ pub async fn handle_distill(
     result
 }
 
+/// An "Update from sources" run on a note that relies on other notes does not
+/// write: it stages a revision card (`gated`, `revision_card_id`), or finds the
+/// body already right (`unchanged`). Both keys appear only in those cases, so
+/// every other response keeps its shape.
+fn add_preview_outcome(
+    response: &mut serde_json::Value,
+    outcome: &wenlan_core::synthesis::distill::RefreshOutcome,
+) {
+    if outcome.gated {
+        response["gated"] = serde_json::json!(true);
+        if let Some(card) = &outcome.revision_card_id {
+            response["revision_card_id"] = serde_json::json!(card);
+        }
+    }
+    if outcome.acknowledged {
+        response["unchanged"] = serde_json::json!(true);
+    }
+}
+
 fn distill_response_generated(response: &serde_json::Value) -> bool {
     response
         .get("pages_created")
@@ -712,10 +731,11 @@ async fn handle_distill_inner(
                 // discarded the rebuild — otherwise `updated: false`
                 // reads as "already up to date".
                 if !outcome.wrote {
-                    if let Some(reason) = outcome.discard_reason {
+                    if let Some(reason) = outcome.discard_reason.clone() {
                         response["reason"] = serde_json::json!(reason);
                     }
                 }
+                add_preview_outcome(&mut response, &outcome);
                 return Ok(Json(response));
             }
             _ => {
@@ -1030,10 +1050,11 @@ async fn handle_redistill_inner(
         // Say WHY nothing was written when the citation gate discarded the
         // rebuild — otherwise `updated: false` reads as "already up to date".
         if !outcome.wrote {
-            if let Some(reason) = outcome.discard_reason {
+            if let Some(reason) = outcome.discard_reason.clone() {
                 response["reason"] = serde_json::json!(reason);
             }
         }
+        add_preview_outcome(&mut response, &outcome);
         Ok(Json(response))
     } else {
         Ok(Json(serde_json::json!({
@@ -3418,5 +3439,52 @@ still thinking"#;
             bodies[0]["max_tokens"], 256,
             "a 10-token cap strands thinking models inside <think>"
         );
+    }
+}
+
+#[cfg(test)]
+mod preview_outcome_tests {
+    use super::add_preview_outcome;
+    use wenlan_core::synthesis::distill::RefreshOutcome;
+
+    #[test]
+    fn a_staged_card_reports_gated_and_the_card_id() {
+        let mut response = serde_json::json!({"status": "ok", "updated": false});
+        let outcome = RefreshOutcome {
+            gated: true,
+            revision_card_id: Some("card_1".to_string()),
+            ..RefreshOutcome::default()
+        };
+        add_preview_outcome(&mut response, &outcome);
+        assert_eq!(response["gated"], true);
+        assert_eq!(response["revision_card_id"], "card_1");
+        assert!(response.get("unchanged").is_none());
+    }
+
+    #[test]
+    fn an_identical_body_reports_unchanged_and_no_card() {
+        let mut response = serde_json::json!({"status": "ok", "updated": false});
+        let outcome = RefreshOutcome {
+            acknowledged: true,
+            ..RefreshOutcome::default()
+        };
+        add_preview_outcome(&mut response, &outcome);
+        assert_eq!(response["unchanged"], true);
+        assert!(response.get("gated").is_none());
+        assert!(response.get("revision_card_id").is_none());
+    }
+
+    #[test]
+    fn an_ordinary_outcome_keeps_the_response_shape() {
+        let mut response = serde_json::json!({"status": "ok", "updated": true});
+        let before = response.clone();
+        add_preview_outcome(
+            &mut response,
+            &RefreshOutcome {
+                wrote: true,
+                ..RefreshOutcome::default()
+            },
+        );
+        assert_eq!(response, before);
     }
 }

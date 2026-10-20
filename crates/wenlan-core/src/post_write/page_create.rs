@@ -140,6 +140,7 @@ pub(super) async fn write_document_source_page_impl(
         log::warn!("[document_source_page] activity log failed: {error}");
     }
     Ok(WriteResult {
+        basis_confirm: None,
         id: page_id.to_string(),
         attached_to: None,
         warnings: Vec::new(),
@@ -200,6 +201,7 @@ pub(super) async fn replace_source_page_impl(
         && stored_sources == incoming_sources
     {
         return Ok(WriteResult {
+            basis_confirm: None,
             id: page_id.to_string(),
             attached_to: None,
             warnings: Vec::new(),
@@ -228,6 +230,7 @@ pub(super) async fn replace_source_page_impl(
         log::warn!("[replace_source_page] activity log failed: {error}");
     }
     Ok(WriteResult {
+        basis_confirm: None,
         id: page_id.to_string(),
         attached_to: None,
         warnings: Vec::new(),
@@ -251,6 +254,7 @@ pub(super) async fn attach_page_sources_impl(
     }
     log_activity_best_effort(db, agent, "page_attach", page_id).await;
     Ok(WriteResult {
+        basis_confirm: None,
         id: page_id.to_string(),
         attached_to: Some(page_id.to_string()),
         warnings: vec![],
@@ -537,6 +541,7 @@ pub(super) async fn create_page_impl(
     }
 
     Ok(WriteResult {
+        basis_confirm: None,
         id,
         attached_to: None,
         warnings,

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=82625dd31a0057659fa9d7bcd41bd7dfa3f3f976ce6f85bffec57cfe31acafc2 -->
+<!-- README_SYNC: source=README.md sha256=5a4a4b887bb26ec4cc193050b02b7ffa6a40dca76287fa57ccd05b9043a07446 -->
 
 <p align="center">
   <picture>
@@ -169,11 +169,6 @@ Un agente puede leer archivos y escribir texto. Wenlan añade una **base de cono
 - **Recuperación limitada a un Espacio:** Selecciona un Espacio para limitar el conocimiento devuelto al proyecto o colección personal pertinente.
 
 **Próximamente:** Compatibilidad con repositorios de código en Espacios.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-knowledge-to-work-es-ES.png" alt="La IA continúa con lo que ya sabes: búsqueda por palabras clave, significado y grafo" width="100%">
-</p>
-<p>Ejemplo ficticio, no una prueba del producto; Wenlan aporta contexto junto con la memoria nativa de Claude.</p>
 
 Activa el interruptor **Web access** en Settings para que clientes web de IA compatibles, como Claude, ChatGPT o Muse, puedan buscar en toda la biblioteca o en un Espacio elegido mientras el ordenador con Wenlan esté conectado. Esta función es experimental; las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 

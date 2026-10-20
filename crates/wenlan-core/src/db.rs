@@ -59,6 +59,7 @@ mod memory_point_reads;
 mod migrations_v004_v009;
 mod okf_concepts;
 mod onboarding_milestones;
+mod page_basis;
 mod page_drafts;
 pub mod page_map;
 pub mod page_map_independent;
@@ -101,6 +102,12 @@ pub(crate) use maintenance_duplicate_reads::{NearDuplicatePairRead, NearDuplicat
 pub(crate) use maintenance_retro_scan::AutomaticRetroPageScan;
 pub(crate) use memory_point_reads::PendingMemoryRevisionPayload;
 pub use okf_concepts::OkfConceptRecord;
+pub use page_basis::{
+    BasisContext, BasisDiff, BasisDiffOutcome, BasisEdit, BasisError, BasisPendingCiter,
+    BasisPendingGroup, BasisSnapshotEntry, BasisUnavailableReason, BasisWrite, BasisWriteOutcome,
+    PageBasisEntry, BASIS_STATE_ARCHIVED, BASIS_STATE_DELETED, BASIS_STATE_OK, BASIS_STATE_PENDING,
+    BASIS_STATE_UNAVAILABLE,
+};
 pub use presence_review::ReviewOutcome;
 pub use truth_exposure::{
     CutoverFence, CutoverLease, CutoverPhase, TruthMarkerAudit, TRUTH_CUTOVER_FENCE_KEY,
@@ -155,6 +162,10 @@ mod maintenance_queue_test;
 mod maintenance_retro_scan_test;
 #[cfg(test)]
 mod memory_point_reads_test;
+#[cfg(test)]
+mod page_basis_test;
+#[cfg(test)]
+mod page_basis_update_test;
 #[cfg(test)]
 mod page_drafts_test;
 #[cfg(test)]
@@ -1474,7 +1485,9 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 136 records one history row per successful Brief update.
 /// Migration 137 adds `pages.review_required`, the review lock that stages
 /// every machine write.
-/// Migration 138 adds `agent_sessions` and `session_id` on `memories`,
+/// Migration 138 adds `page_basis` (a note relying on another note),
+/// `page_history.minor` and `pages.basis_revision`.
+/// Migration 139 adds `agent_sessions` and `session_id` on `memories`,
 /// `page_history`, and `brief_history`, and backfills one session per past
 /// ChatGPT / Claude.ai import conversation.
 ///
@@ -1484,7 +1497,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 138;
+pub const SCHEMA_VERSION: u32 = 139;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -10440,13 +10453,22 @@ impl MemoryDB {
             if version < 137 {
                 self.migrate_137_page_review_required(version).await?;
             }
-            // Migration 138 records which agent session wrote a memory, note
-            // version, or Brief update. See migrate_138_agent_sessions.
+            // Migration 138 adds `page_basis` (a note that relies on another
+            // note), `page_history.minor` and `pages.basis_revision`. See
+            // migrate_138_page_basis.
             if ceiling < 138 {
                 return Ok(());
             }
             if version < 138 {
-                self.migrate_138_agent_sessions(version).await?;
+                self.migrate_138_page_basis(version).await?;
+            }
+            // Migration 139 records which agent session wrote a memory, note
+            // version, or Brief update. See migrate_139_agent_sessions.
+            if ceiling < 139 {
+                return Ok(());
+            }
+            if version < 139 {
+                self.migrate_139_agent_sessions(version).await?;
             }
         }
 
@@ -17860,6 +17882,67 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Migration 138: a note can rely on another note (its "basis").
+    ///
+    /// - `page_basis` holds one row per (citer, basis) pair plus the digest of
+    ///   the basis text the citer was last confirmed against. It deliberately
+    ///   has no foreign key to `pages`: a deleted basis must leave its row
+    ///   behind (state `deleted`, title kept) so the citer can say so.
+    /// - `page_history.minor` marks a version the author called a small edit.
+    /// - `pages.basis_revision` counts basis mark/unmark/confirm on the citer,
+    ///   which never bump `version` (same as the review lock).
+    ///
+    /// Each ALTER is guarded by a column-exists check, and the table is
+    /// `IF NOT EXISTS`, so a crash between the DDL and the version bump
+    /// replays cleanly (same pattern as migration 137).
+    async fn migrate_138_page_basis(&self, prior_version: i64) -> Result<(), WenlanError> {
+        self.backup_before_migration(138, prior_version).await?;
+        let conn = self.conn.lock().await;
+        conn.execute_batch(page_basis::PAGE_BASIS_DDL)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m138 page_basis ddl: {e}")))?;
+        for (table, column, alter) in [
+            (
+                "page_history",
+                "minor",
+                "ALTER TABLE page_history ADD COLUMN minor INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "pages",
+                "basis_revision",
+                "ALTER TABLE pages ADD COLUMN basis_revision INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            let has_col: bool = {
+                let mut rows = conn
+                    .query(
+                        &format!(
+                            "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"
+                        ),
+                        (),
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("m138 col check: {e}")))?;
+                match rows.next().await {
+                    Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
+                    _ => false,
+                }
+            };
+            if !has_col {
+                conn.execute(alter, ()).await.map_err(|e| {
+                    WenlanError::VectorDb(format!("m138 add {table}.{column}: {e}"))
+                })?;
+            }
+        }
+        conn.execute("PRAGMA user_version = 138", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m138 bump: {e}")))?;
+        log::info!(
+            "[migration] Migration 138 applied: page_basis, page_history.minor, pages.basis_revision"
+        );
+        Ok(())
+    }
+
     async fn migrate_135_source_annotations(&self) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         conn.execute_batch(
@@ -25047,6 +25130,11 @@ impl MemoryDB {
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("delete_space unassign pages scope: {e}"))
                 })?;
+                // Notes moved to Unfiled may no longer share a Space with
+                // their basis; re-evaluate in the same transaction.
+                page_basis::refresh_basis_all(&tx).await.map_err(|e| {
+                    WenlanError::VectorDb(format!("delete_space unassign basis: {e}"))
+                })?;
             }
             "delete" => {
                 let mut rows = tx
@@ -25217,6 +25305,11 @@ impl MemoryDB {
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("delete_space delete pages scope: {e}"))
                 })?;
+                // Entity shadows were deleted and the remaining notes folded
+                // to Unfiled above; re-evaluate every basis row.
+                page_basis::refresh_basis_all(&tx).await.map_err(|e| {
+                    WenlanError::VectorDb(format!("delete_space delete basis: {e}"))
+                })?;
             }
             other if other.starts_with("move:") => {
                 let target = &other[5..];
@@ -25285,6 +25378,11 @@ impl MemoryDB {
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("delete_space move pages scope: {}", e))
                 })?;
+                // Moving into a Space that already has notes can separate a
+                // note from a basis it shared a Space with.
+                page_basis::refresh_basis_all(&tx)
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("delete_space move basis: {e}")))?;
                 // Fold the community/genesis substrate into the target too, so
                 // the moved entities keep their `relates` edges for grouping and
                 // no control row keeps naming the space deleted below.
@@ -25421,6 +25519,9 @@ impl MemoryDB {
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("reassign pages scope: {}", e)))?;
+        page_basis::refresh_basis_all(&tx)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("reassign basis: {e}")))?;
         // Fold the community/genesis substrate into the target too, so the
         // moved entities keep their `relates` edges for grouping and the
         // source's community rows do not outlive its content.
@@ -26440,6 +26541,7 @@ impl MemoryDB {
             None
         };
         Ok(SearchResult {
+            basis: Vec::new(),
             id: row
                 .get::<String>(0)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
@@ -31296,6 +31398,7 @@ impl MemoryDB {
             let source_id = format!("obs_{}", id);
 
             results.push(SearchResult {
+                basis: Vec::new(),
                 id,
                 content,
                 source: "knowledge_graph".to_string(),
@@ -31367,6 +31470,7 @@ impl MemoryDB {
             .map(|dt| dt.timestamp())
             .unwrap_or(0);
         SearchResult {
+            basis: Vec::new(),
             id: page.id.clone(),
             content: page.content,
             source: "page".to_string(),
@@ -31841,6 +31945,7 @@ impl MemoryDB {
     /// score; they ride the prelude, never the rerank pool).
     fn search_result_from_summary(node: SummaryNode) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: node.id.clone(),
             content: node.body,
             source: "summary".to_string(),
@@ -33056,6 +33161,11 @@ impl MemoryDB {
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("rebind SOURCE Page proposals: {e}")))?;
+        // Notes that rely on this one, and the notes it relies on, follow the
+        // new id (same transaction), before the old row goes.
+        page_basis::retarget_page_identity(conn, old_page_id, new_page_id)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("rebind SOURCE Page basis: {e}")))?;
         conn.execute(
             "DELETE FROM pages WHERE id = ?1",
             libsql::params![old_page_id],
@@ -34243,6 +34353,13 @@ impl MemoryDB {
                     "source page {page_id} changed before space move"
                 )));
             }
+            // The moved page left the Space it shared with its bases (and
+            // its citers); re-evaluate them in the same transaction.
+            page_basis::refresh_basis_state(conn, &page_id)
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("source page move basis {page_id}: {e}"))
+                })?;
             conn.execute(
                 "UPDATE edges SET space = ?1
                  WHERE src_id = ?2 AND src_kind = 'page'
@@ -50942,20 +51059,39 @@ impl MemoryDB {
     /// A plain INSERT, not `OR IGNORE`: `UNIQUE(page_id, version)` colliding
     /// means a row already exists for a version this write claims to have just
     /// created, and failing the transaction is the correct answer to that.
+    ///
+    /// The same call re-evaluates every note that relies on this page (and the
+    /// page's own bases) so a `page_basis` row never disagrees with the write
+    /// that moved it; see `db/page_basis.rs`.
     async fn append_page_history(
         conn: &libsql::Connection,
         page_id: &str,
         edited_by: &str,
         created_at: i64,
     ) -> Result<(), libsql::Error> {
+        Self::append_page_history_with_minor(conn, page_id, edited_by, created_at, false).await
+    }
+
+    /// [`Self::append_page_history`] that also records whether the version was
+    /// saved as a minor edit (typo, formatting). `minor` is stored on the
+    /// history row and read by `page_basis` to tell a citing note that only
+    /// minor edits happened.
+    async fn append_page_history_with_minor(
+        conn: &libsql::Connection,
+        page_id: &str,
+        edited_by: &str,
+        created_at: i64,
+        minor: bool,
+    ) -> Result<(), libsql::Error> {
         conn.execute(
             "INSERT INTO page_history \
-               (page_id, version, title, content, source_memory_ids, edited_by, created_at) \
-             SELECT id, version, title, content, source_memory_ids, ?2, ?3 \
+               (page_id, version, title, content, source_memory_ids, edited_by, created_at, minor) \
+             SELECT id, version, title, content, source_memory_ids, ?2, ?3, ?4 \
              FROM pages WHERE id = ?1",
-            libsql::params![page_id, edited_by, created_at],
+            libsql::params![page_id, edited_by, created_at, i64::from(minor)],
         )
         .await?;
+        page_basis::refresh_basis_state(conn, page_id).await?;
         Ok(())
     }
 
@@ -52091,6 +52227,7 @@ impl MemoryDB {
             None,
             false,
             false,
+            &BasisWrite::default(),
         )
         .await
         .map(|_| ())
@@ -52126,8 +52263,10 @@ impl MemoryDB {
             None,
             false,
             false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -52144,10 +52283,45 @@ impl MemoryDB {
         expected_version: Option<i64>,
         receipt: Option<OperationReceipt<'_>>,
     ) -> Result<bool, WenlanError> {
+        self.try_update_page_content_with_changelog_at_source_revision_and_basis(
+            id,
+            content,
+            source_memory_ids,
+            link_reason,
+            require_stale,
+            changelog,
+            citations_json,
+            expected_source_revision,
+            expected_version,
+            receipt,
+            &BasisWrite::default(),
+        )
+        .await
+        .map(|landed| landed.is_some())
+    }
+
+    /// The agent-refresh write, also marking the notes the agent relied on in
+    /// the same transaction. `None` means the write did not land.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn try_update_page_content_with_changelog_at_source_revision_and_basis(
+        &self,
+        id: &str,
+        content: &str,
+        source_memory_ids: &[&str],
+        link_reason: &str,
+        require_stale: bool,
+        changelog: &str,
+        citations_json: Option<&str>,
+        expected_source_revision: i64,
+        expected_version: Option<i64>,
+        receipt: Option<OperationReceipt<'_>>,
+        basis: &BasisWrite,
+    ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         // This entry point's guard is the source revision. `expected_version`
         // is `Some` only for an agent refresh that proved it read the current
         // version; the UPDATE then fences on both, and the inner fn refuses
-        // that combination for any other writer.
+        // that combination for any other writer. `None` means the write did
+        // not land.
         self.try_update_page_content(
             id,
             content,
@@ -52164,6 +52338,7 @@ impl MemoryDB {
             None,
             false,
             false,
+            basis,
         )
         .await
     }
@@ -52203,8 +52378,10 @@ impl MemoryDB {
             None,
             false,
             true,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Capability-fn variant: like `try_update_page_content_if_stale` but also
@@ -52250,8 +52427,10 @@ impl MemoryDB {
             None,
             false,
             false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Version-CAS variant for non-stale Page writes. Returns `false` when the
@@ -52269,6 +52448,37 @@ impl MemoryDB {
         expected_version: i64,
         receipt: Option<OperationReceipt<'_>>,
     ) -> Result<bool, WenlanError> {
+        self.try_update_page_content_with_changelog_at_version_and_basis(
+            id,
+            content,
+            source_memory_ids,
+            link_reason,
+            changelog,
+            citations_json,
+            expected_version,
+            receipt,
+            &BasisWrite::default(),
+        )
+        .await
+        .map(|landed| landed.is_some())
+    }
+
+    /// The human-save write, also carrying a `minor` flag and an optional
+    /// confirm of one basis in the same transaction. `None` means the version
+    /// moved and nothing was written.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn try_update_page_content_with_changelog_at_version_and_basis(
+        &self,
+        id: &str,
+        content: &str,
+        source_memory_ids: &[&str],
+        link_reason: &str,
+        changelog: &str,
+        citations_json: Option<&str>,
+        expected_version: i64,
+        receipt: Option<OperationReceipt<'_>>,
+        basis: &BasisWrite,
+    ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         self.try_update_page_content(
             id,
             content,
@@ -52285,6 +52495,7 @@ impl MemoryDB {
             None,
             false,
             false,
+            basis,
         )
         .await
     }
@@ -52333,8 +52544,10 @@ impl MemoryDB {
             None,
             false,
             false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Page-growth commit variant: the Page body, source/evidence links, fresh
@@ -52376,8 +52589,10 @@ impl MemoryDB {
             Some((source_id, expected_memory_version)),
             true,
             false,
+            &BasisWrite::default(),
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Apply a staged Page revision and consume its pending card in the same
@@ -52393,6 +52608,7 @@ impl MemoryDB {
         expected_version: Option<i64>,
         expected_source_revision: Option<i64>,
         revision_source_id: &str,
+        basis: &BasisWrite,
     ) -> Result<bool, WenlanError> {
         self.try_update_page_content(
             id,
@@ -52410,8 +52626,10 @@ impl MemoryDB {
             None,
             false,
             false,
+            basis,
         )
         .await
+        .map(|landed| landed.is_some())
     }
 
     /// Internal implementation. `require_stale` gates on `stale_reason IS NOT NULL`.
@@ -52440,7 +52658,8 @@ impl MemoryDB {
         page_growth_guard: Option<(&str, i64)>,
         machine_owned_only: bool,
         user_forced: bool,
-    ) -> Result<bool, WenlanError> {
+        basis: &BasisWrite,
+    ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         // A user-forced rebuild releases edit protection in this UPDATE, so it
         // only rides the one shape that fences it: a machine changelog write
         // under a source-revision AND incarnation CAS, with no stale
@@ -52545,6 +52764,77 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_page_content begin: {e}")))?;
 
+        // The automatic refresh never writes over a note that relies on other
+        // notes. `refresh_page` checks this before generating, but a basis can
+        // be marked while the model runs, so the check is repeated here, in
+        // the write's own transaction. A refused write leaves the body alone
+        // and records the skip like the early check does.
+        if link_reason == "re_distill" {
+            let has_basis = match conn
+                .query(
+                    "SELECT 1 FROM page_basis WHERE page_id = ?1 LIMIT 1",
+                    libsql::params![id],
+                )
+                .await
+            {
+                Ok(mut rows) => match rows.next().await {
+                    Ok(row) => row.is_some(),
+                    Err(e) => {
+                        let _ = conn.execute("ROLLBACK", ()).await;
+                        return Err(WenlanError::VectorDb(format!(
+                            "update_page_content basis row: {e}"
+                        )));
+                    }
+                },
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content basis check: {e}"
+                    )));
+                }
+            };
+            if has_basis {
+                // Fenced like the early marker: a source change that landed
+                // since the compile began already re-armed the retry.
+                let marked = match expected_source_revision {
+                    Some(revision) => {
+                        conn.execute(
+                            "UPDATE pages SET refresh_blocked_reason = ?1 \
+                             WHERE id = ?2 AND status = 'active' \
+                               AND COALESCE(source_revision, 0) = ?3",
+                            libsql::params![
+                                crate::synthesis::distill::REFRESH_BLOCKED_HAS_BASIS,
+                                id,
+                                revision
+                            ],
+                        )
+                        .await
+                    }
+                    None => {
+                        conn.execute(
+                            "UPDATE pages SET refresh_blocked_reason = ?1 \
+                             WHERE id = ?2 AND status = 'active'",
+                            libsql::params![
+                                crate::synthesis::distill::REFRESH_BLOCKED_HAS_BASIS,
+                                id
+                            ],
+                        )
+                        .await
+                    }
+                };
+                if let Err(e) = marked {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content basis marker: {e}"
+                    )));
+                }
+                commit_or_rollback(&conn).await.map_err(|e| {
+                    WenlanError::VectorDb(format!("update_page_content basis commit: {e}"))
+                })?;
+                return Ok(None);
+            }
+        }
+
         if let Some((source_id, expected_memory_version)) = page_growth_guard {
             let mut rows = conn
                 .query(
@@ -52572,7 +52862,7 @@ impl MemoryDB {
             drop(rows);
             if !current {
                 let _ = conn.execute("ROLLBACK", ()).await;
-                return Ok(false);
+                return Ok(None);
             }
         }
 
@@ -52957,7 +53247,7 @@ impl MemoryDB {
             // returning — an empty txn, but the connection must not be left in
             // an open-transaction state.
             let _ = conn.execute("ROLLBACK", ()).await;
-            return Ok(false);
+            return Ok(None);
         }
 
         let embedding_result = match page_embedding_sql.as_deref() {
@@ -53130,12 +53420,26 @@ impl MemoryDB {
         }
 
         // Append the immutable history row for the version this write produced.
-        if let Err(e) = Self::append_page_history(&conn, id, link_reason, now_ts).await {
+        if let Err(e) =
+            Self::append_page_history_with_minor(&conn, id, link_reason, now_ts, basis.minor).await
+        {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!(
                 "update_page_content history: {e}"
             )));
         }
+
+        // The bases this write relied on, and a human's confirm, ride the same
+        // transaction: a mark or confirm never outlives a write that rolled
+        // back, and a confirm can only land if the basis is still at the
+        // version the human looked at.
+        let outcome = match page_basis::apply_basis_write_on_conn(&conn, id, basis).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error.into());
+            }
+        };
 
         // Record the retry receipt in the same transaction as the write it
         // describes. Committed together or not at all — a receipt that
@@ -53147,6 +53451,29 @@ impl MemoryDB {
         // rolling back is the correct answer — the caller re-reads the
         // receipt and replays what actually landed.
         if let Some(r) = receipt {
+            // The receipt was serialized before the write ran, so it cannot
+            // know what a carried confirm did. Record the real outcome, or a
+            // replay of this save would report one that never happened.
+            let response = match outcome.confirm {
+                Some(confirm) => {
+                    match serde_json::from_str::<serde_json::Value>(r.response)
+                        .ok()
+                        .and_then(|mut stored| {
+                            stored["basis_confirm"] = serde_json::to_value(confirm).ok()?;
+                            serde_json::to_string(&stored).ok()
+                        }) {
+                        Some(patched) => patched,
+                        None => {
+                            let _ = conn.execute("ROLLBACK", ()).await;
+                            return Err(WenlanError::VectorDb(format!(
+                                "receipt for {}/{} is unreadable",
+                                r.caller_id, r.operation_id
+                            )));
+                        }
+                    }
+                }
+                None => r.response.to_string(),
+            };
             if let Err(e) = conn
                 .execute(
                     "INSERT INTO operation_receipts \
@@ -53156,7 +53483,7 @@ impl MemoryDB {
                         r.caller_id,
                         r.operation_id,
                         r.request_digest,
-                        r.response,
+                        response,
                         now_ts
                     ],
                 )
@@ -53190,7 +53517,7 @@ impl MemoryDB {
         if let Err(e) = self.refresh_page_wikilinks(id, content).await {
             log::warn!("[page-links] refresh failed for {id}: {e}");
         }
-        Ok(true)
+        Ok(Some(outcome))
     }
 
     /// Extract wikilinks from `content`, resolve them against current page
@@ -53919,6 +54246,12 @@ impl MemoryDB {
                 .map_err(|e| {
                     WenlanError::VectorDb(format!("accept_page_merge archive history: {e}"))
                 })?;
+            // R4b: what the absorbed note relied on, the survivor now relies
+            // on too, but unconfirmed (`pending`); only an explicit confirm
+            // can make a merged-in basis `ok`.
+            page_basis::carry_bases_into_survivor(&conn, absorbed_id, survivor_id, now_ts)
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("accept_page_merge basis: {e}")))?;
 
             let absorbed_title_key = absorbed.title.to_lowercase();
             // Dual-write (G6 Stage 0): the repoint below moves inbound and
@@ -54317,6 +54650,11 @@ impl MemoryDB {
             .map_err(|e| {
                 WenlanError::VectorDb(format!("delete_page citation backfill attempts: {e}"))
             })?;
+            // R4: notes that relied on this page now read `deleted` (title
+            // kept); the rows it held as a citer go away with it.
+            page_basis::retire_basis_for_deleted_page(&conn, id)
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("delete_page basis: {e}")))?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;
@@ -57751,12 +58089,25 @@ impl MemoryDB {
     ) -> Result<(), WenlanError> {
         let resolved = workspace.unwrap_or(UNFILED_SPACE_ID);
         let conn = self.conn.lock().await;
-        conn.execute(
+        // The Space move and the basis re-evaluation (notes this page relies
+        // on, and notes relying on it, may now sit in different Spaces) are
+        // one unit.
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("set_page_workspace begin: {e}")))?;
+        tx.execute(
             "UPDATE pages SET workspace = ?1, space = ?1 WHERE id = ?2",
             libsql::params![resolved, page_id],
         )
         .await
         .map_err(|e| WenlanError::VectorDb(format!("set_page_workspace: {e}")))?;
+        page_basis::refresh_basis_state(&tx, page_id)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("set_page_workspace basis: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("set_page_workspace commit: {e}")))?;
         Ok(())
     }
 

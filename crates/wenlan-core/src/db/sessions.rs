@@ -151,20 +151,20 @@ fn clean_metadata(name: &str, value: &Option<String>) -> Result<Option<String>, 
 }
 
 impl MemoryDB {
-    /// Migration 138: `agent_sessions`, the `session_id` columns on
+    /// Migration 139: `agent_sessions`, the `session_id` columns on
     /// `memories`, `page_history`, and `brief_history`, and a session for every
     /// past ChatGPT / Claude.ai import conversation. The column-exists checks
     /// keep a crash-replay (columns added, version bump lost) idempotent, same
     /// pattern as migration 137.
-    pub(super) async fn migrate_138_agent_sessions(
+    pub(super) async fn migrate_139_agent_sessions(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(138, prior_version).await?;
+        self.backup_before_migration(139, prior_version).await?;
         let conn = self.conn.lock().await;
         conn.execute_batch(AGENT_SESSIONS_DDL)
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 agent_sessions DDL: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m139 agent_sessions DDL: {e}")))?;
         for table in ["memories", "page_history", "brief_history"] {
             let mut rows = conn
                 .query(
@@ -175,7 +175,7 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(|e| WenlanError::VectorDb(format!("m138 {table} col check: {e}")))?;
+                .map_err(|e| WenlanError::VectorDb(format!("m139 {table} col check: {e}")))?;
             let has_col = match rows.next().await {
                 Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
                 _ => false,
@@ -187,7 +187,7 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(|e| WenlanError::VectorDb(format!("m138 {table} add column: {e}")))?;
+                .map_err(|e| WenlanError::VectorDb(format!("m139 {table} add column: {e}")))?;
             }
         }
         conn.execute_batch(
@@ -197,14 +197,14 @@ impl MemoryDB {
                  ON page_history(session_id) WHERE session_id IS NOT NULL;",
         )
         .await
-        .map_err(|e| WenlanError::VectorDb(format!("m138 indexes: {e}")))?;
+        .map_err(|e| WenlanError::VectorDb(format!("m139 indexes: {e}")))?;
 
         Self::backfill_import_sessions(&conn).await?;
 
-        conn.execute("PRAGMA user_version = 138", ())
+        conn.execute("PRAGMA user_version = 139", ())
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 bump: {e}")))?;
-        log::info!("[migration] Migration 138 applied: agent_sessions and session_id columns");
+            .map_err(|e| WenlanError::VectorDb(format!("m139 bump: {e}")))?;
+        log::info!("[migration] Migration 139 applied: agent_sessions and session_id columns");
         Ok(())
     }
 
@@ -228,12 +228,12 @@ impl MemoryDB {
                 (),
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 backfill read: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m139 backfill read: {e}")))?;
         let mut conversations = Vec::new();
         while let Some(row) = rows
             .next()
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 backfill row: {e}")))?
+            .map_err(|e| WenlanError::VectorDb(format!("m139 backfill row: {e}")))?
         {
             conversations.push((
                 row.get::<String>(0).unwrap_or_default(),
@@ -250,26 +250,26 @@ impl MemoryDB {
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 backfill begin: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m139 backfill begin: {e}")))?;
         for (source_id, title, first, last) in conversations {
             let Some(session) = import_session_ref(&source_id) else {
-                log::warn!("[migration] m138: no session for import source_id {source_id}");
+                log::warn!("[migration] m139: no session for import source_id {source_id}");
                 continue;
             };
             let id = upsert_session_span(&tx, &session, title.as_deref(), None, first, last)
                 .await
-                .map_err(|e| WenlanError::VectorDb(format!("m138 backfill session: {e}")))?;
+                .map_err(|e| WenlanError::VectorDb(format!("m139 backfill session: {e}")))?;
             tx.execute(
                 "UPDATE memories SET session_id = ?1
                   WHERE source = 'memory' AND source_id = ?2 AND session_id IS NULL",
                 libsql::params![id, source_id],
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 backfill stamp: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m139 backfill stamp: {e}")))?;
         }
         tx.commit()
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m138 backfill commit: {e}")))?;
+            .map_err(|e| WenlanError::VectorDb(format!("m139 backfill commit: {e}")))?;
         Ok(())
     }
 

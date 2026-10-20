@@ -538,6 +538,7 @@ fn page_entity_id_freeze() {
 #[allow(clippy::too_many_arguments)]
 fn sample_search_result(entity_id: Option<String>, entity_name: Option<String>) -> SearchResult {
     SearchResult {
+        basis: Vec::new(),
         id: "sr_1".into(),
         content: "content".into(),
         source: "memory".into(),

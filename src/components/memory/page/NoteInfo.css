@@ -49,6 +49,12 @@
   white-space: normal;
 }
 
+/* Items stack in the narrow panel; the flex gap separates them, so a "·"
+   would start a line. */
+.note-info-summary .page-detail-dateline-item + .page-detail-dateline-item::before {
+  content: none;
+}
+
 .note-info-sections > .flex.flex-col.gap-4,
 .note-info-page-groups > .flex.flex-col.gap-4 {
   gap: 20px;
@@ -106,6 +112,63 @@
 .note-info-link-row:hover {
   color: var(--mem-text);
   background: var(--mem-hover);
+}
+
+.note-info-link-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.note-info-link-item > .note-info-link-row {
+  flex: 1 1 0;
+  width: auto;
+}
+
+.note-info-link-error {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font-size: 12px;
+}
+
+.note-basis-badge {
+  position: relative;
+  flex: none;
+  padding: 1px 7px;
+  border: 1px solid var(--mem-border);
+  border-radius: 4px;
+  color: var(--mem-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: default;
+}
+
+.note-basis-badge:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 2px;
+}
+
+/* Two classes: the rail's `.memory-detail-rail-section span` rule caps a span
+   at 100% of its parent, which would squeeze this to the badge's own width. */
+.memory-detail-rail-section .note-basis-badge__tip {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: min(220px, 80vw);
+  padding: 6px 9px;
+  border: 1px solid var(--mem-border);
+  border-radius: 6px;
+  background: var(--mem-surface);
+  color: var(--mem-text);
+  box-shadow: var(--mem-shadow-popover, 0 4px 14px rgba(0, 0, 0, 0.12));
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .note-info-link-row:focus-visible {
@@ -251,3 +314,63 @@
 @media (pointer: coarse) {
   .note-revision-toggle { min-height: 44px; }
 }
+
+.note-info-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.note-info-notes__hint {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.note-info-notes__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.note-info-notes__row > .note-info-link-row {
+  flex: 1 1 0;
+  width: auto;
+}
+
+.note-info-notes__add {
+  align-self: flex-start;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--mem-text-secondary);
+  font: 500 13px/1.4 var(--mem-font-body);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.note-info-notes__add:hover { color: var(--mem-text); }
+.note-info-notes__add:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
+
+.note-info-notes__picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.note-info-notes__search {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--mem-border);
+  border-radius: 6px;
+  background: var(--mem-surface);
+  color: var(--mem-text);
+  font: 400 13px/1.4 var(--mem-font-body);
+}
+
+.note-info-notes__search:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 1px; }
