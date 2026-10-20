@@ -7,7 +7,7 @@
 
 <p align="center">
   Wenlan turns your scattered documents, AI chats, and coding sessions into one local source of truth that keeps up as they change,<br>
-  so you and AI tools like Claude and Codex pick up where you left off.
+  so you can read and check it, and AI tools like Claude and Codex work from it instead of what each one happens to remember.
 </p>
 
 <p align="center">
