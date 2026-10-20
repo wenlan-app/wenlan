@@ -4362,6 +4362,7 @@ mod update_page_outcome_tests {
             ok: true,
             revision_card_id: Some("revision-1".to_string()),
             gated: false,
+            basis: Vec::new(),
         }));
 
         assert_eq!(result, Ok(UpdatePageOutcome::Saved));
@@ -4578,6 +4579,7 @@ mod search_response_type_tests {
 
     fn search_result(source: &str, source_id: &str) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: format!("{source_id}-hit"),
             content: format!("{source} content"),
             source: source.to_string(),

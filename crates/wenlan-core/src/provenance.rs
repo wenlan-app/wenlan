@@ -96,6 +96,173 @@ pub fn revision_content_digest(content: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Version tag mixed into every [`basis_text_digest`]. Changing the digest
+/// recipe means bumping this, which makes every stored digest differ and so
+/// asks for one extra confirmation per basis -- the safe direction.
+const BASIS_DIGEST_VERSION: &[u8] = b"wenlan-basis-digest-v1";
+
+/// Collects one block's visible text for [`basis_text_digest`]: whitespace
+/// runs collapse to one space (so re-wrapping a paragraph is not a change),
+/// while inline code is kept verbatim between backticks.
+#[derive(Default)]
+struct BasisBlockText {
+    text: String,
+    pending_space: bool,
+}
+
+impl BasisBlockText {
+    fn flush_space(&mut self) {
+        if self.pending_space && !self.text.is_empty() {
+            self.text.push(' ');
+        }
+        self.pending_space = false;
+    }
+
+    fn push_text(&mut self, raw: &str) {
+        for ch in raw.chars() {
+            if ch.is_whitespace() {
+                self.pending_space = true;
+            } else {
+                self.flush_space();
+                self.text.push(ch);
+            }
+        }
+    }
+
+    /// Verbatim run (inline code, link and image targets): whitespace inside
+    /// it is content, so it is not collapsed.
+    fn push_verbatim(&mut self, raw: &str) {
+        self.flush_space();
+        self.text.push_str(raw);
+    }
+
+    fn take(&mut self) -> Option<String> {
+        self.pending_space = false;
+        if self.text.is_empty() {
+            None
+        } else {
+            Some(std::mem::take(&mut self.text))
+        }
+    }
+}
+
+fn basis_digest_segment(hasher: &mut Sha256, tag: u8, bytes: &[u8]) {
+    hasher.update([tag]);
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+}
+
+fn basis_inline_tag(tag: &pulldown_cmark::Tag<'_>) -> bool {
+    use pulldown_cmark::Tag;
+    matches!(
+        tag,
+        Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Superscript | Tag::Subscript
+    )
+}
+
+/// Digest of what a note SAYS, ignoring how it is dressed, for the "this note
+/// relies on that note" check. A note is told its basis changed only when this
+/// digest differs from the one recorded when the basis was last confirmed.
+///
+/// The content is parsed as Markdown (`pulldown-cmark`, CommonMark only) and
+/// only the text events are hashed. Dropped: emphasis and strong markers,
+/// heading level, list and block-quote markers, blank lines and wrapping
+/// (whitespace runs collapse). Kept: every text character (so `foo_bar` and
+/// `foobar` differ, and so does a changed date), inline and fenced code
+/// verbatim, and link and image targets. Blocks stay separate, so splitting or
+/// joining paragraphs counts as a change.
+///
+/// When in doubt it must say "changed": a spurious confirmation costs one
+/// click, a missed change leaves a note quietly wrong.
+pub fn basis_text_digest(content: &str) -> String {
+    use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+
+    let mut hasher = Sha256::new();
+    hasher.update(BASIS_DIGEST_VERSION);
+    let mut block = BasisBlockText::default();
+    let mut code: Option<(String, String)> = None;
+
+    for event in Parser::new_ext(content, pulldown_cmark::Options::empty()) {
+        match event {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                if let Some(text) = block.take() {
+                    basis_digest_segment(
+                        &mut hasher,
+                        b'B',
+                        text.nfc().collect::<String>().as_bytes(),
+                    );
+                }
+                let info = match kind {
+                    CodeBlockKind::Fenced(info) => info.trim().to_string(),
+                    CodeBlockKind::Indented => String::new(),
+                };
+                code = Some((info, String::new()));
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                if let Some((info, body)) = code.take() {
+                    let mut framed = info;
+                    framed.push('\0');
+                    framed.push_str(&body.replace("\r\n", "\n"));
+                    basis_digest_segment(
+                        &mut hasher,
+                        b'C',
+                        framed.nfc().collect::<String>().as_bytes(),
+                    );
+                }
+            }
+            Event::Text(text) if code.is_some() => {
+                if let Some((_, body)) = code.as_mut() {
+                    body.push_str(&text);
+                }
+            }
+            Event::Start(Tag::Link {
+                dest_url, title, ..
+            })
+            | Event::Start(Tag::Image {
+                dest_url, title, ..
+            }) => {
+                block.push_verbatim(&format!("\u{0}<{dest_url}|{title}>\u{0}"));
+            }
+            Event::Start(tag) if basis_inline_tag(&tag) => {}
+            Event::End(
+                TagEnd::Emphasis
+                | TagEnd::Strong
+                | TagEnd::Strikethrough
+                | TagEnd::Superscript
+                | TagEnd::Subscript
+                | TagEnd::Link
+                | TagEnd::Image,
+            ) => {}
+            Event::Start(_) | Event::End(_) | Event::Rule => {
+                if let Some(text) = block.take() {
+                    basis_digest_segment(
+                        &mut hasher,
+                        b'B',
+                        text.nfc().collect::<String>().as_bytes(),
+                    );
+                }
+            }
+            Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => {
+                block.push_text(&text);
+            }
+            Event::Code(text) => block.push_verbatim(&format!("`{text}`")),
+            Event::SoftBreak | Event::HardBreak => block.pending_space = true,
+            Event::FootnoteReference(label) => block.push_verbatim(&format!("[^{label}]")),
+            Event::TaskListMarker(checked) => {
+                block.push_verbatim(if checked { "[x]" } else { "[ ]" });
+            }
+            // Math, metadata and other extensions are not enabled (see the
+            // `Options::empty()` above), so nothing else is reachable; any
+            // future event degrades to "counts as a change" by being hashed.
+            other => block.push_verbatim(&format!("{other:?}")),
+        }
+    }
+    if let Some(text) = block.take() {
+        basis_digest_segment(&mut hasher, b'B', text.nfc().collect::<String>().as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 /// Root digest = `hash(identity_version, root_kind, canonical_content_digest)`
 /// (Q6, spec §1). Source-instance identity is excluded, so two
 /// byte-identical imports converge on one root via `INSERT ... ON CONFLICT
@@ -380,5 +547,97 @@ mod tests {
             a, b,
             "an embedded NUL must not collide with a shifted split -- length-prefix, not separator"
         );
+    }
+
+    // ---- basis_text_digest (note-relies-on-note change detection) ----
+
+    #[test]
+    fn basis_digest_ignores_bold_heading_level_and_blank_lines() {
+        let plain = "# Pricing\n\nThe plan costs 12 dollars.\n\n- one\n- two\n";
+        let bold = "# Pricing\n\nThe plan costs **12** dollars.\n\n- one\n- _two_\n";
+        let level = "### Pricing\n\nThe plan costs 12 dollars.\n\n* one\n* two\n";
+        let blanks = "# Pricing\n\n\n\nThe plan costs 12 dollars.\n\n\n- one\n\n- two\n\n\n";
+        let wrapped = "# Pricing\n\nThe plan costs\n12   dollars.\n\n- one\n- two\n";
+        let base = basis_text_digest(plain);
+        assert_eq!(
+            base,
+            basis_text_digest(bold),
+            "bold-only edit must converge"
+        );
+        assert_eq!(
+            base,
+            basis_text_digest(level),
+            "heading-level and list-marker edits must converge"
+        );
+        assert_eq!(
+            base,
+            basis_text_digest(blanks),
+            "blank-line edit must converge"
+        );
+        assert_eq!(
+            base,
+            basis_text_digest(wrapped),
+            "re-wrapping must converge"
+        );
+    }
+
+    #[test]
+    fn basis_digest_keeps_every_text_character() {
+        assert_ne!(
+            basis_text_digest("use foo_bar here"),
+            basis_text_digest("use foobar here"),
+            "an underscore inside a word is content, not emphasis"
+        );
+        assert_ne!(
+            basis_text_digest("Launch on 2026-10-17."),
+            basis_text_digest("Launch on 2026-10-18."),
+            "a date change is a change"
+        );
+        assert_ne!(
+            basis_text_digest("Launch on 2026-10-17."),
+            basis_text_digest("Launch on 2026-10-17"),
+            "punctuation is content"
+        );
+        assert_ne!(
+            basis_text_digest("one paragraph\n\nsecond"),
+            basis_text_digest("one paragraph second"),
+            "splitting paragraphs is a change"
+        );
+    }
+
+    #[test]
+    fn basis_digest_keeps_code_and_link_targets() {
+        assert_ne!(
+            basis_text_digest("run `cargo test -p core` now"),
+            basis_text_digest("run `cargo test -p cli` now"),
+            "inline code content is verbatim"
+        );
+        assert_ne!(
+            basis_text_digest("run `a  b` now"),
+            basis_text_digest("run `a b` now"),
+            "whitespace inside a code span is content"
+        );
+        assert_ne!(
+            basis_text_digest("```sh\nrm -rf build\n```\n"),
+            basis_text_digest("```sh\nrm -rf dist\n```\n"),
+            "fenced code content is verbatim"
+        );
+        assert_ne!(
+            basis_text_digest("see [docs](https://a.example/x)"),
+            basis_text_digest("see [docs](https://b.example/x)"),
+            "a link target change is a change"
+        );
+        assert_ne!(
+            basis_text_digest("![chart](https://a.example/c.png)"),
+            basis_text_digest("![chart](https://a.example/d.png)"),
+            "an image target change is a change"
+        );
+    }
+
+    #[test]
+    fn basis_digest_of_empty_content_is_not_empty() {
+        let digest = basis_text_digest("");
+        assert!(!digest.is_empty());
+        assert_eq!(digest, basis_text_digest("\n\n  \n"));
     }
 }

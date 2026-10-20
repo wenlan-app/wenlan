@@ -1376,6 +1376,35 @@ pub(crate) enum CandidateOutcome {
 /// Cap on source text length embedded in one numbered source entry.
 const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
 
+/// Cap on one basis note's text embedded in the "notes this note relies on"
+/// block of an update-from-sources prompt.
+const BASIS_CONTEXT_CHAR_CAP: usize = 2000;
+
+/// `pages.refresh_blocked_reason` value for a note the automatic refresh skips
+/// because it relies on other notes. Only "Update from sources" rebuilds it.
+pub const REFRESH_BLOCKED_HAS_BASIS: &str = "has_basis";
+
+/// The "notes this note relies on" block of an update-from-sources prompt.
+/// Empty when the note has no readable basis, so a note without one gets the
+/// same prompt as before.
+fn build_basis_context_block(bases: &[crate::db::BasisContext]) -> String {
+    if bases.is_empty() {
+        return String::new();
+    }
+    let mut block = String::from(
+        "## Notes this note relies on\n\
+         These are other notes this note is built on. Use them as background context. \
+         When you draw a claim from one of them, write it as a link to that note, \
+         like [[Title]]. Never give these notes a numbered citation marker such as [1]; \
+         numbered markers are only for the numbered sources above.",
+    );
+    for basis in bases {
+        let text: String = basis.content.chars().take(BASIS_CONTEXT_CHAR_CAP).collect();
+        block.push_str(&format!("\n\n### [[{}]]\n{}", basis.title, text));
+    }
+    block
+}
+
 /// Synthesize one candidate body from `source_ids` under `system_prompt` and
 /// verify its per-claim `[N]` citations — the shared synthesis/verification
 /// core of [`refresh_page_with_prompt`], factored out so first-time creation
@@ -1387,12 +1416,19 @@ pub(crate) async fn synthesize_candidate_body(
     title: &str,
     workspace: Option<&str>,
     source_ids: &[String],
+    bases: &[crate::db::BasisContext],
 ) -> Result<CandidateOutcome, WenlanError> {
-    if source_ids.is_empty() {
+    // A note that relies on other notes can be rebuilt from those notes alone;
+    // everyone else still needs at least one memory source.
+    if source_ids.is_empty() && bases.is_empty() {
         return Ok(CandidateOutcome::Unavailable);
     }
-    let memories = db.get_memory_contents_by_ids(source_ids).await?;
-    if memories.is_empty() {
+    let memories = if source_ids.is_empty() {
+        Vec::new()
+    } else {
+        db.get_memory_contents_by_ids(source_ids).await?
+    };
+    if memories.is_empty() && bases.is_empty() {
         log::warn!("[refresh] page '{title}' sources are all orphaned, skipping");
         return Ok(CandidateOutcome::Unavailable);
     }
@@ -1415,7 +1451,17 @@ pub(crate) async fn synthesize_candidate_body(
             text: content.chars().take(CANDIDATE_MEM_SNIPPET_CAP).collect(),
         })
         .collect();
-    let memories_block = crate::citations::build_numbered_block(&numbered);
+    // The notes this note relies on are context, never evidence: they are not
+    // numbered, never enter the citation store, and the gate below does not
+    // count them.
+    let memories_block = [
+        crate::citations::build_numbered_block(&numbered),
+        build_basis_context_block(bases),
+    ]
+    .into_iter()
+    .filter(|block| !block.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n");
     let user_prompt = build_page_compile_user_prompt(db, title, workspace, &memories_block).await;
 
     let raw = llm
@@ -1447,7 +1493,10 @@ pub(crate) async fn synthesize_candidate_body(
     // whole-body sentence-majority scorer false-rejected thin-source pages:
     // DISTILL_PAGE/OVERVIEW_SUMMARY require elaboration and Open Questions
     // sentences that carry no markers by design.
-    if stats.verified == 0 || stats.unverified > stats.verified {
+    // A note built only from other notes has no memory citations to check, so
+    // the body-length and no-change rules downstream are its only gates.
+    let basis_only = numbered.is_empty();
+    if !basis_only && (stats.verified == 0 || stats.unverified > stats.verified) {
         log::warn!(
             "[refresh] page '{title}' synthesis failed the citation verification gate ({}); discarding",
             stats.summary()
@@ -1560,6 +1609,30 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         )));
     }
 
+    // A note that relies on other notes is rebuilt only by an explicit "Update
+    // from sources": the automatic refresh would write over text a person
+    // confirmed against those notes. It is skipped, and the skip is recorded on
+    // the page so it reads as "update blocked" and not as an endless update.
+    // A run that lands or previews a new body clears the marker.
+    let has_basis = db.page_has_basis(page_id).await?;
+    if has_basis && reason == RefreshReason::SourceChanged {
+        log::info!(
+            "[refresh] page {page_id} relies on other notes; leaving it to Update from sources"
+        );
+        db.set_page_refresh_blocked_reason_at_fence(
+            page_id,
+            REFRESH_BLOCKED_HAS_BASIS,
+            &page_fence,
+        )
+        .await?;
+        return Ok(RefreshOutcome::default());
+    }
+    let bases = if has_basis {
+        db.list_basis_context(page_id).await?
+    } else {
+        Vec::new()
+    };
+
     // Rebuild from the page's CURRENT sources: join table first, JSON column
     // fallback for legacy pages.
     let sources = db.get_page_sources(page_id).await?;
@@ -1570,7 +1643,7 @@ pub(crate) async fn refresh_page_with_candidate_sources(
     if let Some(candidate_sources) = candidate_sources {
         source_ids = candidate_sources.to_vec();
     }
-    if source_ids.is_empty() {
+    if source_ids.is_empty() && bases.is_empty() {
         log::warn!("[refresh] page '{}' has no sources, skipping", page.id);
         return Ok(RefreshOutcome::default());
     }
@@ -1584,6 +1657,7 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         &page.title,
         page_workspace(&page),
         &source_ids,
+        &bases,
     )
     .await?
     {
@@ -1632,6 +1706,55 @@ pub(crate) async fn refresh_page_with_candidate_sources(
     // under the same id still wins, and the edit protection it overrides is
     // released by the write that lands the body, never before.
     let summary = candidate.summary.clone();
+    let user_forced_write = reason == RefreshReason::UserForced && candidate_sources.is_none();
+
+    // "Update from sources" on a note that relies on other notes is a preview:
+    // the run stages a revision card, whatever the note's ownership, and the
+    // card remembers which version of each basis it read. Accepting it
+    // confirms the ones that still match. A note without a basis never takes
+    // this branch.
+    if user_forced_write && has_basis {
+        let old_sources: std::collections::HashSet<&str> =
+            page.source_memory_ids.iter().map(String::as_str).collect();
+        let new_sources: std::collections::HashSet<&str> =
+            source_ids.iter().map(String::as_str).collect();
+        if candidate.content == page.content && old_sources == new_sources {
+            // Nothing to change: no card, and nothing is confirmed. Only the
+            // compile watermark advances.
+            db.clear_page_staleness_at_fence(page_id, page.version, &page_fence)
+                .await?;
+            return Ok(RefreshOutcome {
+                acknowledged: true,
+                ..RefreshOutcome::default()
+            });
+        }
+        let snapshot: Vec<crate::db::BasisSnapshotEntry> =
+            bases.iter().map(|b| b.snapshot.clone()).collect();
+        let Some(staged) = crate::post_write::stage_basis_preview_card(
+            db,
+            &page,
+            &candidate.content,
+            &source_ids,
+            &page_fence,
+            reason.edited_by(),
+            &snapshot,
+        )
+        .await?
+        else {
+            log::info!(
+                "[refresh] page {page_id} changed or was replaced during generation; no preview card staged"
+            );
+            return Ok(RefreshOutcome::default());
+        };
+        db.clear_page_staleness_at_fence(page_id, page.version, &page_fence)
+            .await?;
+        return Ok(RefreshOutcome {
+            gated: staged.gated,
+            revision_card_id: staged.revision_card_id,
+            ..RefreshOutcome::default()
+        });
+    }
+
     let req = UpdatePageRequest {
         content: candidate.content,
         source_memory_ids: source_ids,
@@ -1640,7 +1763,6 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         operation_id: None,
     };
     let citations = Some((candidate.citations_json, candidate.stats_summary));
-    let user_forced_write = reason == RefreshReason::UserForced && candidate_sources.is_none();
     let result = if user_forced_write {
         crate::post_write::page_write(
             db,

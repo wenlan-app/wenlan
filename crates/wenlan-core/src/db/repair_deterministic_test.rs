@@ -286,6 +286,46 @@ async fn archive_page_commits_exact_route_invalidation_and_proof() {
 }
 
 #[tokio::test]
+async fn archive_page_repair_re_evaluates_notes_that_rely_on_the_archived_page() {
+    let (db, _db_dir, _page_root, _repair_root, manifest) = archive_fixture().await;
+    db.insert_page_with_kind(
+        "citer",
+        "Citer",
+        None,
+        "Relies on the source target.",
+        None,
+        Some("work"),
+        &[],
+        "2026-07-17T00:00:00Z",
+        "authored",
+        "confirmed",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    db.mark_page_basis("citer", "source-target", 1, "human")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.list_page_basis("citer").await.unwrap()[0].state,
+        crate::db::BASIS_STATE_OK
+    );
+
+    // The repair's strict effect guard must accept the refresh's own writes.
+    apply_deterministic_repair_cas(&db, &manifest, &[], |_| Ok(()))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.list_page_basis("citer").await.unwrap()[0].state,
+        crate::db::BASIS_STATE_ARCHIVED,
+        "archiving the basis note must reach the notes that rely on it"
+    );
+    assert_db_mutex_released(&db);
+}
+
+#[tokio::test]
 async fn archive_page_without_invalidation_trigger_fails_exact_and_rolls_back_active() {
     let (db, _db_dir, _page_root, _repair_root, manifest) = archive_fixture().await;
     let route_before = page_route_state(&db).await;

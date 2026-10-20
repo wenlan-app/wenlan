@@ -410,6 +410,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",
     "/api/pages/{id}/map/improve",
+    // A basis mark, unmark and confirm return a state receipt only; the two
+    // reads (`basis-pending`, `diff`) are in the sensitive catalog instead.
+    "/api/pages/{id}/basis/{basis_id}", "/api/pages/{id}/basis/{basis_id}/confirm",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

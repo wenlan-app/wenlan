@@ -19,6 +19,7 @@ pub mod memory_type;
 pub mod narrative;
 pub mod onboarding;
 pub mod outbox;
+pub mod page_basis;
 pub mod page_map;
 pub mod pages;
 pub mod repair;
@@ -63,6 +64,11 @@ pub use memory_type::{MEMORY_TYPE_CAPTURE_DESCRIPTION, MEMORY_TYPE_FILTER_DESCRI
 pub use narrative::NarrativeResponse;
 pub use outbox::{
     OutboxDrainDetail, OutboxDrainReport, OutboxEnvelope, OutboxPayload, OUTBOX_SCHEMA,
+};
+pub use page_basis::{
+    BasisConfirmOutcome, BasisDiffEdit, BasisDiffResponse, BasisInput, BasisPendingCiterRef,
+    BasisPendingEntry, BasisRef, BasisRemoveResponse, BasisVersionRequest, ConfirmBasisInput,
+    LinkedChanged,
 };
 pub use pages::{Page, PageEvidence};
 pub use repair::*;
@@ -172,6 +178,7 @@ mod tests {
     #[test]
     fn search_result_serializes() {
         let sr = SearchResult {
+            basis: Vec::new(),
             id: "1".into(),
             content: "test".into(),
             source: "memory".into(),

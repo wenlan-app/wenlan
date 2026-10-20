@@ -105,7 +105,11 @@ impl Phase {
             // The create gate's kind resolution is shared with the HTTP route
             // so its telemetry follows the same rule as the write.
             expected.insert("pub:page_create:resolve_page_creation_kind".to_string());
-            for item in ["PRE_WRITE_GATE", "merge_shrink_threshold"] {
+            for item in [
+                "PRE_WRITE_GATE",
+                "merge_shrink_threshold",
+                "stage_basis_preview_card",
+            ] {
                 expected.insert(format!("pub(crate):page_update:{item}"));
             }
         }
@@ -511,7 +515,7 @@ pub(crate) use self::page_dispatch::update_page_growth_at_versions;
 pub use self::page_revision::{accept_pending_revision, accept_pending_revision_with_knowledge_path, dismiss_pending_revision, dismiss_contradiction, PAGE_REVISION_OUTDATED};
 pub use self::page_create::resolve_page_creation_kind;
 pub use self::page_update::{PipelineStage, Writer, machine_write_requires_review, page_is_human_owned, stage_page_revision_card, stage_page_revision_card_proposed_by};
-pub(crate) use self::page_update::{PRE_WRITE_GATE, merge_shrink_threshold};
+pub(crate) use self::page_update::{PRE_WRITE_GATE, merge_shrink_threshold, stage_basis_preview_card};
 pub(crate) async fn log_activity_best_effort() {}
 "#;
     let children: BTreeSet<String> = CHILDREN.iter().map(|name| (*name).to_string()).collect();
@@ -611,6 +615,7 @@ fn post_write_facade_contract_compiles_and_preserves_result_shape() {
     let _ = std::mem::size_of::<Option<crate::post_write::PageWrite<'static>>>();
 
     let result = crate::post_write::WriteResult {
+        basis_confirm: None,
         id: "page_1".into(),
         attached_to: None,
         warnings: Vec::new(),

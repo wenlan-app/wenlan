@@ -52,6 +52,7 @@ mod tests {
 
     pub(super) fn page(title: &str, source_id: &str) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: "p1".to_string(),
             content: "First page line\nSecond page line".to_string(),
             source: "page".to_string(),

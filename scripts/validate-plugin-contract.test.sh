@@ -78,6 +78,22 @@ assert_rejects "handoff same-item snapshot version drift" \
     perl -0pi -e 's/Every delta for one existing item uses the same version from the pre-handoff Brief snapshot./Chain item versions inside the request./g' \
     "$TMPDIR_TEST/root/plugin-codex/skills/handoff/SKILL.md"
 
+assert_rejects "claude handoff dropped page_basis permission" \
+    perl -0pi -e 's/, "mcp__plugin_wenlan_wenlan__page_basis"//' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
+
+assert_rejects "codex distill forgot to confirm a pending basis" \
+    perl -0pi -e 's/`action="confirm"`/`action="accept"`/g' \
+    "$TMPDIR_TEST/root/plugin-codex/skills/wenlan/references/distill.md"
+
+assert_rejects "claude handoff forgot the pending-basis diff" \
+    perl -0pi -e 's/`action: "diff"`/`action: "look"`/g' \
+    "$TMPDIR_TEST/root/plugin/skills/handoff/SKILL.md"
+
+assert_rejects "claude distill forgot to leave unconfirmable bases alone" \
+    perl -0pi -e 's/`archived`,\n`deleted` or `unavailable`/`archived`/' \
+    "$TMPDIR_TEST/root/plugin/skills/distill/SKILL.md"
+
 python3 - "$TMPDIR_TEST/root/plugin-codex/.mcp.json" <<'PY'
 import json
 import sys

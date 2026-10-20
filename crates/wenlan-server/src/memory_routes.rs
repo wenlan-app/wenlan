@@ -1206,6 +1206,19 @@ async fn handle_search_memory_inner(
                 })
                 .await
                 .map_err(|e| ServerError::SearchFailed(e.to_string()))?;
+            // A hit on a note whose basis needs a look says so, in the same
+            // shape `read_page` uses. Quiet notes carry nothing.
+            let ids: Vec<String> = kept.iter().map(|row| row.source_id.clone()).collect();
+            let mut basis_by_page =
+                crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &ids)
+                    .await?;
+            let kept: Vec<_> = kept
+                .into_iter()
+                .map(|mut row| {
+                    row.basis = basis_by_page.remove(&row.source_id).unwrap_or_default();
+                    row
+                })
+                .collect();
             (!kept.is_empty()).then_some(kept)
         }
         None => None,
@@ -3751,6 +3764,7 @@ mod partition_pages_tests {
 
     fn make_result(source: &str, id: &str) -> SearchResult {
         SearchResult {
+            basis: Vec::new(),
             id: id.to_string(),
             content: "body".to_string(),
             source: source.to_string(),

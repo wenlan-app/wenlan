@@ -92,6 +92,12 @@ unicode-normalization = "0.1"
 # the invisible-label attacks live. Already in the lock file transitively, so
 # this pins it as a direct dep rather than growing the resolved graph.
 unicode-properties = "0.1"
+# Markdown event stream for `provenance::basis_text_digest` (a note that relies
+# on another note is told when the text it relied on changes, not when it was
+# merely reformatted). Already in the lock file via text-splitter's markdown
+# feature, so this pins it as a direct dep rather than growing the resolved
+# graph; no default features because only the event parser is used.
+pulldown-cmark = { version = "0.13.3", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 fastembed = { workspace = true, features = ["ort-load-dynamic"] }

@@ -6,7 +6,7 @@ description: >
   the daemon couldn't (no LLM or cluster too big). Invoked as
   `/wenlan distill [target]`.
 argument-hint: "[target | rebuild <page-id> | deep]"
-allowed-tools: ["mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__distill", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__delete_page", "mcp__plugin_wenlan_wenlan__get_page_sources", "Bash"]
+allowed-tools: ["mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__distill", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__delete_page", "mcp__plugin_wenlan_wenlan__get_page_sources", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__page_basis", "Bash"]
 user-invocable: false
 ---
 
@@ -240,6 +240,20 @@ write_page(page_id=stale.page_id,
 
 When `stale_truncated == true`, tell the user "more stale pages
 remain — re-run `/wenlan distill` after this pass to continue."
+
+### 3.55 Pages that rely on other pages
+
+Before refreshing a page, `read_page` it and look at `basis` (absent when the
+page relies on no other note). For each entry whose `state` is `pending`, call
+`page_basis(page_id=<page>, basis_page_id=<entry.page_id>, action="diff")`. If
+the change does not touch what the page says, call it again with
+`action="confirm"` and `version=<entry.to_version>`, and leave the prose alone.
+If it does, rewrite the page and pass the notes it relied on to `write_page` as
+`basis=[{page_id, version}]`, using each note's own `read_page` `page.version`.
+A note's page id never goes in `source_memory_ids`. A basis that is `archived`,
+`deleted` or `unavailable` cannot be confirmed: report it and leave it.
+A `basis:` line in the `write_page` reply that shows an entry still `pending`
+means that note changed after you read it: diff it again before moving on.
 
 ### 3.6 Resolve markdown paths for the report
 

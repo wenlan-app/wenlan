@@ -159,6 +159,11 @@ pub async fn handle_list_pages(
         .filter(|page| page.kind != "entity" && page.status != "draft")
         .map(|page| page.id.clone())
         .collect();
+    // A note whose basis needs a look carries those rows; the quiet majority
+    // carry none, so the list stays small.
+    let mut basis_by_page =
+        crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &page_ids)
+            .await?;
     let mut folders = HashMap::new();
     for page in pages.iter().filter(|page| page.status == "draft") {
         folders.insert(
@@ -181,6 +186,7 @@ pub async fn handle_list_pages(
         pages: pages
             .into_iter()
             .map(|page| PageInventoryEntry {
+                basis: basis_by_page.remove(&page.id).unwrap_or_default(),
                 storage_path: filenames.get(&page.id).cloned(),
                 folder_path: folders.get(&page.id).cloned(),
                 page,
@@ -250,8 +256,43 @@ pub async fn handle_get_page(
                 }),
                 _ => None,
             };
+            // Every basis of this note, in any state, plus (agents only, but
+            // computed for every caller) the notes it links to that changed
+            // after it did.
+            let basis = crate::page_basis_routes::basis_refs(
+                &db,
+                &view.grant,
+                &scope,
+                db.list_page_basis(&id).await?,
+            )
+            .await?;
+            let linked_ids: Vec<(String, String, i64)> = db.linked_changed(&id).await?;
+            let linked_visible = crate::page_basis_routes::visible_ids(
+                &db,
+                &view.grant,
+                &scope,
+                &linked_ids
+                    .iter()
+                    .map(|(page_id, _, _)| page_id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+            let linked_changed = linked_ids
+                .into_iter()
+                .filter(|(page_id, _, _)| linked_visible.contains(page_id))
+                .map(|(page_id, title, version)| wenlan_types::LinkedChanged {
+                    page_id,
+                    title,
+                    version,
+                })
+                .collect();
             Ok(Json(PageReadResponse {
+                basis,
+                linked_changed,
+                // The full list is the top-level `basis`; the entry's own
+                // non-ok list is for inventories.
                 page: PageInventoryEntry {
+                    basis: Vec::new(),
                     page,
                     storage_path,
                     folder_path,
@@ -470,8 +511,9 @@ pub async fn handle_create_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
-    Json(req): Json<CreateConceptRequest>,
+    Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
+    let wenlan_types::requests::CreatePageWithBasisRequest { create: req, basis } = wire;
     // An omitted creation_kind is resolved by the core writer from the
     // distinct source count against the distillation floor. Classify
     // telemetry with the same resolver so MCP's compact write_page payload is
@@ -493,6 +535,7 @@ pub async fn handle_create_page(
         headers,
         crate::space_header::SpaceHeader(header_space),
         Json(req),
+        basis,
     )
     .await;
     if is_distilled {
@@ -512,6 +555,7 @@ async fn handle_create_page_inner(
     headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(mut req): Json<CreateConceptRequest>,
+    basis: Vec<wenlan_types::BasisInput>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
     let agent = extract_agent_name(&headers, None);
     let (db, page_root, page_min_cluster_size, page_match_threshold) = {
@@ -536,6 +580,21 @@ async fn handle_create_page_inner(
         None => WriteSpaceTarget::Uncategorized,
     };
     req.workspace = resolved.space_name.clone();
+    // Refuse a bad basis before anything is created, so the agent is told
+    // instead of getting a note without the basis it said it relied on.
+    crate::page_basis_routes::refuse_note_ids_in_sources(&db, &req.source_memory_ids).await?;
+    let marks: Vec<(String, i64)> = basis
+        .iter()
+        .map(|b| (b.page_id.clone(), b.version))
+        .collect();
+    if !marks.is_empty() {
+        let scope =
+            crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+        crate::page_basis_routes::require_basis_visible(&db, &scope, &marks).await?;
+    }
+    db.check_basis_candidates(resolved.space_name.as_deref(), &marks)
+        .await
+        .map_err(crate::page_basis_routes::basis_error)?;
     let result = wenlan_core::post_write::create_page_with_tuning(
         &db,
         req,
@@ -552,10 +611,32 @@ async fn handle_create_page_inner(
         .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?
         .space;
     let attached_existing = result.attached_to.is_some();
+    // Marks go on the note this call created. A create that attached to an
+    // existing note wrote nothing of its own, so it marks nothing.
+    let mut written_basis = Vec::new();
+    let mut warnings = result.warnings;
+    if !attached_existing {
+        for (basis_page_id, version) in &marks {
+            if let Err(error) = db
+                .mark_page_basis(&result.id, basis_page_id, *version, &agent)
+                .await
+            {
+                tracing::warn!(
+                    "[create_page] {} created; basis {basis_page_id} not recorded: {error}",
+                    result.id
+                );
+                // The note stays; the agent is told which basis did not land
+                // and can mark it with the basis route.
+                warnings.push(format!("basis {basis_page_id} was not recorded: {error}"));
+            }
+        }
+        written_basis = crate::page_basis_routes::written_basis(&db, &result.id).await?;
+    }
     Ok(Json(CreatePageResponse {
+        basis: written_basis,
         id: result.id,
         attached_to: result.attached_to,
-        warnings: result.warnings,
+        warnings,
         space: persisted_space.clone(),
         space_source: Some(if attached_existing {
             WriteSpaceSource::Existing
@@ -1320,8 +1401,13 @@ pub async fn handle_list_orphan_links(
 pub async fn handle_update_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
-    Json(req): Json<wenlan_types::requests::UpdatePageRequest>,
+    Json(wire): Json<wenlan_types::requests::ManualPageEditRequest>,
 ) -> Result<Json<wenlan_types::responses::ManualPageWriteResponse>, ServerError> {
+    let wenlan_types::requests::ManualPageEditRequest {
+        edit: req,
+        minor,
+        confirm_basis,
+    } = wire;
     let (db, page_root) = {
         let s = state.read().await;
         (
@@ -1339,18 +1425,31 @@ pub async fn handle_update_page(
 
     // Use captured server state, never global config (which would point an
     // isolated handler at the user's vault). Core commits DB + receipt first.
-    let result = wenlan_core::post_write::update_page_preserving_sources(
+    // `minor` rides on the version's history row. `confirm_basis` (R11) is
+    // confirmed in this save's own transaction and only if the basis is still
+    // at that version, so a save made any other way never confirms. A person's
+    // save marks nothing: marks are an agent's statement of what it read.
+    let result = wenlan_core::post_write::page_write(
         &db,
-        &id,
-        wenlan_types::requests::UpdatePageRequest {
-            content: req.content,
-            source_memory_ids: vec![],
-            expected_version: req.expected_version,
-            caller_id: req.caller_id,
-            operation_id: req.operation_id,
+        wenlan_core::post_write::PageWrite::UpdatePreservingSources {
+            page_id: &id,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content: req.content,
+                source_memory_ids: vec![],
+                expected_version: req.expected_version,
+                caller_id: req.caller_id,
+                operation_id: req.operation_id,
+            },
+            edited_by: "manual_edit",
+            knowledge_path: page_root.as_deref(),
+            basis: wenlan_core::db::BasisWrite {
+                minor: minor.unwrap_or(false),
+                actor: "human".to_string(),
+                marks: Vec::new(),
+                confirm: confirm_basis.map(|c| (c.basis_page_id, c.version)),
+                confirm_snapshot: Vec::new(),
+            },
         },
-        "manual_edit",
-        page_root.as_deref(),
     )
     .await?;
 
@@ -1388,6 +1487,7 @@ pub async fn handle_update_page(
                 None => (PageProjectionStatus::NotConfigured, None),
             };
             Ok(Json(ManualPageWriteResponse {
+                basis_confirm: result.basis_confirm,
                 ok: true,
                 projection_status,
                 projection_error,
@@ -1492,6 +1592,22 @@ async fn handle_refresh_page_inner(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    // A note id in the source list is a mistake the agent can fix right now:
+    // say which field takes notes.
+    crate::page_basis_routes::refuse_note_ids_in_sources(&db, &req.source_memory_ids).await?;
+    // This route carries no Space header, so the visibility check is the
+    // truth grant alone; the same-Space rule in core bounds the rest.
+    let basis_marks: Vec<(String, i64)> = req
+        .basis
+        .iter()
+        .map(|b| (b.page_id.clone(), b.version))
+        .collect();
+    crate::page_basis_routes::require_basis_visible(
+        &db,
+        &wenlan_core::read_scope::ReadScope::Global,
+        &basis_marks,
+    )
+    .await?;
 
     // Read the staleness fence before the fields it protects (same
     // fence-first discipline as the refresh/growth path): a source attached
@@ -1578,6 +1694,7 @@ async fn handle_refresh_page_inner(
         return Ok((
             wenlan_core::post_write::WriteOutcome::Gated,
             wenlan_types::responses::PageWriteResponse {
+                basis: crate::page_basis_routes::written_basis(&db, &id).await?,
                 ok: true,
                 revision_card_id: result.revision_card_id,
                 gated: true,
@@ -1595,6 +1712,17 @@ async fn handle_refresh_page_inner(
     let result = wenlan_core::post_write::page_write(
         &db,
         wenlan_core::post_write::PageWrite::AgentUpdate {
+            basis: wenlan_core::db::BasisWrite {
+                minor: req.minor.unwrap_or(false),
+                actor: proposer.unwrap_or("unknown").to_string(),
+                marks: req
+                    .basis
+                    .iter()
+                    .map(|b| (b.page_id.clone(), b.version))
+                    .collect(),
+                confirm: None,
+                confirm_snapshot: Vec::new(),
+            },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
                 content: req.content.clone(),
@@ -1645,6 +1773,7 @@ async fn handle_refresh_page_inner(
     Ok((
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
+            basis: crate::page_basis_routes::written_basis(&db, &id).await?,
             ok: true,
             revision_card_id: result.revision_card_id,
             gated: result.gated,

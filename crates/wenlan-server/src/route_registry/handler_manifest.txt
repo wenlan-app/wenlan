@@ -44,10 +44,12 @@ main|get|/api/memory/{source_id}/enrichment-status|wenlan_server::memory_routes:
 main|get|/api/on-device-model|wenlan_server::config_routes::handle_get_on_device_model
 main|get|/api/onboarding/milestones|wenlan_server::onboarding_routes::handle_list_milestones
 main|get|/api/pages|wenlan_server::page_routes::handle_list_pages
+main|get|/api/pages/basis-pending|wenlan_server::page_basis_routes::handle_basis_pending
 main|get|/api/pages/orphan-links|wenlan_server::page_routes::handle_list_orphan_links
 main|get|/api/pages/recent|wenlan_server::routes::handle_recent_pages
 main|get|/api/pages/recent-changes|wenlan_server::routes::handle_recent_page_changes
 main|get|/api/pages/{id}|wenlan_server::page_routes::handle_get_page
+main|get|/api/pages/{id}/basis/{basis_id}/diff|wenlan_server::page_basis_routes::handle_basis_diff
 main|get|/api/pages/{id}/links|wenlan_server::page_routes::handle_get_page_links
 main|get|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_get_page_map
 main|get|/api/pages/{id}/revisions|wenlan_server::page_routes::handle_get_page_revisions
@@ -123,6 +125,7 @@ main|post|/api/pages/search|wenlan_server::page_routes::handle_search_pages
 main|post|/api/pages/{id}/archive|wenlan_server::page_routes::handle_archive_page
 main|post|/api/pages/{id}/rename|wenlan_server::page_routes::handle_rename_page
 main|post|/api/pages/{id}/review|wenlan_server::page_routes::handle_review_page
+main|post|/api/pages/{id}/basis/{basis_id}/confirm|wenlan_server::page_basis_routes::handle_confirm_basis
 main|post|/api/pages/{id}/export|wenlan_server::page_routes::handle_export_page
 main|post|/api/pages/{id}/map/edges|wenlan_server::page_map_routes::handle_create_map_edge
 main|post|/api/pages/{id}/map/improve|wenlan_server::page_map_routes::handle_improve_page_map
@@ -165,6 +168,7 @@ main|put|/api/memory/{id}/stability|wenlan_server::memory_routes::handle_set_sta
 main|put|/api/memory/{id}/update|wenlan_server::memory_routes::handle_update_memory
 main|put|/api/pages/drafts/{id}|wenlan_server::page_routes::handle_update_page_draft
 main|put|/api/pages/{id}|wenlan_server::page_routes::handle_refresh_page
+main|put|/api/pages/{id}/basis/{basis_id}|wenlan_server::page_basis_routes::handle_mark_basis
 main|put|/api/pages/{id}/map/layout|wenlan_server::page_map_routes::handle_put_page_map_layout
 main|put|/api/pages/{id}/review-required|wenlan_server::page_routes::handle_set_page_review_required
 main|put|/api/profile|wenlan_server::profile_agents_routes::handle_update_profile
@@ -179,6 +183,7 @@ main|delete|/api/memory/entities/{id}/delete|wenlan_server::entity_graph_routes:
 main|delete|/api/memory/observations/{id}|wenlan_server::entity_graph_routes::handle_delete_observation
 main|delete|/api/pages/drafts/{id}|wenlan_server::page_routes::handle_discard_page_draft
 main|delete|/api/pages/{id}|wenlan_server::page_routes::handle_delete_page
+main|delete|/api/pages/{id}/basis/{basis_id}|wenlan_server::page_basis_routes::handle_unmark_basis
 main|delete|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_reset_page_map
 main|delete|/api/pages/{id}/map/edges/{edge_id}|wenlan_server::page_map_routes::handle_delete_map_edge
 main|delete|/api/pages/{id}/map/nodes/{node_id}|wenlan_server::page_map_routes::handle_delete_map_node

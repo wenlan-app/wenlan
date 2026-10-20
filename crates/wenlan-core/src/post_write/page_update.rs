@@ -1,6 +1,6 @@
 use super::{page_dispatch::PageGrowthCommit, WriteOutcome, WriteResult};
 use crate::{
-    db::{MemoryDB, PageFence},
+    db::{BasisWrite, BasisWriteOutcome, MemoryDB, PageFence},
     error::WenlanError,
 };
 use std::path::Path;
@@ -213,6 +213,7 @@ pub async fn stage_page_revision_card_proposed_by(
         edited_by,
         proposer,
         retry,
+        None,
     )
     .await?
     .ok_or_else(|| {
@@ -244,6 +245,35 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         edited_by,
         None,
         retry,
+        None,
+    )
+    .await
+}
+
+/// The preview card of an "Update from sources" run on a note that relies on
+/// other notes (R9). Staged exactly like [`stage_page_revision_card_at_fence`],
+/// plus `basis_snapshot`: what each basis note looked like when the body was
+/// written, so accepting the card confirms only the ones that still match.
+pub(crate) async fn stage_basis_preview_card(
+    db: &MemoryDB,
+    page: &crate::pages::Page,
+    content: &str,
+    source_memory_ids: &[String],
+    fence: &PageFence,
+    edited_by: &str,
+    basis_snapshot: &[crate::db::BasisSnapshotEntry],
+) -> Result<Option<WriteResult>, WenlanError> {
+    stage_page_revision_card_inner(
+        db,
+        page,
+        content,
+        source_memory_ids,
+        fence.source_revision,
+        Some(fence),
+        edited_by,
+        None,
+        None,
+        Some(basis_snapshot),
     )
     .await
 }
@@ -259,6 +289,7 @@ async fn stage_page_revision_card_inner(
     edited_by: &str,
     proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
+    basis_snapshot: Option<&[crate::db::BasisSnapshotEntry]>,
 ) -> Result<Option<WriteResult>, WenlanError> {
     crate::export::provenance::validate_canonical_page_content(content)?;
     // Who the human sees on the card. Never the internal `page_write` kind:
@@ -291,7 +322,7 @@ async fn stage_page_revision_card_inner(
     } else {
         "owned"
     };
-    let structured = serde_json::json!({
+    let mut structured = serde_json::json!({
         "revision_kind": "page_write",
         "target_kind": "page",
         "revises_page": page.id,
@@ -300,8 +331,12 @@ async fn stage_page_revision_card_inner(
         "edited_by": edited_by,
         "source_memory_ids": source_memory_ids,
         "review_reason": review_reason,
-    })
-    .to_string();
+    });
+    // Only an update-from-sources card carries the notes it was written from.
+    if let Some(snapshot) = basis_snapshot {
+        structured["basis_snapshot"] = serde_json::to_value(snapshot)?;
+    }
+    let structured = structured.to_string();
     let title: String = format!("Revision: {}", page.title)
         .chars()
         .take(80)
@@ -325,6 +360,7 @@ async fn stage_page_revision_card_inner(
         ..Default::default()
     };
     let result = WriteResult {
+        basis_confirm: None,
         id: page.id.clone(),
         attached_to: None,
         warnings: vec![
@@ -515,6 +551,7 @@ fn page_write_digest(
     req: &UpdatePageRequest,
     edited_by: &str,
     preserve_sources: bool,
+    basis: &BasisWrite,
 ) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -543,6 +580,25 @@ fn page_write_digest(
             field(&v.to_le_bytes());
         }
         None => field(b"-"),
+    }
+    // The basis part is appended only when the write carries one, so a digest
+    // recorded before notes could rely on notes still matches its retry.
+    if basis.minor || !basis.marks.is_empty() || basis.confirm.is_some() {
+        field(b"basis");
+        field(&[u8::from(basis.minor)]);
+        field(&(basis.marks.len() as u64).to_le_bytes());
+        for (basis_page_id, version) in &basis.marks {
+            field(basis_page_id.as_bytes());
+            field(&version.to_le_bytes());
+        }
+        match &basis.confirm {
+            Some((basis_page_id, version)) => {
+                field(b"confirm");
+                field(basis_page_id.as_bytes());
+                field(&version.to_le_bytes());
+            }
+            None => field(b"-"),
+        }
     }
     format!("{:x}", hasher.finalize())
 }
@@ -617,8 +673,9 @@ pub(super) async fn update_page_impl(
     user_forced: bool,
     page_fence: Option<&PageFence>,
     agent: Option<&str>,
+    basis: &BasisWrite,
 ) -> Result<WriteResult, WenlanError> {
-    let result = update_page_db_impl(
+    let mut result = update_page_db_impl(
         db,
         page_id,
         req,
@@ -632,8 +689,14 @@ pub(super) async fn update_page_impl(
         user_forced,
         page_fence,
         agent,
+        basis,
     )
     .await?;
+    // A confirm asked for with a save that did not land (unchanged text, a
+    // contended write) confirmed nothing; say so rather than saying nothing.
+    if basis.confirm.is_some() && result.basis_confirm.is_none() {
+        result.basis_confirm = Some(wenlan_types::BasisConfirmOutcome::NotSaved);
+    }
     // Receipts describe the DB transaction. Repairing an independent
     // projection on replay must neither change that receipt nor replay old
     // content over a newer Page. Unchanged saves repair too.
@@ -680,11 +743,20 @@ async fn update_page_db_impl(
     user_forced: bool,
     page_fence: Option<&PageFence>,
     agent: Option<&str>,
+    basis: &BasisWrite,
 ) -> Result<WriteResult, WenlanError> {
     // ── Pre-write validation ────────────────────────────────────────────────
     if req.content.trim().is_empty() {
         return Err(WenlanError::Validation(
             "page content must not be empty".into(),
+        ));
+    }
+    // Marks and a confirm ride the two writes that have a person or an agent
+    // behind them. Every pipeline write fails closed rather than dropping them.
+    let carries_basis = basis.minor || !basis.marks.is_empty() || basis.confirm.is_some();
+    if carries_basis && (page_growth.is_some() || user_forced || require_stale) {
+        return Err(WenlanError::Validation(
+            "a basis or minor flag rides only an agent refresh or a human save".into(),
         ));
     }
     // Preserve mode derives provenance from the Page generation inside the
@@ -757,7 +829,7 @@ async fn update_page_db_impl(
         (Some(caller), Some(operation)) if !caller.is_empty() && !operation.is_empty() => Some((
             caller.to_string(),
             operation.to_string(),
-            page_write_digest(page_id, &req, edited_by, preserve_sources),
+            page_write_digest(page_id, &req, edited_by, preserve_sources, basis),
         )),
         _ => None,
     };
@@ -803,9 +875,10 @@ async fn update_page_db_impl(
         gated: false,
         outcome,
         acknowledged: false,
+        basis_confirm: None,
     };
 
-    let (delta_summary, current_version, new_version) = 'cas: {
+    let (delta_summary, current_version, new_version, basis_outcome) = 'cas: {
         for attempt in 1..=MAX_CAS_ATTEMPTS {
             let current = db.get_page(page_id).await?.ok_or_else(|| {
                 WenlanError::Validation(format!("page '{page_id}' does not exist"))
@@ -1126,6 +1199,9 @@ async fn update_page_db_impl(
             if let Some(agent) = agent {
                 entry["agent"] = serde_json::Value::String(agent.to_string());
             }
+            if basis.minor {
+                entry["minor"] = serde_json::Value::Bool(true);
+            }
             if let Some((_, ref stats_summary)) = citations {
                 entry["citations_summary"] = serde_json::Value::String(stats_summary.clone());
             }
@@ -1161,6 +1237,7 @@ async fn update_page_db_impl(
                     gated: false,
                     outcome: WriteOutcome::Wrote,
                     acknowledged: false,
+                    basis_confirm: None,
                 })?),
                 None => None,
             };
@@ -1186,7 +1263,7 @@ async fn update_page_db_impl(
             // checked equal to `current_version` above) fences on both, so a
             // version bump that leaves the source revision alone, such as a
             // human rename, still refuses the write.
-            let wrote = if let Some(guard) = page_growth {
+            let landed: Option<BasisWriteOutcome> = if let Some(guard) = page_growth {
                 db.try_update_page_growth_at_versions(
                     page_id,
                     &req.content,
@@ -1199,6 +1276,7 @@ async fn update_page_db_impl(
                     guard.expected_memory_version,
                 )
                 .await?
+                .then(BasisWriteOutcome::default)
             } else if let (true, Some(fence)) = (user_forced, page_fence) {
                 db.try_user_forced_page_content_at_source_revision(
                     page_id,
@@ -1212,8 +1290,9 @@ async fn update_page_db_impl(
                     receipt,
                 )
                 .await?
+                .then(BasisWriteOutcome::default)
             } else if let Some(source_revision) = expected_source_revision {
-                db.try_update_page_content_with_changelog_at_source_revision(
+                db.try_update_page_content_with_changelog_at_source_revision_and_basis(
                     page_id,
                     &req.content,
                     &source_refs,
@@ -1229,6 +1308,7 @@ async fn update_page_db_impl(
                     req.expected_version
                         .filter(|_| matches!(writer, Writer::Agent(_))),
                     receipt,
+                    basis,
                 )
                 .await?
             } else if require_stale {
@@ -1244,8 +1324,9 @@ async fn update_page_db_impl(
                     receipt,
                 )
                 .await?
+                .then(BasisWriteOutcome::default)
             } else {
-                db.try_update_page_content_with_changelog_at_version(
+                db.try_update_page_content_with_changelog_at_version_and_basis(
                     page_id,
                     &req.content,
                     &source_refs,
@@ -1254,12 +1335,13 @@ async fn update_page_db_impl(
                     citations.as_ref().map(|(json, _)| json.as_str()),
                     current_version,
                     receipt,
+                    basis,
                 )
                 .await?
             };
 
-            if wrote {
-                break 'cas (delta_summary, current_version, new_version);
+            if let Some(outcome) = landed {
+                break 'cas (delta_summary, current_version, new_version, outcome);
             }
 
             // Nothing was written. Two distinguishable causes share this branch:
@@ -1327,5 +1409,6 @@ async fn update_page_db_impl(
         gated: false,
         outcome: WriteOutcome::Wrote,
         acknowledged: false,
+        basis_confirm: basis_outcome.confirm,
     })
 }
