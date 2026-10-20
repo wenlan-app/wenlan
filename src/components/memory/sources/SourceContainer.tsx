@@ -143,7 +143,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     const path = childPath(location.path, entry.name);
     const indexed = indexedByPath.get(`${location.sourceId}::${path}`);
     const presentation = getSourcePresentation(indexed ?? { source: "file", source_id: path, title: entry.name }, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt") });
-    const kind = entry.isDirectory ? "folder" : presentation.kind;
+    const kind = entry.isDirectory ? "folder" : presentation.iconKind;
     return {
       id: path,
       title: entry.name,

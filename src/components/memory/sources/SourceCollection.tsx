@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Funnel, CaretRight, Plus } from "@phosphor-icons/react";
 import { SourceTypeIcon } from "./SourceTypeIcon";
+import type { SourceApp, SourceKind } from "./sourcePresentation";
 import type { AssetLens } from "../../../lib/assetLens";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import type { SourceLibraryFilter } from "./SourceLibrary";
@@ -12,7 +13,7 @@ export interface SourceCollectionItem {
   id: string;
   title: string;
   metadata: string;
-  kind: "pdf" | "text" | "image" | "webpage" | "file" | "folder" | "obsidian";
+  kind: SourceKind | SourceApp | "folder" | "obsidian";
   onSelect: () => void;
 }
 

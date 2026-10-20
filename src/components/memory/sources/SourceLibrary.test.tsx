@@ -142,6 +142,25 @@ describe("SourceLibrary", () => {
     expect(props.onAdd).toHaveBeenCalledOnce();
   });
 
+  it("shows the app a saved link came from instead of the generic webpage label and host", async () => {
+    vi.mocked(listRegisteredSources).mockResolvedValue([folder()]);
+    vi.mocked(listIndexedFiles).mockResolvedValue([
+      file({ source: "webpage", source_id: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ", title: "Invoice from Acme", url: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ" }),
+      file({ source: "webpage", source_id: "https://example.com/blog/local-first", title: "Local-first essay", url: "https://example.com/blog/local-first" }),
+    ]);
+    renderLibrary();
+    const gmailRow = (await screen.findByText("Invoice from Acme")).closest("button")!;
+    expect(gmailRow).toHaveTextContent(/^Invoice from AcmeGmail$/);
+    expect(gmailRow.querySelector('[data-resource-icon="gmail"]')).not.toBeNull();
+    expect(screen.queryByText(/mail\.google\.com/)).not.toBeInTheDocument();
+    const plainRow = screen.getByText("Local-first essay").closest("button")!;
+    expect(plainRow).toHaveTextContent("Webpage · example.com");
+    expect(plainRow.querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "gmail" } });
+    expect(screen.getByText("Invoice from Acme")).toBeInTheDocument();
+    expect(screen.queryByText("Local-first essay")).not.toBeInTheDocument();
+  });
+
   it("filters links using webpage or http URL and searches URL/title/path", async () => {
     vi.mocked(listRegisteredSources).mockResolvedValue([folder()]);
     vi.mocked(listIndexedFiles).mockResolvedValue([

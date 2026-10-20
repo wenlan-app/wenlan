@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Funnel, Plus } from "@phosphor-icons/react";
 import { listIndexedFiles, listRegisteredSources, type IndexedFileInfo } from "../../../lib/tauri";
 import type { AssetLens } from "../../../lib/assetLens";
-import { getSourcePresentation } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation, SOURCE_APP_NAMES } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { SourceCollection, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import SourceContainer, { type SourceContainerLocation } from "./SourceContainer";
@@ -97,8 +97,9 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
   const visibleDocuments = filter === "folders" ? [] : documents.filter((file) => {
     const link = file.source === "webpage" || documentUrl(file) !== null;
     const visibleType = filter === "all" ? (!!needle || !coveredDocuments.has(`${file.source}:${file.source_id}`)) : filter === "links" ? link : !link;
+    const app = getSourceAppFromUrl(file.url ?? file.source_id);
     return visibleType &&
-      `${file.title} ${documentPath(file)} ${file.url ?? ""}`.toLocaleLowerCase().includes(needle);
+      `${file.title} ${documentPath(file)} ${file.url ?? ""} ${app ? SOURCE_APP_NAMES[app] : ""}`.toLocaleLowerCase().includes(needle);
   });
   const bothLoaded = foldersQuery.isSuccess && filesQuery.isSuccess;
   const realEmpty = bothLoaded && folders.length === 0 && documents.length === 0;
@@ -141,7 +142,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
         id: `${file.source}:${file.source_id}`,
         title: file.title || pathName(path),
         metadata: presentation.metadata,
-        kind: presentation.kind,
+        kind: presentation.iconKind,
         onSelect: () => {
           updateState({ focusedDocument: `${file.source}:${file.source_id}` });
           onOpenDocument(file);

@@ -20,6 +20,14 @@
   line-height: var(--reading-line-height);
 }
 
+.source-document-reader-app {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--mem-text);
+}
+
 .source-document-reader-url a {
   display: inline-flex;
   flex: 1 1 auto;
@@ -47,7 +55,7 @@
   border-radius: 2px;
 }
 
-.source-document-reader-url svg {
+.source-document-reader-url a svg {
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
@@ -94,3 +102,8 @@
 .source-info-metadata > div { display: grid; grid-template-columns: minmax(80px, .4fr) minmax(0, 1fr); gap: 12px; align-items: baseline; }
 .source-info-metadata dt { color: var(--mem-text-secondary); }
 .source-info-metadata dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+
+.source-document-reader-app svg {
+  flex: 0 0 16px;
+  color: var(--mem-text-secondary);
+}

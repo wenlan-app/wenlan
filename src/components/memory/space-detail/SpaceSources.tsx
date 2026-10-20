@@ -36,7 +36,7 @@ export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegiste
           webExcerpt: t("sourceLibrary.webExcerpt"),
         });
         return <li key={`${file.source}:${file.source_id}`}><button type="button" className="source-library-row" onClick={(event) => { triggerRef.current = event.currentTarget; setSelected(file); }}>
-          <span className="source-library-icon"><SourceTypeIcon kind={presentation.kind} /></span>
+          <span className="source-library-icon"><SourceTypeIcon kind={presentation.iconKind} /></span>
           <span className="source-library-row-content"><span className="source-library-row-title">{file.title || name}</span><span className="source-library-row-meta">{presentation.metadata}</span></span>
         </button></li>;
       })}
