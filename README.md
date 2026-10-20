@@ -43,7 +43,7 @@ Your notes, documents, and AI chats are scattered everywhere, and they keep chan
 
 - **Everything in one place:** Documents, Markdown files, Obsidian vaults, web excerpts with their links, and exported AI chats come into one wiki.
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, and other MCP clients work from the same pages.
-- **Built in, not bolted on:** Saving, organizing, citing, and updating live in one app, with no maze of plugins to wire up.
+- **Built in, not bolted on:** Saving, organizing, citing, and updating pages live in one app, with no maze of plugins to wire up.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
