@@ -306,6 +306,328 @@ async fn query_only_requires_a_strict_space_pin() {
     assert_eq!(error.to_string(), wenlan_mcp::serve::QUERY_ONLY_SPACE_ERROR);
 }
 
+#[tokio::test]
+async fn web_write_requires_a_non_empty_bearer_token() {
+    for token in [None, Some(String::new()), Some(" \t\n".into())] {
+        let config = test_config(0, token);
+
+        let error = wenlan_mcp::serve::run_serve_with_profile(
+            config,
+            wenlan_mcp::tools::ToolProfile::WebWrite,
+        )
+        .await
+        .expect_err("web-write must reject missing or blank auth tokens");
+        assert_eq!(error.to_string(), wenlan_mcp::serve::WEB_WRITE_AUTH_ERROR);
+    }
+}
+
+#[tokio::test]
+async fn web_write_requires_a_strict_space_pin() {
+    let config = test_config(0, Some("secret-token".into()));
+
+    let error =
+        wenlan_mcp::serve::run_serve_with_profile(config, wenlan_mcp::tools::ToolProfile::WebWrite)
+            .await
+            .expect_err("web-write must reject when no strict WENLAN_SPACE pin is active");
+    assert_eq!(error.to_string(), wenlan_mcp::serve::WEB_WRITE_SPACE_ERROR);
+}
+
+#[test]
+fn web_write_shares_the_connector_scope_rules_with_query_only() {
+    use wenlan_mcp::serve::connector_scope;
+    use wenlan_mcp::tools::ToolProfile;
+
+    for profile in [ToolProfile::QueryOnly, ToolProfile::WebWrite] {
+        assert_eq!(
+            connector_scope(profile, Some("work".into()), false).unwrap(),
+            "work"
+        );
+        assert_eq!(connector_scope(profile, None, true).unwrap(), "*");
+        assert_eq!(
+            connector_scope(profile, Some("work".into()), true)
+                .unwrap_err()
+                .to_string(),
+            wenlan_mcp::serve::WHOLE_LIBRARY_PIN_CONFLICT_ERROR
+        );
+        assert_eq!(
+            connector_scope(profile, Some("*".into()), false)
+                .unwrap_err()
+                .to_string(),
+            wenlan_mcp::serve::RESERVED_SPACE_PIN_ERROR
+        );
+    }
+    assert_eq!(
+        connector_scope(ToolProfile::WebWrite, None, false)
+            .unwrap_err()
+            .to_string(),
+        wenlan_mcp::serve::WEB_WRITE_SPACE_ERROR
+    );
+    assert_eq!(
+        connector_scope(ToolProfile::QueryOnly, None, false)
+            .unwrap_err()
+            .to_string(),
+        wenlan_mcp::serve::QUERY_ONLY_SPACE_ERROR
+    );
+    assert!(connector_scope(ToolProfile::Standard, Some("work".into()), true).is_err());
+}
+
+/// The web-write profile over a real HTTP listener: bearer-gated, pinned to a
+/// Space, exposing exactly the ten tools, with deletes reaching the daemon for
+/// an item in the pinned Space and refused for one outside it.
+#[tokio::test]
+async fn web_write_serves_the_write_tools_inside_the_pinned_space_only() {
+    struct ChildGuard(std::process::Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    let daemon = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/memory/mem_in/detail"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"memory": {
+                "source_id": "mem_in", "title": "Fact", "content": "A fact", "summary": null,
+                "memory_type": "fact", "space": "synthetic-review", "source_agent": "web-ai",
+                "confidence": null, "confirmed": true, "pinned": false, "supersedes": null,
+                "last_modified": 100, "chunk_count": 1, "enrichment_status": "done",
+                "supersede_mode": "replace", "access_count": 0
+            }})),
+        )
+        .mount(&daemon)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/memory/mem_out/detail"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({"error": "nf"})))
+        .mount(&daemon)
+        .await;
+    Mock::given(method("DELETE"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"deleted": true})),
+        )
+        .mount(&daemon)
+        .await;
+
+    let port = portpicker::pick_unused_port().expect("no free port");
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_wenlan-mcp"))
+        .env("WENLAN_NO_AUTOSTART", "1")
+        .env("WENLAN_SPACE", "synthetic-review")
+        .env_remove("WENLAN_DEFAULT_SPACE")
+        .args([
+            "--origin-url",
+            &daemon.uri(),
+            "--agent-name",
+            "web-ai",
+            "serve",
+            "--tool-profile",
+            "web-write",
+            "--token",
+            "synthetic-connector-token",
+            "--port",
+            &port.to_string(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("binary must start");
+    let _guard = ChildGuard(child);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{port}");
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if client
+                .get(format!("{base}/health"))
+                .send()
+                .await
+                .is_ok_and(|response| response.status().is_success())
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("server must become ready");
+
+    let info: serde_json::Value = client
+        .get(format!("{base}/connector-info"))
+        .bearer_auth("synthetic-connector-token")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info["tool_profile"], "web-write");
+    assert_eq!(info["space"], "synthetic-review");
+
+    let anonymous = client
+        .post(format!("{base}/mcp"))
+        .header("Accept", "application/json, text/event-stream")
+        .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), 401);
+
+    let initialized = client
+        .post(format!("{base}/mcp"))
+        .header("Accept", "application/json, text/event-stream")
+        .bearer_auth("synthetic-connector-token")
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                "clientInfo": {"name": "synthetic", "version": "1"}}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(initialized.status(), 200);
+    let session_id = initialized.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    initialized.text().await.unwrap();
+    let notified = client
+        .post(format!("{base}/mcp"))
+        .header("Accept", "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .bearer_auth("synthetic-connector-token")
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(notified.status(), 202);
+
+    let rpc = |id: u64, method: &'static str, params: serde_json::Value| {
+        let client = client.clone();
+        let base = base.clone();
+        let session_id = session_id.clone();
+        async move {
+            let response = client
+                .post(format!("{base}/mcp"))
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", &session_id)
+                .bearer_auth("synthetic-connector-token")
+                .json(&serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "method": method, "params": params
+                }))
+                .send()
+                .await
+                .unwrap();
+            rpc_result(response).await
+        }
+    };
+
+    let listed = rpc(2, "tools/list", serde_json::json!({})).await;
+    let mut names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "brief",
+            "capture",
+            "delete_page",
+            "forget",
+            "get_page_sources",
+            "list_pages",
+            "read_page",
+            "recall",
+            "rename_page",
+            "write_page"
+        ]
+    );
+    for tool in listed["result"]["tools"].as_array().unwrap() {
+        assert!(
+            tool["inputSchema"]["properties"].get("space").is_none(),
+            "a pinned connection hides the space argument: {}",
+            tool["name"]
+        );
+    }
+    let hint = |name: &str, field: &str| {
+        listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap()["annotations"][field]
+            .clone()
+    };
+    assert_eq!(hint("forget", "destructiveHint"), true);
+    assert_eq!(hint("delete_page", "destructiveHint"), true);
+    assert_eq!(hint("write_page", "readOnlyHint"), false);
+
+    let refused = rpc(
+        3,
+        "tools/call",
+        serde_json::json!({"name": "lint", "arguments": {}}),
+    )
+    .await;
+    assert_eq!(refused["result"]["isError"], true, "{refused}");
+    assert!(refused["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("not available in the web-write profile"));
+
+    let outside = rpc(
+        4,
+        "tools/call",
+        serde_json::json!({"name": "forget", "arguments": {"memory_id": "mem_out"}}),
+    )
+    .await;
+    assert_eq!(outside["result"]["isError"], true, "{outside}");
+    assert!(outside["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("not found in the Space this connection is limited to"));
+    assert!(
+        !daemon
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .any(|request| request.method == "DELETE"),
+        "a memory outside the Space must never be deleted"
+    );
+
+    let inside = rpc(
+        5,
+        "tools/call",
+        serde_json::json!({"name": "forget", "arguments": {"memory_id": "mem_in"}}),
+    )
+    .await;
+    assert_ne!(inside["result"]["isError"], true, "{inside}");
+    let deletes: Vec<_> = daemon
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.method == "DELETE")
+        .collect();
+    assert_eq!(deletes.len(), 1);
+    assert_eq!(deletes[0].url.path(), "/api/memory/delete/mem_in");
+    assert_eq!(
+        deletes[0].headers.get("x-wenlan-space").unwrap(),
+        "synthetic-review"
+    );
+    assert_eq!(deletes[0].headers.get("x-agent-name").unwrap(), "web-ai");
+}
+
 /// Run a `serve` invocation that must refuse to start. A regression that lets
 /// it start would otherwise block `output()` forever, so it is killed and
 /// reported after a bounded wait.
@@ -393,7 +715,21 @@ fn query_only_without_strict_space_pin_rejects_before_bind() {
 /// server binds, in a child process so env mutation cannot race other tests.
 #[test]
 fn whole_library_scope_conflicts_reject_before_bind() {
-    let scenarios: [(&str, &str, Option<&str>, bool, &str); 3] = [
+    let scenarios: [(&str, &str, Option<&str>, bool, &str); 5] = [
+        (
+            "web-write whole library plus a Space pin",
+            "web-write",
+            Some("work"),
+            true,
+            wenlan_mcp::serve::WHOLE_LIBRARY_PIN_CONFLICT_ERROR,
+        ),
+        (
+            "web-write pin spelled as the reserved value",
+            "web-write",
+            Some("*"),
+            false,
+            wenlan_mcp::serve::RESERVED_SPACE_PIN_ERROR,
+        ),
         (
             "whole library plus a Space pin",
             "query-only",

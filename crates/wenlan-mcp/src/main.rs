@@ -73,8 +73,8 @@ struct ServeArgs {
     #[arg(long, default_value = "https://claude.ai,https://chatgpt.com")]
     allowed_origins: String,
 
-    /// Query-only: search the whole library (every Space and Uncategorized)
-    /// instead of one pinned Space
+    /// Query-only and web-write: serve the whole library (every Space and
+    /// Uncategorized) instead of one pinned Space
     #[arg(long)]
     whole_library: bool,
 }
@@ -188,19 +188,24 @@ async fn run_serve(
     origin_url: Option<String>,
     agent_name: String,
 ) -> anyhow::Result<()> {
-    if args.tool_profile == ToolProfile::QueryOnly && args.no_auth {
-        anyhow::bail!("{}", serve::QUERY_ONLY_AUTH_ERROR);
+    let connector_profile = serve::is_connector_profile(args.tool_profile);
+    if connector_profile && args.no_auth {
+        anyhow::bail!("{}", serve::connector_auth_error(args.tool_profile));
     }
     let resolved_token = resolve_token(&args)?;
 
-    if args.tool_profile == ToolProfile::QueryOnly {
+    if connector_profile {
         if resolved_token
             .as_deref()
             .is_none_or(|token| token.trim().is_empty())
         {
-            anyhow::bail!("{}", serve::QUERY_ONLY_AUTH_ERROR);
+            anyhow::bail!("{}", serve::connector_auth_error(args.tool_profile));
         }
-        serve::query_only_scope(wenlan_mcp::lock_state::locked_space(), args.whole_library)?;
+        serve::connector_scope(
+            args.tool_profile,
+            wenlan_mcp::lock_state::locked_space(),
+            args.whole_library,
+        )?;
     } else if args.whole_library {
         anyhow::bail!("{}", serve::WHOLE_LIBRARY_PROFILE_ERROR);
     }
@@ -412,6 +417,28 @@ mod tests {
     }
 
     #[test]
+    fn serve_accepts_web_write_tool_profile() {
+        let cli = Cli::try_parse_from([
+            "wenlan-mcp",
+            "serve",
+            "--tool-profile",
+            "web-write",
+            "--token-env",
+            "WENLAN_TEST_TOKEN",
+            "--agent-name",
+            "web-ai",
+        ])
+        .expect("parse web-write tool profile");
+
+        let Some(Commands::Serve(args)) = cli.command else {
+            panic!("expected serve command");
+        };
+
+        assert_eq!(args.tool_profile, ToolProfile::WebWrite);
+        assert_eq!(effective_agent_name(cli.agent_name, Some(&args)), "web-ai");
+    }
+
+    #[test]
     fn serve_rejects_invalid_tool_profile() {
         let result = Cli::try_parse_from(["wenlan-mcp", "serve", "--tool-profile", "invalid"]);
 
@@ -437,6 +464,50 @@ mod tests {
             .await
             .expect_err("query-only --no-auth must be rejected");
         assert_eq!(error.to_string(), serve::QUERY_ONLY_AUTH_ERROR);
+    }
+
+    #[tokio::test]
+    async fn web_write_rejects_no_auth_and_missing_token_before_startup() {
+        for (no_auth, token) in [(true, None), (false, None), (false, Some(" ".to_string()))] {
+            let args = ServeArgs {
+                tool_profile: ToolProfile::WebWrite,
+                port: 0,
+                host: "127.0.0.1".into(),
+                token,
+                token_file: None,
+                token_env: None,
+                no_auth,
+                user_id: None,
+                allowed_origins: "*".into(),
+                whole_library: false,
+            };
+
+            let error = run_serve(args, Some("http://127.0.0.1:19999".into()), "test".into())
+                .await
+                .expect_err("web-write without a bearer token must be rejected");
+            assert_eq!(error.to_string(), serve::WEB_WRITE_AUTH_ERROR);
+        }
+    }
+
+    #[tokio::test]
+    async fn web_write_rejects_missing_space_pin_before_startup() {
+        let args = ServeArgs {
+            tool_profile: ToolProfile::WebWrite,
+            port: 0,
+            host: "127.0.0.1".into(),
+            token: Some("secret".into()),
+            token_file: None,
+            token_env: None,
+            no_auth: false,
+            user_id: None,
+            allowed_origins: "*".into(),
+            whole_library: false,
+        };
+
+        let error = run_serve(args, Some("http://127.0.0.1:19999".into()), "test".into())
+            .await
+            .expect_err("web-write without a strict Space pin must be rejected");
+        assert_eq!(error.to_string(), serve::WEB_WRITE_SPACE_ERROR);
     }
 
     #[tokio::test]
