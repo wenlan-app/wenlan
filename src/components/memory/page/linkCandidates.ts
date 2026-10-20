@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { listPages, type Page } from "../../../lib/tauri";
+import { listPagesExplicitBrowse, type Page } from "../../../lib/tauri";
 
 /** Pages read per request while loading the `[[` menu. */
 export const LINK_CANDIDATE_BATCH = 500;
@@ -12,14 +12,20 @@ export const LINK_CANDIDATE_CAP = 10_000;
  * looks unique only when no other page in the Space shares it, so a partial
  * list could offer a link the daemon then finds ambiguous. A Space larger than
  * the cap therefore answers null and the menu offers nothing.
+ *
+ * The person typing `[[` asked for these pages, so this is an explicit browse:
+ * it lists the pages the Wiki shows, including ones a background read hides,
+ * which the daemon still resolves a link against.
  */
 export async function loadLinkCandidates(space: string | null): Promise<Page[] | null> {
   // The daemon reads the reserved name "uncategorized" as the pages in no Space.
   const scope = space ?? "uncategorized";
   const byId = new Map<string, Page>();
-  for (let offset = 0; offset < LINK_CANDIDATE_CAP; offset += LINK_CANDIDATE_BATCH) {
-    const batch = await listPages("active", scope, LINK_CANDIDATE_BATCH, offset);
+  // One read past the cap tells "exactly at the cap" from "over it".
+  for (let offset = 0; offset <= LINK_CANDIDATE_CAP; offset += LINK_CANDIDATE_BATCH) {
+    const batch = await listPagesExplicitBrowse("active", scope, LINK_CANDIDATE_BATCH, offset);
     for (const page of batch) byId.set(page.id, page);
+    if (byId.size > LINK_CANDIDATE_CAP) return null;
     if (batch.length < LINK_CANDIDATE_BATCH) return [...byId.values()];
   }
   return null;

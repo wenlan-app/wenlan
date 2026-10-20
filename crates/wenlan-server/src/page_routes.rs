@@ -593,16 +593,14 @@ async fn handle_create_page_inner(
     req.workspace = resolved.space_name.clone();
     // Refuse a bad basis before anything is created, so the agent is told
     // instead of getting a note without the basis it said it relied on.
-    crate::page_basis_routes::refuse_note_ids_in_sources(&db, &req.source_memory_ids).await?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    crate::page_basis_routes::refuse_note_ids_in_sources(&db, &scope, &req.source_memory_ids)
+        .await?;
     let marks: Vec<(String, i64)> = basis
         .iter()
         .map(|b| (b.page_id.clone(), b.version))
         .collect();
-    if !marks.is_empty() {
-        let scope =
-            crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-        crate::page_basis_routes::require_basis_visible(&db, &scope, &marks).await?;
-    }
+    crate::page_basis_routes::require_basis_visible(&db, &scope, &marks).await?;
     db.check_basis_candidates(resolved.space_name.as_deref(), &marks)
         .await
         .map_err(crate::page_basis_routes::basis_error)?;
@@ -644,7 +642,7 @@ async fn handle_create_page_inner(
     let mut written_code_basis = Vec::new();
     let mut warnings = result.warnings;
     if !attached_existing {
-        written_basis = crate::page_basis_routes::written_basis(&db, &result.id).await?;
+        written_basis = crate::page_basis_routes::written_basis(&db, &scope, &result.id).await?;
         if !prepared_code_basis.is_empty() {
             if let Err(error) = db
                 .upsert_page_code_basis(&result.id, &prepared_code_basis, &agent)
@@ -1642,12 +1640,13 @@ async fn handle_refresh_page_inner(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
-    // A note id in the source list is a mistake the agent can fix right now:
-    // say which field takes notes.
-    crate::page_basis_routes::refuse_note_ids_in_sources(&db, &req.source_memory_ids).await?;
     // A Space-locked caller writes only inside its Space. The app sends no
     // Space header, so its scope is global and it reaches every note.
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space).await?;
+    // A note id in the source list is a mistake the agent can fix right now:
+    // say which field takes notes.
+    crate::page_basis_routes::refuse_note_ids_in_sources(&db, &scope, &req.source_memory_ids)
+        .await?;
     let basis_marks: Vec<(String, i64)> = req
         .basis
         .iter()
@@ -1764,7 +1763,7 @@ async fn handle_refresh_page_inner(
             wenlan_core::post_write::WriteOutcome::Gated,
             wenlan_types::responses::PageWriteResponse {
                 code_basis: db.list_page_code_basis(&id).await?,
-                basis: crate::page_basis_routes::written_basis(&db, &id).await?,
+                basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
                 ok: true,
                 revision_card_id: result.revision_card_id,
                 gated: true,
@@ -1854,7 +1853,7 @@ async fn handle_refresh_page_inner(
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
             code_basis: db.list_page_code_basis(&id).await?,
-            basis: crate::page_basis_routes::written_basis(&db, &id).await?,
+            basis: crate::page_basis_routes::written_basis(&db, &scope, &id).await?,
             ok: true,
             revision_card_id: result.revision_card_id,
             gated: result.gated,

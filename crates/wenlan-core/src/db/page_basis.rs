@@ -112,6 +112,9 @@ pub enum BasisError {
     MovedOn { current: i64 },
     #[error("this note does not rely on that note")]
     NotABasis,
+    /// The note relying on the basis was edited after the write checked it.
+    #[error("the note changed: it is now at version {current}")]
+    CiterMovedOn { current: i64 },
     #[error("the basis note is not available: {0}")]
     BasisUnavailable(BasisUnavailableReason),
     /// A mark recorded on a revision card (an agent's write to a locked note)
@@ -145,6 +148,7 @@ impl From<BasisError> for WenlanError {
             | BasisError::BasisDeleted
             | BasisError::NotABasis => WenlanError::NotFound(error.to_string()),
             BasisError::MovedOn { .. }
+            | BasisError::CiterMovedOn { .. }
             | BasisError::BasisUnavailable(_)
             | BasisError::CardMarkRefused { .. } => WenlanError::Conflict(error.to_string()),
             _ => WenlanError::Validation(error.to_string()),
@@ -1496,10 +1500,14 @@ impl MemoryDB {
 
     /// R7 for a write that changed nothing (same text, same sources): there is
     /// no page write for the marks to ride on, so they land here on their own,
-    /// all in one transaction. A refused mark records none of them.
+    /// all in one transaction. A refused mark records none of them. The note
+    /// must still be at `at_version`, the version the write compared itself
+    /// against; an edit that landed since answers [`BasisError::CiterMovedOn`]
+    /// and records nothing.
     pub async fn mark_page_bases(
         &self,
         page_id: &str,
+        at_version: i64,
         marks: &[(String, i64)],
         added_by: &str,
     ) -> Result<(), BasisError> {
@@ -1510,6 +1518,20 @@ impl MemoryDB {
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await?;
+        let mut rows = tx
+            .query(
+                "SELECT version FROM pages WHERE id = ?1",
+                libsql::params![page_id],
+            )
+            .await?;
+        let current = match rows.next().await? {
+            Some(row) => row.get::<i64>(0)?,
+            None => return Err(BasisError::CiterNotFound),
+        };
+        drop(rows);
+        if current != at_version {
+            return Err(BasisError::CiterMovedOn { current });
+        }
         for (basis_page_id, version) in marks {
             mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by).await?;
         }

@@ -2045,6 +2045,28 @@ async fn an_unchanged_agent_write_with_a_refused_mark_is_refused_and_records_non
     );
 }
 
+/// An unchanged write compares itself against one version of the note. An
+/// edit that lands before its marks do means the marks describe text that is
+/// gone, so none are recorded.
+#[tokio::test]
+async fn marks_for_an_unchanged_write_are_refused_when_the_note_changed_since() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "text", "sp").await;
+    page(&db, "b", "Beta", "Plans.", "sp").await;
+    let compared = version_of(&db, "b").await;
+    edit(&db, "b", "Plans, revised by hand.", false).await;
+
+    let error = db
+        .mark_page_bases("b", compared, &[("a".into(), 1)], "claude-code")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, BasisError::CiterMovedOn { current } if current == compared + 1),
+        "{error:?}"
+    );
+    assert!(db.list_page_basis("b").await.unwrap().is_empty());
+}
+
 fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir).unwrap() {

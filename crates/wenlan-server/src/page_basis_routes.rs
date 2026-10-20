@@ -163,26 +163,39 @@ pub(crate) async fn non_ok_basis_by_citer(
 }
 
 /// Every basis of a note just written, for the write response: the same shape
-/// `read_page` uses, so the writer sees pending versus ok directly. The writer
-/// named these notes itself, so they are shown under the mutation grant.
+/// `read_page` uses, so the writer sees pending versus ok directly. They are
+/// shown under the mutation grant, within the writer's Space: a basis the note
+/// kept after it moved to another Space has its title withheld, as on a read.
 pub(crate) async fn written_basis(
     db: &MemoryDB,
+    scope: &ReadScope,
     page_id: &str,
 ) -> Result<Vec<BasisRef>, ServerError> {
     let entries = db.list_page_basis(page_id).await?;
-    basis_refs(db, &MUTATION_GRANT, &ReadScope::Global, entries).await
+    basis_refs(db, &MUTATION_GRANT, scope, entries).await
 }
 
 /// A source list is for memories. A note id in one is a mistake an agent can
-/// act on, so name the right field instead of silently dropping the id.
+/// act on, so name the right field instead of silently dropping the id. Only a
+/// note the caller can see is named; one in another Space is left for the
+/// source check, which answers for it as for any id that is not a memory.
 pub(crate) async fn refuse_note_ids_in_sources(
     db: &MemoryDB,
+    scope: &ReadScope,
     source_memory_ids: &[String],
 ) -> Result<(), ServerError> {
     if source_memory_ids.is_empty() {
         return Ok(());
     }
-    let notes = db.page_ids_present(source_memory_ids).await?;
+    let present = db.page_ids_present(source_memory_ids).await?;
+    if present.is_empty() {
+        return Ok(());
+    }
+    let visible = visible_ids(db, &MUTATION_GRANT, scope, &present).await?;
+    let notes: Vec<String> = present
+        .into_iter()
+        .filter(|id| visible.contains(id))
+        .collect();
     if notes.is_empty() {
         return Ok(());
     }

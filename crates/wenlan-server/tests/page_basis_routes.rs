@@ -1152,6 +1152,113 @@ async fn an_agent_write_scoped_to_one_space_answers_a_note_in_another_exactly_li
     assert_eq!(status, StatusCode::OK, "{wrote}");
 }
 
+/// A Space-scoped agent that puts a note id from another Space in its source
+/// list hears exactly what it hears for an id that names nothing, so the
+/// answer cannot confirm the note exists. A note in its own Space is named.
+#[tokio::test]
+async fn a_scoped_agent_cannot_learn_from_the_source_list_that_a_note_in_another_space_exists() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("alpha", None, false).await.unwrap();
+    db.create_space("beta", None, false).await.unwrap();
+    let elsewhere = note(
+        &db,
+        "Launch Plan",
+        "The launch is on 2026-03-01.",
+        Some("beta"),
+    )
+    .await;
+    let sibling = note(&db, "Glossary", "Terms.", Some("alpha")).await;
+    let target = note(&db, "Roadmap", "Original plans.", Some("alpha")).await;
+    let put = |source: String| {
+        let router = router.clone();
+        let target = target.clone();
+        let db = db.clone();
+        async move {
+            let version = db.get_page(&target).await.unwrap().unwrap().version;
+            agent_put(
+                &router,
+                &target,
+                json!({
+                    "content": "Changed by an agent.",
+                    "source_memory_ids": [source],
+                    "expected_version": version,
+                }),
+                Some("alpha"),
+            )
+            .await
+        }
+    };
+
+    let (missing_status, missing) = put("ghost".into()).await;
+    let (status, refused) = put(elsewhere.clone()).await;
+    assert_eq!(status, missing_status, "{refused}");
+    assert_eq!(
+        refused.to_string().replace(&elsewhere, "ghost"),
+        missing.to_string(),
+        "the same answer as a missing id"
+    );
+    assert!(!refused.to_string().contains("is a note"), "{refused}");
+
+    let (status, named) = put(sibling.clone()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{named}");
+    assert!(
+        named.to_string().contains(&format!("{sibling} is a note")),
+        "{named}"
+    );
+}
+
+/// The bases a write answers with are shown within the writer's Space: a
+/// basis that moved to another Space keeps its state, but not its title.
+#[tokio::test]
+async fn a_scoped_write_withholds_the_title_of_a_basis_that_moved_to_another_space() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("alpha", None, false).await.unwrap();
+    db.create_space("beta", None, false).await.unwrap();
+    let basis = note(
+        &db,
+        "Launch Plan",
+        "The launch is on 2026-03-01.",
+        Some("alpha"),
+    )
+    .await;
+    let citer = note(&db, "Roadmap", "Original plans.", Some("alpha")).await;
+    mark(&router, &citer, &basis, 1).await;
+    db.set_page_workspace(&basis, Some("beta")).await.unwrap();
+    let write = |content: &'static str, space: Option<&'static str>| {
+        let router = router.clone();
+        let citer = citer.clone();
+        let db = db.clone();
+        async move {
+            let version = db.get_page(&citer).await.unwrap().unwrap().version;
+            let (status, body) = agent_put(
+                &router,
+                &citer,
+                json!({
+                    "content": content,
+                    "source_memory_ids": [],
+                    "expected_version": version,
+                }),
+                space,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            typed::<PageWriteResponse>(body)
+        }
+    };
+
+    let scoped = write("Changed in its own Space.", Some("alpha")).await;
+    assert_eq!(scoped.basis.len(), 1);
+    assert_eq!(scoped.basis[0].page_id, basis);
+    assert_eq!(scoped.basis[0].title, "", "title withheld");
+
+    let global = write("Changed by the app.", None).await;
+    assert_eq!(global.basis[0].title, "Launch Plan");
+}
+
 #[tokio::test]
 async fn a_locked_notes_agent_write_keeps_its_marks_on_the_card_and_accepting_records_them() {
     let _guard = data_dir_lock().lock().await;

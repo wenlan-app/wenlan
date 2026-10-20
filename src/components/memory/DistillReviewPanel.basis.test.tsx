@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { BasisPendingEntry, DistillReviewResponse } from "../../lib/tauri";
 
 vi.mock("../../lib/tauri", async (importOriginal) => ({
@@ -86,6 +86,17 @@ describe("DistillReviewPanel source updates", () => {
 
     expect(await screen.findByRole("heading", { name: "All caught up" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Source updates" })).toBeNull();
+  });
+
+  it("re-reads the group when the person presses Refresh", async () => {
+    vi.mocked(listBasisPending).mockResolvedValue([]);
+    renderPanel();
+    await screen.findByRole("heading", { name: "All caught up" });
+
+    vi.mocked(listBasisPending).mockResolvedValue([pricing]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Refresh" })[0]);
+
+    expect(await screen.findByRole("region", { name: "Source updates" })).toBeInTheDocument();
   });
 
   it("scrolls to the group when Home sent the person here for it", async () => {

@@ -1144,10 +1144,24 @@ async fn update_page_db_impl(
             if delta_summary.is_none() && old_set == new_set {
                 // No page write for the marks to ride on, so the notes this
                 // write relied on (and reconfirms of ones it already had) are
-                // recorded on their own. A refused mark still refuses the write.
+                // recorded on their own. A refused mark still refuses the write,
+                // and so does an edit that landed after the comparison above.
                 if !basis.marks.is_empty() {
-                    db.mark_page_bases(page_id, &basis.marks, &basis.actor)
-                        .await?;
+                    match db
+                        .mark_page_bases(page_id, current_version, &basis.marks, &basis.actor)
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(crate::db::BasisError::CiterMovedOn { current }) => {
+                            return Ok(no_op(
+                                WriteOutcome::Refused,
+                                vec![format!(
+                                    "page moved to v{current} (expected v{current_version}); write refused"
+                                )],
+                            ));
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 let acknowledged = if require_stale || user_forced {
                     if let Some((caller, operation, digest)) = retry.as_ref() {
