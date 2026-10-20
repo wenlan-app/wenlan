@@ -1139,6 +1139,15 @@ async fn handle_search_memory_inner(
         // only reads from one that was never used. Throttled and off the
         // response path; this route never writes trust or memory counts.
         crate::agent_presence::note_agent_read(db.clone(), agent_presence, &agent);
+        // When the caller names its AI session, list this lookup on the
+        // session card. Same contract: off the response path, never fails it.
+        crate::session_routes::note_session_read(
+            db.clone(),
+            &headers,
+            wenlan_types::SessionReadKind::Recall,
+            &req.query,
+            wenlan_core::db::sessions::session_read_space(&scope),
+        );
     }
 
     let took_ms = start.elapsed().as_secs_f64() * 1000.0;

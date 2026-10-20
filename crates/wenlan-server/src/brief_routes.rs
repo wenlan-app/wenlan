@@ -93,6 +93,7 @@ where
 /// read here.
 pub async fn handle_read_brief(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     SpaceHeader(header_space): SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(request): Json<BriefReadRequest>,
@@ -217,6 +218,18 @@ pub async fn handle_read_brief(
                 None
             }
         };
+
+    // A Brief that was actually read is listed on the session card when the
+    // caller names its session. This is bookkeeping beside the read: it never
+    // creates or changes a Brief or a Space, and nothing is recorded for the
+    // unresolved and not-created answers above.
+    crate::session_routes::note_session_read(
+        db.clone(),
+        &headers,
+        wenlan_types::SessionReadKind::Brief,
+        &space,
+        wenlan_core::db::sessions::session_read_space_of(Some(&space)).into(),
+    );
 
     Ok(Json(BriefReadResponse {
         state: BriefReadState::Ready,

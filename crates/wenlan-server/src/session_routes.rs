@@ -10,9 +10,12 @@ use axum::{
     http::HeaderMap,
     response::Json,
 };
+use std::sync::Arc;
+use wenlan_core::db::sessions::{last_ai_title, SESSION_READS_LISTED};
+use wenlan_core::db::MemoryDB;
 use wenlan_types::{
-    AgentSession, PageSessionsResponse, SessionDetailResponse, SessionRef, UpsertSessionRequest,
-    SESSION_HEADER,
+    AgentSession, PageSessionsResponse, SessionDetailResponse, SessionReadKind, SessionRef,
+    UpsertSessionRequest, SESSION_HEADER,
 };
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
@@ -40,6 +43,34 @@ pub(crate) fn extract_session_ref(headers: &HeaderMap) -> Option<SessionRef> {
             None
         }
     }
+}
+
+/// Record that the session named in `headers` just read something, for the
+/// session card's "what it looked up" list.
+///
+/// Best effort, like the write stamping and the agent presence signal: no
+/// header or a malformed one records nothing, the write runs on a spawned task
+/// off the response path, and an error is logged and never reaches the read.
+/// `space` is the Space the read was scoped to (`session_read_space`,
+/// `session_read_space_of`), `None` for the whole library. The handle
+/// is returned only so tests can await the write; handlers drop it.
+pub(crate) fn note_session_read(
+    db: Arc<MemoryDB>,
+    headers: &HeaderMap,
+    kind: SessionReadKind,
+    label: &str,
+    space: Option<String>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let session = extract_session_ref(headers)?;
+    let label = label.to_string();
+    Some(tokio::spawn(async move {
+        if let Err(error) = db
+            .record_session_read(&session, kind, &label, space.as_deref())
+            .await
+        {
+            tracing::warn!("[session] could not record a {kind:?} read: {error}");
+        }
+    }))
 }
 
 /// POST /api/sessions
@@ -85,8 +116,77 @@ pub async fn handle_get_session(
         |page| page.id.as_str(),
     )
     .await?;
+    // Note reads name a note: list only the ones this caller may see.
+    let read_pages: Vec<String> = detail
+        .reads
+        .iter()
+        .filter(|read| read.kind == SessionReadKind::ReadPage)
+        .map(|read| read.label.clone())
+        .collect();
+    if !read_pages.is_empty() {
+        let visible: std::collections::HashSet<String> =
+            wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, read_pages, |id| {
+                id.as_str()
+            })
+            .await?
+            .into_iter()
+            .collect();
+        detail
+            .reads
+            .retain(|read| read.kind != SessionReadKind::ReadPage || visible.contains(&read.label));
+    }
+    detail.reads_total = detail.reads.len() as i64;
+    detail.reads.truncate(SESSION_READS_LISTED);
+    // The same contract for notes that cite the session's memories.
+    detail.cited_by = wenlan_core::truth_adapter::filter_page_refs(
+        &db,
+        &view.grant,
+        std::mem::take(&mut detail.cited_by),
+        |note| note.id.as_str(),
+    )
+    .await?;
     detail.transcript_available = transcript_exists(detail.session.transcript_path.as_deref());
+    fill_title_from_transcript(&db, &mut detail.session).await;
     Ok(Json(detail))
+}
+
+/// Claude Code writes its own conversation title into the transcript. When a
+/// `claude-code` session has none stored and its transcript is still on this
+/// machine, read the newest one and keep it. A title an agent already sent
+/// wins: the write only lands while the title is empty. Best effort; any
+/// failure leaves the session as it was.
+async fn fill_title_from_transcript(db: &MemoryDB, session: &mut AgentSession) {
+    if session.tool != "claude-code"
+        || session
+            .title
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+    {
+        return;
+    }
+    let Some(path) = session.transcript_path.clone() else {
+        return;
+    };
+    let found = tokio::task::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(path);
+        path.is_file().then(|| last_ai_title(&path)).flatten()
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(title) = found else {
+        return;
+    };
+    match db.set_session_title_if_absent(&session.id, &title).await {
+        Ok(true) => session.title = Some(title),
+        // An agent sent a title in the meantime: show that one.
+        Ok(false) => {
+            if let Ok(Some(current)) = db.get_session(&session.id).await {
+                session.title = current.title;
+            }
+        }
+        Err(error) => tracing::warn!("[session] could not keep the transcript title: {error}"),
+    }
 }
 
 /// Whether a stored transcript location still names a file on this machine.

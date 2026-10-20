@@ -1494,6 +1494,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 140 adds `agent_sessions` and `session_id` on `memories`,
 /// `page_history`, and `brief_history`, and backfills one session per past
 /// ChatGPT / Claude.ai import conversation.
+/// Migration 141 adds `session_reads`, what a session looked up in Wenlan.
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1501,7 +1502,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 140;
+pub const SCHEMA_VERSION: u32 = 141;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -10481,6 +10482,14 @@ impl MemoryDB {
             }
             if version < 140 {
                 self.migrate_140_agent_sessions(version).await?;
+            }
+            // Migration 141 records what a session looked up: recall, Brief
+            // and note reads. See migrate_141_session_reads.
+            if ceiling < 141 {
+                return Ok(());
+            }
+            if version < 141 {
+                self.migrate_141_session_reads().await?;
             }
         }
 

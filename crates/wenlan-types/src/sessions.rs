@@ -153,6 +153,61 @@ pub struct SessionHandoffEntry {
     pub created_at: i64,
 }
 
+/// What a session read from Wenlan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionReadKind {
+    /// A memory search or recall; the label is the query.
+    Recall,
+    /// A Space Brief read; the label is the Space name.
+    Brief,
+    /// A note read in full; the label is the note id.
+    ReadPage,
+}
+
+impl SessionReadKind {
+    /// The value stored in `session_reads.kind`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Recall => "recall",
+            Self::Brief => "brief",
+            Self::ReadPage => "read_page",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "recall" => Some(Self::Recall),
+            "brief" => Some(Self::Brief),
+            "read_page" => Some(Self::ReadPage),
+            _ => None,
+        }
+    }
+}
+
+/// One thing a session looked up, newest first in the detail.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionReadEntry {
+    pub kind: SessionReadKind,
+    /// The query (`recall`), the Space name (`brief`), or the note id
+    /// (`read_page`). Queries are cut short.
+    pub label: String,
+    /// The note's title, for `read_page` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub created_at: i64,
+}
+
+/// A note that cites a memory the session wrote, without the session having
+/// written a version of the note itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionCitedByEntry {
+    pub id: String,
+    pub title: String,
+    /// When the note most recently linked one of the session's memories.
+    pub cited_at: i64,
+}
+
 /// `GET /api/sessions/{id}`: the session and what it wrote, newest first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionDetailResponse {
@@ -160,6 +215,18 @@ pub struct SessionDetailResponse {
     pub memories: Vec<SessionMemoryEntry>,
     pub pages: Vec<SessionPageEntry>,
     pub handoffs: Vec<SessionHandoffEntry>,
+    /// What the session read from Wenlan, newest first, at most 10. Only
+    /// reads that named the session (`x-wenlan-session`) are recorded.
+    #[serde(default)]
+    pub reads: Vec<SessionReadEntry>,
+    /// How many recorded reads this caller can see, so a client can say how
+    /// many more there are than `reads` lists.
+    #[serde(default)]
+    pub reads_total: i64,
+    /// Notes that later cited a memory this session wrote, newest first, at
+    /// most 10. Notes the session wrote a version of are in `pages` instead.
+    #[serde(default)]
+    pub cited_by: Vec<SessionCitedByEntry>,
     /// Whether the transcript file named by `transcript_path` is still on
     /// this machine. Tools prune old transcripts, so the path alone does not
     /// say. Computed by the detail route only; false when no path is stored.
@@ -202,6 +269,36 @@ mod tests {
             parsed.to_string(),
             "claude-code:00893aaf-19fa-41d2-8238-13269b9b3ca0"
         );
+    }
+
+    #[test]
+    fn read_kinds_round_trip_their_stored_names() {
+        for kind in [
+            SessionReadKind::Recall,
+            SessionReadKind::Brief,
+            SessionReadKind::ReadPage,
+        ] {
+            assert_eq!(SessionReadKind::parse(kind.as_str()), Some(kind));
+            assert_eq!(
+                serde_json::to_value(kind).unwrap(),
+                serde_json::json!(kind.as_str())
+            );
+        }
+        assert_eq!(SessionReadKind::parse("write"), None);
+    }
+
+    #[test]
+    fn an_older_detail_without_the_new_fields_still_parses() {
+        let detail: SessionDetailResponse = serde_json::from_value(serde_json::json!({
+            "session": {
+                "id": "ses_a", "tool": "codex", "external_id": "x",
+                "first_write_at": 1, "last_write_at": 2
+            },
+            "memories": [], "pages": [], "handoffs": []
+        }))
+        .unwrap();
+        assert!(detail.reads.is_empty() && detail.cited_by.is_empty());
+        assert_eq!(detail.reads_total, 0);
     }
 
     #[test]

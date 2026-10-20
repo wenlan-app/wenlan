@@ -333,3 +333,301 @@ async fn session_detail_reports_whether_the_transcript_file_exists() {
     assert_eq!(none["transcript_available"], false, "{none}");
     assert!(none["session"]["transcript_path"].is_null());
 }
+
+// ---------------------------------------------------------------------------
+// Conversation title, lookups, and notes that later used the session's memories.
+// ---------------------------------------------------------------------------
+
+async fn session_detail(app: &AppRouter, session: &str) -> Value {
+    let (status, detail) = send(
+        app,
+        Method::GET,
+        &format!("/api/sessions/{}", session_id(session)),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    detail
+}
+
+/// Lookups are recorded on a spawned task after the read answers: wait for the
+/// detail to list `count` of them.
+async fn detail_with_reads(app: &AppRouter, session: &str, count: usize) -> Value {
+    for _ in 0..100 {
+        let detail = session_detail(app, session).await;
+        if detail["reads"].as_array().map_or(0, Vec::len) >= count {
+            return detail;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }
+    session_detail(app, session).await
+}
+
+async fn announce(app: &AppRouter, session: &str, extra: Value) {
+    let mut body = json!({ "session": session });
+    body.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let (status, response) = send(app, Method::POST, "/api/sessions", Some(body), &[]).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+}
+
+fn transcript_file(dir: &tempfile::TempDir, body: &str) -> String {
+    let path = dir.path().join("session.jsonl");
+    std::fs::write(&path, body).unwrap();
+    path.to_str().unwrap().to_string()
+}
+
+const TRANSCRIPT: &str = concat!(
+    "{\"type\":\"user\",\"message\":\"hi\"}\n",
+    "{\"type\":\"ai-title\",\"aiTitle\":\"Early title\",\"sessionId\":\"s\"}\n",
+    "not json at all\n",
+    "{\"type\":\"ai-title\",\"aiTitle\":\"文兰 AI 会话资源\",\"sessionId\":\"s\"}\n",
+);
+
+#[tokio::test]
+async fn claude_code_title_is_read_from_the_transcript_once() {
+    let (app, _temp, db) = common::test_app_no_gate().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = transcript_file(&dir, TRANSCRIPT);
+    store_memory(&app, "a memory so the session is visible", Some(SESSION_A)).await;
+    announce(&app, SESSION_A, json!({ "transcript_path": path })).await;
+
+    let detail = session_detail(&app, SESSION_A).await;
+    assert_eq!(detail["session"]["title"], "文兰 AI 会话资源");
+    let stored = db
+        .get_session(&session_id(SESSION_A))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.title.as_deref(), Some("文兰 AI 会话资源"));
+
+    // Once kept, a newer line in the transcript does not move it.
+    std::fs::write(
+        &path,
+        format!("{TRANSCRIPT}{{\"type\":\"ai-title\",\"aiTitle\":\"Newer\"}}\n"),
+    )
+    .unwrap();
+    let detail = session_detail(&app, SESSION_A).await;
+    assert_eq!(detail["session"]["title"], "文兰 AI 会话资源");
+}
+
+#[tokio::test]
+async fn a_title_the_agent_sent_wins_over_the_transcript() {
+    let (app, _temp, _db) = common::test_app_no_gate().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = transcript_file(&dir, TRANSCRIPT);
+    store_memory(&app, "a memory so the session is visible", Some(SESSION_A)).await;
+    announce(
+        &app,
+        SESSION_A,
+        json!({ "transcript_path": path, "title": "Sent by the agent" }),
+    )
+    .await;
+
+    let detail = session_detail(&app, SESSION_A).await;
+    assert_eq!(detail["session"]["title"], "Sent by the agent");
+}
+
+#[tokio::test]
+async fn other_tools_and_missing_transcripts_keep_no_title() {
+    let (app, _temp, _db) = common::test_app_no_gate().await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = transcript_file(&dir, TRANSCRIPT);
+    // Codex keeps using the title it sends, even with such lines around.
+    store_memory(&app, "a codex memory", Some(SESSION_B)).await;
+    announce(&app, SESSION_B, json!({ "transcript_path": path })).await;
+    let detail = session_detail(&app, SESSION_B).await;
+    assert!(detail["session"].get("title").is_none(), "{detail}");
+
+    // A Claude Code session whose transcript was pruned has none either.
+    store_memory(&app, "a claude memory", Some(SESSION_A)).await;
+    announce(
+        &app,
+        SESSION_A,
+        json!({ "transcript_path": dir.path().join("gone.jsonl").to_str().unwrap() }),
+    )
+    .await;
+    let detail = session_detail(&app, SESSION_A).await;
+    assert!(detail["session"].get("title").is_none(), "{detail}");
+}
+
+#[tokio::test]
+async fn lookups_that_name_the_session_are_listed_with_note_titles() {
+    let (app, _temp, _db) = common::test_app_no_gate().await;
+    let headers = [(SESSION_HEADER, SESSION_A)];
+    store_memory(
+        &app,
+        "the sync design uses a single writer",
+        Some(SESSION_A),
+    )
+    .await;
+    announce(&app, SESSION_A, json!({})).await;
+    let (status, page) = send(
+        &app,
+        Method::POST,
+        "/api/pages",
+        Some(json!({
+            "title": "Sync design",
+            "content": "One writer.",
+            "creation_kind": "authored"
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let page_id = page["id"].as_str().unwrap().to_string();
+    let (status, _) = send(
+        &app,
+        Method::PATCH,
+        "/api/brief",
+        Some(json!({
+            "space": "work",
+            "caller_id": "session-test",
+            "operation_id": "op-reads",
+            "summary": {"text": "Handed over", "expected_version": 0},
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A lookup with no header, and one with a malformed header, are not listed
+    // and do not fail.
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        "/api/memory/search",
+        Some(json!({"query": "unattributed"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        "/api/memory/search",
+        Some(json!({"query": "bad header"})),
+        &[(SESSION_HEADER, "not a session")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    for (index, (method, uri, body)) in [
+        (
+            Method::POST,
+            "/api/memory/search".to_string(),
+            Some(json!({"query": "single writer"})),
+        ),
+        (
+            Method::POST,
+            "/api/brief".to_string(),
+            Some(json!({"space": "work"})),
+        ),
+        (Method::GET, format!("/api/pages/{page_id}"), None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (status, body) = send(&app, method, &uri, body, &headers).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+        // Wait for each lookup to land before the next, so the newest-first
+        // order is deterministic.
+        let seen = detail_with_reads(&app, SESSION_A, index + 1).await["reads_total"]
+            .as_i64()
+            .unwrap();
+        assert_eq!(seen as usize, index + 1, "{uri}");
+    }
+
+    let detail = detail_with_reads(&app, SESSION_A, 3).await;
+    let reads = detail["reads"].as_array().unwrap();
+    assert_eq!(detail["reads_total"], 3, "{detail}");
+    assert_eq!(reads.len(), 3, "{detail}");
+    assert_eq!(reads[0]["kind"], "read_page");
+    assert_eq!(reads[0]["label"], page_id.as_str());
+    assert_eq!(reads[0]["title"], "Sync design");
+    assert_eq!(reads[1]["kind"], "brief");
+    assert_eq!(reads[1]["label"], "work");
+    assert_eq!(reads[2]["kind"], "recall");
+    assert_eq!(reads[2]["label"], "single writer");
+}
+
+#[tokio::test]
+async fn a_lookup_never_creates_a_session() {
+    let (app, _temp, db) = common::test_app_no_gate().await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        "/api/memory/search",
+        Some(json!({"query": "from a stranger"})),
+        &[(SESSION_HEADER, SESSION_B)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(db
+        .get_session(&session_id(SESSION_B))
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn notes_that_cite_the_sessions_memories_are_listed_unless_it_wrote_them() {
+    let (app, _temp, _db) = common::test_app_no_gate().await;
+    let source_id = store_memory(&app, "a source memory from session a", Some(SESSION_A)).await;
+    let cite = |title: &str| {
+        json!({
+            "title": title,
+            "content": "Built on a memory.",
+            "creation_kind": "authored",
+            "source_memory_ids": [source_id]
+        })
+    };
+    let (status, theirs) = send(
+        &app,
+        Method::POST,
+        "/api/pages",
+        Some(cite("Cited by another session")),
+        &[(SESSION_HEADER, SESSION_B)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{theirs}");
+    let (status, own) = send(
+        &app,
+        Method::POST,
+        "/api/pages",
+        Some(cite("Written by session a")),
+        &[(SESSION_HEADER, SESSION_A)],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{own}");
+
+    let detail = session_detail(&app, SESSION_A).await;
+    let cited: Vec<&str> = detail["cited_by"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(cited, [theirs["id"].as_str().unwrap()], "{detail}");
+    let pages: Vec<&str> = detail["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(pages, [own["id"].as_str().unwrap()]);
+
+    // A caller locked to an unrelated Space cannot see the session at all.
+    let (status, _) = send(
+        &app,
+        Method::GET,
+        &format!("/api/sessions/{}", session_id(SESSION_A)),
+        None,
+        &[("x-wenlan-space", "elsewhere")],
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK);
+}

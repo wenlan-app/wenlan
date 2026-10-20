@@ -13,14 +13,35 @@ use crate::WenlanError;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use wenlan_types::{
-    AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionDetailResponse,
-    SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry, SessionRef, UpsertSessionRequest,
+    AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionCitedByEntry,
+    SessionDetailResponse, SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry,
+    SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest,
 };
 
 /// Most memories and notes `GET /api/sessions/{id}` returns for one session.
 const SESSION_DETAIL_CAP: i64 = 200;
 /// Longest accepted metadata value, in bytes. Paths and remotes are short.
 const MAX_METADATA_LEN: usize = 4096;
+/// Newest reads kept per session; older ones are dropped as new ones arrive.
+const SESSION_READS_KEPT: i64 = 50;
+/// Most reads `GET /api/sessions/{id}` lists. The total is reported beside.
+pub const SESSION_READS_LISTED: usize = 10;
+/// Most notes listed under `cited_by`.
+const SESSION_CITED_BY_CAP: i64 = 10;
+/// Longest stored read label, in characters.
+const MAX_READ_LABEL_CHARS: usize = 80;
+
+const SESSION_READS_DDL: &str = "
+CREATE TABLE IF NOT EXISTS session_reads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('recall', 'brief', 'read_page')),
+    label TEXT NOT NULL,
+    space TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_reads_session ON session_reads(session_id, id);
+";
 
 const AGENT_SESSIONS_DDL: &str = "
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -137,6 +158,156 @@ pub(super) async fn upsert_session_span(
     Ok(id)
 }
 
+/// Most transcript bytes read from the end of the file to find a title.
+const TRANSCRIPT_TAIL_BYTES: u64 = 32 * 1024 * 1024;
+/// Bytes read from the start when the tail holds no title (a title written
+/// early in a very long conversation).
+const TRANSCRIPT_HEAD_BYTES: u64 = 1024 * 1024;
+/// A transcript line longer than this cannot be a title line; it is skipped.
+const TRANSCRIPT_MAX_LINE_BYTES: usize = 64 * 1024;
+/// Longest stored conversation title, in characters.
+const MAX_TRANSCRIPT_TITLE_CHARS: usize = 200;
+
+/// The newest `ai-title` in a Claude Code transcript (JSONL), or `None`.
+///
+/// Claude Code appends lines such as
+/// `{"type":"ai-title","aiTitle":"...","sessionId":"..."}`; the last one is
+/// current. Reads at most `TRANSCRIPT_TAIL_BYTES` from the end, then the first
+/// `TRANSCRIPT_HEAD_BYTES` when the tail has none. Malformed lines, lines
+/// without a non-empty string `aiTitle`, and over-long lines are ignored.
+/// Blocking file IO: call from a blocking task.
+pub fn last_ai_title(path: &std::path::Path) -> Option<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    if len <= TRANSCRIPT_TAIL_BYTES {
+        return scan_ai_title(&mut file, false);
+    }
+    file.seek(SeekFrom::Start(len - TRANSCRIPT_TAIL_BYTES))
+        .ok()?;
+    // The first line of the tail is probably cut mid-way.
+    if let Some(title) = scan_ai_title(&mut file, true) {
+        return Some(title);
+    }
+    file.seek(SeekFrom::Start(0)).ok()?;
+    scan_ai_title(&mut std::io::Read::take(file, TRANSCRIPT_HEAD_BYTES), false)
+}
+
+fn scan_ai_title(reader: &mut impl std::io::Read, skip_partial_first: bool) -> Option<String> {
+    let mut buf = [0u8; 64 * 1024];
+    let mut line: Vec<u8> = Vec::new();
+    let mut overlong = false;
+    let mut skipping_first = skip_partial_first;
+    let mut found = None;
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        for &byte in &buf[..n] {
+            if byte == b'\n' {
+                if skipping_first {
+                    skipping_first = false;
+                } else if !overlong {
+                    if let Some(title) = ai_title_from_line(&line) {
+                        found = Some(title);
+                    }
+                }
+                line.clear();
+                overlong = false;
+            } else if !overlong && !skipping_first {
+                if line.len() >= TRANSCRIPT_MAX_LINE_BYTES {
+                    overlong = true;
+                    line.clear();
+                } else {
+                    line.push(byte);
+                }
+            }
+        }
+    }
+    // A final line without a newline.
+    if !skipping_first && !overlong {
+        if let Some(title) = ai_title_from_line(&line) {
+            found = Some(title);
+        }
+    }
+    found
+}
+
+fn ai_title_from_line(line: &[u8]) -> Option<String> {
+    const MARKER: &[u8] = b"\"ai-title\"";
+    if !line.windows(MARKER.len()).any(|window| window == MARKER) {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(line).ok()?;
+    if value.get("type")?.as_str()? != "ai-title" {
+        return None;
+    }
+    let title = value.get("aiTitle")?.as_str()?.trim();
+    if title.is_empty() {
+        return None;
+    }
+    Some(title.chars().take(MAX_TRANSCRIPT_TITLE_CHARS).collect())
+}
+
+/// A read label as stored: whitespace collapsed, cut to
+/// `MAX_READ_LABEL_CHARS` characters. `None` when nothing is left.
+fn clean_read_label(raw: &str) -> Option<String> {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+    if collapsed.chars().count() <= MAX_READ_LABEL_CHARS {
+        return Some(collapsed);
+    }
+    let mut cut: String = collapsed.chars().take(MAX_READ_LABEL_CHARS - 1).collect();
+    cut.truncate(cut.trim_end().len());
+    cut.push('…');
+    Some(cut)
+}
+
+/// The `session_reads.space` value for a read made inside `scope`: `None` for
+/// the whole library.
+pub fn session_read_space(scope: &ReadScope) -> Option<String> {
+    match scope {
+        ReadScope::Global => None,
+        ReadScope::Space(space) => Some(space.clone()),
+        ReadScope::Uncategorized => Some(super::UNFILED_SPACE_ID.to_string()),
+    }
+}
+
+/// The `session_reads.space` value for a read of one note or Space: its own
+/// Space, or the unfiled marker when it has none.
+pub fn session_read_space_of(space: Option<&str>) -> String {
+    space
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(super::UNFILED_SPACE_ID)
+        .to_string()
+}
+
+/// SQL that keeps a `session_reads.space` column to what `scope` may see.
+/// A read made without a Space (the whole library) is visible only to an
+/// unscoped caller, so a scoped caller never sees a query that spanned more
+/// than its own Space.
+fn push_read_space_filter(
+    scope: &ReadScope,
+    column: &str,
+    conditions: &mut Vec<String>,
+    values: &mut Vec<libsql::Value>,
+) {
+    match scope {
+        ReadScope::Global => {}
+        ReadScope::Space(space) => {
+            conditions.push(format!("{column} = ?"));
+            values.push(libsql::Value::Text(space.clone()));
+        }
+        ReadScope::Uncategorized => {
+            conditions.push(format!("{column} = '{}'", super::UNFILED_SPACE_ID));
+        }
+    }
+}
+
 /// Normalize one metadata value: trimmed, empty means absent, bounded.
 fn clean_metadata(name: &str, value: &Option<String>) -> Result<Option<String>, WenlanError> {
     let Some(value) = value.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
@@ -205,6 +376,20 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("m140 bump: {e}")))?;
         log::info!("[migration] Migration 140 applied: agent_sessions and session_id columns");
+        Ok(())
+    }
+
+    /// Migration 141: `session_reads`. `CREATE ... IF NOT EXISTS` keeps a
+    /// crash-replay (table created, version bump lost) idempotent.
+    pub(super) async fn migrate_141_session_reads(&self) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch(SESSION_READS_DDL)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m141 session_reads DDL: {e}")))?;
+        conn.execute("PRAGMA user_version = 141", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m141 bump: {e}")))?;
+        log::info!("[migration] Migration 141 applied: session_reads");
         Ok(())
     }
 
@@ -343,6 +528,139 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("stamp page session commit: {e}")))?;
         Ok(())
+    }
+
+    /// Record that `session` read something from Wenlan, for the "what it
+    /// looked up" list. Best effort bookkeeping on the read path:
+    ///
+    /// - Only a session the daemon already knows (announced or written for) is
+    ///   recorded; a read never creates a session. Returns `false` then.
+    /// - `label` is whitespace-collapsed and cut to 80 characters; nothing is
+    ///   recorded when it is empty.
+    /// - An identical consecutive read (same kind, label and Space) moves the
+    ///   newest entry's time instead of adding a row.
+    /// - Only the newest `SESSION_READS_KEPT` rows of a session are kept.
+    ///
+    /// `space` is the Space the read was scoped to, `None` for the whole
+    /// library. It decides who may see the entry later.
+    pub async fn record_session_read(
+        &self,
+        session: &SessionRef,
+        kind: SessionReadKind,
+        label: &str,
+        space: Option<&str>,
+    ) -> Result<bool, WenlanError> {
+        let Some(label) = clean_read_label(label) else {
+            return Ok(false);
+        };
+        let space = space.filter(|s| !s.is_empty());
+        let id = session_row_id(session);
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record session read begin: {e}")))?;
+        let mut rows = tx
+            .query(
+                "SELECT 1 FROM agent_sessions WHERE id = ?1",
+                libsql::params![id.as_str()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record session read lookup: {e}")))?;
+        let known = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record session read lookup row: {e}")))?
+            .is_some();
+        drop(rows);
+        if !known {
+            return Ok(false);
+        }
+
+        let mut rows = tx
+            .query(
+                "SELECT id, kind, label, space FROM session_reads
+                  WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
+                libsql::params![id.as_str()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record session read newest: {e}")))?;
+        let newest =
+            match rows.next().await.map_err(|e| {
+                WenlanError::VectorDb(format!("record session read newest row: {e}"))
+            })? {
+                Some(row) => Some((
+                    row.get::<i64>(0).unwrap_or(0),
+                    row.get::<String>(1).unwrap_or_default(),
+                    row.get::<String>(2).unwrap_or_default(),
+                    row.get::<Option<String>>(3).unwrap_or(None),
+                )),
+                None => None,
+            };
+        drop(rows);
+
+        match newest {
+            Some((row_id, newest_kind, newest_label, newest_space))
+                if newest_kind == kind.as_str()
+                    && newest_label == label
+                    && newest_space.as_deref() == space =>
+            {
+                tx.execute(
+                    "UPDATE session_reads SET created_at = ?1 WHERE id = ?2",
+                    libsql::params![now, row_id],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("record session read touch: {e}")))?;
+            }
+            _ => {
+                tx.execute(
+                    "INSERT INTO session_reads (session_id, kind, label, space, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    libsql::params![id.as_str(), kind.as_str(), label, space, now],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("record session read insert: {e}")))?;
+                tx.execute(
+                    "DELETE FROM session_reads
+                      WHERE session_id = ?1
+                        AND id NOT IN (SELECT id FROM session_reads WHERE session_id = ?1
+                                        ORDER BY id DESC LIMIT ?2)",
+                    libsql::params![id.as_str(), SESSION_READS_KEPT],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("record session read trim: {e}")))?;
+            }
+        }
+        tx.commit()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record session read commit: {e}")))?;
+        Ok(true)
+    }
+
+    /// Set the session's title from its transcript, only while it has none:
+    /// a title an agent sent through `POST /api/sessions` always wins.
+    /// Returns whether the title was set.
+    pub async fn set_session_title_if_absent(
+        &self,
+        id: &str,
+        title: &str,
+    ) -> Result<bool, WenlanError> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Ok(false);
+        }
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        let changed = conn
+            .execute(
+                "UPDATE agent_sessions SET title = ?1, updated_at = ?2
+                  WHERE id = ?3 AND (title IS NULL OR TRIM(title) = '')",
+                libsql::params![title, now, id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("set session title: {e}")))?;
+        Ok(changed > 0)
     }
 
     /// `POST /api/sessions`: create the session if needed, then overwrite the
@@ -561,11 +879,118 @@ impl MemoryDB {
         {
             return Ok(None);
         }
+
+        // What the session looked up. Entries made in another Space stay
+        // hidden from a scoped caller; a note read is listed only while the
+        // note still exists inside the scope. The newest rows are all
+        // returned: the route filters by the caller's grant, then trims.
+        let (page_scope_sql, page_scope_value) = page_scope_clause(scope, "p.workspace", 2);
+        let mut values = vec![libsql::Value::Text(id.to_string())];
+        values.extend(page_scope_value);
+        // Placeholders: `?2` (page scope, when bound) comes first in the text,
+        // so the anonymous space placeholder numbers after it.
+        let mut conditions = vec!["r.session_id = ?1".to_string()];
+        let mut space_values = Vec::new();
+        push_read_space_filter(scope, "r.space", &mut conditions, &mut space_values);
+        values.extend(space_values);
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT r.kind, r.label, p.title, r.created_at
+                       FROM session_reads r
+                       LEFT JOIN pages p ON r.kind = 'read_page' AND p.id = r.label{page_scope_sql}
+                      WHERE {}
+                      ORDER BY r.id DESC",
+                    conditions.join(" AND ")
+                ),
+                libsql::params_from_iter(values),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("session reads: {e}")))?;
+        let mut reads = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("session reads row: {e}")))?
+        {
+            let Some(kind) = SessionReadKind::parse(&row.get::<String>(0).unwrap_or_default())
+            else {
+                continue;
+            };
+            let title = row.get::<Option<String>>(2).unwrap_or(None);
+            if kind == SessionReadKind::ReadPage && title.is_none() {
+                continue;
+            }
+            reads.push(SessionReadEntry {
+                kind,
+                label: row.get::<String>(1).unwrap_or_default(),
+                title,
+                created_at: row.get::<i64>(3).unwrap_or(0),
+            });
+        }
+        drop(rows);
+        let reads_total = reads.len() as i64;
+
+        // Notes that cite a memory this session wrote, minus the notes the
+        // session wrote a version of itself (those are `pages`).
+        let mut conditions = vec![
+            "m.source = 'memory'".to_string(),
+            "m.pending_revision = 0".to_string(),
+            "m.session_id = ?".to_string(),
+            not_hidden_by_superseder(scope, "m"),
+        ];
+        let mut memory_values = vec![libsql::Value::Text(id.to_string())];
+        push_read_scope_filter_folded(scope, "m.space", &mut conditions, &mut memory_values);
+        let (page_scope_sql, page_scope_value) = page_scope_clause(scope, "p.workspace", 2);
+        let mut values = vec![libsql::Value::Text(id.to_string())];
+        values.extend(page_scope_value);
+        values.extend(memory_values);
+        values.push(libsql::Value::Integer(SESSION_CITED_BY_CAP));
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT p.id, p.title,
+                            MAX(COALESCE(json_extract(e.payload, '$.linked_at'), e.created_at))
+                       FROM edges e
+                       JOIN pages p ON p.id = e.src_id
+                      WHERE e.edge_type = 'cites' AND e.valid_until IS NULL
+                        AND p.status = 'active'{page_scope_sql}
+                        AND NOT EXISTS (SELECT 1 FROM page_history h
+                                         WHERE h.page_id = p.id AND h.session_id = ?1)
+                        AND EXISTS (SELECT 1 FROM memories m
+                                     WHERE (m.source_id = e.dst_id OR m.id = e.dst_id)
+                                       AND {})
+                      GROUP BY p.id, p.title
+                      ORDER BY 3 DESC, p.id
+                      LIMIT ?",
+                    conditions.join(" AND ")
+                ),
+                libsql::params_from_iter(values),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("session cited by: {e}")))?;
+        let mut cited_by = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("session cited by row: {e}")))?
+        {
+            cited_by.push(SessionCitedByEntry {
+                id: row.get::<String>(0).unwrap_or_default(),
+                title: row.get::<String>(1).unwrap_or_default(),
+                cited_at: row.get::<i64>(2).unwrap_or(0),
+            });
+        }
+        drop(rows);
+
         Ok(Some(SessionDetailResponse {
             session,
             memories,
             pages,
             handoffs,
+            reads,
+            reads_total,
+            cited_by,
             transcript_available: false,
         }))
     }

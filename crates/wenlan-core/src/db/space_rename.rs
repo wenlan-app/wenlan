@@ -219,9 +219,10 @@ pub(super) async fn cascade_space_rename(
     cascade_agent_sessions(tx, old_name, new_name).await
 }
 
-/// `agent_sessions.space` is the Space of a session's first write. It follows
-/// a rename or merge like the rows it describes, outside `CLOSURE` because it
-/// holds no grouping or genesis state.
+/// `agent_sessions.space` is the Space of a session's first write, and
+/// `session_reads.space` the Space a read was scoped to. They follow a rename
+/// or merge like the rows they describe, outside `CLOSURE` because they hold
+/// no grouping or genesis state.
 async fn cascade_agent_sessions(
     tx: &libsql::Transaction,
     old_name: &str,
@@ -232,8 +233,14 @@ async fn cascade_agent_sessions(
         libsql::params![new_name, old_name],
     )
     .await
+    .map_err(|e| WenlanError::VectorDb(format!("space cascade agent_sessions: {e}")))?;
+    tx.execute(
+        "UPDATE session_reads SET space = ?1 WHERE space = ?2",
+        libsql::params![new_name, old_name],
+    )
+    .await
     .map(|_| ())
-    .map_err(|e| WenlanError::VectorDb(format!("space cascade agent_sessions: {e}")))
+    .map_err(|e| WenlanError::VectorDb(format!("space cascade session_reads: {e}")))
 }
 
 /// Fold every space-keyed row from `old_name` into the LIVE space

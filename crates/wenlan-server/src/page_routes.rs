@@ -201,6 +201,7 @@ pub async fn handle_list_pages(
 /// GET /api/pages/:id
 pub async fn handle_get_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
@@ -224,6 +225,18 @@ pub async fn handle_get_page(
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?
     {
         Some(page) => {
+            // A note read in full is listed on the session card when the caller
+            // names its AI session. Only after scope and truth authorization,
+            // so a hidden note is never recorded.
+            crate::session_routes::note_session_read(
+                db.clone(),
+                &headers,
+                wenlan_types::SessionReadKind::ReadPage,
+                &id,
+                Some(wenlan_core::db::sessions::session_read_space_of(
+                    page.space.as_deref(),
+                )),
+            );
             // An imported OKF concept carries its bundle frontmatter beside the
             // page, for display only. The key is omitted for every other page,
             // so a reader that does not know about OKF sees today's shape.

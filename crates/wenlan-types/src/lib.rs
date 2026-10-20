@@ -94,9 +94,9 @@ pub use responses::{
     RevisionDismissResponse,
 };
 pub use sessions::{
-    AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionDetailResponse,
-    SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry, SessionRef, UpsertSessionRequest,
-    SESSION_HEADER,
+    AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionCitedByEntry,
+    SessionDetailResponse, SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry,
+    SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};

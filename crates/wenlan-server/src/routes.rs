@@ -257,12 +257,23 @@ async fn handle_search_inner(
 
     // Mark the caller seen (throttled, off the response path, never writes
     // trust or memory counts), so the Connections list shows a tool that only
-    // searches. `/api/context` and the Brief stay strictly read-only.
+    // searches. `/api/context` and the Brief write no memory, trust or Brief
+    // state; a read that names its AI session is listed on the session card.
     crate::agent_presence::note_agent_read(
         db.clone(),
         agent_presence,
         &crate::memory_routes::extract_agent_name(&headers, None),
     );
+    // The "recent context" sentinel is the app's own recents view, not a lookup.
+    if req.query != "recent context" {
+        crate::session_routes::note_session_read(
+            db.clone(),
+            &headers,
+            wenlan_types::SessionReadKind::Recall,
+            &req.query,
+            wenlan_core::db::sessions::session_read_space(&scope),
+        );
+    }
 
     let took_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -376,6 +387,7 @@ fn render_brief_for_legacy(response: &wenlan_types::BriefReadResponse) -> String
 /// separately-labelled, same-Space recall results.
 pub async fn handle_context(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(req): Json<ChatContextRequest>,
@@ -392,6 +404,7 @@ pub async fn handle_context(
     // re-derived there.
     let Json(brief_response) = crate::brief_routes::handle_read_brief(
         State(state),
+        headers,
         crate::space_header::SpaceHeader(header_space),
         view,
         Json(request),
