@@ -92,6 +92,9 @@ pub struct QueryBriefOutput {
     pub space: Option<String>,
     pub brief: Option<QueryBrief>,
     pub related_context: Option<QueryRelatedContext>,
+    /// Notes in the Space that rely on code that changed or went missing.
+    /// `None` when no note in the Space relies on code.
+    pub code_basis_pending: Option<u32>,
 }
 
 pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &'static str> {
@@ -141,6 +144,9 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
         space: response.space.clone(),
         brief,
         related_context,
+        code_basis_pending: matches!(response.state, BriefReadState::Ready)
+            .then_some(response.code_basis_pending)
+            .flatten(),
     })
 }
 
