@@ -111,7 +111,7 @@ beforeEach(() => {
 });
 
 async function typeAtEnd(text: string) {
-  const view = editorViewFromTextbox(await screen.findByRole("textbox", { name: "Note editor" }));
+  const view = editorViewFromTextbox(await screen.findByRole("textbox", { name: "Page editor" }));
   act(() => {
     for (const char of text) {
       const from = view.state.doc.length;
@@ -263,7 +263,7 @@ describe("PageDetail with note bases", () => {
     renderPage({}, { initialMode: "edit" });
     const view = await typeAtEnd(" [[pri");
 
-    const menu = await screen.findByRole("listbox", { name: "Link a note" });
+    const menu = await screen.findByRole("listbox", { name: "Link a page" });
     expect(listPages).toHaveBeenCalledWith("active", undefined, 500);
     const rows = await waitFor(() => {
       const options = menu.querySelectorAll('[role="option"]');
@@ -285,7 +285,7 @@ describe("PageDetail with note bases", () => {
     vi.mocked(markPageBasis).mockReset().mockRejectedValue(new Error("boom"));
     renderPage({}, { initialMode: "edit" });
     const view = await typeAtEnd(" [[price l");
-    const menu = await screen.findByRole("listbox", { name: "Link a note" });
+    const menu = await screen.findByRole("listbox", { name: "Link a page" });
     const action = await waitFor(() => {
       const button = menu.querySelector("button");
       expect(button).not.toBeNull();

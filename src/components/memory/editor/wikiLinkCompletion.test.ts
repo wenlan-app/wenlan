@@ -12,7 +12,7 @@ import { setWritingCompositionActive } from "./writingPresentation";
 beforeAll(installCodeMirrorDomPolyfills);
 const views: EditorView[] = [];
 afterEach(() => { views.splice(0).forEach((view) => { const parent = view.dom.parentElement; view.destroy(); parent?.remove(); }); });
-const labels = { label: "Link a note", empty: "No matching notes", useAsSource: "Use as a source", useAsSourceHint: "You'll be told when it changes" };
+const labels = { label: "Link a page", empty: "No matching pages", useAsSource: "Use as a source", useAsSourceHint: "You'll be told when it changes" };
 const notes: LinkCompletionNote[] = [
   { id: "p-roadmap", title: "Roadmap", canUseAsSource: true },
   { id: "p-rust", title: "Rust ownership", canUseAsSource: true },
@@ -76,14 +76,14 @@ describe("[[ link completion", () => {
     await waitFor(() => expect(editor.menuElement()).not.toBeNull());
     const menu = editor.menuElement()!;
     expect(editor.view.dom.contains(menu)).toBe(false);
-    expect(menu.getAttribute("aria-label")).toBe("Link a note");
+    expect(menu.getAttribute("aria-label")).toBe("Link a page");
     expect(menu.querySelectorAll('[role="option"]')).toHaveLength(4);
     editor.type("rus");
     expect([...menu.querySelectorAll('[role="option"]')].map((row) => row.getAttribute("aria-label"))).toEqual(["Rust ownership", "Trust model"]);
     expect(editor.view.contentDOM.getAttribute("aria-activedescendant")).toBe(menu.querySelector('[role="option"]')!.id);
     editor.type("zz");
     expect(menu.querySelectorAll('[role="option"]')).toHaveLength(0);
-    expect(menu.textContent).toBe("No matching notes");
+    expect(menu.textContent).toBe("No matching pages");
     expect(editor.view.contentDOM.hasAttribute("aria-activedescendant")).toBe(false);
   });
 
@@ -223,7 +223,7 @@ describe("[[ link completion", () => {
     const editor = make("", 0, []);
     editor.type("[[");
     await waitFor(() => expect(editor.menuElement()).not.toBeNull());
-    expect(editor.menuElement()!.textContent).toBe("No matching notes");
+    expect(editor.menuElement()!.textContent).toBe("No matching pages");
     editor.setNotes(notes);
     expect(editor.menuElement()!.querySelectorAll('[role="option"]')).toHaveLength(4);
   });

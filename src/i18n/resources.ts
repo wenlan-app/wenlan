@@ -678,8 +678,8 @@ const en = {
     openLinkFailed: "Could not open this link.",
   },
   linkCompletion: {
-    label: "Link a note",
-    empty: "No matching notes",
+    label: "Link a page",
+    empty: "No matching pages",
   },
   slashEditing: {
     label: "Basic editing",
