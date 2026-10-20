@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=38b2daa70943619f1e07f04d78003b40a9a94d164362fdb27141293a336014a3 -->
+<!-- README_SYNC: source=README.md sha256=548fe3266a56e25482f92e6185995743da2aaa7bf98a22c1d58cbbe536cf151c -->
 
 <p align="center">
   <picture>
@@ -44,6 +44,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 - **筆記會自己跟上：** 來源變了，根據它寫的筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
 - **每句話都查得到出處：** 筆記附上引用；AI 改寫筆記後，文瀾會先核對引用和原文，才存進去。
 - **所有 AI 工具共用一份知識：** 在 Claude Code 開始，換到 Codex 或 Cursor 接著做；網頁版 Claude 和 ChatGPT 也能用（實驗功能）。
+- **和 Obsidian 一起用：** 以唯讀方式連接你的 vault，文瀾不會寫回去；文瀾自己的筆記也是 Markdown 檔，可以用 Obsidian 打開。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

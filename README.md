@@ -42,6 +42,7 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 - **Notes that keep up:** When a source changes, notes built on it update. Notes you wrote get a suggested edit instead.
 - **Every claim traceable:** Notes cite their sources. Before saving an AI rewrite, Wenlan checks its citations against the original text.
 - **One knowledge base for every AI tool:** Start in Claude Code, pick up in Codex or Cursor. Claude and ChatGPT on the web can join too (experimental).
+- **Works with your Obsidian vault:** Connect it read-only; Wenlan never writes to it. Wenlan's own notes are Markdown files you can open in Obsidian too.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
