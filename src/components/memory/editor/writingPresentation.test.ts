@@ -202,8 +202,9 @@ describe("writingPresentation", () => {
     const external = [...view.contentDOM.querySelectorAll(".cm-writing-link-external")];
     expect(external.map((node) => node.textContent)).toEqual([
       "docs",
-      "https://github.com/wenlan-app/wenlan",
+      "github.com/wenlan-app/wenlan",
     ]);
+    expect(view.contentDOM.textContent).not.toContain("https://");
     expect(view.state.doc.toString()).toBe(source);
   });
 

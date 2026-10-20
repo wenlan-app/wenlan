@@ -21,6 +21,7 @@ import {
   WidgetType,
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { hiddenUrlPrefixLength } from "../../../lib/displayUrl";
 
 export const setWritingCompositionActive = StateEffect.define<boolean>();
 const refreshWritingPresentation = StateEffect.define<null>();
@@ -525,6 +526,14 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           && isBrowserUrl(state.sliceDoc(node.from, node.to))
         ) {
           addMarkClass(node.from, node.to, "cm-writing-link cm-writing-link-external");
+          // Read like the reader shows it: site and path, no "https://".
+          // The full address comes back as soon as the caret reaches it.
+          if (!constructIsRevealed(state, node.from, node.to, contentFocused)) {
+            addConcealment(
+              node.from,
+              node.from + hiddenUrlPrefixLength(state.sliceDoc(node.from, node.to)),
+            );
+          }
           return;
         }
         if (node.name === "HorizontalRule") {
