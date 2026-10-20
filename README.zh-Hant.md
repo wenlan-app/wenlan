@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=fafba9c0a51e34a88c369d67568362cd3b7bd4cf1372ceb233b58c47a77414bc -->
+<!-- README_SYNC: source=README.md sha256=32e38736322fb72231da82510fbc1e738f368ee9389f8e2c60b184ce85415728 -->
 
 <p align="center">
   <picture>
@@ -42,11 +42,6 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 ## 為什麼用文瀾
 
 筆記、文件和 AI 對話散落各處，內容又一直在變，每個 AI 工具也只各記一小部分。文瀾是為 AI 時代打造的知識庫：一份存在你電腦裡、由你和 AI 一起維護的唯一可信來源。從保存、整理、引用到更新，整套知識流程都內建，不用再拼裝一堆外掛。
-
-- **筆記會自己跟上：** 開啟後台沉澱（Steep）後，來源變了，根據它寫的筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
-- **每句話都查得到出處：** 筆記附上引用，可以直接打開原文。文瀾在後台更新筆記時，會先核對引用，才取代原本的筆記。
-- **在任何 AI 工具接著做：** 在 Claude Code 或 Codex 用 `/handoff` 存下進度，下次用 `/brief` 接上；Cursor 等 MCP 工具也讀寫同一個知識庫。網頁版 Claude 和 ChatGPT 也能搜尋（實驗功能）。
-- **資料留在你的電腦：** 筆記是你電腦上的 Markdown 檔，也能用開放格式匯出。可以用 Obsidian 打開，也可以唯讀連接你現有的 Obsidian vault，文瀾不會寫回去。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
