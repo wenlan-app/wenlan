@@ -154,7 +154,7 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 让 AI 接续已有知识
 
-智能体可以读取文件、撰写文字。Wenlan 增加了一个**跨任务与 AI 工具持续维护的共享知识库**：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
+开新对话时，AI 已经能找到你之前的决定和依据，不用再从头交代。选一个 Space，就只用这个项目的资料。
 
 **适用场景：**
 
@@ -162,18 +162,7 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 - **产品与网站：** 运用客户研究、定位与设计原则撰写规格或构建页面。
 - **研究与学习：** 将阅读资料与保存的发现整理成带引用的报告或可复用学习笔记。
 
-**检索与连接：** 插件会引导检索和保存；MCP 连接则提供工具供 AI 调用。
-
-- **[本地混合检索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义，再以加权 RRF 合并排名；基础搜索无需 API key。
-- **图谱辅助排序：** 共享实体链接可提升相关记忆的排名，即使措辞不同也能关联。可选的 cross-encoder 重排会比较每条候选内容与问题，以调整顺序。
-- **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
-
 **即将推出：** Space 中的代码仓库支持。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-knowledge-to-work-zh-Hans.png" alt="AI 接着做，不必从头交代：关键词、语义与图谱检索" width="100%">
-</p>
-<p>虚构案例，非产品测试；文澜补充上下文，与 Claude 原生记忆配合使用。</p>
 
 在“设置”中开启“网页访问”开关，即可让 Claude、ChatGPT 或 Muse 等受支持的网页 AI 客户端，在你的电脑保持联网时搜索整个资料库或指定空间。此功能仍处于实验阶段；查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 

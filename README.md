@@ -150,7 +150,7 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 
 ## Put your knowledge to work with AI
 
-An agent can read files and write text. Wenlan adds a **shared knowledge base maintained across tasks and AI tools**: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
+Open a new session and your AI already has your earlier decisions, with their reasons and sources, so you don't have to explain them again. Pick a Space to keep it focused on one project.
 
 **Use it for:**
 
@@ -158,18 +158,7 @@ An agent can read files and write text. Wenlan adds a **shared knowledge base ma
 - **Products and websites:** Use customer research, positioning, and design principles to draft specifications or build pages.
 - **Research and learning:** Turn reading material and saved findings into cited reports or study notes you can reuse.
 
-**Retrieval and connections:** Plugins guide retrieval and saving; MCP connections expose the tools for your AI to call.
-
-- **[Local hybrid retrieval](docs/technical-foundations.md#retrieval-pipeline):** Find exact terms and similar meaning with SQLite FTS5 and BGE embeddings, fused by weighted Reciprocal Rank Fusion (RRF); base search needs no API key.
-- **Graph-assisted ranking:** Shared-entity links boost related memories even when their wording differs. Optional cross-encoder reranking compares each candidate with the question to refine the order.
-- **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
-
 **Coming soon:** Coding repository support in Spaces.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-knowledge-to-work.png" alt="Let AI continue from what you already know: keyword, semantic and Graph retrieval" width="100%">
-</p>
-<p>Fictional example, not a product test; Wenlan adds context alongside Claude’s native memory.</p>
 
 Turn on **Web access** in Settings to let supported web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. This feature is experimental; queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 

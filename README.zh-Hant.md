@@ -154,7 +154,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ## 讓 AI 接續已有知識
 
-Agent 本來就能讀檔、寫文章。Wenlan 多提供一個<strong>跨任務與 AI 工具共用、持續維護的知識庫</strong>：找回先前的決定與依據，保存新的成果，並隨依據變動繼續使用。
+開新對話時，AI 已經能找到你之前的決定和依據，不用再從頭交代。選一個 Space，就只用這個專案的資料。
 
 **可以用在：**
 
@@ -162,18 +162,7 @@ Agent 本來就能讀檔、寫文章。Wenlan 多提供一個<strong>跨任務�
 - **產品與網站**：依據使用者研究、產品定位與設計原則，撰寫規格或製作網頁。
 - **研究與學習**：把閱讀資料與保存的發現整理成帶引用的報告或學習筆記，供後續重用。
 
-**檢索與連接方式：** 插件引導 AI 取用與保存知識；MCP 連接提供可供 AI 呼叫的工具。
-
-- **[本地混合檢索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同詞句、BGE 向量找出相近語意，再以加權 RRF 合併排名；基礎搜尋不需 API key。
-- **圖譜輔助排序**：沿共同實體提高相關記憶的排名，即使用詞不同也能建立關聯；另可啟用 cross-encoder reranking，逐一比對問題與候選內容，精排結果。
-- **Spaces 範圍檢索**：選定 Space，將回傳的知識限制在相關專案或個人資料集合內。
-
 **即將推出（Coming soon）：** Spaces 的程式碼儲存庫（coding repo）支援。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-knowledge-to-work-zh-Hant.png" alt="AI 接著做，不必從頭交代：關鍵詞、語義與圖譜檢索" width="100%">
-</p>
-<p>虛構案例，非產品測試；文瀾補充脈絡，與 Claude 原生記憶搭配使用。</p>
 
 在「設定」中開啟「網頁存取」開關，即可讓 Claude、ChatGPT 或 Muse 等支援的網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。此功能仍在實驗階段；查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
