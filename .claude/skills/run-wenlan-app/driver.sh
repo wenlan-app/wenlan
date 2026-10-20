@@ -4,9 +4,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)" # unit root (repo or worktree)
-MAIN="$(cd "$(git -C "$ROOT" rev-parse --git-common-dir)/.." && pwd)"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$MAIN/target}"
+ROOT_REAL="$(cd "$ROOT" && pwd -P)"           # what lsof reports as a cwd
+# Worktree-local by default. The app binary bakes in its devUrl and bundle
+# identifier at build time, so a target dir shared across checkouts means one
+# checkout's build is what another checkout launches.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 BIN="$CARGO_TARGET_DIR/debug/wenlan-app"
+STAMP="$BIN.driver-stamp"
 LOG="${TMPDIR:-/tmp}"
 
 # A debug wenlan-app refuses to start without a complete isolated runtime
@@ -21,29 +25,95 @@ load_dev_runtime_config() {
         ;;
     esac
   done < <(bash "$ROOT/scripts/dev-runtime.sh" print-config)
+  UI_URL="http://localhost:$WENLAN_DEV_UI_PORT"
+}
+
+# Same override scripts/dev-all.sh hands the tauri CLI: the worktree's UI port
+# and dev bundle identifier, json_patch-merged by tauri-build and tauri-codegen.
+tauri_config() {
+  printf '{"identifier":"%s","build":{"devUrl":"%s"}}' "$WENLAN_DEV_APP_ID" "$UI_URL"
+}
+
+stamp_text() {
+  printf 'root=%s\ndevUrl=%s\nidentifier=%s\n' "$ROOT_REAL" "$UI_URL" "$WENLAN_DEV_APP_ID"
+}
+
+pid_cwd() {
+  lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
+}
+
+listener_pids() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | sort -u
+}
+
+# Only a dev app this checkout launched: the exact $BIN command line (string
+# compare, not a pattern) and a cwd of this unit root (launch cds there).
+# The seatbelt sandbox denies ps and pgrep outright; fail rather than report
+# "nothing running".
+app_pids() {
+  local pid cmd
+  if ! ps -p $$ >/dev/null 2>&1; then
+    echo "cannot list processes (sandboxed shell?); re-run unsandboxed" >&2
+    return 1
+  fi
+  ps -axwwo pid=,command= | while read -r pid cmd; do
+    [ "$cmd" = "$BIN" ] || continue
+    [ "$(pid_cwd "$pid")" = "$ROOT_REAL" ] || continue
+    echo "$pid"
+  done
+}
+
+# Prints this checkout's vite PID on $1, nothing if the port is free, and exits
+# non-zero if any other process holds it. Never reuse or kill a listener whose
+# cwd is another checkout: that is another session's frontend.
+own_listener() {
+  local port="$1" pid cwd mine=""
+  for pid in $(listener_pids "$port"); do
+    cwd="$(pid_cwd "$pid")"
+    if [ "$cwd" != "$ROOT_REAL" ]; then
+      echo "REFUSING: :$port is served by pid $pid from ${cwd:-<unreadable cwd>}," >&2
+      echo "not this checkout ($ROOT_REAL). Reusing it would run that checkout's" >&2
+      echo "frontend. Never kill it; it belongs to another session." >&2
+      return 1
+    fi
+    mine="$pid"
+  done
+  echo "$mine"
 }
 
 case "${1:-}" in
   build)
     # Decoupled from `tauri dev`: its beforeDevCommand compiles sidecars and
     # times out the CLI's 180s wait for vite on a cold cache.
+    load_dev_runtime_config
     cd "$ROOT"
     pnpm prepare:sidecars
-    cargo build --manifest-path app/Cargo.toml
+    TAURI_CONFIG="$(tauri_config)" cargo build --manifest-path app/Cargo.toml
+    # Prove the override landed instead of trusting cargo's rebuild tracking.
+    for want in "$UI_URL" "$WENLAN_DEV_APP_ID"; do
+      if ! grep -aqF "$want" "$BIN"; then
+        echo "BUILD WRONG: $BIN does not contain $want" >&2
+        rm -f "$STAMP"
+        exit 1
+      fi
+    done
+    stamp_text >"$STAMP"
+    echo "built $BIN (devUrl $UI_URL)"
     ;;
   vite)
+    load_dev_runtime_config
     cd "$ROOT"
-    # Pinned to :1420 on purpose: a directly-launched prebuilt binary loads the
-    # devUrl baked into app/tauri.conf.json, which the tauri CLI's --config
-    # override (used by scripts/dev-all.sh) cannot reach here.
-    if ! curl -s -o /dev/null http://localhost:1420/; then
-      WENLAN_DEV_UI_PORT=1420 nohup pnpm dev >"$LOG/wenlan-vite.log" 2>&1 &
+    pid="$(own_listener "$WENLAN_DEV_UI_PORT")" || exit 1
+    if [ -z "$pid" ]; then
+      nohup pnpm dev >"$LOG/wenlan-vite.log" 2>&1 &
     fi
     for _ in $(seq 1 30); do
-      curl -s -o /dev/null http://localhost:1420/ && break
+      curl -s -o /dev/null "$UI_URL/" && break
       sleep 2
     done
-    curl -s -o /dev/null -w 'vite: %{http_code}\n' http://localhost:1420/
+    # Re-check ownership: something else could have bound the port meanwhile.
+    own_listener "$WENLAN_DEV_UI_PORT" >/dev/null || exit 1
+    curl -s -o /dev/null -w "vite $UI_URL: %{http_code}\n" "$UI_URL/"
     ;;
   launch)
     # The app inherits this shell's seatbelt sandbox, and the sandbox denies
@@ -61,19 +131,29 @@ case "${1:-}" in
       exit 1
     fi
     load_dev_runtime_config
+    running="$(app_pids)" || exit 1
+    if [ -n "$running" ]; then
+      echo "APP ALREADY UP (pid $running); run stop first to relaunch"
+      exit 0
+    fi
     # The app now selects the worktree daemon port, so give it a daemon there.
     # This never touches the user's :7878 instance.
     bash "$ROOT/scripts/dev-runtime.sh" start >"$LOG/wenlan-dev-daemon.log" 2>&1 ||
       echo "warning: isolated dev daemon did not start; see $LOG/wenlan-dev-daemon.log" >&2
     "$0" vite
-    [ -x "$BIN" ] || "$0" build
+    # Rebuild unless the binary was built by this checkout for this UI port.
+    if [ ! -x "$BIN" ] || [ "$(cat "$STAMP" 2>/dev/null)" != "$(stamp_text)" ]; then
+      "$0" build
+    fi
     # Launch the binary directly: spawning through the pnpm/tauri chain in a
     # sandboxed shell panics on the rolling-log appender (PermissionDenied,
     # ~/Library/Logs/com.wenlan.desktop/).
+    cd "$ROOT"
     nohup "$BIN" >"$LOG/wenlan-app.log" 2>&1 &
+    app_pid=$!
     sleep 5
-    if pgrep -f 'target/debug/wenlan-app' >/dev/null; then
-      echo "APP UP"
+    if app_pids | grep -qx "$app_pid"; then
+      echo "APP UP (pid $app_pid, devUrl $UI_URL)"
     else
       echo "APP DEAD"
       tail -20 "$LOG/wenlan-app.log"
@@ -86,10 +166,20 @@ case "${1:-}" in
     swift "$(dirname "$0")/wincap.swift" "${2:-$LOG/wenlan-shot.png}"
     ;;
   stop)
-    # Only what we started. NEVER kill the user's daemon on :7878 —
-    # dev-runtime.sh stop refuses any PID it did not record for this worktree.
-    pkill -f 'target/debug/wenlan-app' || true
-    lsof -ti:1420 | xargs kill 2>/dev/null || true
+    # Only what this checkout started. NEVER kill the user's daemon on :7878
+    # (dev-runtime.sh stop refuses any PID it did not record for this
+    # worktree), nor another checkout's app or vite.
+    load_dev_runtime_config
+    if pids="$(app_pids)"; then
+      for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+    else
+      echo "warning: dev app NOT stopped" >&2
+    fi
+    # 1420 covers a vite this checkout started under the old pinned port.
+    for port in "$WENLAN_DEV_UI_PORT" 1420; do
+      pid="$(own_listener "$port" 2>/dev/null)" || continue
+      [ -z "$pid" ] || kill "$pid" 2>/dev/null || true
+    done
     bash "$ROOT/scripts/dev-runtime.sh" stop || true
     ;;
   *)

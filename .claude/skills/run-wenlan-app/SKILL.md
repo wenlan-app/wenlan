@@ -27,18 +27,21 @@ daemon this worktree recorded.
 - No sibling checkout needed: the monorepo checkout is the backend, and
   `scripts/resolve-backend-dir.sh` probes the repo root first (an explicit
   `WENLAN_BACKEND_DIR` overrides it; a sibling checkout is only a legacy
-  fallback). The driver defaults `CARGO_TARGET_DIR` to the main checkout (a
-  warm cargo cache) via `git rev-parse --git-common-dir`, so worktrees work
-  out of the box.
+  fallback). The driver defaults `CARGO_TARGET_DIR` to `<unit root>/target`,
+  so a worktree's first `build` is cold (about 1.5 minutes with a warm
+  `sccache`, much longer without one). Do not point it at
+  the main checkout's target to save time: the binary bakes in this
+  worktree's UI port and app id, so a shared target runs whichever checkout
+  built last (see Gotchas).
 - Terminal needs macOS Screen Recording permission (for `shot`).
 
 ## Run (agent path)
 
 ```bash
-.claude/skills/run-wenlan-app/driver.sh build    # sidecars + cargo build (decoupled from tauri dev)
-.claude/skills/run-wenlan-app/driver.sh launch   # isolated daemon + vite up + launch target/debug/wenlan-app directly → "APP UP"
+.claude/skills/run-wenlan-app/driver.sh build    # sidecars + cargo build with this worktree's devUrl/app id baked in
+.claude/skills/run-wenlan-app/driver.sh launch   # isolated daemon + this worktree's vite + launch target/debug/wenlan-app directly → "APP UP"
 .claude/skills/run-wenlan-app/driver.sh shot /tmp/shot.png   # window PNG, works while occluded
-.claude/skills/run-wenlan-app/driver.sh stop     # kills only the dev app, vite, and this worktree's daemon; never :7878
+.claude/skills/run-wenlan-app/driver.sh stop     # kills only this checkout's dev app, vite, and daemon; never :7878 or another session's
 ```
 
 Logs land in `$TMPDIR/wenlan-app.log` and `$TMPDIR/wenlan-vite.log`.
@@ -320,12 +323,28 @@ from an empty one.
   180s for vite — on a cold cache it dies with
   `Error Could not connect to `http://localhost:1420/` after 180s`.
   The driver decouples: sidecars → vite → `cargo build` → direct launch.
-- `app/Cargo.toml` has `default = []` (no `custom-protocol`), so a plain
-  debug `cargo build` produces the dev binary that loads `devUrl` :1420.
-  That URL is baked in at build time and no runtime env var overrides it, so
-  `driver.sh vite` pins vite to :1420 even though the isolated runtime config
-  also carries a worktree-scoped `WENLAN_DEV_UI_PORT` (which `pnpm dev:all`
-  does use, since the tauri CLI can rewrite `devUrl` via `--config`).
+- **A dev app loads whatever frontend answers on its baked-in `devUrl`.**
+  `app/Cargo.toml` has `default = []` (no `custom-protocol`), so a debug build
+  loads `devUrl` at runtime, and no env var overrides it. A plain
+  `cargo build` bakes in `app/tauri.conf.json`'s `:1420`, which every
+  checkout shares: a launch once loaded another checkout's vite from :1420
+  and verified the wrong code with no warning. `driver.sh build` passes
+  `TAURI_CONFIG='{"identifier":"<WENLAN_DEV_APP_ID>","build":{"devUrl":"http://localhost:<WENLAN_DEV_UI_PORT>"}}'`
+  (what `pnpm dev:all` gives the tauri CLI), greps the binary for both
+  values, and writes `target/debug/wenlan-app.driver-stamp`; `launch`
+  rebuilds when the stamp does not match this checkout and port.
+- **Never reuse or kill a vite or app another checkout started.** `vite`
+  checks the UI-port listener's cwd (`lsof -a -p <pid> -d cwd`) and refuses
+  with `REFUSING: :<port> is served by pid … from <other checkout>` instead of
+  reusing it. `launch`/`stop` match the app by its exact `$BIN` command line
+  and a cwd of the unit root, never `pgrep -f 'target/debug/wenlan-app'`.
+  If something foreign holds this worktree's UI port, ask its owner; do not
+  kill it.
+- `ps` and `pgrep` are denied in the sandbox, so `launch` and `stop` must run
+  unsandboxed to see the app; a sandboxed `stop` prints
+  `warning: dev app NOT stopped` rather than claiming success. With
+  `sccache` as the rustc wrapper, `build` must run unsandboxed too (a
+  sandboxed build dies with `exit status: 254` on some crate).
 - The dev updater toast covers the lower-left sidebar and its Install button
   is live. Never click it. Suppress during verification with a TEMP
   `if (import.meta.env.DEV) return null;` at the top of
