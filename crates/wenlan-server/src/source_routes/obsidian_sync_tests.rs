@@ -259,3 +259,35 @@ async fn missing_vault_root_is_unavailable_and_deletes_nothing() {
     ));
     assert_eq!(stored_ids(&db).await, before);
 }
+
+#[tokio::test]
+async fn background_pass_stores_a_bounded_number_of_notes() {
+    use super::{try_sync_obsidian_source, OBSIDIAN_POLL_NOTE_LIMIT};
+
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let (db, _db_dir) = new_test_db().await;
+    let vault = tempfile::tempdir().unwrap();
+    let total = OBSIDIAN_POLL_NOTE_LIMIT + 3;
+    for i in 0..total {
+        write(
+            vault.path(),
+            &format!("note-{i:03}.md"),
+            &note(&format!("Topic{i}")),
+        );
+    }
+    let source = register_vault(vault.path());
+    let gate = ServerState::default().quality_gate;
+
+    try_sync_obsidian_source(db.clone(), &gate, &source)
+        .await
+        .expect("no other sync is running")
+        .expect("first pass succeeds");
+    assert_eq!(stored_ids(&db).await.len(), OBSIDIAN_POLL_NOTE_LIMIT);
+
+    try_sync_obsidian_source(db.clone(), &gate, &source)
+        .await
+        .expect("no other sync is running")
+        .expect("second pass succeeds");
+    assert_eq!(stored_ids(&db).await.len(), total);
+}

@@ -18,6 +18,9 @@
 //!   mtime is remembered so the 30 second poll does not re-read it each time.
 //! - One sync per source runs at a time. The HTTP handler waits for a running
 //!   sync; the scheduler skips a source whose sync is still running.
+//! - The scheduler's pass stores at most [`OBSIDIAN_POLL_NOTE_LIMIT`] changed
+//!   notes, so it never holds the serial poll loop for a whole vault; the
+//!   rest are picked up by the next polls. The HTTP sync has no limit.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -33,6 +36,9 @@ use super::{
     mark_source_unavailable, SyncStatsResponse,
 };
 use crate::error::ServerError;
+
+/// The most changed notes one scheduler pass stores per vault.
+pub(crate) const OBSIDIAN_POLL_NOTE_LIMIT: usize = 50;
 
 type SyncLock = Arc<tokio::sync::Mutex<()>>;
 
@@ -86,11 +92,12 @@ pub(crate) async fn sync_obsidian_source(
 ) -> Result<SyncStatsResponse, ServerError> {
     let lock = sync_lock(&source.id);
     let _guard = lock.lock().await;
-    sync_obsidian_source_locked(db, quality_gate, source).await
+    sync_obsidian_source_locked(db, quality_gate, source, None).await
 }
 
 /// Sync an Obsidian source unless a sync of it is already running, in which
-/// case return `None` at once. Used by the background poll.
+/// case return `None` at once. Used by the background poll, so it stores at
+/// most [`OBSIDIAN_POLL_NOTE_LIMIT`] changed notes.
 pub(crate) async fn try_sync_obsidian_source(
     db: Arc<MemoryDB>,
     quality_gate: &QualityGate,
@@ -98,7 +105,9 @@ pub(crate) async fn try_sync_obsidian_source(
 ) -> Option<Result<SyncStatsResponse, ServerError>> {
     let lock = sync_lock(&source.id);
     let _guard = lock.try_lock().ok()?;
-    Some(sync_obsidian_source_locked(db, quality_gate, source).await)
+    Some(
+        sync_obsidian_source_locked(db, quality_gate, source, Some(OBSIDIAN_POLL_NOTE_LIMIT)).await,
+    )
 }
 
 fn note_chunk_prefix(source_id: &str, path: &str) -> String {
@@ -157,6 +166,7 @@ async fn sync_obsidian_source_locked(
     db: Arc<MemoryDB>,
     quality_gate: &QualityGate,
     source: &Source,
+    note_limit: Option<usize>,
 ) -> Result<SyncStatsResponse, ServerError> {
     let id = source.id.clone();
 
@@ -199,6 +209,7 @@ async fn sync_obsidian_source_locked(
     // threshold comparison stays in consistent "files" units.
     let mut file_errors: usize = 0;
     let mut gdrive_errors: usize = 0;
+    let mut stored_notes: usize = 0;
 
     // Notes that left the vault: a deletion, or the old half of a rename.
     let scanned: HashSet<String> = md_files
@@ -221,6 +232,10 @@ async fn sync_obsidian_source_locked(
     }
 
     for file_path in &md_files {
+        if note_limit.is_some_and(|limit| stored_notes >= limit) {
+            // The rest keep their old sync state and are read next time.
+            break;
+        }
         let file_key = file_path.to_string_lossy().to_string();
         let is_gdrive = is_google_drive_path(file_path);
         let mut count_file_error = |errors: &mut usize| {
@@ -322,6 +337,7 @@ async fn sync_obsidian_source_locked(
         match db.upsert_documents(filtered).await {
             Ok(_) => {
                 ingested += count;
+                stored_notes += 1;
                 // Upsert first, then drop the old tail, so the note is never
                 // missing from search in between.
                 let failures = delete_note_chunks_except(&db, &id, &file_key, &keep).await;

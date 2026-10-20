@@ -1425,7 +1425,7 @@ pub fn spawn_scheduler(
             // only the ordinary resource-admitted pass; the app runs a
             // vault's first import itself when it is connected.
             if directory_scope == Some(DirectorySyncScope::All) {
-                spawn_obsidian_source_syncs(&shared, &db).await;
+                sync_obsidian_sources(&shared, &db).await;
             }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
@@ -2218,12 +2218,13 @@ fn should_poll_obsidian_source(source: &wenlan_types::sources::Source) -> bool {
         && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
 }
 
-/// Start one background sync per pollable Obsidian vault, so a vault that
-/// holds many changed notes never stalls the poll loop while they embed. A
-/// vault whose previous sync (from here or the app) is still running is
-/// skipped. Each task holds its own background maintenance guard, so a
-/// maintenance fence that starts later waits for it.
-async fn spawn_obsidian_source_syncs(shared: &SharedState, db: &Arc<wenlan_core::db::MemoryDB>) {
+/// Sync every pollable Obsidian vault inside the poll, like the Directory
+/// pass. A vault whose sync (started by the app) is still running is
+/// skipped, and each pass embeds at most
+/// [`OBSIDIAN_POLL_NOTE_LIMIT`](crate::source_routes::obsidian_sync::OBSIDIAN_POLL_NOTE_LIMIT)
+/// changed notes per vault, so a large batch of edits spreads over several
+/// polls instead of holding the loop.
+async fn sync_obsidian_sources(shared: &SharedState, db: &Arc<wenlan_core::db::MemoryDB>) {
     let config = wenlan_core::config::load_config();
     let vaults: Vec<_> = config
         .sources
@@ -2233,34 +2234,27 @@ async fn spawn_obsidian_source_syncs(shared: &SharedState, db: &Arc<wenlan_core:
     if vaults.is_empty() {
         return;
     }
-    let (quality_gate, coordinator) = {
+    let quality_gate = {
         let state = shared.read().await;
-        (
-            state.quality_gate.clone(),
-            state.maintenance_coordinator.clone(),
-        )
+        state.quality_gate.clone()
     };
     for source in vaults {
-        let Some(guard) = coordinator.try_begin_background() else {
-            return;
-        };
-        let db = db.clone();
-        let quality_gate = quality_gate.clone();
-        tokio::spawn(async move {
-            let _guard = guard;
-            match crate::source_routes::obsidian_sync::try_sync_obsidian_source(
-                db,
-                &quality_gate,
-                &source,
-            )
-            .await
-            {
-                Some(Ok(_)) | None => {}
-                Some(Err(e)) => {
-                    tracing::warn!("[scheduler] obsidian sync '{}' failed: {e}", source.id);
-                }
+        match crate::source_routes::obsidian_sync::try_sync_obsidian_source(
+            db.clone(),
+            &quality_gate,
+            &source,
+        )
+        .await
+        {
+            Some(Ok(_)) => {}
+            None => tracing::debug!(
+                "[scheduler] obsidian sync '{}' skipped: a sync is already running",
+                source.id
+            ),
+            Some(Err(e)) => {
+                tracing::warn!("[scheduler] obsidian sync '{}' failed: {e}", source.id);
             }
-        });
+        }
     }
 }
 
