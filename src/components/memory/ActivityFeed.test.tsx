@@ -230,7 +230,7 @@ describe("ActivityFeed i18n", () => {
     }
   });
 
-  it("maps legacy backend steep wording to current English note copy", async () => {
+  it("maps legacy backend steep wording to current English page copy", async () => {
     await i18n.changeLanguage("en");
     activityMock.mockResolvedValue([
       activity({
@@ -242,7 +242,7 @@ describe("ActivityFeed i18n", () => {
     renderActivityFeed();
 
     expect(
-      await screen.findByText("Wenlan refreshed 2 notes with new information"),
+      await screen.findByText("Wenlan refreshed 2 pages with new information"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/concept/i)).not.toBeInTheDocument();
   });

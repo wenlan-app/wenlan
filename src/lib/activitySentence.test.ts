@@ -178,7 +178,7 @@ describe("routeSentence", () => {
         job: i18n.t("activityStatus.jobTitle.synthesis"),
         lane: i18n.t(laneKey("on_device")),
       }),
-    ).toBe("Note writing: a-model on this machine.");
+    ).toBe("Page writing: a-model on this machine.");
   });
 });
 
@@ -334,7 +334,7 @@ describe("units", () => {
     };
     expect(say(step("detect", 2, 10))).toBe("2 of 10 memories");
     expect(say(step("confirm", 1, 3))).toBe("1 of 3 entities");
-    expect(say(step("write", 1, 1))).toBe("1 of 1 note");
+    expect(say(step("write", 1, 1))).toBe("1 of 1 page");
   });
 });
 

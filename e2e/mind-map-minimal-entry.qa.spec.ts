@@ -19,7 +19,7 @@ async function start(page:Page,locale:"en"|"zh-Hant"|"zh-Hans"="en",width=1440,m
  await group(page).getByRole("tab",{name:tr.pageCanvas.tabCanvas,exact:true}).click();
  const surface=group(page).locator(".page-canvas-surface");await expect(surface).toBeVisible();
  await expect(group(page).locator(".page-canvas-new-node")).toHaveCount(0);
- await expect(group(page).getByRole("button",{name:/^(Apply to note|Improve|Generate canvas|Preview changes)$/})).toHaveCount(0);
+ await expect(group(page).getByRole("button",{name:/^(Apply to page|Improve|Generate canvas|Preview changes)$/})).toHaveCount(0);
  return {runtime,errors,tr};
 }
 async function openNewNode(frame:Locator){
@@ -51,15 +51,15 @@ test("empty map menu entry retains uncertain-create retry identity",async({page}
  const creates=runtime.calls().filter(c=>c.command==="create_page_map_node");expect(creates).toHaveLength(2);expect(creates[0].args).toEqual(creates[1].args);
  noArticleWrites(runtime);expect(errors.pageErrors).toEqual([]);
 });
-test("N is group-local and does not capture note editing",async({page},info) => {
+test("N is group-local and does not capture page editing",async({page},info) => {
  const {runtime,errors}=await start(page,"en",1920);await openWikiNote(page,"Why fixtures stay deterministic");
  await group(page).getByRole("tab",{name:"Why fixtures stay deterministic",exact:true}).click({button:"right"});await page.getByRole("menuitem",{name:"Move to right group",exact:true}).click();
  const left=group(page),right=group(page,"secondary");
- for(const f of [left,right]){const open=f.getByRole("button",{name:"Open note sidebar",exact:true});if(await open.count())await open.click();await f.getByRole("tab",{name:"Mind map",exact:true}).click();await expect(f.locator(".page-canvas-surface")).toBeVisible();}
+ for(const f of [left,right]){const open=f.getByRole("button",{name:"Open page sidebar",exact:true});if(await open.count())await open.click();await f.getByRole("tab",{name:"Mind map",exact:true}).click();await expect(f.locator(".page-canvas-surface")).toBeVisible();}
  await right.locator(".page-canvas-surface").focus();await page.keyboard.press("n");
  await expect(right.getByRole("textbox",{name:"Name this node",exact:true})).toBeVisible();await expect(left.getByRole("textbox",{name:"Name this node",exact:true})).toHaveCount(0);await page.keyboard.press("Escape");
  await left.getByRole("tab",{name:"Info",exact:true}).click();await expect(left.locator(".page-canvas-surface")).toHaveCount(0);await expect(right.locator(".page-canvas-surface")).toBeVisible();
- const editor=left.getByRole("textbox",{name:"Note editor",exact:true});await editor.click();await page.keyboard.press("n");
+ const editor=left.getByRole("textbox",{name:"Page editor",exact:true});await editor.click();await page.keyboard.press("n");
  await expect(page.getByRole("textbox",{name:"Name this node",exact:true})).toHaveCount(0);await page.keyboard.press("Backspace");
  await page.screenshot({path:info.outputPath("local-controls.png")});expect(runtime.calls().filter(c=>c.command==="create_page_map_node")).toHaveLength(0);
  expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);

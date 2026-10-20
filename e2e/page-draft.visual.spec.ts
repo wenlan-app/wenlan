@@ -30,7 +30,7 @@ async function openPrimaryDestination(
   else await expect(page.getByRole("heading", { level: 1, name: destination })).toBeAttached();
 }
 
-async function controlMetrics(page: Page, name: "New note" | "New") {
+async function controlMetrics(page: Page, name: "New page" | "New") {
   return page.getByRole("button", { name, exact: true }).evaluate((element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -58,7 +58,7 @@ test("captures direct Page authoring from the tab action and Space detail", asyn
 
   await openPrimaryDestination(page, "Wiki");
   await settle(page);
-  const newPageMetrics = await controlMetrics(page, "New note");
+  const newPageMetrics = await controlMetrics(page, "New page");
   await page.screenshot({
     path: path.join(evidenceDir, "wiki-1280x900.png"),
     fullPage: false,
@@ -66,7 +66,7 @@ test("captures direct Page authoring from the tab action and Space detail", asyn
 
   await page.locator(".note-tab-create").click();
   await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeFocused();
-  const wikiDraftForm = page.getByRole("region", { name: "New note", exact: true });
+  const wikiDraftForm = page.getByRole("region", { name: "New page", exact: true });
   await expect(wikiDraftForm.getByRole("combobox")).toHaveCount(0);
   await expect(wikiDraftForm.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
   await settle(page);
@@ -98,9 +98,9 @@ test("captures direct Page authoring from the tab action and Space detail", asyn
     fullPage: false,
   });
 
-  await page.getByRole("button", { name: "New note", exact: true }).click();
+  await page.getByRole("button", { name: "New page", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Title", exact: true })).toBeVisible();
-  const spaceDraftForm = page.getByRole("region", { name: "New note", exact: true });
+  const spaceDraftForm = page.getByRole("region", { name: "New page", exact: true });
   await expect(spaceDraftForm.getByRole("combobox")).toHaveCount(0);
   await expect(spaceDraftForm.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
   await page.getByRole("textbox", { name: "Title", exact: true }).fill("Space-scoped draft");
@@ -132,8 +132,8 @@ test("keeps the editor axis stable on wide screens and title conflicts readable 
     .getByRole("button", { name: "Wenlan", exact: true })
     .click();
   await expect(page.getByRole("heading", { level: 1, name: "Wenlan" })).toBeVisible();
-  await page.getByRole("button", { name: "New note", exact: true }).click();
-  await expect(page.getByRole("region", { name: "New note", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "New page", exact: true }).click();
+  await expect(page.getByRole("region", { name: "New page", exact: true })).toBeVisible();
   const draftContentEdge = await page.locator(".page-draft-editor").evaluate((element) => {
     const rect = element.getBoundingClientRect();
     return rect.x + Number.parseFloat(getComputedStyle(element).paddingLeft);
@@ -153,13 +153,13 @@ test("keeps the editor axis stable on wide screens and title conflicts readable 
     .toMatchObject({ space: "Wenlan" });
   await page.locator(".note-tab-create").click();
   await expect(page.getByRole("alert")).toContainText(
-    "A note with this title already exists.",
+    "A page with this title already exists.",
   );
 
   await page.setViewportSize({ width: 375, height: 812 });
   const alert = page.getByRole("alert");
   await expect(alert.getByRole("button", { name: "Open existing", exact: true })).toHaveCount(0);
-  await expect(alert.getByRole("button", { name: "Rename note", exact: true })).toBeVisible();
+  await expect(alert.getByRole("button", { name: "Rename page", exact: true })).toBeVisible();
   await expect(alert).toHaveCSS("flex-direction", "column");
   const overflow = await page.evaluate(() => ({
     clientWidth: document.documentElement.clientWidth,

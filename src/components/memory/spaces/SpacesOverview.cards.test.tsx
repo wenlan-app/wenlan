@@ -62,7 +62,7 @@ describe("SpacesOverview cards lens", () => {
     expect(within(workCard).queryByText("★")).not.toBeInTheDocument();
 
     expect(within(workCard).getByText("Projects and planning")).toBeInTheDocument();
-    expect(within(workCard).getByTestId("space-card-pages")).toHaveTextContent("2 notes");
+    expect(within(workCard).getByTestId("space-card-pages")).toHaveTextContent("2 pages");
     expect(within(workCard).queryByTestId("space-card-memories")).not.toBeInTheDocument();
     expect(within(workCard).queryByTestId("space-card-entities")).not.toBeInTheDocument();
     expect(workCard.querySelector("time")).toBeNull();
@@ -169,7 +169,7 @@ describe("SpacesOverview cards lens", () => {
     expect(card.querySelector("time")).toBeNull();
     expect(within(card).queryByTestId("space-card-memories")).not.toBeInTheDocument();
     expect(within(card).queryByTestId("space-card-entities")).not.toBeInTheDocument();
-    expect(within(card).getByTestId("space-card-pages")).toHaveTextContent("0 notes");
+    expect(within(card).getByTestId("space-card-pages")).toHaveTextContent("0 pages");
   });
 
   it("filters cards by name", async () => {

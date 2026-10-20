@@ -237,7 +237,7 @@ describe("CitationChip", () => {
     expect(screen.getByTestId("citation-popover-skeleton")).toBeInTheDocument();
   });
 
-  it("notes unverified status in the popover", () => {
+  it("pages unverified status in the popover", () => {
     renderChip({ citation: cite({ status: "unverified" }) });
     fireEvent.focus(screen.getByRole("button", { name: /Memory/ }));
     expect(screen.getByText(/unverified/i)).toBeInTheDocument();
@@ -333,7 +333,7 @@ describe("CitationChip", () => {
   it("explains that authored content survives a rebuild", () => {
     renderChip({ citation: cite({ source_kind: "authored" }), sourceMemory: null });
     fireEvent.focus(screen.getByRole("button", { name: /Written here/ }));
-    expect(screen.getByText(/kept unchanged when the note is rebuilt/i)).toBeInTheDocument();
+    expect(screen.getByText(/kept unchanged when the page is rebuilt/i)).toBeInTheDocument();
   });
 });
 

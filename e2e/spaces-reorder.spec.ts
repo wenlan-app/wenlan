@@ -5,7 +5,7 @@ import { createSpacesNavigationFixture } from './fixtures/spacesNavigation';
 async function setup(page: Page, delay = 0) {
     const f = createSpacesNavigationFixture();
     const base = f.spaces[0];
-    const fixture = { ...f, spaces: [{ ...base, id: 'star', name: 'Starred', starred: true, sort_order: 0 }, ...['Alpha', 'Bravo', 'Charlie'].map((name, i) => ({ ...base, id: name.toLowerCase(), name, starred: false, sort_order: i + 1, description: i === 1 ? 'A deliberately longer description that wraps in the narrow layout so dragging also accounts for rows with different heights.' : 'Notes and project references.' }))], pages: f.pages.map((p, i) => ({ ...p, space: i < 2 ? 'Alpha' : 'Bravo' })) };
+    const fixture = { ...f, spaces: [{ ...base, id: 'star', name: 'Starred', starred: true, sort_order: 0 }, ...['Alpha', 'Bravo', 'Charlie'].map((name, i) => ({ ...base, id: name.toLowerCase(), name, starred: false, sort_order: i + 1, description: i === 1 ? 'A deliberately longer description that wraps in the narrow layout so dragging also accounts for rows with different heights.' : 'Pages and project references.' }))], pages: f.pages.map((p, i) => ({ ...p, space: i < 2 ? 'Alpha' : 'Bravo' })) };
     const errors = collectBrowserErrors(page);
     const controller = await installTauriMock(page, { locale: 'en', fixture, rawActions: [], delays: { reorder_space: delay }, localStorage: { 'wenlan-theme': 'dark', 'wenlan-spaces-view-mode': 'rows' } });
     await page.goto('/');
@@ -51,7 +51,7 @@ for (const width of [1280, 375])
         }).__dropFrames as number[]);
         expect(Math.max(...samples), 'drop should not overshoot when canonical order replaces the preview').toBeLessThanOrEqual(Math.max(lifted.y, c.y + c.height - a.height) + 12);
         await expect(page.locator('.spaces-table-head')).toHaveCount(0);
-        await expect(row(page, 'alpha')).toContainText('2 notes');
+        await expect(row(page, 'alpha')).toContainText('2 pages');
         await page.screenshot({ path: info.outputPath('after-drop.png') });
         expect(errors.pageErrors).toEqual([]);
         expect(errors.consoleErrors).toEqual([]);
@@ -102,7 +102,7 @@ test('upward filtered dragging and reduced motion keep the same saving contract'
     await page.setViewportSize({ width: 1280, height: 960 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const { controller, errors } = await setup(page);
-    await page.getByLabel('Filter spaces').fill('Notes and project');
+    await page.getByLabel('Filter spaces').fill('Pages and project');
     await expect(row(page, 'bravo')).toHaveCount(0);
     const target = await box(row(page, 'alpha'));
     const p = await begin(page, 'charlie');

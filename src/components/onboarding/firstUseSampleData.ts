@@ -140,7 +140,7 @@ const enData: SampleDataset = {
   ],
   page: {
     title: "An unhurried Tainan weekend",
-    subtitle: "From a chat decision and a packing list to one note.",
+    subtitle: "From a chat decision and a packing list to one page.",
     paragraphs: [
       {
         text: "Take the train to Tainan, leaving Saturday morning.",
@@ -162,7 +162,7 @@ const enData: SampleDataset = {
   },
   ai: {
     question: "What's left before the Tainan weekend?",
-    answer: "From your note “An unhurried Tainan weekend”: book a room near the station, then confirm the Saturday morning train.",
+    answer: "From your page “An unhurried Tainan weekend”: book a room near the station, then confirm the Saturday morning train.",
   },
   commands: {
     chatgpt: {

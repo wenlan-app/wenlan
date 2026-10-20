@@ -52,7 +52,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
   expect(overflow.main).toBeLessThanOrEqual(1);
   if (wikiLibrary) {
     const reading=page.locator(".wiki-workspace-reading");
-    await expect(reading.getByRole("heading", { level: 1, name: "Open a note", exact: true })).toBeVisible();
+    await expect(reading.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
     await expect(reading.locator(".asset-card, .wiki-table, .wiki-folder-lenses")).toHaveCount(0);
     await expect(reading).not.toContainText("Fixture architecture");
     const control=page.locator(".note-tab-create");
@@ -62,7 +62,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     expect(box.height).toBeGreaterThanOrEqual(32);expect(box.width).toBeGreaterThanOrEqual(32);
     const contrast=await renderedContrast(page,[
       {selector:".wiki-overview h1",label:"Workspace title",foregroundProperty:"color",minimum:4.5},
-      {selector:".note-tab-create",label:"New note icon",foregroundProperty:"color",minimum:4.5},
+      {selector:".note-tab-create",label:"New page icon",foregroundProperty:"color",minimum:4.5},
     ]);
     for(const result of contrast)expect(result.ratio,result.label).toBeGreaterThanOrEqual(result.minimum);
   } else if (entityPage) {
@@ -116,21 +116,21 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     await expect(dossier.getByRole("heading", { level: 1, name: "Wenlan", exact: true })).toBeVisible();
     await expect(dossier.getByRole("textbox", { name: "Edit description" })).toHaveValue("Editorial memory system");
     await expect(dossier.locator(".space-dossier-metrics")).toHaveCount(0);
-    const recent = dossier.getByRole("region", { name: "Notes", exact: true });
+    const recent = dossier.getByRole("region", { name: "Pages", exact: true });
     await expect(recent.locator(".space-dossier-page-list > button")).toHaveCount(6);
     await expect(recent.getByRole("button").first()).toContainText("Fixture architecture");
     await expect(recent.locator(".space-dossier-page-summary")).toHaveCount(6);
     await expect(recent.locator(".space-dossier-page-meta, time")).toHaveCount(0);
     await expect(dossier.locator(".space-dossier-rail")).toHaveCount(0);
     await expect(dossier.locator(".space-dossier-disclosure,.space-dossier-archive,.space-dossier-entities,.space-dossier-review")).toHaveCount(0);
-    await expect(dossier.getByRole("tab", { name: "Notes" })).toHaveAttribute("aria-selected", "true");
+    await expect(dossier.getByRole("tab", { name: "Pages" })).toHaveAttribute("aria-selected", "true");
     await expect(dossier.getByRole("tab", { name: "Sources" })).toBeVisible();
     await dossier.getByRole("button", { name: "Actions for Wenlan" }).click();
-    await expect(dossier.getByRole("menuitem", { name: "Review note changes" })).toBeVisible();
+    await expect(dossier.getByRole("menuitem", { name: "Review page changes" })).toBeVisible();
     await page.keyboard.press("Escape");
     await page.locator("main").evaluate((node) => { node.scrollTop = 0; });
     await expect.poll(() => page.locator("main").evaluate((node) => node.scrollTop)).toBe(0);
-    const create = dossier.getByRole("button", { name: "New note", exact: true });
+    const create = dossier.getByRole("button", { name: "New page", exact: true });
     await expect(create).toBeVisible();
     const control = await create.evaluate((node) => ({
       fontSize: Number.parseFloat(getComputedStyle(node).fontSize),
@@ -150,7 +150,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     }
     const recentBox = (await recent.boundingBox())!;
     const tabsBox = (await dossier.locator(".space-project-tabs").boundingBox())!;
-    expect(recentBox.y, "notes follow the two-tab project navigation at every width").toBeGreaterThanOrEqual(tabsBox.y + tabsBox.height);
+    expect(recentBox.y, "pages follow the two-tab project navigation at every width").toBeGreaterThanOrEqual(tabsBox.y + tabsBox.height);
     const contrast = await renderedContrast(page, [
       { selector: ".space-dossier h1", label: "Space title", foregroundProperty: "color", minimum: 4.5 },
       { selector: ".space-dossier-new-page", label: "Space creation control", foregroundProperty: "color", minimum: 4.5 },
@@ -232,7 +232,7 @@ async function openSpaces(page: Page): Promise<void> {
 async function openWiki(page: Page): Promise<void> {
   await openSidebar(page);
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 }
 
 async function captureFourSurfaces(page: Page, label: string): Promise<void> {
@@ -279,7 +279,7 @@ test("captures the complete responsive and native-reference matrix", async ({ pa
   await openSpaces(page);
   const wenlanRow = page.getByTestId("space-row-space-wenlan");
   const pageCount = wenlanRow.getByTestId("space-pages");
-  await expect(pageCount).toHaveText("6 notes");
+  await expect(pageCount).toHaveText("6 pages");
   await expect(pageCount).toBeHidden();
   await page.getByLabel("Filter spaces").focus();
   // Follow the live tab order through the collection controls to the first Space.

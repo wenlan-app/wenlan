@@ -11,7 +11,7 @@ export async function openCanvas(page: Page): Promise<void> {
     .getByRole("button", { name: "Wiki", exact: true })
     .click();
   await openWikiNote(page, "Fixture architecture");
-  await expect(page.getByRole("textbox", { name: "Note editor", exact: true })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();
   await openPageTool(page, "Mind map");
   await expect(page.getByRole("region", { name: "Canvas for Fixture architecture" })).toBeVisible();
 }

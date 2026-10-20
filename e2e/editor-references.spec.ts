@@ -21,7 +21,7 @@ async function openReferences(page: Page) {
   const panel = directory.locator('.notes-list-panel');
   await panel.getByRole('button', { name: 'Work', exact: true }).click();
   await panel.getByRole('button', { name: 'Open Three references', exact: true }).click();
-  const editor = page.getByRole('textbox', { name: 'Note editor', exact: true });
+  const editor = page.getByRole('textbox', { name: 'Page editor', exact: true });
   await expect(editor).toBeEditable();
   await page.mouse.move(1, 1);
   await editor.evaluate(el => {

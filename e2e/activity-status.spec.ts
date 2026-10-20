@@ -325,11 +325,11 @@ test("a failed step is the only attention state on the Activity entry", async ({
   await button.click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByTestId("activity-summary-open").click();
-  await expect(page.getByTestId("activity-now-failed")).toHaveText("2 notes could not be updated.");
+  await expect(page.getByTestId("activity-now-failed")).toHaveText("2 pages could not be updated.");
 });
 
 
-test("summary Escape keeps the note editor open and returns focus to Activity", async ({ page }) => {
+test("summary Escape keeps the page editor open and returns focus to Activity", async ({ page }) => {
   await installTauriMock(page, { locale: "en", rawActions: [] });
   await installPr4ActivityFixture(page, IDLE_ACTIVITY);
   await page.goto("/");

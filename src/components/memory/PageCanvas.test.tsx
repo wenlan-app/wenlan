@@ -289,15 +289,15 @@ describe("PageCanvas", () => {
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));
     renderCanvas();
     await screen.findByText("Page One");
-    render(<button type="button">Back to note</button>);
-    const control = screen.getByRole("button", { name: "Back to note" });
+    render(<button type="button">Back to page</button>);
+    const control = screen.getByRole("button", { name: "Back to page" });
     control.focus();
 
     expect(fireEvent.keyDown(control, { key })).toBe(true);
     expect(document.querySelector(".page-canvas-node-name input")).toBeNull();
   });
 
-  it("leaves selected nodes untouched by neighboring page menus and note shortcuts", async () => {
+  it("leaves selected nodes untouched by neighboring page menus and page shortcuts", async () => {
     const { getPageMap, deletePageMapNode, patchPageMapNode } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));
     (deletePageMapNode as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -305,13 +305,13 @@ describe("PageCanvas", () => {
     await user.click(await screen.findByRole("button", { name: "select n_sec" }));
     const node = screen.getByTestId("react-flow").querySelector('[data-node-id="n_sec"]')!;
     const position = { x: node.getAttribute("data-x"), y: node.getAttribute("data-y") };
-    render(<><div role="menu"><button role="menuitem">Page information</button></div><p tabIndex={0}>Readable center note</p></>);
+    render(<><div role="menu"><button role="menuitem">Page information</button></div><p tabIndex={0}>Readable center page</p></>);
     const menuItem = screen.getByRole("menuitem", { name: "Page information" });
     menuItem.focus();
     for (const key of ["ArrowDown", "Delete", "Backspace", "F2", "Enter", "Tab", "Escape"]) {
       expect(fireEvent.keyDown(menuItem, { key })).toBe(true);
     }
-    const note = screen.getByText("Readable center note");
+    const note = screen.getByText("Readable center page");
     note.focus();
     expect(fireEvent.keyDown(note, { key: "a", metaKey: true })).toBe(true);
     expect(fireEvent.keyDown(note, { key: "a", ctrlKey: true })).toBe(true);
@@ -738,7 +738,7 @@ describe("PageCanvas", () => {
     expect(hints.textContent).toContain("F2");
     expect(hints.textContent).toContain("Rename");
     // The one thing the keys themselves cannot tell you.
-    expect(hints.textContent).toContain("Nodes stay in this mind map without changing the note.");
+    expect(hints.textContent).toContain("Nodes stay in this mind map without changing the page.");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 
@@ -828,7 +828,7 @@ describe("PageCanvas", () => {
   });
 
   it.each(["Tab", "Enter"] as const)(
-    "creates an independent idea through the %s canvas path without writing the note",
+    "creates an independent idea through the %s canvas path without writing the page",
     async (key) => {
     const { getPageMap, createPageMapNode, updatePage } = await tauri();
     (getPageMap as ReturnType<typeof vi.fn>).mockResolvedValue(makeMap({ independent_ideas: true }));
@@ -994,7 +994,7 @@ describe("PageCanvas", () => {
     await user.click(await screen.findByRole("button", { name: "select n_root" }));
     fireEvent.keyDown(surface(), { key: "Delete" });
     expect(
-      await screen.findByText("The center box is the note itself. It can't be deleted."),
+      await screen.findByText("The center box is the page itself. It can't be deleted."),
     ).toBeTruthy();
     expect(deletePageMapNode).not.toHaveBeenCalled();
 

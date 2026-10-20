@@ -6,8 +6,8 @@ import { NoteTabs } from "./NoteTabs";
 import type { NoteTab } from "./noteTabState";
 
 const tabs: NoteTab[] = [
-  { key: "note:one", view: { kind: "page", pageId: "one" }, title: "First note" },
-  { key: "note:two", view: { kind: "page", pageId: "two" }, title: "Second note" },
+  { key: "note:one", view: { kind: "page", pageId: "one" }, title: "First page" },
+  { key: "note:two", view: { kind: "page", pageId: "two" }, title: "Second page" },
 ];
 
 function renderTabs(overrides: Partial<React.ComponentProps<typeof NoteTabs>> = {}) {
@@ -49,7 +49,7 @@ describe("NoteTabs", () => {
     expect(screen.getByRole("button", { name: "Wiki home" })).toHaveAttribute("data-active", "false");
   });
 
-  it("keeps the home button when no note is open and out of the tab arrow-key order", async () => {
+  it("keeps the home button when no page is open and out of the tab arrow-key order", async () => {
     const user = userEvent.setup();
     renderTabs({ tabs: [], activeKey: undefined, onHome: vi.fn(), homeActive: true });
     expect(screen.getByRole("button", { name: "Wiki home" })).toBeInTheDocument();
@@ -57,10 +57,10 @@ describe("NoteTabs", () => {
     cleanup();
 
     renderTabs({ onHome: vi.fn() });
-    const first = screen.getByRole("tab", { name: "First note" });
+    const first = screen.getByRole("tab", { name: "First page" });
     first.focus();
     await user.keyboard("{ArrowLeft}");
-    expect(screen.getByRole("tab", { name: "Second note" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Second page" })).toHaveFocus();
     await user.keyboard("{Home}");
     expect(first).toHaveFocus();
   });
@@ -78,7 +78,7 @@ describe("NoteTabs", () => {
   it("opens the selected tab's action from the keyboard and restores tab focus on Escape", async () => {
     const user = userEvent.setup();
     const { props } = renderTabs({ onMoveToOtherGroup: vi.fn(), moveLabel: "Move to other group" });
-    const tab = screen.getByRole("tab", { name: "First note" });
+    const tab = screen.getByRole("tab", { name: "First page" });
     tab.focus();
 
     await user.keyboard("{Shift>}{F10}{/Shift}");
@@ -94,7 +94,7 @@ describe("NoteTabs", () => {
     const user = userEvent.setup();
     const onMoveToOtherGroup = vi.fn();
     const { props } = renderTabs({ onMoveToOtherGroup, moveLabel: "Move to other group" });
-    const tab = screen.getByRole("tab", { name: "Second note" });
+    const tab = screen.getByRole("tab", { name: "Second page" });
 
     fireEvent.contextMenu(tab, { clientX: 20, clientY: 30 });
     await user.click(await screen.findByRole("menuitem", { name: "Move to other group" }));
@@ -105,28 +105,28 @@ describe("NoteTabs", () => {
   });
 
   it("uses a unique content target and supplied tab list label", () => {
-    renderTabs({ contentId: "group-two-content", tabListLabel: "Notes in second group" });
+    renderTabs({ contentId: "group-two-content", tabListLabel: "Pages in second group" });
 
-    expect(screen.getByRole("tablist", { name: "Notes in second group" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "First note" })).toHaveAttribute("aria-controls", "group-two-content");
-    expect(screen.getByRole("tab", { name: "Second note" })).toHaveAttribute("aria-controls", "group-two-content");
+    expect(screen.getByRole("tablist", { name: "Pages in second group" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "First page" })).toHaveAttribute("aria-controls", "group-two-content");
+    expect(screen.getByRole("tab", { name: "Second page" })).toHaveAttribute("aria-controls", "group-two-content");
   });
 
   it("retains arrow navigation, close focus, and new tab behavior", async () => {
     const user = userEvent.setup();
     const { props, rerender } = renderTabs();
-    const first = screen.getByRole("tab", { name: "First note" });
-    const second = screen.getByRole("tab", { name: "Second note" });
+    const first = screen.getByRole("tab", { name: "First page" });
+    const second = screen.getByRole("tab", { name: "Second page" });
 
     first.focus();
     await user.keyboard("{ArrowRight}");
     expect(second).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Close First note" }));
+    await user.click(screen.getByRole("button", { name: "Close First page" }));
     expect(props.onClose).toHaveBeenCalledWith(tabs[0]);
 
     rerender(<NoteTabs {...props} tabs={[tabs[1]]} activeKey={tabs[1].key} />);
-    await waitFor(() => expect(screen.getByRole("tab", { name: "Second note" })).toHaveFocus());
-    await user.click(screen.getByRole("button", { name: "New note" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Second page" })).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "New page" }));
     expect(props.onCreate).toHaveBeenCalledOnce();
   });
 });
@@ -136,7 +136,7 @@ describe("NoteTabs window dragging", () => {
     renderTabs({ onHome: vi.fn() });
     expect(document.querySelector(".note-tabs")).toHaveAttribute("data-tauri-drag-region");
     expect(screen.getByRole("tablist")).toHaveAttribute("data-tauri-drag-region");
-    expect(screen.getByRole("tab", { name: "First note" })).not.toHaveAttribute("data-tauri-drag-region");
+    expect(screen.getByRole("tab", { name: "First page" })).not.toHaveAttribute("data-tauri-drag-region");
     expect(screen.getByRole("button", { name: "Wiki home" })).not.toHaveAttribute("data-tauri-drag-region");
   });
 });

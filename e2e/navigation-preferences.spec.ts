@@ -58,7 +58,7 @@ for (const copy of languages) {
     const defaults = ["Wiki", copy.spaces, copy.graph, copy.sources, copy.more];
     await expect.poll(railNames).toEqual(defaults);
     await nav.getByRole("button", { name: "Wiki", exact: true }).click();
-    await expect(page.getByRole("heading", { name: copy.locale === "en" ? "Open a note" : copy.locale === "zh-Hant" ? "開啟筆記" : "打开笔记", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: copy.locale === "en" ? "Open a page" : copy.locale === "zh-Hant" ? "開啟筆記" : "打开笔记", level: 1 })).toBeVisible();
     await capture(page, `${copy.locale}-${copy.theme}-default`);
 
     await moreButton.click();
@@ -146,7 +146,7 @@ for (const copy of languages) {
     await expect(page.locator("[data-sidebar-toggle]")).toBeFocused();
     await page.locator("[data-sidebar-toggle]").click();
     await nav.locator('.notes-primary-link[aria-label="Wiki"]').click();
-    await expect(page.getByRole("heading", { name: copy.locale === "en" ? "Open a note" : copy.locale === "zh-Hant" ? "開啟筆記" : "打开笔记", level: 1 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: copy.locale === "en" ? "Open a page" : copy.locale === "zh-Hant" ? "開啟筆記" : "打开笔记", level: 1 })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(moreButton).toBeVisible();
@@ -155,7 +155,7 @@ for (const copy of languages) {
   });
 }
 
-test("closing More keeps the note in its writing session", async ({ page }) => {
+test("closing More keeps the page in its writing session", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await installTauriMock(page, { locale: "en", rawActions: [] });

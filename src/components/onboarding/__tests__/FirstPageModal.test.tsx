@@ -20,10 +20,10 @@ describe("FirstPageModal", () => {
     expect(screen.getByText(/compiled from 3 memories/i)).toBeInTheDocument();
   });
 
-  it("calls onOpen when Open note clicked", () => {
+  it("calls onOpen when Open page clicked", () => {
     const onOpen = vi.fn();
     render(<FirstPageModal page={sampleConcept} onOpen={onOpen} onDismiss={vi.fn()} />);
-    fireEvent.click(screen.getByRole("button", { name: /open note/i }));
+    fireEvent.click(screen.getByRole("button", { name: /open page/i }));
     expect(onOpen).toHaveBeenCalledWith("c1");
   });
 
@@ -50,7 +50,7 @@ describe("FirstPageModal", () => {
   it("traps Tab at the last focusable element (cycles to first)", () => {
     render(<FirstPageModal page={sampleConcept} onOpen={vi.fn()} onDismiss={vi.fn()} />);
     const dismissBtn = screen.getByRole("button", { name: /dismiss/i });
-    const openBtn = screen.getByRole("button", { name: /open note/i });
+    const openBtn = screen.getByRole("button", { name: /open page/i });
     // Move focus to the last element.
     openBtn.focus();
     expect(document.activeElement).toBe(openBtn);
@@ -62,7 +62,7 @@ describe("FirstPageModal", () => {
   it("traps Shift+Tab at the first focusable element (cycles to last)", () => {
     render(<FirstPageModal page={sampleConcept} onOpen={vi.fn()} onDismiss={vi.fn()} />);
     const dismissBtn = screen.getByRole("button", { name: /dismiss/i });
-    const openBtn = screen.getByRole("button", { name: /open note/i });
+    const openBtn = screen.getByRole("button", { name: /open page/i });
     // First element should already be focused on mount.
     expect(document.activeElement).toBe(dismissBtn);
     // Shift+Tab at the start should cycle to the last focusable.

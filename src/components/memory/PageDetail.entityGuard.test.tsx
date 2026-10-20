@@ -72,8 +72,8 @@ describe("PageDetail entity-guard delete error", () => {
 
     try {
       await screen.findByText("libSQL Architecture");
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
 
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent("This page belongs to the entity 'Ada Lovelace'");
@@ -94,11 +94,11 @@ describe("PageDetail entity-guard delete error", () => {
 
     try {
       await screen.findByText("libSQL Architecture");
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-      await user.click(screen.getByRole("menuitem", { name: "Delete note" }));
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+      await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
 
       const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent("Could not delete this note. Try again.");
+      expect(alert).toHaveTextContent("Could not delete this page. Try again.");
       expect(screen.queryByRole("button", { name: "Open the topic" })).toBeNull();
     } finally {
       confirmSpy.mockRestore();

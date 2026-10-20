@@ -11,7 +11,7 @@ async function start(page: Page) {
   await installTauriMock(page, { locale: 'en', rawActions: [], preserveLocalStorage: true,
     localStorage: { 'wenlan-theme': 'light', [key]: JSON.stringify({ version: 1, visible: ['pages','spaces','graph','sources'], sidebar: { visible: true, mode: 'labels' } }) } });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Open a note', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Open a page', exact: true })).toBeVisible();
   await expect(seam(page)).toBeVisible();
 }
 async function stored(page: Page) { return page.evaluate(k => JSON.parse(localStorage.getItem(k)!), key); }
@@ -109,7 +109,7 @@ test('keyboard resize reaches icon and hidden states; narrow drawer retains desk
   await page.setViewportSize({ width: 1280, height: 900 }); await widthMatches(page, 340);
 });
 
-test('resizing during note editing preserves the editor and content', async ({ page }) => {
+test('resizing during page editing preserves the editor and content', async ({ page }) => {
   await start(page);
   await openWikiNote(page, "Fixture architecture");
   const editor = page.locator('.cm-content[contenteditable=true]');

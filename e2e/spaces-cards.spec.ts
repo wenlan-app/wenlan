@@ -44,7 +44,7 @@ test("Spaces cards lens stays inside the viewport", async ({ browser }) => {
     await expect(cards.locator(".asset-card")).toHaveCount(4);
 
     const first = cards.locator(".asset-card").first();
-    await expect(first).toContainText("6 notes");
+    await expect(first).toContainText("6 pages");
     await expect(first).not.toContainText("205 memories");
     await expect(first).not.toContainText("7 topics");
 

@@ -67,7 +67,7 @@ function generatedDraftTitle(content: string): string {
     title = title.split(/\p{White_Space}+/u).filter(Boolean).join(" ");
     if (title) return Array.from(title).slice(0, 80).join("");
   }
-  return "Untitled note";
+  return "Untitled page";
 }
 
 function nextFixtureTimestamp(previous: string | null | undefined): string {
@@ -1152,7 +1152,7 @@ export class TauriMockRuntime {
       throw new TauriMockArgumentError(command, "req.notes");
     }
     if (request.notes !== undefined && new TextEncoder().encode(request.notes).length > 65_536) {
-      throw new Error("notes exceed 65536 UTF-8 bytes");
+      throw new Error("pages exceed 65536 UTF-8 bytes");
     }
     if (request.page_ids !== undefined && !Array.isArray(request.page_ids)) {
       throw new TauriMockArgumentError(command, "req.page_ids");

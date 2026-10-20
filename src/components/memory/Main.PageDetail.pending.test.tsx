@@ -99,8 +99,8 @@ vi.mock("./PageDetail", async () => {
       >
         PageDetail back
       </button>
-      <div aria-label="Note editor" contentEditable role="textbox" />
-      <textarea aria-label="Page notes" />
+      <div aria-label="Page editor" contentEditable role="textbox" />
+      <textarea aria-label="Page pages" />
       <select aria-label="Block style" defaultValue="paragraph">
         <option value="paragraph">Paragraph</option>
       </select>
@@ -302,7 +302,7 @@ describe("Main published PageDetail navigation guards", () => {
     const { user } = renderMain({ initialPageId: "page-one", onRegisterQuitGuard: guard => { quitGuard = guard; } });
     await user.pointer({ keys: "[MouseRight]", target: document.querySelector<HTMLElement>('[data-note-tab-group="primary"] [role="tab"][aria-selected="true"]')! });
     await user.click(screen.getByRole("menuitem", { name: "Move to right group" }));
-    const right = await screen.findByRole("region", { name: "Right notes" });
+    const right = await screen.findByRole("region", { name: "Right pages" });
     await user.click(screen.getByRole("button", { name: "Open second page" }));
     expect(within(right).getByRole("heading", { name: "Pending page" })).toBeInTheDocument();
     flushHarness.flush.mockResolvedValue(false);
@@ -342,7 +342,7 @@ describe("Main published PageDetail navigation guards", () => {
     await expect(quitGuard!()).resolves.toBe(false);
   });
 
-  it("blocks Back, Escape, and tab close while a note move waits, then remains recoverable", async () => {
+  it("blocks Back, Escape, and tab close while a page move waits, then remains recoverable", async () => {
     flushHarness.enabled = true;
     let settle!: (saved: boolean) => void;
     const saving = new Promise<boolean>((resolve) => { settle = resolve; });
@@ -356,16 +356,16 @@ describe("Main published PageDetail navigation guards", () => {
 
     await user.click(screen.getByRole("button", { name: i18n.t("main.back") }));
     fireEvent.keyDown(window, { key: "Escape" });
-    await user.click(screen.getByRole("button", { name: "Close Untitled note" }));
+    await user.click(screen.getByRole("button", { name: "Close Untitled page" }));
     expect(flushHarness.flush).toHaveBeenCalledOnce();
     await act(async () => settle(true));
 
-    const right = await screen.findByRole("region", { name: "Right notes" });
+    const right = await screen.findByRole("region", { name: "Right pages" });
     expect(within(right).getByRole("heading", { name: "Pending page" })).toBeInTheDocument();
     await expect(quitGuard!()).resolves.toBe(true);
   });
 
-  it("keeps an initial Page destination pending until a note move completes", async () => {
+  it("keeps an initial Page destination pending until a page move completes", async () => {
     flushHarness.enabled = true;
     let settle!: (saved: boolean) => void;
     const saving = new Promise<boolean>((resolve) => { settle = resolve; });
@@ -402,7 +402,7 @@ describe("Main published PageDetail navigation guards", () => {
     const { user } = renderMain();
     await user.click(screen.getByRole("button", { name: "Wiki directory second page" }));
     expect(await screen.findByText("Second page")).toBeInTheDocument();
-    const tabs = screen.getByRole("tablist", { name: "Open notes" });
+    const tabs = screen.getByRole("tablist", { name: "Open pages" });
     expect(within(tabs).getAllByRole("tab")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "Delete current page" }));
@@ -411,11 +411,11 @@ describe("Main published PageDetail navigation guards", () => {
     expect(screen.getByRole("button", { name: i18n.t("main.forward") })).toBeDisabled();
   });
 
-  it("closes a note deleted from the Wiki directory and leaves the previous note on screen", async () => {
+  it("closes a page deleted from the Wiki directory and leaves the previous page on screen", async () => {
     const { user } = renderMain();
     await user.click(screen.getByRole("button", { name: "Wiki directory second page" }));
     expect(await screen.findByText("Second page")).toBeInTheDocument();
-    const tabs = screen.getByRole("tablist", { name: "Open notes" });
+    const tabs = screen.getByRole("tablist", { name: "Open pages" });
     expect(within(tabs).getAllByRole("tab")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "Delete second page from directory" }));
@@ -425,11 +425,11 @@ describe("Main published PageDetail navigation guards", () => {
     expect(screen.getByRole("button", { name: i18n.t("main.forward") })).toBeDisabled();
   });
 
-  it("closes a note deleted from the Wiki directory that is open in a background tab", async () => {
+  it("closes a page deleted from the Wiki directory that is open in a background tab", async () => {
     const { user } = renderMain();
     await user.click(screen.getByRole("button", { name: "Wiki directory second page" }));
     expect(await screen.findByText("Second page")).toBeInTheDocument();
-    const tabs = screen.getByRole("tablist", { name: "Open notes" });
+    const tabs = screen.getByRole("tablist", { name: "Open pages" });
     await user.click(within(tabs).getAllByRole("tab")[0]);
     expect(await screen.findByText("Pending page")).toBeInTheDocument();
     expect(within(tabs).getAllByRole("tab")).toHaveLength(2);
@@ -439,11 +439,11 @@ describe("Main published PageDetail navigation guards", () => {
     expect(screen.getByText("Pending page")).toBeInTheDocument();
   });
 
-  it("closes a draft deleted from the Wiki directory and returns to the previous note", async () => {
+  it("closes a draft deleted from the Wiki directory and returns to the previous page", async () => {
     const { user } = renderMain();
     await user.click(screen.getByRole("button", { name: "Open draft X" }));
     expect(await screen.findByTestId("draft-editor")).toBeInTheDocument();
-    const tabs = screen.getByRole("tablist", { name: "Open notes" });
+    const tabs = screen.getByRole("tablist", { name: "Open pages" });
     expect(within(tabs).getAllByRole("tab")).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "Delete draft X from directory" }));
@@ -460,12 +460,12 @@ describe("Main published PageDetail navigation guards", () => {
     });
     await user.pointer({ keys: "[MouseRight]", target: document.querySelector<HTMLElement>('[data-note-tab-group="primary"] [role="tab"][aria-selected="true"]')! });
     await user.click(screen.getByRole("menuitem", { name: "Move to right group" }));
-    const right = await screen.findByRole("region", { name: "Right notes" });
+    const right = await screen.findByRole("region", { name: "Right pages" });
     expect(within(right).getByText("Unhydrated draft")).toBeInTheDocument();
     await expect(quitGuard!()).resolves.toBe(true);
 
     await user.click(within(right).getByRole("button", { name: "Draft back" }));
-    await waitFor(() => expect(screen.queryByRole("region", { name: "Right notes" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Right pages" })).toBeNull());
   });
 
   it("routes a newly saved draft identity to its current owner without mounting a second editor", async () => {
@@ -475,7 +475,7 @@ describe("Main published PageDetail navigation guards", () => {
     await user.click(screen.getByRole("button", { name: "Report draft X identity" }));
     await user.pointer({ keys: "[MouseRight]", target: document.querySelector<HTMLElement>('[data-note-tab-group="primary"] [role="tab"][aria-selected="true"]')! });
     await user.click(screen.getByRole("menuitem", { name: "Move to right group" }));
-    const right = await screen.findByRole("region", { name: "Right notes" });
+    const right = await screen.findByRole("region", { name: "Right pages" });
     const ownerEditor = within(right).getByTestId("draft-editor");
 
     await user.click(screen.getByRole("button", { name: "Open draft X" }));
@@ -563,7 +563,7 @@ describe("Main published PageDetail navigation guards", () => {
     expect(confirmSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps the current note when automatic saving fails and prevents quit", async () => {
+  it("keeps the current page when automatic saving fails and prevents quit", async () => {
     flushHarness.enabled = true;
     flushHarness.flush.mockResolvedValue(false);
     let quitGuard: (() => Promise<boolean>) | null = null;
@@ -582,7 +582,7 @@ describe("Main published PageDetail navigation guards", () => {
     const { user } = renderMain();
     await user.click(screen.getByRole("button", { name: "Make page dirty" }));
     await user.click(screen.getByRole("button", { name: "Search" }));
-    const search = screen.getByPlaceholderText("Search notes, memories, sources...");
+    const search = screen.getByPlaceholderText("Search pages, memories, sources...");
     fireEvent.change(search, { target: { value: "first" } });
     fireEvent.change(search, { target: { value: "latest" } });
     expect(screen.getByText("Pending page")).toBeInTheDocument();
@@ -633,7 +633,7 @@ describe("Main published PageDetail navigation guards", () => {
     await expect(quitGuard!()).resolves.toBe(true);
     eventListeners.get("focus-search")?.();
     expect(await screen.findByRole("dialog", { name: "Search" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Search notes, memories, sources...")).toHaveFocus();
+    expect(screen.getByPlaceholderText("Search pages, memories, sources...")).toHaveFocus();
 
     await user.click(screen.getByRole("button", { name: "Make page dirty" }));
     await expect(quitGuard!()).resolves.toBe(false);
@@ -696,10 +696,10 @@ describe("Main published PageDetail navigation guards", () => {
 
     await user.click(screen.getByRole("button", { name: "Search" }));
     const search = screen.getByPlaceholderText(
-      "Search notes, memories, sources...",
+      "Search pages, memories, sources...",
     );
-    const editor = screen.getByRole("textbox", { name: "Note editor" });
-    const textarea = screen.getByRole("textbox", { name: "Page notes" });
+    const editor = screen.getByRole("textbox", { name: "Page editor" });
+    const textarea = screen.getByRole("textbox", { name: "Page pages" });
     const select = screen.getByRole("combobox", { name: "Block style" });
     fireEvent.keyDown(editor, { key: "/" });
     fireEvent.keyDown(editor, { key: "Escape" });
@@ -757,7 +757,7 @@ describe("Main published PageDetail navigation guards", () => {
 
     await user.click(screen.getByRole("button", { name: "Search" }));
     const search = screen.getByPlaceholderText(
-      "Search notes, memories, sources...",
+      "Search pages, memories, sources...",
     );
     fireEvent.change(search, { target: { value: "blocked" } });
     expect(search).toHaveValue("");

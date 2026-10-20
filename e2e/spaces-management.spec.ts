@@ -127,7 +127,7 @@ test("recovers from corrupt recent-space storage on reload", async ({ page }) =>
   await page.reload();
 
   // Then invalid history is treated as no visits, so Recents is omitted without browser errors.
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Recent spaces" })).toHaveCount(0);
   await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Spaces", exact: true }).click();
   await page.getByTestId("space-row-space-wenlan").getByRole("button", { name: "Wenlan", exact: true }).click();

@@ -57,10 +57,10 @@ test("names the dragged-out box and keeps it on the canvas", async ({ page }) =>
 
   const field = page.getByRole("textbox", { name: "Name this node" });
   await expect(field).toBeVisible();
-  await field.fill("Design notes");
+  await field.fill("Design pages");
   await field.press("Enter");
 
-  await expect(page.getByRole("button", { name: "Design notes" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Design pages" })).toBeVisible();
   const created = controller.calls().filter((call) => call.command === "create_page_map_node") as {
     args: { body: { ref_kind: string } };
   }[];
@@ -92,18 +92,18 @@ test("keeps the box and its line on screen while a slow daemon catches up", asyn
   // pointer lifts — not only once the server copy lands.
   await expect(page.locator('.react-flow__edge[data-id="tree-__draft__"]')).toHaveCount(1);
 
-  await field.fill("Design notes");
+  await field.fill("Design pages");
   await field.press("Enter");
 
   // Straight after commit, mid-flight: the box is still there, named.
-  await expect(page.getByRole("button", { name: "Design notes" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Design pages" })).toBeVisible();
   await expect(page.locator('.react-flow__edge[data-id="tree-__draft__"]')).toHaveCount(1);
 
   // And once the daemon answers, the server's copy takes over without a blink.
   await expect(page.locator('.react-flow__edge[data-id="tree-__draft__"]')).toHaveCount(0, {
     timeout: 15_000,
   });
-  await expect(page.getByRole("button", { name: "Design notes" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Design pages" })).toBeVisible();
 
   expect(browserErrors.pageErrors).toEqual([]);
   expect(browserErrors.consoleErrors).toEqual([]);
