@@ -436,6 +436,8 @@ async fn acceptance_6_a_bad_path_span_or_file_is_400_and_nothing_is_written() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
     let (router, _tmp, db) = common::test_app_no_gate().await;
+    // Registers the Space; the create route refuses an unknown one (422).
+    make_brief(&db).await;
     let repo = Repo::new("src/lib.rs", &numbered(30));
     let page = common::create_page_fixture(
         &db,
@@ -665,6 +667,8 @@ async fn acceptance_9_deleting_a_note_removes_its_code_bases() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
     let (router, _tmp, db) = common::test_app_no_gate().await;
+    // Registers the Space; the create route refuses an unknown one (422).
+    make_brief(&db).await;
     let repo = Repo::new("a.rs", &numbered(40));
     let (_, created) = new_note(&router, "Doomed", json!([repo.span("a.rs", 10, 20)])).await;
     let id = typed::<CreatePageResponse>(created).id;
