@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 ## Why Wenlan
 
-Your notes, documents, and AI chats are scattered everywhere, and they keep changing. Each AI tool remembers its own bits. Wenlan is a knowledge base built for the AI era: one local source of truth that you and your AI tools keep current together. The whole knowledge workflow is built in, from saving and organizing to citing and updating, so there is no maze of note-app plugins to wire up.
+Your notes, documents, and AI chats are scattered everywhere, and they keep changing. Each AI tool remembers its own bits. Wenlan is a knowledge base built for the AI era: one local source of truth that you and your AI tools keep current together. The whole knowledge workflow is built in, from saving and organizing to citing and updating, so there is no maze of plugins to wire up.
 
 - **Notes that keep up:** With Steep on, when a source changes, notes built on it update. Notes you wrote get a suggested edit instead.
 - **Every claim traceable:** Notes cite their sources, so you can open the original. When Wenlan refreshes a note in the background, it checks the citations before replacing the note.
