@@ -68,8 +68,6 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-data.md#installation).
 
-Optionally enable Steep with a [local model](docs/steep.md#enable-steep) to organize memories and update knowledge pages in the background.
-
 ### 2. Create a note or import existing material
 
 Create a note in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
@@ -88,26 +86,7 @@ Imported material is ready to use; you do not need to create a note first. Ask y
 
 > Check Wenlan for my earlier notes and decisions on this, then help me: …
 
-<a id="daily-workflow"></a>
-
-<br>
-
-## In everyday use
-
-Save new findings and progress as you work, then pick up where you left off next time.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
-</p>
-
-Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
-
-- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
-- **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
-- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
-- **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
-
-**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/wenlan distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
+Later, you can turn on [Steep](#steep-keep-knowledge-useful-as-it-changes) with a [local model](docs/steep.md#enable-steep) to organize memories and update pages in the background.
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -150,6 +129,27 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 </p>
 <p>App nodes and connections; translated labels and illustrative regions.</p>
 
+<a id="daily-workflow"></a>
+
+<br>
+
+## In everyday use
+
+Save new findings and progress as you work, then pick up where you left off next time.
+
+<p align="center">
+  <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
+</p>
+
+Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
+
+- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
+- **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
+- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
+- **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
+
+**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/wenlan distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
+
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>
 
@@ -163,7 +163,7 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 
 ## Put your knowledge to work with AI
 
-An agent can read files and write text. Wenlan adds a **shared knowledge base maintained across tasks and AI tools**: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
+Once your material is in Wenlan, your AI tools can build on it: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
 
 **Use it for:**
 
