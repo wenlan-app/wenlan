@@ -225,7 +225,7 @@ describe("CitationChip", () => {
     fireEvent.focus(chip);
     expect(chip).not.toHaveTextContent("mem-1");
     expect(screen.getByText(/no longer exists/i)).toBeInTheDocument();
-    expect(screen.getByText(/rebuild/i)).toBeInTheDocument();
+    expect(screen.getByText(/update the note from its sources/i)).toBeInTheDocument();
     expect(screen.getByText("mem-1")).toBeInTheDocument();
     await user.click(chip);
     expect(onOpenMemory).not.toHaveBeenCalled();

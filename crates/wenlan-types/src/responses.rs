@@ -557,6 +557,10 @@ pub struct PageReadResponse {
     /// modified. Computed on read, never stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub linked_changed: Vec<crate::page_basis::LinkedChanged>,
+    /// How many active notes rely on this note. The desktop app shows its
+    /// "minor edit" box only when this is above zero.
+    #[serde(default)]
+    pub basis_citer_count: i64,
 }
 
 /// Wikilink graph centered on a single page. Outbound = labels parsed

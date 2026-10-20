@@ -10,6 +10,7 @@ import {
 } from "../../../lib/tauri";
 import { isActionableReviewItem } from "../reviewDisposition";
 import type { ReviewItem } from "../useReviewQueue";
+import { NoteBasisLines, basisNeedingAttention, type NoteBasisHandlers } from "./NoteBasisLines";
 import "./NoteReviewNotice.css";
 
 const NOTICE_LIMIT = 500;
@@ -92,9 +93,20 @@ export interface NoteReviewNoticeProps {
   onReview: (itemId?: string) => void;
   onShowSources: () => void;
   disabled?: boolean;
+  /** Present on the note itself: lines and actions for the notes it relies on. */
+  basis?: NoteBasisHandlers;
 }
 
-export function NoteReviewNotice({ page, onReview, onShowSources, disabled = false }: NoteReviewNoticeProps) {
+/**
+ * A note that relies on other notes is never rebuilt on its own, so the daemon
+ * says "blocked because it has a basis" for a plain source change. That is the
+ * normal state of such a note, not a problem to flag.
+ */
+function isBlockingRefreshReason(reason: string | null | undefined): boolean {
+  return Boolean(reason) && reason !== "has_basis";
+}
+
+export function NoteReviewNotice({ page, onReview, onShowSources, disabled = false, basis }: NoteReviewNoticeProps) {
   const { t } = useTranslation();
   const revisions = useQuery({
     queryKey: revisionQueryKey,
@@ -121,14 +133,17 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
   const queryFailed = revisions.isError || refinements.isError;
   const pageRevisionPending = categoryCounts.pageRevision > 0;
 
+  const refreshBlocked = isBlockingRefreshReason(page.refresh_blocked_reason);
   const staleMessage = page.stale_reason === "source_conflict"
     ? "sourceConflict"
-    : page.refresh_blocked_reason
+    : refreshBlocked
       ? "updateBlocked"
       : page.stale_reason === "source_updated" && !pageRevisionPending
         ? "sourceUpdated"
         : null;
-  const hasContent = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped;
+  const basisLines = basis ? basisNeedingAttention(page.basis) : [];
+  const hasContent = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped
+    || basisLines.length > 0;
   if (!hasContent) return null;
 
   const retry = () => {
@@ -136,7 +151,9 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
     void Promise.all([revisions.refetch(), refinements.refetch()]);
   };
 
-  return <div className={`note-review-notice${pendingItems.length > 0 || page.stale_reason === "source_conflict" || page.refresh_blocked_reason ? " note-review-notice--attention" : ""}`} role="status" aria-live="polite">
+  const attention = pendingItems.length > 0 || page.stale_reason === "source_conflict" || refreshBlocked
+    || basisLines.length > 0;
+  return <div className={`note-review-notice${attention ? " note-review-notice--attention" : ""}`} role="status" aria-live="polite">
     <div className="note-review-notice__content">
       {pendingItems.length > 0 && <div className="note-review-notice__summary">
         <span>{t(pendingItems.length === 1 ? "noteReview.pending_one" : "noteReview.pending_other", { count: pendingItems.length })}</span>
@@ -177,6 +194,12 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
         onClick={() => onReview()}
       >{t("noteReview.openQueue")}</button>}
     </div>
+    {basis && basisLines.length > 0 && <NoteBasisLines
+      {...basis}
+      pageId={page.id}
+      basis={basisLines}
+      disabled={disabled}
+    />}
   </div>;
 }
 

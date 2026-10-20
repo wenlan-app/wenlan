@@ -206,21 +206,21 @@ describe("PageInfo i18n", () => {
         loading: "Loading revision history…",
         error: "Could not load revision history.",
         retry: "Retry",
-        confirm: "Rebuild this note from its sources? Your edits may be replaced.",
+        confirm: "Update this note from its sources? Your edits may be replaced.",
       },
       {
         language: "zh-Hans",
         loading: "正在加载修订记录…",
         error: "无法加载修订记录。",
         retry: "重试",
-        confirm: "要根据来源重新整理此笔记吗？您的编辑可能会被替换。",
+        confirm: "要按来源更新此笔记吗？您的编辑可能会被替换。",
       },
       {
         language: "zh-Hant",
         loading: "正在載入修訂紀錄…",
         error: "無法載入修訂紀錄。",
         retry: "重試",
-        confirm: "要根據來源重新整理此筆記嗎？您的編輯可能會被取代。",
+        confirm: "要依來源更新此筆記嗎？您的編輯可能會被取代。",
       },
     ] as const;
 

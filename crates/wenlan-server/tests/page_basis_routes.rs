@@ -196,6 +196,11 @@ async fn acceptance_1_3_4_5_mark_change_diff_confirm_and_remove_over_http() {
     assert_eq!(basis_of(&read).len(), 1);
     assert_eq!(basis_of(&read)[0].state, "ok");
 
+    // B2: the basis note reports how many notes rely on it (the desktop app's
+    // "minor edit" box), and a note nobody relies on reports zero, not absent.
+    assert_eq!(read_note(&router, &basis).await["basis_citer_count"], 2);
+    assert_eq!(read_note(&router, &citer).await["basis_citer_count"], 0);
+
     // 3: the basis changes; the citer reads pending and the diff has both texts.
     person_edits(&router, &basis, "The launch is on 2026-04-01.").await;
     let read = read_note(&router, &citer).await;
@@ -301,6 +306,7 @@ async fn acceptance_1_3_4_5_mark_change_diff_confirm_and_remove_over_http() {
     }
     assert!(basis_of(&read_note(&router, &citer).await).is_empty());
     assert!(read_note(&router, &citer).await.get("basis").is_none());
+    assert_eq!(read_note(&router, &basis).await["basis_citer_count"], 1);
 }
 
 #[tokio::test]

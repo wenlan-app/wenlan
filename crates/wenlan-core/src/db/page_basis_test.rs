@@ -1786,3 +1786,34 @@ async fn linked_changed_lists_linked_notes_edited_after_the_note_itself() {
     set_kind(&db, "a", "entity").await;
     assert!(db.linked_changed("b").await.unwrap().is_empty());
 }
+
+/// B2: the desktop app shows its "minor edit" box only for a note other active
+/// notes rely on. Counts rows that are not `deleted`, citers that are active.
+#[tokio::test]
+async fn count_basis_citers_counts_active_citers_in_live_rows() {
+    let (db, _dir) = pair().await;
+    assert_eq!(db.count_basis_citers("a").await.unwrap(), 1);
+    assert_eq!(
+        db.count_basis_citers("b").await.unwrap(),
+        0,
+        "relying on a note is not being relied on"
+    );
+
+    page(&db, "c", "Gamma", "text", "sp").await;
+    db.mark_page_basis("c", "a", 1, "human").await.unwrap();
+    assert_eq!(db.count_basis_citers("a").await.unwrap(), 2);
+
+    // A pending row still counts: the citer still relies on the note.
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    assert_eq!(db.count_basis_citers("a").await.unwrap(), 2);
+
+    // A draft or archived citer is not counted.
+    set_status(&db, "c", "draft").await;
+    assert_eq!(db.count_basis_citers("a").await.unwrap(), 1);
+    set_status(&db, "c", "archived").await;
+    assert_eq!(db.count_basis_citers("a").await.unwrap(), 1);
+
+    // A citer that was deleted takes its row with it.
+    db.delete_page("b").await.unwrap();
+    assert_eq!(db.count_basis_citers("a").await.unwrap(), 0);
+}

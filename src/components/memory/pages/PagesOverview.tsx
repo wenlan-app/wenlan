@@ -8,6 +8,7 @@ import { FirstPageMilestone } from "../../onboarding/FirstPageMilestone";
 import { GettingStarted } from "../../onboarding/GettingStarted";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
+import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -23,6 +24,8 @@ interface PagesOverviewProps {
   readonly onConnectTool?: () => void;
   readonly onSeeExample?: () => void;
   readonly onOpenIntelligence?: () => void;
+  /** Open the review group for notes whose source note changed. */
+  readonly onOpenBasisUpdates?: () => void;
 }
 
 export function PagesOverview({
@@ -31,6 +34,7 @@ export function PagesOverview({
   onConnectTool,
   onSeeExample,
   onOpenIntelligence,
+  onOpenBasisUpdates,
 }: PagesOverviewProps) {
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
@@ -55,6 +59,7 @@ export function PagesOverview({
       data-library-empty={empty ? "true" : undefined}
       data-onboarding={onboarding ? "true" : undefined}
     >
+      {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
       <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />
       <div className="wiki-reading-start-panel">
         <PageIcon className="wiki-reading-start-icon" size={32} />

@@ -54,3 +54,18 @@
 }
 /* These actions no longer have a duplicate desktop toolbar. */
 .page-document-tools .page-detail-actions-menu .page-detail-mobile-menu-item { display: block; }
+
+.page-editor-minor-edit {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-control);
+  cursor: pointer;
+}
+
+.page-editor-minor-edit input:focus-visible {
+  outline: 2px solid var(--mem-accent-page);
+  outline-offset: 2px;
+}
