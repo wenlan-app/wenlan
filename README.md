@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  Wenlan organizes scattered notes, documents, and conversations into a knowledge base that stays current and links back to its sources,<br>
-  so you and AI tools like Claude and Codex can reuse what you learned without explaining past decisions again.
+  Wenlan turns scattered notes, documents, and AI chats into a personal wiki that stays current and cites its sources,<br>
+  so Claude, Codex, and your other AI tools pick up where you left off.
 </p>
 
 <p align="center">
