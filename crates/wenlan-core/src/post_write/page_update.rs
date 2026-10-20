@@ -583,6 +583,17 @@ fn page_write_digest(
     }
     // The basis part is appended only when the write carries one, so a digest
     // recorded before notes could rely on notes still matches its retry.
+    if !basis.code_basis.is_empty() {
+        field(b"code_basis");
+        field(&(basis.code_basis.len() as u64).to_le_bytes());
+        for (input, anchor) in &basis.code_basis {
+            field(input.repo_root.as_bytes());
+            field(input.path.as_bytes());
+            field(&input.line_start.to_le_bytes());
+            field(&input.line_end.to_le_bytes());
+            field(anchor.digest.as_bytes());
+        }
+    }
     if basis.minor || !basis.marks.is_empty() || basis.confirm.is_some() {
         field(b"basis");
         field(&[u8::from(basis.minor)]);
@@ -753,7 +764,10 @@ async fn update_page_db_impl(
     }
     // Marks and a confirm ride the two writes that have a person or an agent
     // behind them. Every pipeline write fails closed rather than dropping them.
-    let carries_basis = basis.minor || !basis.marks.is_empty() || basis.confirm.is_some();
+    let carries_basis = basis.minor
+        || !basis.marks.is_empty()
+        || basis.confirm.is_some()
+        || !basis.code_basis.is_empty();
     if carries_basis && (page_growth.is_some() || user_forced || require_stale) {
         return Err(WenlanError::Validation(
             "a basis or minor flag rides only an agent refresh or a human save".into(),
