@@ -102,6 +102,8 @@ export function OverflowMenu({ label, items, disabled = false, className }: Over
         onClick={(event) => {
           event.stopPropagation();
           setOpen(false);
+          // Hand focus back before the action, which may open a dialog or remove this row.
+          triggerRef.current?.focus();
           item.onSelect();
         }}
       >

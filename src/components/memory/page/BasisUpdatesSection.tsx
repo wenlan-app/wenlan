@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { BasisPendingCiter, BasisPendingEntry } from "../../../lib/tauri";
 import { BasisDiffDialog } from "./BasisDiffDialog";
+import { OverflowMenu } from "./OverflowMenu";
 import { useBasisActions } from "./useBasisActions";
 import "./BasisUpdates.css";
 
@@ -30,6 +31,7 @@ export function BasisUpdatesSection({
   const { t } = useTranslation();
   const actions = useBasisActions();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [stopFailed, setStopFailed] = useState<ReadonlySet<string>>(new Set());
   const [diffFor, setDiffFor] = useState<{ pageId: string; entry: BasisPendingEntry } | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
 
@@ -114,12 +116,29 @@ export function BasisUpdatesSection({
                     className="basis-updates__button"
                     onClick={() => onPageClick(citer.page_id)}
                   >{t("noteBasis.openNote")}</button>}
+                  <OverflowMenu
+                    label={t("noteBasis.moreActions")}
+                    disabled={busy}
+                    items={[{
+                      key: "stop",
+                      label: t("noteBasis.stopUsing"),
+                      onSelect: () => {
+                        const key = `${citer.page_id}\u0000${entry.basis_page_id}`;
+                        void actions.stop(citer.page_id, entry.basis_page_id).then((done) => setStopFailed((current) => {
+                          const next = new Set(current);
+                          if (done) next.delete(key);
+                          else next.add(key);
+                          return next;
+                        }));
+                      },
+                    }]}
+                  />
                 </span>
                 {actions.hasChangedAgain(citer.page_id, entry.basis_page_id) && <p className="basis-updates__note" role="status">
                   {t("noteBasis.changedAgain", { title })}
                 </p>}
                 {actions.hasFailed(citer.page_id, entry.basis_page_id) && <p className="basis-updates__note" role="alert">
-                  {t("noteBasis.confirmFailed")}
+                  {t(stopFailed.has(`${citer.page_id}\u0000${entry.basis_page_id}`) ? "noteBasis.stopFailed" : "noteBasis.confirmFailed")}
                 </p>}
               </li>;
             })}

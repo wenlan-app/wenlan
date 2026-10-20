@@ -100,9 +100,13 @@ export function useBasisActions() {
       await unmarkPageBasis(pageId, basisPageId);
       return true;
     }, false);
-    if (done) refresh(pageId);
+    if (done) {
+      refresh(pageId);
+      // The source note's own count of notes relying on it changed too.
+      void queryClient.invalidateQueries({ queryKey: ["page", basisPageId] });
+    }
     return done;
-  }, [refresh, track]);
+  }, [queryClient, refresh, track]);
 
   /** Mark a conflict seen from outside (a save that carried `confirm_basis`). */
   const noteChangedAgain = useCallback((pageId: string, basisPageId: string) => {

@@ -55,7 +55,12 @@ export function BasisDiffDialog({
   });
 
   useEffect(() => {
+    // Return focus to whatever opened the dialog once it closes.
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     panelRef.current?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
   }, []);
 
   const diff: BasisDiff | null = diffQuery.data?.outcome === "available" ? diffQuery.data.diff : null;
@@ -89,7 +94,8 @@ export function BasisDiffDialog({
               {HUMAN_WRITERS.has(edit.edited_by) ? t("noteBasis.diff.you") : revisionWriterLabel(t, edit.edited_by)} · {whenLabel(edit.at, i18n.language)}
               {edit.minor && <span className="basis-diff__minor">{t("noteBasis.diff.minorEdit")}</span>}
             </span>
-            {edit.delta_summary && <span className="basis-diff__edit-summary">{edit.delta_summary}</span>}
+            {/* The daemon writes these summaries in English; other languages leave them out, as revision history does. */}
+            {edit.delta_summary && i18n.language?.startsWith("en") && <span className="basis-diff__edit-summary">{edit.delta_summary}</span>}
           </li>)}
         </ul>
       </section>}

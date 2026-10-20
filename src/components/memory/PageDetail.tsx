@@ -631,6 +631,9 @@ export default function PageDetail({
     autosaveRef.current?.reset(null);
     editorPageRef.current = null;
     autoEditIntentRef.current = null;
+    confirmIntentRef.current = null;
+    minorEditRef.current = false;
+    setMinorEdit(false);
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
@@ -694,7 +697,8 @@ export default function PageDetail({
   if (!autosaveRef.current) {
     autosaveRef.current = new PageAutosave({
       write: async (input) => {
-        const intent = confirmIntentRef.current;
+        // Both save intents belong to the note they were chosen on.
+        const intent = confirmIntentRef.current?.pageId === input.id ? confirmIntentRef.current : null;
         const outcome = await updatePage({
           ...input,
           ...(minorEditRef.current ? { minor: true } : {}),
@@ -1694,6 +1698,7 @@ export default function PageDetail({
     try {
       await markPageBasis(originPageId, basisPageId);
       basisActions.refresh(originPageId);
+      void queryClient.invalidateQueries({ queryKey: ["page", basisPageId] });
       return true;
     } catch {
       return false;

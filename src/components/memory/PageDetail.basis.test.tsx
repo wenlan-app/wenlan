@@ -141,6 +141,35 @@ describe("PageDetail with note bases", () => {
     expect(vi.mocked(updatePage).mock.calls[0][0]).not.toHaveProperty("minor");
   });
 
+  it("does not carry a minor edit or a basis confirmation over to another note", async () => {
+    const { user, rerender, client } = renderPage({ basis_citer_count: 2, basis: [pendingBasis] });
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit it yourself" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Minor edit" }));
+
+    vi.mocked(getPage).mockImplementation(async (id: string) => notePage({
+      id, title: "Other note", basis_citer_count: 2, basis: [],
+    }));
+    rerender(<QueryClientProvider client={client}>
+      <PageDetail
+        pageId="note_b"
+        onBack={vi.fn()}
+        onMemoryClick={vi.fn()}
+        onPageClick={vi.fn()}
+        initialMode="edit"
+      />
+    </QueryClientProvider>);
+
+    expect(await screen.findByRole("checkbox", { name: "Minor edit" })).not.toBeChecked();
+    await typeIntoEditor("Something else entirely.");
+    await waitFor(() => expect(updatePage).toHaveBeenCalled(), { timeout: 4000 });
+    const calls = vi.mocked(updatePage).mock.calls;
+    const sent = calls[calls.length - 1][0];
+    expect(sent).toMatchObject({ id: "note_b" });
+    expect(sent).not.toHaveProperty("minor");
+    expect(sent).not.toHaveProperty("confirmBasis");
+  });
+
   it("carries the basis confirmation on the next save after 'Edit it yourself'", async () => {
     const { user } = renderPage({ basis: [pendingBasis] });
 
