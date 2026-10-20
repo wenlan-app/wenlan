@@ -159,13 +159,12 @@ export default function CitationChip({
           lastPointerType.current = e.pointerType;
         }}
         onClick={activate}
-        className="reference-link reference-link--source focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]"
+        className="reference-link reference-link--source citation-chip focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]"
         style={{
           fontFamily: "var(--mem-font-body)",
           // A footnote step below the reading size: 12px beside 15px body text.
           fontSize: "calc(var(--content-body-size, 15px) * 0.8)",
           lineHeight: 1,
-          color: unverified ? "var(--mem-text-tertiary)" : "var(--mem-accent-indigo)",
           background: "transparent",
           border: unverified ? "1px dashed var(--mem-accent-amber)" : "0",
           borderRadius: "3px",

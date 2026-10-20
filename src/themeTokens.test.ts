@@ -124,6 +124,12 @@ describe("dark theme brand tokens", () => {
     expect(rule).toMatch(/text-decoration:\s*underline/);
   });
 
+  it("marks only browser-bound links with an arrow and brightens links on hover", () => {
+    expect(css).toMatch(/\.content-renderer a\[href\^="http"\]::after/);
+    expect(css).toMatch(/\.content-renderer a:hover,\s*\.source-document-body a:hover\s*\{[^}]*color:\s*var\(--mem-link-hover\)/);
+    expect(luminance(darkToken("--mem-link-hover") ?? "")).toBeGreaterThan(luminance(darkToken("--mem-link") ?? ""));
+  });
+
   it("keeps wiki page icons quieter than page emphasis colors", () => {
     expect(darkToken("--mem-page-icon")).toBe("#C19A7B");
     expect(darkToken("--mem-page-icon-hover")).toBe("#D1AF95");

@@ -4,6 +4,17 @@
   text-underline-offset: 2px;
 }
 
+/* Citation chips are footnotes: quiet grey until pointed at or opened, so
+   they never outrank the links in the sentence. */
+.citation-chip {
+  color: var(--mem-text-tertiary);
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.citation-chip:not([data-status="unverified"]):is(:hover, :focus-visible, [aria-describedby]) {
+  color: var(--mem-link);
+  text-decoration-color: currentColor;
+}
+
 .reference-link > svg {
   display: inline-block;
   vertical-align: -0.08em;
