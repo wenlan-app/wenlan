@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  Wenlan turns your files and everything you work out with AI into a local personal wiki that stays current and cites its sources,<br>
-  so you and AI tools like Claude and Codex can pick up where you left off.
+  Wenlan gives Claude Code, Codex, and you one shared memory: a local wiki built from your files,<br>
+  past AI chats, and the decisions you save, kept current and linked to its sources.
 </p>
 
 <p align="center">
