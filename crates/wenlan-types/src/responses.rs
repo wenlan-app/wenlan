@@ -440,6 +440,9 @@ pub struct CreatePageResponse {
     /// Every basis of the new note after the write.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisRef>,
+    /// Every code basis of the new note after the write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
 }
 
 /// Result of an explicit page-title change. Does not expose page prose.
@@ -524,6 +527,9 @@ pub struct PageInventoryEntry {
     /// The bases of this note that are not `ok`; empty for most notes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisRef>,
+    /// The code bases of this note that are not `ok`; empty for most notes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
 }
 
 /// `GET /api/pages` inventory response. Search keeps `SearchPagesResponse`.
@@ -553,6 +559,9 @@ pub struct PageReadResponse {
     /// Every basis of this note, in any state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisRef>,
+    /// Every code basis of this note, in any state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
     /// Notes this note links to that changed after this note was last
     /// modified. Computed on read, never stored.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -744,6 +753,10 @@ pub struct PageWriteResponse {
     /// `read_page` uses, so the agent sees pending versus ok directly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisRef>,
+    /// Every code basis of the written note after the write, in the same
+    /// shape `read_page` uses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.

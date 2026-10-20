@@ -77,6 +77,11 @@ pub struct BriefReadResponse {
     pub brief: Option<Brief>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_context: Option<BriefRelatedContext>,
+    /// How many notes in the Space rely on code that changed or went missing
+    /// (at least one `pending` or `unavailable` code basis). Absent when the
+    /// Space has no code bases at all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_basis_pending: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
