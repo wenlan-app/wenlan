@@ -50,7 +50,6 @@
 /* The card can be taller than the window: the body scrolls, Close stays put. */
 .session-card-body { min-height: 0; overflow-y: auto; padding: 24px 24px 0; }
 .session-card-title { margin: 0 0 8px; font: 500 20px/1.3 var(--mem-font-heading); letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.session-card-session-title { margin: 0 0 4px; color: var(--mem-text); overflow-wrap: anywhere; }
 .session-card-muted { margin: 0; color: var(--mem-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .session-card-section { margin-top: 20px; }
 .session-card-heading { margin: 0 0 8px; color: var(--mem-text); font: 500 14px/1.4 var(--mem-font-body); }
@@ -76,6 +75,8 @@
   overflow-wrap: anywhere;
 }
 .session-card-row:hover { background: var(--mem-hover); }
+.session-card-row-static { color: var(--mem-text); cursor: default; }
+.session-card-row-static:hover { background: none; }
 .session-card-row-icon { display: inline-flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-text-tertiary); }
 .session-card-row-title { min-width: 0; }
 .session-card-resume { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 20px; }

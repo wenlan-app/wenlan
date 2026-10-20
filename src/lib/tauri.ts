@@ -2225,11 +2225,35 @@ export interface SessionHandoffEntry {
   created_at: number;
 }
 
+/** `recall`: a memory search (label is the query). `brief`: a Space Brief read (label is the Space). `read_page`: a note read in full (label is the note id). */
+export type SessionReadKind = "recall" | "brief" | "read_page";
+
+export interface SessionReadEntry {
+  kind: SessionReadKind;
+  label: string;
+  /** The note's title, for `read_page` only. */
+  title?: string | null;
+  created_at: number;
+}
+
+/** A note that cites a memory the conversation wrote, without the conversation having written the note. */
+export interface SessionCitedByEntry {
+  id: string;
+  title: string;
+  cited_at: number;
+}
+
 export interface SessionDetail {
   session: AgentSession;
   memories: SessionMemoryEntry[];
   pages: SessionPageEntry[];
   handoffs: SessionHandoffEntry[];
+  /** What the conversation looked up, newest first (at most 10). Absent from older daemons. */
+  reads?: SessionReadEntry[];
+  /** How many lookups there are in all, which can exceed `reads.length`. */
+  reads_total?: number;
+  /** Notes that later used a memory this conversation wrote. */
+  cited_by?: SessionCitedByEntry[];
   /** The transcript file named by `session.transcript_path` is still on this machine. */
   transcript_available?: boolean;
 }

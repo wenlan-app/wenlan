@@ -113,12 +113,135 @@ describe("SessionCard", () => {
     expect(onOpenPage).toHaveBeenCalledWith("page-1");
   });
 
+  it("uses the conversation title as the heading and moves the tool to the meta line", async () => {
+    renderCard(detailFor({ ...claudeSession, title: "文兰 AI 会话资源" }));
+    const dialog = await screen.findByRole("dialog", { name: "文兰 AI 会话资源" });
+    expect(within(dialog).getByRole("heading", { level: 2, name: "文兰 AI 会话资源" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Claude Code · Oct 20 9:12/)).toBeInTheDocument();
+    // The title is not repeated in the body.
+    expect(within(dialog).getAllByText("文兰 AI 会话资源")).toHaveLength(1);
+  });
+
+  it("keeps the tool heading when the conversation has no title", async () => {
+    renderCard(detailFor({ ...claudeSession, title: "   " }));
+    expect(await screen.findByRole("dialog", { name: "Claude Code conversation" })).toBeInTheDocument();
+    expect(screen.getByText(/^Oct 20 9:12/)).not.toHaveTextContent("Claude Code");
+  });
+
+  it("lists up to three lookups, newest first, with the rest counted", async () => {
+    const { onClose, onOpenPage } = renderCard(
+      detailFor(claudeSession, {
+        reads: [
+          { kind: "recall", label: "how do we sync", created_at: oct20(10, 30) },
+          { kind: "brief", label: "Work", created_at: oct20(10, 20) },
+          { kind: "read_page", label: "page-9", title: "Sync design", created_at: oct20(10, 10) },
+          { kind: "recall", label: "older query", created_at: oct20(9, 50) },
+        ],
+        reads_total: 6,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "What it looked up" })).toBeInTheDocument();
+    const list = within(dialog).getByRole("list", { name: "What it looked up" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(list).getByText("Searched for “how do we sync”")).toBeInTheDocument();
+    expect(within(list).getByText("Read the Brief for Work")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/older query/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText("3 more lookups")).toBeInTheDocument();
+
+    await userEvent.click(within(list).getByRole("button", { name: "Read Sync design" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onOpenPage).toHaveBeenCalledWith("page-9");
+  });
+
+  it("says nothing more when every lookup is shown", async () => {
+    renderCard(
+      detailFor(claudeSession, {
+        reads: [{ kind: "recall", label: "one", created_at: oct20(10, 30) }],
+        reads_total: 1,
+      }),
+    );
+    await screen.findByText("Searched for “one”");
+    expect(screen.queryByText(/more lookup/)).not.toBeInTheDocument();
+  });
+
+  it("lists notes that later used the memories it left", async () => {
+    const { onOpenPage } = renderCard(
+      detailFor(claudeSession, {
+        cited_by: [
+          { id: "page-7", title: "Sync overview", cited_at: oct20(11, 0) },
+          { id: "page-8", title: "", cited_at: oct20(11, 5) },
+        ],
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByRole("heading", { name: "Notes that later used these memories" })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Untitled" }));
+    expect(onOpenPage).toHaveBeenCalledWith("page-8");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Sync overview" }));
+    expect(onOpenPage).toHaveBeenCalledWith("page-7");
+  });
+
+  it("orders the sections: handoff, lookups, left behind, later used, continue", async () => {
+    renderCard(
+      detailFor(claudeSession, {
+        handoffs: [{ space: "Work", brief_version: 1, summary: "Done.", created_at: oct20(10, 30) }],
+        reads: [{ kind: "recall", label: "q", created_at: oct20(10, 0) }],
+        reads_total: 1,
+        memories: [{ source_id: "m", title: "Mem", created_at: oct20(9, 30) }],
+        cited_by: [{ id: "p", title: "Later note", cited_at: oct20(11, 0) }],
+      }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("heading", { name: "Notes that later used these memories" });
+    const order = within(dialog)
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent);
+    expect(order).toEqual([
+      "Handoff summary",
+      "What it looked up",
+      "Left by this conversation",
+      "Notes that later used these memories",
+    ]);
+    const heading = within(dialog).getByRole("heading", { name: "Notes that later used these memories" });
+    const resume = within(dialog).getByRole("button", { name: "Continue in Claude Code" });
+    expect(heading.compareDocumentPosition(resume) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("writes the new sections in Traditional Chinese without dashes", async () => {
+    await i18n.changeLanguage("zh-Hant");
+    try {
+      renderCard(
+        detailFor({ ...claudeSession, title: "文蘭對話" }, {
+          reads: [
+            { kind: "recall", label: "同步", created_at: oct20(10, 30) },
+            { kind: "brief", label: "Work", created_at: oct20(10, 20) },
+            { kind: "read_page", label: "p", title: "同步設計", created_at: oct20(10, 10) },
+            { kind: "recall", label: "舊的", created_at: oct20(9, 50) },
+          ],
+          reads_total: 5,
+          cited_by: [{ id: "p2", title: "後續筆記", cited_at: oct20(11, 0) }],
+        }),
+      );
+      const dialog = await screen.findByRole("dialog", { name: "文蘭對話" });
+      expect(await within(dialog).findByRole("heading", { name: "它查了什麼" })).toBeInTheDocument();
+      expect(within(dialog).getByText("搜尋了「同步」")).toBeInTheDocument();
+      expect(within(dialog).getByText("還有 2 次")).toBeInTheDocument();
+      expect(within(dialog).getByRole("heading", { name: "後來用到這些記憶的筆記" })).toBeInTheDocument();
+      expect(dialog.textContent).not.toMatch(/[—–]/);
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
   it("omits the handoff and left-behind blocks when there is nothing to list", async () => {
     renderCard(detailFor(claudeSession));
     await screen.findByRole("dialog");
     await screen.findByText(/Oct 20/);
     expect(screen.queryByRole("heading", { name: "Handoff summary" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Left by this conversation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "What it looked up" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Notes that later used these memories" })).not.toBeInTheDocument();
   });
 
   it("caps a long list and shows the rest on request", async () => {

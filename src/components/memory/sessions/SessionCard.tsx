@@ -2,7 +2,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { getSessionDetail, type AgentSession, type SessionDetail } from "../../../lib/tauri";
+import { MagnifyingGlass } from "@phosphor-icons/react";
+import {
+  getSessionDetail,
+  type AgentSession,
+  type SessionDetail,
+  type SessionReadEntry,
+} from "../../../lib/tauri";
 import {
   formatSessionClock,
   formatSessionDay,
@@ -28,6 +34,13 @@ export function useSessionDetail(sessionId: string | null | undefined) {
 }
 
 const LIST_SHOWN = 8;
+/** Lookups listed before "N more". */
+const READS_SHOWN = 3;
+
+/** The conversation's own title, when it has one. */
+function sessionTitle(session: AgentSession | undefined): string {
+  return session?.title?.trim() ?? "";
+}
 
 interface SessionCardProps {
   readonly sessionId: string;
@@ -118,6 +131,53 @@ function CappedList({
   );
 }
 
+function ReadsSection({
+  reads,
+  total,
+  onOpenPage,
+}: {
+  reads: ReadonlyArray<SessionReadEntry>;
+  total: number;
+  onOpenPage?: (pageId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const untitled = t("knowledgeContext.untitled");
+  const shown = reads.slice(0, READS_SHOWN);
+  const more = Math.max(total, reads.length) - shown.length;
+  const heading = t("sessionSource.readsTitle");
+  return (
+    <section className="session-card-section">
+      <h3 className="session-card-heading">{heading}</h3>
+      <ul className="session-card-list" aria-label={heading}>
+        {shown.map((read, index) => {
+          const key = `${read.kind}:${read.label}:${read.created_at}:${index}`;
+          if (read.kind === "read_page") {
+            const label = t("sessionSource.readPage", { title: read.title?.trim() || untitled });
+            return (
+              <li key={key}>
+                <button type="button" className="session-card-row" onClick={() => onOpenPage?.(read.label)}>
+                  <span className="session-card-row-icon"><ReferenceTypeIcon kind="page" size={14} /></span>
+                  <span className="session-card-row-title">{label}</span>
+                </button>
+              </li>
+            );
+          }
+          const label = read.kind === "brief"
+            ? t("sessionSource.readBrief", { space: read.label })
+            : t("sessionSource.readRecall", { query: read.label });
+          return (
+            <li key={key} className="session-card-row session-card-row-static">
+              <span className="session-card-row-icon"><MagnifyingGlass size={14} aria-hidden="true" focusable="false" /></span>
+              <span className="session-card-row-title">{label}</span>
+            </li>
+          );
+        })}
+      </ul>
+      {more > 0 && <p className="session-card-muted">{t("sessionSource.readsMore", { count: more })}</p>}
+    </section>
+  );
+}
+
 function CardBody({
   detail,
   onOpenMemory,
@@ -149,11 +209,19 @@ function CardBody({
     onOpen: () => onOpenPage?.(page.id),
   }));
   const hasLeft = memoryItems.length > 0 || pageItems.length > 0;
+  const reads = detail.reads ?? [];
+  const citedItems = (detail.cited_by ?? []).map((note) => ({
+    key: note.id,
+    title: note.title || untitled,
+    onOpen: () => onOpenPage?.(note.id),
+  }));
+  // With a conversation title as the heading, the tool moves to the meta line.
+  const tool = sessionTitle(session) ? sessionToolLabel(session.tool) : "";
+  const meta = [tool, span].filter(Boolean).join(" · ");
 
   return (
     <>
-      {session.title && <p className="session-card-session-title">{session.title}</p>}
-      {span && <p className="session-card-muted">{span}</p>}
+      {meta && <p className="session-card-muted">{meta}</p>}
       <PlaceLine session={session} />
       {detail.handoffs.length > 0 && (
         <section className="session-card-section">
@@ -171,6 +239,9 @@ function CardBody({
             ))}
           </ul>
         </section>
+      )}
+      {reads.length > 0 && (
+        <ReadsSection reads={reads} total={detail.reads_total ?? reads.length} onOpenPage={onOpenPage} />
       )}
       {hasLeft && (
         <section className="session-card-section">
@@ -191,6 +262,12 @@ function CardBody({
           )}
         </section>
       )}
+      {citedItems.length > 0 && (
+        <section className="session-card-section">
+          <h3 className="session-card-heading">{t("sessionSource.citedByTitle")}</h3>
+          <CappedList label={t("sessionSource.notes", { count: citedItems.length })} kind="page" items={citedItems} />
+        </section>
+      )}
       <SessionResumeAction session={session} transcriptAvailable={detail.transcript_available === true} />
     </>
   );
@@ -207,7 +284,9 @@ export function SessionCard({ sessionId, known, onClose, onOpenMemory, onOpenPag
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const detail = query.data ?? null;
-  const tool = sessionToolLabel((detail?.session ?? known)?.tool ?? "");
+  const shownSession = detail?.session ?? known;
+  const tool = sessionToolLabel(shownSession?.tool ?? "");
+  const conversationTitle = sessionTitle(shownSession);
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -244,7 +323,8 @@ export function SessionCard({ sessionId, known, onClose, onOpenMemory, onOpenPag
       >
         <div className="session-card-body">
           <h2 id={titleId} className="session-card-title">
-            {tool ? t("sessionSource.cardTitle", { tool }) : t("sessionSource.title", { count: 1 })}
+            {conversationTitle ||
+              (tool ? t("sessionSource.cardTitle", { tool }) : t("sessionSource.title", { count: 1 }))}
           </h2>
           {query.isPending && <p role="status" className="session-card-muted">{t("sessionSource.loading")}</p>}
           {!query.isPending && !detail && <p role="alert" className="session-card-muted">{t("sessionSource.loadFailed")}</p>}
