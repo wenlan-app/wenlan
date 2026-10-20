@@ -142,8 +142,9 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
         ? "sourceUpdated"
         : null;
   const basisLines = basis ? basisNeedingAttention(page.basis) : [];
-  const hasContent = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped
-    || basisLines.length > 0;
+  // Basis lines alone leave the review row empty; drawing it anyway adds a blank row and a gap above them.
+  const hasTopRow = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped;
+  const hasContent = hasTopRow || basisLines.length > 0;
   if (!hasContent) return null;
 
   const retry = () => {
@@ -154,7 +155,7 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
   const attention = pendingItems.length > 0 || page.stale_reason === "source_conflict" || refreshBlocked
     || basisLines.length > 0;
   return <div className={`note-review-notice${attention ? " note-review-notice--attention" : ""}`} role="status" aria-live="polite">
-    <div className="note-review-notice__content">
+    {hasTopRow && <div className="note-review-notice__content">
       {pendingItems.length > 0 && <div className="note-review-notice__summary">
         <span>{t(pendingItems.length === 1 ? "noteReview.pending_one" : "noteReview.pending_other", { count: pendingItems.length })}</span>
         <span className="note-review-notice__categories">
@@ -167,8 +168,8 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
       {staleMessage && <p className="note-review-notice__message">{t(`noteReview.${staleMessage}`)}</p>}
       {queryFailed && <p className="note-review-notice__message">{t("noteReview.checkFailed")}</p>}
       {capped && <p className="note-review-notice__message">{t("noteReview.incomplete")}</p>}
-    </div>
-    <div className="note-review-notice__actions">
+    </div>}
+    {hasTopRow && <div className="note-review-notice__actions">
       {pendingItems.length > 0 && <button
         type="button"
         className="note-review-notice__button"
@@ -193,7 +194,7 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
         disabled={disabled}
         onClick={() => onReview()}
       >{t("noteReview.openQueue")}</button>}
-    </div>
+    </div>}
     {basis && basisLines.length > 0 && <NoteBasisLines
       {...basis}
       pageId={page.id}

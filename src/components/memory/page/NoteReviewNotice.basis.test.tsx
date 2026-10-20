@@ -96,6 +96,14 @@ describe("NoteReviewNotice with a basis", () => {
     expect(notice).toHaveClass("note-review-notice--attention");
   });
 
+  it("draws no empty review row above the basis lines", async () => {
+    const { container } = renderNotice({ ...basePage, basis: [pending()] });
+
+    await screen.findByText(/Source “Pricing” has an update to confirm/);
+    expect(container.querySelector(".note-review-notice__content")).toBeNull();
+    expect(container.querySelectorAll(".note-review-notice > .note-review-notice__actions")).toHaveLength(0);
+  });
+
   it("shows one line per changed basis with its visible and tucked-away actions", async () => {
     const { onEditToConfirm, onUpdateFromSources } = renderNotice({
       ...basePage,
