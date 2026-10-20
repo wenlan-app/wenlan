@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  Wenlan turns your documents, AI chats, and coding sessions into a local wiki that keeps up with its sources and traces each point back to them,<br>
+  Wenlan turns your scattered documents, AI chats, and coding sessions into one local source of truth that keeps up as they change,<br>
   so you and AI tools like Claude and Codex pick up where you left off.
 </p>
 
