@@ -4,7 +4,7 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::{fmt, num::NonZeroU64};
 
 pub const LINT_REPORT_SCHEMA_VERSION: u16 = 5;
-pub const LINT_CHECK_CATALOG_VERSION: u16 = 3;
+pub const LINT_CHECK_CATALOG_VERSION: u16 = 4;
 pub const LINT_MAX_EVIDENCE_PER_CHECK: u16 = 100;
 pub const LINT_GENERAL_CHECK_COUNT: usize = 56;
 pub const LINT_DEEP_CHECK_COUNT: usize = 75;

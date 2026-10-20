@@ -316,7 +316,6 @@ where
             ));
         }
         let page = page_on_connection(&conn, page_id).await?;
-        let code_bases = super::code_basis::code_basis_locators_on_conn(&conn, page_id).await?;
         if page.title != *after_title || page.version != current_version + 1 {
             return Err(WenlanError::VectorDb(
                 "repair_target_write_unproven".to_string(),
@@ -327,17 +326,14 @@ where
         projection_written = true;
         #[cfg(test)]
         if RENAME_PAGE_TITLE_TEST_CHECKPOINTS.try_with(|_| ()).is_ok() {
-            projection.write_page_with_after_target_write_permitted(
-                &permit,
-                &page,
-                &code_bases,
-                || run_test_checkpoint(TestCheckpointKind::AfterTargetWrite),
-            )?;
+            projection.write_page_with_after_target_write_permitted(&permit, &page, || {
+                run_test_checkpoint(TestCheckpointKind::AfterTargetWrite)
+            })?;
         } else {
-            projection.write_page_permitted(&permit, &page, &code_bases)?;
+            projection.write_page_permitted(&permit, &page)?;
         }
         #[cfg(not(test))]
-        projection.write_page_permitted(&permit, &page, &code_bases)?;
+        projection.write_page_permitted(&permit, &page)?;
 
         let after =
             crate::repair::capture_rename_page_title_on_connection(&conn, &projection, page_id)
@@ -660,8 +656,7 @@ async fn rename_page_projection_matches_post(
     let mut after_page = page_on_connection(connection, page_id).await?;
     after_page.title = after_title.clone();
     after_page.version = after_page.version.saturating_add(1);
-    let code_bases = super::code_basis::code_basis_locators_on_conn(connection, page_id).await?;
-    let expected_markdown = crate::export::knowledge::render_markdown_for(&after_page, &code_bases);
+    let expected_markdown = crate::export::knowledge::render_markdown_for(&after_page);
     let current_target = current_entries
         .iter()
         .find(|entry| entry.relative_path() == projection_target_path)
@@ -693,11 +688,8 @@ async fn rename_page_projection_matches_post(
     let (Some(before_page), Some(current_page)) = (before_page, current_page) else {
         return Ok(false);
     };
-    let mut expected_current_page = crate::export::knowledge::page_file_state_value(
-        &after_page,
-        projection_target_path,
-        &code_bases,
-    );
+    let mut expected_current_page =
+        crate::export::knowledge::page_file_state_value(&after_page, projection_target_path);
     // Older writers did not record a projection hash. The exact Markdown
     // bytes have already matched above, so only an absent hash is compatible;
     // a present but incorrect hash still makes recovery fail closed.

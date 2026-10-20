@@ -39,7 +39,12 @@ const REPAIR_VERIFICATION_RECEIPT_SCHEMA_VERSION: u16 = 4;
 pub const REPAIR_CLASSIFICATION_CHECK_ID: &str = "memories.semantic.classification";
 pub const REPAIR_RELATION_CHECK_ID: &str = "kg.semantic.entity_relations";
 const PREVIOUS_LINT_REPORT_SCHEMA_VERSION: u16 = 4;
-const PREVIOUS_LINT_CHECK_CATALOG_VERSION: u16 = 2;
+/// Catalog 3 -> 4 only added an advisory deep check, so a manifest prepared
+/// under 3 stays readable and applicable.
+const PREVIOUS_LINT_CHECK_CATALOG_VERSION: u16 = 3;
+/// The catalog of manifests written before report schema 5 / manifest schema 5;
+/// readable only inside the older manifest schemas.
+const LEGACY_LINT_CHECK_CATALOG_VERSION: u16 = 2;
 const REPAIR_MEMORY_STATE_CHECK_ID: &str = "identity.memory_state_integrity";
 const REPAIR_TAG_INTEGRITY_CHECK_ID: &str = "identity.tag_integrity";
 const REPAIR_SUPERSESSION_CHECK_ID: &str = "memories.supersession_integrity";
@@ -2425,7 +2430,8 @@ impl<'de> Deserialize<'de> for RepairSource {
         let review_binding = wire.review_binding;
         if (report_schema_version != PREVIOUS_LINT_REPORT_SCHEMA_VERSION
             && report_schema_version != LINT_REPORT_SCHEMA_VERSION)
-            || (check_catalog_version != PREVIOUS_LINT_CHECK_CATALOG_VERSION
+            || (check_catalog_version != LEGACY_LINT_CHECK_CATALOG_VERSION
+                && check_catalog_version != PREVIOUS_LINT_CHECK_CATALOG_VERSION
                 && check_catalog_version != LINT_CHECK_CATALOG_VERSION)
             || wire.deep_snapshots.is_some() != wire.deep_producer_receipt.is_some()
         {
@@ -3821,8 +3827,9 @@ impl RepairManifestDraft {
             LINT_REPORT_SCHEMA_VERSION
         };
         let catalog_version_supported = source.check_catalog_version == LINT_CHECK_CATALOG_VERSION
+            || source.check_catalog_version == PREVIOUS_LINT_CHECK_CATALOG_VERSION
             || (matches!(manifest_schema_version, 2..=4)
-                && source.check_catalog_version == PREVIOUS_LINT_CHECK_CATALOG_VERSION);
+                && source.check_catalog_version == LEGACY_LINT_CHECK_CATALOG_VERSION);
         if source.report_schema_version != expected_report_schema_version
             || !catalog_version_supported
             || !manifest_baseline_schema_matches(manifest_schema_version, &post_assertions)

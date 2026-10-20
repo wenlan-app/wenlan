@@ -345,7 +345,7 @@ impl KnowledgeWriter {
         create_projection_root_nofollow(&self.path)?;
         KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
             after_open()?;
-            self.write_page_with_lock_held(capabilities, &guard, page, &[], true)
+            self.write_page_with_lock_held(capabilities, &guard, page, true)
         })
     }
 
@@ -358,18 +358,15 @@ impl KnowledgeWriter {
     #[cfg(test)]
     fn reconcile_for_test(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
         let guard = self.begin_test_write();
-        self.reconcile(&guard, pages, &HashMap::new())
+        self.reconcile(&guard, pages)
     }
 
-    /// Project `page` with no code bases: for callers with no database at hand.
-    /// Production writes go through `write_page_gated` (or pass the page's
-    /// rows to `write_page_permitted`), which list the page's `repo://` sources.
     pub fn write_page(
         &self,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
     ) -> Result<String, WenlanError> {
-        self.write_page_with_regenerate_index(guard, page, &[], true)
+        self.write_page_with_regenerate_index(guard, page, true)
     }
 
     /// Place a new projection directly in a folder. Existing mapping always wins.
@@ -377,7 +374,6 @@ impl KnowledgeWriter {
         &self,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         initial_folder: Option<&str>,
     ) -> Result<String, WenlanError> {
         self.validate_guard(guard)?;
@@ -386,13 +382,7 @@ impl KnowledgeWriter {
         }
         create_projection_root_nofollow(&self.path)?;
         KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
-            self.write_page_with_lock_held_and_folder(
-                capabilities,
-                guard,
-                page,
-                code_bases,
-                initial_folder,
-            )
+            self.write_page_with_lock_held_and_folder(capabilities, guard, page, initial_folder)
         })
     }
 
@@ -401,14 +391,12 @@ impl KnowledgeWriter {
         capabilities: &ProjectionCapabilities,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         initial_folder: Option<&str>,
     ) -> Result<String, WenlanError> {
         self.write_page_with_lock_held_and_hook_in_folder(
             capabilities,
             guard,
             page,
-            code_bases,
             || Ok(()),
             true,
             initial_folder,
@@ -426,13 +414,12 @@ impl KnowledgeWriter {
         &self,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         regenerate_index: bool,
     ) -> Result<String, WenlanError> {
         self.validate_guard(guard)?;
         create_projection_root_nofollow(&self.path)?;
         KnowledgeProjectionWrite::with_projection_capabilities(&self.path, |capabilities| {
-            self.write_page_with_lock_held(capabilities, guard, page, code_bases, regenerate_index)
+            self.write_page_with_lock_held(capabilities, guard, page, regenerate_index)
         })
     }
 
@@ -441,14 +428,12 @@ impl KnowledgeWriter {
         capabilities: &ProjectionCapabilities,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         regenerate_index: bool,
     ) -> Result<String, WenlanError> {
         self.write_page_with_lock_held_and_hook(
             capabilities,
             guard,
             page,
-            code_bases,
             || Ok(()),
             regenerate_index,
         )
@@ -459,7 +444,6 @@ impl KnowledgeWriter {
         capabilities: &ProjectionCapabilities,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         after_target_write: F,
         regenerate_index: bool,
     ) -> Result<String, WenlanError>
@@ -470,7 +454,6 @@ impl KnowledgeWriter {
             capabilities,
             guard,
             page,
-            code_bases,
             after_target_write,
             regenerate_index,
             None,
@@ -483,7 +466,6 @@ impl KnowledgeWriter {
         capabilities: &ProjectionCapabilities,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         after_target_write: F,
         regenerate_index: bool,
         initial_folder: Option<&str>,
@@ -525,7 +507,7 @@ impl KnowledgeWriter {
         let file_path = self.path.join(&filename);
         let (target_directory, target_name) = folders::page_parent(&capabilities.root, &filename)?;
 
-        let content = render_markdown(page, code_bases);
+        let content = render_markdown(page);
         // Write to a temp file in the same capability directory, then rename
         // over the target: rename within one directory is atomic, so a reader
         // (Obsidian, the fs watcher) never observes a half-written page file.
@@ -643,7 +625,6 @@ impl KnowledgeWriter {
         &self,
         guard: &crate::page_projection_tracker::PageProjectionWriteGuard,
         pages: &[Page],
-        code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
     ) -> Result<ReconcileStats, WenlanError> {
         self.validate_guard(guard)?;
         let mut stats = ReconcileStats {
@@ -663,8 +644,7 @@ impl KnowledgeWriter {
             if !self.projection_is_behind(&entry.file, page) {
                 continue;
             }
-            let page_code_bases = code_bases.get(&page.id).map_or(&[][..], Vec::as_slice);
-            match self.write_page_with_regenerate_index(guard, page, page_code_bases, false) {
+            match self.write_page_with_regenerate_index(guard, page, false) {
                 Ok(_) => stats.rewritten += 1,
                 Err(e) => {
                     log::warn!("[reconcile] repair failed for {}: {e}", page.id);
@@ -715,7 +695,7 @@ impl KnowledgeWriter {
         if fm.fields.contains_key("type") {
             return false;
         }
-        let rendered = render_markdown(page, &[]);
+        let rendered = render_markdown(page);
         let (_, rendered_body) = crate::sources::obsidian::extract_frontmatter(&rendered);
         body == rendered_body
     }
@@ -1799,11 +1779,10 @@ impl KnowledgeProjectionWriteRef<'_> {
     pub fn write_page_in_folder(
         &self,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         initial_folder: Option<&str>,
     ) -> Result<String, WenlanError> {
         self.writer
-            .write_page_in_folder(&self.guard, page, code_bases, initial_folder)
+            .write_page_in_folder(&self.guard, page, initial_folder)
     }
 
     /// Project a page only if an automatic reader may see it.
@@ -1828,10 +1807,9 @@ impl KnowledgeProjectionWriteRef<'_> {
             return Ok(None);
         };
         let folder = database.page_initial_folder_path(&page.id).await?;
-        let code_bases = database.page_code_basis_locators(&page.id).await?;
         check_permit(&permit, page)?;
         self.writer
-            .write_page_in_folder(&self.guard, page, &code_bases, Some(&folder))
+            .write_page_in_folder(&self.guard, page, Some(&folder))
             .map(Some)
     }
 
@@ -1845,10 +1823,9 @@ impl KnowledgeProjectionWriteRef<'_> {
         &self,
         permit: &crate::truth_adapter::PagePermit,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
     ) -> Result<String, WenlanError> {
         check_permit(permit, page)?;
-        self.write_page_in_folder(page, code_bases, None)
+        self.write_page(page)
     }
 
     pub fn remove_page(&self, page_id: &str) -> Result<(), WenlanError> {
@@ -2158,7 +2135,6 @@ impl LockedProjection<'_> {
     pub(crate) fn capture_checked_page_projection(
         &self,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
     ) -> Result<Option<(String, Vec<wenlan_types::repair::RepairRollbackFileEntry>)>, WenlanError>
     {
         let Some((path, entries)) = self.capture_optional_page_projection(&page.id)? else {
@@ -2175,10 +2151,10 @@ impl LockedProjection<'_> {
             .get("pages")
             .and_then(serde_json::Value::as_object)
             .and_then(|pages| pages.get(&page.id));
-        let expected_state = page_file_state_value(page, &path, code_bases);
+        let expected_state = page_file_state_value(page, &path);
         let target_bytes = hex::decode(entries[1].content_hex())
             .map_err(|_| WenlanError::Conflict("repair_target_stale".to_string()))?;
-        let expected_markdown = render_markdown_for(page, code_bases);
+        let expected_markdown = render_markdown_for(page);
         let state_matches = stored_page.is_some_and(|stored| {
             if stored == &expected_state {
                 return true;
@@ -2321,14 +2297,12 @@ impl LockedRepairProjection<'_> {
         &self,
         permit: &crate::truth_adapter::PagePermit,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
     ) -> Result<String, WenlanError> {
         check_permit(permit, page)?;
         self.write.writer.write_page_with_lock_held(
             self.capabilities,
             &self.write.guard,
             page,
-            code_bases,
             true,
         )
     }
@@ -2343,7 +2317,6 @@ impl LockedRepairProjection<'_> {
         &self,
         permit: &crate::truth_adapter::PagePermit,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         after_target_write: F,
     ) -> Result<String, WenlanError>
     where
@@ -2354,7 +2327,6 @@ impl LockedRepairProjection<'_> {
             self.capabilities,
             &self.write.guard,
             page,
-            code_bases,
             after_target_write,
             true,
         )
@@ -2371,11 +2343,10 @@ impl LockedRepairProjection<'_> {
     pub(crate) fn capture_checked_page_projection(
         &self,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
     ) -> Result<Option<(String, Vec<wenlan_types::repair::RepairRollbackFileEntry>)>, WenlanError>
     {
         self.locked_projection()
-            .capture_checked_page_projection(page, code_bases)
+            .capture_checked_page_projection(page)
     }
 
     pub(crate) fn restore_rename_page_projection(
@@ -4509,7 +4480,7 @@ fn projection_bytes_replaceable(
     let not_newer = projected_origin_version(&fm) <= page.version;
     let unchanged = baseline.and_then(|entry| entry.content_sha256.as_deref())
         == Some(projection_digest(bytes).as_str());
-    let rendered = render_markdown(page, &[]);
+    let rendered = render_markdown(page);
     let (_, rendered_body) = crate::sources::obsidian::extract_frontmatter(&rendered);
     let adopted = crate::export::provenance::canonicalize_page_body(body)
         == crate::export::provenance::canonicalize_page_body(rendered_body);
@@ -5014,11 +4985,10 @@ impl KnowledgeProjectionWrite {
     pub fn write_page_in_folder(
         &self,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
         initial_folder: Option<&str>,
     ) -> Result<String, WenlanError> {
         self.writer
-            .write_page_in_folder(&self.guard, page, code_bases, initial_folder)
+            .write_page_in_folder(&self.guard, page, initial_folder)
     }
 
     /// Project a page only if an automatic reader may see it.
@@ -5051,10 +5021,9 @@ impl KnowledgeProjectionWrite {
             return Ok(None);
         };
         let folder = database.page_initial_folder_path(&page.id).await?;
-        let code_bases = database.page_code_basis_locators(&page.id).await?;
         check_permit(&permit, page)?;
         self.writer
-            .write_page_in_folder(&self.guard, page, &code_bases, Some(&folder))
+            .write_page_in_folder(&self.guard, page, Some(&folder))
             .map(Some)
     }
 
@@ -5067,10 +5036,9 @@ impl KnowledgeProjectionWrite {
         &self,
         permit: &crate::truth_adapter::PagePermit,
         page: &Page,
-        code_bases: &[CodeBasisLocator],
     ) -> Result<String, WenlanError> {
         check_permit(permit, page)?;
-        self.write_page_in_folder(page, code_bases, None)
+        self.write_page(page)
     }
 
     pub fn remove_page(&self, page_id: &str) -> Result<(), WenlanError> {
@@ -5085,12 +5053,8 @@ impl KnowledgeProjectionWrite {
     /// the same startup block -- so a page this pass re-projects and the truth
     /// verdict hides is evicted in the same tick. Gating here as well would only
     /// move where the same file stops existing.
-    pub fn reconcile(
-        &self,
-        pages: &[Page],
-        code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
-    ) -> Result<ReconcileStats, WenlanError> {
-        self.writer.reconcile(&self.guard, pages, code_bases)
+    pub fn reconcile(&self, pages: &[Page]) -> Result<ReconcileStats, WenlanError> {
+        self.writer.reconcile(&self.guard, pages)
     }
 
     /// See [`KnowledgeWriter::enforce_projection_directory_invariant`].
@@ -5179,24 +5143,18 @@ impl ProjectionCapabilities {
 /// Sources block), so callers outside this module (the watcher's
 /// protected-block re-projection check) can compute the canonical projection
 /// without duplicating it.
-pub fn render_markdown_for(page: &Page, code_bases: &[CodeBasisLocator]) -> String {
-    render_markdown(page, code_bases)
+pub fn render_markdown_for(page: &Page) -> String {
+    render_markdown(page)
 }
 
 /// The `state.json` entry `write_page` records for `page` at `file`, as JSON.
 /// Callers that compare a captured `state.json` against the expected
 /// post-write entry (the rename-repair recovery matcher) go through this so
 /// new `PageFileState` fields stay in sync with the writer.
-pub(crate) fn page_file_state_value(
-    page: &Page,
-    file: &str,
-    code_bases: &[CodeBasisLocator],
-) -> serde_json::Value {
+pub(crate) fn page_file_state_value(page: &Page, file: &str) -> serde_json::Value {
     serde_json::to_value(PageFileState {
         file: file.to_string(),
-        content_sha256: Some(projection_digest(
-            render_markdown(page, code_bases).as_bytes(),
-        )),
+        content_sha256: Some(projection_digest(render_markdown(page).as_bytes())),
         version: page.version,
         last_written: page.last_modified.clone(),
         title: Some(page.title.clone()),
@@ -5265,13 +5223,15 @@ pub(crate) fn page_frontmatter(
     out
 }
 
-fn render_markdown(page: &Page, code_bases: &[CodeBasisLocator]) -> String {
+fn render_markdown(page: &Page) -> String {
     use crate::export::provenance::render_sources_block;
     let mut out = String::new();
 
     // Frontmatter — OKF v0.2 conformant (see specs/2026-09-16-okf-projection.md).
     out.push_str("---\n");
-    out.push_str(&page_frontmatter(page, true, code_bases));
+    // The projection never lists code bases: their rows change outside page
+    // writes, so a `repo://` line here would make the file read as edited.
+    out.push_str(&page_frontmatter(page, true, &[]));
     out.push_str("---\n\n");
 
     // Body with wikilinks
@@ -6170,7 +6130,7 @@ mod tests {
         assert!(page_root.join(".wenlan").is_dir());
         assert_eq!(
             std::fs::read_to_string(path).unwrap(),
-            render_markdown(&test_concept(), &[])
+            render_markdown(&test_concept())
         );
     }
 
@@ -6203,7 +6163,7 @@ mod tests {
         assert!(!external.path().join("_sources").exists());
         assert_eq!(
             std::fs::read_to_string(pinned_root.join("rust-ownership.md")).unwrap(),
-            render_markdown(&test_concept(), &[])
+            render_markdown(&test_concept())
         );
         assert!(pinned_root.join(".wenlan/state.json").is_file());
         assert!(pinned_root.join("_sources/m1.md").is_file());
@@ -6350,7 +6310,7 @@ mod tests {
         );
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, render_markdown_for(&page, &[]));
+        assert_eq!(content, render_markdown_for(&page));
 
         let leftover_temp_files: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -6381,7 +6341,7 @@ mod tests {
         assert_eq!(stats.rewritten, 1);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            render_markdown_for(&page, &[]),
+            render_markdown_for(&page),
             "vanished projection was not restored from the DB"
         );
     }
@@ -6410,7 +6370,7 @@ mod tests {
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             on_disk,
-            render_markdown_for(&page, &[]),
+            render_markdown_for(&page),
             "stale projection was not brought forward to the DB version"
         );
     }
@@ -6433,7 +6393,7 @@ mod tests {
         assert_eq!(stats.rewritten, 1);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            render_markdown_for(&page, &[])
+            render_markdown_for(&page)
         );
     }
 
@@ -6558,7 +6518,7 @@ mod tests {
         // A projection exists on disk, but state.json does not know about it.
         std::fs::write(
             dir.path().join("rust-ownership.md"),
-            render_markdown_for(&page, &[]),
+            render_markdown_for(&page),
         )
         .unwrap();
 
@@ -6703,7 +6663,7 @@ mod tests {
     fn render_markdown_emits_sources_frontmatter_and_delimiter_block() {
         let mut page = test_concept();
         page.source_memory_ids = vec!["mem_1".to_string(), "mem_2".to_string()];
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         // Read-only frontmatter property, OKF object-list shape.
         assert!(md.contains("sources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}"));
         assert!(md.contains("  - {id: \"mem_2\", resource: \"wenlan://memory/mem_2\"}"));
@@ -6739,7 +6699,7 @@ mod tests {
     fn render_markdown_source_less_page_has_no_sources_artifacts() {
         let mut page = test_concept();
         page.source_memory_ids = vec![];
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         assert!(!md.contains("sources:"));
         assert!(!md.contains(crate::export::provenance::SOURCES_BLOCK_START));
     }
@@ -6748,7 +6708,7 @@ mod tests {
     fn render_markdown_escapes_title_so_frontmatter_survives_quotes() {
         let mut page = test_concept();
         page.title = "The \"Real\" Architecture".to_string();
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         let (fm, _body) = crate::sources::obsidian::extract_frontmatter(&md);
         // Frontmatter must NOT have collapsed to empty: origin_id still parses.
         assert_eq!(
@@ -6764,14 +6724,14 @@ mod tests {
 
     #[test]
     fn render_markdown_frontmatter_gains_type_page() {
-        let md = render_markdown(&test_concept(), &[]);
+        let md = render_markdown(&test_concept());
         let (fm, _) = crate::sources::obsidian::extract_frontmatter(&md);
         assert_eq!(fm.get_str("type"), Some("page"));
     }
 
     #[test]
     fn render_markdown_description_reflects_summary_when_present() {
-        let md = render_markdown(&test_concept(), &[]);
+        let md = render_markdown(&test_concept());
         let (fm, _) = crate::sources::obsidian::extract_frontmatter(&md);
         assert_eq!(fm.get_str("description"), Some("Memory safety without GC"));
     }
@@ -6782,13 +6742,13 @@ mod tests {
             summary: None,
             ..test_concept()
         };
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         assert!(!md.contains("description:"));
     }
 
     #[test]
     fn render_markdown_tags_mirror_space_when_present() {
-        let md = render_markdown(&test_concept(), &[]);
+        let md = render_markdown(&test_concept());
         let (fm, _) = crate::sources::obsidian::extract_frontmatter(&md);
         assert_eq!(fm.tags(), vec!["rust".to_string()]);
         // The pre-existing `space:` line is kept alongside the new `tags:`.
@@ -6801,7 +6761,7 @@ mod tests {
             space: None,
             ..test_concept()
         };
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         assert!(!md.contains("tags:"));
     }
 
@@ -6813,7 +6773,7 @@ mod tests {
         let mut page = test_concept();
         page.created_at = "2026-04-01T00:00:00+00:00".to_string();
         page.last_modified = "2026-09-17T12:00:00+00:00".to_string();
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         assert!(
             md.contains(&format!(
                 "generated: {{by: \"wenlan/{}\", at: \"{}\"}}",
@@ -6825,71 +6785,9 @@ mod tests {
         assert!(!md.contains("at: \"2026-04-01T00:00:00+00:00\""), "{md}");
     }
 
-    fn code_basis_locator(path: &str, start: u32, end: u32) -> CodeBasisLocator {
-        CodeBasisLocator {
-            repo_root: "/home/someone/private-checkout".to_string(),
-            path: path.to_string(),
-            line_start: start,
-            line_end: end,
-        }
-    }
-
-    #[test]
-    fn render_markdown_lists_code_bases_as_repo_sources() {
-        let mut page = test_concept();
-        page.source_memory_ids = vec!["mem_1".to_string()];
-        let md = render_markdown(&page, &[code_basis_locator("src/lib.rs", 10, 20)]);
-        assert!(
-            md.contains(
-                "sources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}\n  \
-                 - {resource: \"repo://src/lib.rs#L10-L20\"}\n"
-            ),
-            "{md}"
-        );
-        assert!(!md.contains("private-checkout"), "{md}");
-        // The delimiter Sources block in the body stays memory-only.
-        let (_, body) = crate::sources::obsidian::extract_frontmatter(&md);
-        assert!(!body.contains("repo://"), "{body}");
-        // A code basis alone still opens the `sources:` list.
-        let mut bare = test_concept();
-        bare.source_memory_ids.clear();
-        let md = render_markdown(&bare, &[code_basis_locator("src/lib.rs", 1, 2)]);
-        assert!(
-            md.contains("sources:\n  - {resource: \"repo://src/lib.rs#L1-L2\"}\n"),
-            "{md}"
-        );
-    }
-
-    /// The `.md` a write leaves on disk is the render `projection_digest` and
-    /// the repair comparisons expect, code bases included.
-    #[test]
-    fn write_page_projects_code_bases_and_records_the_matching_digest() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
-        let page = test_concept();
-        let bases = [code_basis_locator("src/lib.rs", 10, 20)];
-        let guard = writer.begin_test_write();
-        let file = writer
-            .write_page_in_folder(&guard, &page, &bases, None)
-            .unwrap();
-        let on_disk = std::fs::read_to_string(&file).unwrap();
-        assert_eq!(on_disk, render_markdown(&page, &bases));
-        assert!(on_disk.contains("repo://src/lib.rs#L10-L20"), "{on_disk}");
-        let state = page_file_state_value(&page, "x.md", &bases);
-        assert_eq!(
-            state["content_sha256"].as_str(),
-            Some(projection_digest(on_disk.as_bytes()).as_str())
-        );
-        // Without the rows the digest differs: callers must pass what they wrote.
-        assert_ne!(
-            page_file_state_value(&page, "x.md", &[])["content_sha256"],
-            state["content_sha256"]
-        );
-    }
-
     #[test]
     fn render_markdown_status_stable_by_default() {
-        let md = render_markdown(&test_concept(), &[]);
+        let md = render_markdown(&test_concept());
         let (fm, _) = crate::sources::obsidian::extract_frontmatter(&md);
         assert_eq!(fm.get_str("status"), Some("stable"));
     }
@@ -6900,7 +6798,7 @@ mod tests {
             stale_reason: Some("source_updated".to_string()),
             ..test_concept()
         };
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         let (fm, _) = crate::sources::obsidian::extract_frontmatter(&md);
         assert_eq!(fm.get_str("status"), Some("draft"));
     }
@@ -6911,7 +6809,7 @@ mod tests {
             status: "archived".to_string(),
             ..test_concept()
         };
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         let (fm, _) = crate::sources::obsidian::extract_frontmatter(&md);
         assert_eq!(fm.get_str("status"), Some("deprecated"));
     }
@@ -6924,7 +6822,7 @@ mod tests {
         // must never appear rather than fabricate `at`.
         let page = test_concept();
         assert_eq!(page.review_status, "confirmed");
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         assert!(!md.contains("verified:"));
     }
 
@@ -6935,7 +6833,7 @@ mod tests {
         // wikified content plus the delimiter-wrapped Sources block, same as
         // before this change.
         let page = test_concept();
-        let md = render_markdown(&page, &[]);
+        let md = render_markdown(&page);
         let (_, body) = crate::sources::obsidian::extract_frontmatter(&md);
         let expected = format!(
             "{}\n\n{}",
@@ -7680,7 +7578,7 @@ mod tests {
                 &filename,
                 ".race.tmp",
                 &page,
-                render_markdown(&page, &[]).as_bytes(),
+                render_markdown(&page).as_bytes(),
                 state.pages.get(&page.id),
                 || {
                     std::fs::write(&file, b"external replacement at the old pathname")?;
@@ -7769,7 +7667,6 @@ mod tests {
                     caps,
                     &guard,
                     &page,
-                    &[],
                     || Err(WenlanError::Conflict("injected before state save".into())),
                     true,
                 )
@@ -7835,7 +7732,7 @@ mod tests {
                 &filename,
                 ".moved-race.tmp",
                 &page,
-                render_markdown(&page, &[]).as_bytes(),
+                render_markdown(&page).as_bytes(),
                 state.pages.get(&page.id),
                 || {
                     editor.write_all(b"\nexternal prose arrived during replacement\n")?;

@@ -77,14 +77,14 @@ fn first_placement_and_future_saves_keep_the_recorded_folder() {
     let mut page = super::super::tests::test_concept();
     let guard = writer.begin_test_write();
     writer
-        .write_page_in_folder(&guard, &page, &[], Some("Notes/Rust"))
+        .write_page_in_folder(&guard, &page, Some("Notes/Rust"))
         .unwrap();
     let path = writer.page_filename(&page.id).unwrap();
     assert_eq!(path, "Notes/Rust/rust-ownership.md");
     page.version += 1;
     page.content.push_str("\nUpdated");
     writer
-        .write_page_in_folder(&guard, &page, &[], Some(""))
+        .write_page_in_folder(&guard, &page, Some(""))
         .unwrap();
     assert_eq!(
         writer.page_filename(&page.id).as_deref(),
@@ -220,7 +220,7 @@ fn encoded_folder_index_links_stay_owned_and_update_after_move_and_save() {
         other.id = "page_another".into();
         other.title = "Another title".into();
         writer
-            .write_page_in_folder(&writer.begin_test_write(), &other, &[], Some(folder))
+            .write_page_in_folder(&writer.begin_test_write(), &other, Some(folder))
             .unwrap();
         let index = std::fs::read_to_string(dir.path().join("index.md")).unwrap();
         assert!(
@@ -316,7 +316,7 @@ fn nested_reconcile_removal_and_truth_eviction_cover_every_copy() {
         .all(|path| !path.starts_with("archive/")));
 
     writer
-        .write_page_in_folder(&guard, &page, &[], Some("Notes"))
+        .write_page_in_folder(&guard, &page, Some("Notes"))
         .unwrap();
     writer.remove_page(&guard, &page.id).unwrap();
     assert!(!dir.path().join(&target).exists());

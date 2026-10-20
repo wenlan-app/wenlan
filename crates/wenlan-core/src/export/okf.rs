@@ -691,7 +691,7 @@ pub fn export_okf(pages: &[Page], target: &Path) -> Result<ExportStats, WenlanEr
 /// it with [`concept_path_map`] from `MemoryDB::okf_concept_paths`; an empty
 /// map simply leaves every such link unresolvable. `code_bases` holds each
 /// page's code bases by page id (callers with database access load them with
-/// `MemoryDB::page_code_basis_locators`); a page absent from it lists none.
+/// `MemoryDB::code_basis_locators_by_page`); a page absent from it lists none.
 pub fn export_okf_with_concept_paths(
     pages: &[Page],
     target: &Path,

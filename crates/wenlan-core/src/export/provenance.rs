@@ -105,6 +105,12 @@ pub fn render_sources_block(source_memory_ids: &[String]) -> String {
 /// entry, sorted by path then line. The repository root is never written: a
 /// reader of the export gets the in-repo path, not where it lives on this
 /// machine. Empty string when there is nothing to list.
+///
+/// Only the OKF bundle export passes code bases. The `.md` projection passes
+/// `&[]`: a note's `page_code_basis` rows change outside page writes (create
+/// stores them after the projection, confirm, remove and recheck move them
+/// without bumping the version), so a projected `repo://` line would go stale
+/// and the file would read as hand-edited.
 /// PROJECTION-OUT ONLY — the watcher never reads this back.
 pub fn sources_frontmatter(
     source_memory_ids: &[String],

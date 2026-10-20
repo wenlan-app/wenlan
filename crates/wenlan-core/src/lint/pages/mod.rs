@@ -134,8 +134,6 @@ pub(crate) fn uses_filesystem(check_id: &str) -> bool {
     uses_cross_store(check_id)
         || matches!(
             check_id,
-            state_checks::STATE_CONTRACT_ID
-                | link_checks::MANIFEST_ID
-                | provenance_checks::CODE_BASIS_DRIFT_ID
+            state_checks::STATE_CONTRACT_ID | link_checks::MANIFEST_ID
         )
 }

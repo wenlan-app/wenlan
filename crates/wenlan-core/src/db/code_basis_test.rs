@@ -1265,3 +1265,31 @@ async fn a_pending_row_is_always_read_even_when_the_file_looks_untouched() {
     recheck_code_basis(&db, None).await.unwrap();
     assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_OK);
 }
+
+/// The `.md` projection never lists a note's code bases; only the OKF bundle
+/// export does. The rows change outside page writes (a create stores them after
+/// the projection, confirm and remove edit them, a recheck moves or deletes
+/// them), so a `repo://` line in the projected file would go stale and the file
+/// would read as hand-edited, which refuses the next rename.
+#[tokio::test]
+async fn the_md_projection_of_a_note_with_a_code_basis_has_no_repo_line() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    let note = db.get_page("n1").await.unwrap().unwrap();
+
+    let root = tempfile::tempdir().unwrap();
+    let writer = crate::export::knowledge::KnowledgeWriter::new(root.path().to_path_buf(), &db);
+    let guard = db.begin_page_projection_write();
+    let file = writer.write_page(&guard, &note).unwrap();
+    let projected = std::fs::read_to_string(&file).unwrap();
+    assert!(!projected.contains("repo://"), "{projected}");
+    assert!(!projected.contains(&repo.root()), "{projected}");
+    // Byte-identical to what a page with no code basis renders.
+    assert_eq!(
+        projected,
+        crate::export::knowledge::render_markdown_for(&note)
+    );
+}

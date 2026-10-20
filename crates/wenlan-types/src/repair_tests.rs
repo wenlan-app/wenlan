@@ -1072,6 +1072,15 @@ fn manifest_roundtrips_and_rejects_unsupported_writer() {
         "current manifests must not downgrade their lint check catalog"
     );
 
+    // Catalog 3 -> 4 only added an advisory deep check: a manifest prepared
+    // under 3 is still readable.
+    let mut previous_catalog = value.clone();
+    previous_catalog["source"]["check_catalog_version"] = serde_json::json!(3);
+    assert!(matches!(
+        StoredRepairManifest::from_slice(&serde_json::to_vec(&previous_catalog).unwrap()).unwrap(),
+        StoredRepairManifest::V5(_)
+    ));
+
     let mut unsupported = value;
     unsupported["writer"] = serde_json::json!("refresh_page");
     assert!(serde_json::from_value::<RepairManifest>(unsupported).is_err());

@@ -31,8 +31,10 @@ pub(crate) async fn run(context: &LintContext<'_, '_>) -> Vec<LintCheckResult> {
     .collect()
 }
 
-/// The deep-profile advisory check. It reads code files, not the projection,
-/// so unlike the checks in [`run`] it does not depend on the page scan.
+/// The deep-profile advisory check. It reads code files, not the page root,
+/// so unlike the checks in [`run`] it does not depend on the page scan, and a
+/// change to the page root during the run does not make it inconsistent
+/// (`uses_filesystem` leaves it out).
 pub(super) async fn run_code_basis_drift(context: &LintContext<'_, '_>) -> LintCheckResult {
     let basis = if context.scope().filter().is_selected() {
         PopulationBasis::SelectedScope

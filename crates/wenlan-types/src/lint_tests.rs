@@ -164,7 +164,7 @@ fn report_roundtrips_current_schema_for_each_applied_scope_kind() {
 #[test]
 fn opaque_digest_evidence_roundtrips_without_ordinal_semantics() {
     assert_eq!(LINT_REPORT_SCHEMA_VERSION, 5);
-    assert_eq!(LINT_CHECK_CATALOG_VERSION, 3);
+    assert_eq!(LINT_CHECK_CATALOG_VERSION, 4);
     let evidence = LintEvidenceRef::OpaqueDigest {
         opaque_digest: LintOpaqueDigest::from_hex(
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

@@ -43,12 +43,20 @@ fn numbered(n: u32) -> String {
 }
 
 async fn page(db: &MemoryDB, id: &str, workspace: &str) {
-    let conn = db.test_secondary_session().unwrap();
-    conn.execute(
-        "INSERT INTO pages (id, title, content, source_memory_ids, version, status, created_at, \
-         last_compiled, last_modified, workspace) \
-         VALUES (?1, ?1, 'body', '[]', 1, 'active', 'now', 'now', 'now', ?2)",
-        libsql::params![id, workspace],
+    // `insert_page_with_kind` mirrors the space into `workspace`.
+    db.insert_page_with_kind(
+        id,
+        id,
+        None,
+        "body",
+        None,
+        Some(workspace),
+        &[],
+        "2026-01-01T00:00:00Z",
+        "authored",
+        "confirmed",
+        None,
+        None,
     )
     .await
     .unwrap();
