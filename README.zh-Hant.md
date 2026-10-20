@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=dbd8de7a5bab8697c64041589ef1b8cb676dd4c7fd5c6da14c9bf5dec7aabcd6 -->
+<!-- README_SYNC: source=README.md sha256=eae94f450ece4073c935c06328cf4214da74f7090ef27d088a1705317c9408a6 -->
 
 <p align="center">
   <picture>
@@ -154,13 +154,19 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ## 讓 AI 接續已有知識
 
-開新對話時，AI 已經能找到你之前的決定和依據，不用再從頭交代。選一個 Space，就只用這個專案的資料。
+Agent 本來就能讀檔、寫文章。Wenlan 多提供一個<strong>跨任務與 AI 工具共用、持續維護的知識庫</strong>：找回先前的決定與依據，保存新的成果，並隨依據變動繼續使用。
 
 **可以用在：**
 
 - **開發**：把先前的技術決定、經驗與驗收條件，用於功能實作與除錯。
 - **產品與網站**：依據使用者研究、產品定位與設計原則，撰寫規格或製作網頁。
 - **研究與學習**：把閱讀資料與保存的發現整理成帶引用的報告或學習筆記，供後續重用。
+
+**檢索與連接方式：** 插件引導 AI 取用與保存知識；MCP 連接提供可供 AI 呼叫的工具。
+
+- **[本地混合檢索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同詞句、BGE 向量找出相近語意，再以加權 RRF 合併排名；基礎搜尋不需 API key。
+- **圖譜輔助排序**：沿共同實體提高相關記憶的排名，即使用詞不同也能建立關聯；另可啟用 cross-encoder reranking，逐一比對問題與候選內容，精排結果。
+- **Spaces 範圍檢索**：選定 Space，將回傳的知識限制在相關專案或個人資料集合內。
 
 **即將推出（Coming soon）：** Spaces 的程式碼儲存庫（coding repo）支援。
 

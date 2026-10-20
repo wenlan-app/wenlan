@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=dbd8de7a5bab8697c64041589ef1b8cb676dd4c7fd5c6da14c9bf5dec7aabcd6 -->
+<!-- README_SYNC: source=README.md sha256=eae94f450ece4073c935c06328cf4214da74f7090ef27d088a1705317c9408a6 -->
 
 <p align="center">
   <picture>
@@ -154,13 +154,19 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 让 AI 接续已有知识
 
-开新对话时，AI 已经能找到你之前的决定和依据，不用再从头交代。选一个 Space，就只用这个项目的资料。
+智能体可以读取文件、撰写文字。Wenlan 增加了一个**跨任务与 AI 工具持续维护的共享知识库**：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
 
 **适用场景：**
 
 - **开发：** 将先前的技术决定、经验与验收标准带入实现和调试。
 - **产品与网站：** 运用客户研究、定位与设计原则撰写规格或构建页面。
 - **研究与学习：** 将阅读资料与保存的发现整理成带引用的报告或可复用学习笔记。
+
+**检索与连接：** 插件会引导检索和保存；MCP 连接则提供工具供 AI 调用。
+
+- **[本地混合检索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义，再以加权 RRF 合并排名；基础搜索无需 API key。
+- **图谱辅助排序：** 共享实体链接可提升相关记忆的排名，即使措辞不同也能关联。可选的 cross-encoder 重排会比较每条候选内容与问题，以调整顺序。
+- **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
 
 **即将推出：** Space 中的代码仓库支持。
 

@@ -9,7 +9,7 @@ The Agent Loop overview is retained for future reuse, although the main READMEs 
 - `wenlan-system-zh-Hans.svg` / `.png`: Simplified Chinese desktop overview.
 - Matching `*-mobile.svg` / `.png` versions remain alongside them.
 
-The original knowledge-network illustrations (`wenlan-knowledge-network*`) are also retained. The AI-work comparison (`wenlan-knowledge-to-work*`) is retained but no longer shown in the READMEs, which now describe the result in a sentence instead of the retrieval paths. These are explanatory illustrations, not captures of the app.
+The original knowledge-network illustrations (`wenlan-knowledge-network*`) are also retained. The AI-work comparison (`wenlan-knowledge-to-work*`) is retained but no longer shown in the READMEs; the retrieval text stays. These are explanatory illustrations, not captures of the app.
 
 Their editable source is `scripts/readme-product-visuals.cjs`; the renderer and font setup are documented in [the visual toolchain](../../scripts/readme-visuals/README.md). Removing an illustration from the README does not retire its assets or generator.
 

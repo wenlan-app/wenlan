@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=dbd8de7a5bab8697c64041589ef1b8cb676dd4c7fd5c6da14c9bf5dec7aabcd6 -->
+<!-- README_SYNC: source=README.md sha256=eae94f450ece4073c935c06328cf4214da74f7090ef27d088a1705317c9408a6 -->
 
 <p align="center">
   <picture>
@@ -154,13 +154,19 @@ Los PDF escaneados necesitan extracción de texto; los adjuntos de chats no se i
 
 ## Pon tu conocimiento a trabajar con IA
 
-Al abrir una sesión nueva, tu IA ya encuentra tus decisiones anteriores con sus razones y fuentes, así que no tienes que explicarlas otra vez. Elige un Espacio para que se limite a un proyecto.
+Un agente puede leer archivos y escribir texto. Wenlan añade una **base de conocimiento compartida y mantenida entre tareas y herramientas de IA**: recupera decisiones anteriores con sus fuentes, guarda el trabajo nuevo y sigue usándolo a medida que cambia la evidencia.
 
 **Úsala para:**
 
 - **Desarrollo:** Incorpora decisiones técnicas, aprendizajes y criterios de aceptación anteriores al implementar y depurar.
 - **Productos y sitios web:** Usa investigación de clientes, posicionamiento y principios de diseño para redactar especificaciones o crear páginas.
 - **Investigación y aprendizaje:** Convierte lecturas y hallazgos guardados en informes citados o apuntes de estudio reutilizables.
+
+**Recuperación y conexiones:** Los plugins orientan la recuperación y el guardado; las conexiones MCP exponen las herramientas para que las use tu IA.
+
+- **[Búsqueda híbrida local](docs/technical-foundations.md#retrieval-pipeline):** Encuentra términos exactos y significados similares con SQLite FTS5 y embeddings BGE, combinados mediante Reciprocal Rank Fusion (RRF) ponderado; la búsqueda base no requiere clave API.
+- **Clasificación asistida por el grafo:** Los enlaces entre entidades compartidas elevan memorias relacionadas aunque usen palabras distintas. El reranking opcional con cross-encoder compara cada candidato con la pregunta para ajustar el orden.
+- **Recuperación limitada a un Espacio:** Selecciona un Espacio para limitar el conocimiento devuelto al proyecto o colección personal pertinente.
 
 **Próximamente:** Compatibilidad con repositorios de código en Espacios.
 
