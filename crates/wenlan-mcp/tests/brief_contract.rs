@@ -57,6 +57,7 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
             query: query.into(),
             results: Vec::new(),
         }),
+        code_basis_pending: None,
     }
 }
 
@@ -121,6 +122,33 @@ async fn topic_appends_separately_labeled_same_space_context() {
 }
 
 #[tokio::test]
+async fn brief_says_how_many_notes_rely_on_code_that_changed() {
+    for (pending, expect_line) in [(Some(3_u32), true), (Some(0), false), (None, false)] {
+        let mock = MockServer::start().await;
+        let mut response = ready_response(None);
+        response.code_basis_pending = pending;
+        Mock::given(method("POST"))
+            .and(path("/api/brief"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock)
+            .await;
+        let result = make_server(&mock)
+            .brief_impl(BriefParams {
+                topic: None,
+                space: Some("wenlan".into()),
+            })
+            .await
+            .expect("brief read succeeds");
+        let text = text_of(&result);
+        assert_eq!(
+            text.contains("3 notes rely on code that changed; /wenlan map rechecks them"),
+            expect_line,
+            "{text}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn missing_brief_explains_that_reads_do_not_create_it() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
@@ -130,6 +158,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
             space: Some("wenlan".into()),
             brief: None,
             related_context: None,
+            code_basis_pending: None,
         }))
         .mount(&mock)
         .await;
