@@ -54,7 +54,7 @@ pub(crate) const MUTATION_GRANT: TruthGrant = TruthGrant::Automatic;
 
 /// Who marks or confirms: the agent named in `x-agent-name`, otherwise the
 /// person using the app.
-fn actor_from(headers: &HeaderMap) -> String {
+pub(crate) fn actor_from(headers: &HeaderMap) -> String {
     headers
         .get("x-agent-name")
         .and_then(|v| v.to_str().ok())
