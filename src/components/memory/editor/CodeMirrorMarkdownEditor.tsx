@@ -252,6 +252,11 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               ".cm-wiki-page-link:hover": {
                 color: "var(--mem-link-hover)",
               },
+              // Syntax highlighting wraps the marker text (the "1" of [1]) in
+              // its own link-coloured span; let the reference decide.
+              ".cm-wiki-page-link *": {
+                color: "inherit",
+              },
               // Citation markers are footnotes, as in reading mode: grey
               // until pointed at, so they never outrank the links.
               ".cm-wiki-page-link.cm-citation-link": {
