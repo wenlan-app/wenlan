@@ -175,13 +175,10 @@ for (const locale of LOCALES) {
       await expect(dialog.getByText(t("noteBasis.diff.versions", { title: BASIS_TITLE, from: 1, to: 3 }))).toBeVisible();
       await expect(dialog.locator("del").first()).toBeVisible();
       await expect(dialog.locator("ins").first()).toBeVisible();
-      // The daemon's edit summaries are English; other languages leave them out.
-      if (locale === "en") {
-        await expect(dialog.getByText("Raised the price")).toBeVisible();
-        await expect(dialog.getByText("Added the annual plan")).toBeVisible();
-      } else {
-        await expect(dialog.getByText("Raised the price")).toHaveCount(0);
-      }
+      // The daemon's edit summaries can carry writer slugs and source ids; the
+      // word diff above shows the change, so no language shows them.
+      await expect(dialog.getByText("Raised the price")).toHaveCount(0);
+      await expect(dialog.getByText("Added the annual plan")).toHaveCount(0);
       const editList = dialog.getByRole("region", { name: t("noteBasis.diff.edits") });
       await expect(editList.getByRole("listitem").nth(0)).toContainText(t("revisionLabel.writer.agentRefresh"));
       await expect(editList.getByRole("listitem").nth(1)).toContainText(t("noteBasis.diff.you"));
