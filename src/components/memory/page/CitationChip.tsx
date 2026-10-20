@@ -165,7 +165,6 @@ export default function CitationChip({
           // A footnote step below the reading size: 12px beside 15px body text.
           fontSize: "calc(var(--content-body-size, 15px) * 0.8)",
           lineHeight: 1,
-          background: "transparent",
           border: unverified ? "1px dashed var(--mem-accent-amber)" : "0",
           borderRadius: "3px",
           padding: "1px 2px",

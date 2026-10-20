@@ -243,11 +243,22 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 borderLeftColor: "var(--mem-accent-indigo)",
               },
               ".cm-wiki-page-link": {
-                color: "var(--mem-accent-indigo)",
+                color: "var(--mem-link)",
                 textDecoration: "underline",
-                textDecorationColor: "var(--mem-border)",
+                textDecorationColor: "color-mix(in srgb, currentColor 45%, transparent)",
                 textUnderlineOffset: "2px",
                 cursor: "pointer",
+              },
+              ".cm-wiki-page-link:hover": {
+                color: "var(--mem-link-hover)",
+              },
+              // Citation markers are footnotes, as in reading mode: grey
+              // until pointed at, so they never outrank the links.
+              ".cm-wiki-page-link.cm-citation-link": {
+                color: "var(--mem-text-tertiary)",
+              },
+              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):is(:hover, :focus-visible)": {
+                color: "var(--mem-link)",
               },
               ".cm-wiki-page-link:focus-visible": {
                 outline: "2px solid var(--mem-accent-indigo)",

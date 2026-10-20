@@ -288,10 +288,18 @@ const writingTheme = EditorView.theme({
     textDecorationThickness: "1px",
   },
   ".cm-writing-link": {
-    color: "var(--mem-accent-indigo)",
+    color: "var(--mem-link)",
     textDecoration: "underline",
-    textDecorationColor: "color-mix(in srgb, var(--mem-accent-indigo) 45%, transparent)",
+    textDecorationColor: "color-mix(in srgb, var(--mem-link) 45%, transparent)",
     textUnderlineOffset: "0.16em",
+  },
+  ".cm-writing-link-external::after": {
+    content: '"\\2197"',
+    display: "inline-block",
+    marginLeft: "0.15em",
+    fontSize: "0.8em",
+    lineHeight: "1",
+    textDecoration: "none",
   },
   ".cm-writing-image": {
     boxSizing: "border-box",
@@ -367,6 +375,11 @@ const writingTheme = EditorView.theme({
     verticalAlign: "middle",
   },
 });
+
+/** Links that leave the app for the browser; wiki references use "#" hrefs. */
+function isBrowserUrl(url: string): boolean {
+  return /^https?:\/\//i.test(url.trim());
+}
 
 export function writingPresentation(): Extension {
   return [
@@ -494,8 +507,24 @@ function buildWritingRanges(view: EditorView): WritingRanges {
             if (!constructIsRevealed(state, node.from, node.to, contentFocused)) {
               addConcealment(opening.from, opening.to);
               addConcealment(closingLabel.from, closing.to);
+              // The arrow stands in for the hidden URL, so it only shows
+              // while the URL is concealed.
+              if (isBrowserUrl(state.sliceDoc(url.from, url.to))) {
+                addMarkClass(opening.to, closingLabel.from, "cm-writing-link-external");
+              }
             }
           }
+          return;
+        }
+        // A bare URL (GFM autolink) is a link in its own right: it reads the
+        // same as a labelled link, arrow included.
+        if (
+          node.name === "URL"
+          && parent
+          && !["Link", "Image", "LinkReference", "Autolink"].includes(parent.name)
+          && isBrowserUrl(state.sliceDoc(node.from, node.to))
+        ) {
+          addMarkClass(node.from, node.to, "cm-writing-link cm-writing-link-external");
           return;
         }
         if (node.name === "HorizontalRule") {
