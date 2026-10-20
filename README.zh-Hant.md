@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=1367155bcba3fd0e6cfd6bca4b5ce444dce7500abee6860e6b58c7e74fd654e6 -->
+<!-- README_SYNC: source=README.md sha256=3e604d0c8cc413ddd696798e670cc16d476ffb21ce387d432c81d2e680c55c9f -->
 
 <p align="center">
   <picture>
@@ -41,9 +41,9 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ## 為什麼用文瀾
 
-- **筆記會自己跟上：** 來源變了，根據它寫的筆記會跟著更新。你自己寫過或改過的筆記，則改成提出修改，等你確認。
-- **每句話都查得到出處：** 筆記附上引用，可以點開原文。AI 改寫筆記時，文瀾會逐句比對引用的原文，大部分引用對不上的草稿不會存進去。
-- **所有 AI 工具共用一份知識：** Claude Code、Codex、Cursor 都讀寫同一個地方；開啟「網頁存取」後，網頁版 Claude 和 ChatGPT 也能用（實驗功能）。在一個工具做到一半，換另一個工具也能接著做。
+- **筆記會自己跟上：** 來源變了，根據它寫的筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
+- **每句話都查得到出處：** 筆記附上引用；AI 改寫筆記後，文瀾會先核對引用和原文，才存進去。
+- **所有 AI 工具共用一份知識：** 在 Claude Code 開始，換到 Codex 或 Cursor 接著做；網頁版 Claude 和 ChatGPT 也能用（實驗功能）。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

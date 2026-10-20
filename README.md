@@ -39,9 +39,9 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 ## Why Wenlan
 
-- **Notes that keep up:** When a source changes, notes built on it are refreshed. Notes you wrote or edited get a proposed revision for you to accept instead.
-- **Every claim traceable:** Notes cite their sources, and you can open the original text. When AI rewrites a note, Wenlan checks each cited sentence against the text it cites; a draft whose citations mostly fail is not saved.
-- **One knowledge base for all your AI tools:** Claude Code, Codex, and Cursor read and save to the same place, and with Web access on, so can Claude and ChatGPT on the web (experimental). Start a task in one tool and finish it in another.
+- **Notes that keep up:** When a source changes, notes built on it update. Notes you wrote get a suggested edit instead.
+- **Every claim traceable:** Notes cite their sources. Before saving an AI rewrite, Wenlan checks its citations against the original text.
+- **One knowledge base for every AI tool:** Start in Claude Code, pick up in Codex or Cursor. Claude and ChatGPT on the web can join too (experimental).
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
