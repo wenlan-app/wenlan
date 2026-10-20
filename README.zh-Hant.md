@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b08d819cd004e4e3bed903701bfe04c5db7421c78ce9b1e9ca1f416faae03991 -->
+<!-- README_SYNC: source=README.md sha256=5bfb5283bf386b9a3df4ea4ca25f1e85154df818a822a013fb238b169548538a -->
 
 <p align="center">
   <picture>
@@ -41,9 +41,9 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 ## 為什麼用文瀾
 
-筆記、文件和 AI 對話散落各處，內容又一直在變，每個 AI 工具也只各記一小部分。文瀾是為 AI 時代打造的知識庫：一份存在你電腦裡、由你和 AI 一起維護的唯一可信來源。
+我做文瀾，是因為我的筆記、文件和 AI 對話散落各處又一直在變，每個 AI 工具也只記得自己那一小部分。我想要一份存在自己電腦裡、我和 AI 一起維護的唯一可信來源。
 
-- **散落的資料收進一處：** 文件、Markdown 檔、Obsidian vault、網頁摘錄與連結，還有匯出的 AI 對話，都進到同一個知識庫。
+- **散落的資料收進一處：** 文件、Markdown 檔、Obsidian vault、網頁連結，還有匯出的 AI 對話，都進到同一個知識庫。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。
 - **流程全部內建：** 保存、整理、引用到更新筆記，都在同一個 App 裡，不用再拼裝一堆外掛。
 

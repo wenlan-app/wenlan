@@ -39,9 +39,9 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 ## Why Wenlan
 
-Your notes, documents, and AI chats are scattered everywhere, and they keep changing. Each AI tool remembers its own bits. Wenlan is a knowledge base built for the AI era: one local source of truth that you and your AI tools keep current together.
+I started Wenlan because my notes, documents, and AI chats were scattered everywhere and kept changing, and each AI tool remembered only its own bits. I wanted one local source of truth that my AI tools and I keep current together.
 
-- **Everything in one place:** Documents, Markdown files, Obsidian vaults, web excerpts with their links, and exported AI chats come into one wiki.
+- **Everything in one place:** Documents, Markdown files, Obsidian vaults, web links, and exported AI chats come into one wiki.
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, and other MCP clients work from the same pages.
 - **Built in, not bolted on:** Saving, organizing, citing, and updating pages live in one app, with no maze of plugins to wire up.
 
