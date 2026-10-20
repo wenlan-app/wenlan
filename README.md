@@ -33,6 +33,16 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 <p>Cover: localized composite of App views with demo data; the graph is illustrative, not a native three-column layout.</p>
 
+<a id="why-wenlan"></a>
+
+<br>
+
+## Why Wenlan
+
+- **Notes that keep up:** When a source changes, notes built on it are refreshed. Notes you wrote or edited get a proposed revision for you to accept instead.
+- **Every claim traceable:** Notes cite their sources, and you can open the original text. When AI rewrites a note, Wenlan checks each cited sentence against the text it cites; a draft whose citations mostly fail is not saved.
+- **One knowledge base for all your AI tools:** Claude Code, Codex, and Cursor read and save to the same place, and with Web access on, so can Claude and ChatGPT on the web (experimental). Start a task in one tool and finish it in another.
+
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
 <a id="start-with-the-app"></a>
