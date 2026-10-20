@@ -252,7 +252,7 @@ async fn actual_socket_forwards_a_credited_loopback_response_and_shuts_down() {
         let _ = socket.flush().await;
     });
     let connection = client
-        .connect_reverse(&device(), port, "b".repeat(43))
+        .connect_reverse(&device(), port, WriteRoute::default(), "b".repeat(43))
         .await
         .unwrap();
     assert_eq!(connection.connection_id(), "a".repeat(64));
@@ -284,7 +284,7 @@ async fn handshake_rejection_is_generic_and_never_retried() {
         );
     });
     let error = client
-        .connect_reverse(&device(), 12345, "b".repeat(43))
+        .connect_reverse(&device(), 12345, WriteRoute::default(), "b".repeat(43))
         .await
         .unwrap_err();
     assert_eq!(error, RelayError::Unauthorized);
@@ -348,7 +348,7 @@ async fn dropping_socket_owner_cancels_a_pending_local_http_request() {
         }
     });
     let connection = client
-        .connect_reverse(&device(), port, "b".repeat(43))
+        .connect_reverse(&device(), port, WriteRoute::default(), "b".repeat(43))
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(3), started_rx)

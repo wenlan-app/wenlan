@@ -52,14 +52,14 @@ function grant(id: string, over: Partial<RemoteGrant>): RemoteGrant {
     status: "active", cleanupPending: false,
     // The relay's own name is attacker-controlled, so the screens never trust it.
     clientName: "Whatever the app called itself", redirectHost: "claude.ai", knownClient: true,
-    lastUsedAt: null, endReason: null,
+    lastUsedAt: null, endReason: null, access: "query",
     ...over,
   };
 }
 
 function seedApps() {
   grants.push(
-    grant("g-claude", { redirectHost: "claude.ai", knownClient: true, lastUsedAt: Date.now() - 5 * MINUTE }),
+    grant("g-claude", { redirectHost: "claude.ai", knownClient: true, lastUsedAt: Date.now() - 5 * MINUTE, access: "write" }),
     grant("g-chatgpt", { redirectHost: "chatgpt.com", knownClient: true, lastUsedAt: null, createdAt: Date.now() - 20 * MINUTE }),
     grant("g-unknown", { redirectHost: "notes.example.org", knownClient: false, lastUsedAt: Date.now() - 3 * DAY }),
     grant("g-old-claude", { redirectHost: "claude.com", knownClient: true, status: "inactive", endReason: "revoked", lastUsedAt: Date.now() - 9 * DAY }),
@@ -212,6 +212,7 @@ export async function invokeRemoteFixture(command: string, args?: Record<string,
       grants.push(grant("g1", {
         clientId: request.clientId, space: profile.space, createdAt: Date.now(), expiresAt: Date.now() + DAY,
         clientName: inspected.clientName ?? null, redirectHost: inspected.redirectHost ?? null, knownClient: inspected.knownClient ?? false,
+        access: args?.access === "write" ? "write" : "query",
       }));
       return null;
     }

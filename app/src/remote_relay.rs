@@ -159,6 +159,27 @@ pub enum GrantEndReason {
     Other,
 }
 
+/// What an app connected through the relay may do. `Query` searches and reads;
+/// `Write` also adds, edits and deletes. A relay that predates the choice sends
+/// nothing, and a value this app does not know reads as `Query`, the narrower one.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GrantAccess {
+    Write,
+    #[default]
+    #[serde(other)]
+    Query,
+}
+
+impl GrantAccess {
+    fn as_str(self) -> &'static str {
+        match self {
+            GrantAccess::Query => "query",
+            GrantAccess::Write => "write",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GrantView {
@@ -179,6 +200,8 @@ pub struct GrantView {
     pub last_used_at: Option<u64>,
     #[serde(default)]
     pub end_reason: Option<GrantEndReason>,
+    #[serde(default)]
+    pub access: GrantAccess,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -425,6 +448,7 @@ impl RelayClient {
         credential: &DeviceCredential,
         view: &PairingView,
         space: &str,
+        access: GrantAccess,
     ) -> Result<(), RelayError> {
         if !valid_id(&view.pairing_id, 32)
             || view.client_id.is_empty()
@@ -436,7 +460,7 @@ impl RelayClient {
         {
             return Err(RelayError::InvalidInput);
         }
-        let body = serde_json::json!({ "approved": true, "clientId": view.client_id, "resource": view.resource, "space": space });
+        let body = serde_json::json!({ "approved": true, "clientId": view.client_id, "resource": view.resource, "space": space, "access": access.as_str() });
         let response = Self::send(
             self.request(
                 Method::POST,

@@ -496,6 +496,7 @@ fn validate_headers(headers: &HeaderMap, request: bool) -> Result<(), ReversePro
                     | "mcp-protocol-version"
                     | "last-event-id"
                     | "authorization"
+                    | "x-wenlan-access"
             )
         } else {
             matches!(
@@ -512,6 +513,11 @@ fn validate_headers(headers: &HeaderMap, request: bool) -> Result<(), ReversePro
             return Err(ReverseProtocolError);
         }
         if request && name == "authorization" && !valid_authorization(value) {
+            return Err(ReverseProtocolError);
+        }
+        // The relay's note of which local server a request is for. It carries
+        // no credential, and anything but these two words is not the contract.
+        if request && name == "x-wenlan-access" && !matches!(value.as_str(), "query" | "write") {
             return Err(ReverseProtocolError);
         }
     }
@@ -808,6 +814,45 @@ mod tests {
             body: String::new(),
         })
         .is_ok());
+    }
+
+    #[test]
+    fn access_header_is_a_request_only_note_of_query_or_write() {
+        let with_access = |value: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-wenlan-access".into(), value.into());
+            headers
+        };
+        for value in ["write", "query"] {
+            let frame = Frame::Request {
+                id: "request-1".into(),
+                path: "/mcp".into(),
+                method: "POST".into(),
+                headers: with_access(value),
+                body: String::new(),
+            };
+            assert_eq!(decode_frame(&encode_frame(&frame).unwrap()).unwrap(), frame);
+        }
+        for value in ["", "WRITE", "admin", "write "] {
+            assert!(encode_frame(&Frame::Request {
+                id: "request-1".into(),
+                path: "/mcp".into(),
+                method: "POST".into(),
+                headers: with_access(value),
+                body: String::new(),
+            })
+            .is_err());
+        }
+        // The relay never answers with it.
+        assert!(encode_frame(&Frame::Response {
+            id: "response-1".into(),
+            status: 200,
+            headers: with_access("write"),
+        })
+        .is_err());
+        assert_invalid(
+            r#"{"v":1,"type":"response","id":"id","status":200,"headers":{"x-wenlan-access":"write"}}"#,
+        );
     }
 
     #[test]

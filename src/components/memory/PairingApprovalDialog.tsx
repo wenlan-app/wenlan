@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   approveRemotePairing, denyRemotePairing, inspectRemotePairing, lookupRemotePairing,
-  type RemotePairing,
+  type RemoteAccess, type RemotePairing,
 } from "../../lib/tauri";
 import {
   clearPendingPairingCode, holdPendingPairingCode, markPairingApproved, usePendingPairingCode,
@@ -39,6 +39,45 @@ export default function PairingApprovalDialog({ currentSpace }: { currentSpace?:
   return code ? <ApprovalDialog key={code} code={code} currentSpace={currentSpace} /> : null;
 }
 
+/**
+ * What the app may do, chosen per app at connect time. Search only is selected
+ * and stays selected until the person picks otherwise.
+ */
+function AccessChoice({ value, disabled, onChange }: {
+  value: RemoteAccess;
+  disabled: boolean;
+  onChange: (access: RemoteAccess) => void;
+}) {
+  const { t } = useTranslation();
+  const questionId = useId();
+  const name = useId();
+  const options: { access: RemoteAccess; label: string; hint: string }[] = [
+    { access: "query", label: t("remoteAccess.accessQuery"), hint: t("remoteAccess.accessQueryHint") },
+    { access: "write", label: t("remoteAccess.accessWrite"), hint: t("remoteAccess.accessWriteHint") },
+  ];
+  return (
+    <>
+      <p id={questionId} className="pairing-approval-question">{t("remoteAccess.accessQuestion")}</p>
+      <div role="radiogroup" aria-labelledby={questionId} className="pairing-approval-options">
+        {options.map((option) => (
+          <label key={option.access} className="pairing-approval-option"
+            data-selected={value === option.access} aria-disabled={disabled}>
+            <input type="radio" className="pairing-approval-radio" name={name} value={option.access}
+              checked={value === option.access} disabled={disabled}
+              aria-labelledby={`${name}-${option.access}-label`}
+              aria-describedby={`${name}-${option.access}-hint`}
+              onChange={() => onChange(option.access)} />
+            <span>
+              <span id={`${name}-${option.access}-label`} className="pairing-approval-option-title">{option.label}</span>
+              <span id={`${name}-${option.access}-hint`} className="pairing-approval-option-hint">{option.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function ApprovalDialog({ code, currentSpace }: { code: string; currentSpace?: string }) {
   const { t } = useTranslation();
   const cache = useQueryClient();
@@ -50,6 +89,7 @@ function ApprovalDialog({ code, currentSpace }: { code: string; currentSpace?: s
   const bodyId = useId();
   const [step, setStep] = useState<Step>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [access, setAccess] = useState<RemoteAccess>("query");
   const [turningOn, setTurningOn] = useState(false);
   const [turnOnError, setTurnOnError] = useState<unknown>(null);
   // Once a decision is on its way, a refreshed profile must not start over.
@@ -110,7 +150,7 @@ function ApprovalDialog({ code, currentSpace }: { code: string; currentSpace?: s
     decided.current = true;
     setStep({ kind: "working", request, doing: "allow" });
     try {
-      await approveRemotePairing(inspectedAt, request);
+      await approveRemotePairing(inspectedAt, request, access);
       markPairingApproved();
       void cache.invalidateQueries({ queryKey: REMOTE_GRANTS });
       setStep({ kind: "approved", request });
@@ -226,6 +266,7 @@ function ApprovalDialog({ code, currentSpace }: { code: string; currentSpace?: s
           ? t("remoteAccess.approveBodyWholeLibrary")
           : t("remoteAccess.approveBody", { space: profile?.space ?? "" })}
       </p>
+      <AccessChoice value={access} disabled={working} onChange={setAccess} />
       {host && <p className="pairing-approval-sends">{t("remoteAccess.sendsTo", { host })}</p>}
       {unknown && <p role="note" className="pairing-approval-warning">{t("remoteAccess.unknownWarning")}</p>}
     </>;
@@ -247,7 +288,8 @@ function ApprovalDialog({ code, currentSpace }: { code: string; currentSpace?: s
         onKeyDown={(event) => {
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (step.kind !== "working") close(); return; }
           if (event.key !== "Tab") return;
-          const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>("button:not(:disabled), select:not(:disabled), a[href]") ?? []);
+          const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>("button:not(:disabled), input[type=radio]:checked:not(:disabled), select:not(:disabled), a[href]") ?? [])
+            .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
           const first = controls[0];
           const last = controls[controls.length - 1];
           if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) {

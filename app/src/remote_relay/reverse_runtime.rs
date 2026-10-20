@@ -2,6 +2,7 @@
 //! Bounded native lifecycle for an authenticated reverse relay connection.
 
 use super::reverse_client::ReverseCandidate;
+use super::reverse_peer::WriteRoute;
 use super::reverse_socket::ReverseConnection;
 use super::runtime::RenewalError;
 use super::store::{Profile, Store, StoreError};
@@ -26,8 +27,19 @@ impl std::fmt::Debug for ActiveReverse {
 
 /// Open the native reverse connection using the profile currently persisted by
 /// the app. The profile is never silently re-enrolled or rotated.
-pub(crate) async fn connect(profile: Profile, port: u16) -> Result<ActiveReverse, RenewalError> {
-    connect_at(Store::current(), RelayClient::new()?, profile, port).await
+pub(crate) async fn connect(
+    profile: Profile,
+    port: u16,
+    write_route: WriteRoute,
+) -> Result<ActiveReverse, RenewalError> {
+    connect_at(
+        Store::current(),
+        RelayClient::new()?,
+        profile,
+        port,
+        write_route,
+    )
+    .await
 }
 
 /// Testable lifecycle entrypoint. The store and client are injected so tests
@@ -37,6 +49,7 @@ pub(super) async fn connect_at(
     client: RelayClient,
     profile: Profile,
     port: u16,
+    write_route: WriteRoute,
 ) -> Result<ActiveReverse, RenewalError> {
     if port == 0 {
         return Err(RenewalError::Relay(RelayError::InvalidInput));
@@ -87,7 +100,12 @@ pub(super) async fn connect_at(
         .map_err(RenewalError::Profile)?;
 
     let connection = client
-        .connect_reverse(&credential, port, profile.backend_token().to_owned())
+        .connect_reverse(
+            &credential,
+            port,
+            write_route,
+            profile.backend_token().to_owned(),
+        )
         .await
         .map_err(RenewalError::Relay)?;
 
@@ -329,6 +347,7 @@ mod tests {
             client(listener.local_addr().unwrap().port()),
             profile,
             12345,
+            WriteRoute::default(),
         )
         .await
         .unwrap_err();
@@ -349,6 +368,7 @@ mod tests {
             client(listener.local_addr().unwrap().port()),
             current,
             12345,
+            WriteRoute::default(),
         )
         .await
         .unwrap_err();
@@ -369,6 +389,7 @@ mod tests {
             client(listener.local_addr().unwrap().port()),
             disabled,
             12345,
+            WriteRoute::default(),
         )
         .await
         .unwrap_err();
@@ -391,6 +412,7 @@ mod tests {
             client(listener.local_addr().unwrap().port()),
             profile,
             0,
+            WriteRoute::default(),
         )
         .await
         .unwrap_err();
@@ -426,9 +448,15 @@ mod tests {
                     .unwrap();
             }
         });
-        let error = connect_at(store.clone(), client(port), profile, 12345)
-            .await
-            .unwrap_err();
+        let error = connect_at(
+            store.clone(),
+            client(port),
+            profile,
+            12345,
+            WriteRoute::default(),
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(
             error,
             RenewalError::Relay(RelayError::Unauthorized)
@@ -465,7 +493,7 @@ mod tests {
                     .is_err()
             }
         });
-        let error = connect_at(store, client(port), profile, 12345)
+        let error = connect_at(store, client(port), profile, 12345, WriteRoute::default())
             .await
             .unwrap_err();
         assert!(
@@ -493,7 +521,14 @@ mod tests {
                 let _ = tokio::time::timeout(Duration::from_secs(5), socket.next()).await;
             }
         });
-        let active = connect_at(store.clone(), client(port), profile.clone(), 12345).await;
+        let active = connect_at(
+            store.clone(),
+            client(port),
+            profile.clone(),
+            12345,
+            WriteRoute::default(),
+        )
+        .await;
         let active = active.unwrap();
         assert_eq!(active.profile.revision(), profile.revision());
         assert_eq!(active.profile.device().unwrap().id, device.id);
@@ -554,6 +589,7 @@ mod tests {
                 client(listener.local_addr().unwrap().port()),
                 profile,
                 12345,
+                WriteRoute::default(),
             )
             .await
             .unwrap_err();

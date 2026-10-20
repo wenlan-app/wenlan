@@ -69,8 +69,13 @@ describe('remote access consent bridge', () => {
       expiresAt: 1900000000,
     };
     await tauri.approveRemotePairing('revision-3', inspected);
+    // Search only unless the person chose otherwise.
     expect(mockInvoke).toHaveBeenCalledWith('approve_remote_pairing', {
-      expectedRevision: 'revision-3', inspected,
+      expectedRevision: 'revision-3', inspected, access: 'query',
+    });
+    await tauri.approveRemotePairing('revision-3', inspected, 'write');
+    expect(mockInvoke).toHaveBeenLastCalledWith('approve_remote_pairing', {
+      expectedRevision: 'revision-3', inspected, access: 'write',
     });
   });
 

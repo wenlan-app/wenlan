@@ -40,6 +40,11 @@ pub struct Profile {
     backend_token: String,
     enabled: bool,
     device: Option<DeviceCredential>,
+    /// An app was allowed to write, so the web-write process runs beside the
+    /// search-only one. Missing in a profile saved before the choice existed;
+    /// not written while false, so an older build can still read the file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    write_enabled: bool,
 }
 
 impl std::fmt::Debug for Profile {
@@ -87,6 +92,10 @@ impl Profile {
     }
     pub fn device(&self) -> Option<&DeviceCredential> {
         self.device.as_ref()
+    }
+    /// Whether the local web-write process should run for this profile.
+    pub fn write_enabled(&self) -> bool {
+        self.write_enabled
     }
 
     fn validate(&self) -> Result<(), StoreError> {
@@ -161,6 +170,7 @@ impl Store {
                 backend_token: secret()?,
                 enabled: false,
                 device: None,
+                write_enabled: false,
             };
             write_profile(path, &profile)?;
             Ok(profile)
@@ -174,6 +184,7 @@ impl Store {
             }
             profile.backend_token = secret()?;
             profile.enabled = true;
+            profile.write_enabled = false;
             Ok(())
         })
     }
@@ -197,8 +208,33 @@ impl Store {
             {
                 return Err(StoreError::Stale);
             }
+            // A new or rotated key ends every grant the relay holds for this
+            // computer, so no write approval survives it.
             profile.device = Some(device);
+            profile.write_enabled = false;
             Ok(())
+        })
+    }
+
+    /// Record that an app was allowed to write. Unlike every other change this
+    /// keeps the revision: it only adds a process beside the running one, so a
+    /// connection captured at this revision stays current. It applies only to
+    /// the enabled, enrolled profile the person approved against, and a stale
+    /// caller cannot switch writing on for a newer profile.
+    pub fn enable_write(&self, expected: &str) -> Result<Profile, StoreError> {
+        self.with_lock(|path| {
+            let mut profile = read_profile(path)?.ok_or(StoreError::NotConfigured)?;
+            if profile.revision != expected {
+                return Err(StoreError::Stale);
+            }
+            if !profile.enabled || profile.device.is_none() {
+                return Err(StoreError::Stale);
+            }
+            if !profile.write_enabled {
+                profile.write_enabled = true;
+                write_profile(path, &profile)?;
+            }
+            Ok(profile)
         })
     }
 
@@ -207,6 +243,7 @@ impl Store {
     pub fn disable(&self, expected: &str) -> Result<Profile, StoreError> {
         self.change(expected, |profile| {
             profile.enabled = false;
+            profile.write_enabled = false;
             Ok(())
         })
     }
@@ -224,6 +261,7 @@ impl Store {
             }
             profile.device = None;
             profile.backend_token = secret()?;
+            profile.write_enabled = false;
             Ok(())
         })
     }
