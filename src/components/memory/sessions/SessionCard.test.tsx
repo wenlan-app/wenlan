@@ -103,7 +103,7 @@ describe("SessionCard", () => {
     expect(within(dialog).getByRole("heading", { name: "Left by this conversation" })).toBeInTheDocument();
     expect(within(dialog).getByRole("list", { name: "2 memories" })).toBeInTheDocument();
     // Two versions of one note are one note.
-    expect(within(dialog).getByRole("list", { name: "1 note" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("list", { name: "1 page" })).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Untitled" }));
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -175,7 +175,7 @@ describe("SessionCard", () => {
       }),
     );
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByRole("heading", { name: "Notes that later used these memories" })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("heading", { name: "Pages that later used these memories" })).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Untitled" }));
     expect(onOpenPage).toHaveBeenCalledWith("page-8");
     await userEvent.click(within(dialog).getByRole("button", { name: "Sync overview" }));
@@ -193,7 +193,7 @@ describe("SessionCard", () => {
       }),
     );
     const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByRole("heading", { name: "Notes that later used these memories" });
+    await within(dialog).findByRole("heading", { name: "Pages that later used these memories" });
     const order = within(dialog)
       .getAllByRole("heading", { level: 3 })
       .map((heading) => heading.textContent);
@@ -201,9 +201,9 @@ describe("SessionCard", () => {
       "Handoff summary",
       "What it looked up",
       "Left by this conversation",
-      "Notes that later used these memories",
+      "Pages that later used these memories",
     ]);
-    const heading = within(dialog).getByRole("heading", { name: "Notes that later used these memories" });
+    const heading = within(dialog).getByRole("heading", { name: "Pages that later used these memories" });
     const resume = within(dialog).getByRole("button", { name: "Continue in Claude Code" });
     expect(heading.compareDocumentPosition(resume) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -241,7 +241,7 @@ describe("SessionCard", () => {
     expect(screen.queryByRole("heading", { name: "Handoff summary" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Left by this conversation" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "What it looked up" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Notes that later used these memories" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Pages that later used these memories" })).not.toBeInTheDocument();
   });
 
   it("caps a long list and shows the rest on request", async () => {

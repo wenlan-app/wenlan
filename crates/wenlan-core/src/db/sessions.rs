@@ -586,18 +586,18 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("record session read newest: {e}")))?;
-        let newest =
-            match rows.next().await.map_err(|e| {
-                WenlanError::VectorDb(format!("record session read newest row: {e}"))
-            })? {
-                Some(row) => Some((
+        let newest = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("record session read newest row: {e}")))?
+            .map(|row| {
+                (
                     row.get::<i64>(0).unwrap_or(0),
                     row.get::<String>(1).unwrap_or_default(),
                     row.get::<String>(2).unwrap_or_default(),
                     row.get::<Option<String>>(3).unwrap_or(None),
-                )),
-                None => None,
-            };
+                )
+            });
         drop(rows);
 
         match newest {
@@ -636,31 +636,6 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("record session read commit: {e}")))?;
         Ok(true)
-    }
-
-    /// Set the session's title from its transcript, only while it has none:
-    /// a title an agent sent through `POST /api/sessions` always wins.
-    /// Returns whether the title was set.
-    pub async fn set_session_title_if_absent(
-        &self,
-        id: &str,
-        title: &str,
-    ) -> Result<bool, WenlanError> {
-        let title = title.trim();
-        if title.is_empty() {
-            return Ok(false);
-        }
-        let now = chrono::Utc::now().timestamp();
-        let conn = self.conn.lock().await;
-        let changed = conn
-            .execute(
-                "UPDATE agent_sessions SET title = ?1, updated_at = ?2
-                  WHERE id = ?3 AND (title IS NULL OR TRIM(title) = '')",
-                libsql::params![title, now, id],
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("set session title: {e}")))?;
-        Ok(changed > 0)
     }
 
     /// `POST /api/sessions`: create the session if needed, then overwrite the

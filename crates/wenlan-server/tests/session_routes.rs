@@ -387,7 +387,7 @@ const TRANSCRIPT: &str = concat!(
 );
 
 #[tokio::test]
-async fn claude_code_title_is_read_from_the_transcript_once() {
+async fn claude_code_title_is_read_from_the_transcript_each_time() {
     let (app, _temp, db) = common::test_app_no_gate().await;
     let dir = tempfile::tempdir().unwrap();
     let path = transcript_file(&dir, TRANSCRIPT);
@@ -396,21 +396,22 @@ async fn claude_code_title_is_read_from_the_transcript_once() {
 
     let detail = session_detail(&app, SESSION_A).await;
     assert_eq!(detail["session"]["title"], "文兰 AI 会话资源");
+    // Shown, not stored: the read stays write-free.
     let stored = db
         .get_session(&session_id(SESSION_A))
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.title.as_deref(), Some("文兰 AI 会话资源"));
+    assert_eq!(stored.title, None);
 
-    // Once kept, a newer line in the transcript does not move it.
+    // A later rename in the transcript shows up.
     std::fs::write(
         &path,
         format!("{TRANSCRIPT}{{\"type\":\"ai-title\",\"aiTitle\":\"Newer\"}}\n"),
     )
     .unwrap();
     let detail = session_detail(&app, SESSION_A).await;
-    assert_eq!(detail["session"]["title"], "文兰 AI 会话资源");
+    assert_eq!(detail["session"]["title"], "Newer");
 }
 
 #[tokio::test]

@@ -146,16 +146,16 @@ pub async fn handle_get_session(
     )
     .await?;
     detail.transcript_available = transcript_exists(detail.session.transcript_path.as_deref());
-    fill_title_from_transcript(&db, &mut detail.session).await;
+    fill_title_from_transcript(&mut detail.session).await;
     Ok(Json(detail))
 }
 
-/// Claude Code writes its own conversation title into the transcript. When a
-/// `claude-code` session has none stored and its transcript is still on this
-/// machine, read the newest one and keep it. A title an agent already sent
-/// wins: the write only lands while the title is empty. Best effort; any
-/// failure leaves the session as it was.
-async fn fill_title_from_transcript(db: &MemoryDB, session: &mut AgentSession) {
+/// Claude Code writes its own conversation title into the transcript and may
+/// rename the conversation later. When a `claude-code` session has no title an
+/// agent sent and its transcript is still on this machine, show the newest one.
+/// Read fresh each time and never stored, so this read stays write-free and a
+/// later rename shows up. Best effort; any failure leaves the title empty.
+async fn fill_title_from_transcript(session: &mut AgentSession) {
     if session.tool != "claude-code"
         || session
             .title
@@ -167,26 +167,13 @@ async fn fill_title_from_transcript(db: &MemoryDB, session: &mut AgentSession) {
     let Some(path) = session.transcript_path.clone() else {
         return;
     };
-    let found = tokio::task::spawn_blocking(move || {
+    session.title = tokio::task::spawn_blocking(move || {
         let path = std::path::PathBuf::from(path);
         path.is_file().then(|| last_ai_title(&path)).flatten()
     })
     .await
     .ok()
     .flatten();
-    let Some(title) = found else {
-        return;
-    };
-    match db.set_session_title_if_absent(&session.id, &title).await {
-        Ok(true) => session.title = Some(title),
-        // An agent sent a title in the meantime: show that one.
-        Ok(false) => {
-            if let Ok(Some(current)) = db.get_session(&session.id).await {
-                session.title = current.title;
-            }
-        }
-        Err(error) => tracing::warn!("[session] could not keep the transcript title: {error}"),
-    }
 }
 
 /// Whether a stored transcript location still names a file on this machine.

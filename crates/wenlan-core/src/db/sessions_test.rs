@@ -301,48 +301,6 @@ fn an_overlong_line_is_skipped_and_does_not_hide_the_title() {
     assert_eq!(last_ai_title(&path).as_deref(), Some("After"));
 }
 
-#[tokio::test]
-async fn a_stored_title_is_never_replaced_by_the_transcript_one() {
-    let (db, _temp) = test_db().await;
-    let sent = db
-        .upsert_session_metadata(&UpsertSessionRequest {
-            session: "claude-code:titled".into(),
-            title: Some("Sent by the agent".into()),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(!db
-        .set_session_title_if_absent(&sent.id, "From the transcript")
-        .await
-        .unwrap());
-    let stored = db.get_session(&sent.id).await.unwrap().unwrap();
-    assert_eq!(stored.title.as_deref(), Some("Sent by the agent"));
-
-    let bare = db
-        .upsert_session_metadata(&UpsertSessionRequest {
-            session: "claude-code:untitled".into(),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert!(!db
-        .set_session_title_if_absent(&bare.id, "  ")
-        .await
-        .unwrap());
-    assert!(db
-        .set_session_title_if_absent(&bare.id, "From the transcript")
-        .await
-        .unwrap());
-    // Once set, a later transcript title does not move it.
-    assert!(!db
-        .set_session_title_if_absent(&bare.id, "Newer")
-        .await
-        .unwrap());
-    let stored = db.get_session(&bare.id).await.unwrap().unwrap();
-    assert_eq!(stored.title.as_deref(), Some("From the transcript"));
-}
-
 async fn announce(db: &super::MemoryDB, raw: &str) -> String {
     db.upsert_session_metadata(&UpsertSessionRequest {
         session: raw.into(),
