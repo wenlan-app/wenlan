@@ -264,7 +264,7 @@ describe("PageDetail with note bases", () => {
     const view = await typeAtEnd(" [[pri");
 
     const menu = await screen.findByRole("listbox", { name: "Link a page" });
-    expect(listPages).toHaveBeenCalledWith("active", undefined, 500);
+    expect(listPages).toHaveBeenCalledWith("active", "uncategorized", 500, 0);
     const rows = await waitFor(() => {
       const options = menu.querySelectorAll('[role="option"]');
       expect(options.length).toBeGreaterThan(0);

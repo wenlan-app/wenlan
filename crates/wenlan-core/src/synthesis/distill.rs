@@ -849,6 +849,7 @@ async fn distill_one_cluster_with_tuning(
                     page_min_cluster_size: tuning.page_min_cluster_size,
                     page_match_threshold: tuning.page_match_threshold,
                     citations_json: Some(citations_json),
+                    basis_marks: Vec::new(),
                 },
             )
             .await?;

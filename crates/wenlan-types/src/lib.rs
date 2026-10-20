@@ -70,7 +70,7 @@ pub use outbox::{
 pub use page_basis::{
     BasisConfirmOutcome, BasisDiffEdit, BasisDiffResponse, BasisInput, BasisPendingCiterRef,
     BasisPendingEntry, BasisRef, BasisRemoveResponse, BasisVersionRequest, ConfirmBasisInput,
-    LinkedChanged,
+    LinkedChanged, PAGE_REVISION_BASIS_REFUSED,
 };
 pub use pages::{Page, PageEvidence};
 pub use repair::*;

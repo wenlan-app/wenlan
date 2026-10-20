@@ -947,6 +947,7 @@ async fn write_source_page(
             page_min_cluster_size: 1,
             page_match_threshold: 0.0,
             citations_json: None,
+            basis_marks: Vec::new(),
         },
     )
     .await

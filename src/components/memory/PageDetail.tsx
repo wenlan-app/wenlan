@@ -31,7 +31,6 @@ import {
   pageReviewSupported,
   parseEntityGuardError,
   markPageBasis,
-  listPages,
   type Entity,
   type BasisConfirmOutcome,
   type BasisRef,
@@ -78,7 +77,8 @@ import {
   type MarkdownEditorStatus,
   type MarkdownEditorSelection,
 } from "./editor/MarkdownEditor";
-import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
+import { pageTitleKey, trimLikeDaemon, type LinkCompletionNote } from "./editor/wikiLinkCompletion";
+import { loadLinkCandidates } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
@@ -131,14 +131,14 @@ function relativeTimeFromISO(iso: string, t: TFunction): string {
 }
 
 function normalizeLinkLabel(label: string): string {
-  return label.trim().toLowerCase();
+  return pageTitleKey(label);
 }
 
 function parseWikilink(inner: string): { targetLabel: string; displayText: string; hasAlias: boolean } {
   const pipeIndex = inner.indexOf("|");
   const rawTarget = pipeIndex >= 0 ? inner.slice(0, pipeIndex) : inner;
   const headingIndex = rawTarget.indexOf("#");
-  const targetLabel = (headingIndex >= 0 ? rawTarget.slice(0, headingIndex) : rawTarget).trim();
+  const targetLabel = trimLikeDaemon(headingIndex >= 0 ? rawTarget.slice(0, headingIndex) : rawTarget);
   const targetDisplay = targetLabel || rawTarget.trim();
   const alias = pipeIndex >= 0 ? inner.slice(pipeIndex + 1).trim() : "";
   return {
@@ -162,7 +162,6 @@ function localShortcutModifier(): "Cmd" | "Ctrl" {
 }
 
 const PAGE_LINK_ANCHOR_PREFIX = "#concept:";
-const LINK_NOTE_LIMIT = 500;
 type MenuInitialFocus = "first" | "last";
 
 type PageEditGate =
@@ -499,7 +498,7 @@ export default function PageDetail({
   const { data: linkCandidates } = useQuery({
     // Under ["pages"] so every rename and delete that refreshes the library refreshes this too.
     queryKey: ["pages", "link-notes", linkSpace],
-    queryFn: () => listPages("active", linkSpace ?? undefined, LINK_NOTE_LIMIT),
+    queryFn: () => loadLinkCandidates(linkSpace),
     enabled: editing && !!page,
     staleTime: 30_000,
     retry: false,

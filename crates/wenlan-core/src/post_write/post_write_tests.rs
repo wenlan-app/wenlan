@@ -960,6 +960,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             page_min_cluster_size: 3,
             page_match_threshold: 0.86,
             citations_json: None,
+            basis_marks: Vec::new(),
         },
     )
     .await
@@ -1015,6 +1016,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             page_min_cluster_size: 3,
             page_match_threshold: 0.86,
             citations_json: None,
+            basis_marks: Vec::new(),
         },
     );
     let observe_projection = async {
@@ -2820,6 +2822,7 @@ async fn seed_source_page(db: &MemoryDB, page_id: &'static str) -> (&'static str
             page_min_cluster_size: 1,
             page_match_threshold: 0.0,
             citations_json: None,
+            basis_marks: Vec::new(),
         },
     )
     .await
@@ -7632,6 +7635,7 @@ async fn staged_page_card_names_its_proposer() {
             edited_by,
             proposer,
             None,
+            &[],
         )
         .await
         .unwrap();

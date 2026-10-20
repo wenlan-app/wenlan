@@ -28,6 +28,11 @@ pub enum PageWrite<'a> {
         page_min_cluster_size: usize,
         page_match_threshold: f64,
         citations_json: Option<String>,
+        /// R7: the notes the new page relies on, `(basis_page_id,
+        /// read_version)`, recorded in the create transaction (a refused mark
+        /// creates nothing). Ignored when the write attaches to an existing
+        /// page instead of creating one.
+        basis_marks: Vec<(String, i64)>,
     },
     Update {
         page_id: &'a str,
@@ -128,6 +133,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             page_min_cluster_size,
             page_match_threshold,
             citations_json,
+            basis_marks,
         } => {
             create_page_impl(
                 db,
@@ -139,6 +145,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                     page_min_cluster_size,
                     page_match_threshold,
                     citations_json: citations_json.as_deref(),
+                    basis_marks: &basis_marks,
                 },
             )
             .await
@@ -354,6 +361,7 @@ pub async fn create_page_with_tuning(
             page_min_cluster_size,
             page_match_threshold,
             citations_json: None,
+            basis_marks: Vec::new(),
         },
     )
     .await

@@ -338,7 +338,13 @@ pub async fn handle_basis_diff(
     // The response carries the basis' prose, so the caller must be allowed to
     // read both notes in full.
     require_pair_visible(&db, &view.grant, &scope, &id, &basis_id).await?;
-    match db.basis_diff(&id, &basis_id).await.map_err(basis_error)? {
+    // The read itself carries the scope: a note moved out of the caller's
+    // Space after the check above reads as missing, never as its prose.
+    match db
+        .basis_diff_in_scope(&id, &basis_id, &scope)
+        .await
+        .map_err(basis_error)?
+    {
         BasisDiffOutcome::Available(diff) => Ok(Json(BasisDiffResponse {
             from_version: diff.from_version,
             to_version: diff.to_version,
@@ -356,6 +362,9 @@ pub async fn handle_basis_diff(
                 })
                 .collect(),
         })),
+        BasisDiffOutcome::OutOfScope(page_id) => {
+            Err(ServerError::NotFound(format!("page {page_id} not found")))
+        }
         BasisDiffOutcome::Unavailable(reason) => Err(ServerError::Structured {
             status: axum::http::StatusCode::CONFLICT,
             body: serde_json::json!({

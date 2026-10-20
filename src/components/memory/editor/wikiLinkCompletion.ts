@@ -26,27 +26,44 @@ const QUERY_STOP = /[[\]|#\n\r\u3010\u3011\u300c\u300d\uff3b\uff3d]/;
 let nextMenuId = 0;
 
 /**
+ * The whitespace the daemon trims (Rust `str::trim`, Unicode White_Space).
+ * JS `trim()` differs: it also strips U+FEFF and keeps U+0085.
+ */
+const DAEMON_EDGE_SPACE =
+  /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
+
+/** Trims `text` exactly as the daemon does before it compares a link label. */
+export function trimLikeDaemon(text: string): string {
+  return text.replace(DAEMON_EDGE_SPACE, "");
+}
+
+/** The daemon's page-title identity (`page_title_key`): trimmed, then lowercased. */
+export function pageTitleKey(title: string): string {
+  return trimLikeDaemon(title).toLowerCase();
+}
+
+/**
  * A title the daemon can resolve from `[[Title]]`: its parser stops at `]`,
  * `|`, `#` and line ends, and drops labels carrying `[`.
  */
 export function linkableTitle(title: string): boolean {
-  const trimmed = title.trim();
+  const trimmed = trimLikeDaemon(title);
   return trimmed.length > 0 && !/[[\]|#\n\r]/.test(trimmed);
 }
 
 /** The notes shown for `query`: prefix matches first, then word starts, then any match. */
 export function linkCompletionMatches(notes: readonly LinkCompletionNote[], query: string): LinkCompletionNote[] {
-  const needle = query.trim().toLowerCase();
+  const needle = pageTitleKey(query);
   // A title two notes share links to neither, so neither is offered.
   const titleCount = new Map<string, number>();
   for (const note of notes) {
-    const key = note.title.trim().toLowerCase();
+    const key = pageTitleKey(note.title);
     titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
   }
   const ranked: { note: LinkCompletionNote; rank: number; order: number }[] = [];
   notes.forEach((note, order) => {
     if (!linkableTitle(note.title)) return;
-    const key = note.title.trim().toLowerCase();
+    const key = pageTitleKey(note.title);
     if (titleCount.get(key) !== 1) return;
     if (!needle) { ranked.push({ note, rank: 0, order }); return; }
     const at = key.indexOf(needle);
@@ -158,7 +175,7 @@ export function createLinkCompletion(options: {
     if (matches.length === 0) { close(view); return false; }
     const note = clicked ? matches.find((match) => match.id === clicked.id) : matches[activeIndex(menu, matches.length)];
     if (!note) return false;
-    const insert = `[[${note.title.trim()}]]`;
+    const insert = `[[${trimLikeDaemon(note.title)}]]`;
     view.dispatch({
       changes: { from: menu.from, to: menu.to, insert },
       selection: EditorSelection.cursor(menu.from + insert.length),

@@ -1573,6 +1573,13 @@ export function isPageRevisionOutdated(error: unknown): boolean {
   return daemonErrorMessage(error)?.startsWith("page_revision_outdated") ?? false;
 }
 
+/** True when the daemon refused a page revision card because a page the
+ * change relied on (a basis) was archived, deleted or moved since. The daemon
+ * has already discarded the card and left the page unchanged. */
+export function isPageRevisionBasisRefused(error: unknown): boolean {
+  return daemonErrorMessage(error)?.startsWith("page_revision_basis_refused") ?? false;
+}
+
 /** The daemon's guard when a page delete is refused because the row belongs
  * to an entity: `{"error": "This page belongs to the entity '<name>'. Archive
  * or delete it from Entities", "entity_id": "..."}`. Isolated here so the

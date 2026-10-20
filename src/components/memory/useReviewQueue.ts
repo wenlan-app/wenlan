@@ -8,6 +8,7 @@ import {
   confirmMemory,
   deleteMemory,
   dismissPendingRevision,
+  isPageRevisionBasisRefused,
   isPageRevisionOutdated,
   listPendingRevisions,
   listRefinements,
@@ -22,6 +23,7 @@ import {
   type RefinementProposalSummary,
   type RevisionTargetKind,
 } from "../../lib/tauri";
+import { BASIS_PENDING_QUERY_KEY } from "./page/useBasisActions";
 
 export type ReviewItem =
   | {
@@ -246,7 +248,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       // The daemon discards a page revision card that can no longer apply.
       // Drop it here too, so neither the queue nor the page banner keeps
       // offering a card that is already gone.
-      if (item.kind !== "revision" || !isPageRevisionOutdated(error)) return;
+      if (item.kind !== "revision" || !(isPageRevisionOutdated(error) || isPageRevisionBasisRefused(error))) return;
       queryClient.setQueriesData<PendingRevisionItem[]>(
         { queryKey: REVISIONS_KEY },
         (old) =>
@@ -300,8 +302,10 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       }
       // Decisions entered from a note must refresh that note and its inline
       // signal as well as every capped queue cache. Never leave approved text
-      // or a dismissed card looking pending on return.
-      for (const key of ["page", "pages", "page-revisions", "page-sources", "page-links", "space-pages", "memory-detail"]) {
+      // or a dismissed card looking pending on return. Accepting an update can
+      // confirm a basis, so the "source note changed" group and each note's
+      // basis diff refresh too.
+      for (const key of ["page", "pages", "page-revisions", "page-sources", "page-links", "space-pages", "memory-detail", "page-basis-diff", ...BASIS_PENDING_QUERY_KEY]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
       queryClient.invalidateQueries({ queryKey: REVISIONS_KEY });
@@ -320,6 +324,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
     void revisions.refetch();
     void refinements.refetch();
     void captures.refetch();
+    void queryClient.invalidateQueries({ queryKey: BASIS_PENDING_QUERY_KEY });
   };
 
   return {

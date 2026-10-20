@@ -288,6 +288,7 @@ pub(super) struct CreatePageInput<'a> {
     pub(super) page_min_cluster_size: usize,
     pub(super) page_match_threshold: f64,
     pub(super) citations_json: Option<&'a str>,
+    pub(super) basis_marks: &'a [(String, i64)],
 }
 
 pub(super) async fn create_page_impl(
@@ -302,6 +303,7 @@ pub(super) async fn create_page_impl(
         page_min_cluster_size,
         page_match_threshold,
         citations_json,
+        basis_marks,
     } = input;
 
     // Pre-write validation
@@ -473,7 +475,7 @@ pub(super) async fn create_page_impl(
     // DB index
     let source_refs: Vec<&str> = req.source_memory_ids.iter().map(|s| s.as_str()).collect();
     if let Err(e) = db
-        .insert_page_with_kind(
+        .insert_page_with_basis(
             &id,
             &req.title,
             req.summary.as_deref(),
@@ -486,6 +488,8 @@ pub(super) async fn create_page_impl(
             review_status,
             req.workspace.as_deref(),
             citations_json,
+            basis_marks,
+            agent,
         )
         .await
     {

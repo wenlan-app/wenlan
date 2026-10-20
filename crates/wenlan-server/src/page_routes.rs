@@ -613,13 +613,21 @@ async fn handle_create_page_inner(
     let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&code_basis)
         .await
         .map_err(crate::code_basis_routes::code_basis_error)?;
-    let result = wenlan_core::post_write::create_page_with_tuning(
+    // The marks are recorded in the create transaction itself, so a mark
+    // refused at write time (its note archived or moved since the check above)
+    // creates nothing: no page row, no page file.
+    let result = wenlan_core::post_write::page_write(
         &db,
-        req,
-        &agent,
-        page_root.as_deref(),
-        page_min_cluster_size,
-        page_match_threshold,
+        wenlan_core::post_write::PageWrite::Create {
+            page_id: None,
+            req,
+            agent: &agent,
+            knowledge_path: page_root.as_deref(),
+            page_min_cluster_size,
+            page_match_threshold,
+            citations_json: None,
+            basis_marks: marks.clone(),
+        },
     )
     .await?;
     let persisted_page_id = result.attached_to.as_deref().unwrap_or(&result.id);
@@ -629,26 +637,13 @@ async fn handle_create_page_inner(
         .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?
         .space;
     let attached_existing = result.attached_to.is_some();
-    // Marks go on the note this call created. A create that attached to an
-    // existing note wrote nothing of its own, so it marks nothing.
+    // Marks went on the note this call created, inside its create
+    // transaction. A create that attached to an existing note wrote nothing of
+    // its own, so it marked nothing.
     let mut written_basis = Vec::new();
     let mut written_code_basis = Vec::new();
     let mut warnings = result.warnings;
     if !attached_existing {
-        for (basis_page_id, version) in &marks {
-            if let Err(error) = db
-                .mark_page_basis(&result.id, basis_page_id, *version, &agent)
-                .await
-            {
-                tracing::warn!(
-                    "[create_page] {} created; basis {basis_page_id} not recorded: {error}",
-                    result.id
-                );
-                // The note stays; the agent is told which basis did not land
-                // and can mark it with the basis route.
-                warnings.push(format!("basis {basis_page_id} was not recorded: {error}"));
-            }
-        }
         written_basis = crate::page_basis_routes::written_basis(&db, &result.id).await?;
         if !prepared_code_basis.is_empty() {
             if let Err(error) = db
@@ -1493,6 +1488,7 @@ pub async fn handle_update_page(
                 marks: Vec::new(),
                 confirm: confirm_basis.map(|c| (c.basis_page_id, c.version)),
                 confirm_snapshot: Vec::new(),
+                card_marks: Vec::new(),
                 code_basis: Vec::new(),
             },
         },
@@ -1567,6 +1563,7 @@ pub async fn handle_update_page(
 pub async fn handle_refresh_page(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     headers: HeaderMap,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<Json<wenlan_types::responses::PageWriteResponse>, ServerError> {
@@ -1579,8 +1576,14 @@ pub async fn handle_refresh_page(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let result =
-        handle_refresh_page_inner(State(state), Path(id), proposer.as_deref(), Json(req)).await;
+    let result = handle_refresh_page_inner(
+        State(state),
+        Path(id),
+        header_space.as_deref(),
+        proposer.as_deref(),
+        Json(req),
+    )
+    .await;
     match &result {
         Ok((wenlan_core::post_write::WriteOutcome::Wrote, _)) => {
             telemetry.record(TelemetryEvent::WikiGenerated)
@@ -1611,6 +1614,7 @@ fn page_moved_conflict(id: &str, current_version: i64) -> ServerError {
 async fn handle_refresh_page_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
+    header_space: Option<&str>,
     proposer: Option<&str>,
     Json(req): Json<wenlan_types::requests::RefreshPageRequest>,
 ) -> Result<
@@ -1641,19 +1645,15 @@ async fn handle_refresh_page_inner(
     // A note id in the source list is a mistake the agent can fix right now:
     // say which field takes notes.
     crate::page_basis_routes::refuse_note_ids_in_sources(&db, &req.source_memory_ids).await?;
-    // This route carries no Space header, so the visibility check is the
-    // truth grant alone; the same-Space rule in core bounds the rest.
+    // A Space-locked caller writes only inside its Space. The app sends no
+    // Space header, so its scope is global and it reaches every note.
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space).await?;
     let basis_marks: Vec<(String, i64)> = req
         .basis
         .iter()
         .map(|b| (b.page_id.clone(), b.version))
         .collect();
-    crate::page_basis_routes::require_basis_visible(
-        &db,
-        &wenlan_core::read_scope::ReadScope::Global,
-        &basis_marks,
-    )
-    .await?;
+    crate::page_basis_routes::require_basis_visible(&db, &scope, &basis_marks).await?;
     // Read the staleness fence before the fields it protects (same
     // fence-first discipline as the refresh/growth path): a source attached
     // between this read and the page read below is then either fully
@@ -1673,6 +1673,14 @@ async fn handle_refresh_page_inner(
         .await
         .map_err(|e| ServerError::Internal(e.to_string()))?
         .ok_or_else(|| ServerError::ValidationError(format!("page {} not found", id)))?;
+    // A note outside the caller's Space answers exactly as a missing one, so
+    // a locked agent learns nothing about it, not even that it exists.
+    if !scope.matches(existing.space.as_deref()) {
+        return Err(ServerError::ValidationError(format!(
+            "page {} not found",
+            id
+        )));
+    }
     // `existing` just proved the page row exists, so the counter read a
     // moment earlier must also have found one; `None` here means the page
     // was deleted in the gap between the two reads — an internal race, not
@@ -1732,6 +1740,13 @@ async fn handle_refresh_page_inner(
         .await
         .map_err(crate::code_basis_routes::code_basis_error)?;
     if requires_review {
+        // The notes the write relies on ride the card and are recorded when
+        // the human accepts it. Checked now, so a refused mark refuses this
+        // request exactly as it would a direct write.
+        let staged_marks = db
+            .prepare_staged_basis_marks(&id, &basis_marks)
+            .await
+            .map_err(crate::page_basis_routes::basis_error)?;
         let result = wenlan_core::post_write::stage_page_revision_card_proposed_by(
             &db,
             &existing,
@@ -1741,6 +1756,7 @@ async fn handle_refresh_page_inner(
             "agent_refresh",
             proposer,
             None,
+            &staged_marks,
         )
         .await
         .map_err(ServerError::from)?;
@@ -1777,6 +1793,7 @@ async fn handle_refresh_page_inner(
                     .collect(),
                 confirm: None,
                 confirm_snapshot: Vec::new(),
+                card_marks: Vec::new(),
                 code_basis: prepared_code_basis.clone(),
             },
             page_id: &id,
