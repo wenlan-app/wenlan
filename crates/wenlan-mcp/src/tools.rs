@@ -479,6 +479,11 @@ pub struct RecallParams {
     )]
     #[serde(default)]
     pub rerank: Option<bool>,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; lists this lookup on that conversation's card."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -492,6 +497,11 @@ pub struct BriefParams {
     )]
     #[serde(default, alias = "domain")]
     pub space: Option<String>,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; lists this lookup on that conversation's card."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
@@ -1102,6 +1112,11 @@ pub struct ReadPageParams {
         description = "Opaque page id from list_pages, recall, or write_page; ASCII letters, digits, underscores, and hyphens only, never a URL or file path."
     )]
     pub page_id: String,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; lists this lookup on that conversation's card."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1757,10 +1772,11 @@ impl WenlanMcpServer {
     }
 
     pub async fn recall_impl(&self, params: RecallParams) -> Result<CallToolResult, McpError> {
+        let client = self.session_client(params.session.as_deref()).await;
         let req = recall_search_request(params);
 
         let resp: SearchMemoryResponse =
-            try_call!(self.client.post("/api/memory/search", &req), "search");
+            try_call!(client.post("/api/memory/search", &req), "search");
 
         if self.tool_profile == ToolProfile::QueryOnly {
             return query_success(query_output::project_recall(&resp));
@@ -1790,13 +1806,14 @@ impl WenlanMcpServer {
     }
 
     pub async fn brief_impl(&self, params: BriefParams) -> Result<CallToolResult, McpError> {
+        let client = self.session_client(params.session.as_deref()).await;
         let request = wenlan_types::BriefReadRequest {
             topic: params.topic,
             space: effective_space(&params.space),
             legacy_context_limit: None,
         };
         let response: wenlan_types::BriefReadResponse =
-            try_call!(self.client.post("/api/brief", &request), "brief load");
+            try_call!(client.post("/api/brief", &request), "brief load");
 
         if self.tool_profile == ToolProfile::QueryOnly {
             let output = query_output::project_brief(&response)
@@ -2977,17 +2994,28 @@ impl WenlanMcpServer {
     }
 
     pub async fn read_page_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
+        self.read_page_for_session(page_id, None).await
+    }
+
+    /// `read_page`, naming the AI session that is reading so the note shows on
+    /// that conversation's card.
+    pub async fn read_page_for_session(
+        &self,
+        page_id: &str,
+        session: Option<&str>,
+    ) -> Result<CallToolResult, McpError> {
         if !is_opaque_page_id(page_id) {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
                 "Invalid page id. Use the page's opaque identifier, not a URL or file path.",
             )]));
         }
-        let page: wenlan_types::responses::PageReadResponse = try_call!(
-            self.client.get(&format!("/api/pages/{page_id}")),
-            "read_page"
-        );
+        let client = self.session_client(session).await;
+        let page: wenlan_types::responses::PageReadResponse =
+            try_call!(client.get(&format!("/api/pages/{page_id}")), "read_page");
+        // Only the note read itself is listed on the session card; the
+        // sources fetch rides on the same client without adding an entry.
         let sources: Vec<PageSourceWithMemory> = try_call!(
-            self.client.get(&format!("/api/pages/{page_id}/sources")),
+            client.get(&format!("/api/pages/{page_id}/sources")),
             "read_page"
         );
         let visible = visible_page_sources_for_standard(&sources, crate::lock_state::is_locked());
@@ -3868,7 +3896,8 @@ impl WenlanMcpServer {
         &self,
         Parameters(params): Parameters<ReadPageParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.read_page_impl(&params.page_id).await
+        self.read_page_for_session(&params.page_id, params.session.as_deref())
+            .await
     }
 
     #[tool(
@@ -7654,6 +7683,7 @@ mod tests {
         // never what Claude Code captured (found filming the launch demo,
         // 2026-08-30). Attribution goes in the `x-agent-name` header instead.
         let req = recall_search_request(RecallParams {
+            session: None,
             query: "which database did we pick".into(),
             limit: Some(5),
             memory_type: None,
@@ -7675,6 +7705,7 @@ mod tests {
     #[test]
     fn test_recall_constructs_search_request() {
         let params = RecallParams {
+            session: None,
             query: "database choices".into(),
             limit: Some(5),
             memory_type: Some("decision".into()),
@@ -7706,6 +7737,7 @@ mod tests {
         // When the caller passes rerank: Some(true), the constructed
         // SearchMemoryRequest must carry rerank=true through to the daemon.
         let params = RecallParams {
+            session: None,
             query: "database choices".into(),
             limit: None,
             memory_type: None,

@@ -179,6 +179,7 @@ async fn mcp_capture_and_recall_respects_space() {
     // Recall with space=alpha.
     let recall_result = server
         .recall_impl(RecallParams {
+            session: None,
             query: "fact".into(),
             limit: None,
             memory_type: None,

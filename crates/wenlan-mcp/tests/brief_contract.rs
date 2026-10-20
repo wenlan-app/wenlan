@@ -80,6 +80,7 @@ async fn no_topic_reads_only_the_complete_brief_and_preserves_versions() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some("wenlan".into()),
         })
@@ -114,6 +115,7 @@ async fn topic_appends_separately_labeled_same_space_context() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: Some("release readiness".into()),
             space: Some("wenlan".into()),
         })
@@ -149,6 +151,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             .await;
         let result = make_server(&mock)
             .brief_impl(BriefParams {
+                session: None,
                 topic: None,
                 space: Some("wenlan".into()),
             })
@@ -180,6 +183,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some("wenlan".into()),
         })

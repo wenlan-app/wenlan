@@ -513,6 +513,7 @@ async fn t4_recall_roundtrip() {
     let server = make_server(client);
     let result = server
         .recall_impl(RecallParams {
+            session: None,
             query: "anything".into(),
             limit: None,
             memory_type: None,
@@ -692,6 +693,7 @@ async fn t9_recall_request_does_not_contain_entity() {
     let server = make_server(client);
     let result = server
         .recall_impl(RecallParams {
+            session: None,
             query: "anything".into(),
             limit: None,
             memory_type: None,

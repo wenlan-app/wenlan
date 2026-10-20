@@ -128,7 +128,8 @@ impl WenlanClient {
     }
 
     /// Attribute this client's writes to an AI session by sending
-    /// `x-wenlan-session` on every request (the daemon reads it on writes).
+    /// `x-wenlan-session` on every request (the daemon reads it on writes and on
+    /// the lookups the session card lists: search, recall, Brief and note reads).
     pub fn with_session(mut self, session: Option<SessionRef>) -> Result<Self> {
         if let Some(session) = &session {
             self.headers.insert(
@@ -385,6 +386,7 @@ impl WenlanClient {
             source_filter: None,
             space: None,
         };
+        self.announce_session().await;
         self.post_json("/api/search", &req).await
     }
 
@@ -398,11 +400,13 @@ impl WenlanClient {
             source_agent: None,
             rerank: false,
         };
+        self.announce_session().await;
         self.post_json("/api/memory/search", &request).await
     }
 
     /// POST /api/brief — complete Brief plus optional same-Space recall.
     pub async fn brief(&self, request: &BriefReadRequest) -> Result<BriefReadResponse> {
+        self.announce_session().await;
         self.post_json("/api/brief", request).await
     }
 
@@ -698,6 +702,7 @@ impl WenlanClient {
 
     /// GET /api/pages/{id} — one page with its live-file metadata.
     pub async fn read_page(&self, id: &str) -> Result<PageReadResponse> {
+        self.announce_session().await;
         self.get_json(&format!("/api/pages/{}", id), true).await
     }
 
