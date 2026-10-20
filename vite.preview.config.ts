@@ -52,6 +52,6 @@ export default defineConfig({
       },
     },
     // Polling: edits from the sandboxed agent don't emit fsevents.
-    watch: { ignored: ["**/app/**"], usePolling: true, interval: 400 },
+    watch: { ignored: ["**/app/**", "**/target/**"], usePolling: true, interval: 400 },
   },
 });
