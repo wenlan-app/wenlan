@@ -162,7 +162,8 @@ export default function CitationChip({
         className="reference-link reference-link--source focus-visible:outline-2 focus-visible:outline-[var(--mem-accent-indigo)]"
         style={{
           fontFamily: "var(--mem-font-body)",
-          fontSize: "11px",
+          // A footnote step below the reading size: 12px beside 15px body text.
+          fontSize: "calc(var(--content-body-size, 15px) * 0.8)",
           lineHeight: 1,
           color: unverified ? "var(--mem-text-tertiary)" : "var(--mem-accent-indigo)",
           background: "transparent",
@@ -183,7 +184,7 @@ export default function CitationChip({
           gap: "2px",
         }}
       >
-        <ReferenceTypeIcon kind={citationReferenceKind(citation)} size={11} locator={citation.locator} />
+        <ReferenceTypeIcon kind={citationReferenceKind(citation)} size={12} locator={citation.locator} />
         <span
           style={{
             display: "inline-block",

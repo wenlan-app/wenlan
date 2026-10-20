@@ -204,7 +204,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 { tag: tags.heading, color: "var(--mem-accent-page)", fontWeight: "600" },
                 { tag: tags.strong, color: "var(--mem-text)", fontWeight: "700" },
                 { tag: tags.emphasis, color: "var(--mem-text-secondary)", fontStyle: "italic" },
-                { tag: [tags.link, tags.url], color: "var(--mem-accent-indigo)" },
+                { tag: [tags.link, tags.url], color: "var(--mem-link)" },
                 { tag: tags.monospace, color: "var(--mem-accent-warm)" },
                 { tag: [tags.comment, tags.meta], color: "var(--mem-text-tertiary)" },
                 { tag: [tags.atom, tags.keyword], color: "var(--mem-accent-sage)" },

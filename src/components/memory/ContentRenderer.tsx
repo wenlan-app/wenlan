@@ -91,9 +91,6 @@ const markdownComponents = {
           href={href}
           target={href?.startsWith("#") ? undefined : "_blank"}
           rel="noopener noreferrer"
-          style={{ color: "var(--mem-accent-indigo)", textDecoration: "none" }}
-          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
         >
           {children}
         </a>
