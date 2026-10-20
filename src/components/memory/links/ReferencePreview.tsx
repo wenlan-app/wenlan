@@ -236,7 +236,10 @@ export function ReferencePreview({
       </details>}
       {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
       {citationTarget?.sourceMemory?.last_modified && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{relativeMs(citationTarget.sourceMemory.last_modified * 1000)}</p>}
-      {canOpen && <button type="button" onClick={open} style={{ alignSelf: "flex-start", color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>}
+      {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}
+      {canOpen && <div data-reference-preview-actions="true" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "6px 12px 12px", background: "var(--mem-surface)" }}>
+        <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>
+      </div>}
     </div>
   );
   return createPortal(preview, document.body);

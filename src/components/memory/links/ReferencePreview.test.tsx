@@ -135,6 +135,14 @@ describe("ReferencePreview saved app links", () => {
     }
   });
 
+  it("pins the open action to the bottom of the card so long content cannot scroll it away", () => {
+    renderPreview(gmail);
+    const actions = screen.getByRole("button", { name: "Open in Gmail →" }).closest<HTMLElement>('[data-reference-preview-actions="true"]');
+    expect(actions).not.toBeNull();
+    expect(actions!.style.position).toBe("sticky");
+    expect(screen.getByRole("dialog").lastElementChild).toBe(actions);
+  });
+
   it("keeps the browser wording for a site that is not a known app", () => {
     renderPreview({ ...gmail, locator: "https://example.com/blog" });
     expect(screen.getByRole("button", { name: "Open in browser →" })).toBeInTheDocument();
