@@ -548,6 +548,8 @@ async fn old_bodies_without_code_basis_still_work_and_responses_stay_quiet() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
     let (router, _tmp, db) = common::test_app_no_gate().await;
+    // Registers the Space; the create route refuses an unknown one (422).
+    make_brief(&db).await;
 
     let (status, created) = call(
         &router,
@@ -586,7 +588,6 @@ async fn old_bodies_without_code_basis_still_work_and_responses_stay_quiet() {
     assert!(db.list_page_code_basis(&id).await.unwrap().is_empty());
 
     // A Space without any code basis reads nothing: the field is absent.
-    make_brief(&db).await;
     let (_, body) = call(
         &router,
         Method::POST,
