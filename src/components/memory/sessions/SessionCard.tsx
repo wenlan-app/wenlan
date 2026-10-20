@@ -67,9 +67,19 @@ function PlaceLine({ session }: { session: AgentSession }) {
     shortCommit(session.repo_commit)
       ? t("sessionSource.commit", { name: shortCommit(session.repo_commit) })
       : null,
-  ].filter(Boolean);
+  ].filter((part): part is string => Boolean(part));
   if (parts.length === 0) return null;
-  return <p className="session-card-muted">{parts.join(" · ")}</p>;
+  // Each "label value" pair stays on one line; only the separators may wrap.
+  return (
+    <p className="session-card-muted">
+      {parts.map((part, index) => (
+        <span key={part}>
+          {index > 0 && " · "}
+          <span className="session-card-nowrap">{part}</span>
+        </span>
+      ))}
+    </p>
+  );
 }
 
 function CappedList({

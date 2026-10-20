@@ -52,8 +52,8 @@ describe("SessionCard", () => {
   it("shows the title, the time span and where it ran", async () => {
     renderCard(detailFor(claudeSession));
     const dialog = await screen.findByRole("dialog", { name: "Claude Code conversation" });
-    expect(await within(dialog).findByText(/Oct 20 09:12 AM to 10:40 AM|Oct 20 09:12 to 10:40/)).toBeInTheDocument();
-    expect(within(dialog).getByText("Repository wenlan · Branch main · Commit be0283a")).toBeInTheDocument();
+    expect(await within(dialog).findByText(/Oct 20 9:12 AM to 10:40 AM|Oct 20 9:12 to 10:40/)).toBeInTheDocument();
+    expect(within(dialog).getByText((_, el) => el?.tagName === "P" && el.textContent === "Repository wenlan · Branch main · Commit be0283a")).toBeInTheDocument();
   });
 
   it("writes the same card in Traditional Chinese", async () => {
@@ -61,8 +61,8 @@ describe("SessionCard", () => {
     try {
       renderCard(detailFor(claudeSession));
       const dialog = await screen.findByRole("dialog", { name: "Claude Code 對話" });
-      expect(await within(dialog).findByText(/10月20日 .*09:12.* 到 .*10:40/)).toBeInTheDocument();
-      expect(within(dialog).getByText("倉庫 wenlan · 分支 main · 提交 be0283a")).toBeInTheDocument();
+      expect(await within(dialog).findByText(/10月20日 .*(?<!\d)9:12.* 到 .*10:40/)).toBeInTheDocument();
+      expect(within(dialog).getByText((_, el) => el?.tagName === "P" && el.textContent === "儲存庫 wenlan · 分支 main · 提交 be0283a")).toBeInTheDocument();
       expect(within(dialog).getByRole("button", { name: "在 Claude Code 繼續這次對話" })).toBeInTheDocument();
     } finally {
       await i18n.changeLanguage("en");
@@ -78,7 +78,7 @@ describe("SessionCard", () => {
 
   it("shows a single time when the conversation was one moment", async () => {
     renderCard(detailFor({ ...claudeSession, last_write_at: claudeSession.first_write_at + 10 }));
-    expect(await screen.findByText(/^Oct 20 09:12/)).not.toHaveTextContent(" to ");
+    expect(await screen.findByText(/^Oct 20 9:12/)).not.toHaveTextContent(" to ");
   });
 
   it("lists handoff summaries and what the session left, as links", async () => {

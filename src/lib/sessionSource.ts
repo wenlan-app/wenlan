@@ -65,5 +65,5 @@ export function formatSessionDay(seconds: number, locale: string, now: Date = ne
 export function formatSessionClock(seconds: number, locale: string): string {
   const date = new Date(seconds * 1000);
   if (!Number.isFinite(date.getTime())) return "";
-  return date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
 }

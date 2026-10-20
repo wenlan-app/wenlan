@@ -714,13 +714,14 @@ export default function MemoryDetail({
                 )}
               </div>
             </div>
-            <MemorySessionSource
-              sessionId={memory.session_id}
-              headingClassName="memory-detail-subsection"
-              onOpenMemory={navigateMemory}
-              onOpenPage={navigatePage}
-            />
           </section>
+
+          <MemorySessionSource
+            sessionId={memory.session_id}
+            headingClassName="memory-detail-subsection"
+            onOpenMemory={navigateMemory}
+            onOpenPage={navigatePage}
+          />
 
           {structuredEntries.length > 0 && (
             <section className="memory-detail-structured">

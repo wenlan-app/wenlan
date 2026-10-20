@@ -87,6 +87,6 @@ describe("session dates", () => {
   });
 
   it("formats the clock time", () => {
-    expect(formatSessionClock(local(2026), "zh-Hant")).toMatch(/09:12/);
+    expect(formatSessionClock(local(2026), "zh-Hant")).toMatch(/(?<!\d)9:12/);
   });
 });

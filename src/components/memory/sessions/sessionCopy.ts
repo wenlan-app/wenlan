@@ -78,7 +78,7 @@ export const hantSessionSource = {
   timeOnce: "{{day}} {{start}}",
   timeSpan: "{{day}} {{start}} 到 {{end}}",
   timeSpanDays: "{{startDay}} {{start}} 到 {{endDay}} {{end}}",
-  repo: "倉庫 {{name}}",
+  repo: "儲存庫 {{name}}",
   branch: "分支 {{name}}",
   commit: "提交 {{name}}",
   handoffTitle: "交接摘要",
