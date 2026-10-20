@@ -1,8 +1,16 @@
+use crate::lint::catalog::catalog_entry;
 use wenlan_types::lint::{
     LintApplicability, LintCheckResult, LintCheckResultInput, LintCoverage, LintEvidenceRef,
-    LintMetric, LintOpaqueId, LintOutcome, LintPrecondition, LintRecommendationCode, LintSeverity,
-    LintSummaryCode, LintValidationMethod, LINT_MAX_EVIDENCE_PER_CHECK,
+    LintGateEffect, LintMetric, LintOpaqueId, LintOutcome, LintPrecondition,
+    LintRecommendationCode, LintSeverity, LintSummaryCode, LintValidationMethod,
+    LINT_MAX_EVIDENCE_PER_CHECK,
 };
+
+/// The gate effect the catalog gives `check_id`: a result must carry it, and an
+/// advisory check's Warning is only legal with it.
+fn catalog_gate_effect(check_id: &str) -> LintGateEffect {
+    catalog_entry(check_id).map_or(LintGateEffect::Actionable, |entry| entry.gate_effect)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(in crate::lint::pages) enum Level {
@@ -145,50 +153,56 @@ impl Assessment {
                 Some(LintRecommendationCode::ReviewFinding),
             ),
         };
-        LintCheckResult::try_new(LintCheckResultInput {
-            check_id: check_id.to_string(),
-            outcome,
-            severity,
-            applicability,
-            precondition: LintPrecondition::Ready,
-            coverage: LintCoverage::new(
-                LintValidationMethod::FullEnumeration,
-                population,
-                population,
-                LINT_MAX_EVIDENCE_PER_CHECK,
-                defect_count > u64::from(LINT_MAX_EVIDENCE_PER_CHECK),
-                u64::try_from(evidence.len()).unwrap_or(u64::MAX),
-            )?,
-            metrics: self.metrics,
-            summary_code,
-            recommendation_code,
-            evidence,
-            duration_ms,
-        })
+        LintCheckResult::try_new_with_gate_effect(
+            LintCheckResultInput {
+                check_id: check_id.to_string(),
+                outcome,
+                severity,
+                applicability,
+                precondition: LintPrecondition::Ready,
+                coverage: LintCoverage::new(
+                    LintValidationMethod::FullEnumeration,
+                    population,
+                    population,
+                    LINT_MAX_EVIDENCE_PER_CHECK,
+                    defect_count > u64::from(LINT_MAX_EVIDENCE_PER_CHECK),
+                    u64::try_from(evidence.len()).unwrap_or(u64::MAX),
+                )?,
+                metrics: self.metrics,
+                summary_code,
+                recommendation_code,
+                evidence,
+                duration_ms,
+            },
+            catalog_gate_effect(check_id),
+        )
     }
 }
 
 pub(in crate::lint::pages) fn failed_result(check_id: &str, duration_ms: u64) -> LintCheckResult {
-    LintCheckResult::try_new(LintCheckResultInput {
-        check_id: check_id.to_string(),
-        outcome: LintOutcome::FailedToRun,
-        severity: LintSeverity::Error,
-        applicability: LintApplicability::Applicable,
-        precondition: LintPrecondition::Ready,
-        coverage: LintCoverage::new(
-            LintValidationMethod::FullEnumeration,
-            0,
-            0,
-            LINT_MAX_EVIDENCE_PER_CHECK,
-            false,
-            0,
-        )
-        .expect("static failed coverage is valid"),
-        metrics: Vec::new(),
-        summary_code: LintSummaryCode::ExecutionFailed,
-        recommendation_code: Some(LintRecommendationCode::InspectRuntime),
-        evidence: Vec::new(),
-        duration_ms,
-    })
+    LintCheckResult::try_new_with_gate_effect(
+        LintCheckResultInput {
+            check_id: check_id.to_string(),
+            outcome: LintOutcome::FailedToRun,
+            severity: LintSeverity::Error,
+            applicability: LintApplicability::Applicable,
+            precondition: LintPrecondition::Ready,
+            coverage: LintCoverage::new(
+                LintValidationMethod::FullEnumeration,
+                0,
+                0,
+                LINT_MAX_EVIDENCE_PER_CHECK,
+                false,
+                0,
+            )
+            .expect("static failed coverage is valid"),
+            metrics: Vec::new(),
+            summary_code: LintSummaryCode::ExecutionFailed,
+            recommendation_code: Some(LintRecommendationCode::InspectRuntime),
+            evidence: Vec::new(),
+            duration_ms,
+        },
+        catalog_gate_effect(check_id),
+    )
     .expect("static failed result is valid")
 }
