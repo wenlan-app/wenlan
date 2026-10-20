@@ -7,6 +7,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 use std::{future::Future, sync::Arc};
@@ -215,6 +216,7 @@ pub async fn handle_read_brief(
 /// project the committed Brief as a human-readable Markdown receipt.
 pub async fn handle_update_brief(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(request): Json<BriefUpdateRequest>,
 ) -> Result<Json<BriefUpdateReceipt>, ServerError> {
     let (db, status_root, projection_lock) = {
@@ -225,7 +227,10 @@ pub async fn handle_update_brief(
             Arc::clone(&state.brief_projection_lock),
         )
     };
-    let mut receipt = db.apply_brief_update(&request).await?;
+    let session = crate::session_routes::extract_session_ref(&headers);
+    let mut receipt = db
+        .apply_brief_update_in_session(&request, session.as_ref())
+        .await?;
     let _projection_guard = projection_lock.lock().await;
 
     match (

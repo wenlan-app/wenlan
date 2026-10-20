@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: Apache-2.0
+//! Agent sessions: record which conversation a write came from, and read back
+//! what a session wrote. Writes name their session in the `x-wenlan-session`
+//! header (`<tool>:<external_id>`).
+
+use crate::route_registry::{get, post, TrackedRouter};
+use crate::{error::ServerError, space_header::SpaceHeader, state::SharedState};
+use axum::{
+    extract::{Path, State},
+    http::HeaderMap,
+    response::Json,
+};
+use wenlan_types::{
+    AgentSession, PageSessionsResponse, SessionDetailResponse, SessionRef, UpsertSessionRequest,
+    SESSION_HEADER,
+};
+
+pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
+    router
+        .route("/api/sessions", post(handle_upsert_session))
+        .route("/api/sessions/{id}", get(handle_get_session))
+        .route("/api/pages/{id}/sessions", get(handle_get_page_sessions))
+}
+
+/// Resolve the `x-wenlan-session` header.
+///
+/// A missing header is an unattributed write. A malformed one is ignored with
+/// a warning: attribution is best effort and must never fail the write it
+/// rides on.
+pub(crate) fn extract_session_ref(headers: &HeaderMap) -> Option<SessionRef> {
+    let raw = headers.get(SESSION_HEADER)?;
+    let parsed = raw
+        .to_str()
+        .map_err(|_| "header is not valid text".to_string())
+        .and_then(SessionRef::parse);
+    match parsed {
+        Ok(session) => Some(session),
+        Err(reason) => {
+            tracing::warn!("[session] ignoring malformed {SESSION_HEADER} header: {reason}");
+            None
+        }
+    }
+}
+
+/// POST /api/sessions
+///
+/// Upsert a session and its metadata. Absent fields keep what is stored, and
+/// `last_write_at` does not move: this records where a session ran, not a write.
+pub async fn handle_upsert_session(
+    State(state): State<SharedState>,
+    Json(request): Json<UpsertSessionRequest>,
+) -> Result<Json<AgentSession>, ServerError> {
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    Ok(Json(db.upsert_session_metadata(&request).await?))
+}
+
+/// GET /api/sessions/{id}
+///
+/// The session and what it wrote, newest first. A Space-scoped caller sees only
+/// what it wrote in that Space, and 404 when none of it is visible.
+pub async fn handle_get_session(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    Path(id): Path<String>,
+) -> Result<Json<SessionDetailResponse>, ServerError> {
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let mut detail = db
+        .get_session_detail(&id, &scope)
+        .await?
+        .ok_or_else(|| ServerError::NotFound("session not found".to_string()))?;
+    // Note titles are page-bearing: a note this caller may not see is not
+    // listed, the same contract as the other note listings.
+    detail.pages = wenlan_core::truth_adapter::filter_page_refs(
+        &db,
+        &view.grant,
+        std::mem::take(&mut detail.pages),
+        |page| page.id.as_str(),
+    )
+    .await?;
+    Ok(Json(detail))
+}
+
+/// GET /api/pages/{id}/sessions
+///
+/// Sessions that wrote a version of the note (`wrote`) and sessions of the
+/// memories it cites (`source`).
+pub async fn handle_get_page_sessions(
+    State(state): State<SharedState>,
+    SpaceHeader(header_space): SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    Path(id): Path<String>,
+) -> Result<Json<PageSessionsResponse>, ServerError> {
+    let db = {
+        let state = state.read().await;
+        state.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let page = db.get_page_scoped_browse(&id, &scope).await?;
+    wenlan_core::truth_adapter::filter_page(&db, &view.grant, page)
+        .await?
+        .ok_or_else(|| ServerError::NotFound("page not found".to_string()))?;
+    Ok(Json(db.list_page_sessions(&id, &scope).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn headers(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(SESSION_HEADER, HeaderValue::from_str(value).unwrap());
+        headers
+    }
+
+    #[test]
+    fn header_resolves_to_a_session() {
+        let session =
+            extract_session_ref(&headers("claude-code:00893aaf-19fa-41d2-8238-13269b9b3ca0"))
+                .expect("valid header");
+        assert_eq!(session.tool, "claude-code");
+        assert_eq!(session.external_id, "00893aaf-19fa-41d2-8238-13269b9b3ca0");
+    }
+
+    #[test]
+    fn missing_header_is_unattributed() {
+        assert!(extract_session_ref(&HeaderMap::new()).is_none());
+    }
+
+    #[test]
+    fn malformed_header_is_ignored_not_fatal() {
+        for bad in ["", "nocolon", "Tool:id", "codex:has space", "codex:a:b"] {
+            assert!(extract_session_ref(&headers(bad)).is_none(), "{bad:?}");
+        }
+        let mut opaque = HeaderMap::new();
+        opaque.insert(
+            SESSION_HEADER,
+            HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+        );
+        assert!(extract_session_ref(&opaque).is_none());
+    }
+}

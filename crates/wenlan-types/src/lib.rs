@@ -31,6 +31,7 @@ pub mod repair_relation;
 pub mod repair_runtime;
 pub mod requests;
 pub mod responses;
+pub mod sessions;
 pub mod source_annotations;
 pub mod sources;
 pub mod space_context;
@@ -82,6 +83,11 @@ pub use responses::{
     PendingRevisionItem, ProposalAction, RefinementCardAction, RefinementPayload,
     RefinementProposalSummary, RejectRefinementResponse, RevisionAcceptResponse,
     RevisionDismissResponse,
+};
+pub use sessions::{
+    AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionDetailResponse,
+    SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry, SessionRef, UpsertSessionRequest,
+    SESSION_HEADER,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};

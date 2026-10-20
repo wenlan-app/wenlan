@@ -826,6 +826,16 @@ async fn handle_store_memory_inner(
         .get_memory_space(&source_id)
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))?;
+    // Attribution is best effort: the memory is already stored, so a failure
+    // here is logged and never fails the write.
+    if let Some(session) = crate::session_routes::extract_session_ref(&headers) {
+        if let Err(error) = origin_db
+            .stamp_memory_session(&source_id, &session, persisted_space.as_deref())
+            .await
+        {
+            tracing::warn!("[session] failed to stamp {source_id} with {session}: {error}");
+        }
+    }
     let persisted_space_source = if persisted_space.is_some() {
         resolved_write_space.source
     } else {

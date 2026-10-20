@@ -189,6 +189,7 @@ fn sample_memory(source_id: &str) -> MemoryItem {
         changelog: None,
         pending_revision: false,
         merged_from: None,
+        session_id: None,
     }
 }
 

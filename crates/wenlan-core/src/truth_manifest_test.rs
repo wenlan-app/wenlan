@@ -219,9 +219,11 @@ fn manifest_counts_match_the_spec() {
     // Then 201 after PUT `/api/pages/{id}/review-required` (the page review
     // lock; a flag receipt, not page-bearing).
     // POST `/api/agents` (register a connected tool) adds another.
+    // Then 207 after the agent-session routes: POST `/api/sessions`, GET
+    // `/api/sessions/{id}`, and GET `/api/pages/{id}/sessions`.
     assert_eq!(
         HTTP_READERS.len(),
-        204,
+        207,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 30, "#[tool( declarations");
@@ -232,7 +234,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        216,
+        219,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -240,7 +242,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        199,
+        202,
         "main builder entries"
     );
     assert_eq!(
@@ -256,7 +258,7 @@ fn manifest_counts_match_the_spec() {
         .iter()
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
-    assert_eq!(bearing, 76, "page-bearing HTTP routes");
+    assert_eq!(bearing, 78, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -416,7 +418,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        197 // all remaining handlers carry no page markers (+1: review-required, +1: agents)
+        200 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +3: sessions)
     );
 }
 

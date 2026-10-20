@@ -376,6 +376,7 @@ mod tests {
             summary: summary.into(),
             mutation_count: 2,
             mutations: Vec::new(),
+            session_id: None,
         }
     }
 

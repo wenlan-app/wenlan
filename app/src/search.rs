@@ -1890,6 +1890,7 @@ pub async fn list_memories_cmd(
             changelog: None,
             pending_revision: false,
             merged_from: None,
+            session_id: None,
         })
         .collect();
     Ok(items)

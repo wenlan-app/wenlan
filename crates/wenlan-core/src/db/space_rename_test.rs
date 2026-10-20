@@ -13,7 +13,7 @@ const NEW: &str = "Field Notes";
 
 /// Tables that carry a `space` column and are closed over by the cascade that
 /// already existed before S0-162 (`update_space`, `db.rs:19327`-`:19360`).
-const PRE_EXISTING_CASCADE: &[&str] = &["memories", "entities", "pages"];
+const PRE_EXISTING_CASCADE: &[&str] = &["memories", "entities", "pages", "agent_sessions"];
 
 /// Tables that carry a `space` column and are deliberately left alone.
 ///
