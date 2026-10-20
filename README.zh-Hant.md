@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=a8b5a2d7b965326c17a8671766d1deb6e4bb3a7b672b2de9f8fbbcd90358aaa1 -->
+<!-- README_SYNC: source=README.md sha256=dcc2e4597427b77f19b886ea9f70dcce517f3e13faf48c221f5bf5a14e1df0e1 -->
 
 <p align="center">
   <picture>
@@ -40,6 +40,8 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 <br>
 
 ## 為什麼用文瀾
+
+筆記、文件和 AI 對話散在各處，內容又一直在變，每個 AI 工具也只各記一小部分。文瀾是為 AI 時代打造的知識庫：一份存在你電腦裡、由你和 AI 一起維護的唯一可信來源，不用再拼裝一堆 Obsidian 外掛。
 
 - **筆記會自己跟上：** 開啟後台沉澱（Steep）後，來源變了，根據它寫的筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
 - **每句話都查得到出處：** 筆記附上引用，可以直接打開原文。文瀾在後台更新筆記時，會先核對引用，才取代原本的筆記。
