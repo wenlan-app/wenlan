@@ -1223,6 +1223,52 @@ describe('page links wrappers', () => {
     expect(mockInvoke).toHaveBeenCalledWith('set_page_review_required', { pageId: 'page-1', required: true });
   });
 
+  it('the note basis wrappers invoke their commands with camelCase arguments', async () => {
+    mockInvoke.mockResolvedValue({});
+
+    await tauri.markPageBasis('page-1', 'basis-1');
+    expect(mockInvoke).toHaveBeenLastCalledWith('mark_page_basis', { pageId: 'page-1', basisPageId: 'basis-1' });
+
+    await tauri.unmarkPageBasis('page-1', 'basis-1');
+    expect(mockInvoke).toHaveBeenLastCalledWith('unmark_page_basis', { pageId: 'page-1', basisPageId: 'basis-1' });
+
+    await tauri.confirmPageBasis('page-1', 'basis-1', 4);
+    expect(mockInvoke).toHaveBeenLastCalledWith('confirm_page_basis', {
+      pageId: 'page-1',
+      basisPageId: 'basis-1',
+      version: 4,
+    });
+
+    await tauri.getPageBasisDiff('page-1', 'basis-1');
+    expect(mockInvoke).toHaveBeenLastCalledWith('get_page_basis_diff', { pageId: 'page-1', basisPageId: 'basis-1' });
+
+    await tauri.listBasisPending('space-a');
+    expect(mockInvoke).toHaveBeenLastCalledWith('list_basis_pending', { space: 'space-a' });
+
+    await tauri.listBasisPending();
+    expect(mockInvoke).toHaveBeenLastCalledWith('list_basis_pending', { space: null });
+  });
+
+  it('updatePage forwards the basis to confirm', async () => {
+    mockInvoke.mockResolvedValue({ outcome: 'saved', basisConfirm: 'confirmed' });
+
+    await tauri.updatePage({
+      id: 'page-1',
+      content: 'text',
+      expectedVersion: 2,
+      callerId: 'wenlan-app',
+      operationId: 'op',
+      confirmBasis: { basis_page_id: 'basis-1', version: 5 },
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'update_page',
+      expect.objectContaining({
+        confirmBasis: { basis_page_id: 'basis-1', version: 5 },
+      }),
+    );
+  });
+
   it('listOrphanLinks invokes the daemon orphan link command with minCount', async () => {
     mockInvoke.mockResolvedValue({ min_count: 2, orphan_labels: [] });
 

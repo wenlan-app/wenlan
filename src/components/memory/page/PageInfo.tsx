@@ -3,6 +3,7 @@ import { useState } from "react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import type {
+  BasisRef,
   MemoryItem,
   PageChangelogEntry,
   PageCitation,
@@ -10,7 +11,8 @@ import type {
   PageSourceWithMemory,
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
-import { prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
+import { basisCountLabel, prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
+import PageInfoNotes from "./PageInfoNotes";
 import "./NoteInfo.css";
 
 interface PageInfoProps {
@@ -27,6 +29,12 @@ interface PageInfoProps {
   citationState: CitationState;
   onMemoryClick: (sourceId: string) => void;
   onPageClick?: (pageId: string) => void;
+  /** Notes this note relies on. With the handlers below, the group can be edited. */
+  currentPageId?: string;
+  currentSpace?: string | null;
+  basis?: readonly BasisRef[];
+  onMarkBasis?: (pageId: string) => Promise<boolean>;
+  onUnmarkBasis?: (pageId: string) => void;
 }
 
 // Content chips already carry per-claim provenance; inside this panel the
@@ -92,6 +100,11 @@ export default function PageInfo({
   citationState,
   onMemoryClick,
   onPageClick,
+  currentPageId,
+  currentSpace = null,
+  basis,
+  onMarkBasis,
+  onUnmarkBasis,
 }: PageInfoProps) {
   const { t, i18n } = useTranslation();
   // English keeps the legacy abbreviated relatives ("1d ago"); Chinese gets
@@ -169,7 +182,9 @@ export default function PageInfo({
         <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
           {t("pageInfo.backlinks", { count: uniqueInbound.length })} ·{" "}
           {t("pageInfo.revisions", { count: revisions.length })} ·{" "}
-          {t("pageInfo.sources", { count: sourceCount })}
+          {basis && basis.length > 0
+            ? basisCountLabel(t, sourceCount, basis.length)
+            : t("pageInfo.sources", { count: sourceCount })}
         </span>
       </summary>}
       <div className={embedded ? "flex flex-col gap-4" : "flex flex-col gap-4 px-4 pb-4"}>
@@ -397,6 +412,16 @@ export default function PageInfo({
               </button>
             )}
           </div>
+        )}
+        {onMarkBasis && onUnmarkBasis && currentPageId && (
+          <PageInfoNotes
+            pageId={currentPageId}
+            space={currentSpace}
+            basis={basis ?? []}
+            onPageClick={onPageClick}
+            onMarkBasis={onMarkBasis}
+            onUnmarkBasis={onUnmarkBasis}
+          />
         )}
         {diagnosability && (
           <p

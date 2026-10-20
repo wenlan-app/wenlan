@@ -167,8 +167,8 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Note actions", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Rebuild note", exact: true }).click();
-  await expect(page.getByText("Note rebuilt.", { exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "Update from sources", exact: true }).click();
+  await expect(page.getByText("Note updated from its sources.", { exact: true })).toBeVisible();
   await expect.poll(async () => (await storedReviewPage(page, "page-architecture"))?.last_compiled).toBe("2026-07-10T12:33:00Z");
 
   page.once("dialog", (dialog) => dialog.accept());

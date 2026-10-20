@@ -1007,6 +1007,8 @@ export const AGENT_DISPLAY: Record<string, string> = {
   windsurf: "Windsurf",
   zed: "Zed",
   wenlan: "Wenlan",
+  // The desktop app's own writer id (`callerId` on its saves and rebuilds).
+  "wenlan-app": "Wenlan",
 };
 
 export function agentDisplayName(slug: string | null | undefined): string | null {
@@ -1425,6 +1427,11 @@ export interface Page {
   user_edited?: boolean;
   /** Review lock: machine writes wait as revision cards. Omitted while false. */
   review_required?: boolean;
+  /**
+   * The notes this note relies on, in any state. Present on a page read, absent
+   * when the note relies on nothing and on every inventory/list entry.
+   */
+  basis?: BasisRef[];
   citations?: PageCitation[];
   /**
    * Both M5 truth axes, present only when this page was fetched via an
@@ -1726,6 +1733,14 @@ export interface DistillOrphanTopic {
 export interface PageRedistillResponse {
   status: "ok" | "skipped" | string;
   updated: boolean;
+  /**
+   * "Update from sources" on a note that relies on other notes stages a preview
+   * card instead of writing: `gated` with the card to review.
+   */
+  gated?: boolean;
+  revision_card_id?: string | null;
+  /** The note already says what its sources say; nothing was staged. */
+  unchanged?: boolean;
   hint?: string | null;
   /**
    * Present when `updated === false` because the daemon discarded the rebuild
@@ -1765,6 +1780,105 @@ export async function setPageReviewRequired(
   required: boolean,
 ): Promise<PageReviewRequiredResponse> {
   return invoke("set_page_review_required", { pageId, required });
+}
+
+// ── Note bases (a note that relies on other notes) ───────────────────
+
+/** `ok` is current; the rest need a look or have nothing to compare with. */
+export type BasisState =
+  | "ok"
+  | "pending"
+  | "archived"
+  | "deleted"
+  | "unavailable";
+
+export interface BasisRef {
+  page_id: string;
+  /** Live title; the last known one once deleted; empty when not visible. */
+  title: string;
+  state: BasisState;
+  from_version: number;
+  /** Absent once the basis is deleted. */
+  to_version?: number | null;
+  /** Every change since the last check was a small edit. */
+  minor_only?: boolean;
+}
+
+export interface BasisDiffEdit {
+  version: number;
+  edited_by: string;
+  /** Unix seconds. */
+  at: number;
+  minor: boolean;
+  delta_summary: string;
+}
+
+export interface BasisDiff {
+  from_version: number;
+  to_version: number;
+  from_content: string;
+  to_content: string;
+  edits: BasisDiffEdit[];
+}
+
+export type BasisDiffResult =
+  | { outcome: "available"; diff: BasisDiff }
+  | { outcome: "unavailable"; reason: string; message: string };
+
+export type BasisConfirmResult =
+  | { outcome: "confirmed"; basis: BasisRef }
+  | { outcome: "conflict"; message: string };
+
+export interface BasisPendingCiter {
+  page_id: string;
+  title: string;
+  minor_only: boolean;
+}
+
+export interface BasisPendingEntry {
+  basis_page_id: string;
+  title: string;
+  changed_version?: number | null;
+  state: BasisState;
+  citers: BasisPendingCiter[];
+}
+
+/** Use `basisPageId` as a source of `pageId`, at the version it is now. */
+export async function markPageBasis(
+  pageId: string,
+  basisPageId: string,
+): Promise<BasisRef> {
+  return invoke("mark_page_basis", { pageId, basisPageId });
+}
+
+export async function unmarkPageBasis(
+  pageId: string,
+  basisPageId: string,
+): Promise<{ removed: boolean }> {
+  return invoke("unmark_page_basis", { pageId, basisPageId });
+}
+
+/** "No impact": `version` is the one the person looked at. */
+export async function confirmPageBasis(
+  pageId: string,
+  basisPageId: string,
+  version: number,
+): Promise<BasisConfirmResult> {
+  return invoke("confirm_page_basis", { pageId, basisPageId, version });
+}
+
+export async function getPageBasisDiff(
+  pageId: string,
+  basisPageId: string,
+): Promise<BasisDiffResult> {
+  return invoke("get_page_basis_diff", { pageId, basisPageId });
+}
+
+/** Every changed source with the notes waiting on it; `space` narrows it. */
+export async function listBasisPending(
+  space: string | null = null,
+): Promise<BasisPendingEntry[]> {
+  return invoke("list_basis_pending", { space });
 }
 
 export async function listOrphanLinks(minCount?: number): Promise<OrphanLinksResponse> {
@@ -2359,6 +2473,8 @@ export interface UpdatePageInput {
   expectedVersion: number;
   callerId: "wenlan-app";
   operationId: string;
+  /** Also confirm one basis of this note, if it is still at `version`. */
+  confirmBasis?: { basis_page_id: string; version: number };
 }
 
 export type UpdatePageFailureKind =
@@ -2370,8 +2486,10 @@ export type UpdatePageFailureKind =
   | "server"
   | "other";
 
+export type BasisConfirmOutcome = "confirmed" | "moved_on" | "not_saved";
+
 export type UpdatePageOutcome =
-  | { outcome: "saved" }
+  | { outcome: "saved"; basisConfirm?: BasisConfirmOutcome }
   | {
       outcome: "upgrade_required";
       reportedVersion: string;

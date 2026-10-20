@@ -5,6 +5,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
+  agentDisplayName,
   clipboardWrite,
   daemonErrorMessage,
   isPageRevisionOutdated,
@@ -20,6 +21,9 @@ import { reviewItemId, type ReviewItem } from "./useReviewQueue";
 import { PageMergeStripOff, usePageMergeEvidence } from "./ReviewPageMerge";
 import { MemoryRevisionChain, PageRevisionChain } from "./ReviewHistory";
 import SourceRepairReview from "./SourceRepairReview";
+
+// The writer id the desktop app sends on its own saves and rebuilds.
+const APP_AGENT_ID = "wenlan-app";
 
 export function reviewKindLabel(t: TFunction, item: ReviewItem): string {
   if (item.kind === "revision")
@@ -334,7 +338,11 @@ export function useReviewItemSummary(item: ReviewItem | null): {
     title = short(a.data?.name, 96) ?? short(item.content, 96);
     reason = item.targetKind === "page" && item.agent === "page_write"
       ? t("review.pageUpdate")
-      : item.agent ? t("review.proposedBy", { agent: item.agent }) : null;
+      : item.agent
+        // The app's own writer id reads as "Wenlan"; other agents keep the
+        // name they sent.
+        ? t("review.proposedBy", { agent: item.agent === APP_AGENT_ID ? agentDisplayName(item.agent) : item.agent })
+        : null;
   } else if (item.kind === "capture") {
     title = short(item.title, 96);
     reason = short(item.snippet, 96);
@@ -573,7 +581,7 @@ function ReviewEvidencePane({
   );
 }
 
-function DiffText({ segments }: { segments: DiffSegment[] }) {
+export function DiffText({ segments }: { segments: DiffSegment[] }) {
   return (
     <>
       {segments.map((segment, index) =>
