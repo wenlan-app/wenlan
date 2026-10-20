@@ -151,7 +151,7 @@ async fn upsert_overwrites_present_fields_and_is_not_a_write() {
         &[],
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
