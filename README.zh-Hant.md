@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=bc02586fecdc56464d9f53259b464b8024cc1dddefe84a87fc9eb169de7ffa0b -->
+<!-- README_SYNC: source=README.md sha256=2847ab210cde2801284c664e2cb46ad13b801f760adf3239dfce0a70704aa356 -->
 
 <p align="center">
   <picture>
@@ -43,12 +43,9 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 筆記、文件和 AI 對話散落各處，內容又一直在變，每個 AI 工具也只各記一小部分。文瀾是為 AI 時代打造的知識庫：一份存在你電腦裡、由你和 AI 一起維護的唯一可信來源。從保存、整理、引用到更新，整套知識流程都內建，不用再拼裝一堆外掛。
 
-- **筆記會跟上：** 開啟沉澱（Steep）後，來源變了，相關筆記會跟著更新。
-- **改你寫的之前先問你：** 背景更新遇到你寫的筆記，只提出修改，等你確認。
+- **筆記會跟上：** 開啟沉澱（Steep）後，來源變了，相關筆記會跟著更新；你寫的筆記則先提出修改，等你確認。
 - **每句話都查得到出處：** 筆記附上引用，可以直接打開原文；背景更新前也會先核對引用。
-- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。在 Claude Code 或 Codex 用 `/handoff` 存下進度，下次用 `/brief` 接上。
-- **自動連起來，按專案分開：** 設定模型後，不同來源裡的同一個人、專案或概念會連在一起；Spaces 讓每個專案各自獨立。
-- **資料在你的電腦，而且開源：** 筆記是 Markdown 檔，可以用 Obsidian 打開；在本機使用不用帳號，基本搜尋不需要 API key。
+- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
