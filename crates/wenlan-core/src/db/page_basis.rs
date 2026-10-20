@@ -846,6 +846,11 @@ pub struct BasisWrite {
     /// changed, that was removed, or that became unreadable is left as it is.
     /// Nothing is ever added.
     pub confirm_snapshot: Vec<BasisSnapshotEntry>,
+    /// Lines of code this write relied on, each already fingerprinted from
+    /// the file as it reads now (`crate::code_basis::prepare_code_basis`).
+    /// Recorded in this write's transaction, only if the write lands. A span
+    /// the note already has is re-anchored and `ok`; others are untouched.
+    pub code_basis: Vec<(wenlan_types::CodeBasisInput, crate::code_anchor::CodeAnchor)>,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the

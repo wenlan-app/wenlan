@@ -790,6 +790,7 @@ impl MemoryDB {
             let entity_name: String = row.get(2).unwrap_or_default();
             results.push(SearchResult {
                 basis: Vec::new(),
+                code_basis: Vec::new(),
                 id: id.clone(),
                 content: row.get(1).unwrap_or_default(),
                 source: "knowledge_graph".to_string(),

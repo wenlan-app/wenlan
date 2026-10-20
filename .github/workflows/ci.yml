@@ -390,6 +390,9 @@ jobs:
               - 'crates/wenlan-core/src/db/m5_page_size_snapshot.rs'
               - 'crates/wenlan-core/src/db/community_grouping_state.rs'
               - 'crates/wenlan-core/src/refinery/mod.rs'
+              # A code basis may not follow a symlink out of its repository;
+              # that case is proved against a real symlink, which is `cfg(unix)`.
+              - 'crates/wenlan-core/src/db/code_basis_test.rs'
               - 'crates/wenlan-core/src/db/presence_review_test.rs'
               - 'crates/wenlan-core/src/export/knowledge.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders.rs'
@@ -492,6 +495,9 @@ jobs:
               - 'crates/wenlan-mcp/npm/install.js'
               - 'crates/wenlan-core/src/config.rs'
               - 'crates/wenlan-core/src/db/m5_page_size_snapshot.rs'
+              # A code basis may not follow a symlink out of its repository;
+              # that case is proved against a real symlink, which is `cfg(unix)`.
+              - 'crates/wenlan-core/src/db/code_basis_test.rs'
               - 'crates/wenlan-core/src/db/presence_review_test.rs'
               - 'crates/wenlan-core/src/export/knowledge.rs'
               - 'crates/wenlan-core/src/export/knowledge_folders.rs'

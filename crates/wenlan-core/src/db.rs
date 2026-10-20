@@ -44,6 +44,7 @@ mod genesis_schema;
 pub(crate) use genesis_schema::GENESIS_SUBSTRATE_DDL;
 mod activity_counts;
 mod agent_presence;
+mod code_basis;
 mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;
@@ -90,6 +91,7 @@ mod space_rename;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
+pub use code_basis::{CodeBasisRow, CodeBasisVerdict};
 pub(crate) use community_grouping_state::CommunityGroupingLeaseCleanup;
 pub(crate) use eval_temporal_seed::EvalTemporalSeed;
 pub(crate) use kg_quality_diagnostics::ContradictionObservationCount;
@@ -123,6 +125,8 @@ mod claim_derivation_test;
 mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
+#[cfg(test)]
+mod code_basis_test;
 #[cfg(test)]
 mod edges_rebuild_test;
 #[cfg(test)]
@@ -1484,6 +1488,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// every machine write.
 /// Migration 138 adds `page_basis` (a note relying on another note),
 /// `page_history.minor` and `pages.basis_revision`.
+/// Migration 139 adds `page_code_basis` (a note relying on lines of code).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1491,7 +1496,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 138;
+pub const SCHEMA_VERSION: u32 = 139;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -10456,6 +10461,14 @@ impl MemoryDB {
             if version < 138 {
                 self.migrate_138_page_basis(version).await?;
             }
+            // Migration 139 adds `page_code_basis` (a note that relies on
+            // lines of code). See migrate_139_page_code_basis.
+            if ceiling < 139 {
+                return Ok(());
+            }
+            if version < 139 {
+                self.migrate_139_page_code_basis().await?;
+            }
         }
 
         // Private M4 builds could already have stamped user_version=95 before
@@ -17926,6 +17939,25 @@ impl MemoryDB {
         log::info!(
             "[migration] Migration 138 applied: page_basis, page_history.minor, pages.basis_revision"
         );
+        Ok(())
+    }
+
+    /// Migration 139: a note can rely on lines of code (its "code basis").
+    ///
+    /// One new table and its index, both `IF NOT EXISTS`, so a crash between
+    /// the DDL and the version bump replays cleanly. Nothing existing is
+    /// altered, so there is no pre-migration backup to take. Like `page_basis`
+    /// the table has no foreign key to `pages`; the page deleter removes the
+    /// rows explicitly.
+    async fn migrate_139_page_code_basis(&self) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch(code_basis::PAGE_CODE_BASIS_DDL)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m139 page_code_basis ddl: {e}")))?;
+        conn.execute("PRAGMA user_version = 139", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m139 bump: {e}")))?;
+        log::info!("[migration] Migration 139 applied: page_code_basis");
         Ok(())
     }
 
@@ -26528,6 +26560,7 @@ impl MemoryDB {
         };
         Ok(SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: row
                 .get::<String>(0)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
@@ -31385,6 +31418,7 @@ impl MemoryDB {
 
             results.push(SearchResult {
                 basis: Vec::new(),
+                code_basis: Vec::new(),
                 id,
                 content,
                 source: "knowledge_graph".to_string(),
@@ -31457,6 +31491,7 @@ impl MemoryDB {
             .unwrap_or(0);
         SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: page.id.clone(),
             content: page.content,
             source: "page".to_string(),
@@ -31932,6 +31967,7 @@ impl MemoryDB {
     fn search_result_from_summary(node: SummaryNode) -> SearchResult {
         SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: node.id.clone(),
             content: node.body,
             source: "summary".to_string(),
@@ -33152,6 +33188,9 @@ impl MemoryDB {
         page_basis::retarget_page_identity(conn, old_page_id, new_page_id)
             .await
             .map_err(|e| WenlanError::VectorDb(format!("rebind SOURCE Page basis: {e}")))?;
+        code_basis::retarget_code_basis(conn, old_page_id, new_page_id)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("rebind SOURCE Page code basis: {e}")))?;
         conn.execute(
             "DELETE FROM pages WHERE id = ?1",
             libsql::params![old_page_id],
@@ -53423,6 +53462,20 @@ impl MemoryDB {
                 return Err(error.into());
             }
         };
+        // Lines of code the writer relied on land in the same transaction, so a
+        // rolled-back write leaves no code basis behind.
+        if let Err(error) = code_basis::upsert_code_basis_on_conn(
+            &conn,
+            id,
+            &basis.code_basis,
+            &basis.actor,
+            now_ts,
+        )
+        .await
+        {
+            let _ = conn.execute("ROLLBACK", ()).await;
+            return Err(error.into());
+        }
 
         // Record the retry receipt in the same transaction as the write it
         // describes. Committed together or not at all — a receipt that
@@ -54235,6 +54288,11 @@ impl MemoryDB {
             page_basis::carry_bases_into_survivor(&conn, absorbed_id, survivor_id, now_ts)
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("accept_page_merge basis: {e}")))?;
+            // What the absorbed note relied on in code, the survivor relies on
+            // too (the anchors describe the code, so they carry over as they are).
+            code_basis::carry_code_basis_into_survivor(&conn, absorbed_id, survivor_id)
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("accept_page_merge code basis: {e}")))?;
 
             let absorbed_title_key = absorbed.title.to_lowercase();
             // Dual-write (G6 Stage 0): the repoint below moves inbound and
@@ -54638,6 +54696,10 @@ impl MemoryDB {
             page_basis::retire_basis_for_deleted_page(&conn, id)
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page basis: {e}")))?;
+            // Lines of code the page relied on go with it.
+            code_basis::delete_code_basis_for_page(&conn, id)
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("delete_page code basis: {e}")))?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;
