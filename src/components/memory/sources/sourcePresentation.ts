@@ -39,7 +39,7 @@ export function getSourceAppFromUrl(value: string | URL | null | undefined): Sou
   const under = (domain: string) => host === domain || host.endsWith(`.${domain}`);
   if (host === "mail.google.com") return "gmail";
   if (host === "docs.google.com" || host === "drive.google.com") return "googleDrive";
-  if (host === "notion.so" || host === "www.notion.so" || host.endsWith(".notion.site")) return "notion";
+  if (host === "notion.so" || host === "www.notion.so" || host === "app.notion.com" || host.endsWith(".notion.site")) return "notion";
   if (under("slack.com")) return "slack";
   if (host === "github.com") return "github";
   return null;

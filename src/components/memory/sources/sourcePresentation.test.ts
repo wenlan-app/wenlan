@@ -93,6 +93,7 @@ describe("source presentation", () => {
       ["https://notion.so/Q4-roadmap-1a2b3c", "notion"],
       ["https://www.notion.so/team/Q4-roadmap-1a2b3c", "notion"],
       ["https://team.notion.site/Public-page-1a2b3c", "notion"],
+      ["https://app.notion.com/p/Q4-roadmap-1a2b3c", "notion"],
       ["https://slack.com/archives/C024/p1", "slack"],
       ["https://acme.slack.com/archives/C024/p1712345678", "slack"],
       ["https://github.com/wenlan-app/wenlan/issues/12", "github"],
