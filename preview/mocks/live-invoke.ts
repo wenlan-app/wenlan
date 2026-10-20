@@ -710,6 +710,48 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       })}`,
     );
   },
+  // Note bases. Mirrors the WenlanClient methods in app/src/api.rs: marking
+  // reads the basis' current version first, and the 409 answers of confirm
+  // and diff come back as outcomes rather than errors.
+  mark_page_basis: async (a) => {
+    const basis = await get(`/api/pages/${enc(a.basisPageId)}`, EXPLICIT_BROWSE_HEADERS);
+    return put(`/api/pages/${enc(a.pageId)}/basis/${enc(a.basisPageId)}`, {
+      version: basis?.page?.version,
+    });
+  },
+  unmark_page_basis: (a) => del(`/api/pages/${enc(a.pageId)}/basis/${enc(a.basisPageId)}`),
+  confirm_page_basis: async (a) => {
+    try {
+      const basis = await post(
+        `/api/pages/${enc(a.pageId)}/basis/${enc(a.basisPageId)}/confirm`,
+        { version: a.version },
+      );
+      return { outcome: "confirmed", basis };
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) {
+        return { outcome: "conflict", message: error.message };
+      }
+      throw error;
+    }
+  },
+  get_page_basis_diff: async (a) => {
+    try {
+      const diff = await get(`/api/pages/${enc(a.pageId)}/basis/${enc(a.basisPageId)}/diff`);
+      return { outcome: "available", diff };
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) {
+        let reason = "unavailable";
+        try {
+          reason = JSON.parse(error.body)?.reason ?? reason;
+        } catch {
+          // keep the generic reason
+        }
+        return { outcome: "unavailable", reason, message: error.message };
+      }
+      throw error;
+    }
+  },
+  list_basis_pending: (a) => get(`/api/pages/basis-pending${qs({ space: a?.space })}`),
   get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions`),
   redistill_page: (a) => post(`/api/distill/${enc(a.pageId)}`, {}),
   // Mirrors app/src/search.rs `export_pages_okf_checked`: an older daemon
@@ -781,18 +823,20 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
         expected_version: a.expectedVersion,
         caller_id: a.callerId,
         operation_id: a.operationId,
+        ...(a.minor ? { minor: true } : undefined),
+        ...(a.confirmBasis ? { confirm_basis: a.confirmBasis } : undefined),
       });
-      if (!response?.ok || response?.gated) {
+      if (!response?.ok) {
         return {
           outcome: "failure",
           kind: "other",
           status: 200,
-          message: response?.gated
-            ? "Daemon staged the page update instead of saving it."
-            : "Daemon did not confirm the page update.",
+          message: "Daemon did not confirm the page update.",
         };
       }
-      return { outcome: "saved" };
+      return response.basis_confirm
+        ? { outcome: "saved", basisConfirm: response.basis_confirm }
+        : { outcome: "saved" };
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
       if (error.status === 409) {

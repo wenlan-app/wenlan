@@ -96,3 +96,33 @@
 }
 .note-review-notice__button:hover { background: var(--mem-hover); }
 .note-review-notice__button:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
+
+.note-review-notice__basis-list {
+  display: grid;
+  flex: 1 1 100%;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note-review-notice__basis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+
+.note-review-notice__basis-text {
+  color: var(--mem-text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.note-review-notice__basis-note {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--mem-text-secondary, #666);
+  font-size: 12px;
+}

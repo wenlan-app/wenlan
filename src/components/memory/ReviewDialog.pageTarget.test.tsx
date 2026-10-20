@@ -351,3 +351,20 @@ describe("ReviewDialog page-target revision card", () => {
     expect(getPage).not.toHaveBeenCalled();
   });
 });
+
+describe("ReviewDialog proposer label", () => {
+  it.each([
+    ["en", "proposed by Wenlan"],
+    ["zh-Hant", "由 Wenlan 提議"],
+    ["zh-Hans", "由 Wenlan 提议"],
+  ])("shows the app's own writer id as Wenlan (%s)", async (language, label) => {
+    await i18n.changeLanguage(language);
+    vi.mocked(getPage).mockResolvedValue({ id: PAGE_ID, title: PAGE_TITLE, summary: "", content: PAGE_BODY } as never);
+    vi.mocked(getPageRevisions).mockResolvedValue({ page_id: PAGE_ID, current_version: 1, entries: [] } as never);
+    const item: ReviewItem = { ...pageItem, agent: "wenlan-app" };
+    const dialog = await openDialog(item);
+    expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
+    expect(within(dialog).queryByText(/wenlan-app/)).toBeNull();
+    await i18n.changeLanguage("en");
+  });
+});

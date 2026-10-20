@@ -259,6 +259,49 @@ pub struct PageRedistillResponse {
     /// rebuild (today: the citation verification gate), so the UI can say why
     /// instead of "already up to date".
     pub reason: Option<String>,
+    /// "Update from sources" on a note that relies on other notes stages a
+    /// revision card instead of writing: `gated` with the card's id.
+    #[serde(default)]
+    pub gated: bool,
+    #[serde(default)]
+    pub revision_card_id: Option<String>,
+    /// The note already says what its sources say; nothing was staged.
+    #[serde(default)]
+    pub unchanged: bool,
+}
+
+/// What became of "confirm no impact" on a basis. A refusal is an answer, not
+/// an error: the basis moved on and the person is asked to look again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum BasisConfirmResult {
+    Confirmed {
+        basis: wenlan_types::page_basis::BasisRef,
+    },
+    Conflict {
+        message: String,
+    },
+}
+
+/// The comparison for a basis, or the reason there is none to show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum BasisDiffResult {
+    Available {
+        diff: wenlan_types::page_basis::BasisDiffResponse,
+    },
+    Unavailable {
+        reason: String,
+        message: String,
+    },
+}
+
+/// The `error` text of a daemon error envelope, or the body as sent.
+fn daemon_error_text(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str().map(str::to_owned)))
+        .unwrap_or_else(|| body.trim().to_string())
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -640,8 +683,8 @@ impl WenlanClient {
     pub(crate) async fn post_page_update(
         &self,
         page_id: &str,
-        body: &wenlan_types::requests::UpdatePageRequest,
-    ) -> Result<wenlan_types::responses::PageWriteResponse, PageUpdateRequestError> {
+        body: &wenlan_types::requests::ManualPageEditRequest,
+    ) -> Result<wenlan_types::responses::ManualPageWriteResponse, PageUpdateRequestError> {
         let path = format!(
             "/api/memory/{}/update-page",
             percent_encode_path_segment(page_id)
@@ -919,6 +962,146 @@ impl WenlanClient {
     pub async fn redistill_page(&self, page_id: &str) -> Result<PageRedistillResponse, String> {
         let path = format!("/api/distill/{}", percent_encode_path_segment(page_id));
         self.post_json(&path, &PageRedistillRequest {}).await
+    }
+
+    // ── Note bases (a note that relies on other notes) ────────────────
+
+    /// One basis call that keeps the daemon's status. A 409 is an answer the
+    /// app shows ("it changed again"), not a failure, so the caller decides.
+    async fn basis_call<Req: Serialize>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Req>,
+    ) -> Result<(u16, String), String> {
+        let mut request = self.client.request(method.clone(), self.url(path));
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let resp = request
+            .send()
+            .await
+            .map_err(|e| format!("HTTP {} {}: {}", method, path, e))?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        Ok((status, text))
+    }
+
+    fn basis_failure(method: &str, path: &str, status: u16, text: &str) -> String {
+        format!("HTTP {method} {path} returned {status}: {text}")
+    }
+
+    /// Mark `basis_page_id` as a basis of `page_id`, at the version the person
+    /// is looking at now. A person's click is a gesture, so the basis note is
+    /// read as an explicit browse.
+    pub async fn mark_page_basis(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+    ) -> Result<wenlan_types::page_basis::BasisRef, String> {
+        let basis_path = format!("/api/pages/{}", percent_encode_path_segment(basis_page_id));
+        let basis: serde_json::Value = self.get_json_explicit_browse(&basis_path).await?;
+        let version = basis
+            .get("page")
+            .and_then(|page| page.get("version"))
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| format!("Parse {basis_path}: the note has no version"))?;
+        let path = Self::basis_path(page_id, basis_page_id);
+        self.put_json(
+            &path,
+            &wenlan_types::page_basis::BasisVersionRequest { version },
+        )
+        .await
+    }
+
+    pub async fn unmark_page_basis(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+    ) -> Result<wenlan_types::page_basis::BasisRemoveResponse, String> {
+        self.delete_path(&Self::basis_path(page_id, basis_page_id))
+            .await
+    }
+
+    /// Say the citing note accounts for the basis at `version`. A 409 means the
+    /// basis moved past `version` (or can no longer be confirmed): the caller
+    /// refetches and asks the person to look again.
+    pub async fn confirm_page_basis(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+        version: i64,
+    ) -> Result<BasisConfirmResult, String> {
+        let path = format!("{}/confirm", Self::basis_path(page_id, basis_page_id));
+        let (status, text) = self
+            .basis_call(
+                reqwest::Method::POST,
+                &path,
+                Some(&wenlan_types::page_basis::BasisVersionRequest { version }),
+            )
+            .await?;
+        match status {
+            200..=299 => serde_json::from_str(&text)
+                .map(|basis| BasisConfirmResult::Confirmed { basis })
+                .map_err(|e| format!("Parse {path}: {e}")),
+            409 => Ok(BasisConfirmResult::Conflict {
+                message: daemon_error_text(&text),
+            }),
+            _ => Err(Self::basis_failure("POST", &path, status, &text)),
+        }
+    }
+
+    /// The text the citing note relied on next to the basis' text now. A 409
+    /// carries a `reason` (deleted, archived, other space, history gone).
+    pub async fn get_page_basis_diff(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+    ) -> Result<BasisDiffResult, String> {
+        let path = format!("{}/diff", Self::basis_path(page_id, basis_page_id));
+        let (status, text) = self
+            .basis_call::<()>(reqwest::Method::GET, &path, None)
+            .await?;
+        match status {
+            200..=299 => serde_json::from_str(&text)
+                .map(|diff| BasisDiffResult::Available { diff })
+                .map_err(|e| format!("Parse {path}: {e}")),
+            409 => {
+                let reason = serde_json::from_str::<serde_json::Value>(&text)
+                    .ok()
+                    .and_then(|v| v.get("reason").and_then(|r| r.as_str().map(str::to_owned)))
+                    .unwrap_or_default();
+                Ok(BasisDiffResult::Unavailable {
+                    reason,
+                    message: daemon_error_text(&text),
+                })
+            }
+            _ => Err(Self::basis_failure("GET", &path, status, &text)),
+        }
+    }
+
+    /// Every basis that is not ok with the notes waiting on it, grouped by
+    /// basis note, optionally for one Space.
+    pub async fn list_basis_pending(
+        &self,
+        space: Option<&str>,
+    ) -> Result<Vec<wenlan_types::page_basis::BasisPendingEntry>, String> {
+        let path = match space.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(space) => format!(
+                "/api/pages/basis-pending?space={}",
+                percent_encode_path_segment(space)
+            ),
+            None => "/api/pages/basis-pending".to_string(),
+        };
+        self.get_json(&path).await
+    }
+
+    fn basis_path(page_id: &str, basis_page_id: &str) -> String {
+        format!(
+            "/api/pages/{}/basis/{}",
+            percent_encode_path_segment(page_id),
+            percent_encode_path_segment(basis_page_id)
+        )
     }
 
     // ── Lint and approval-gated repair ────────────────────────────────
@@ -2081,17 +2264,21 @@ mod tests {
     #[tokio::test]
     async fn post_page_update_serializes_the_complete_lossless_request() {
         let (base_url, request) =
-            serve_response_once("200 OK", r#"{"ok":true,"revision_card_id":"rev-1"}"#).await;
+            serve_response_once("200 OK", r#"{"ok":true,"projection_status":"synced"}"#).await;
         let client = WenlanClient {
             client: reqwest::Client::new(),
             base_url,
         };
-        let update = wenlan_types::requests::UpdatePageRequest {
-            content: "  # Exact source\r\n\r\nBody  \r\n".to_string(),
-            source_memory_ids: Vec::new(),
-            expected_version: Some(7),
-            caller_id: Some("wenlan-app".to_string()),
-            operation_id: Some("operation-123".to_string()),
+        let update = wenlan_types::requests::ManualPageEditRequest {
+            edit: wenlan_types::requests::UpdatePageRequest {
+                content: "  # Exact source\r\n\r\nBody  \r\n".to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(7),
+                caller_id: Some("wenlan-app".to_string()),
+                operation_id: Some("operation-123".to_string()),
+            },
+            minor: None,
+            confirm_basis: None,
         };
 
         let response = client
@@ -2100,7 +2287,7 @@ mod tests {
             .expect("page update succeeds");
 
         assert!(response.ok);
-        assert_eq!(response.revision_card_id.as_deref(), Some("rev-1"));
+        assert_eq!(response.basis_confirm, None);
         let request = request.await.unwrap();
         assert_eq!(
             request.lines().next().unwrap_or_default(),
@@ -2126,12 +2313,16 @@ mod tests {
             client: reqwest::Client::new(),
             base_url,
         };
-        let update = wenlan_types::requests::UpdatePageRequest {
-            content: "# Draft".to_string(),
-            source_memory_ids: Vec::new(),
-            expected_version: Some(7),
-            caller_id: Some("wenlan-app".to_string()),
-            operation_id: Some("operation-123".to_string()),
+        let update = wenlan_types::requests::ManualPageEditRequest {
+            edit: wenlan_types::requests::UpdatePageRequest {
+                content: "# Draft".to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(7),
+                caller_id: Some("wenlan-app".to_string()),
+                operation_id: Some("operation-123".to_string()),
+            },
+            minor: None,
+            confirm_basis: None,
         };
 
         let error = client
@@ -2147,6 +2338,264 @@ mod tests {
             }
         );
         request.await.unwrap();
+    }
+
+    /// Serve one canned response per connection, in order, and hand back each
+    /// request as it arrived.
+    async fn serve_sequence(
+        responses: Vec<(&'static str, &'static str)>,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = [0_u8; 4096];
+                let n = stream.read(&mut buf).await.unwrap();
+                requests.push(String::from_utf8_lossy(&buf[..n]).to_string());
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len(),
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            requests
+        });
+        (format!("http://{}", addr), handle)
+    }
+
+    fn client_at(base_url: String) -> WenlanClient {
+        WenlanClient {
+            client: reqwest::Client::new(),
+            base_url,
+        }
+    }
+
+    #[tokio::test]
+    async fn post_page_update_carries_minor_and_confirm_basis_beside_the_page_fields() {
+        let (base_url, request) = serve_response_once(
+            "200 OK",
+            r#"{"ok":true,"projection_status":"synced","basis_confirm":"moved_on"}"#,
+        )
+        .await;
+        let update = wenlan_types::requests::ManualPageEditRequest {
+            edit: wenlan_types::requests::UpdatePageRequest {
+                content: "# Plan".to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: Some(3),
+                caller_id: Some("wenlan-app".to_string()),
+                operation_id: Some("operation-9".to_string()),
+            },
+            minor: Some(true),
+            confirm_basis: Some(wenlan_types::page_basis::ConfirmBasisInput {
+                basis_page_id: "pricing".to_string(),
+                version: 5,
+            }),
+        };
+
+        let response = client_at(base_url)
+            .post_page_update("plan", &update)
+            .await
+            .expect("save succeeds");
+
+        assert_eq!(
+            response.basis_confirm,
+            Some(wenlan_types::page_basis::BasisConfirmOutcome::MovedOn)
+        );
+        let request = request.await.unwrap();
+        assert_eq!(
+            request_body(&request),
+            serde_json::json!({
+                "content": "# Plan",
+                "source_memory_ids": [],
+                "expected_version": 3,
+                "caller_id": "wenlan-app",
+                "operation_id": "operation-9",
+                "minor": true,
+                "confirm_basis": {"basis_page_id": "pricing", "version": 5},
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_page_basis_reads_the_basis_version_then_puts_it() {
+        let (base_url, requests) = serve_sequence(vec![
+            ("200 OK", r#"{"page":{"id":"pricing","version":7}}"#),
+            (
+                "200 OK",
+                r#"{"page_id":"pricing","title":"Pricing","state":"ok","from_version":7,"to_version":7,"minor_only":false}"#,
+            ),
+        ])
+        .await;
+
+        let basis = client_at(base_url)
+            .mark_page_basis("plan", "pricing")
+            .await
+            .unwrap();
+
+        assert_eq!((basis.state.as_str(), basis.from_version), ("ok", 7));
+        let requests = requests.await.unwrap();
+        assert_eq!(
+            requests[0].lines().next().unwrap_or_default(),
+            "GET /api/pages/pricing HTTP/1.1"
+        );
+        assert_eq!(
+            requests[1].lines().next().unwrap_or_default(),
+            "PUT /api/pages/plan/basis/pricing HTTP/1.1"
+        );
+        assert_eq!(
+            request_body(&requests[1]),
+            serde_json::json!({"version": 7})
+        );
+    }
+
+    #[tokio::test]
+    async fn unmark_page_basis_deletes_the_pair() {
+        let (base_url, request) = serve_response_once("200 OK", r#"{"removed":true}"#).await;
+
+        let receipt = client_at(base_url)
+            .unmark_page_basis("plan", "pricing")
+            .await
+            .unwrap();
+
+        assert!(receipt.removed);
+        assert_eq!(
+            request.await.unwrap().lines().next().unwrap_or_default(),
+            "DELETE /api/pages/plan/basis/pricing HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_page_basis_answers_a_409_as_conflict_not_an_error() {
+        let (base_url, requests) = serve_sequence(vec![
+            ("409 Conflict", r#"{"error":"the basis is at version 6"}"#),
+            (
+                "200 OK",
+                r#"{"page_id":"pricing","title":"Pricing","state":"ok","from_version":6,"to_version":6}"#,
+            ),
+        ])
+        .await;
+        let client = client_at(base_url);
+
+        let refused = client
+            .confirm_page_basis("plan", "pricing", 5)
+            .await
+            .unwrap();
+        assert_eq!(
+            refused,
+            BasisConfirmResult::Conflict {
+                message: "the basis is at version 6".to_string()
+            }
+        );
+        let confirmed = client
+            .confirm_page_basis("plan", "pricing", 6)
+            .await
+            .unwrap();
+        assert!(matches!(confirmed, BasisConfirmResult::Confirmed { .. }));
+
+        let requests = requests.await.unwrap();
+        assert_eq!(
+            requests[0].lines().next().unwrap_or_default(),
+            "POST /api/pages/plan/basis/pricing/confirm HTTP/1.1"
+        );
+        assert_eq!(
+            request_body(&requests[0]),
+            serde_json::json!({"version": 5})
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_page_basis_keeps_other_failures_as_errors() {
+        let (base_url, _request) =
+            serve_response_once("500 Internal Server Error", r#"{"error":"boom"}"#).await;
+        let error = client_at(base_url)
+            .confirm_page_basis("plan", "pricing", 5)
+            .await
+            .unwrap_err();
+        assert!(error.contains("500"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn basis_diff_returns_the_comparison_or_the_reason_there_is_none() {
+        let (base_url, requests) = serve_sequence(vec![
+            (
+                "200 OK",
+                r#"{"from_version":1,"to_version":2,"from_content":"a","to_content":"b","edits":[{"version":2,"edited_by":"manual_edit","at":1,"minor":false,"delta_summary":"x"}]}"#,
+            ),
+            (
+                "409 Conflict",
+                r#"{"error":"the comparison is not available: archived","reason":"archived"}"#,
+            ),
+        ])
+        .await;
+        let client = client_at(base_url);
+
+        match client.get_page_basis_diff("plan", "pricing").await.unwrap() {
+            BasisDiffResult::Available { diff } => {
+                assert_eq!((diff.from_version, diff.to_version), (1, 2));
+                assert_eq!(diff.edits.len(), 1);
+            }
+            other => panic!("expected a comparison, got {other:?}"),
+        }
+        match client.get_page_basis_diff("plan", "pricing").await.unwrap() {
+            BasisDiffResult::Unavailable { reason, .. } => assert_eq!(reason, "archived"),
+            other => panic!("expected a reason, got {other:?}"),
+        }
+        assert_eq!(
+            requests.await.unwrap()[0]
+                .lines()
+                .next()
+                .unwrap_or_default(),
+            "GET /api/pages/plan/basis/pricing/diff HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_basis_pending_encodes_the_space_and_omits_it_when_blank() {
+        let (base_url, requests) = serve_sequence(vec![
+            (
+                "200 OK",
+                r#"[{"basis_page_id":"pricing","title":"Pricing","changed_version":2,"state":"pending","citers":[{"page_id":"plan","title":"Plan","minor_only":false}]}]"#,
+            ),
+            ("200 OK", "[]"),
+        ])
+        .await;
+        let client = client_at(base_url);
+
+        let entries = client.list_basis_pending(Some("Team / R&D")).await.unwrap();
+        assert_eq!(entries[0].citers.len(), 1);
+        assert!(client
+            .list_basis_pending(Some("  "))
+            .await
+            .unwrap()
+            .is_empty());
+
+        let requests = requests.await.unwrap();
+        assert_eq!(
+            requests[0].lines().next().unwrap_or_default(),
+            "GET /api/pages/basis-pending?space=Team%20%2F%20R%26D HTTP/1.1"
+        );
+        assert_eq!(
+            requests[1].lines().next().unwrap_or_default(),
+            "GET /api/pages/basis-pending HTTP/1.1"
+        );
+    }
+
+    #[test]
+    fn redistill_response_carries_the_preview_fields_and_defaults_them() {
+        let staged: PageRedistillResponse = serde_json::from_str(
+            r#"{"status":"ok","updated":false,"hint":null,"reason":null,"gated":true,"revision_card_id":"rev-3"}"#,
+        )
+        .unwrap();
+        assert!(staged.gated && !staged.unchanged);
+        assert_eq!(staged.revision_card_id.as_deref(), Some("rev-3"));
+        let same: PageRedistillResponse = serde_json::from_str(
+            r#"{"status":"ok","updated":false,"hint":null,"reason":null,"unchanged":true}"#,
+        )
+        .unwrap();
+        assert!(same.unchanged && !same.gated);
+        assert_eq!(same.revision_card_id, None);
     }
 
     async fn serve_status_once(
@@ -3891,6 +4340,11 @@ mod tests {
         let _get = WenlanClient::get_page_links;
         let _list = WenlanClient::list_orphan_links;
         let _lock = WenlanClient::set_page_review_required;
+        let _mark = WenlanClient::mark_page_basis;
+        let _unmark = WenlanClient::unmark_page_basis;
+        let _confirm = WenlanClient::confirm_page_basis;
+        let _diff = WenlanClient::get_page_basis_diff;
+        let _pending = WenlanClient::list_basis_pending;
     }
 
     #[test]

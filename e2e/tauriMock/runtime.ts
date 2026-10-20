@@ -11,6 +11,7 @@ import type {
   MemoryItem,
   IngestWebpageRequest,
   Page as KnowledgePage,
+  PageRedistillResponse,
   PageReviewOutcome,
   RefinementProposalSummary,
   RestoreEntitiesRequest,
@@ -24,6 +25,7 @@ import { daemonMeetsFloor } from "../../src/lib/daemonVersion";
 import type { SpacesNavigationFixture } from "../fixtures/spacesNavigation";
 import { baseResponse } from "./baseResponses";
 import { ConfiguredTauriFailureError, TauriMockArgumentError } from "./errors";
+import { PageBasisStore } from "./pageBasis";
 import { PageMapStore } from "./pageMap";
 import type { MockCommandCall, MockFailure, TauriMockPageScenario } from "./types";
 
@@ -135,6 +137,7 @@ export class TauriMockRuntime {
   private readonly activityRows: readonly Record<string, unknown>[];
   private readonly pageDraftCreateRequests = new Map<string, PageDraftCreateRequest | null>();
   private readonly pageMaps = new PageMapStore();
+  private readonly pageBasis: PageBasisStore;
   private readonly updatePageReceipts = new Map<
     string,
     { readonly input: UpdatePageInput; readonly outcome: UpdatePageOutcome }
@@ -155,6 +158,7 @@ export class TauriMockRuntime {
     this.spaces = fixture.spaces.map((space) => ({ ...space }));
     this.pages = fixture.pages.map((page) => ({ ...page }));
     this.pageSequence = this.pages.length;
+    this.pageBasis = new PageBasisStore(pageScenario.basis);
     this.entityDetails = fixture.entityDetails.map((detail) => ({
       entity: { ...detail.entity },
       observations: detail.observations.map((observation) => ({ ...observation })),
@@ -292,6 +296,32 @@ export class TauriMockRuntime {
         this.pages[index] = required ? { ...rest, review_required: true } : rest;
         return { page_id: pageId, review_required: required };
       }
+      case "mark_page_basis":
+        return this.pageBasis.mark(
+          requiredString(command, args, "pageId"),
+          requiredString(command, args, "basisPageId"),
+          this.pages,
+        );
+      case "unmark_page_basis":
+        return this.pageBasis.unmark(
+          requiredString(command, args, "pageId"),
+          requiredString(command, args, "basisPageId"),
+        );
+      case "confirm_page_basis":
+        return this.pageBasis.confirm(
+          requiredString(command, args, "pageId"),
+          requiredString(command, args, "basisPageId"),
+          requiredNumber(command, args, "version"),
+          this.pages,
+        );
+      case "get_page_basis_diff":
+        return this.pageBasis.diff(
+          requiredString(command, args, "pageId"),
+          requiredString(command, args, "basisPageId"),
+          this.pages,
+        );
+      case "list_basis_pending":
+        return this.pageBasis.pending(optionalString(args, "space"), this.pages);
       case "get_page_sources": {
         const pageId = requiredString(command, args, "pageId");
         const page = this.pages.find((entry) => entry.id === pageId);
@@ -481,6 +511,9 @@ export class TauriMockRuntime {
       // not a durable error inferred from a missing file on later reads.
       delete page.projection_status;
       delete page.projection_error;
+      // Like the real GET: the bases ride with the note.
+      const basis = this.pageBasis.refsFor(page.id, this.pages);
+      if (basis.length > 0) page.basis = basis;
     }
     return page;
   }
@@ -642,7 +675,18 @@ export class TauriMockRuntime {
       version: page.version + 1,
       last_modified: "2026-07-10T12:32:00Z",
     };
-    const outcome: UpdatePageOutcome = { outcome: "saved" };
+    const confirmBasis = optionalValue(args, "confirmBasis");
+    const basisConfirm =
+      typeof confirmBasis === "object" && confirmBasis !== null
+        ? this.pageBasis.confirmFromSave(
+            id,
+            confirmBasis as { basis_page_id: string; version: number },
+            this.pages,
+          )
+        : undefined;
+    const outcome: UpdatePageOutcome = basisConfirm
+      ? { outcome: "saved", basisConfirm }
+      : { outcome: "saved" };
     this.updatePageReceipts.set(receiptKey, {
       input: structuredClone(input),
       outcome: structuredClone(outcome),
@@ -669,11 +713,18 @@ export class TauriMockRuntime {
     return { id: renamed.id, title: renamed.title, version: renamed.version };
   }
 
-  private redistillPage(args: unknown): { status: "ok"; updated: true } {
+  private redistillPage(args: unknown): PageRedistillResponse {
     const id = requiredString("redistill_page", args, "pageId");
     const index = this.pages.findIndex((page) => page.id === id);
     const page = this.pages[index];
     if (index < 0 || !page) throw new TauriMockArgumentError("redistill_page", "pageId");
+    // A note that relies on other notes never takes the rebuild directly: the
+    // daemon stages a preview card, or finds the note already says it all.
+    const preview = this.pageBasis.redistillOutcome(id);
+    if (preview === "unchanged") return { status: "ok", updated: false, unchanged: true };
+    if (preview) {
+      return { status: "ok", updated: false, gated: true, revision_card_id: preview.gated };
+    }
     this.pages[index] = {
       ...page,
       last_compiled: "2026-07-10T12:33:00Z",

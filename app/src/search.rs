@@ -3658,11 +3658,22 @@ mod remaining_json_command_type_tests {
 /// Raw-JSON passthrough: the pinned wenlan-types structs would silently drop
 /// fields the daemon added after 0.9.2 (e.g. `citations`); the Rust layer
 /// consumes no Page fields on this path, so TypeScript types the response.
+///
+/// A note's bases ride beside the page object on the wire (`basis`). They
+/// belong to the note, so they are folded into the page the UI receives; the
+/// page's own fields win.
 fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
-    match wire.get_mut("page") {
-        Some(v) if !v.is_null() => Some(v.take()),
-        _ => None,
+    let basis = wire.get_mut("basis").map(serde_json::Value::take);
+    let mut page = match wire.get_mut("page") {
+        Some(v) if !v.is_null() => v.take(),
+        _ => return None,
+    };
+    if let Some(fields) = page.as_object_mut() {
+        if let Some(basis) = basis.filter(|b| !b.is_null()) {
+            fields.entry("basis").or_insert(basis);
+        }
     }
+    Some(page)
 }
 
 #[tauri::command]
@@ -3704,6 +3715,19 @@ mod get_page_tests {
         let page = page_from_wire(wire).expect("page present");
         assert_eq!(page["id"], "p1");
         assert_eq!(page["citations"][0]["occurrence"], 1);
+    }
+
+    #[test]
+    fn page_from_wire_folds_the_bases_into_the_page() {
+        let wire = serde_json::json!({
+            "page": { "id": "p1" },
+            "basis": [{ "page_id": "b1", "state": "pending" }]
+        });
+        let page = page_from_wire(wire).expect("page present");
+        assert_eq!(page["basis"][0]["page_id"], "b1");
+
+        let plain = page_from_wire(serde_json::json!({ "page": { "id": "p2" } })).unwrap();
+        assert!(plain.get("basis").is_none());
     }
 
     #[test]
@@ -4147,7 +4171,11 @@ mod page_draft_command_tests {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum UpdatePageOutcome {
-    Saved,
+    Saved {
+        /// Present only when the save carried `confirm_basis`.
+        #[serde(rename = "basisConfirm", skip_serializing_if = "Option::is_none")]
+        basis_confirm: Option<wenlan_types::page_basis::BasisConfirmOutcome>,
+    },
     UpgradeRequired {
         #[serde(rename = "reportedVersion")]
         reported_version: String,
@@ -4201,18 +4229,16 @@ fn page_update_error_message(status: u16, body: &str) -> String {
 }
 
 fn map_page_update_result(
-    result: Result<responses::PageWriteResponse, crate::api::PageUpdateRequestError>,
+    result: Result<responses::ManualPageWriteResponse, crate::api::PageUpdateRequestError>,
 ) -> Result<UpdatePageOutcome, String> {
     match result {
-        Ok(response) if response.ok && !response.gated => Ok(UpdatePageOutcome::Saved),
-        Ok(response) => Ok(UpdatePageOutcome::Failure {
+        Ok(response) if response.ok => Ok(UpdatePageOutcome::Saved {
+            basis_confirm: response.basis_confirm,
+        }),
+        Ok(_) => Ok(UpdatePageOutcome::Failure {
             kind: UpdatePageFailureKind::Other,
             status: 200,
-            message: if response.gated {
-                "Daemon staged the page update instead of saving it.".to_string()
-            } else {
-                "Daemon did not confirm the page update.".to_string()
-            },
+            message: "Daemon did not confirm the page update.".to_string(),
         }),
         Err(crate::api::PageUpdateRequestError::TransportOrDecode(message)) => Err(message),
         Err(crate::api::PageUpdateRequestError::Http { status, body }) => {
@@ -4357,14 +4383,59 @@ mod update_page_outcome_tests {
 
     #[test]
     fn successful_page_write_maps_to_saved() {
-        let result = map_page_update_result(Ok(responses::PageWriteResponse {
+        let result = map_page_update_result(Ok(responses::ManualPageWriteResponse {
             ok: true,
-            revision_card_id: Some("revision-1".to_string()),
-            gated: false,
-            basis: Vec::new(),
+            projection_status: responses::PageProjectionStatus::Synced,
+            projection_error: None,
+            basis_confirm: None,
         }));
 
-        assert_eq!(result, Ok(UpdatePageOutcome::Saved));
+        assert_eq!(
+            result,
+            Ok(UpdatePageOutcome::Saved {
+                basis_confirm: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_save_that_confirmed_a_basis_reports_what_became_of_it() {
+        use wenlan_types::page_basis::BasisConfirmOutcome;
+        for outcome in [
+            BasisConfirmOutcome::Confirmed,
+            BasisConfirmOutcome::MovedOn,
+            BasisConfirmOutcome::NotSaved,
+        ] {
+            let result = map_page_update_result(Ok(responses::ManualPageWriteResponse {
+                ok: true,
+                projection_status: responses::PageProjectionStatus::Synced,
+                projection_error: None,
+                basis_confirm: Some(outcome),
+            }));
+            assert_eq!(
+                result,
+                Ok(UpdatePageOutcome::Saved {
+                    basis_confirm: Some(outcome)
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn the_saved_outcome_serializes_with_camel_case_basis_confirm_only_when_present() {
+        let plain = serde_json::to_value(UpdatePageOutcome::Saved {
+            basis_confirm: None,
+        })
+        .unwrap();
+        assert_eq!(plain, serde_json::json!({ "outcome": "saved" }));
+        let confirmed = serde_json::to_value(UpdatePageOutcome::Saved {
+            basis_confirm: Some(wenlan_types::page_basis::BasisConfirmOutcome::MovedOn),
+        })
+        .unwrap();
+        assert_eq!(
+            confirmed,
+            serde_json::json!({ "outcome": "saved", "basisConfirm": "moved_on" })
+        );
     }
 
     #[test]
@@ -4406,6 +4477,7 @@ mod page_editor_diagnostic_tests {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn update_page(
     state: tauri::State<'_, State>,
@@ -4414,6 +4486,7 @@ pub async fn update_page(
     expected_version: i64,
     caller_id: String,
     operation_id: String,
+    confirm_basis: Option<wenlan_types::page_basis::ConfirmBasisInput>,
 ) -> Result<UpdatePageOutcome, String> {
     if caller_id != "wenlan-app" {
         return Err("Unsupported page-update caller identity".to_string());
@@ -4433,12 +4506,16 @@ pub async fn update_page(
         return Ok(outcome);
     }
 
-    let req = requests::UpdatePageRequest {
-        content,
-        source_memory_ids: Vec::new(),
-        expected_version: Some(expected_version),
-        caller_id: Some("wenlan-app".to_string()),
-        operation_id: Some(operation_id),
+    let req = requests::ManualPageEditRequest {
+        edit: requests::UpdatePageRequest {
+            content,
+            source_memory_ids: Vec::new(),
+            expected_version: Some(expected_version),
+            caller_id: Some("wenlan-app".to_string()),
+            operation_id: Some(operation_id),
+        },
+        minor: None,
+        confirm_basis,
     };
     map_page_update_result(client.post_page_update(&id, &req).await)
 }
@@ -4780,6 +4857,58 @@ pub async fn set_page_review_required(
 ) -> Result<responses::PageReviewRequiredResponse, String> {
     let client = { state.read().await.client.clone() };
     client.set_page_review_required(&page_id, required).await
+}
+
+#[tauri::command]
+pub async fn mark_page_basis(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    basis_page_id: String,
+) -> Result<wenlan_types::page_basis::BasisRef, String> {
+    let client = { state.read().await.client.clone() };
+    client.mark_page_basis(&page_id, &basis_page_id).await
+}
+
+#[tauri::command]
+pub async fn unmark_page_basis(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    basis_page_id: String,
+) -> Result<wenlan_types::page_basis::BasisRemoveResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.unmark_page_basis(&page_id, &basis_page_id).await
+}
+
+#[tauri::command]
+pub async fn confirm_page_basis(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    basis_page_id: String,
+    version: i64,
+) -> Result<crate::api::BasisConfirmResult, String> {
+    let client = { state.read().await.client.clone() };
+    client
+        .confirm_page_basis(&page_id, &basis_page_id, version)
+        .await
+}
+
+#[tauri::command]
+pub async fn get_page_basis_diff(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    basis_page_id: String,
+) -> Result<crate::api::BasisDiffResult, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_basis_diff(&page_id, &basis_page_id).await
+}
+
+#[tauri::command]
+pub async fn list_basis_pending(
+    state: tauri::State<'_, State>,
+    space: Option<String>,
+) -> Result<Vec<wenlan_types::page_basis::BasisPendingEntry>, String> {
+    let client = { state.read().await.client.clone() };
+    client.list_basis_pending(space.as_deref()).await
 }
 
 #[tauri::command]

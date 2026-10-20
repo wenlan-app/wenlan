@@ -1,8 +1,8 @@
-<svg width="1120" height="350" viewBox="0 0 1120 350" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="1120" height="260" viewBox="0 0 1120 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan README banner</title>
   <desc id="desc">Wenlan: 持續更新的個人知識庫</desc>
-  <rect width="1120" height="350" fill="#151D2B"/>
-  <g transform="translate(172 0)"><g transform="translate(81.28 84.28) scale(0.354375)">
+  <rect width="1120" height="260" fill="#151D2B"/>
+  <g transform="translate(172 -45)"><g transform="translate(81.28 84.28) scale(0.354375)">
     <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-zh-Hant-desktop-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-zh-Hant-desktop-orb)"/>

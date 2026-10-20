@@ -30,7 +30,10 @@ import {
   reviewPage,
   pageReviewSupported,
   parseEntityGuardError,
+  markPageBasis,
   type Entity,
+  type BasisConfirmOutcome,
+  type BasisRef,
   type Page,
   type PageReviewOutcome,
   type IndexedFileInfo,
@@ -80,6 +83,8 @@ import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInventory";
 import { PageAutosave } from "./editor/pageAutosave";
 import { NoteReviewNotice } from "./page/NoteReviewNotice";
+import { useBasisActions } from "./page/useBasisActions";
+import { basisCountLabel } from "./page/format";
 
 interface PageDetailProps {
   pageId: string;
@@ -353,6 +358,19 @@ export default function PageDetail({
     message: string;
   } | null>(null);
   const [reviewNotice, setReviewNotice] = useState<PageReviewNotice | null>(null);
+  const basisActions = useBasisActions();
+  // "Edit it yourself" on a changed basis: the next save also confirms it. The
+  // ref is what the (once-built) autosave writer reads; the state drives the UI.
+  const confirmIntentRef = useRef<{ pageId: string; basis: BasisRef } | null>(null);
+  // Opening the review waits for the stored action to finish: while it is
+  // pending, the shell refuses to navigate away from this note.
+  const openReviewAfterActionRef = useRef<{ pageId: string; itemId: string } | null>(null);
+  const takeReviewToOpen = () => {
+    const pending = openReviewAfterActionRef.current;
+    openReviewAfterActionRef.current = null;
+    return pending;
+  };
+  const basisSaveOutcomeRef = useRef<(outcome: BasisConfirmOutcome) => void>(() => undefined);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasSwitchPending, setCanvasSwitchPending] = useState(false);
   const [storedActionPending, setStoredActionPending] = useState(false);
@@ -612,6 +630,7 @@ export default function PageDetail({
     autosaveRef.current?.reset(null);
     editorPageRef.current = null;
     autoEditIntentRef.current = null;
+    confirmIntentRef.current = null;
     setRedistillNotice(null);
     setReviewNotice(null);
     setActionErrorMessage(null);
@@ -674,7 +693,20 @@ export default function PageDetail({
 
   if (!autosaveRef.current) {
     autosaveRef.current = new PageAutosave({
-      write: updatePage,
+      write: async (input) => {
+        // The confirm intent belongs to the note it was chosen on.
+        const intent = confirmIntentRef.current?.pageId === input.id ? confirmIntentRef.current : null;
+        const outcome = await updatePage({
+          ...input,
+          ...(intent && intent.basis.to_version != null
+            ? { confirmBasis: { basis_page_id: intent.basis.page_id, version: intent.basis.to_version } }
+            : {}),
+        });
+        if (outcome.outcome === "saved" && intent && outcome.basisConfirm) {
+          basisSaveOutcomeRef.current(outcome.basisConfirm);
+        }
+        return outcome;
+      },
       read: (id) => getPage(id, "explicit"),
       operationId: createPageOperationId,
       onChange: () => {},
@@ -864,6 +896,14 @@ export default function PageDetail({
         });
         return;
       }
+      if (result.gated) {
+        // The rebuild was staged as a preview card rather than applied: say so
+        // and open it, because nothing changes until the person confirms.
+        void queryClient.invalidateQueries({ queryKey: ["pending-revisions"] });
+        setRedistillNotice({ kind: "success", message: t("noteBasis.previewReady") });
+        openReviewAfterActionRef.current = { pageId: id, itemId: `revision:${id}` };
+        return;
+      }
       if (!result.updated && result.reason) {
         // The daemon ran the rebuild and discarded it (citation gate);
         // saying "already up to date" here would hide the failure.
@@ -954,7 +994,19 @@ export default function PageDetail({
     [pageId, t],
   );
 
+  const clearConfirmIntent = () => {
+    confirmIntentRef.current = null;
+  };
+  basisSaveOutcomeRef.current = (outcome) => {
+    const intent = confirmIntentRef.current;
+    if (!intent || outcome === "not_saved") return;
+    clearConfirmIntent();
+    if (outcome === "confirmed") basisActions.refresh(intent.pageId);
+    else basisActions.noteChangedAgain(intent.pageId, intent.basis.page_id);
+  };
+
   const closeEditor = () => {
+    clearConfirmIntent();
     canvasSwitchAttemptRef.current += 1;
     canvasSwitchPendingRef.current = false;
     setCanvasSwitchPending(false);
@@ -1425,6 +1477,7 @@ export default function PageDetail({
     const originSession = activeEditorSessionRef.current;
     const wasEditing = editing;
     const token = {};
+    openReviewAfterActionRef.current = null;
     storedActionRef.current = token;
     setStoredActionPending(true);
     setActionMenuOpen(false);
@@ -1485,7 +1538,10 @@ export default function PageDetail({
       if (ownsAction()) {
         storedActionRef.current = null;
         setStoredActionPending(false);
+        const reviewToOpen = takeReviewToOpen();
+        if (reviewToOpen?.pageId === originPageId) onOpenReview?.(reviewToOpen.itemId);
       }
+      takeReviewToOpen();
     }
   };
 
@@ -1620,6 +1676,31 @@ export default function PageDetail({
   }
 
   const sourceCount = pageSources?.length ?? page.source_memory_ids.length;
+  const basisRefs = page.basis ?? [];
+  // A note that relies on other notes is not rebuilt by itself: the daemon says
+  // "blocked: has_basis" for that normal state, which reads as a plain update.
+  const datelineBlocked = Boolean(page.refresh_blocked_reason) && page.refresh_blocked_reason !== "has_basis";
+  // A note can be rebuilt from its memories or from notes it still relies on.
+  const canUpdateFromSources = sourceCount > 0
+    || basisRefs.some((entry) => entry.state !== "deleted" && entry.state !== "unavailable");
+  const startConfirmEdit = (basis: BasisRef) => {
+    confirmIntentRef.current = { pageId: page.id, basis };
+    if (!editing) void beginEditing();
+  };
+  const markBasis = async (basisPageId: string): Promise<boolean> => {
+    const originPageId = page.id;
+    try {
+      await markPageBasis(originPageId, basisPageId);
+      basisActions.refresh(originPageId);
+      void queryClient.invalidateQueries({ queryKey: ["page", basisPageId] });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const unmarkBasis = (basisPageId: string) => { void basisActions.stop(page.id, basisPageId); };
+  // An entity's own page cannot rely on, or be, a note.
+  const basisEditable = page.creation_kind !== "entity";
 
   // Citations first (occurrence counting mirrors the backend and runs over the
   // raw stored body), then the existing display transforms.
@@ -1874,7 +1955,7 @@ export default function PageDetail({
                     ) : null}
                     {/* Re-distill rebuilds a page from its sources; a page
                         with none has nothing to rebuild from. */}
-                    {sourceCount > 0 ? <button
+                    {canUpdateFromSources ? <button
                         className="page-detail-mobile-menu-item"
                         disabled={storedActionBlocked || redistillMutation.isPending}
                         aria-busy={redistillMutation.isPending}
@@ -2014,6 +2095,12 @@ export default function PageDetail({
           onReview={onOpenReview}
           onShowSources={() => void requestPageInfo()}
           disabled={storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}
+          basis={{
+            actions: basisActions,
+            onEditToConfirm: startConfirmEdit,
+            onUpdateFromSources: () => { void requestStoredPageAction("redistill"); },
+            updateFromSourcesDisabled: !canUpdateFromSources || storedActionBlocked || redistillMutation.isPending,
+          }}
         />}
 
         {page.review_required === true && (
@@ -2510,15 +2597,21 @@ export default function PageDetail({
                       time: relativeTimeFromISO(page.last_compiled, t),
                     })}
               </span>
-              {sourceCount > 0 && <span className="page-detail-dateline-item">
-                {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}
-              </span>}
+              {basisRefs.length > 0
+                ? <span className="page-detail-dateline-item">
+                  {basisCountLabel(t, sourceCount, basisRefs.length)}
+                </span>
+                : sourceCount > 0 && <span className="page-detail-dateline-item">
+                  {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}
+                </span>}
             </div>
           <div className="flex flex-wrap gap-2">
-            {page.stale_reason && <span style={{ color: "var(--mem-accent-amber)" }}>
+            {page.stale_reason && <span style={datelineBlocked || page.stale_reason === "source_conflict"
+              ? { color: "var(--mem-accent-amber)" }
+              : undefined}>
               {page.stale_reason === "source_conflict"
                 ? t("pageDetail.dateline.needsReview")
-                : page.refresh_blocked_reason
+                : datelineBlocked
                   ? t("pageDetail.dateline.updateBlocked")
                   : t("noteReview.sourceUpdated")}
             </span>}
@@ -2552,7 +2645,14 @@ export default function PageDetail({
                     </div>
                   </section>
                 )}
-                <RelatedPages outbound={outboundLinks} onPageClick={onPageClick} />
+                <RelatedPages
+                  outbound={outboundLinks}
+                  onPageClick={onPageClick}
+                  currentPageId={page.id}
+                  basis={basisRefs}
+                  onMarkBasis={basisEditable ? markBasis : undefined}
+                  onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
+                />
               </div>
             )}
             <PageInfo
@@ -2568,6 +2668,11 @@ export default function PageDetail({
               citationState={processed.state}
               onMemoryClick={openSourceMemory}
               onPageClick={onPageClick}
+              currentPageId={page.id}
+              currentSpace={page.space ?? null}
+              basis={basisRefs}
+              onMarkBasis={basisEditable ? markBasis : undefined}
+              onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
             />
           </div>
             </DetailInfoContent>}
