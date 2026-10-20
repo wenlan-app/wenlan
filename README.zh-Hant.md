@@ -45,7 +45,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 - **散落的資料收進一處：** 文件、Markdown 檔、Obsidian vault、網頁摘錄與連結，還有匯出的 AI 對話，都進到同一個知識庫。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。
-- **流程內建，不用拼外掛：** 保存、整理、引用到更新筆記，都在同一個 App 裡，不用再拼裝一堆外掛。
+- **流程全部內建：** 保存、整理、引用到更新筆記，都在同一個 App 裡，不用再拼裝一堆外掛。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
