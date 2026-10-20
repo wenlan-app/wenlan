@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=c7cc2995281201ca8ce8f852df408aa222fda5ea6b998c7729f9cbfc1642d912 -->
+<!-- README_SYNC: source=README.md sha256=08cc07278ca9d7db97902b458c781ec8ca1dfa6e1c0b1cae0fb3983875abda18 -->
 
 <p align="center">
   <picture>
@@ -43,7 +43,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 
 筆記、文件和 AI 對話散落各處，內容又一直在變，每個 AI 工具也只各記一小部分。文瀾是為 AI 時代打造的知識庫：一份存在你電腦裡、由你和 AI 一起維護的唯一可信來源。
 
-- **散落的資料收進一處：** 文件、Markdown 檔、Obsidian vault、網頁內容與連結，還有匯出的 AI 對話，都進到同一個知識庫。
+- **散落的資料收進一處：** 文件、Markdown 檔、Obsidian vault、網頁摘錄與連結，還有匯出的 AI 對話，都進到同一個知識庫。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。
 - **流程內建，不用拼外掛：** 保存、整理、引用到更新都在同一個 App 裡，不用再拼裝一堆外掛。
 
