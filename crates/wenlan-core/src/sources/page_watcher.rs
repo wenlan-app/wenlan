@@ -150,7 +150,8 @@ async fn sync_one_file(
         // DB truth so the file stops lying about its sources; otherwise it
         // really is unchanged.
         let raw_body = body.trim_end_matches('\n');
-        let fresh = crate::export::knowledge::render_markdown_for(&existing);
+        // Only the body is compared, so the frontmatter's code bases are not needed.
+        let fresh = crate::export::knowledge::render_markdown_for(&existing, &[]);
         let (_, fresh_body) = obsidian::extract_frontmatter(&fresh);
         if raw_body != fresh_body.trim_end_matches('\n') {
             let writer =
@@ -176,9 +177,12 @@ async fn sync_one_file(
                 // so an ungated rewrite here would outlive the ceremony.
                 match crate::truth_adapter::page_write_permit(db, &existing.id).await? {
                     Some(permit) => {
-                        writer
-                            .begin_projection_write()
-                            .write_page_permitted(&permit, &existing)?;
+                        let code_bases = db.page_code_basis_locators(&existing.id).await?;
+                        writer.begin_projection_write().write_page_permitted(
+                            &permit,
+                            &existing,
+                            &code_bases,
+                        )?;
                     }
                     None => log::info!(
                         "[truth] not re-projecting page {} after an edit — an automatic \
@@ -1000,5 +1004,88 @@ mod tests {
             .await
             .unwrap();
         assert!(links.iter().all(|l| !l.label.starts_with("mem_")));
+    }
+    /// The `repo://` entries of `sources:` are projection-out only: a tick over
+    /// a projected page that carries them changes nothing and creates no source.
+    #[tokio::test]
+    async fn code_basis_sources_are_never_read_back() {
+        let (db, _ddir) = crate::db::code_basis_test::test_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let repo = TempDir::new().unwrap();
+        std::fs::write(
+            repo.path().join("lib.rs"),
+            (1..=10).map(|i| format!("line {i}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let seed = sample_page("page_cb", "CB Topic", "## Overview\nstable prose");
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            "page_cb",
+            &seed.title,
+            None,
+            &seed.content,
+            None,
+            None,
+            &[],
+            &now,
+        )
+        .await
+        .unwrap();
+        let page = db.get_page("page_cb").await.unwrap().unwrap();
+        let prepared = crate::code_basis::prepare_code_basis(&[wenlan_types::CodeBasisInput {
+            repo_root: repo.path().to_str().unwrap().to_string(),
+            path: "lib.rs".to_string(),
+            line_start: 2,
+            line_end: 4,
+        }])
+        .await
+        .unwrap();
+        db.upsert_page_code_basis("page_cb", &prepared, "agent")
+            .await
+            .unwrap();
+        let bases = db.page_code_basis_locators("page_cb").await.unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let guard = db.begin_page_projection_write();
+        let file = writer
+            .write_page_in_folder(&guard, &page, &bases, None)
+            .unwrap();
+        let projected = std::fs::read_to_string(&file).unwrap();
+        assert!(projected.contains("repo://lib.rs#L2-L4"), "{projected}");
+        assert!(!projected.contains(repo.path().to_str().unwrap()));
+        drop(guard);
+
+        for _ in 0..2 {
+            let stats = sync_filesystem_edits(&db, knowledge_dir.path())
+                .await
+                .unwrap();
+            assert_eq!(stats.applied, 0);
+            assert_eq!(stats.skipped_unchanged, 1);
+        }
+        let back = db.get_page("page_cb").await.unwrap().unwrap();
+        assert_eq!(back.content, page.content);
+        assert_eq!(back.version, 1);
+        assert!(back.source_memory_ids.is_empty());
+        assert!(!back.user_edited);
+        // The file was not rewritten and the rows are as they were.
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), projected);
+        // A user touching the protected Sources block makes the watcher
+        // re-project from DB truth, and the re-projection keeps the entry.
+        std::fs::write(
+            &file,
+            format!(
+                "{projected}\n{}\n## Sources\n- [[mem_forged]]\n{}\n",
+                crate::export::provenance::SOURCES_BLOCK_START,
+                crate::export::provenance::SOURCES_BLOCK_END
+            ),
+        )
+        .unwrap();
+        let stats = sync_filesystem_edits(&db, knowledge_dir.path())
+            .await
+            .unwrap();
+        assert_eq!(stats.applied, 0);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), projected);
+        let rows = db.list_page_code_basis("page_cb").await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, "ok");
     }
 }

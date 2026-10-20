@@ -326,6 +326,40 @@ async fn ensure_span_free(
     Ok(())
 }
 
+/// [`MemoryDB::list_page_code_basis`] on a connection the caller already holds.
+pub(crate) async fn list_code_basis_on_conn(
+    conn: &libsql::Connection,
+    page_id: &str,
+) -> Result<Vec<CodeBasisRef>, WenlanError> {
+    let sql = format!(
+        "SELECT {REF_COLUMNS} FROM page_code_basis WHERE page_id = ?1 \
+         ORDER BY added_at, repo_root, path, line_start, line_end"
+    );
+    let mut rows = conn
+        .query(&sql, libsql::params![page_id])
+        .await
+        .map_err(decode("list_page_code_basis"))?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(decode("list_page_code_basis"))? {
+        out.push(ref_from(&row).map_err(decode("list_page_code_basis"))?);
+    }
+    Ok(out)
+}
+
+/// The locators the projection and the OKF export render for a note, read on a
+/// connection the caller already holds (the repair paths hold it across the
+/// projection write).
+pub(crate) async fn code_basis_locators_on_conn(
+    conn: &libsql::Connection,
+    page_id: &str,
+) -> Result<Vec<CodeBasisLocator>, WenlanError> {
+    Ok(list_code_basis_on_conn(conn, page_id)
+        .await?
+        .iter()
+        .map(CodeBasisLocator::from)
+        .collect())
+}
+
 impl MemoryDB {
     /// Record that `page_id` relies on these lines (one transaction). For the
     /// writes that have no page write to ride on: a create, and a refresh whose
@@ -352,19 +386,45 @@ impl MemoryDB {
         page_id: &str,
     ) -> Result<Vec<CodeBasisRef>, WenlanError> {
         let conn = self.conn.lock().await;
+        list_code_basis_on_conn(&conn, page_id).await
+    }
+
+    /// The code bases of every note that has any, by note id, as the OKF export
+    /// and the startup projection repair render them. One query.
+    pub async fn code_basis_locators_by_page(
+        &self,
+    ) -> Result<HashMap<String, Vec<CodeBasisLocator>>, WenlanError> {
+        let conn = self.conn.lock().await;
         let sql = format!(
-            "SELECT {REF_COLUMNS} FROM page_code_basis WHERE page_id = ?1 \
+            "SELECT {REF_COLUMNS}, page_id FROM page_code_basis \
              ORDER BY added_at, repo_root, path, line_start, line_end"
         );
         let mut rows = conn
-            .query(&sql, libsql::params![page_id])
+            .query(&sql, ())
             .await
-            .map_err(decode("list_page_code_basis"))?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next().await.map_err(decode("list_page_code_basis"))? {
-            out.push(ref_from(&row).map_err(decode("list_page_code_basis"))?);
+            .map_err(decode("code_basis_locators_by_page"))?;
+        let mut out: HashMap<String, Vec<CodeBasisLocator>> = HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(decode("code_basis_locators_by_page"))?
+        {
+            let reference = ref_from(&row).map_err(decode("code_basis_locators_by_page"))?;
+            let page_id: String = row.get(7).map_err(decode("code_basis_locators_by_page"))?;
+            out.entry(page_id)
+                .or_default()
+                .push(CodeBasisLocator::from(&reference));
         }
         Ok(out)
+    }
+
+    /// A note's code bases as the projection and the OKF export render them.
+    pub async fn page_code_basis_locators(
+        &self,
+        page_id: &str,
+    ) -> Result<Vec<CodeBasisLocator>, WenlanError> {
+        let conn = self.conn.lock().await;
+        code_basis_locators_on_conn(&conn, page_id).await
     }
 
     /// The code bases of many notes that are NOT `ok`, keyed by note. Notes with

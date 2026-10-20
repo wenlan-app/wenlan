@@ -126,7 +126,7 @@ mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
 #[cfg(test)]
-mod code_basis_test;
+pub(crate) mod code_basis_test;
 #[cfg(test)]
 mod edges_rebuild_test;
 #[cfg(test)]

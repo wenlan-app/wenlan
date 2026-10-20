@@ -225,9 +225,10 @@ impl MemoryDB {
 
             if let Some(projection) = projection.as_ref() {
                 let current_page = page_for_title_rename_on_connection(&conn, id).await?;
+                let code_bases = super::code_basis::code_basis_locators_on_conn(&conn, id).await?;
                 projection_before = projection
                     .locked()
-                    .capture_checked_page_projection(&current_page)?;
+                    .capture_checked_page_projection(&current_page, &code_bases)?;
             }
 
             let wanted_key = MemoryDB::page_title_key(&title);
@@ -347,6 +348,7 @@ impl MemoryDB {
 
             if projection_before.is_some() {
                 let page = page_for_title_rename_on_connection(&conn, id).await?;
+                let code_bases = super::code_basis::code_basis_locators_on_conn(&conn, id).await?;
                 let latest_projection = projection
                     .as_ref()
                     .expect("projection snapshot requires a session")
@@ -362,7 +364,7 @@ impl MemoryDB {
                     .as_ref()
                     .expect("projection snapshot requires a session")
                     .locked()
-                    .write_page_permitted(&permit, &page)?;
+                    .write_page_permitted(&permit, &page, &code_bases)?;
                 let expected_file = projection_before
                     .as_ref()
                     .and_then(|(path, _)| Path::new(path).file_name())

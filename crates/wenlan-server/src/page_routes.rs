@@ -1159,10 +1159,16 @@ pub async fn handle_export_pages(
                 .await
                 .map_err(|e| ServerError::Internal(e.to_string()))?,
         );
+        // Each page's code bases ride along as `repo://` sources.
+        let code_bases = db
+            .code_basis_locators_by_page()
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?;
         let mut stats = wenlan_core::export::okf::export_okf_with_concept_paths(
             &exportable,
             std::path::Path::new(&expanded),
             &concept_paths,
+            &code_bases,
         )?;
         // `export_okf` never sets `skipped`: pages the automatic reader may
         // not see are reported here, OKF-branch only. The Obsidian response

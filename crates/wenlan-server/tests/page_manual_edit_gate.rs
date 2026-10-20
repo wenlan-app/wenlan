@@ -768,7 +768,7 @@ async fn external_markdown_edit_survives_manual_save_replay_and_startup_reconcil
 
     // Exercise the same projection recovery entrypoint used at daemon startup.
     KnowledgeProjectionWrite::new(root, &db)
-        .reconcile(std::slice::from_ref(&after))
+        .reconcile(std::slice::from_ref(&after), &Default::default())
         .unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
     let reconciled = db.get_page(&page_id).await.unwrap().unwrap();
