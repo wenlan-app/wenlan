@@ -31,10 +31,18 @@ async fn setup() -> (MockServer, WenlanClient) {
 }
 
 fn make_server(client: WenlanClient) -> WenlanMcpServer {
+    // A session exported by the developer's own agent would add a
+    // `POST /api/sessions` request these tests do not expect.
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     WenlanMcpServer::new(client, TransportMode::Stdio, "test-agent".into(), None)
 }
 
 fn make_server_with_transport(client: WenlanClient, transport: TransportMode) -> WenlanMcpServer {
+    // A session exported by the developer's own agent would add a
+    // `POST /api/sessions` request these tests do not expect.
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     WenlanMcpServer::new(client, transport, "test-agent".into(), None)
 }
 
@@ -231,6 +239,7 @@ async fn t1_remember_roundtrip() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -381,6 +390,7 @@ async fn t2_remember_surfaces_warnings_when_present() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -443,6 +453,7 @@ async fn t3_structured_fields_schema_is_object() {
             supersedes: None,
             structured_fields: Some(structured_fields),
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -573,6 +584,7 @@ async fn t5_memory_type_hint_preserved_without_forcing_domain() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -740,6 +752,7 @@ async fn t10_remember_request_does_not_contain_user_id() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -794,6 +807,7 @@ async fn t11_extraction_method_none_not_in_text() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -832,6 +846,7 @@ async fn t12_forward_compat_response_missing_extraction_method() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed against pre-D9 response");
@@ -882,6 +897,7 @@ async fn origin_client_sends_x_agent_name_header() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");
@@ -939,6 +955,7 @@ async fn origin_client_omits_x_agent_name_when_unset() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl failed");

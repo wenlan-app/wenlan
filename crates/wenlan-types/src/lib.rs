@@ -31,6 +31,7 @@ pub mod repair_relation;
 pub mod repair_runtime;
 pub mod requests;
 pub mod responses;
+pub mod session_context;
 pub mod sessions;
 pub mod source_annotations;
 pub mod sources;

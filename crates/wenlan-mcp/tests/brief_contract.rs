@@ -14,6 +14,10 @@ use wiremock::{
 };
 
 fn make_server(mock: &MockServer) -> WenlanMcpServer {
+    // A session exported by the developer's own agent would add a
+    // `POST /api/sessions` request these tests do not expect.
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     WenlanMcpServer::new(
         WenlanClient::new(mock.uri()),
         TransportMode::Stdio,

@@ -3,6 +3,9 @@
 Force a distillation pass now. The daemon's background distill cycles run
 on its own clock; `$wenlan distill` is the explicit user-triggered pass.
 
+Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass
+`session: "codex:<that id>"` on `write_page`.
+
 ## Mental model
 
 Distillation is four operations bundled into one flow:

@@ -100,6 +100,7 @@ async fn drain_replays_both_kinds_and_handles_duplicates_and_malformed_files() {
         space: Some("demo".into()),
         agent_name: None,
         reconcile_summary_version: true,
+        session: None,
         payload: OutboxPayload::BriefUpdate(BriefUpdateRequest {
             space: "demo".into(),
             caller_id: "test".into(),
@@ -119,6 +120,7 @@ async fn drain_replays_both_kinds_and_handles_duplicates_and_malformed_files() {
         space: Some("demo".into()),
         agent_name: None,
         reconcile_summary_version: false,
+        session: None,
         payload: OutboxPayload::MemoryStore(StoreMemoryRequest {
             content: "outbox replay stores this durable memory".into(),
             memory_type: Some("fact".into()),
@@ -246,6 +248,7 @@ async fn drain_moves_a_terminal_4xx_rejection_to_failed_with_a_receipt() {
         space: Some("demo".into()),
         agent_name: None,
         reconcile_summary_version: false,
+        session: None,
         payload: OutboxPayload::MemoryStore(StoreMemoryRequest {
             content: "too short".into(),
             memory_type: None,

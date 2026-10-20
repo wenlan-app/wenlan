@@ -103,6 +103,7 @@ pub async fn run(
                         space: Some(request.space.clone()),
                         agent_name: agent_name.map(str::to_owned),
                         reconcile_summary_version: true,
+                        session: client.session().map(ToString::to_string),
                         payload: OutboxPayload::BriefUpdate(request),
                     };
                     let path = outbox::enqueue(&envelope)?;

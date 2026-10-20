@@ -249,6 +249,9 @@ async fn replay(
     if let Some(agent_name) = envelope.agent_name.as_deref() {
         request = request.header("x-agent-name", agent_name);
     }
+    if let Some(session) = envelope.session.as_deref() {
+        request = request.header(wenlan_types::SESSION_HEADER, session);
+    }
     let response = request.send().await.context("loopback replay request")?;
     let status = response.status();
     let body = response.text().await.context("read replay response")?;

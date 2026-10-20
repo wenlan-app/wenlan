@@ -104,6 +104,7 @@ mod tests {
             space: None,
             agent_name: None,
             reconcile_summary_version: false,
+            session: None,
             payload: OutboxPayload::BriefUpdate(BriefUpdateRequest {
                 space: "demo".into(),
                 caller_id: "wenlan-cli".into(),

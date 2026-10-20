@@ -31,7 +31,19 @@
       "openai": {
         "display_name": "Wenlan Capture",
         "short_description": "Save a durable memory to Wenlan from the current conversation"
-      }
+      },
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on `capture` and `write_page`."
+          ],
+          "to": [
+            "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
+            "`session: \"codex:<that id>\"` on `capture` and `write_page`."
+          ]
+        }
+      ]
     },
     "curate": {
       "sections": {
@@ -192,7 +204,33 @@
       "openai": {
         "display_name": "Wenlan Handoff",
         "short_description": "End a Codex session with captures and a typed Brief update"
-      }
+      },
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on `capture`, `write_page` and `update_brief`."
+          ],
+          "to": [
+            "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
+            "`session: \"codex:<that id>\"` on `capture`, `write_page` and `update_brief`."
+          ]
+        }
+      ]
+    },
+    "distill": {
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on `write_page`."
+          ],
+          "to": [
+            "Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass",
+            "`session: \"codex:<that id>\"` on `write_page`."
+          ]
+        }
+      ]
     },
     "pages": {
       "sections": {

@@ -15,6 +15,9 @@ user-invocable: false
 Force a distillation pass now. The daemon's background distill cycles run
 on its own clock; `/wenlan distill` is the explicit user-triggered pass.
 
+When the session start printed a `Wenlan session:` line, pass its value as
+`session` on `write_page`.
+
 ## Mental model
 
 Distillation is four operations bundled into one flow:

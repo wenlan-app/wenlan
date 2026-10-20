@@ -14,6 +14,9 @@ allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan
 Capture a single memory in the moment. Active verb: agent captures the
 moment of insight, like a photograph.
 
+When the session start printed a `Wenlan session:` line, pass its value as
+`session` on `capture` and `write_page`.
+
 ## Resolve the active space
 
 The `/capture` skill accepts one optional inline token of the form
