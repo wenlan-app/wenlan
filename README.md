@@ -41,10 +41,10 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 Your notes, documents, and AI chats are scattered everywhere, and they keep changing. Each AI tool remembers its own bits. Wenlan is a knowledge base built for the AI era: one local source of truth that you and your AI tools keep current together. The whole knowledge workflow is built in, from saving and organizing to citing and updating, so there is no maze of plugins to wire up.
 
-- **Notes that keep up:** With Steep on, notes update when their sources change. Notes you wrote get a suggested edit.
-- **Every claim traceable:** Notes cite their sources, so you can open the original.
+- **Pages that keep up:** With Steep on, pages update when their sources change. Pages you wrote get a suggested edit.
+- **Every claim traceable:** Pages cite their sources, so you can open the original.
 - **Pick up where you left off:** Save progress with `/handoff` and resume with `/brief` in Claude Code or Codex.
-- **Plain files on your computer:** Notes are Markdown files on your disk that open in Obsidian.
+- **Plain files on your computer:** Pages are Markdown files on your disk that open in Obsidian.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -68,9 +68,9 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-data.md#installation).
 
-### 2. Create a note or import existing material
+### 2. Create a page or import existing material
 
-Create a note in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
+Create a page in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
 
 ### 3. Connect an AI tool when you want
 
@@ -80,9 +80,9 @@ Create a note in Wenlan, connect an Obsidian vault, or import earlier AI convers
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed. Type what you want after it, such as `/wenlan open my note on the release plan`, to reach everything else.
+After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed. Type what you want after it, such as `/wenlan open my page on the release plan`, to reach everything else.
 
-Imported material is ready to use; you do not need to create a note first. Ask your AI:
+Imported material is ready to use; you do not need to create a page first. Ask your AI:
 
 > Check Wenlan for my earlier notes and decisions on this, then help me: …
 
@@ -205,7 +205,7 @@ Saving material is only the start. **Steep prepares it for reuse and keeps suppo
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a note that is either updated automatically or sent for review." width="100%">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
 </p>
 <p>Illustration based on current update behavior; not an App screenshot.</p>
 
