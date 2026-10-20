@@ -404,7 +404,16 @@ pub(super) async fn prepare_startup_state(
                         knowledge_path.clone(),
                         &db_arc,
                     );
-                    match projection.reconcile(&pages) {
+                    // A page rewritten here keeps its `repo://` sources.
+                    let code_bases =
+                        db_arc
+                            .code_basis_locators_by_page()
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::warn!("[reconcile] code bases not loaded: {e}");
+                                Default::default()
+                            });
+                    match projection.reconcile(&pages, &code_bases) {
                         Ok(stats)
                             if stats.rewritten > 0
                                 || stats.temp_files_removed > 0

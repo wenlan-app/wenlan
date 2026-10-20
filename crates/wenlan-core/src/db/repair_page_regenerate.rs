@@ -171,6 +171,7 @@ where
     let target_path = crate::repair::page_projection_target_path(rollback)?;
     let conn = db.conn.lock().await;
     let page_row = crate::repair::projection_page_row_on_connection(&conn, page_id).await?;
+    let code_bases = super::code_basis::code_basis_locators_on_conn(&conn, page_id).await?;
     let post_apply_db_digest = crate::repair::database_content_digest(&conn).await?;
     #[cfg(test)]
     run_test_checkpoint(TestCheckpointKind::AfterDbSnapshotBeforeProjectionLock)?;
@@ -212,14 +213,17 @@ where
             let result = (|| {
                 #[cfg(test)]
                 if REGENERATE_PAGE_TEST_CHECKPOINTS.try_with(|_| ()).is_ok() {
-                    write.write_page_with_after_target_write_permitted(&permit, &page, || {
-                        run_test_checkpoint(TestCheckpointKind::AfterTargetWrite)
-                    })?;
+                    write.write_page_with_after_target_write_permitted(
+                        &permit,
+                        &page,
+                        &code_bases,
+                        || run_test_checkpoint(TestCheckpointKind::AfterTargetWrite),
+                    )?;
                 } else {
-                    write.write_page_permitted(&permit, &page)?;
+                    write.write_page_permitted(&permit, &page, &code_bases)?;
                 }
                 #[cfg(not(test))]
-                write.write_page_permitted(&permit, &page)?;
+                write.write_page_permitted(&permit, &page, &code_bases)?;
                 let after_scan = crate::lint::pages::fs::scan_page_root_controlled(
                     page_root,
                     true,

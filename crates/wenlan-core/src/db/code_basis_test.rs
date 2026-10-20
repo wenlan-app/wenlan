@@ -69,7 +69,9 @@ async fn build_db(ceiling: Option<i64>) -> (MemoryDB, tempfile::TempDir) {
     (memory_db, dir)
 }
 
-async fn test_db() -> (MemoryDB, tempfile::TempDir) {
+/// [`build_db`] at the current schema; shared with the lint and watcher
+/// tests of the same feature.
+pub(crate) async fn test_db() -> (MemoryDB, tempfile::TempDir) {
     build_db(None).await
 }
 
