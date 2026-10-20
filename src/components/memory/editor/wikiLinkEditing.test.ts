@@ -342,6 +342,7 @@ describe("canonical references share editor behavior", () => {
     const links = [...view.contentDOM.querySelectorAll<HTMLAnchorElement>("a[data-inline-reference-key]")];
     expect(links.map(link => link.textContent)).toEqual(["2", "3"]);
     expect(links[1]).toHaveClass("reference-link--source", "reference-link--unverified");
+    expect(links.every(link => link.classList.contains("cm-citation-link"))).toBe(true);
     expect(links[1]).toHaveAttribute("aria-label", "3, source, Unverified");
     links[1].dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
     expect(onReferencePreview.mock.calls[0][0]).toMatchObject({ kind: "citation", citation: citations[2] });

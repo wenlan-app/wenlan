@@ -53,11 +53,7 @@
 .source-document-body li > ol { margin-top: 0.2em; }
 .source-document-body li.task-list-item { list-style: none; }
 
-.source-document-body a {
-  color: var(--mem-accent-indigo);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
+/* Link colour and underline live with the reading-text rule in index.css. */
 
 .source-document-body blockquote {
   margin: 0 0 var(--content-para-gap);

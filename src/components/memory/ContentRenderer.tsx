@@ -10,6 +10,7 @@ import {
 import { CITATION_ANCHOR_PREFIX } from "../../lib/pageCitations";
 import { ReferenceLink } from "./links/ReferenceLink";
 import { referenceTargetFromHref } from "./links/referenceTypes";
+import { displayUrl, isBareUrlLink } from "../../lib/displayUrl";
 
 interface ContentRendererProps {
   content: string;
@@ -91,11 +92,9 @@ const markdownComponents = {
           href={href}
           target={href?.startsWith("#") ? undefined : "_blank"}
           rel="noopener noreferrer"
-          style={{ color: "var(--mem-accent-indigo)", textDecoration: "none" }}
-          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+          title={isBareUrlLink(href, children) ? href : undefined}
         >
-          {children}
+          {isBareUrlLink(href, children) ? displayUrl(children) : children}
         </a>
   ),
   h1: ({ children }: { children?: React.ReactNode }) => (
