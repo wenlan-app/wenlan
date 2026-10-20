@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5e11b2ed7e13a57dc5db347d00dce473fd208b435dd88ad0c7ab290a7e119b2e -->
+<!-- README_SYNC: source=README.md sha256=bc02586fecdc56464d9f53259b464b8024cc1dddefe84a87fc9eb169de7ffa0b -->
 
 <p align="center">
   <picture>
@@ -48,7 +48,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 - **每句話都查得到出處：** 筆記附上引用，可以直接打開原文；背景更新前也會先核對引用。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。在 Claude Code 或 Codex 用 `/handoff` 存下進度，下次用 `/brief` 接上。
 - **自動連起來，按專案分開：** 設定模型後，不同來源裡的同一個人、專案或概念會連在一起；Spaces 讓每個專案各自獨立。
-- **資料在你的電腦，而且開源：** 筆記是 Markdown 檔，可以用 Obsidian 打開；不用帳號，基本搜尋不需要 API key。
+- **資料在你的電腦，而且開源：** 筆記是 Markdown 檔，可以用 Obsidian 打開；在本機使用不用帳號，基本搜尋不需要 API key。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

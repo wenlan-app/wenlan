@@ -46,7 +46,7 @@ Your notes, documents, and AI chats are scattered everywhere, and they keep chan
 - **Every claim traceable:** Pages cite their sources, and background updates check those citations before replacing a page.
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, and other MCP clients share it. In Claude Code or Codex, `/handoff` saves progress and `/brief` resumes it.
 - **Connected, and scoped by project:** With a model set up, the same people, projects, and ideas link across sources. Spaces keep each project separate.
-- **Local and open source:** Pages are Markdown files on your disk that open in Obsidian. No account needed, and basic search needs no API key.
+- **Local and open source:** Pages are Markdown files on your disk that open in Obsidian. No account needed for local use, and basic search needs no API key.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
