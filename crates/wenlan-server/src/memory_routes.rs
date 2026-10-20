@@ -1212,10 +1212,15 @@ async fn handle_search_memory_inner(
             let mut basis_by_page =
                 crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &ids)
                     .await?;
+            let mut code_basis_by_page =
+                crate::code_basis_routes::non_ok_code_basis_by_page(&db, &ids).await?;
             let kept: Vec<_> = kept
                 .into_iter()
                 .map(|mut row| {
                     row.basis = basis_by_page.remove(&row.source_id).unwrap_or_default();
+                    row.code_basis = code_basis_by_page
+                        .remove(&row.source_id)
+                        .unwrap_or_default();
                     row
                 })
                 .collect();
@@ -3765,6 +3770,7 @@ mod partition_pages_tests {
     fn make_result(source: &str, id: &str) -> SearchResult {
         SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: id.to_string(),
             content: "body".to_string(),
             source: source.to_string(),

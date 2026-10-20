@@ -379,8 +379,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
 
     let rows = wenlan_server::sensitive_read_routes::sensitive_read_routes().collect::<Vec<_>>();
     // The source-annotation GET and POST routes add two PageWorkspace-scoped readers,
-    // and the basis-pending list and basis diff add two more.
-    assert_eq!(rows.len(), 76);
+    // the basis-pending list and basis diff add two more, and the code basis
+    // recheck one.
+    assert_eq!(rows.len(), 77);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -391,7 +392,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        56
+        57
     );
     assert_eq!(
         rows.iter()
