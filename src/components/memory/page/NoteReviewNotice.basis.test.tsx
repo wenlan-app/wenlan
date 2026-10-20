@@ -39,7 +39,7 @@ const diff: BasisDiff = {
   from_content: "The plan costs 10 dollars.",
   to_content: "The plan costs 12 dollars.",
   edits: [
-    { version: 2, edited_by: "agent_refresh", at: 1_760_000_000, minor: false, delta_summary: "Raised the price" },
+    { version: 2, edited_by: "agent_refresh", at: 1_760_000_000, minor: false, delta_summary: "+mem_a; +23 chars; +5 words (agent_refresh)" },
     { version: 3, edited_by: "manual_edit", at: 1_760_000_100, minor: true, delta_summary: "Fixed a typo" },
   ],
 };
@@ -136,13 +136,12 @@ describe("NoteReviewNotice with a basis", () => {
     const text = within(dialog).getByTestId("basis-diff-text");
     expect(text.querySelector("del")).toHaveTextContent("10");
     expect(text.querySelector("ins")).toHaveTextContent("12");
-    expect(within(dialog).getByText("Raised the price")).toBeInTheDocument();
-    expect(within(dialog).getByText("Fixed a typo")).toBeInTheDocument();
-    // Who made each edit reads as a person would say it, never the raw slug.
+    // Who made each edit reads as a person would say it. The daemon's English
+    // summary carries writer slugs and source ids, so it stays out.
     const edits = within(dialog).getByRole("region", { name: "Edits" });
     expect(within(edits).getAllByRole("listitem")[0]).toHaveTextContent(/^Updated by an agent · /);
     expect(within(edits).getAllByRole("listitem")[1]).toHaveTextContent(/^You · /);
-    expect(edits).not.toHaveTextContent(/agent_refresh|manual_edit|human/);
+    expect(edits).not.toHaveTextContent(/agent_refresh|manual_edit|human|mem_a|chars|Fixed a typo/);
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Confirm no impact" }));
     await waitFor(() => expect(confirmPageBasis).toHaveBeenCalledWith("page-1", "basis-a", 3));

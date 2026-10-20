@@ -94,8 +94,6 @@ export function BasisDiffDialog({
               {HUMAN_WRITERS.has(edit.edited_by) ? t("noteBasis.diff.you") : revisionWriterLabel(t, edit.edited_by)} · {whenLabel(edit.at, i18n.language)}
               {edit.minor && <span className="basis-diff__minor">{t("noteBasis.diff.minorEdit")}</span>}
             </span>
-            {/* The daemon writes these summaries in English; other languages leave them out, as revision history does. */}
-            {edit.delta_summary && i18n.language?.startsWith("en") && <span className="basis-diff__edit-summary">{edit.delta_summary}</span>}
           </li>)}
         </ul>
       </section>}

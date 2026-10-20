@@ -83,12 +83,6 @@
   font-size: 12px;
 }
 
-.basis-diff__edit-summary {
-  color: var(--mem-text-secondary);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
 .basis-diff__actions {
   display: flex;
   flex-wrap: wrap;
