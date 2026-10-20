@@ -7,7 +7,7 @@
 
 <p align="center">
   Wenlan turns scattered notes, documents, and AI chats into a personal wiki that stays current and cites its sources,<br>
-  so Claude, Codex, and your other AI tools pick up where you left off.
+  so you and AI tools like Claude and Codex can pick up where you left off.
 </p>
 
 <p align="center">
