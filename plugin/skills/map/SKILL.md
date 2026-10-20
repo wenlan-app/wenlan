@@ -61,8 +61,8 @@ fuzzy.
 - Present, and listed with a `code_basis` entry in state `pending` or
   `unavailable` whose `repo_root` is this repository: refresh it (step 5).
 - Present with nothing outstanding: leave it, and say so in the report.
-  `list_pages` shows only code bases that are not `ok`, so a note with none
-  listed is current.
+  `list_pages` rechecks the cited files first and lists only code bases that
+  are not `ok`, so a note with none listed is current.
 
 ## 4. Writing a note
 
@@ -96,8 +96,9 @@ and lines) and decide whether what the note says still holds.
 - Something changed: rewrite only the sentences that changed. Then call
   `write_page` with `page_id`, `expected_version` set to the `version` you
   read, the edited `content`, and a `code_basis` list that names every entry
-  again at its current lines (naming an entry again re-anchors it as `ok`),
-  plus any new ones.
+  the rewrite relies on at its current lines. Naming a span again re-anchors
+  it as `ok`; a span that moved replaces the stale entry it overlaps on the
+  same file, so nothing is left `pending`.
 - `unavailable` entry (the file or repository is gone): drop the sentence or
   re-point it, and call `page_code_basis` with `action: "remove"` for the old
   entry.

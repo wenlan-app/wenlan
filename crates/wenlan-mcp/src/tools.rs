@@ -1630,6 +1630,22 @@ fn recall_hits(results: &[wenlan_types::SearchResult]) -> Vec<RecallHit<'_>> {
     results.iter().map(RecallHit::from).collect()
 }
 
+/// The Brief's line about notes that rely on code that changed, or `None` when
+/// there are none. The recheck already ran inside the Brief read; nothing for
+/// the agent to run first.
+fn code_basis_drift_line(count: Option<u32>) -> Option<String> {
+    match count? {
+        0 => None,
+        1 => Some(
+            "1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
+                .to_string(),
+        ),
+        count => Some(format!(
+            "{count} notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
+        )),
+    }
+}
+
 /// One Brief item list as text, keeping the stable item ids and versions the
 /// handoff skill reconciles against.
 fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::BriefItem]) {
@@ -1784,10 +1800,16 @@ impl WenlanMcpServer {
             wenlan_types::BriefReadState::SpaceNotResolved => {
                 "Space not resolved. Pass `space` or configure a default Space.".to_string()
             }
-            wenlan_types::BriefReadState::BriefNotCreated => format!(
-                "No Brief exists for Space `{}` yet. Reads never create one; the first handoff update can.",
-                response.space.as_deref().unwrap_or("unknown")
-            ),
+            wenlan_types::BriefReadState::BriefNotCreated => {
+                let mut output = format!(
+                    "No Brief exists for Space `{}` yet. Reads never create one; the first handoff update can.",
+                    response.space.as_deref().unwrap_or("unknown")
+                );
+                if let Some(line) = code_basis_drift_line(response.code_basis_pending) {
+                    output.push_str(&format!("\n\n{line}\n"));
+                }
+                output
+            }
             wenlan_types::BriefReadState::Ready => {
                 let brief = response.brief.as_ref().ok_or_else(|| {
                     McpError::internal_error("ready Brief response omitted brief", None)
@@ -1804,17 +1826,7 @@ impl WenlanMcpServer {
                 );
                 render_brief_items(&mut output, "Active", &brief.active);
                 render_brief_items(&mut output, "Backlog", &brief.backlog);
-                if let Some(count) = response.code_basis_pending.filter(|count| *count > 0) {
-                    // The recheck already ran inside this read; nothing for the
-                    // agent to run.
-                    let line = if count == 1 {
-                        "1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
-                            .to_string()
-                    } else {
-                        format!(
-                            "{count} notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
-                        )
-                    };
+                if let Some(line) = code_basis_drift_line(response.code_basis_pending) {
                     output.push_str(&format!("\n{line}\n"));
                 }
                 if let Some(related) = response.related_context.as_ref() {

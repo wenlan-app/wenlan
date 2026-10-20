@@ -120,12 +120,13 @@ pub async fn handle_read_brief(
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
+        let code_basis_pending = code_basis_pending_for(&db, &space).await;
         return Ok(Json(BriefReadResponse {
             state: BriefReadState::BriefNotCreated,
             space: Some(space),
             brief: None,
             related_context: None,
-            code_basis_pending: None,
+            code_basis_pending,
         }));
     };
 
@@ -205,17 +206,7 @@ pub async fn handle_read_brief(
         }
     };
 
-    // Notes that rely on lines of code are checked against the files as they
-    // read now (no model, one read per file; nothing at all for a Space without
-    // code bases). A failed check leaves the Brief readable without the count.
-    let code_basis_pending =
-        match wenlan_core::code_basis::brief_code_basis_pending(&db, &space).await {
-            Ok(count) => count,
-            Err(error) => {
-                tracing::warn!("[brief] code basis check failed for Space {space}: {error}");
-                None
-            }
-        };
+    let code_basis_pending = code_basis_pending_for(&db, &space).await;
 
     Ok(Json(BriefReadResponse {
         state: BriefReadState::Ready,
@@ -224,6 +215,21 @@ pub async fn handle_read_brief(
         related_context,
         code_basis_pending,
     }))
+}
+
+/// Notes that rely on lines of code are checked against the files as they read
+/// now (no model, one read per file; nothing at all for a Space without code
+/// bases), and the notes whose code changed are counted. This holds whether or
+/// not the Space has a Brief yet. A failed check leaves the Brief readable
+/// without the count.
+async fn code_basis_pending_for(db: &MemoryDB, space: &str) -> Option<u32> {
+    match wenlan_core::code_basis::brief_code_basis_pending(db, space).await {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::warn!("[brief] code basis check failed for Space {space}: {error}");
+            None
+        }
+    }
 }
 
 /// PATCH /api/brief — apply item-level handoff deltas, then best-effort

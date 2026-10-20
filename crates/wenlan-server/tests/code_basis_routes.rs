@@ -295,6 +295,18 @@ async fn acceptance_1_to_5_write_move_change_confirm_and_lose_the_file_over_http
             numbered(40).replace("line 15\n", "line fifteen, rewritten\n")
         ),
     );
+    // The list rechecks the cited files itself: read before any Brief or
+    // recheck call, it already shows the note as pending.
+    let (_, listed) = call(
+        &router,
+        Method::GET,
+        &format!("/api/pages?limit=50&space={SPACE}"),
+        None,
+        Caller::Reader,
+    )
+    .await;
+    let listed_rows: Vec<CodeBasisRef> = typed(listed["pages"][0]["code_basis"].clone());
+    assert_eq!(listed_rows[0].state, "pending", "list rechecks first");
     assert_eq!(brief_pending(&router).await, Some(1));
     let report = recheck(&router).await;
     assert_eq!(report.len(), 1);

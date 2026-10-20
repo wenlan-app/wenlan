@@ -523,6 +523,15 @@ pub async fn recheck_code_basis(db: &MemoryDB, space: Option<&str>) -> Result<us
     Ok(checked)
 }
 
+/// [`recheck_code_basis`] for the Space a read scope names (every Space for
+/// `Global`). Returns how many rows were checked.
+pub async fn recheck_code_basis_for_scope(
+    db: &MemoryDB,
+    scope: &ReadScope,
+) -> Result<usize, WenlanError> {
+    recheck_code_basis(db, space_of(scope).as_deref()).await
+}
+
 /// [`recheck_code_basis`] for a read scope, then the notes that now have a
 /// `pending` or `unavailable` code basis, grouped by note.
 pub async fn recheck_code_basis_in_scope(

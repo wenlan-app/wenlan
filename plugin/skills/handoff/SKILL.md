@@ -227,9 +227,10 @@ To update a page:
    holds, call `mcp__plugin_wenlan_wenlan__page_code_basis` with
    `action: "confirm"` for that entry; if it does not, rewrite the sentence in
    steps 4 and 5 and name the entry again in `write_page`'s `code_basis` at its
-   current lines. When a sentence this session proved from code is new, add a
-   `code_basis` entry for those lines in the same write. An `unavailable` entry
-   cannot be confirmed: leave it and note it in the session log.
+   current lines, which replaces the stale entry it overlaps. When a sentence
+   this session proved from code is new, add a `code_basis` entry for those
+   lines in the same write. An `unavailable` entry cannot be confirmed: leave
+   it and note it in the session log.
 4. Edit the current body: keep everything still true, change only what this
    session changed. Do not rewrite from memory of an older read.
 5. Call `mcp__plugin_wenlan_wenlan__write_page` with `page_id`, the edited

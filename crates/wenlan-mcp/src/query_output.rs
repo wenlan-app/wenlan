@@ -144,9 +144,13 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
         space: response.space.clone(),
         brief,
         related_context,
-        code_basis_pending: matches!(response.state, BriefReadState::Ready)
-            .then_some(response.code_basis_pending)
-            .flatten(),
+        // A Space with no Brief yet can still have notes that rely on code.
+        code_basis_pending: matches!(
+            response.state,
+            BriefReadState::Ready | BriefReadState::BriefNotCreated
+        )
+        .then_some(response.code_basis_pending)
+        .flatten(),
     })
 }
 

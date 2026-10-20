@@ -164,6 +164,11 @@ pub async fn handle_list_pages(
     let mut basis_by_page =
         crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &page_ids)
             .await?;
+    // The states shown are checked against the files as they read now, so a
+    // list read without a Brief first does not call a changed note current.
+    if !page_ids.is_empty() {
+        crate::code_basis_routes::recheck_for_list(&db, &scope).await;
+    }
     let mut code_basis_by_page =
         crate::code_basis_routes::non_ok_code_basis_by_page(&db, &page_ids).await?;
     let mut folders = HashMap::new();
