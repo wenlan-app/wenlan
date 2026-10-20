@@ -69,13 +69,14 @@ function PlaceLine({ session }: { session: AgentSession }) {
       : null,
   ].filter((part): part is string => Boolean(part));
   if (parts.length === 0) return null;
-  // Each "label value" pair stays on one line; only the separators may wrap.
+  // Each "label value" pair stays on one line with the dot before it, so a
+  // wrap never leaves a dot hanging at the end of a line.
   return (
     <p className="session-card-muted">
       {parts.map((part, index) => (
         <span key={part}>
-          {index > 0 && " · "}
-          <span className="session-card-nowrap">{part}</span>
+          {index > 0 && " "}
+          <span className="session-card-nowrap">{index > 0 ? `· ${part}` : part}</span>
         </span>
       ))}
     </p>
@@ -235,14 +236,16 @@ export function SessionCard({ sessionId, known, onClose, onOpenMemory, onOpenPag
           }
         }}
       >
-        <h2 id={titleId} className="session-card-title">
-          {tool ? t("sessionSource.cardTitle", { tool }) : t("sessionSource.title", { count: 1 })}
-        </h2>
-        {query.isPending && <p role="status" className="session-card-muted">{t("sessionSource.loading")}</p>}
-        {!query.isPending && !detail && <p role="alert" className="session-card-muted">{t("sessionSource.loadFailed")}</p>}
-        {detail && (
-          <CardBody detail={detail} onOpenMemory={leave(onOpenMemory)} onOpenPage={leave(onOpenPage)} />
-        )}
+        <div className="session-card-body">
+          <h2 id={titleId} className="session-card-title">
+            {tool ? t("sessionSource.cardTitle", { tool }) : t("sessionSource.title", { count: 1 })}
+          </h2>
+          {query.isPending && <p role="status" className="session-card-muted">{t("sessionSource.loading")}</p>}
+          {!query.isPending && !detail && <p role="alert" className="session-card-muted">{t("sessionSource.loadFailed")}</p>}
+          {detail && (
+            <CardBody detail={detail} onOpenMemory={leave(onOpenMemory)} onOpenPage={leave(onOpenPage)} />
+          )}
+        </div>
         <div className="session-card-actions">
           <button type="button" className="session-card-close" onClick={onClose}>{t("common.close")}</button>
         </div>
