@@ -12,6 +12,9 @@ export const SOURCE_APP_NAMES: Readonly<Record<SourceApp, string>> = {
   slack: "Slack",
   github: "GitHub",
 };
+export function isSourceApp(value: string): value is SourceApp {
+  return Object.prototype.hasOwnProperty.call(SOURCE_APP_NAMES, value);
+}
 export type SourcePresentationInput = Pick<IndexedFileInfo, "source" | "source_id" | "title" | "url" | "source_agent">;
 const WEBPAGE_EXTENSIONS = new Set(["html", "htm", "php", "asp", "aspx"]);
 
