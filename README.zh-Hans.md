@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=82625dd31a0057659fa9d7bcd41bd7dfa3f3f976ce6f85bffec57cfe31acafc2 -->
+<!-- README_SYNC: source=README.md sha256=5a4a4b887bb26ec4cc193050b02b7ffa6a40dca76287fa57ccd05b9043a07446 -->
 
 <p align="center">
   <picture>
@@ -8,8 +8,8 @@
 </p>
 
 <p align="center">
-  文澜将散落的笔记、文档与对话，整理成持续更新、来源可查的知识库，<br>
-  让你和 Claude、Codex 等 AI 工具用上之前积累的知识，不必反复解释过去的决定。
+  文澜把散落各处的笔记、文档、AI 对话和写代码的记录，<br>
+  整理成一份本地、能查回原文、你和 AI 工具共用、会跟着来源更新的知识库。
 </p>
 
 <p align="center">
@@ -35,6 +35,18 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 <p>封面为实机画面与示范数据的翻译合成图；图谱为示意，非 App 原生三栏版面。</p>
 
+<a id="why-wenlan"></a>
+
+<br>
+
+## 为什么用文澜
+
+我做文澜，是因为对自己的知识一直有种焦虑：笔记、文档和 AI 对话散落各处，又一直在变。要让 Obsidian 仓库三个月后不荒废，得装插件、设计流程、不停维护；LLM wiki 那类做法，日常用起来也不轻松。我想要一个 AI 原生、不用费心照顾的知识库 App。
+
+- **散落的资料收进一处：** 文档、Markdown 文件、Obsidian 仓库、网页链接，还有导出的 AI 对话，都进到同一个知识库。
+- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一个知识库。
+- **流程全部内置：** 保存、整理、引用到更新笔记，都在同一个 App 里，不用再拼装一堆插件。
+
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
 <a id="start-with-the-app"></a>
@@ -57,11 +69,9 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 更喜欢终端？[通过 CLI 或 AI 工具使用 Wenlan](docs/setup-and-data.zh-Hans.md#installation)。
 
-也可以选用[本地模型启用 Steep](docs/steep.md#enable-steep)，在后台整理记忆并更新知识页。
+### 2. 新建笔记或导入现有资料
 
-### 2. 新建页面或导入现有资料
-
-在 Wenlan 中新建页面、连接 Obsidian 仓库，或导入过去的 AI 对话与记忆。[导入指南](docs/import-guide.md)。
+在 Wenlan 中新建笔记、连接 Obsidian 仓库，或导入过去的 AI 对话与记忆。[导入指南](docs/import-guide.md)。
 
 ### 3. 需要时再连接 AI 工具
 
@@ -71,32 +81,15 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-安装插件后，开启新的 AI 会话并运行 `/wenlan`（Codex 中为 `$wenlan`）。它会确认 Wenlan 是否正常，需要时自动完成设置。其他功能只要在后面直接说，例如 `/wenlan 打开发布计划那篇笔记`。
+安装插件后，开启新的 AI 会话并运行 `/wenlan`（Codex 中为 `$wenlan`）。它会确认 Wenlan 是否正常，需要时自动完成设置。
 
-导入的资料可以直接使用，无需先创建页面。可以这样问 AI：
+导入的资料可以直接使用，想整理成笔记也随时可以。连接后，就可以问 AI：
 
-> 用我保存在 Wenlan 中的资料帮我完成这个任务：……
+> /recall 我之前对这件事的笔记和决定，再帮我：……
 
-<a id="daily-workflow"></a>
+Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我之前对这件事的笔记和决定，再帮我：……”。
 
-<br>
-
-## 日常使用
-
-工作中留下新发现与进度，下次直接接着用。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-daily-workflow-zh-Hans.png" alt="来源与已有记忆积累在 Wenlan；在 App 或 AI 中使用，再存回新记忆与工作进度，供下次继续。" width="100%">
-</p>
-
-简化流程示意；插件指令与页面整理均按需使用，没有固定顺序。
-
-- **在 App 中使用。** 添加资料、撰写或编辑页面、查看引用来源与审核修订，无需连接 AI。
-- **运用知识、编写新页面。** 请 AI 找回相关来源与记忆，用于当前任务（`/recall`）；也能编写带引用的新页面，或依据现有版本更新页面，再存回 Wenlan。
-- **留下你的新发现。** 保存决定或心得，以及其理由和来源；可在 App 操作，或请 AI 代存（`/capture`）。
-- **告一段落，下次继续。** 保存发现与会话记录，更新受影响的页面，并将进度和下一步写进项目摘要 Brief（`/handoff`）。下次读取这些上下文继续工作（`/brief`）。
-
-**按需整理积累的记忆：** 将相关记忆整理或更新为带引用的页面（`/wenlan distill`），不是编写新页面的必要步骤。[插件指令](plugin/skills/README.md)。
+之后可用[本地模型](docs/steep.md#enable-steep)开启 [Steep（沉淀）](#steep沉淀让知识跟上新发现)，在后台整理记忆、更新笔记。
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -115,9 +108,9 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 把散落的资料整理成知识
 
-**来源**保留文档与对话；**记忆**记录值得重用的决定、经验与理由。将两者整理成可编辑的**带引用 Markdown 页面**，用 `[[wikilinks]]` 连接页面，并沿引用回到原始资料。
+**来源**保留文档与对话；**记忆**记录值得重用的决定、经验与理由。将两者整理成可编辑的**带引用 Markdown 笔记**，用 `[[wikilinks]]` 连接笔记，并沿引用回到原始资料。
 
-- **原子记忆：** 遵循 [Zettelkasten 的原子性原则](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，让每条发现都能独立检索和重用，无需加载整段对话或页面。
+- **原子记忆：** 遵循 [Zettelkasten 的原子性原则](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，让每条发现都能独立检索和重用，无需加载整段对话或笔记。
 - **共享主题：** 配置整理模型后，LLM 实体提取与实体消歧会将文档和对话中对同一人物、项目或概念的提及关联起来，并保留其记忆与来源。
 - **知识群集：** 将相连主题分组，发现资料中的相关知识。默认使用 Label Propagation；Leiden 可作为选配算法。[图谱详情](docs/technical-foundations.md#graph-data-and-entity-resolution)。
 
@@ -140,6 +133,27 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 </p>
 <p>保留实机节点与连线；文字经翻译，区域名称与范围为示意。</p>
 
+<a id="daily-workflow"></a>
+
+<br>
+
+## 日常使用
+
+工作中留下新发现与进度，下次直接接着用。
+
+<p align="center">
+  <img src="./docs/assets/wenlan-daily-workflow-zh-Hans.png" alt="来源与已有记忆积累在 Wenlan；在 App 或 AI 中使用，再存回新记忆与工作进度，供下次继续。" width="100%">
+</p>
+
+简化流程示意；插件指令与笔记整理均按需使用，没有固定顺序。
+
+- **在 App 中使用。** 添加资料、撰写或编辑笔记、查看引用来源与审核修订，无需连接 AI。
+- **运用知识、编写新笔记。** 请 AI 找回相关来源与记忆，用于当前任务（`/recall`）；也能编写带引用的新笔记，或依据现有版本更新笔记，再存回 Wenlan。
+- **留下你的新发现。** 保存决定或心得，以及其理由和来源；可在 App 操作，或请 AI 代存（`/capture`）。
+- **告一段落，下次继续。** 保存发现与会话记录，更新受影响的笔记，并将进度和下一步写进项目摘要 Brief（`/handoff`）。下次读取这些上下文继续工作（`/brief`）。
+
+**按需整理积累的记忆：** 将相关记忆整理或更新为带引用的笔记（`/wenlan distill`），不是编写新笔记的必要步骤。[插件指令](plugin/skills/README.md)。
+
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>
 
@@ -154,12 +168,12 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 让 AI 接续已有知识
 
-智能体可以读取文件、撰写文字。Wenlan 增加了一个**跨任务与 AI 工具持续维护的共享知识库**：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
+资料放进文澜后，AI 就能接着用：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
 
 **适用场景：**
 
 - **开发：** 将先前的技术决定、经验与验收标准带入实现和调试。
-- **产品与网站：** 运用客户研究、定位与设计原则撰写规格或构建页面。
+- **产品与网站：** 运用客户研究、定位与设计原则撰写规格或构建网页。
 - **研究与学习：** 将阅读资料与保存的发现整理成带引用的报告或可复用学习笔记。
 
 **检索与连接：** 插件会引导检索和保存；MCP 连接则提供工具供 AI 调用。
@@ -169,11 +183,6 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 - **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
 
 **即将推出：** Space 中的代码仓库支持。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-knowledge-to-work-zh-Hans.png" alt="AI 接着做，不必从头交代：关键词、语义与图谱检索" width="100%">
-</p>
-<p>虚构案例，非产品测试；文澜补充上下文，与 Claude 原生记忆配合使用。</p>
 
 在“设置”中开启“网页访问”开关，即可让 Claude、ChatGPT 或 Muse 等受支持的网页 AI 客户端，在你的电脑保持联网时搜索整个资料库或指定空间。此功能仍处于实验阶段；查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
@@ -193,11 +202,11 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## Steep（沉淀）：让知识跟上新发现
 
-保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的页面保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
+保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的笔记保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
 
 - **整理记忆：** 添加类型、结构化细节、搜索线索和图谱链接，让单条发现更容易在上下文中检索。
-- **让依据带动更新：** 来源或记忆变化时，依赖它们的页面会标记待刷新；新记忆也可以丰富符合条件的页面。如果草稿未通过引用检查，刷新会保留已保存页面。通过检查并不代表事实正确。
-- **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护页面；你撰写或编辑的页面会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。页面修订可供检查。
+- **让依据带动更新：** 来源或记忆变化时，依赖它们的笔记会标记待刷新；新记忆也可以丰富符合条件的笔记。如果草稿未通过引用检查，刷新会保留已保存笔记。通过检查并不代表事实正确。
+- **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护笔记；你撰写或编辑的笔记会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。笔记修订可供检查。
 
 [Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
 
@@ -212,7 +221,7 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 系统架构
 
-**共用本地知识库。** App、CLI 与 AI 工具通过 Wenlan 本地服务读写。页面以 Markdown 保存；记忆、关系与搜索索引由本地 libSQL 管理。
+**共用本地知识库。** App、CLI 与 AI 工具通过 Wenlan 本地服务读写。笔记以 Markdown 保存；记忆、关系与搜索索引由本地 libSQL 管理。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hans.png" alt="架构示意：App 与 AI 工具共用本地知识库，后台整理模型为可选项。" width="100%">
@@ -226,7 +235,7 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 ## 数据与隐私
 
-**导出维基：** 将符合条件的页面导出为 Open Knowledge Format（OKF）维基。
+**导出维基：** 将符合条件的笔记导出为 Open Knowledge Format（OKF）维基。
 
 云端 AI 客户端可能会把找回的知识传给其服务商，云端模型也会收到它处理所需的内容。本地存储不代表这些交互都留在本机。使用统计默认关闭。
 

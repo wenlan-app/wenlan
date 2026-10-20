@@ -29,7 +29,7 @@ test("renders Graph as a structured canvas instead of a flat orange field", asyn
   await expect(graph).toBeVisible();
   // Notes lead the line now, and the counts are over what is actually drawn:
   // seven notes plus the three entities that have a connection.
-  await expect(page.getByText(/^7 notes · 3 topics(?: · \d+ regions?)?$/)).toBeVisible();
+  await expect(page.getByText(/^7 pages · 3 topics(?: · \d+ regions?)?$/)).toBeVisible();
 
   // Regions stay quiet by default. Names and contours have separate transparent
   // canvases, above and below Sigma respectively, and become visible together.
@@ -164,7 +164,7 @@ test("Graph keeps app search focused and canvas controls reachable", async ({ pa
     await window.__TAURI_INTERNALS__?.invoke("plugin:event|emit", { event: "toggle-spotlight", payload: null });
   });
   const search = page.getByRole("dialog", { name: "Search", exact: true });
-  const input = search.getByPlaceholder("Search notes, memories, sources...");
+  const input = search.getByPlaceholder("Search pages, memories, sources...");
   await expect(input).toBeFocused();
   await input.press("Meta+k");
   await expect(input).toBeFocused();
@@ -177,7 +177,7 @@ test("Graph keeps app search focused and canvas controls reachable", async ({ pa
 });
 
 
-test("Graph can open a note while its focus camera is still moving", async ({ page }) => {
+test("Graph can open a page while its focus camera is still moving", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   await page.setViewportSize({ width: 375, height: 900 });
   await installTauriMock(page, { locale: "en", rawActions: [] });

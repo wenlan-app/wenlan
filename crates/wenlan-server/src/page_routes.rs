@@ -164,6 +164,8 @@ pub async fn handle_list_pages(
     let mut basis_by_page =
         crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &page_ids)
             .await?;
+    let mut code_basis_by_page =
+        crate::code_basis_routes::non_ok_code_basis_by_page(&db, &page_ids).await?;
     let mut folders = HashMap::new();
     for page in pages.iter().filter(|page| page.status == "draft") {
         folders.insert(
@@ -187,6 +189,7 @@ pub async fn handle_list_pages(
             .into_iter()
             .map(|page| PageInventoryEntry {
                 basis: basis_by_page.remove(&page.id).unwrap_or_default(),
+                code_basis: code_basis_by_page.remove(&page.id).unwrap_or_default(),
                 storage_path: filenames.get(&page.id).cloned(),
                 folder_path: folders.get(&page.id).cloned(),
                 page,
@@ -287,12 +290,14 @@ pub async fn handle_get_page(
                 })
                 .collect();
             Ok(Json(PageReadResponse {
+                code_basis: db.list_page_code_basis(&id).await?,
                 basis,
                 linked_changed,
                 // The full list is the top-level `basis`; the entry's own
                 // non-ok list is for inventories.
                 page: PageInventoryEntry {
                     basis: Vec::new(),
+                    code_basis: Vec::new(),
                     page,
                     storage_path,
                     folder_path,
@@ -513,7 +518,11 @@ pub async fn handle_create_page(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(wire): Json<wenlan_types::requests::CreatePageWithBasisRequest>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
-    let wenlan_types::requests::CreatePageWithBasisRequest { create: req, basis } = wire;
+    let wenlan_types::requests::CreatePageWithBasisRequest {
+        create: req,
+        basis,
+        code_basis,
+    } = wire;
     // An omitted creation_kind is resolved by the core writer from the
     // distinct source count against the distillation floor. Classify
     // telemetry with the same resolver so MCP's compact write_page payload is
@@ -536,6 +545,7 @@ pub async fn handle_create_page(
         crate::space_header::SpaceHeader(header_space),
         Json(req),
         basis,
+        code_basis,
     )
     .await;
     if is_distilled {
@@ -556,6 +566,7 @@ async fn handle_create_page_inner(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(mut req): Json<CreateConceptRequest>,
     basis: Vec<wenlan_types::BasisInput>,
+    code_basis: Vec<wenlan_types::CodeBasisInput>,
 ) -> Result<Json<CreatePageResponse>, ServerError> {
     let agent = extract_agent_name(&headers, None);
     let (db, page_root, page_min_cluster_size, page_match_threshold) = {
@@ -595,6 +606,13 @@ async fn handle_create_page_inner(
     db.check_basis_candidates(resolved.space_name.as_deref(), &marks)
         .await
         .map_err(crate::page_basis_routes::basis_error)?;
+    // Lines of code the note relies on are read and fingerprinted before
+    // anything is created, so a path out of the repository or a file that cannot
+    // be read refuses the whole request instead of landing as a row that was
+    // never true.
+    let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&code_basis)
+        .await
+        .map_err(crate::code_basis_routes::code_basis_error)?;
     let result = wenlan_core::post_write::create_page_with_tuning(
         &db,
         req,
@@ -614,6 +632,7 @@ async fn handle_create_page_inner(
     // Marks go on the note this call created. A create that attached to an
     // existing note wrote nothing of its own, so it marks nothing.
     let mut written_basis = Vec::new();
+    let mut written_code_basis = Vec::new();
     let mut warnings = result.warnings;
     if !attached_existing {
         for (basis_page_id, version) in &marks {
@@ -631,8 +650,28 @@ async fn handle_create_page_inner(
             }
         }
         written_basis = crate::page_basis_routes::written_basis(&db, &result.id).await?;
+        if !prepared_code_basis.is_empty() {
+            if let Err(error) = db
+                .upsert_page_code_basis(&result.id, &prepared_code_basis, &agent)
+                .await
+            {
+                tracing::warn!(
+                    "[create_page] {} created; code basis not recorded: {error}",
+                    result.id
+                );
+                warnings.push(format!("code_basis was not recorded: {error}"));
+            }
+        }
+        written_code_basis = db.list_page_code_basis(&result.id).await?;
+    } else if !prepared_code_basis.is_empty() {
+        warnings.push(
+            "code_basis was not recorded: this call attached to an existing note and wrote \
+             nothing of its own"
+                .to_string(),
+        );
     }
     Ok(Json(CreatePageResponse {
+        code_basis: written_code_basis,
         basis: written_basis,
         id: result.id,
         attached_to: result.attached_to,
@@ -1448,6 +1487,7 @@ pub async fn handle_update_page(
                 marks: Vec::new(),
                 confirm: confirm_basis.map(|c| (c.basis_page_id, c.version)),
                 confirm_snapshot: Vec::new(),
+                code_basis: Vec::new(),
             },
         },
     )
@@ -1608,7 +1648,6 @@ async fn handle_refresh_page_inner(
         &basis_marks,
     )
     .await?;
-
     // Read the staleness fence before the fields it protects (same
     // fence-first discipline as the refresh/growth path): a source attached
     // between this read and the page read below is then either fully
@@ -1673,12 +1712,20 @@ async fn handle_refresh_page_inner(
     // directly. The page prose stays byte-unchanged until the human accepts a
     // card. The core gate re-runs the same rule inside its CAS loop, which
     // still stages a card if the page turns human-owned mid-write.
-    if wenlan_core::post_write::machine_write_requires_review(
+    let requires_review = wenlan_core::post_write::machine_write_requires_review(
         wenlan_core::post_write::Writer::classify("agent_refresh"),
         &existing,
         req.expected_version.is_some(),
         false,
-    ) {
+    );
+    // Lines of code the write relies on: read and fingerprinted only now that
+    // the cheap refusals (404, 409, ownership) are behind us, so those never
+    // touch the disk. A bad path, span or unreadable file still refuses the
+    // request before anything is staged or written.
+    let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&req.code_basis)
+        .await
+        .map_err(crate::code_basis_routes::code_basis_error)?;
+    if requires_review {
         let result = wenlan_core::post_write::stage_page_revision_card_proposed_by(
             &db,
             &existing,
@@ -1694,10 +1741,12 @@ async fn handle_refresh_page_inner(
         return Ok((
             wenlan_core::post_write::WriteOutcome::Gated,
             wenlan_types::responses::PageWriteResponse {
+                code_basis: db.list_page_code_basis(&id).await?,
                 basis: crate::page_basis_routes::written_basis(&db, &id).await?,
                 ok: true,
                 revision_card_id: result.revision_card_id,
                 gated: true,
+                warnings: gated_code_basis_warning(&prepared_code_basis),
             },
         ));
     }
@@ -1722,6 +1771,7 @@ async fn handle_refresh_page_inner(
                     .collect(),
                 confirm: None,
                 confirm_snapshot: Vec::new(),
+                code_basis: prepared_code_basis.clone(),
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -1748,6 +1798,13 @@ async fn handle_refresh_page_inner(
             .unwrap_or(existing.version);
         return Err(page_moved_conflict(&id, current_version));
     }
+    // A write that changed nothing wrote no transaction for the code bases to
+    // ride on; the lines the agent says it relies on are recorded on their own.
+    if result.outcome == WriteOutcome::Unchanged && !prepared_code_basis.is_empty() {
+        db.upsert_page_code_basis(&id, &prepared_code_basis, proposer.unwrap_or("unknown"))
+            .await
+            .map_err(crate::code_basis_routes::code_basis_error)?;
+    }
     // Metadata follows the canonical result, never a rejected/staged candidate.
     if matches!(
         result.outcome,
@@ -1773,12 +1830,34 @@ async fn handle_refresh_page_inner(
     Ok((
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
+            code_basis: db.list_page_code_basis(&id).await?,
             basis: crate::page_basis_routes::written_basis(&db, &id).await?,
             ok: true,
             revision_card_id: result.revision_card_id,
             gated: result.gated,
+            warnings: if result.gated {
+                gated_code_basis_warning(&prepared_code_basis)
+            } else {
+                Vec::new()
+            },
         },
     ))
+}
+
+/// A refresh staged as a revision card records no code bases: the prose the
+/// lines were read for has not landed yet. Say so when the write carried any,
+/// so the agent re-sends them after the card is accepted.
+fn gated_code_basis_warning(
+    prepared: &[wenlan_core::code_basis::PreparedCodeBasis],
+) -> Vec<String> {
+    if prepared.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        "code_basis was not recorded: this write was staged as a revision card, so the card \
+         must be accepted first and the write re-sent with code_basis"
+            .to_string(),
+    ]
 }
 
 // ===== Revision history endpoints =====
@@ -2931,3 +3010,31 @@ mod entity_page_guard_tests;
 #[cfg(test)]
 #[path = "page_routes/real_folder_page_routes_test.rs"]
 mod real_folder_page_route_tests;
+
+#[cfg(test)]
+mod gated_code_basis_warning_tests {
+    use super::*;
+    use wenlan_core::code_anchor::{anchor, LineSpan};
+    use wenlan_core::code_basis::PreparedCodeBasis;
+
+    #[test]
+    fn a_staged_write_warns_only_when_it_carried_code_basis() {
+        assert!(gated_code_basis_warning(&[]).is_empty());
+        let input = wenlan_types::CodeBasisInput {
+            repo_root: "/repo".into(),
+            path: "a.rs".into(),
+            line_start: 1,
+            line_end: 1,
+        };
+        let prepared = PreparedCodeBasis {
+            anchor: anchor("one\n", LineSpan { start: 1, end: 1 }).unwrap(),
+            input,
+            stamp: None,
+        };
+        let warnings = gated_code_basis_warning(&[prepared]);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("code_basis was not recorded"));
+        assert!(warnings[0].contains("accepted first"));
+        assert!(warnings[0].contains("re-sent with code_basis"));
+    }
+}

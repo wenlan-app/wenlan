@@ -227,6 +227,25 @@ impl WenlanClient {
         Self::parse_response(&bytes)
     }
 
+    /// DELETE request with a JSON body (the row to remove is named by fields,
+    /// not by a path segment), deserialize JSON response.
+    pub async fn delete_with_body<B: Serialize, R: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<R, WenlanError> {
+        let url = format!("{}{}", self.base_url, path);
+        let agent = self.agent_name.clone();
+        let resp = self
+            .send_with_retry(|| {
+                let req = self.client.delete(&url).json(body);
+                Self::attach_common_headers(req, agent.as_deref())
+            })
+            .await?;
+        let bytes = Self::read_body(resp).await?;
+        Self::parse_response(&bytes)
+    }
+
     /// PUT request with JSON body, deserialize JSON response.
     pub async fn put<B: Serialize, R: DeserializeOwned>(
         &self,
@@ -352,6 +371,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "embedding_unavailable"
             | "duplicate"
             | "unknown"
+            | "code_basis_invalid"
     );
     safe.then(|| code.to_string())
 }

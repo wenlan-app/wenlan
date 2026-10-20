@@ -56,9 +56,9 @@ describe("PageDetail export", () => {
   async function renderMenu() {
     const user = userEvent.setup();
     render(<PageDetail pageId="c1" onBack={vi.fn()} onMemoryClick={vi.fn()} />, { wrapper });
-    const trigger = await screen.findByRole("button", { name: "Note actions" });
+    const trigger = await screen.findByRole("button", { name: "Page actions" });
     await user.click(trigger);
-    return { user, trigger, menu: screen.getByRole("menu", { name: "Note actions" }) };
+    return { user, trigger, menu: screen.getByRole("menu", { name: "Page actions" }) };
   }
 
   it("keeps the export menu item disabled when no Obsidian source exists", async () => {
@@ -148,7 +148,7 @@ describe("PageDetail export", () => {
     vi.mocked(tauri.exportPageToObsidian).mockRejectedValueOnce(new Error("vault unavailable"));
     const { user, trigger } = await renderMenu();
     await user.click(screen.getByRole("menuitem", { name: "Export to Obsidian" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not export this note. Try again.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not export this page. Try again.");
     await user.click(trigger);
     expect(screen.getByRole("menuitem", { name: "Export to Obsidian" })).toBeEnabled();
   });

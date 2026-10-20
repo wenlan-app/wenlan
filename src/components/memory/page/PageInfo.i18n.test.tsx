@@ -91,7 +91,7 @@ describe("PageInfo i18n", () => {
       citationState: "cited",
     });
     expect(screen.getByText("1 backlink · 1 revision · 1 source")).toBeInTheDocument();
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     expect(screen.getByText("1 incoming memory")).toBeInTheDocument();
     expect(
       screen.getByText("Citations: 2 (1 unverified)"),
@@ -110,7 +110,7 @@ describe("PageInfo i18n", () => {
         source("mem-b", { memory_type: "pdfx" }),
       ],
     });
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     const rows = screen.getAllByTestId("page-info-source-row");
     expect(within(rows[0]).getByText("unknown agent")).toBeInTheDocument();
     // Arbitrary data values are never translated.
@@ -206,7 +206,7 @@ describe("PageInfo i18n", () => {
         loading: "Loading revision history…",
         error: "Could not load revision history.",
         retry: "Retry",
-        confirm: "Update this note from its sources? Your edits may be replaced.",
+        confirm: "Update this page from its sources? Your edits may be replaced.",
       },
       {
         language: "zh-Hans",
@@ -254,7 +254,7 @@ describe("PageInfo i18n", () => {
         { version: 1, at, edited_by: "migration_99" },
       ],
     });
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     await user.click(screen.getByRole("button", { name: "Show all 4 revisions" }));
     const rows = screen.getAllByRole("listitem").filter((li) => li.className.includes("note-revision-entry"));
     expect(rows.map((row) => row.querySelector(".note-revision-meta")?.textContent)).toEqual([

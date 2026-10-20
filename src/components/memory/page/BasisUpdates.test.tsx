@@ -61,8 +61,8 @@ describe("BasisUpdatesSummary on Home", () => {
     const list = await screen.findByRole("list", { name: "Source updates" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent("“Pricing” changed. 20 notes to confirm");
-    expect(rows[1]).toHaveTextContent("“Roadmap” changed. 1 note to confirm");
+    expect(rows[0]).toHaveTextContent("“Pricing” changed. 20 pages to confirm");
+    expect(rows[1]).toHaveTextContent("“Roadmap” changed. 1 page to confirm");
     expect(listBasisPending).toHaveBeenCalledWith(null);
 
     // A compact neutral notice, not an attention box, with a visible action per line.
@@ -71,7 +71,7 @@ describe("BasisUpdatesSummary on Home", () => {
     expect(notice).not.toHaveClass("note-review-notice--attention");
     const lines = within(list).getAllByRole("button", { name: "Review" });
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toHaveAccessibleDescription("“Pricing” changed. 20 notes to confirm");
+    expect(lines[0]).toHaveAccessibleDescription("“Pricing” changed. 20 pages to confirm");
 
     fireEvent.click(lines[0]);
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -101,14 +101,14 @@ describe("BasisUpdatesSection in the review panel", () => {
     renderWith(<BasisUpdatesSection entries={[entry()]} onPageClick={vi.fn()} />);
 
     const group = screen.getByRole("region", { name: "Source updates" });
-    expect(within(group).getByText("“Pricing” changed. 2 notes to confirm")).toBeInTheDocument();
+    expect(within(group).getByText("“Pricing” changed. 2 pages to confirm")).toBeInTheDocument();
     expect(within(group).queryByText("Launch plan")).toBeNull();
 
-    fireEvent.click(within(group).getByRole("button", { name: "Show the notes" }));
+    fireEvent.click(within(group).getByRole("button", { name: "Show the pages" }));
     expect(within(group).getByText("Launch plan")).toBeInTheDocument();
     expect(within(group).getByText("Sales deck")).toBeInTheDocument();
     expect(within(group).getByText("(minor edit)")).toBeInTheDocument();
-    expect(within(group).getByRole("button", { name: "Hide the notes" })).toHaveAttribute("aria-expanded", "true");
+    expect(within(group).getByRole("button", { name: "Hide the pages" })).toHaveAttribute("aria-expanded", "true");
   });
 
   it("confirms a note at the version the source note is now, and can open the note", async () => {
@@ -116,7 +116,7 @@ describe("BasisUpdatesSection in the review panel", () => {
     const onPageClick = vi.fn();
     renderWith(<BasisUpdatesSection entries={[entry()]} onPageClick={onPageClick} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show the notes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show the pages" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Confirm no impact" })[1]);
     await waitFor(() => expect(confirmPageBasis).toHaveBeenCalledWith("note-2", "pricing", 4));
 
@@ -128,7 +128,7 @@ describe("BasisUpdatesSection in the review panel", () => {
     vi.mocked(confirmPageBasis).mockResolvedValue({ outcome: "conflict", message: "moved on" });
     renderWith(<BasisUpdatesSection entries={[entry()]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show the notes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show the pages" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Confirm no impact" })[0]);
 
     expect(await screen.findByText("“Pricing” changed again. Please take another look.")).toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("BasisUpdatesSection in the review panel", () => {
     vi.mocked(confirmPageBasis).mockResolvedValue({ outcome: "confirmed", basis: {} as never });
     renderWith(<BasisUpdatesSection entries={[entry({ changed_version: null })]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show the notes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show the pages" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Confirm no impact" })[0]);
 
     const dialog = await screen.findByRole("dialog", { name: "Changes since you last checked" });

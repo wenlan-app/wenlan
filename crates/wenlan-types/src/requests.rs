@@ -875,6 +875,11 @@ pub struct RefreshPageRequest {
     /// `source_memory_ids`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisInput>,
+    /// Lines of code this write relied on. Each is read from disk by the
+    /// daemon when the write lands; a file it cannot read fails the whole
+    /// request. Existing code bases of the page stay as they are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisInput>,
     /// Marks this write as a small edit, so a note relying on this one is told
     /// the change was minor. It never suppresses the pending notice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -904,6 +909,9 @@ pub struct CreatePageWithBasisRequest {
     pub create: CreateConceptRequest,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub basis: Vec<crate::page_basis::BasisInput>,
+    /// Lines of code the new note relies on (see [`RefreshPageRequest`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code_basis: Vec<crate::code_basis::CodeBasisInput>,
 }
 
 /// Request body for `PUT /api/pages/{id}/review-required`: set or clear the

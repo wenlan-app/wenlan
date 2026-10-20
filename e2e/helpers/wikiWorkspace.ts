@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { expect, type Page } from "@playwright/test";
 
-/** Switch the optional notes panel to folders, including narrow screens. */
+/** Switch the optional pages panel to folders, including narrow screens. */
 export async function showWikiFolders(page: Page) {
   const directory = page.locator(".wiki-workspace-directory");
   await expect(directory).toBeAttached();
@@ -12,7 +12,7 @@ export async function showWikiFolders(page: Page) {
   return directory;
 }
 
-/** Open a note through the optional folder view. */
+/** Open a page through the optional folder view. */
 export async function openWikiNote(page: Page, title: string) {
   const directory = await showWikiFolders(page);
   await expect(directory.locator(".notes-inventory-page, .notes-inventory-scope").first()).toBeVisible();

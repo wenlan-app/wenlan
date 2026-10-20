@@ -69,7 +69,7 @@ function generatedDraftTitle(content: string): string {
     title = title.split(/\p{White_Space}+/u).filter(Boolean).join(" ");
     if (title) return Array.from(title).slice(0, 80).join("");
   }
-  return "Untitled note";
+  return "Untitled page";
 }
 
 function nextFixtureTimestamp(previous: string | null | undefined): string {

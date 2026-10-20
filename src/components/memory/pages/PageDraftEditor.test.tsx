@@ -77,8 +77,8 @@ describe("PageDraftEditor", () => {
   });
 
   it("has no manual Publish bar or Space selector and finalizes through flush", async () => {
-    vi.mocked(createPageDraft).mockResolvedValue(page({ version: 1, title: "Quick note", content: "" }));
-    vi.mocked(publishPageDraft).mockResolvedValue(page({ title: "Quick note", status: "active", version: 2 }));
+    vi.mocked(createPageDraft).mockResolvedValue(page({ version: 1, title: "Quick page", content: "" }));
+    vi.mocked(publishPageDraft).mockResolvedValue(page({ title: "Quick page", status: "active", version: 2 }));
     const ref = createRef<PageDraftEditorHandle>();
     const onDraftIdentity = vi.fn();
     const { onPublished } = renderEditor({ ref, space: "Work", onDraftIdentity });
@@ -88,13 +88,13 @@ describe("PageDraftEditor", () => {
     expect(title).toHaveFocus();
     expect(screen.queryByRole("button", { name: /publish/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Space" })).not.toBeInTheDocument();
-    await userEvent.type(title, "Quick note");
+    await userEvent.type(title, "Quick page");
 
     const handle = ref.current!;
     await act(async () => expect(await handle.flush()).toBe(true));
 
     expect(createPageDraft).toHaveBeenCalledWith(expect.objectContaining({
-      title: "Quick note",
+      title: "Quick page",
       content: "",
       space: "Work",
     }));
@@ -117,9 +117,9 @@ describe("PageDraftEditor", () => {
         vi.mocked(getPage).mockResolvedValue(null as unknown as Page);
       }
       const { onBack } = renderEditor({ draftId: "missing-draft" });
-      if (state === "loading") await screen.findByText("Loading note…");
+      if (state === "loading") await screen.findByText("Loading page…");
       if (state === "error") await screen.findByRole("alert");
-      if (state === "missing") await screen.findByText("This note no longer exists.");
+      if (state === "missing") await screen.findByText("This page no longer exists.");
 
       await userEvent.click(screen.getByRole("button", { name: "Back" }));
       expect(onBack).toHaveBeenCalledOnce();
@@ -162,7 +162,7 @@ describe("PageDraftEditor", () => {
     expect(publishPageDraft).toHaveBeenCalledTimes(1);
   });
 
-  it("does not create or publish an exactly empty note", async () => {
+  it("does not create or publish an exactly empty page", async () => {
     const ref = createRef<PageDraftEditorHandle>();
     const { onBack } = renderEditor({ ref });
 
@@ -179,10 +179,10 @@ describe("PageDraftEditor", () => {
     vi.mocked(createPageDraft).mockReturnValue(new Promise((resolve) => {
       resolveCreate = resolve;
     }));
-    vi.mocked(publishPageDraft).mockResolvedValue(page({ title: "A note", content: "", status: "active", version: 2 }));
+    vi.mocked(publishPageDraft).mockResolvedValue(page({ title: "A page", content: "", status: "active", version: 2 }));
     const ref = createRef<PageDraftEditorHandle>();
     const { onBack } = renderEditor({ ref });
-    fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "A note" } });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Title" }), { target: { value: "A page" } });
 
     let leaving!: Promise<void>;
     act(() => { leaving = ref.current!.requestBack(); });
@@ -190,7 +190,7 @@ describe("PageDraftEditor", () => {
     expect(publishPageDraft).not.toHaveBeenCalled();
 
     await act(async () => {
-      resolveCreate(page({ title: "A note", content: "", version: 1 }));
+      resolveCreate(page({ title: "A page", content: "", version: 1 }));
       await leaving;
     });
     expect(publishPageDraft).toHaveBeenCalledWith({ id: "draft-1", expectedVersion: 1 });
@@ -215,7 +215,7 @@ describe("PageDraftEditor", () => {
     expect(onPublished).not.toHaveBeenCalled();
   });
 
-  it("preserves the note after a save failure and retries finalization explicitly", async () => {
+  it("preserves the page after a save failure and retries finalization explicitly", async () => {
     vi.mocked(createPageDraft)
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce(page({ title: "Keep me", content: "", version: 1 }));
@@ -227,7 +227,7 @@ describe("PageDraftEditor", () => {
 
     await act(async () => expect(await ref.current!.flush()).toBe(false));
     expect(title).toHaveValue("Keep me");
-    expect(await screen.findByRole("alert")).toHaveTextContent("Note couldn't be saved.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Page couldn't be saved.");
 
     await userEvent.click(screen.getByRole("button", { name: "Retry save" }));
     await waitFor(() => expect(publishPageDraft).toHaveBeenCalledTimes(1));
@@ -254,7 +254,7 @@ describe("PageDraftEditor", () => {
     expect(publishPageDraft).toHaveBeenCalledTimes(1);
   });
 
-  it("unlocks an uncertain note only after readback confirms the unchanged draft", async () => {
+  it("unlocks an uncertain page only after readback confirms the unchanged draft", async () => {
     vi.mocked(getPage)
       .mockResolvedValueOnce(page())
       .mockRejectedValueOnce(new Error("first readback offline"))
@@ -291,11 +291,11 @@ describe("PageDraftEditor", () => {
     await act(async () => expect(await ref.current!.flush()).toBe(false));
 
     expect(title).toHaveValue("My title");
-    expect(await screen.findByRole("alert")).toHaveTextContent("This note changed elsewhere.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("This page changed elsewhere.");
     expect(screen.getByRole("button", { name: "Reload latest" })).toBeInTheDocument();
   });
 
-  it("keeps exact-title conflicts on the saved note and offers rename only", async () => {
+  it("keeps exact-title conflicts on the saved page and offers rename only", async () => {
     const conflict = Object.assign(new Error("title conflict"), {
       code: "page_title_conflict",
       existingPageId: "page-existing",
@@ -308,10 +308,10 @@ describe("PageDraftEditor", () => {
     const title = await screen.findByRole("textbox", { name: "Title" });
 
     await act(async () => expect(await ref.current!.flush()).toBe(false));
-    expect(await screen.findByRole("alert")).toHaveTextContent("A note with this title already exists.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("A page with this title already exists.");
     expect(title).toHaveValue("Draft title");
     expect(screen.queryByRole("button", { name: "Open existing" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Rename note" }));
+    await userEvent.click(screen.getByRole("button", { name: "Rename page" }));
     expect(title).toHaveFocus();
     expect(title).toHaveSelection();
     expect(onOpenExisting).not.toHaveBeenCalled();

@@ -36,7 +36,7 @@ vi.mock("../../../lib/knowledgeCheckWorkflow", () => ({
 }));
 
 vi.mock("../../../lib/tauri", () => ({
-  getPage: vi.fn(async (id: string) => ({ id, title: id === "target-page" ? "Rain plan" : "Trip notes" })),
+  getPage: vi.fn(async (id: string) => ({ id, title: id === "target-page" ? "Rain plan" : "Trip pages" })),
   getMemoryDetail: vi.fn(async (id: string) => ({ source_id: id, title: "Packing reminder" })),
 }));
 
@@ -90,7 +90,7 @@ function state(overrides: Partial<KnowledgeCheckState> = {}): KnowledgeCheckStat
 async function renderCheck(snapshot = state()) {
   harness.setSnapshot(snapshot);
   const rendered = render(<KnowledgeCheck onBack={() => {}} onOpenPage={() => {}} onNavigateMemory={() => {}} onOpenReview={() => {}} />);
-  if (snapshot.entries.length > 0) await screen.findAllByText(/Trip notes|Packing reminder/);
+  if (snapshot.entries.length > 0) await screen.findAllByText(/Trip pages|Packing reminder/);
   return rendered;
 }
 
@@ -135,7 +135,7 @@ describe("KnowledgeCheck", () => {
 
   it("shows a neutral row with the human affected title, preserves focus on close, and shows the exact page-link change", async () => {
     await renderCheck(state({ entries: [readyEntry("eligible-link", true)] }));
-    const row = await screen.findByRole("button", { name: /A note link needs reconnecting.*Trip notes/ });
+    const row = await screen.findByRole("button", { name: /A page link needs reconnecting.*Trip pages/ });
     fireEvent.click(row);
     const drawer = await screen.findByRole("dialog", { name: "Issue details" });
     expect(within(drawer).getByText("“Rain plan” is not linked")).toBeInTheDocument();
@@ -240,10 +240,10 @@ describe("KnowledgeCheck", () => {
     const onOpenReview = vi.fn();
     harness.setSnapshot(state({ entries: [reviewEntry], results: { "review-key": "not_started" } }));
     render(<KnowledgeCheck onBack={() => {}} onOpenReview={onOpenReview} />);
-    await screen.findAllByText(/Trip notes/);
-    fireEvent.click(await screen.findByRole("button", { name: /Notes share the same title/ }));
+    await screen.findAllByText(/Trip pages/);
+    fireEvent.click(await screen.findByRole("button", { name: /Pages share the same title/ }));
     const drawer = screen.getByRole("dialog", { name: "Issue details" });
-    await within(drawer).findByText("Trip notes");
+    await within(drawer).findByText("Trip pages");
     fireEvent.click(within(drawer).getByRole("button", { name: "Review item" }));
     expect(onOpenReview).toHaveBeenCalledWith("refinement:lint_review_exact");
   });

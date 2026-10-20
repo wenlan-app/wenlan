@@ -607,7 +607,7 @@ describe("AtlasView", () => {
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
 
     openDisplayControls();
-    for (const label of ["Notes", "Topics", "Memories"]) {
+    for (const label of ["Pages", "Topics", "Memories"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
     expect(screen.getByRole("group", { name: "Show in graph" })).toBeInTheDocument();
@@ -624,7 +624,7 @@ describe("AtlasView", () => {
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
 
     openDisplayControls();
-    const wikiPages = screen.getByRole("button", { name: "Notes" });
+    const wikiPages = screen.getByRole("button", { name: "Pages" });
     fireEvent.focus(wikiPages);
     expect(screen.getByRole("tooltip")).toHaveTextContent(
       "Knowledge written from your memories, with links to its sources.",
@@ -2465,7 +2465,7 @@ describe("AtlasView", () => {
     // The memory itself lives in another space, so a Work-scoped map must not
     // draw it even though the entity it links to is in scope.
     mockMemories(
-      [makeMemory({ source_id: "m1", title: "Personal note", space: "Personal" })],
+      [makeMemory({ source_id: "m1", title: "Personal page", space: "Personal" })],
       [{ memory_id: "m1", entity_id: "e1" }],
     );
 
@@ -2518,8 +2518,8 @@ describe("AtlasView", () => {
     // the two pages that cite it are joined directly instead.
     expect(graph.hasNode("mem:m1")).toBe(false);
     expect(graph.hasEdge("page:p1", "page:p2")).toBe(true);
-    expect(screen.getByText("2 notes · 3 topics · 1 region")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Notes" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("2 pages · 3 topics · 1 region")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pages" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("gives each layer a chip whose pressed state matches what is drawn", async () => {
@@ -2528,7 +2528,7 @@ describe("AtlasView", () => {
     renderWithQuery(<AtlasView />);
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
 
-    const pages = displayControl("Notes");
+    const pages = displayControl("Pages");
     const entities = displayControl("Topics");
     const memories = displayControl("Memories");
     expect(pages).toHaveAttribute("aria-pressed", "true");
@@ -2550,14 +2550,14 @@ describe("AtlasView", () => {
     const rebuilt = capturedSigmaInstances[capturedSigmaInstances.length - 1];
     expect(rebuilt.camera.setState.mock.calls.some(([state]: [{ x?: number; y?: number }]) =>
       Number.isFinite(state.x) && Number.isFinite(state.y))).toBe(true);
-    expect(screen.getByText("2 notes · 3 topics · 1 memory · 1 region")).toBeInTheDocument();
+    expect(screen.getByText("2 pages · 3 topics · 1 memory · 1 region")).toBeInTheDocument();
 
     fireEvent.click(displayControl("Topics"));
     await waitFor(() => {
       const graph = capturedSigmaInstances[capturedSigmaInstances.length - 1].graph;
       expect(graph.hasNode("e1")).toBe(false);
     });
-    expect(screen.getByText("2 notes · 1 memory")).toBeInTheDocument();
+    expect(screen.getByText("2 pages · 1 memory")).toBeInTheDocument();
   });
 
   it("refuses to turn off the last lit layer", async () => {
@@ -2567,7 +2567,7 @@ describe("AtlasView", () => {
     await waitFor(() => expect(capturedSigmaInstances).toHaveLength(1));
 
     fireEvent.click(displayControl("Topics"));
-    const pages = displayControl("Notes");
+    const pages = displayControl("Pages");
     // Pages are now the only lit layer: the chip stays pressed and stops
     // taking clicks, because an empty map is not a view.
     expect(pages).toHaveAttribute("aria-pressed", "true");

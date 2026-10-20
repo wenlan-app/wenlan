@@ -28,7 +28,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
 function page(overrides: Partial<Page> = {}): Page {
   return {
     id: "page-1",
-    title: "Independent research note",
+    title: "Independent research page",
     summary: "A page can stand on its own.",
     content: "",
     entity_id: null,
@@ -101,8 +101,8 @@ describe("PagesOverview reading workspace", () => {
     queryClient.setQueryData(DISTILL_REVIEW_SESSION_QUERY_KEY, discovery);
     const { container } = renderOverview({ queryClient });
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Open a note" })).toBeInTheDocument();
-    expect(screen.getByText("Use Search to find a note, or select + to start writing.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
+    expect(screen.getByText("Use Search to find a page, or select + to start writing.")).toBeInTheDocument();
     expect(screen.queryByTestId("wiki-create-options")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New" })).not.toBeInTheDocument();
     expect(listPagesExplicitBrowse).toHaveBeenCalledWith("active", undefined, 500, 0);
@@ -118,21 +118,21 @@ describe("PagesOverview reading workspace", () => {
     expect(listRefinements).not.toHaveBeenCalled();
   });
 
-  it("marks the start section empty only once both lists loaded with no notes", async () => {
+  it("marks the start section empty only once both lists loaded with no pages", async () => {
     const { container } = renderOverview();
     const section = container.querySelector(".wiki-reading-start");
     expect(section).not.toHaveAttribute("data-library-empty");
     await waitFor(() => expect(section).toHaveAttribute("data-library-empty", "true"));
-    expect(screen.getByRole("heading", { level: 1, name: "Open a note" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
   });
 
-  it.each(["active", "draft"] as const)("does not mark the library empty when a %s note exists", async status => {
+  it.each(["active", "draft"] as const)("does not mark the library empty when a %s page exists", async status => {
     vi.mocked(listPagesExplicitBrowse).mockImplementation(async requested => requested === status
       ? [page({ id: `${status}-1`, status })]
       : []);
     const { container } = renderOverview();
     await waitFor(() => expect(listPagesExplicitBrowse).toHaveBeenCalledTimes(2));
-    await screen.findByRole("heading", { level: 1, name: "Open a note" });
+    await screen.findByRole("heading", { level: 1, name: "Open a page" });
     expect(container.querySelector(".wiki-reading-start")).not.toHaveAttribute("data-library-empty");
   });
 
@@ -150,7 +150,7 @@ describe("PagesOverview reading workspace", () => {
       await screen.findByTestId("getting-started");
       expect(section).toHaveAttribute("data-onboarding", "true");
       // The landmark heading stays for navigation and the e2e helpers.
-      expect(screen.getByRole("heading", { level: 1, name: "Open a note" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: "Hide getting started" }));
       expect(section).not.toHaveAttribute("data-onboarding");
@@ -169,7 +169,7 @@ describe("PagesOverview reading workspace", () => {
       renderOverview({ checklist: true });
       fireEvent.click(await screen.findByRole("button", { name: "Add a source" }));
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
-      expect(screen.getByRole("heading", { level: 1, name: "Open a note" })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
     });
   });
 });

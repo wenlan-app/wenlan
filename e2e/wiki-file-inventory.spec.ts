@@ -4,7 +4,7 @@ import { showWikiFolders } from "./helpers/wikiWorkspace";
 import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
 import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 const labels = {
- en:{all:"All notes",back:"Back",newFolder:"New folder",folderName:"Folder name",create:"Create",newPage:"New note",empty:"This folder has no notes yet.",folders:"Folders"},
+ en:{all:"All pages",back:"Back",newFolder:"New folder",folderName:"Folder name",create:"Create",newPage:"New page",empty:"This folder has no pages yet.",folders:"Folders"},
 };
 for (const locale of ["en"] as const) for (const width of [1280,375]) {
  test(`real directories and reading workspace/history agree ${locale} ${width}`,async({page})=>{
@@ -84,8 +84,8 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  await expect(page.getByRole("heading",{level:1,name:"Folder draft after reload",exact:true})).toBeVisible();
  const published=runtime.calls().find(call=>call.command==="publish_page_draft");
  expect(published?.args).toEqual({id:draftId,expectedVersion:2});
- await expect(page.getByRole("button",{name:"Note actions",exact:true})).toBeVisible();
- await page.getByRole("button",{name:"Note actions",exact:true}).click();
+ await expect(page.getByRole("button",{name:"Page actions",exact:true})).toBeVisible();
+ await page.getByRole("button",{name:"Page actions",exact:true}).click();
  await page.getByRole("menuitem",{name:"Move to folder",exact:true}).click();
  const dialog=page.getByRole("dialog",{name:"Move to folder",exact:true});
  await dialog.getByRole("combobox",{name:"Destination folder",exact:true}).selectOption("Reading");
@@ -108,24 +108,24 @@ test("an existing folder-and-Space draft survives reload, then auto-finalizes an
  expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
 });
 
-test("old daemon keeps every note available and disables unsupported folder operations", async ({ page }) => {
+test("old daemon keeps every page available and disables unsupported folder operations", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, { locale: "en", rawActions: [], fixture: createReviewDecisionFixture("wiki-folders"), failures: [{command:"knowledge_folders_list",message:"Unknown command",times:100}] });
   await page.goto("/");await showWikiFolders(page);await expect(page.locator(".wiki-workspace")).toBeVisible();
   const sidebar = page.locator(".wiki-workspace-directory .notes-list-panel");
   if (!(await sidebar.isVisible())) await page.locator(".wiki-workspace-folders-toggle").click();
-  await expect(sidebar.getByText("Folder browsing is unavailable. All notes are still accessible.")).toBeVisible();
+  await expect(sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.")).toBeVisible();
   // Right-click the notice, not a corner of the list: a note row now has its own menu.
-  await sidebar.getByText("Folder browsing is unavailable. All notes are still accessible.").click({button:"right"});
+  await sidebar.getByText("Folder browsing is unavailable. All pages are still accessible.").click({button:"right"});
   await expect(page.getByRole("menuitem",{name:/^New folder/})).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(sidebar.getByRole("button",{name:"Work",exact:true})).toHaveCount(0);
   await expect(sidebar.getByRole("button",{name:/Open Independent research/})).toBeVisible();
   await sidebar.getByRole("button",{name:/Open Fixture architecture/}).click();
-  await page.getByRole("button",{name:"Note actions",exact:true}).click();
+  await page.getByRole("button",{name:"Page actions",exact:true}).click();
   await page.getByRole("menuitem",{name:"Move to folder",exact:true}).click();
   const dialog = page.getByRole("dialog",{name:"Move to folder",exact:true});
-  await expect(dialog.getByRole("status")).toHaveText("Folder browsing is unavailable. All notes are still accessible.");
+  await expect(dialog.getByRole("status")).toHaveText("Folder browsing is unavailable. All pages are still accessible.");
   await expect(dialog.getByRole("button",{name:"Move",exact:true})).toBeDisabled();
   await dialog.getByRole("button",{name:"Cancel",exact:true}).click();
   await expect(page.locator(".cm-content[contenteditable=true]")).toContainText("Fixture architecture");
@@ -142,14 +142,14 @@ test("actual file-save failure survives Main navigation and safely replays the s
   await expect(page.getByRole("tab",{name:"Fixture architecture",exact:true})).toHaveAttribute("aria-selected","true");
   await page.locator(".note-tab-create").click();
   await page.getByRole("textbox",{name:"Title",exact:true}).fill("Saved even when folder is unavailable");
-  await page.getByRole("textbox",{name:"Content",exact:true}).fill("This note is safely persisted before its file can be written.");
+  await page.getByRole("textbox",{name:"Content",exact:true}).fill("This page is safely persisted before its file can be written.");
   await expect.poll(()=>runtime.calls().filter(call=>call.command==="create_page_draft").length).toBe(1);
   const created=runtime.calls().find(call=>call.command==="create_page_draft");
-  expect(created?.args).toMatchObject({folderPath:"Work",title:"Saved even when folder is unavailable",content:"This note is safely persisted before its file can be written."});
+  expect(created?.args).toMatchObject({folderPath:"Work",title:"Saved even when folder is unavailable",content:"This page is safely persisted before its file can be written."});
   const draftId=(created?.args as {clientDraftId:string}).clientDraftId;
   await page.getByRole("tab",{name:"Fixture architecture",exact:true}).click();
   await page.getByRole("tab",{name:"Saved even when folder is unavailable",exact:true}).click();
-  await expect(page.getByText("Your note is saved, but its file could not be saved in the chosen folder.",{exact:true})).toBeVisible();
+  await expect(page.getByText("Your page is saved, but its file could not be saved in the chosen folder.",{exact:true})).toBeVisible();
   const initial = runtime.calls().find(call=>call.command==="publish_page_draft");
   expect(initial?.args).toMatchObject({id:draftId,expectedVersion:1});
   const args = initial?.args as { id:string;expectedVersion:number };
@@ -158,10 +158,10 @@ test("actual file-save failure survives Main navigation and safely replays the s
   if (!internals) throw new Error("Expected the installed Tauri mock before reading the saved Page");
   return internals.invoke("get_page",{id});
  },args.id);
-  expect(saved).toMatchObject({id:args.id,status:"active",storage_path:null,content:"This note is safely persisted before its file can be written."});
+  expect(saved).toMatchObject({id:args.id,status:"active",storage_path:null,content:"This page is safely persisted before its file can be written."});
   expect(saved).not.toHaveProperty("projection_error");
   await page.getByRole("button",{name:"Retry saving the file",exact:true}).click();
-  await expect(page.getByText("Your note is saved, but its file could not be saved in the chosen folder.",{exact:true})).toHaveCount(0);
+  await expect(page.getByText("Your page is saved, but its file could not be saved in the chosen folder.",{exact:true})).toHaveCount(0);
   const publishes = runtime.calls().filter(call=>call.command==="publish_page_draft");
   expect(publishes).toHaveLength(2); expect(publishes[1].args).toEqual(initial?.args);
   expect(await page.evaluate(async id => {

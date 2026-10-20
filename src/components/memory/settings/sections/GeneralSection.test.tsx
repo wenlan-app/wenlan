@@ -81,8 +81,8 @@ describe("GeneralSection page storage location", () => {
     renderGeneralSection();
 
     expect(await screen.findByText("/Users/test/Wenlan/pages")).toBeInTheDocument();
-    expect(screen.getByText("Note storage location")).toBeInTheDocument();
-    expect(screen.getByText("Wenlan notes are stored here as Markdown files.")).toBeInTheDocument();
+    expect(screen.getByText("Page storage location")).toBeInTheDocument();
+    expect(screen.getByText("Wenlan pages are stored here as Markdown files.")).toBeInTheDocument();
     expect(screen.queryByText(/page files/)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Open folder" }));
@@ -94,7 +94,7 @@ describe("GeneralSection page storage location", () => {
     vi.mocked(getKnowledgePath).mockReturnValue(new Promise((resolve) => { resolvePath = resolve; }));
 
     renderGeneralSection();
-    expect(screen.getByRole("status", { name: "Loading note storage location" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading page storage location" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open folder" })).not.toBeInTheDocument();
     resolvePath("/Users/test/Wenlan/pages");
     expect(await screen.findByRole("button", { name: "Open folder" })).toBeInTheDocument();
@@ -103,14 +103,14 @@ describe("GeneralSection page storage location", () => {
   it("treats a blank returned path as unavailable", async () => {
     vi.mocked(getKnowledgePath).mockResolvedValueOnce("   ");
     renderGeneralSection();
-    expect(await screen.findByText("Could not read the note storage location.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not read the page storage location.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open folder" })).not.toBeInTheDocument();
   });
 
   it("states when the location could not be read and reports open failures", async () => {
     vi.mocked(getKnowledgePath).mockRejectedValueOnce(new Error("permission denied"));
     renderGeneralSection();
-    expect(await screen.findByText("Could not read the note storage location.")).toBeInTheDocument();
+    expect(await screen.findByText("Could not read the page storage location.")).toBeInTheDocument();
 
     vi.mocked(getKnowledgePath).mockResolvedValueOnce("/Users/test/Wenlan/pages");
     vi.mocked(openFile).mockRejectedValueOnce(new Error("Finder unavailable"));
@@ -523,7 +523,7 @@ describe("GeneralSection OKF export", () => {
     await chooseFolder();
 
     expect(
-      await screen.findByText(`Exported 3 notes to ${TARGET}.`),
+      await screen.findByText(`Exported 3 pages to ${TARGET}.`),
     ).toBeInTheDocument();
     expect(open).toHaveBeenCalledWith(
       expect.objectContaining({ directory: true, multiple: false }),
@@ -532,7 +532,7 @@ describe("GeneralSection OKF export", () => {
     expect(exportPagesAsOkf).toHaveBeenCalledWith(TARGET);
     expect(
       screen.getByText(
-        "1 note was not exported because it is not yet cleared for use outside Wenlan.",
+        "1 page was not exported because it is not yet cleared for use outside Wenlan.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/could not be written/)).not.toBeInTheDocument();
@@ -572,7 +572,7 @@ describe("GeneralSection OKF export", () => {
     // A retry into a folder the daemon accepts replaces the refusal.
     await chooseFolder();
 
-    expect(await screen.findByText(`Exported 2 notes to ${TARGET}.`)).toBeInTheDocument();
+    expect(await screen.findByText(`Exported 2 pages to ${TARGET}.`)).toBeInTheDocument();
     expect(screen.queryByText(/^Export failed/)).not.toBeInTheDocument();
   });
 
@@ -593,7 +593,7 @@ describe("GeneralSection OKF export", () => {
     expect(screen.queryByText(/^Exported /)).not.toBeInTheDocument();
   });
 
-  it("warns when some notes could not be written", async () => {
+  it("warns when some pages could not be written", async () => {
     pickFolder(TARGET);
     vi.mocked(exportPagesAsOkf).mockReset();
     vi.mocked(exportPagesAsOkf).mockResolvedValue({ exported: 1, skipped: 0, failed: 2 });
@@ -601,8 +601,8 @@ describe("GeneralSection OKF export", () => {
 
     await chooseFolder();
 
-    expect(await screen.findByText(`Exported 1 note to ${TARGET}.`)).toBeInTheDocument();
-    expect(screen.getByText("2 notes could not be written.")).toBeInTheDocument();
+    expect(await screen.findByText(`Exported 1 page to ${TARGET}.`)).toBeInTheDocument();
+    expect(screen.getByText("2 pages could not be written.")).toBeInTheDocument();
     expect(screen.queryByText(/not yet cleared/)).not.toBeInTheDocument();
   });
 });

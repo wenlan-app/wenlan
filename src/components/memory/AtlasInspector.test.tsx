@@ -14,7 +14,7 @@ const selected = node("entity-selected", "entity", "Selected", "person");
 const neighbors = [
   node("page-1", "page", "Research page"),
   node("entity-1", "entity", "Ada Lovelace", "person"),
-  node("memory-1", "memory", "Launch note"),
+  node("memory-1", "memory", "Launch page"),
 ];
 const edges: GraphEdge[] = [
   { id: "edge-page", source: selected.id, target: "page-1", type: "documents", confidence: null, createdAt: 1 },
@@ -40,7 +40,7 @@ describe("AtlasInspector", () => {
     renderInspector();
     const sections = screen.getAllByRole("region");
     expect(sections.map((section) => within(section).getByRole("heading").textContent?.replace(/\s+\d+$/, ""))).toEqual([
-      "Notes", "Topics", "Memories",
+      "Pages", "Topics", "Memories",
     ]);
     expect(within(sections[0]).getByText("documents")).toBeInTheDocument();
     expect(within(sections[1]).getByText("inspired")).toBeInTheDocument();
@@ -65,12 +65,12 @@ describe("AtlasInspector", () => {
     ];
     renderInspector({ neighbors: many, edges: [] });
     const summary = screen.getByRole("navigation", { name: "Connections" });
-    expect(within(summary).getByRole("button", { name: "Notes 5" })).toBeInTheDocument();
+    expect(within(summary).getByRole("button", { name: "Pages 5" })).toBeInTheDocument();
     expect(within(summary).getByRole("button", { name: "Topics 5" })).toBeInTheDocument();
     expect(within(summary).getByRole("button", { name: "Memories 5" })).toBeInTheDocument();
     const sections = screen.getAllByRole("region");
     expect(sections.map((section) => within(section).getByRole("heading").textContent?.replace(/\s+\d+$/, ""))).toEqual([
-      "Notes", "Topics", "Memories",
+      "Pages", "Topics", "Memories",
     ]);
   });
 

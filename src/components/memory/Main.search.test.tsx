@@ -235,7 +235,7 @@ vi.mock("./navigation/ContextBrowser", () => ({
     onSelectPage: (page: Page) => void;
   }) => (
     <div data-current-page={props.currentPageId ?? "none"} data-testid="context-browser">
-      <button type="button" onClick={props.onCreatePage}>New context note</button>
+      <button type="button" onClick={props.onCreatePage}>New context page</button>
       <button type="button" onClick={() => props.onSelectDraft("draft-a", null)}>Select draft A</button>
       <button type="button" onClick={() => props.onSelectDraft("draft-b", null)}>Select draft B</button>
       <button type="button" onClick={() => props.onSelectPage({ id: "page-1", status: "active", title: "Recent page" } as Page)}>Open recent page</button>
@@ -253,7 +253,7 @@ vi.mock("./pages/WikiWorkspace", () => ({
   }) => (
     <div data-current-page={props.currentPageId ?? "none"} data-testid="wiki-workspace">
       {props.tabs}{props.children}
-      <button type="button" onClick={() => props.onCreatePage()}>New context note</button>
+      <button type="button" onClick={() => props.onCreatePage()}>New context page</button>
       <button type="button" onClick={() => props.onOpenDraft("draft-a", null)}>Select draft A</button>
       <button type="button" onClick={() => props.onOpenDraft("draft-b", null)}>Select draft B</button>
       <button type="button" onClick={() => props.onOpenDraft("draft-new", null)}>Open saved draft</button>
@@ -556,7 +556,7 @@ describe("Main search", () => {
   it("keeps the Wiki directory inside the workspace instead of the header", () => {
     renderMain();
     expect(screen.getByTestId("wiki-workspace")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Notes and folders" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pages and folders" })).not.toBeInTheDocument();
   });
 
   it("traverses Wiki, Spaces, and Page in both directions without resetting root history", async () => {
@@ -1132,7 +1132,7 @@ describe("Main search", () => {
     expect(screen.getByTestId("pages-overview")).toBeInTheDocument();
   });
 
-  it("saves sidebar New note into a distinct draft without changing the old note", async () => {
+  it("saves sidebar New page into a distinct draft without changing the old page", async () => {
     realDraftEditor.enabled = true;
     const saved: Page[] = [];
     vi.mocked(createPageDraft).mockImplementation(async (request) => {
@@ -1147,13 +1147,13 @@ describe("Main search", () => {
     });
     const user = userEvent.setup();
     const { rerenderMain } = renderMain();
-    await user.click(screen.getByRole("button", { name: "New context note" }));
+    await user.click(screen.getByRole("button", { name: "New context page" }));
     await user.type(await screen.findByRole("textbox", { name: "Title" }), "Original");
     await user.type(screen.getByRole("textbox", { name: "Content" }), "Keep this body");
     rerenderMain();
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Original");
 
-    await user.click(screen.getByRole("button", { name: "New context note" }));
+    await user.click(screen.getByRole("button", { name: "New context page" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(""));
     expect(saved).toHaveLength(1);
     await user.type(screen.getByRole("textbox", { name: "Title" }), "Second");
@@ -1181,14 +1181,14 @@ describe("Main search", () => {
     realDraftEditor.enabled = true;
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "New context note" }));
+    await user.click(screen.getByRole("button", { name: "New context page" }));
     const oldTitle = await screen.findByRole("textbox", { name: "Title" });
-    await user.click(screen.getByRole("button", { name: "New context note" }));
+    await user.click(screen.getByRole("button", { name: "New context page" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).not.toBe(oldTitle));
     expect(createPageDraft).not.toHaveBeenCalled();
   });
 
-  it("keeps the autosaved note mounted while typing, then finalizes it once on quit", async () => {
+  it("keeps the autosaved page mounted while typing, then finalizes it once on quit", async () => {
     realDraftEditor.enabled = true;
     const saved = new Map<string, Page>();
     let published: Page | null = null;
@@ -1212,19 +1212,19 @@ describe("Main search", () => {
     const props = { onRegisterQuitGuard: (guard: (() => Promise<boolean>) | null) => { quitGuard = guard; } };
     const user = userEvent.setup();
     const { rerenderMain } = renderMain(props);
-    await user.click(screen.getByRole("button", { name: "New context note" }));
+    await user.click(screen.getByRole("button", { name: "New context page" }));
     const title = await screen.findByRole("textbox", { name: "Title" });
-    await user.type(title, "Stable note");
+    await user.type(title, "Stable page");
     await waitFor(() => expect(createPageDraft).toHaveBeenCalledTimes(1), { timeout: 2_000 });
     rerenderMain(props);
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(title);
-    expect(title).toHaveValue("Stable note");
+    expect(title).toHaveValue("Stable page");
     await user.type(screen.getByRole("textbox", { name: "Content" }), "More content");
     await act(async () => { expect(await quitGuard!()).toBe(true); });
     expect(createPageDraft).toHaveBeenCalledTimes(1);
     expect(updatePageDraft).toHaveBeenCalledWith(expect.objectContaining({
       id: vi.mocked(createPageDraft).mock.calls[0][0].clientDraftId,
-      title: "Stable note", content: "More content",
+      title: "Stable page", content: "More content",
     }));
     const draftId = vi.mocked(createPageDraft).mock.calls[0]![0].clientDraftId;
     expect(publishPageDraft).toHaveBeenCalledTimes(1);
@@ -1234,12 +1234,12 @@ describe("Main search", () => {
     // mount the tab strip, so this also proves the same note was promoted.
     expect(published).toMatchObject({
       id: draftId,
-      title: "Stable note",
+      title: "Stable page",
       content: "More content",
       status: "active",
       version: 3,
     });
-    expect(saved.get(draftId)).toMatchObject({ title: "Stable note", content: "More content", version: 2 });
+    expect(saved.get(draftId)).toMatchObject({ title: "Stable page", content: "More content", version: 2 });
   });
 
   it("remounts an existing draft A to cached draft B instead of retaining A's autosave identity", async () => {
@@ -1275,21 +1275,21 @@ describe("Main search", () => {
     expect(updatePageDraft).not.toHaveBeenCalledWith(expect.objectContaining({ id: "draft-a" }));
   });
 
-  it("keeps the same editor and content when New note cannot flush", async () => {
+  it("keeps the same editor and content when New page cannot flush", async () => {
     realDraftEditor.enabled = true;
     vi.mocked(createPageDraft).mockRejectedValue(new Error("offline"));
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.click(screen.getByRole("button", { name: "New page" }));
     const oldTitle = await screen.findByRole("textbox", { name: "Title" });
     await user.type(oldTitle, "Unsaved original");
-    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.click(screen.getByRole("button", { name: "New page" }));
     await screen.findByRole("alert");
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(oldTitle);
     expect(oldTitle).toHaveValue("Unsaved original");
   });
 
-  it("waits for an in-flight New note flush before allocating the next editor session", async () => {
+  it("waits for an in-flight New page flush before allocating the next editor session", async () => {
     realDraftEditor.enabled = true;
     const saving = deferred<Page>();
     vi.mocked(createPageDraft).mockReturnValue(saving.promise);
@@ -1298,11 +1298,11 @@ describe("Main search", () => {
     );
     const user = userEvent.setup();
     renderMain();
-    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.click(screen.getByRole("button", { name: "New page" }));
     const oldTitle = await screen.findByRole("textbox", { name: "Title" });
     await user.type(oldTitle, "Pending original");
-    await user.click(screen.getByRole("button", { name: "New note" }));
-    await user.click(screen.getByRole("button", { name: "New note" }));
+    await user.click(screen.getByRole("button", { name: "New page" }));
+    await user.click(screen.getByRole("button", { name: "New page" }));
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(oldTitle);
     expect(oldTitle).toHaveValue("Pending original");
     expect(createPageDraft).toHaveBeenCalledTimes(1);
@@ -1421,7 +1421,7 @@ describe("Main search", () => {
     draftIdentityMock.mockReturnValue({
       draftId: "draft-new",
       version: 1,
-      publishedPage: activePage(draftPage("draft-new", "Untitled note", ""), 2),
+      publishedPage: activePage(draftPage("draft-new", "Untitled page", ""), 2),
     });
     useSearchMock.mockImplementation(() => {
       const [query, setLocalQuery] = useState("");
@@ -1544,7 +1544,7 @@ describe("Main search", () => {
     draftIdentityMock.mockReturnValue({
       draftId: "draft-new",
       version: 1,
-      publishedPage: activePage(draftPage("draft-new", "Untitled note", ""), 2),
+      publishedPage: activePage(draftPage("draft-new", "Untitled page", ""), 2),
     });
     const user = userEvent.setup();
     const view = renderMain();
@@ -1664,9 +1664,9 @@ describe("Main search", () => {
 
     const searchAction = screen.getByRole("button", { name: "Search" });
     expect(searchAction).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByPlaceholderText("Search notes, memories, sources...")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Search pages, memories, sources...")).not.toBeInTheDocument();
     await user.click(searchAction);
-    const searchInput = screen.getByPlaceholderText("Search notes, memories, sources...");
+    const searchInput = screen.getByPlaceholderText("Search pages, memories, sources...");
 
     expect(searchAction).toHaveAttribute("aria-expanded", "true");
     expect(searchInput).toHaveFocus();
@@ -1682,7 +1682,7 @@ describe("Main search", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Search" });
     const shell = document.querySelector(".memory-shell");
-    const input = screen.getByPlaceholderText("Search notes, memories, sources...");
+    const input = screen.getByPlaceholderText("Search pages, memories, sources...");
     expect(shell).toHaveAttribute("inert");
     expect(input).toHaveFocus();
 
@@ -1725,14 +1725,14 @@ describe("Main search", () => {
   it("shows recent pages in an empty search and opens the selected page", async () => {
     localStorage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify({
       version: 1,
-      entries: [{ id: "page-recent", title: "Research notes", visitedAt: Date.now() }],
+      entries: [{ id: "page-recent", title: "Research pages", visitedAt: Date.now() }],
     }));
     const user = userEvent.setup();
     renderMain();
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByText("Recently opened")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open Note: Research notes" }));
+    await user.click(screen.getByRole("button", { name: "Open Page: Research pages" }));
     expect(await screen.findByTestId("page-detail")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Search" })).not.toBeInTheDocument();
   });
@@ -1744,7 +1744,7 @@ describe("Main search", () => {
       debouncedQuery: "source",
       results: [{
         id: "source-hit",
-        content: "Source credibility notes",
+        content: "Source credibility pages",
         source: "local_files",
         source_id: "source-1",
         title: "source.md",
@@ -1758,7 +1758,7 @@ describe("Main search", () => {
     renderMain();
 
     await user.click(screen.getByRole("button", { name: "Search" }));
-    await user.click(await screen.findByRole("button", { name: "Source credibility notes" }));
+    await user.click(await screen.findByRole("button", { name: "Source credibility pages" }));
 
     expect(openSearchResultMock).toHaveBeenCalledWith("/tmp/source.md");
   });
@@ -1770,7 +1770,7 @@ describe("Main search", () => {
       debouncedQuery: "source",
       results: [{
         id: "source-hit",
-        content: "Source credibility notes",
+        content: "Source credibility pages",
         source: "local_files",
         source_id: "source-1",
         title: "source.md",
@@ -1784,7 +1784,7 @@ describe("Main search", () => {
     renderMain();
 
     await user.click(screen.getByRole("button", { name: "Search" }));
-    await user.click(await screen.findByRole("button", { name: "Source credibility notes" }));
+    await user.click(await screen.findByRole("button", { name: "Source credibility pages" }));
 
     expect(openSearchResultMock).toHaveBeenCalledWith("file:///tmp/source.md");
   });

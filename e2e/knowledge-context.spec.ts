@@ -4,7 +4,7 @@ import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 import { openMemoryContext, openPageTool } from "./helpers/pageTools";
 const copies = [
-  {locale:"en",actions:"Note actions",open:"Open Fixture architecture",info:"Note info",pane:"Note views",graph:"Connections",sources:"Source memories",context:"Info",used:"Used as a source in",recent:"Recent memories",close:"Close"},
+  {locale:"en",actions:"Page actions",open:"Open Fixture architecture",info:"Page info",pane:"Page views",graph:"Connections",sources:"Source memories",context:"Info",used:"Used as a source in",recent:"Recent memories",close:"Close"},
 ] as const;
 for (const copy of copies) for (const width of [1280,375]) {
   test(`context roundtrip ${copy.locale} ${width}`,async({page},testInfo)=>{
@@ -37,7 +37,7 @@ test("memory inventory navigation waits for autosave and refuses to leave when s
   const runtime=await installTauriMock(page,{locale:"en",rawActions:[]});
   await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
-  await openPageTool(page,"Note info");
+  await openPageTool(page,"Page info");
   await page.locator(".note-info-source-list").getByRole("button",{name:/Fixture architecture$/}).click();
   const editor=page.getByRole("textbox",{name:"Memory reading",exact:true});
   const draft="Unfinished memory draft that must survive a failed save.";
@@ -78,14 +78,14 @@ test("page action Escape leaves editing intact and narrow context tabs reach the
   await page.setViewportSize({width:375,height:812});
   await installTauriMock(page,{locale:"en",rawActions:[]}); await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
-  const editor=page.getByRole("textbox",{name:"Note editor",exact:true});
+  const editor=page.getByRole("textbox",{name:"Page editor",exact:true});
   await expect(editor).toBeVisible();
-  await page.getByRole("button",{name:"Note actions",exact:true}).click();
-  await page.getByRole("menu",{name:"Note actions",exact:true}).locator('[role="menuitem"]:not(:disabled)').first().press("Escape");
-  await expect(page.getByRole("menu",{name:"Note actions",exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"Page actions",exact:true}).click();
+  await page.getByRole("menu",{name:"Page actions",exact:true}).locator('[role="menuitem"]:not(:disabled)').first().press("Escape");
+  await expect(page.getByRole("menu",{name:"Page actions",exact:true})).toHaveCount(0);
   await expect(editor).toBeVisible();
-  await expect(page.getByRole("button",{name:"Note actions",exact:true})).toBeFocused();
-  await openPageTool(page,"Note info");
+  await expect(page.getByRole("button",{name:"Page actions",exact:true})).toBeFocused();
+  await openPageTool(page,"Page info");
   const infoTab=page.getByRole("tab",{name:"Info",exact:true});
   await infoTab.focus();
   await page.keyboard.press("ArrowRight");

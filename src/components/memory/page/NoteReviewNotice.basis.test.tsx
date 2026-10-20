@@ -83,7 +83,7 @@ describe("NoteReviewNotice with a basis", () => {
     renderNotice({ ...basePage, stale_reason: "source_updated", refresh_blocked_reason: "has_basis" });
 
     const notice = await screen.findByRole("status");
-    expect(notice).toHaveTextContent("A source changed; the current note was kept.");
+    expect(notice).toHaveTextContent("A source changed; the current page was kept.");
     expect(notice).not.toHaveTextContent("could not finish");
     expect(notice).not.toHaveClass("note-review-notice--attention");
   });
@@ -92,7 +92,7 @@ describe("NoteReviewNotice with a basis", () => {
     renderNotice({ ...basePage, stale_reason: "source_updated", refresh_blocked_reason: "citation_gate" });
 
     const notice = await screen.findByRole("status");
-    expect(notice).toHaveTextContent("The update could not finish; the current note was kept.");
+    expect(notice).toHaveTextContent("The update could not finish; the current page was kept.");
     expect(notice).toHaveClass("note-review-notice--attention");
   });
 

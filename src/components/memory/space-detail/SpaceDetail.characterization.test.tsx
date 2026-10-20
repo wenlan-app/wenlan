@@ -266,7 +266,7 @@ describe("SpaceDetail existing behavior", () => {
 
   it("keeps memories and topics out of the Space workspace", async () => {
     renderDetail();
-    await screen.findByRole("tab", { name: "Notes" });
+    await screen.findByRole("tab", { name: "Pages" });
     expect(screen.queryByText("Key entities")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Raw memories (1)" })).not.toBeInTheDocument();
     expect(listEntities).not.toHaveBeenCalled();

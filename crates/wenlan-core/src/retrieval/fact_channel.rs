@@ -124,6 +124,7 @@ mod tests {
     fn mk_result(id: &str, source_id: &str, score: f32) -> SearchResult {
         SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: id.to_string(),
             content: format!("content for {id}"),
             source: "memory".to_string(),

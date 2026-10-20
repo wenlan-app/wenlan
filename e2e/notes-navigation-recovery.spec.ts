@@ -44,7 +44,7 @@ for (const persisted of [false, true]) {
     await mkdir(test.info().outputDir, { recursive: true });
     const errors = collectBrowserErrors(page);
     const originalId = "page_00000000-0000-4000-8000-000000000001";
-    const original = syntheticPage(originalId, "Original synthetic note", "Original synthetic body");
+    const original = syntheticPage(originalId, "Original synthetic page", "Original synthetic body");
     const controller = await installTauriMock(page, {
       locale: "en", rawActions: [],
       fixture: { ...createSpacesNavigationFixture(), pages: persisted ? [original] : [] },
@@ -54,30 +54,30 @@ for (const persisted of [false, true]) {
     await page.goto("/");
     await checkShell(page);
     if (persisted) {
-      await openWikiNote(page, "Original synthetic note");
+      await openWikiNote(page, "Original synthetic page");
       await expect(title(page)).toHaveValue(original.title);
     } else {
-      await page.getByRole("button", { name: "New note", exact: true }).click();
+      await page.getByRole("button", { name: "New page", exact: true }).click();
       await title(page).fill(original.title);
       await content(page).fill(original.content);
       // Click before the debounce: the transition itself must flush this editor.
       expect(controller.calls().filter(call => call.command === "create_page_draft")).toHaveLength(0);
     }
-    await page.getByRole("button", { name: "New note", exact: true }).click();
+    await page.getByRole("button", { name: "New page", exact: true }).click();
     await expect(title(page)).toHaveValue("");
     await expect(content(page)).toHaveValue("");
     await expect(title(page)).toBeFocused();
     const oldCreate = controller.calls().find(call => call.command === "create_page_draft");
     const oldId = persisted ? originalId : (oldCreate!.args as { clientDraftId: string }).clientDraftId;
     await page.screenshot({ path: test.info().outputPath(`new-from-${persisted ? "persisted" : "unpersisted"}-blank.png`) });
-    await title(page).fill("Second synthetic note");
+    await title(page).fill("Second synthetic page");
     await content(page).fill("Second independent body");
     await expect.poll(() => controller.calls().filter(call => call.command === "create_page_draft").length).toBe(persisted ? 1 : 2);
     const creates = controller.calls().filter(call => call.command === "create_page_draft");
     const newId = (creates.at(-1)!.args as { clientDraftId: string }).clientDraftId;
     expect(newId).not.toBe(oldId);
     expect(await storedPage(page, oldId)).toMatchObject({ title: original.title, content: original.content });
-    expect(await storedPage(page, newId)).toMatchObject({ title: "Second synthetic note", content: "Second independent body" });
+    expect(await storedPage(page, newId)).toMatchObject({ title: "Second synthetic page", content: "Second independent body" });
     expect(controller.calls().filter(call => call.command === "update_page_draft" && (call.args as { id: string }).id === oldId)).toHaveLength(0);
     await page.screenshot({ path: test.info().outputPath(`new-from-${persisted ? "persisted" : "unpersisted"}-saved.png`) });
     await writeFile(test.info().outputPath(`identity-${persisted ? "persisted" : "unpersisted"}.json`), JSON.stringify({ oldId, newId, calls: controller.calls(), errors }, null, 2));
@@ -102,7 +102,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 375, height: 812 
       await page.locator('[data-sidebar-toggle="true"]').click();
       await expect(sidebar(page)).toHaveAttribute("aria-hidden", "true");
     }
-    await page.getByRole("button", { name: "New note", exact: true }).click();
+    await page.getByRole("button", { name: "New page", exact: true }).click();
     await title(page).fill("Popup Escape synthetic draft");
     await content(page).fill("The writing session stays here.");
     await showSidebar(page);
@@ -171,7 +171,7 @@ test("late first-page milestone resolves only its passive target after an empty 
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
   await checkShell(page);
-  await expect(page.getByRole("heading", { name: "Open a note", exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Open a page", exact: true, level: 1 })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const initialExplicit = controller.calls().filter(call => call.command.endsWith("_explicit_browse")).length;
   await page.screenshot({ path: test.info().outputPath("milestone-before-empty-wiki.png") });

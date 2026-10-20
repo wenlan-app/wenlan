@@ -20,7 +20,7 @@ describe("RelatedPages", () => {
         onPageClick={onPageClick}
       />,
     );
-    const section = screen.getByLabelText("Linked notes");
+    const section = screen.getByLabelText("Linked pages");
     await user.click(within(section).getByRole("button", { name: "New title" }));
     expect(onPageClick).toHaveBeenCalledWith("page-2");
   });
@@ -32,7 +32,7 @@ describe("RelatedPages", () => {
         onPageClick={vi.fn()}
       />,
     );
-    const section = screen.getByLabelText("Linked notes");
+    const section = screen.getByLabelText("Linked pages");
     expect(within(section).getByText("Missing Link")).toBeInTheDocument();
     expect(within(section).queryByRole("button", { name: /Missing Link/ })).toBeNull();
     expect(within(section).getByText("Not organized yet")).toBeInTheDocument();
@@ -58,7 +58,7 @@ describe("RelatedPages", () => {
       />,
     );
 
-    await user.click(screen.getByText(/Note info/i));
+    await user.click(screen.getByText(/Page info/i));
     expect(screen.getAllByRole("button", { name: "Repeated label" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "First source" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Duplicate source" })).not.toBeInTheDocument();

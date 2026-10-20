@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  Wenlan organizes scattered notes, documents, and conversations into a knowledge base that stays current and links back to its sources,<br>
-  so you and AI tools like Claude and Codex can reuse what you learned without explaining past decisions again.
+  Wenlan turns your scattered documents, AI chats, and coding sessions into one local wiki with citations:<br>
+  a source of truth for you and your AI tools that keeps up as they change.
 </p>
 
 <p align="center">
@@ -33,6 +33,18 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 <p>Cover: localized composite of App views with demo data; the graph is illustrative, not a native three-column layout.</p>
 
+<a id="why-wenlan"></a>
+
+<br>
+
+## Why Wenlan
+
+I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI chats scattered everywhere, always changing. Keeping an Obsidian vault from rotting within three months took plugins, a workflow, and constant upkeep, and LLM-wiki setups weren't much easier day to day. I wanted an AI-native knowledge base app that stays useful without the hassle.
+
+- **Everything in one place:** Documents, Markdown files, Obsidian vaults, web links, and exported AI chats come into one wiki.
+- **One wiki for all your AI tools:** Claude Code, Codex, Cursor, and other MCP clients work from the same pages.
+- **Built in, not bolted on:** Saving, organizing, citing, and updating pages live in one app, with no maze of plugins to wire up.
+
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
 <a id="start-with-the-app"></a>
@@ -55,8 +67,6 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-data.md#installation).
 
-Optionally enable Steep with a [local model](docs/steep.md#enable-steep) to organize memories and update knowledge pages in the background.
-
 ### 2. Create a page or import existing material
 
 Create a page in Wenlan, connect an Obsidian vault, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
@@ -69,32 +79,15 @@ Create a page in Wenlan, connect an Obsidian vault, or import earlier AI convers
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
 | Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed. Type what you want after it, such as `/wenlan open my note on the release plan`, to reach everything else.
+After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed.
 
-Imported material is ready to use; you do not need to create a page first. Ask your AI:
+Imported material is ready to use right away, and you can turn it into pages whenever you want. Ask your AI:
 
-> Use what I’ve saved in Wenlan to help me with this task: …
+> /recall my earlier notes and decisions on this, then help me: …
 
-<a id="daily-workflow"></a>
+In Codex, use `$recall`. With an MCP-only tool, just ask: “Check Wenlan for my earlier notes and decisions on this, then help me: …”
 
-<br>
-
-## In everyday use
-
-Save new findings and progress as you work, then pick up where you left off next time.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
-</p>
-
-Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
-
-- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
-- **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
-- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
-- **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
-
-**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/wenlan distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
+Later, you can turn on [Steep](#steep-keep-knowledge-useful-as-it-changes) with a [local model](docs/steep.md#enable-steep) to organize memories and update pages in the background.
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -137,6 +130,27 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 </p>
 <p>App nodes and connections; translated labels and illustrative regions.</p>
 
+<a id="daily-workflow"></a>
+
+<br>
+
+## In everyday use
+
+Save new findings and progress as you work, then pick up where you left off next time.
+
+<p align="center">
+  <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
+</p>
+
+Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
+
+- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
+- **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan.
+- **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
+- **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
+
+**Organize accumulated memories when needed:** Synthesize or refresh cited pages from related memories (`/wenlan distill`); writing a new page does not require this step. [Plugin commands](plugin/skills/README.md).
+
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>
 
@@ -150,7 +164,7 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 
 ## Put your knowledge to work with AI
 
-An agent can read files and write text. Wenlan adds a **shared knowledge base maintained across tasks and AI tools**: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
+Once your material is in Wenlan, your AI tools can build on it: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
 
 **Use it for:**
 
@@ -165,11 +179,6 @@ An agent can read files and write text. Wenlan adds a **shared knowledge base ma
 - **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
 
 **Coming soon:** Coding repository support in Spaces.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-knowledge-to-work.png" alt="Let AI continue from what you already know: keyword, semantic and Graph retrieval" width="100%">
-</p>
-<p>Fictional example, not a product test; Wenlan adds context alongside Claude’s native memory.</p>
 
 Turn on **Web access** in Settings to let supported web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. This feature is experimental; queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 
@@ -197,7 +206,7 @@ Saving material is only the start. **Steep prepares it for reuse and keeps suppo
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
 <p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a note that is either updated automatically or sent for review." width="100%">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
 </p>
 <p>Illustration based on current update behavior; not an App screenshot.</p>
 

@@ -47,7 +47,7 @@ describe("SpacesOverview layout contract", () => {
     expect(row.querySelector('[data-space-column="drag"]')).toBeNull();
     expect(within(row).getByText(confirmed.description!)).toBeInTheDocument();
     const pageCount = within(row).getByTestId("space-pages");
-    expect(pageCount).toHaveTextContent(/\d+ notes?/i);
+    expect(pageCount).toHaveTextContent(/\d+ pages?/i);
     expect(row.querySelector('[data-space-column="pages"]')).toBeNull();
     expect(row.querySelector(".spaces-row-name")?.contains(pageCount)).toBe(true);
     expect(pageCount).not.toHaveAttribute("aria-hidden", "true");

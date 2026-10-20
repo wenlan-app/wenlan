@@ -13,7 +13,7 @@ import { listPendingRevisions, listRefinements } from "../../../lib/tauri";
 import NoteReviewNotice from "./NoteReviewNotice";
 
 const basePage: Page = {
-  id: "page-1", title: "Current note", summary: null, content: "", entity_id: null,
+  id: "page-1", title: "Current page", summary: null, content: "", entity_id: null,
   domain: null, source_memory_ids: ["memory-1", "memory-2"], version: 1, status: "active",
   created_at: "2026-10-08", last_compiled: "2026-10-08", last_modified: "2026-10-08",
 };
@@ -81,9 +81,9 @@ describe("NoteReviewNotice", () => {
     renderNotice({ ...basePage, review_status: "unconfirmed" }, { onReview });
 
     expect(await screen.findByRole("status")).toHaveTextContent("6 items need review");
-    expect(screen.getByText("Note revisions (1)")).toBeInTheDocument();
+    expect(screen.getByText("Page revisions (1)")).toBeInTheDocument();
     expect(screen.getByText("Related source issues (3)")).toBeInTheDocument();
-    expect(screen.getByText("Note suggestions (2)")).toBeInTheDocument();
+    expect(screen.getByText("Page suggestions (2)")).toBeInTheDocument();
     expect(screen.getByRole("status")).not.toHaveTextContent("other-page");
     expect(screen.getByRole("status")).not.toHaveTextContent("unlinked");
     expect(screen.getByRole("status")).not.toHaveTextContent("unconfirmed");
@@ -106,7 +106,7 @@ describe("NoteReviewNotice", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Review changes" }));
     expect(onReview).toHaveBeenCalledWith("refinement:id-exact-page");
-    expect(screen.getByText("Note suggestions (1)")).toBeInTheDocument();
+    expect(screen.getByText("Page suggestions (1)")).toBeInTheDocument();
     expect(screen.getByRole("status")).not.toHaveTextContent("id-prefix-only");
   });
 
@@ -139,11 +139,11 @@ describe("NoteReviewNotice", () => {
       <NoteReviewNotice page={{ ...basePage, stale_reason: "source_updated", refresh_blocked_reason: "citation_gate" }}
         onReview={vi.fn()} onShowSources={onShowSources} />
     </QueryClientProvider>);
-    expect(await screen.findByText("The update could not finish; the current note was kept.")).toBeInTheDocument();
+    expect(await screen.findByText("The update could not finish; the current page was kept.")).toBeInTheDocument();
 
     cleanup();
     const view = renderNotice({ ...basePage, stale_reason: "source_updated" }, { onShowSources });
-    expect(await screen.findByText("A source changed; the current note was kept.")).toBeInTheDocument();
+    expect(await screen.findByText("A source changed; the current page was kept.")).toBeInTheDocument();
     expect(screen.getByRole("status")).not.toHaveTextContent("Updating");
     view.unmount();
   });
@@ -153,7 +153,7 @@ describe("NoteReviewNotice", () => {
     vi.mocked(listRefinements).mockResolvedValue({ proposals: [] });
     renderNotice({ ...basePage, stale_reason: "source_updated" });
     expect(await screen.findByRole("button", { name: "Review changes" })).toBeInTheDocument();
-    expect(screen.queryByText("A source changed; the current note was kept.")).toBeNull();
+    expect(screen.queryByText("A source changed; the current page was kept.")).toBeNull();
   });
 
   it("keeps matching cached items visible after a partial query error and retries both lists", async () => {

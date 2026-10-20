@@ -131,7 +131,7 @@ test.describe("canvas CRUD", () => {
     await page.keyboard.press("Delete");
 
     await expect(
-      page.getByText("The center box is the note itself. It can't be deleted."),
+      page.getByText("The center box is the page itself. It can't be deleted."),
     ).toBeVisible();
   });
 
@@ -245,17 +245,17 @@ test.describe("canvas Escape", () => {
     // The map is a document tool: its last Escape returns to the same note.
     await expect(page.getByRole("region", { name: "Canvas for Fixture architecture" })).toHaveCount(0);
     await expect(page.locator(".page-detail")).toBeVisible();
-    const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
+    const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
     await expect(editor).toBeEditable();
     await expect(editor).toBeFocused();
-    await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toHaveCount(0);
 
     // Writing retains its own Escape/flush layer before page navigation.
     await editor.press("Escape");
     await expect(editor).toHaveCount(0);
     await expect(page.getByTestId("page-document-reading")).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
   });
 });
 

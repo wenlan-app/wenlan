@@ -7,8 +7,8 @@ import { collectBrowserErrors, installTauriMock } from "./tauriMock";
 function fixture() {
   const base = createReviewDecisionFixture("wiki-folders");
   return { ...base, pages: Array.from({ length: 18 }, (_, i) => ({
-    ...base.pages[0], id: `header-${i}`, title: `Layout note ${i + 1}`,
-    content: `# Layout note ${i + 1}\n\nA synthetic note for tab overflow.`,
+    ...base.pages[0], id: `header-${i}`, title: `Layout page ${i + 1}`,
+    content: `# Layout page ${i + 1}\n\nA synthetic page for tab overflow.`,
     storage_path: `layout-${i + 1}.md`, folder_path: "",
   })) };
 }
@@ -40,42 +40,42 @@ async function assertGeometry(group: Locator) {
   expect(g.documentOverflow).toBe(false);
 }
 
-test("many tabs keep create and inspector reachable while direct move preserves both notes", async ({ page }, info) => {
+test("many tabs keep create and inspector reachable while direct move preserves both pages", async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const errors = collectBrowserErrors(page);
   const runtime = await installTauriMock(page, { fixture: fixture(), locale: "en", rawActions: [], localStorage: { "wenlan-theme": "dark" } });
   await page.goto("/");
-  for (let i = 1; i <= 18; i++) await openWikiNote(page, `Layout note ${i}`);
-  await expect(frame(page).getByRole("tab", { name: "Layout note 18", exact: true })).toHaveAttribute("aria-selected", "true");
+  for (let i = 1; i <= 18; i++) await openWikiNote(page, `Layout page ${i}`);
+  await expect(frame(page).getByRole("tab", { name: "Layout page 18", exact: true })).toHaveAttribute("aria-selected", "true");
   await info.attach("overflow-geometry", { body: JSON.stringify(await geometry(frame(page))), contentType: "application/json" });
   await page.screenshot({ path: info.outputPath("many-tabs.png") });
   await assertGeometry(frame(page));
   expect((await geometry(frame(page))).scroll).toBe(true);
-  const editor = frame(page).getByRole("textbox", { name: "Note editor", exact: true });
+  const editor = frame(page).getByRole("textbox", { name: "Page editor", exact: true });
   await editor.evaluate(el => { const view = (el as any).cmTile.root.view; view.dispatch({ selection: { anchor: view.state.doc.length } }); view.focus(); });
   await page.keyboard.insertText("\nPreserved during direct move.");
   runtime.failNext("update_page", "save refused");
-  await frame(page).getByRole("tab", { name: "Layout note 18", exact: true }).click({ button: "right" });
+  await frame(page).getByRole("tab", { name: "Layout page 18", exact: true }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to right group", exact: true }).click();
   await expect(frame(page).getByRole("alert")).toBeVisible();
   await expect(frame(page, "secondary")).toHaveCount(0);
   await frame(page).getByRole("button", { name: "Retry", exact: true }).click();
   await expect(frame(page).locator('.page-detail .sr-only[role="status"]')).toHaveText("Saved");
-  await frame(page).getByRole("tab", { name: "Layout note 18", exact: true }).click({ button: "right" });
+  await frame(page).getByRole("tab", { name: "Layout page 18", exact: true }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to right group", exact: true }).click();
-  await expect(frame(page, "secondary").getByRole("tab", { name: "Layout note 18", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(frame(page, "secondary").getByRole("textbox", { name: "Note editor", exact: true })).toContainText("Preserved during direct move.");
+  await expect(frame(page, "secondary").getByRole("tab", { name: "Layout page 18", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(frame(page, "secondary").getByRole("textbox", { name: "Page editor", exact: true })).toContainText("Preserved during direct move.");
   for (const width of [1440, 900, 375]) {
     await page.setViewportSize({ width, height: 900 });
     for (const id of ["primary", "secondary"]) await assertGeometry(frame(page, id));
     await page.screenshot({ path: info.outputPath(`split-${width}.png`) });
   }
-  await frame(page, "secondary").getByRole("tab", { name: "Layout note 18", exact: true }).click({ button: "right" });
+  await frame(page, "secondary").getByRole("tab", { name: "Layout page 18", exact: true }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to central group", exact: true }).click();
   await expect(frame(page, "secondary")).toHaveCount(0);
-  await expect(frame(page).getByRole("tab", { name: "Layout note 18", exact: true })).toHaveAttribute("aria-selected", "true");
-  await frame(page).getByRole("tab", { name: "Layout note 18", exact: true }).focus();
+  await expect(frame(page).getByRole("tab", { name: "Layout page 18", exact: true })).toHaveAttribute("aria-selected", "true");
+  await frame(page).getByRole("tab", { name: "Layout page 18", exact: true }).focus();
   await page.keyboard.press("Home");
-  await expect(frame(page).getByRole("tab", { name: "Layout note 1", exact: true })).toBeFocused();
+  await expect(frame(page).getByRole("tab", { name: "Layout page 1", exact: true })).toBeFocused();
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });

@@ -56,9 +56,9 @@ describe("PagesOverview source-update summary", () => {
     renderOverview(onOpen);
 
     const list = await screen.findByRole("list", { name: "Source updates" });
-    expect(list).toHaveTextContent("“Pricing” changed. 20 notes to confirm");
+    expect(list).toHaveTextContent("“Pricing” changed. 20 pages to confirm");
     // The notice sits at the top of the pane, above the reading-start panel.
-    const heading = screen.getByRole("heading", { level: 1, name: "Open a note" });
+    const heading = screen.getByRole("heading", { level: 1, name: "Open a page" });
     expect(list.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(within(list).getByRole("button", { name: "Review" }));
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -68,7 +68,7 @@ describe("PagesOverview source-update summary", () => {
     vi.mocked(listBasisPending).mockResolvedValue([pricing]);
     renderOverview(undefined);
 
-    await screen.findByRole("heading", { level: 1, name: "Open a note" });
+    await screen.findByRole("heading", { level: 1, name: "Open a page" });
     expect(listBasisPending).not.toHaveBeenCalled();
     expect(screen.queryByRole("list", { name: "Source updates" })).toBeNull();
   });
@@ -78,7 +78,7 @@ describe("PagesOverview source-update summary", () => {
     renderOverview(vi.fn());
 
     await waitFor(() => expect(listBasisPending).toHaveBeenCalled());
-    await screen.findByRole("heading", { level: 1, name: "Open a note" });
+    await screen.findByRole("heading", { level: 1, name: "Open a page" });
     expect(screen.queryByRole("list", { name: "Source updates" })).toBeNull();
   });
 });

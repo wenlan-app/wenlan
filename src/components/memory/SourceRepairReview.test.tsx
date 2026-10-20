@@ -403,8 +403,8 @@ describe("SourceRepairReview", () => {
     const item = itemFor("pages.duplicate_active_titles", page.id);
     vi.mocked(api.repairPrepareOperation).mockRejectedValue(new Error('HTTP POST /api/repairs/prepare-current returned 422: {"error":"unsupported_repair_finding"}'));
     const { user } = mount(item);
-    await screen.findByLabelText("New note title");
-    await user.type(screen.getByLabelText("New note title"), "Unnecessary title");
+    await screen.findByLabelText("New page title");
+    await user.type(screen.getByLabelText("New page title"), "Unnecessary title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     expect(await screen.findByRole("status")).toHaveTextContent(i18n.t("sourceRepair.preparationUnknown"));
     const refusal = await screen.findByRole("alert");
@@ -474,7 +474,7 @@ describe("SourceRepairReview", () => {
     mockPrepared(manifest);
     const { user } = mount(item);
     expect(await screen.findByText(page.title)).toBeVisible();
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await screen.findByRole("button", { name: "Apply this change" });
     expect(api.repairApply).not.toHaveBeenCalled();
@@ -514,7 +514,7 @@ describe("SourceRepairReview", () => {
     mockPrepared(manifest);
     const { user } = mount(item);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     expect(await screen.findByRole("status")).toHaveTextContent(i18n.t("sourceRepair.preparationUnknown"));
     expect(screen.queryByRole("button", { name: "Apply this change" })).toBeNull();
@@ -529,7 +529,7 @@ describe("SourceRepairReview", () => {
     vi.mocked(api.repairApply).mockReturnValue(new Promise((_, reject) => { rejectApply = reject; }));
     const { user } = mount(item);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     const apply = await screen.findByRole("button", { name: "Apply this change" });
     fireEvent.click(apply);
@@ -552,7 +552,7 @@ describe("SourceRepairReview", () => {
     const onVerified = vi.fn();
     const { user } = mount(item, onVerified);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await user.click(await screen.findByRole("button", { name: "Apply this change" }));
     await waitFor(() => expect(onVerified).toHaveBeenCalledTimes(1));
@@ -573,7 +573,7 @@ describe("SourceRepairReview", () => {
     const onVerified = vi.fn();
     const { user, onBusyChange } = mount(item, onVerified);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await user.click(await screen.findByRole("button", { name: "Apply this change" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("sourceRepair.verifiedServiceUnavailable"));
@@ -595,7 +595,7 @@ describe("SourceRepairReview", () => {
     const onVerified = vi.fn();
     const { user } = mount(item, onVerified);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await user.click(await screen.findByRole("button", { name: "Apply this change" }));
     await user.click(await screen.findByRole("button", { name: "Check again" }));
@@ -617,7 +617,7 @@ describe("SourceRepairReview", () => {
     const onVerified = vi.fn();
     const { user } = mount(item, onVerified);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await user.click(await screen.findByRole("button", { name: "Apply this change" }));
     const retry = await screen.findByRole("button", { name: "Retry verification" });
@@ -785,10 +785,10 @@ describe("SourceRepairReview", () => {
     const item = itemFor("pages.duplicate_active_titles", page.id);
     const { user } = mount(item);
 
-    expect(await screen.findByLabelText("New note title")).toBeVisible();
+    expect(await screen.findByLabelText("New page title")).toBeVisible();
     expect(api.repairRecovery).toHaveBeenCalledWith(item.id);
     expect(api.repairPrepareOperation).not.toHaveBeenCalled();
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     expect(screen.getByRole("button", { name: "Prepare change" })).toBeEnabled();
   });
 
@@ -802,7 +802,7 @@ describe("SourceRepairReview", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("sourceRepair.recoveryFailed"));
     expect(api.repairPrepareOperation).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Retry recovery" }));
-    expect(await screen.findByLabelText("New note title")).toBeVisible();
+    expect(await screen.findByLabelText("New page title")).toBeVisible();
     expect(api.repairRecovery).toHaveBeenCalledTimes(2);
   });
 
@@ -887,7 +887,7 @@ describe("SourceRepairReview", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage denied"); });
     const { user } = mount(item);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await screen.findByText(/local recovery data could not be saved/i);
     expect(screen.queryByRole("button", { name: "Apply this change" })).toBeNull();
@@ -978,7 +978,7 @@ describe("SourceRepairReview", () => {
     const onVerified = vi.fn();
     const { user } = mount(item, onVerified);
     await screen.findByText(page.title);
-    await user.type(screen.getByLabelText("New note title"), "New title");
+    await user.type(screen.getByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await user.click(await screen.findByRole("button", { name: "Apply this change" }));
     await screen.findByText(/apply receipt did not match/i);
@@ -1029,7 +1029,7 @@ describe("durable repair operation controls", () => {
     });
     const first = render(<SourceRepairReview item={item} onBusyChange={vi.fn()} onVerified={vi.fn()} />);
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("New note title"), "New title");
+    await user.type(await screen.findByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     await screen.findByText(i18n.t("sourceRepair.preparationUnknown"));
     expect(api.repairApply).not.toHaveBeenCalled();
@@ -1130,7 +1130,7 @@ describe("durable repair operation controls", () => {
     const item = itemFor("pages.duplicate_active_titles", page.id);
     const manifest = await manifestFor(item);
     const { user } = mount(item);
-    await user.type(await screen.findByLabelText("New note title"), "New title");
+    await user.type(await screen.findByLabelText("New page title"), "New title");
     const payload = item.payload as RepairPayload;
     writeRepairProgress({ version: 1, reviewId: item.id, checkId: payload.check_id,
       occurrenceDigest: payload.occurrence_digest, ownerIds: item.sourceIds, phase: "prepared", manifest });
@@ -1171,7 +1171,7 @@ describe("durable repair operation controls", () => {
     vi.mocked(api.repairPrepareOperation).mockImplementation((request) => { sent = request; return new Promise((done) => { resolve = done; }); });
     const view = render(<SourceRepairReview item={item} onBusyChange={vi.fn()} onVerified={vi.fn()} />);
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("New note title"), "New title");
+    await user.type(await screen.findByLabelText("New page title"), "New title");
     await user.click(screen.getByRole("button", { name: "Prepare change" }));
     const other = { ...itemFor("pages.duplicate_active_titles", "page-other"), id: "other-review" };
     vi.mocked(api.getPage).mockResolvedValue({ ...page, id: "page-other", title: "Other page" });

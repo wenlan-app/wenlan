@@ -80,7 +80,7 @@ async function openPage(
  * CodeMirror module (or its fallback) while it is still mounting.
  */
 async function openedEditor(page: Page, source = INITIAL_SOURCE): Promise<Locator> {
-  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeVisible();
   await expect(editor).toBeEditable();
   await expect.poll(() => editorSource(editor)).toBe(source);
@@ -180,9 +180,9 @@ test("opens an ordinary page directly in one editable writing view", async ({ pa
   // Still announced to assistive technology, without a row above the title.
   await expect(saveStatus).toHaveCSS("position", "absolute");
   await expect(saveStatus).toHaveCSS("clip-path", "inset(50%)");
-  await expect(page.getByRole("button", { name: "Note info", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Page info", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Mind map", exact: true })).toHaveCount(0);
-  const pageActions = page.getByRole("button", { name: "Note actions", exact: true });
+  const pageActions = page.getByRole("button", { name: "Page actions", exact: true });
   await expect(pageActions).toHaveText("");
   await expect(pageActions.locator("svg")).toHaveCount(1);
 
@@ -447,7 +447,7 @@ test("keeps the local draft and stops autosaving when a remote write wins the CA
   await editor.fill(localDraft);
 
   const conflict = page.getByRole("alert");
-  await expect(conflict).toContainText("This note changed elsewhere.", AUTOSAVE_TIMEOUT);
+  await expect(conflict).toContainText("This page changed elsewhere.", AUTOSAVE_TIMEOUT);
   await expect(conflict).toContainText("Your local draft is still here.");
   await expect(page.getByText("Latest source (version 8)")).toBeVisible();
   await expect.poll(() => editorSource(editor)).toBe(localDraft);
@@ -462,7 +462,7 @@ test("keeps the local draft and stops autosaving when a remote write wins the CA
   await editor.fill(extendedDraft);
   await page.waitForTimeout(QUIET_WINDOW_MS);
   expect(updateCalls(controller)).toHaveLength(1);
-  await expect(conflict).toContainText("This note changed elsewhere.");
+  await expect(conflict).toContainText("This page changed elsewhere.");
   expect(await editorSource(editor)).toBe(extendedDraft);
 
   const stored = await storedPage(page);
@@ -476,9 +476,9 @@ test("blocks editing below the daemon floor and records the typed diagnostic", a
   });
 
   await expect(page.getByRole("alert")).toContainText(
-    "Note editing requires stable Wenlan daemon 0.14.1 or later. Running version: 0.14.0.",
+    "Page editing requires stable Wenlan daemon 0.14.1 or later. Running version: 0.14.0.",
   );
-  await expect(page.getByRole("textbox", { name: "Note editor" })).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Page editor" })).toHaveCount(0);
   await expect.poll(() =>
     controller.calls().filter(
       (call) => call.command === "record_page_editor_diagnostic",
@@ -503,7 +503,7 @@ test("keeps the local draft when the daemon falls below the save floor", async (
   await editor.fill(localDraft);
 
   await expect(page.getByRole("alert")).toContainText(
-    "Note editing requires stable Wenlan daemon 0.14.1 or later. Running version: 0.14.0.",
+    "Page editing requires stable Wenlan daemon 0.14.1 or later. Running version: 0.14.0.",
     AUTOSAVE_TIMEOUT,
   );
   await expect.poll(() => editorSource(editor)).toBe(localDraft);
@@ -619,7 +619,7 @@ test("gives a long document workspace scrolling without a formatting toolbar or 
   await expect(page.getByRole("group", { name: "Formatting", exact: true })).toHaveCount(0);
   expect(await workspace.evaluate((element) => element.scrollWidth - element.clientWidth))
     .toBeLessThanOrEqual(1);
-  const actions = page.getByRole("button", { name: "Note actions", exact: true });
+  const actions = page.getByRole("button", { name: "Page actions", exact: true });
   await expect(actions).toBeEnabled();
   await actions.focus();
   await expect(actions).toBeFocused();
@@ -638,7 +638,7 @@ test("fits a 375px viewport without persistence actions, a formatting toolbar, o
 
   await expect(page.getByRole("toolbar", { name: "Formatting", exact: true })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Formatting", exact: true })).toHaveCount(0);
-  const actions = page.getByRole("button", { name: "Note actions", exact: true });
+  const actions = page.getByRole("button", { name: "Page actions", exact: true });
   await expect(actions).toBeInViewport();
 
   expect(await page.evaluate(() => ({
@@ -681,7 +681,7 @@ test("renders a borderless dark editor while page-actions focus stays visible", 
     })).toEqual({ visibleBorders: [], transparentBackground: true });
   }
 
-  const actions = page.getByRole("button", { name: "Note actions", exact: true });
+  const actions = page.getByRole("button", { name: "Page actions", exact: true });
   await actions.focus();
   await page.keyboard.press("Shift+Tab");
   await page.keyboard.press("Tab");
@@ -706,7 +706,7 @@ test("uses opaque light-theme focus indicators on page actions and tasks", async
   const source = "# Browser editor fixture\n\n- [ ] Keyboard task\n";
   await openPage(page, pageFixture(source));
   const editor = await openedEditor(page, source);
-  const actions = page.getByRole("button", { name: "Note actions", exact: true });
+  const actions = page.getByRole("button", { name: "Page actions", exact: true });
   const task = editor.locator(".cm-writing-task-checkbox");
 
   await actions.focus();
@@ -760,7 +760,7 @@ test("confirms a remotely deleted page before offering guarded local draft disca
   const draft = "A local draft that must survive remote deletion.";
   await editor.fill(draft);
   await expect.poll(() => updateCalls(controller).length, AUTOSAVE_TIMEOUT).toBe(1);
-  await expect(page.getByRole("alert")).toContainText("This note no longer exists. Copy your draft before closing.");
+  await expect(page.getByRole("alert")).toContainText("This page no longer exists. Copy your draft before closing.");
   await expect.poll(() => editorSource(editor)).toBe(draft);
   await expect(page.getByRole("button", { name: "Discard draft", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("editor-deleted-before-recovery.png"), fullPage: true });

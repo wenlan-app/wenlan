@@ -81,7 +81,7 @@ describe("SourceAnnotations", () => {
     vi.mocked(listPages).mockResolvedValue([{ id: "page-1", title: "Reading practice", status: "active", entity_id: null } as never]);
     renderNotes({ onRegisterFlush: (next) => { flush = next; } });
     await screen.findByRole("textbox", { name: editorLabel });
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a page" }));
     let rejectToggle!: (error: Error) => void;
     vi.mocked(updateSourceAnnotation).mockImplementationOnce(() => new Promise((_, reject) => { rejectToggle = reject; }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
@@ -92,7 +92,7 @@ describe("SourceAnnotations", () => {
     await waitFor(() => expect(updateSourceAnnotation).toHaveBeenCalledTimes(1));
     await act(async () => { rejectToggle(new Error("offline")); await pending; });
     expect(completed).toBe(false);
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked note.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked page.");
   });
 
   it("opens directly into a Markdown Description and autosaves blockquotes without an Add reflection action", async () => {
@@ -153,7 +153,7 @@ describe("SourceAnnotations", () => {
     }));
     renderNotes({ renderRelatedPages: (content) => <aside data-testid="info-pages">{content}</aside> });
     const wrapper = await screen.findByTestId("info-pages");
-    expect(within(wrapper).getByRole("region", { name: "Notes" })).toBeInTheDocument();
+    expect(within(wrapper).getByRole("region", { name: "Pages" })).toBeInTheDocument();
     expect(await within(wrapper).findByText("Reading practice")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Description" })).not.toContainElement(wrapper);
   });
@@ -170,7 +170,7 @@ describe("SourceAnnotations", () => {
     expect(view.state.doc.toString()).toBe("漢字");
   });
 
-  it("clears a note by saving an empty string without a delete confirmation", async () => {
+  it("clears a page by saving an empty string without a delete confirmation", async () => {
     vi.mocked(getSourceAnnotation).mockResolvedValue(empty({ notes: "An earlier thought.", version: 4 }));
     renderNotes();
     const editor = await screen.findByRole("textbox", { name: editorLabel });
@@ -281,7 +281,7 @@ describe("SourceAnnotations", () => {
   });
 
   it("restores an empty-string Description draft and reports a conflict when server content changed", async () => {
-    vi.mocked(getSourceAnnotation).mockResolvedValueOnce(empty({ notes: "Old note", version: 4 }));
+    vi.mocked(getSourceAnnotation).mockResolvedValueOnce(empty({ notes: "Old page", version: 4 }));
     vi.mocked(updateSourceAnnotation).mockRejectedValueOnce(new Error("offline"));
     const first = renderNotes();
     const editor = await screen.findByRole("textbox", { name: editorLabel });
@@ -290,7 +290,7 @@ describe("SourceAnnotations", () => {
     await screen.findByRole("button", { name: "Retry save" });
     first.unmount();
 
-    vi.mocked(getSourceAnnotation).mockResolvedValueOnce(empty({ notes: "Different saved note", version: 5 }));
+    vi.mocked(getSourceAnnotation).mockResolvedValueOnce(empty({ notes: "Different saved page", version: 5 }));
     renderNotes();
     expect(editorText(await screen.findByRole("textbox", { name: editorLabel }))).toBe("");
     expect(await screen.findByRole("alert")).toHaveTextContent("This description changed elsewhere");
@@ -299,8 +299,8 @@ describe("SourceAnnotations", () => {
 
   it("clears the recovery draft after an explicitly retried empty-string save succeeds", async () => {
     vi.mocked(getSourceAnnotation)
-      .mockResolvedValueOnce(empty({ notes: "Old note", version: 4 }))
-      .mockResolvedValueOnce(empty({ notes: "Old note", version: 4 }))
+      .mockResolvedValueOnce(empty({ notes: "Old page", version: 4 }))
+      .mockResolvedValueOnce(empty({ notes: "Old page", version: 4 }))
       .mockResolvedValueOnce(empty({ notes: "", version: 5 }));
     vi.mocked(updateSourceAnnotation)
       .mockRejectedValueOnce(new Error("offline"))
@@ -345,7 +345,7 @@ describe("SourceAnnotations", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("could not be kept for recovery");
   });
 
-  it("does not retry a failed note write on its own after the visible retry action appears", async () => {
+  it("does not retry a failed page write on its own after the visible retry action appears", async () => {
     vi.mocked(updateSourceAnnotation).mockRejectedValueOnce(new Error("offline"));
     renderNotes();
     await screen.findByRole("textbox", { name: editorLabel });
@@ -367,12 +367,12 @@ describe("SourceAnnotations", () => {
     }
   });
 
-  it("loads scoped Pages and links them without changing the note field", async () => {
+  it("loads scoped Pages and links them without changing the page field", async () => {
     vi.mocked(listPages).mockResolvedValue([{
       id: "page-1", title: "Reading practice", status: "active", entity_id: null,
     } as never]);
     renderNotes();
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a page" }));
     const checkbox = await screen.findByRole("checkbox", { name: /Reading practice/ });
     fireEvent.click(checkbox);
     await waitFor(() => expect(updateSourceAnnotation).toHaveBeenCalledWith({
@@ -394,7 +394,7 @@ describe("SourceAnnotations", () => {
       .mockResolvedValueOnce(empty({ notes: "Server-side Description", version: 1 }));
     renderNotes();
     await screen.findByRole("textbox", { name: editorLabel });
-    fireEvent.click(screen.getByRole("button", { name: "+ Link a note" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ Link a page" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
     await waitFor(() => expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("Server-side Description"));
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(2);
@@ -413,7 +413,7 @@ describe("SourceAnnotations", () => {
       .mockResolvedValueOnce(empty())
       .mockResolvedValueOnce(empty({ page_ids: ["page-1"], pages: [{ id: "page-1", title: "Reading practice" }], version: 1 }));
     renderNotes();
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a page" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /Reading practice/ })).toBeChecked());
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(1);
@@ -426,9 +426,9 @@ describe("SourceAnnotations", () => {
     } as never]);
     vi.mocked(updateSourceAnnotation).mockRejectedValueOnce(new Error("offline"));
     renderNotes();
-    fireEvent.click(await screen.findByRole("button", { name: "+ Link a note" }));
+    fireEvent.click(await screen.findByRole("button", { name: "+ Link a page" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked note.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not update the linked page.");
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(1);
     await new Promise((resolve) => window.setTimeout(resolve, 800));
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(1);
@@ -442,19 +442,19 @@ describe("SourceAnnotations", () => {
     } as never]);
     vi.mocked(updateSourceAnnotation)
       .mockRejectedValueOnce(new Error("409 Conflict"))
-      .mockResolvedValueOnce(empty({ notes: "Another saved note", page_ids: ["page-1"], pages: [{ id: "page-1", title: "Reading practice" }], version: 2 }))
-      .mockResolvedValueOnce(empty({ notes: "Another saved note", version: 3 }));
+      .mockResolvedValueOnce(empty({ notes: "Another saved page", page_ids: ["page-1"], pages: [{ id: "page-1", title: "Reading practice" }], version: 2 }))
+      .mockResolvedValueOnce(empty({ notes: "Another saved page", version: 3 }));
     vi.mocked(getSourceAnnotation)
       .mockResolvedValueOnce(empty())
-      .mockResolvedValueOnce(empty({ notes: "Another saved note", version: 1 }));
+      .mockResolvedValueOnce(empty({ notes: "Another saved page", version: 1 }));
     renderNotes();
     await screen.findByRole("textbox", { name: editorLabel });
     const editor = screen.getByRole("textbox", { name: editorLabel });
-    changeEditor(editor, "My unsaved note");
-    fireEvent.click(screen.getByRole("button", { name: "+ Link a note" }));
+    changeEditor(editor, "My unsaved page");
+    fireEvent.click(screen.getByRole("button", { name: "+ Link a page" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /Reading practice/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("This description changed elsewhere");
-    expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("My unsaved note");
+    expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("My unsaved page");
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(2);
     expect(updateSourceAnnotation).toHaveBeenLastCalledWith(expect.objectContaining({
       expected_version: 1, page_ids: ["page-1"],
@@ -463,6 +463,6 @@ describe("SourceAnnotations", () => {
     expect(updateSourceAnnotation).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole("button", { name: "Unlink Reading practice" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("This description changed elsewhere"));
-    expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("My unsaved note");
+    expect(editorText(screen.getByRole("textbox", { name: editorLabel }))).toBe("My unsaved page");
   });
 });

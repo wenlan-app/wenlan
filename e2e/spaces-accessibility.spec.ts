@@ -411,7 +411,7 @@ test("reaches management, dossier, graph, ledger, observation, and linked-memory
   await page.keyboard.press("Enter");
   await expect(page.locator(".space-dossier")).toBeVisible();
   const sourcesTab = page.getByRole("tab", { name: "Sources" });
-  const notesTab = page.getByRole("tab", { name: "Notes" });
+  const notesTab = page.getByRole("tab", { name: "Pages" });
   await tabTo(page, notesTab);
   await assertFocusOutline(page);
   await page.keyboard.press("ArrowRight");
@@ -687,5 +687,5 @@ test("removes non-essential transitions under reduced motion", async ({ page }) 
   await expect(newSpace).toHaveCSS("transition-duration", "0s");
   await spaceOverviewButton(page).click();
   await expect(page.locator(".space-dossier-archive-trigger")).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: "Notes" })).toHaveCSS("transition-duration", "0s");
+  await expect(page.getByRole("tab", { name: "Pages" })).toHaveCSS("transition-duration", "0s");
 });

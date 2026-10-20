@@ -413,6 +413,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // A basis mark, unmark and confirm return a state receipt only; the two
     // reads (`basis-pending`, `diff`) are in the sensitive catalog instead.
     "/api/pages/{id}/basis/{basis_id}", "/api/pages/{id}/basis/{basis_id}/confirm",
+    // A code basis confirm and remove return a state receipt only; the recheck
+    // (it reports note titles) is in the sensitive catalog instead.
+    "/api/pages/{id}/code-basis/confirm", "/api/pages/{id}/code-basis",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

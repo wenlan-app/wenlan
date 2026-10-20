@@ -5,7 +5,7 @@ import { openPageTool } from "./helpers/pageTools";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
 const copies = [
-  { locale: "en", open: "Open Fixture architecture", editor: "Note editor", actions: "Note actions", info: "Note info", map: "Mind map", note: "Note", close: "Close", pane: "Note views", toggle: "Open note sidebar", untoggle: "Close note sidebar" },
+  { locale: "en", open: "Open Fixture architecture", editor: "Page editor", actions: "Page actions", info: "Page info", map: "Mind map", note: "Page", close: "Close", pane: "Page views", toggle: "Open page sidebar", untoggle: "Close page sidebar" },
 ] as const;
 
 async function expectDocumentToolsAligned(page: Page, actionsName: string): Promise<void> {
@@ -123,7 +123,7 @@ test("a failed flush keeps the newest draft editable and never opens the map wri
   });
   await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
-  const editor = page.getByRole("textbox", { name: "Note editor", exact: true });
+  const editor = page.getByRole("textbox", { name: "Page editor", exact: true });
   await expect(editor).toBeEditable();
   const draft = "# Fixture architecture\n\nKeep the unsaved draft after the failed map transition.";
   await editor.fill(draft);
@@ -139,13 +139,13 @@ test("a failed flush keeps the newest draft editable and never opens the map wri
   expect(saved).not.toMatchObject({ content: draft });
 });
 
-test("the note and its action menu do not send shortcuts to the open map", async ({ page }) => {
+test("the page and its action menu do not send shortcuts to the open map", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const controller = await installTauriMock(page, { locale: "en", rawActions: [] });
   await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
   await openPageTool(page, "Mind map");
-  const map = page.getByRole("complementary", { name: "Note views", exact: true });
+  const map = page.getByRole("complementary", { name: "Page views", exact: true });
   const node = map.locator(".react-flow__node").filter({ hasText: "Storage layer" }).first();
   await node.click();
   await expect(map.locator(".react-flow__node.selected")).toHaveCount(1);
@@ -154,9 +154,9 @@ test("the note and its action menu do not send shortcuts to the open map", async
   ).length;
   expect(writes()).toBe(0); // Opening and selecting an automatic layout must not persist it.
   const before = writes();
-  const actions = page.getByRole("button", { name: "Note actions", exact: true });
+  const actions = page.getByRole("button", { name: "Page actions", exact: true });
   await actions.click();
-  const menu = page.getByRole("menu", { name: "Note actions", exact: true });
+  const menu = page.getByRole("menu", { name: "Page actions", exact: true });
   // Map-open state disables stored-page actions. The empty menu still owns
   // focus so keyboard shortcuts and Escape cannot fall through to the map.
   await expect(menu.locator('[role="menuitem"]:not(:disabled)')).toHaveCount(0);
@@ -194,7 +194,7 @@ test("docked tools resize the complete workspace and keep search usable across t
   await page.goto("/");
   await openWikiNote(page, "Fixture architecture");
   await openPageTool(page, "Mind map");
-  const pane = page.getByRole("complementary", { name: "Note views", exact: true });
+  const pane = page.getByRole("complementary", { name: "Page views", exact: true });
   const header = page.locator(".memory-workspace-header");
   const frame = page.locator(".wiki-primary-note-group .note-group-frame");
   const groupHeader = frame.locator(".note-group-header");
@@ -219,7 +219,7 @@ test("docked tools resize the complete workspace and keep search usable across t
 
   await pane.getByRole("button", { name: "Close", exact: true }).focus();
   await page.setViewportSize({ width: 1099, height: 900 });
-  const narrowPane = page.getByRole("complementary", { name: "Note views", exact: true });
+  const narrowPane = page.getByRole("complementary", { name: "Page views", exact: true });
   await expect(narrowPane).toBeVisible();
   expect((await header.boundingBox())!.width).toBe(1099);
   const narrowFrame = page.locator(".wiki-primary-note-group .note-group-frame");
@@ -230,7 +230,7 @@ test("docked tools resize the complete workspace and keep search usable across t
   await expect.poll(() => narrowPane.evaluate(node => node.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(narrowPane).toHaveCount(0);
-  await expect(page.getByRole("textbox", { name: "Note editor", exact: true })).toBeFocused();
+  await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeFocused();
 
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(header.getByRole("textbox")).toHaveCount(0);
@@ -250,5 +250,5 @@ test('many tabs leave the entire action group reachable with the main sidebar hi
  await expect(page.locator('.note-tabs-list [role=tab][aria-selected=true]')).toHaveText('Independent research');
  const plus=(await page.locator('.note-tab-create').boundingBox())!,actions=(await page.locator('.workspace-header-actions').boundingBox())!;
  await page.screenshot({path:info.outputPath('many-tabs.png')});expect(plus.x+plus.width).toBeLessThanOrEqual(actions.x+1);
- await expect(page.getByRole('button',{name:'Open note sidebar',exact:true})).toBeInViewport();await page.getByRole('button',{name:'Open note sidebar',exact:true}).click();await expect(page.getByRole('complementary',{name:'Note views',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Open page sidebar',exact:true})).toBeInViewport();await page.getByRole('button',{name:'Open page sidebar',exact:true}).click();await expect(page.getByRole('complementary',{name:'Page views',exact:true})).toBeVisible();
 });
