@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5de32ece392de865aec2ab13c23f48473543a65c6618f04c6ecba52e29c3d9e8 -->
+<!-- README_SYNC: source=README.md sha256=610b99df59b42247f62191bd79ea4915d6804faca1a10b31fb584595e36d21a5 -->
 
 <p align="center">
   <picture>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  文瀾將散落的筆記、文件與對話，整理成持續更新、來源可查的知識庫，<br>
+  文瀾將散落的筆記、文件與對話，整理成跟著來源更新、能查回原文的知識庫，<br>
   讓你和 Claude、Codex 等 AI 工具用上先前累積的知識，不必一再交代過去的決定。
 </p>
 
