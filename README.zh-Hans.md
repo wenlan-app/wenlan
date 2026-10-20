@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=548fe3266a56e25482f92e6185995743da2aaa7bf98a22c1d58cbbe536cf151c -->
+<!-- README_SYNC: source=README.md sha256=9340bb389a5e7facd6b44c5f8c2dd5694a97edc186f1b7f9d7d99c3191ebcb50 -->
 
 <p align="center">
   <picture>

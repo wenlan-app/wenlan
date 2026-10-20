@@ -30,7 +30,7 @@ test("borderless banners preserve four-locale copy in desktop and mobile layouts
       const banner = makeBanner(viewport, locale);
       const suffix = locale === "en" ? "" : `-${locale}`;
       assert.equal(banner.name, `readme-banner${suffix}${viewport === "mobile" ? "-mobile" : ""}`);
-      assert.deepEqual([banner.width, banner.height], viewport === "desktop" ? [1120, 350] : [720, 256]);
+      assert.deepEqual([banner.width, banner.height], viewport === "desktop" ? [1120, 260] : [720, 256]);
       assert.match(banner.svg, new RegExp(`>${lines[0].replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}<`, "u"));
       assert.doesNotMatch(banner.svg, new RegExp(`>${lines[1].replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}<`, "u"));
       assert.doesNotMatch(banner.svg, /letter-spacing="4"|>WENLAN</u);
