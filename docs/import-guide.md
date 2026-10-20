@@ -29,3 +29,9 @@ This imports paired user and assistant text, not attachments or other multimodal
 3. Review the text, choose **Import**, then open **View memories** to check what was saved.
 
 Use this for concise preferences, decisions, facts, or lessons you already have. Use the ZIP route above for conversation history.
+
+## Save an email, page, or thread through your AI tool
+
+If your AI tool can read Gmail, Notion, Google Drive, Slack, GitHub, or the web, ask it to keep what it read in Wenlan, for example "save this email to Wenlan". With the Wenlan plugin connected, the tool saves the text together with a link to the original, so notes that cite it open the email or page it came from. You can also save one from the command line: `wenlan sources save --url <link> --title <title> --label gmail < email.txt`.
+
+Wenlan keeps the copy that was saved and does not fetch the original again. When the original changes, ask your tool to save it again with the same link; Wenlan replaces the copy and marks the notes that rely on it for refresh. This works from a local tool such as Claude Code or Codex. Web access for claude.ai and ChatGPT is read-only, so it cannot save sources.

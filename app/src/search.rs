@@ -232,6 +232,7 @@ mod ingest_command_tests {
             content: "A durable article body.".to_string(),
             metadata: None,
             create_only: false,
+            space: Default::default(),
         };
         let _: Result<responses::IngestResponse, String> = ingest_webpage(state, req).await;
     }

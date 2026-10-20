@@ -297,13 +297,14 @@ async fn main() -> anyhow::Result<ExitCode> {
     };
     let is_lint = matches!(&cli.command, Commands::Lint { .. });
     let is_export = matches!(&cli.command, Commands::Export { .. });
+    // An OKF import and `sources save` each write into one Space.
     let is_okf_import = matches!(
         &cli.command,
         Commands::Sources {
             command: commands::ingest::SourcesCommand::Add {
                 source_type: commands::ingest::SourceKind::Okf,
                 ..
-            }
+            } | commands::ingest::SourcesCommand::Save { .. }
         }
     );
     let mut effective_cli_space = cli.space.clone();
@@ -376,8 +377,9 @@ async fn main() -> anyhow::Result<ExitCode> {
         )?
         .with_recovery(recovery_enabled)
     } else if is_okf_import {
-        // An OKF import writes into one Space: `--space X` or a strict
-        // `WENLAN_SPACE` pin picks it, otherwise the daemon's default Space.
+        // An OKF import or a saved source writes into one Space: `--space X`
+        // or a strict `WENLAN_SPACE` pin picks it, otherwise the daemon's
+        // default Space.
         if cli.all_spaces {
             anyhow::bail!("--all-spaces is valid only for read commands");
         }

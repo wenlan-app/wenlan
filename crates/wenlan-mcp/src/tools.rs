@@ -452,6 +452,34 @@ pub struct CaptureParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SaveSourceParams {
+    #[schemars(
+        description = "Permanent http(s) link to the original: the Gmail message, Notion or Drive page, Slack permalink, issue, or article URL. It identifies the source, so saving the same link again replaces the saved copy. Never invent a link."
+    )]
+    pub url: String,
+    #[schemars(description = "Title of the original (email subject, page or thread title).")]
+    pub title: String,
+    #[schemars(
+        description = "The original text as you read it, in full or the part worth keeping, as plain text or Markdown. Not your summary."
+    )]
+    pub content: String,
+    #[schemars(
+        description = "Where it came from, lowercase: gmail, notion, drive, slack, github, web, or the app's name."
+    )]
+    pub source_label: Option<String>,
+    #[schemars(
+        description = "Topic scope to file the source under. The default Space applies when omitted."
+    )]
+    #[serde(default, alias = "domain")]
+    pub space: Option<String>,
+    #[schemars(
+        description = "true refuses to save when this link is already saved, instead of replacing the saved copy."
+    )]
+    #[serde(default)]
+    pub create_only: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RecallParams {
     #[schemars(
         description = "Natural language search. Be specific: 'Alice database preference' finds more than 'database stuff'."
@@ -1195,6 +1223,55 @@ pub struct ListPendingRevisionsParams {
 
 // ===== Internal Implementations =====
 
+/// Validate `save_source` arguments and build the daemon request. The link
+/// becomes the document's `source_id`, so only an http(s) URL is accepted:
+/// that is what lets a note's citation resolve to the original.
+fn save_source_request(
+    params: SaveSourceParams,
+) -> Result<wenlan_types::requests::IngestWebpageRequest, String> {
+    let url = params.url.trim().to_string();
+    let scheme_ok = url
+        .split_once("://")
+        .map(|(scheme, rest)| {
+            matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") && !rest.is_empty()
+        })
+        .unwrap_or(false);
+    if !scheme_ok {
+        return Err(format!(
+            "url must be the original's http(s) link; got `{url}`. Nothing was saved."
+        ));
+    }
+    let title = params.title.trim().to_string();
+    if title.is_empty() {
+        return Err("title is empty. Nothing was saved.".to_string());
+    }
+    if params.content.trim().is_empty() {
+        return Err("content is empty. Nothing was saved.".to_string());
+    }
+    let metadata = params
+        .source_label
+        .map(|label| label.trim().to_ascii_lowercase())
+        .filter(|label| !label.is_empty())
+        .map(|label| std::collections::HashMap::from([("source_label".to_string(), label)]));
+    Ok(wenlan_types::requests::IngestWebpageRequest {
+        url,
+        title,
+        content: params.content,
+        metadata,
+        create_only: params.create_only.unwrap_or(false),
+        space: effective_space(&params.space).into(),
+    })
+}
+
+fn format_save_source_success(resp: &wenlan_types::responses::IngestResponse) -> String {
+    format!(
+        "Saved source {id}\nsource_memory_id: {id}\nspace: {space}\nWenlan keeps this copy and \
+         does not re-fetch the original; when it changes, save it again with the same link.",
+        id = resp.document_id,
+        space = resp.space.as_deref().unwrap_or("uncategorized"),
+    )
+}
+
 fn format_capture_success(resp: &StoreMemoryResponse) -> String {
     let mut msg = if resp.gated {
         format!(
@@ -1510,6 +1587,35 @@ impl WenlanMcpServer {
 
         Ok(CallToolResult::success(vec![ContentBlock::text(
             format_capture_success(&resp),
+        )]))
+    }
+
+    pub async fn save_source_impl(
+        &self,
+        params: SaveSourceParams,
+    ) -> Result<CallToolResult, McpError> {
+        let req = match save_source_request(params) {
+            Ok(req) => req,
+            Err(message) => return Ok(CallToolResult::error(vec![ContentBlock::text(message)])),
+        };
+        let path = if req.create_only {
+            "/api/ingest/webpage/create"
+        } else {
+            "/api/ingest/webpage"
+        };
+        let resp: wenlan_types::responses::IngestResponse = match self.client.post(path, &req).await
+        {
+            Ok(resp) => resp,
+            Err(WenlanError::Api { status: 409, .. }) if req.create_only => {
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                        "Already saved: {}. Nothing was changed. Save again without create_only to replace the saved copy.",
+                        req.url
+                    ))]));
+            }
+            Err(error) => return Ok(tool_error(error, "source save")),
+        };
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            format_save_source_success(&resp),
         )]))
     }
 
@@ -2965,6 +3071,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<CaptureParams>,
     ) -> Result<CallToolResult, McpError> {
         self.capture_impl(params).await
+    }
+
+    #[tool(
+        description = "Save a document the user wants to keep from another app or the web (email, Notion or Drive page, Slack thread, article) with a permanent link to the original, so notes citing it link back. Use instead of capture when the content comes from elsewhere and has a link. Pass the text as read, not a summary; never bulk-copy an inbox or channel. It is a snapshot: Wenlan does not fetch or sync the original. Saving the same url replaces the copy and marks notes built on it for refresh.",
+        annotations(
+            title = "Save Source",
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn save_source(
+        &self,
+        Parameters(params): Parameters<SaveSourceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.save_source_impl(params).await
     }
 
     #[tool(
@@ -6605,6 +6728,107 @@ mod tests {
 
     // ===== tool-level and param-level description assertions =====
 
+    fn save_source_params(url: &str) -> SaveSourceParams {
+        SaveSourceParams {
+            url: url.to_string(),
+            title: " Q3 plan ".to_string(),
+            content: "The original email body.".to_string(),
+            source_label: Some(" Gmail ".to_string()),
+            space: None,
+            create_only: None,
+        }
+    }
+
+    #[test]
+    fn save_source_request_keeps_link_label_and_text() {
+        let _guard = crate::lock_state::ENV_LOCK.blocking_lock();
+        std::env::remove_var("WENLAN_SPACE");
+        std::env::remove_var("WENLAN_DEFAULT_SPACE");
+        crate::lock_state::init_from_env();
+
+        let req = save_source_request(save_source_params(
+            " https://mail.google.com/mail/u/0/#inbox/abc ",
+        ))
+        .unwrap();
+        assert_eq!(req.url, "https://mail.google.com/mail/u/0/#inbox/abc");
+        assert_eq!(req.title, "Q3 plan");
+        assert_eq!(req.content, "The original email body.");
+        assert_eq!(
+            req.metadata
+                .as_ref()
+                .and_then(|m| m.get("source_label"))
+                .map(String::as_str),
+            Some("gmail")
+        );
+        assert!(!req.create_only);
+        assert!(req.space.is_inherit(), "no Space leaves the daemon default");
+    }
+
+    #[test]
+    fn save_source_request_follows_space_lock() {
+        let _guard = crate::lock_state::ENV_LOCK.blocking_lock();
+        std::env::set_var("WENLAN_SPACE", "career");
+        crate::lock_state::init_from_env();
+
+        let mut params = save_source_params("https://notion.so/page-1");
+        params.space = Some("other".to_string());
+        params.create_only = Some(true);
+        let req = save_source_request(params).unwrap();
+        assert_eq!(req.space.named(), Some("career"));
+        assert!(req.create_only);
+
+        std::env::remove_var("WENLAN_SPACE");
+        crate::lock_state::init_from_env();
+    }
+
+    #[test]
+    fn save_source_request_refuses_non_http_links_and_empty_fields() {
+        for url in [
+            "notion://page-1",
+            "mail.google.com/x",
+            "https://",
+            "file:///tmp/a.md",
+        ] {
+            let error = save_source_request(save_source_params(url)).unwrap_err();
+            assert!(error.contains("Nothing was saved"), "{url}: {error}");
+        }
+        let mut params = save_source_params("https://example.com/a");
+        params.title = "  ".to_string();
+        assert!(save_source_request(params).is_err());
+        let mut params = save_source_params("https://example.com/a");
+        params.content = "\n".to_string();
+        assert!(save_source_request(params).is_err());
+    }
+
+    #[test]
+    fn save_source_receipt_names_link_and_space() {
+        let resp = wenlan_types::responses::IngestResponse {
+            chunks_created: 2,
+            document_id: "https://example.com/a".to_string(),
+            space: Some("work".to_string()),
+        };
+        let text = format_save_source_success(&resp);
+        assert!(text.starts_with(
+            "Saved source https://example.com/a\nsource_memory_id: https://example.com/a\nspace: work"
+        ));
+        let unfiled = wenlan_types::responses::IngestResponse {
+            space: None,
+            ..resp
+        };
+        assert!(format_save_source_success(&unfiled).contains("space: uncategorized"));
+    }
+
+    #[test]
+    fn save_source_description_separates_it_from_capture() {
+        let descriptions = tool_descriptions();
+        let description = descriptions.get("save_source").expect("save_source exists");
+        assert!(description.contains("instead of capture"), "{description}");
+        assert!(
+            description.contains("does not fetch or sync"),
+            "{description}"
+        );
+    }
+
     fn tool_descriptions() -> std::collections::HashMap<String, String> {
         let server = make_server(TransportMode::Stdio, "test", None);
         server
@@ -7292,6 +7516,7 @@ mod tests {
             ("recall", (false, false, false)),
             ("rename_page", (false, true, false)),
             ("reject_refinement", (false, true, false)),
+            ("save_source", (false, true, false)),
             ("update_brief", (false, false, false)),
             ("write_page", (false, true, false)),
         ]);
@@ -7685,6 +7910,7 @@ mod tests {
             "recall",
             "rename_page",
             "reject_refinement",
+            "save_source",
             "update_brief",
             "write_page",
         ]
