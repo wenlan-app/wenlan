@@ -32053,6 +32053,38 @@ impl MemoryDB {
         Ok(())
     }
 
+    /// Distinct `source_id`s of `source` rows that start with `prefix`. Used by
+    /// the Obsidian vault sync to find every chunk document one note owns
+    /// (`<source>::<path>::<n>`). Compared with `substr`, not `LIKE`, so a
+    /// path holding `%` or `_` matches only itself.
+    pub async fn list_source_ids_with_prefix(
+        &self,
+        source: &str,
+        prefix: &str,
+    ) -> Result<Vec<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT source_id FROM memories
+                 WHERE source = ?1 AND substr(source_id, 1, length(?2)) = ?2",
+                libsql::params![source, prefix],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_source_ids_with_prefix: {e}")))?;
+        let mut source_ids = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_source_ids_with_prefix row: {e}")))?
+        {
+            source_ids.push(
+                row.get::<String>(0)
+                    .map_err(|e| WenlanError::VectorDb(format!("source_id: {e}")))?,
+            );
+        }
+        Ok(source_ids)
+    }
+
     /// Delete all rows for a given source + source_id.
     pub async fn delete_by_source_id(
         &self,

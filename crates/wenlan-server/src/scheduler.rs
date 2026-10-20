@@ -1421,6 +1421,12 @@ pub fn spawn_scheduler(
                     filesystem_resource_status.block_reason
                 );
             }
+            // Obsidian vaults embed changed notes directly, so they follow
+            // only the ordinary resource-admitted pass; the app runs a
+            // vault's first import itself when it is connected.
+            if directory_scope == Some(DirectorySyncScope::All) {
+                spawn_obsidian_source_syncs(&shared, &db).await;
+            }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
             }
@@ -2203,6 +2209,59 @@ fn should_poll_directory_source(source: &wenlan_types::sources::Source) -> bool 
         source.source_type,
         wenlan_types::sources::SourceType::Directory | wenlan_types::sources::SourceType::Okf
     ) && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
+}
+
+/// Background polling covers Obsidian vaults too, with the same pause and
+/// recovery rules as Directory sources.
+fn should_poll_obsidian_source(source: &wenlan_types::sources::Source) -> bool {
+    source.source_type == wenlan_types::sources::SourceType::Obsidian
+        && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
+}
+
+/// Start one background sync per pollable Obsidian vault, so a vault that
+/// holds many changed notes never stalls the poll loop while they embed. A
+/// vault whose previous sync (from here or the app) is still running is
+/// skipped. Each task holds its own background maintenance guard, so a
+/// maintenance fence that starts later waits for it.
+async fn spawn_obsidian_source_syncs(shared: &SharedState, db: &Arc<wenlan_core::db::MemoryDB>) {
+    let config = wenlan_core::config::load_config();
+    let vaults: Vec<_> = config
+        .sources
+        .into_iter()
+        .filter(should_poll_obsidian_source)
+        .collect();
+    if vaults.is_empty() {
+        return;
+    }
+    let (quality_gate, coordinator) = {
+        let state = shared.read().await;
+        (
+            state.quality_gate.clone(),
+            state.maintenance_coordinator.clone(),
+        )
+    };
+    for source in vaults {
+        let Some(guard) = coordinator.try_begin_background() else {
+            return;
+        };
+        let db = db.clone();
+        let quality_gate = quality_gate.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            match crate::source_routes::obsidian_sync::try_sync_obsidian_source(
+                db,
+                &quality_gate,
+                &source,
+            )
+            .await
+            {
+                Some(Ok(_)) | None => {}
+                Some(Err(e)) => {
+                    tracing::warn!("[scheduler] obsidian sync '{}' failed: {e}", source.id);
+                }
+            }
+        });
+    }
 }
 
 /// One Directory-source sync + document-enrichment-queue-drive pass (§4).

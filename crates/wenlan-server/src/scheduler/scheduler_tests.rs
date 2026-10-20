@@ -1971,8 +1971,21 @@ fn directory_sync_tick_polls_recoverable_sources_but_not_paused() {
     source.source_type = wenlan_types::sources::SourceType::Okf;
     assert!(should_poll_directory_source(&source));
 
+    // Obsidian vaults are polled on their own path (they embed directly).
     source.source_type = wenlan_types::sources::SourceType::Obsidian;
     assert!(!should_poll_directory_source(&source));
+    assert!(should_poll_obsidian_source(&source));
+
+    source.status =
+        wenlan_types::sources::SyncStatus::Unavailable("vault folder moved".to_string());
+    assert!(should_poll_obsidian_source(&source));
+
+    source.status = wenlan_types::sources::SyncStatus::Paused;
+    assert!(!should_poll_obsidian_source(&source));
+
+    source.status = wenlan_types::sources::SyncStatus::Active;
+    source.source_type = wenlan_types::sources::SourceType::Directory;
+    assert!(!should_poll_obsidian_source(&source));
 }
 
 async fn new_test_db() -> (Arc<wenlan_core::db::MemoryDB>, tempfile::TempDir) {

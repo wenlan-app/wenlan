@@ -113,8 +113,8 @@ export default function VaultConnectCard({ variant, onConnected, onPick }: Props
       const sourceType = pickedVault ? "obsidian" : (detection?.sourceType ?? "directory");
       const source = await addSource(sourceType, path);
       queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
-      // Obsidian vaults are not on the daemon's 30s directory scheduler —
-      // kick a one-shot first index (same rationale as AddSourceDialog).
+      // Kick the vault's first import now; the daemon's 30s scheduler
+      // follows later changes (same rationale as AddSourceDialog).
       if (source.source_type === "obsidian") {
         syncRegisteredSource(source.id).then(() => {
           queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
