@@ -1808,11 +1808,11 @@ impl WenlanMcpServer {
                     // The recheck already ran inside this read; nothing for the
                     // agent to run.
                     let line = if count == 1 {
-                        "1 note relies on code that changed; read_page shows which lines"
+                        "1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
                             .to_string()
                     } else {
                         format!(
-                            "{count} notes rely on code that changed; read_page shows which lines"
+                            "{count} notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
                         )
                     };
                     output.push_str(&format!("\n{line}\n"));

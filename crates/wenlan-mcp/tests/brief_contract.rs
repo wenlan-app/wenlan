@@ -126,11 +126,11 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
     for (pending, expected) in [
         (
             Some(3_u32),
-            Some("3 notes rely on code that changed; read_page shows which lines"),
+            Some("3 notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"),
         ),
         (
             Some(1),
-            Some("1 note relies on code that changed; read_page shows which lines"),
+            Some("1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"),
         ),
         (Some(0), None),
         (None, None),
@@ -153,9 +153,11 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
         let text = text_of(&result);
         match expected {
             Some(line) => assert!(text.contains(line), "{text}"),
-            None => assert!(!text.contains("rely on code that changed"), "{text}"),
+            None => {
+                assert!(!text.contains("rely on code that changed"), "{text}");
+                assert!(!text.contains("/wenlan map"), "{text}");
+            }
         }
-        assert!(!text.contains("/wenlan map"), "{text}");
     }
 }
 

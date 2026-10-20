@@ -28,6 +28,7 @@ CODEX_SKILLS_USING_RESOLVER = {
     "distill",
     "handoff",
     "lint",
+    "map",
     "recall",
 }
 # Installed plugins live under ~/.codex/plugins/cache/<marketplace>/wenlan/<version>/;

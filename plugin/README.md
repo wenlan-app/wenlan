@@ -6,7 +6,7 @@ Wenlan is local-first. Memories, pages, and session notes live on your machine u
 
 ## What the plugin contains
 
-- **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, notes, distill, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
+- **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, notes, distill, map, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
 - **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools (capture, recall, brief, distill, and friends) to Claude Code and Cowork. Claude chat on the web ignores local MCP servers.
 - **One `SessionStart` hook** (`plugin/hooks/check-daemon.sh`). It probes the local daemon and prints at most a few lines: a reminder if the daemon is not running, a count of handoff notes waiting to sync (from the local `wenlan outbox status` command, parsed with `python3`), and a notice if the daemon and plugin versions have drifted apart. It never blocks a session and never installs anything.
 
@@ -78,6 +78,7 @@ The daemon stays the single writer and storage owner. Claude does the thinking.
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
 - `/wenlan distill [t]` - synthesize or refresh source-backed pages for the active Space
+- `/wenlan map [space:<name>]` - read this repository and write a small set of orientation notes, each tied to the code lines it relies on
 - `/wenlan pages [q]` - browse and open distilled pages
 - `/wenlan curate <surface>` - deep audit of captures, revisions or refinements
 - `/wenlan forget <id>` - delete one memory by ID, after confirmation
