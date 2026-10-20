@@ -130,6 +130,12 @@ describe("PageInfo notes group", () => {
     expect(screen.getByText(/3 source memories · 2 notes/)).toBeInTheDocument();
   });
 
+  it("leaves out a zero memory count for a note built only on notes", () => {
+    setup({ embedded: false, sourceCount: 0, basis: [basis()] });
+    expect(screen.getByText(/0 revisions · 1 note$/)).toBeInTheDocument();
+    expect(screen.queryByText(/source memor/)).toBeNull();
+  });
+
   it("leaves the old summary and no notes group for a note with no basis controls", () => {
     setup({ embedded: false, basis: undefined, onMarkBasis: undefined, onUnmarkBasis: undefined });
     expect(screen.getByText(/0 backlinks · 0 revisions · 3 sources/)).toBeInTheDocument();

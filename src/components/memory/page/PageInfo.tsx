@@ -11,7 +11,7 @@ import type {
   PageSourceWithMemory,
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
-import { prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
+import { basisCountLabel, prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
 import PageInfoNotes from "./PageInfoNotes";
 import "./NoteInfo.css";
 
@@ -183,7 +183,7 @@ export default function PageInfo({
           {t("pageInfo.backlinks", { count: uniqueInbound.length })} ·{" "}
           {t("pageInfo.revisions", { count: revisions.length })} ·{" "}
           {basis && basis.length > 0
-            ? `${t("noteBasis.sourceMemoriesCount", { count: sourceCount })} \u00b7 ${t("noteBasis.sourceNotesCount", { count: basis.length })}`
+            ? basisCountLabel(t, sourceCount, basis.length)
             : t("pageInfo.sources", { count: sourceCount })}
         </span>
       </summary>}

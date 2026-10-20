@@ -84,6 +84,7 @@ import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInv
 import { PageAutosave } from "./editor/pageAutosave";
 import { NoteReviewNotice } from "./page/NoteReviewNotice";
 import { useBasisActions } from "./page/useBasisActions";
+import { basisCountLabel } from "./page/format";
 
 interface PageDetailProps {
   pageId: string;
@@ -2618,7 +2619,7 @@ export default function PageDetail({
               </span>
               {basisRefs.length > 0
                 ? <span className="page-detail-dateline-item">
-                  {`${t("noteBasis.sourceMemoriesCount", { count: sourceCount })} · ${t("noteBasis.sourceNotesCount", { count: basisRefs.length })}`}
+                  {basisCountLabel(t, sourceCount, basisRefs.length)}
                 </span>
                 : sourceCount > 0 && <span className="page-detail-dateline-item">
                   {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}

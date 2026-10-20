@@ -49,6 +49,12 @@
   white-space: normal;
 }
 
+/* Items stack in the narrow panel; the flex gap separates them, so a "·"
+   would start a line. */
+.note-info-summary .page-detail-dateline-item + .page-detail-dateline-item::before {
+  content: none;
+}
+
 .note-info-sections > .flex.flex-col.gap-4,
 .note-info-page-groups > .flex.flex-col.gap-4 {
   gap: 20px;
