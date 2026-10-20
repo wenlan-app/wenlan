@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9ac5bbcc5cf0efb24a8adac89a52ced0b8f9f39d55d1913cfba6ecf562159a8c -->
+<!-- README_SYNC: source=README.md sha256=5a4a4b887bb26ec4cc193050b02b7ffa6a40dca76287fa57ccd05b9043a07446 -->
 
 <p align="center">
   <picture>
@@ -81,11 +81,13 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
 | Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-安裝插件後，開啟新的 AI 對話並執行 `/wenlan`（Codex 中為 `$wenlan`）。它會確認 Wenlan 是否正常，需要時自動完成設定。其他功能只要在後面直接說，例如 `/wenlan 打開發布計畫那篇筆記`。
+安裝插件後，開啟新的 AI 對話並執行 `/wenlan`（Codex 中為 `$wenlan`）。它會確認 Wenlan 是否正常，需要時自動完成設定。
 
-匯入的資料可以直接使用，不必先建立筆記。連接後，就可以問 AI：
+匯入的資料可以直接使用，想整理成筆記也隨時可以。連接後，就可以問 AI：
 
-> 先查文瀾裡我之前對這件事的筆記和決定，再幫我：……
+> /recall 我之前對這件事的筆記和決定，再幫我：……
+
+Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我之前對這件事的筆記和決定，再幫我：……」。
 
 之後可用[本地模型](docs/steep.zh-Hant.md#enable-steep)開啟 [Steep（沉澱）](#steep沉澱讓知識持續更新)，在背景整理記憶、更新筆記。
 
