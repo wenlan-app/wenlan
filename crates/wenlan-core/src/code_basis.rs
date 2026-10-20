@@ -449,15 +449,15 @@ fn space_of(scope: &ReadScope) -> Option<String> {
     }
 }
 
-/// Re-read the files behind every code basis in `space` (`None`: every Space)
-/// and move each row to the state its file now justifies. Returns how many
-/// rows were checked. Needs no model; one read per distinct file.
-pub async fn recheck_code_basis(db: &MemoryDB, space: Option<&str>) -> Result<usize, WenlanError> {
-    let rows = db.list_code_basis_rows(space).await?;
-    let checked = rows.len();
-    // Files are read a batch at a time (each batch is one blocking task); the
-    // verdicts are applied together, so a row can move into a place another
-    // row of the note is leaving.
+/// What each of `rows` would be if its file were checked now, without writing
+/// anything. A row comes back with the verdict its file justifies, except one
+/// that was `ok` or `moved` and whose file still shows the stamp it was last
+/// read with: nothing about it changed, so it is left out (no read, no hash).
+/// One read per distinct file, a batch at a time (each batch is one blocking
+/// task).
+pub async fn classify_code_basis_rows(
+    rows: &[CodeBasisRow],
+) -> Vec<(&CodeBasisRow, CodeBasisVerdict)> {
     let mut verdicts: Vec<(&CodeBasisRow, CodeBasisVerdict)> = Vec::with_capacity(rows.len());
     for batch in rows.chunks(RECHECK_BATCH) {
         let key_of =
@@ -506,6 +506,18 @@ pub async fn recheck_code_basis(db: &MemoryDB, space: Option<&str>) -> Result<us
             ));
         }
     }
+    verdicts
+}
+
+/// Re-read the files behind every code basis in `space` (`None`: every Space)
+/// and move each row to the state its file now justifies. Returns how many
+/// rows were checked. Needs no model; one read per distinct file.
+pub async fn recheck_code_basis(db: &MemoryDB, space: Option<&str>) -> Result<usize, WenlanError> {
+    let rows = db.list_code_basis_rows(space).await?;
+    let checked = rows.len();
+    // The verdicts are applied together, so a row can move into a place
+    // another row of the note is leaving.
+    let verdicts = classify_code_basis_rows(&rows).await;
     db.apply_code_basis_verdicts(&verdicts, chrono::Utc::now().timestamp())
         .await?;
     Ok(checked)

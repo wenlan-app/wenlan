@@ -125,7 +125,8 @@ fn decode(context: &'static str) -> impl Fn(libsql::Error) -> WenlanError {
 
 /// The row-with-anchor shape used by checks: `REF_COLUMNS`, then anchor_json,
 /// page id and the note's title.
-const ROW_SELECT: &str = "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
+pub(crate) const ROW_SELECT: &str =
+    "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
     b.unavailable_reason, b.changed_at, b.anchor_json, b.page_id, c.title, \
     b.file_len, b.file_mtime_ns \
     FROM page_code_basis b JOIN pages c ON c.id = b.page_id";
@@ -137,7 +138,7 @@ fn stamp_from(len: Option<i64>, mtime_ns: Option<i64>) -> Option<FileStamp> {
     })
 }
 
-fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
+pub(crate) fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
     let anchor_json: String = row.get(7)?;
     // An anchor that no longer parses cannot be compared against; leave the
     // row out of checks rather than mislabel it.
