@@ -192,13 +192,16 @@ fn code_basis_of(read: &Value) -> Vec<CodeBasisRef> {
         .unwrap_or_default()
 }
 
+// Recheck and brief serve automatic callers only: the truth guard refuses the
+// explicit reader marker there (403 in production), so these helpers call them
+// the way the MCP server does, as a named agent without the marker.
 async fn recheck(router: &common::AppRouter) -> Vec<CodeBasisRecheckEntry> {
     let (status, body) = call(
         router,
         Method::POST,
         &format!("/api/pages/code-basis/recheck?space={SPACE}"),
         None,
-        Caller::Reader,
+        Caller::Agent("code-basis-route-contract"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -211,7 +214,7 @@ async fn brief_pending(router: &common::AppRouter) -> Option<u32> {
         Method::POST,
         "/api/brief",
         Some(json!({ "space": SPACE })),
-        Caller::Reader,
+        Caller::Agent("code-basis-route-contract"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -587,7 +590,7 @@ async fn old_bodies_without_code_basis_still_work_and_responses_stay_quiet() {
         Method::POST,
         "/api/brief",
         Some(json!({ "space": SPACE })),
-        Caller::Reader,
+        Caller::Agent("code-basis-route-contract"),
     )
     .await;
     assert!(body.get("code_basis_pending").is_none(), "{body}");
