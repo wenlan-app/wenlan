@@ -497,7 +497,8 @@ export default function PageDetail({
   // `[[` menu offers just those.
   const linkSpace = page?.space ?? null;
   const { data: linkCandidates } = useQuery({
-    queryKey: ["link-notes", linkSpace],
+    // Under ["pages"] so every rename and delete that refreshes the library refreshes this too.
+    queryKey: ["pages", "link-notes", linkSpace],
     queryFn: () => listPages("active", linkSpace ?? undefined, LINK_NOTE_LIMIT),
     enabled: editing && !!page,
     staleTime: 30_000,
@@ -507,8 +508,17 @@ export default function PageDetail({
     if (!page) return [];
     const taken = new Set((page.basis ?? []).map((entry) => entry.page_id));
     const canRely = page.creation_kind !== "entity";
-    return (linkCandidates ?? [])
-      .filter((candidate) => candidate.id !== page.id && candidate.status === "active" && (candidate.space ?? null) === linkSpace)
+    // The daemon resolves [[Title]] only to a unique active note in the Space,
+    // never to an entity, so the menu offers exactly those.
+    const linkable = (linkCandidates ?? []).filter((candidate) =>
+      candidate.status === "active" && candidate.creation_kind !== "entity" && (candidate.space ?? null) === linkSpace);
+    const titleCount = new Map<string, number>();
+    for (const candidate of linkable) {
+      const key = normalizeLinkLabel(candidate.title);
+      titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
+    }
+    return linkable
+      .filter((candidate) => candidate.id !== page.id && titleCount.get(normalizeLinkLabel(candidate.title)) === 1)
       .map((candidate) => ({
         id: candidate.id,
         title: candidate.title,

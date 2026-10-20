@@ -270,8 +270,8 @@ describe("PageDetail with note bases", () => {
       expect(options.length).toBeGreaterThan(0);
       return [...options];
     });
-    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Price list", "Price Corp"]);
-    expect(rows[1].querySelector("button")).toBeNull();
+    // An entity never resolves as a [[link]], so it is not offered.
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Price list"]);
 
     act(() => { rows[0].querySelector("button")!.click(); });
     expect(view.state.doc.toString()).toBe("The plan costs 10 dollars. [[Price list]]");
