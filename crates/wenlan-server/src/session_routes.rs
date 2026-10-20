@@ -85,7 +85,14 @@ pub async fn handle_get_session(
         |page| page.id.as_str(),
     )
     .await?;
+    detail.transcript_available = transcript_exists(detail.session.transcript_path.as_deref());
     Ok(Json(detail))
+}
+
+/// Whether a stored transcript location still names a file on this machine.
+/// Tools prune old transcripts, so the stored path alone does not say.
+fn transcript_exists(path: Option<&str>) -> bool {
+    path.is_some_and(|path| std::path::Path::new(path).is_file())
 }
 
 /// GET /api/pages/{id}/sessions
@@ -119,6 +126,23 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(SESSION_HEADER, HeaderValue::from_str(value).unwrap());
         headers
+    }
+
+    #[test]
+    fn transcript_exists_checks_the_file() {
+        let dir = std::env::temp_dir().join(format!("wenlan-transcript-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("session.jsonl");
+        std::fs::write(&file, "{}").unwrap();
+        assert!(transcript_exists(file.to_str()));
+        assert!(
+            !transcript_exists(dir.to_str()),
+            "a folder is not a transcript"
+        );
+        std::fs::remove_file(&file).unwrap();
+        assert!(!transcript_exists(file.to_str()), "pruned file");
+        assert!(!transcript_exists(None));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

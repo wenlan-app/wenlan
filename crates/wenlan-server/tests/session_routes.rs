@@ -283,3 +283,53 @@ async fn page_sessions_report_writers_and_cited_sources() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn session_detail_reports_whether_the_transcript_file_exists() {
+    let (app, _temp, _db) = common::test_app_no_gate().await;
+    let dir = tempfile::tempdir().unwrap();
+    let transcript = dir.path().join("session.jsonl");
+    std::fs::write(&transcript, "{}").unwrap();
+    store_memory(
+        &app,
+        "a memory from a session with a transcript",
+        Some(SESSION_A),
+    )
+    .await;
+    let (status, _) = send(
+        &app,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"session": SESSION_A, "transcript_path": transcript.to_str().unwrap()})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let uri = format!("/api/sessions/{}", session_id(SESSION_A));
+
+    let (_, present) = send(&app, Method::GET, &uri, None, &[]).await;
+    assert_eq!(present["transcript_available"], true, "{present}");
+
+    std::fs::remove_file(&transcript).unwrap();
+    let (_, pruned) = send(&app, Method::GET, &uri, None, &[]).await;
+    assert_eq!(pruned["transcript_available"], false, "{pruned}");
+    assert!(pruned["session"]["transcript_path"].is_string());
+
+    // No stored path: nothing to be available.
+    store_memory(
+        &app,
+        "a memory from an import with no transcript",
+        Some(SESSION_B),
+    )
+    .await;
+    let (_, none) = send(
+        &app,
+        Method::GET,
+        &format!("/api/sessions/{}", session_id(SESSION_B)),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(none["transcript_available"], false, "{none}");
+    assert!(none["session"]["transcript_path"].is_null());
+}

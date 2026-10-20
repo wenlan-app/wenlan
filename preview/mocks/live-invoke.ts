@@ -674,6 +674,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     get(`/api/pages/recent-changes${qs({ limit: a?.limit })}`).then((r) => r.changes ?? r),
   get_page_sources: (a) => get(`/api/pages/${enc(a.pageId)}/sources`).then((r) => r?.sources ?? r),
   get_page_links: (a) => get(`/api/pages/${enc(a.pageId)}/links`),
+  get_page_sessions: (a) => get(`/api/pages/${enc(a.pageId)}/sessions`),
+  get_session_detail: (a) => get(`/api/sessions/${enc(a.sessionId)}`),
   set_page_review_required: (a) =>
     put(`/api/pages/${enc(a.pageId)}/review-required`, { required: a.required }),
   get_source_annotation: (a) => get(`/api/source-annotations${qs({

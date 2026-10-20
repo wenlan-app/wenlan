@@ -160,6 +160,11 @@ pub struct SessionDetailResponse {
     pub memories: Vec<SessionMemoryEntry>,
     pub pages: Vec<SessionPageEntry>,
     pub handoffs: Vec<SessionHandoffEntry>,
+    /// Whether the transcript file named by `transcript_path` is still on
+    /// this machine. Tools prune old transcripts, so the path alone does not
+    /// say. Computed by the detail route only; false when no path is stored.
+    #[serde(default)]
+    pub transcript_available: bool,
 }
 
 /// How a session relates to a note.

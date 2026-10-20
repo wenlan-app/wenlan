@@ -9,6 +9,7 @@ import {
   hantActivityStatus,
 } from "../components/memory/activityCopy";
 
+import { enSessionSource, hansSessionSource, hantSessionSource } from "../components/memory/sessions/sessionCopy";
 import { enSourceAccess, hansSourceAccess, hantSourceAccess } from "../components/memory/sources/sourceAccessCopy";
 import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../components/memory/sources/sourceContainerCopy";
 
@@ -2641,6 +2642,7 @@ const en = {
     "recent": "Recent activity"
 },
   activityStatus: enActivityStatus,
+  sessionSource: enSessionSource,
 };
 
 const zhHans = {
@@ -5210,6 +5212,7 @@ const zhHans = {
     "recent": "最近活动"
 },
   activityStatus: hansActivityStatus,
+  sessionSource: hansSessionSource,
 };
 
 const zhHant = {
@@ -7779,6 +7782,7 @@ const zhHant = {
     "recent": "最近活動"
 },
   activityStatus: hantActivityStatus,
+  sessionSource: hantSessionSource,
 };
 
 export const resources = {

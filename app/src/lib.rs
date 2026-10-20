@@ -1746,6 +1746,8 @@ pub fn run() {
             search::discard_page_draft,
             search::get_page_sources,
             search::get_page_links,
+            search::get_session_detail,
+            search::get_page_sessions,
             search::set_page_review_required,
             search::get_page_revisions,
             search::list_orphan_links,

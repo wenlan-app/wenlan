@@ -4763,6 +4763,24 @@ pub async fn get_page_sources(
 }
 
 #[tauri::command]
+pub async fn get_session_detail(
+    state: tauri::State<'_, State>,
+    session_id: String,
+) -> Result<Option<wenlan_types::SessionDetailResponse>, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_session_detail(&session_id).await
+}
+
+#[tauri::command]
+pub async fn get_page_sessions(
+    state: tauri::State<'_, State>,
+    page_id: String,
+) -> Result<wenlan_types::PageSessionsResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_sessions(&page_id).await
+}
+
+#[tauri::command]
 pub async fn get_page_links(
     state: tauri::State<'_, State>,
     page_id: String,

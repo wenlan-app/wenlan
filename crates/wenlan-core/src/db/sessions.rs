@@ -566,6 +566,7 @@ impl MemoryDB {
             memories,
             pages,
             handoffs,
+            transcript_available: false,
         }))
     }
 
