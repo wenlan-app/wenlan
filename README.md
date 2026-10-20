@@ -86,9 +86,7 @@ After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` i
 
 Imported material is ready to use; you do not need to create a note first. Ask your AI:
 
-> What did I decide about the pricing page last month? Check Wenlan, then draft the new homepage copy from it.
-
-> Find my notes on the database migration in Wenlan and list what is still open before you change the code.
+> Check Wenlan for my earlier notes and decisions on this, then help me: …
 
 <a id="daily-workflow"></a>
 
