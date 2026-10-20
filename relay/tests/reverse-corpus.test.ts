@@ -6,8 +6,8 @@ import { decodeFrame, encodeFrame } from '../src/reverse-protocol.ts';
 
 test('TypeScript consumes the same valid and invalid corpus as the Rust desktop codec', () => {
   const corpus = JSON.parse(readFileSync(new URL('./fixtures/reverse-protocol-corpus.json', import.meta.url), 'utf8'));
-  assert.equal(corpus.valid.length, 14);
-  assert.equal(corpus.invalid.length, 27);
+  assert.equal(corpus.valid.length, 15);
+  assert.equal(corpus.invalid.length, 28);
   for (const value of corpus.valid) {
     const frame = decodeFrame(JSON.stringify(value));
     assert.deepEqual(frame, value);
