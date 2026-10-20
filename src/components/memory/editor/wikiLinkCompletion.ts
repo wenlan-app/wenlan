@@ -37,13 +37,17 @@ export function linkableTitle(title: string): boolean {
 /** The notes shown for `query`: prefix matches first, then word starts, then any match. */
 export function linkCompletionMatches(notes: readonly LinkCompletionNote[], query: string): LinkCompletionNote[] {
   const needle = query.trim().toLowerCase();
-  const seen = new Set<string>();
+  // A title two notes share links to neither, so neither is offered.
+  const titleCount = new Map<string, number>();
+  for (const note of notes) {
+    const key = note.title.trim().toLowerCase();
+    titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
+  }
   const ranked: { note: LinkCompletionNote; rank: number; order: number }[] = [];
   notes.forEach((note, order) => {
     if (!linkableTitle(note.title)) return;
     const key = note.title.trim().toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
+    if (titleCount.get(key) !== 1) return;
     if (!needle) { ranked.push({ note, rank: 0, order }); return; }
     const at = key.indexOf(needle);
     if (at < 0) return;
@@ -146,12 +150,14 @@ export function createLinkCompletion(options: {
     view.dispatch({ effects: closeLinkCompletion.of(null) });
     return true;
   };
-  const accept = (view: EditorView, asSource: boolean): boolean => {
+  /** Inserts the active row, or `clicked` when a row was clicked (by id, so a refreshed list cannot swap it). */
+  const accept = (view: EditorView, asSource: boolean, clicked?: LinkCompletionNote): boolean => {
     const menu = view.state.field(state).menu;
     if (!menu || options.blocked(view)) return false;
     const matches = matchesFor(view.state);
     if (matches.length === 0) { close(view); return false; }
-    const note = matches[activeIndex(menu, matches.length)];
+    const note = clicked ? matches.find((match) => match.id === clicked.id) : matches[activeIndex(menu, matches.length)];
+    if (!note) return false;
     const insert = `[[${note.title.trim()}]]`;
     view.dispatch({
       changes: { from: menu.from, to: menu.to, insert },
@@ -182,8 +188,17 @@ export function createLinkCompletion(options: {
     empty.className = "cm-link-empty";
     let rows: { row: HTMLElement; note: LinkCompletionNote }[] = [];
     let shown = "";
+    // Rows are not rebuilt while a press is in progress, so notes arriving
+    // between pointer down and up cannot swallow the click.
+    let pressing = false;
     const retainFocus = (event: Event) => event.preventDefault();
-    dom.addEventListener("pointerdown", retainFocus);
+    dom.addEventListener("pointerdown", (event) => {
+      retainFocus(event);
+      pressing = true;
+      const release = () => setTimeout(() => { pressing = false; update(); }, 0);
+      document.addEventListener("pointerup", release, { once: true, capture: true });
+      document.addEventListener("pointercancel", release, { once: true, capture: true });
+    });
     dom.addEventListener("mousedown", retainFocus);
     const build = (matches: LinkCompletionNote[], labels: LinkCompletionLabels) => {
       rows = matches.map((note, index) => {
@@ -206,8 +221,7 @@ export function createLinkCompletion(options: {
           action.addEventListener("click", (event) => {
             event.stopPropagation();
             if (options.blocked(view) || !view.state.field(state).menu) return;
-            view.dispatch({ effects: selectLinkItem.of(index) });
-            accept(view, true);
+            accept(view, true, note);
           });
           row.setAttribute("aria-description", `${labels.useAsSource}: Shift+Enter`);
           row.setAttribute("aria-keyshortcuts", "Shift+Enter");
@@ -219,8 +233,7 @@ export function createLinkCompletion(options: {
         });
         row.addEventListener("click", () => {
           if (options.blocked(view) || !view.state.field(state).menu) return;
-          view.dispatch({ effects: selectLinkItem.of(index) });
-          accept(view, false);
+          accept(view, false, note);
         });
         return { row, note };
       });
@@ -232,7 +245,7 @@ export function createLinkCompletion(options: {
       dom.setAttribute("aria-label", labels.label);
       empty.textContent = labels.empty;
       const signature = JSON.stringify([labels, matches]);
-      if (signature !== shown) { shown = signature; build(matches, labels); }
+      if (signature !== shown && !pressing) { shown = signature; build(matches, labels); }
       const menu = view.state.field(state).menu;
       const active = menu ? activeIndex(menu, rows.length) : -1;
       rows.forEach(({ row }, index) => row.setAttribute("aria-selected", String(index === active)));
@@ -274,10 +287,11 @@ export function createLinkCompletion(options: {
         ".cm-link-menu": { padding: "4px", border: "1px solid var(--mem-border)", borderRadius: "var(--mem-radius-md)", backgroundColor: "var(--mem-detail-surface)", color: "var(--mem-text)", boxShadow: "0 6px 24px rgba(0,0,0,0.12)", width: "320px", maxWidth: "calc(100vw - 16px)", maxHeight: "min(320px, calc(100vh - 76px))", overflowY: "auto", fontFamily: "var(--mem-font-body, system-ui, sans-serif)", fontSize: "var(--mem-text-sm)", zIndex: "1200" },
         ".cm-link-option": { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", minHeight: "32px", padding: "4px 6px 4px 10px", borderRadius: "var(--mem-radius-sm)", cursor: "pointer" },
         ".cm-link-option-title": { flex: "1 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-        ".cm-link-option-action": { flex: "0 0 auto", visibility: "hidden", padding: "2px 8px", border: "1px solid var(--mem-border)", borderRadius: "var(--mem-radius-sm)", backgroundColor: "var(--mem-detail-surface)", color: "var(--mem-text-secondary)", font: "inherit", fontSize: "var(--mem-text-label)", cursor: "pointer" },
+        // Shown on every row it applies to, so a touch screen can reach it; quiet until the row is active.
+        ".cm-link-option-action": { flex: "0 0 auto", padding: "2px 8px", border: "1px solid transparent", borderRadius: "var(--mem-radius-sm)", backgroundColor: "transparent", color: "var(--mem-text-tertiary)", font: "inherit", fontSize: "var(--mem-text-label)", cursor: "pointer" },
         ".cm-link-option-action:hover": { color: "var(--mem-accent-page)", borderColor: "var(--mem-accent-page)" },
         '.cm-link-option[aria-selected="true"]': { backgroundColor: "var(--mem-indigo-bg)", color: "var(--mem-accent-page)" },
-        '.cm-link-option[aria-selected="true"] .cm-link-option-action': { visibility: "visible" },
+        '.cm-link-option[aria-selected="true"] .cm-link-option-action': { borderColor: "var(--mem-border)", backgroundColor: "var(--mem-detail-surface)", color: "var(--mem-text-secondary)" },
         ".cm-link-empty": { padding: "8px 10px", color: "var(--mem-text-tertiary)" },
       }),
     ],

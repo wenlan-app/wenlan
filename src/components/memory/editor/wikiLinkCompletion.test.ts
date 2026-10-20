@@ -62,7 +62,8 @@ describe("[[ link completion", () => {
       { id: "d", title: "roadmap", canUseAsSource: true },
       { id: "e", title: "[draft]", canUseAsSource: true },
     ];
-    expect(linkCompletionMatches([...notes, ...awkward], "").map((note) => note.id)).toEqual(["p-roadmap", "p-rust", "p-trust", "p-zh"]);
+    // "roadmap" and "Roadmap" are the same link, which resolves to neither.
+    expect(linkCompletionMatches([...notes, ...awkward], "").map((note) => note.id)).toEqual(["p-rust", "p-trust", "p-zh"]);
     expect(linkableTitle("Plain title")).toBe(true);
     expect(linkCompletionMatches(Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, title: `Note ${i}`, canUseAsSource: true })), "note")).toHaveLength(8);
   });
@@ -169,6 +170,31 @@ describe("[[ link completion", () => {
     expect(editor.view.state.doc.toString()).toBe("[[產品路線]]");
     expect(editor.onPick).toHaveBeenCalledWith(notes[3], false);
     expect(document.activeElement).toBe(editor.view.contentDOM);
+  });
+
+  it("keeps the pressed row when the notes refresh mid-click", async () => {
+    const editor = make();
+    editor.type("[[");
+    await waitFor(() => expect(editor.menuElement()).not.toBeNull());
+    const rows = editor.menuElement()!.querySelectorAll<HTMLElement>('[role="option"]');
+    rows[1].dispatchEvent(new Event("pointerdown", { bubbles: true, cancelable: true }));
+    editor.setNotes([{ id: "p-new", title: "A new note", canUseAsSource: true }, ...notes]);
+    expect(editor.menuElement()!.querySelectorAll('[role="option"]')[1]).toBe(rows[1]);
+    document.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    rows[1].click();
+    expect(editor.view.state.doc.toString()).toBe("[[Rust ownership]]");
+    expect(editor.onPick).toHaveBeenCalledWith(notes[1], false);
+  });
+
+  it("shows the new rows once the press ends without a pick", async () => {
+    const editor = make();
+    editor.type("[[");
+    await waitFor(() => expect(editor.menuElement()).not.toBeNull());
+    editor.menuElement()!.dispatchEvent(new Event("pointerdown", { bubbles: true, cancelable: true }));
+    editor.setNotes([{ id: "p-new", title: "A new note", canUseAsSource: true }, ...notes]);
+    expect(editor.menuElement()!.querySelectorAll('[role="option"]')).toHaveLength(4);
+    document.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    await waitFor(() => expect(editor.menuElement()!.querySelectorAll('[role="option"]')).toHaveLength(5));
   });
 
   it("opens for 「「 and 【【 from a Chinese input method and writes a real link", () => {
