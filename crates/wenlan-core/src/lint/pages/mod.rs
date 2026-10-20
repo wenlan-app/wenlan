@@ -118,6 +118,11 @@ fn record_placeholder_populations(
     Ok(())
 }
 
+/// The deep-profile `pages.provenance.code_basis_drift` check.
+pub(crate) async fn run_code_basis_drift(context: &LintContext<'_, '_>) -> LintCheckResult {
+    provenance_checks::run_code_basis_drift(context).await
+}
+
 pub(crate) fn uses_cross_store(check_id: &str) -> bool {
     matches!(
         check_id,

@@ -87,7 +87,7 @@ afterEach(() => {
 });
 
 describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
-  it("opens an existing note in reading-first mode without focusing or writing", async () => {
+  it("opens an existing page in reading-first mode without focusing or writing", async () => {
     const source = "# Heading\n\n> quoted block\n\n[link](https://example.com)\n";
     tauriMocks.getPage.mockResolvedValue({ ...PAGE, content: source });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -104,7 +104,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       </QueryClientProvider>,
     );
 
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
 
     expect(view.contentDOM).not.toHaveFocus();
@@ -137,8 +137,8 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       );
 
       expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+      await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
 
       const description = document.getElementById(
         "page-markdown-editor-description",
@@ -171,8 +171,8 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
 
     expect(
       document.getElementById("page-markdown-editor-description"),
@@ -202,9 +202,9 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     expect(
       screen.queryByRole("radiogroup", { name: "Editing mode" }),
@@ -250,9 +250,9 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     act(() => selectRange(view, 0, view.state.doc.length));
 
@@ -292,14 +292,14 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", {
-      name: "Note editor",
+      name: "Page editor",
     });
     await waitFor(() => {
       expect(
-        screen.getByRole("textbox", { name: "Note editor" }),
+        screen.getByRole("textbox", { name: "Page editor" }),
       ).toHaveFocus();
     });
     expect(
@@ -321,7 +321,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       });
     });
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved"));
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
     expect(editorViewFromTextbox(textbox).state.doc.toString()).toBe(exactSource);
     act(() => pressKey(textbox, "z", { ctrlKey: true }));
     expect(editorViewFromTextbox(textbox).state.doc.toString()).toBe(PAGE.content);
@@ -353,17 +353,17 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     expect(await screen.findByText(PAGE.title)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", {
-      name: "Note editor",
+      name: "Page editor",
     });
     const blockedDraft = "# Draft blocked by the old daemon\n";
     act(() => replaceDocument(editorViewFromTextbox(textbox), blockedDraft));
     act(() => pressKey(textbox, "s", { ctrlKey: true }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Note editing requires stable Wenlan daemon 0.14.1 or later. Running version: 0.14.0.",
+      "Page editing requires stable Wenlan daemon 0.14.1 or later. Running version: 0.14.0.",
     );
     expect(screen.getByRole("button", { name: "Copy my draft" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Retry$/ })).toBeInTheDocument();
@@ -404,13 +404,13 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(await screen.findByText(PAGE.title)).toHaveClass("page-detail-title");
     expect(screen.queryByRole("button", { name: "Copy as context" })).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Note actions" }),
+      screen.getByRole("button", { name: "Page actions" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
     const textbox = await screen.findByRole("textbox", {
-      name: "Note editor",
+      name: "Page editor",
     });
 
     expect(container.querySelector(".page-detail-title")).toBeNull();
@@ -423,7 +423,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(
       screen.queryByRole("button", { name: "Copy as context" }),
     ).toBeNull();
-    expect(screen.getByRole("button", { name: "Note actions" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Page actions" })).toBeVisible();
     expect(
       document.getElementById("page-markdown-editor-description"),
     ).toHaveClass("sr-only");
@@ -471,9 +471,9 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     );
 
     await screen.findByRole("heading", { level: 1, name: PAGE.title });
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const localDraft = `# ${PAGE.title}\n\nUnsaved local draft.\n`;
     act(() => replaceDocument(editorViewFromTextbox(textbox), localDraft));
 
@@ -487,7 +487,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
-        "This note changed elsewhere.",
+        "This page changed elsewhere.",
       ),
     );
     expect(container.querySelector(".page-detail-title")).toBeNull();
@@ -518,10 +518,10 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByRole("button", { name: "Note actions" });
+    await screen.findByRole("button", { name: "Page actions" });
     expect(container.querySelector(".page-detail-title")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Edit note" }));
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Edit page" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Line-ending normalization required",
@@ -531,7 +531,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       screen.getByRole("heading", { level: 1, name: PAGE.title }),
     ).not.toHaveClass("sr-only");
     expect(
-      screen.queryByRole("textbox", { name: "Note editor" }),
+      screen.queryByRole("textbox", { name: "Page editor" }),
     ).toBeNull();
   });
 
@@ -543,7 +543,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onRegisterFlush={registerFlush} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     expect(tauriMocks.updatePage).not.toHaveBeenCalled();
     expect(screen.queryByRole("toolbar", { name: "Formatting" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
@@ -576,7 +576,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
           version: PAGE.version + 1,
         }),
       );
-      expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+      expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
       const flush = registerFlush.mock.lastCall?.[0] as () => Promise<boolean>;
       await act(async () => {
         expect(await flush()).toBe(true);
@@ -611,7 +611,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         }),
       );
       expect(tauriMocks.updatePage).toHaveBeenCalledTimes(2);
-      expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+      expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
     } finally {
       vi.useRealTimers();
     }
@@ -629,7 +629,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onRegisterFlush={register} onEditDirtyChange={dirty} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const view = editorViewFromTextbox(textbox);
     act(() => replaceDocument(view, "First snapshot."));
     tauriMocks.getPage.mockResolvedValueOnce({ ...PAGE, content: "First snapshot.", version: PAGE.version + 1 });
@@ -653,7 +653,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       content: "Second snapshot while saving.", expectedVersion: PAGE.version + 1,
     }));
     expect(dirty).toHaveBeenLastCalledWith(false);
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
     expect(view.state.doc.toString()).toBe("Second snapshot while saving.");
     const confirmedUnload = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(confirmedUnload);
@@ -671,17 +671,17 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={onBack} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const draft = "Leave only after canonical confirmation.";
     act(() => replaceDocument(editorViewFromTextbox(textbox), draft));
     tauriMocks.getPage.mockReturnValueOnce(canonical);
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(tauriMocks.updatePage).toHaveBeenCalledTimes(1);
     expect(onBack).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
     await act(async () => finishRead({ ...PAGE, content: draft, version: PAGE.version + 1 }));
     await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
   });
 
 
@@ -700,15 +700,15 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={onBack} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onEditDirtyChange={dirty} onRegisterFlush={register} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const draft = changed ? "Keep this locally after deletion." : PAGE.content;
     if (changed) act(() => replaceDocument(editorViewFromTextbox(textbox), draft));
     tauriMocks.getPage.mockResolvedValue(null);
     await act(async () => { await client.invalidateQueries({ queryKey: ["page", PAGE.id] }); });
 
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
     expect(editorViewFromTextbox(textbox).state.doc.toString()).toBe(draft);
-    expect(await screen.findByRole("alert")).toHaveTextContent("This note no longer exists. Copy your draft before closing.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("This page no longer exists. Copy your draft before closing.");
     expect(screen.getByRole("status")).toHaveTextContent("Unsaved changes");
     expect(dirty).toHaveBeenLastCalledWith(true);
     await user.click(screen.getByRole("button", { name: "Copy my draft" }));
@@ -723,7 +723,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(await flush()).toBe(false);
     await user.click(screen.getByRole("button", { name: "Discard draft" }));
     expect(confirmDiscard).toHaveBeenCalledWith("Discard your unsaved draft?");
-    expect(screen.getByRole("textbox", { name: "Note editor" })).toBe(textbox);
+    expect(screen.getByRole("textbox", { name: "Page editor" })).toBe(textbox);
     expect(editorViewFromTextbox(textbox).state.doc.toString()).toBe(draft);
     expect(await flush()).toBe(false);
     const cancelledUnload = new Event("beforeunload", { cancelable: true });
@@ -732,7 +732,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 
     confirmDiscard.mockReturnValue(true);
     await user.click(screen.getByRole("button", { name: "Discard draft" }));
-    expect(screen.queryByRole("textbox", { name: "Note editor" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Page editor" })).toBeNull();
     expect(dirty).toHaveBeenLastCalledWith(false);
     expect(await flush()).toBe(true);
     const discardedUnload = new Event("beforeunload", { cancelable: true });
@@ -754,7 +754,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onEditDirtyChange={dirty} onRegisterFlush={register} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     tauriMocks.updatePage.mockResolvedValueOnce({ outcome: "failure", kind: "not_found", status: 404, message: "Missing" });
     tauriMocks.getPage.mockResolvedValue(null);
     const draft = "Draft survives a remote deletion discovered during save.";
@@ -762,7 +762,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     const flush = register.mock.lastCall?.[0] as () => Promise<boolean>;
     await act(async () => { expect(await flush()).toBe(false); });
     expect(client.getQueryData(["page", PAGE.id])).toBeNull();
-    expect(screen.getByRole("alert")).toHaveTextContent("This note no longer exists. Copy your draft before closing.");
+    expect(screen.getByRole("alert")).toHaveTextContent("This page no longer exists. Copy your draft before closing.");
     await user.click(screen.getByRole("button", { name: "Copy my draft" }));
     expect(tauriMocks.clipboardWrite).toHaveBeenCalledWith(draft);
     await user.click(screen.getByRole("button", { name: "Discard draft" }));
@@ -775,7 +775,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(cancelledUnload.defaultPrevented).toBe(true);
     confirmDiscard.mockReturnValue(true);
     await user.click(screen.getByRole("button", { name: "Discard draft" }));
-    expect(screen.queryByRole("textbox", { name: "Note editor" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Page editor" })).toBeNull();
     expect(dirty).toHaveBeenLastCalledWith(false);
     expect(await flush()).toBe(true);
     const discardedUnload = new Event("beforeunload", { cancelable: true });
@@ -792,7 +792,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onRegisterFlush={register} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     tauriMocks.updatePage.mockResolvedValueOnce({ outcome: "failure", kind: "not_found", status: 404, message: "Missing" });
     tauriMocks.getPage.mockRejectedValueOnce(new Error("offline"));
     const draft = "Unconfirmed deletion still protects my draft.";
@@ -816,7 +816,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     const draft = "Keep my local document until confirmation.";
     act(() => replaceDocument(editorViewFromTextbox(textbox), draft));
     const remote4 = { ...PAGE, content: "Remote first conflict.", version: PAGE.version + 1 };
@@ -832,7 +832,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(client.getQueryData(["page", PAGE.id])).toEqual(remote5);
     confirmReload.mockReturnValue(true);
     await user.click(screen.getByRole("button", { name: "Reload latest" }));
-    await waitFor(() => expect(editorViewFromTextbox(screen.getByRole("textbox", { name: "Note editor" })).state.doc.toString()).toBe(remote5.content));
+    await waitFor(() => expect(editorViewFromTextbox(screen.getByRole("textbox", { name: "Page editor" })).state.doc.toString()).toBe(remote5.content));
     expect(client.getQueryData(["page", PAGE.id])).toEqual(remote5);
     expect(tauriMocks.updatePage).not.toHaveBeenCalled();
   });
@@ -846,7 +846,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onRegisterFlush={register} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     tauriMocks.updatePage.mockResolvedValueOnce({ outcome: "conflict", message: "Remote edit" });
     tauriMocks.getPage.mockRejectedValueOnce(new Error("Latest temporarily unavailable"));
     act(() => replaceDocument(editorViewFromTextbox(textbox), "Local document."));
@@ -874,7 +874,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onRegisterFlush={register} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     act(() => replaceDocument(editorViewFromTextbox(textbox), "Possibly committed local draft."));
     let flushing!: Promise<boolean>;
     act(() => { flushing = register.mock.lastCall?.[0](); });
@@ -901,7 +901,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
         <PageDetail pageId={PAGE.id} initialMode="edit" onBack={onBack} onMemoryClick={vi.fn()} onPageClick={vi.fn()} onRegisterFlush={register} />
       </QueryClientProvider>,
     );
-    const textbox = await screen.findByRole("textbox", { name: "Note editor" });
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
     act(() => replaceDocument(editorViewFromTextbox(textbox), "Main owns this flush."));
     await user.click(screen.getByRole("button", { name: "Back" }));
     expect(onBack).toHaveBeenCalledOnce();
@@ -917,17 +917,17 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 it("refreshes an open context graph after a page autosave persists new links", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} /></QueryClientProvider>);
-  const textbox = await screen.findByRole("textbox", { name: "Note editor" });
-  await userEvent.click(screen.getByRole("button", { name: "Open note sidebar" }));
+  const textbox = await screen.findByRole("textbox", { name: "Page editor" });
+  await userEvent.click(screen.getByRole("button", { name: "Open page sidebar" }));
   await userEvent.click(screen.getByRole("tab", { name: "Info" }));
   await screen.findByText("No direct connections in the currently visible knowledge.");
   const priorSave = tauriMocks.updatePage.getMockImplementation()!;
   tauriMocks.updatePage.mockImplementationOnce(async (input) => {
     const result = await priorSave(input);
-    tauriMocks.getKnowledgeGraph.mockResolvedValue({entities:[],relations:[],memories:[],memory_links:[],pages:[{id:"linked-note", title:"New linked note", space:null, creation_kind:"source", entity_id:null,last_modified:""}],page_links:[{from:{kind:"page",id:PAGE.id},to:{kind:"page",id:"linked-note"},link_type:"wikilink"}]});
+    tauriMocks.getKnowledgeGraph.mockResolvedValue({entities:[],relations:[],memories:[],memory_links:[],pages:[{id:"linked-note", title:"New linked page", space:null, creation_kind:"source", entity_id:null,last_modified:""}],page_links:[{from:{kind:"page",id:PAGE.id},to:{kind:"page",id:"linked-note"},link_type:"wikilink"}]});
     return result;
   });
-  act(() => replaceDocument(editorViewFromTextbox(textbox), "Body with [[New linked note]].\n"));
-  expect(await screen.findByRole("button", { name: "Open note: New linked note" })).toBeVisible();
+  act(() => replaceDocument(editorViewFromTextbox(textbox), "Body with [[New linked page]].\n"));
+  expect(await screen.findByRole("button", { name: "Open page: New linked page" })).toBeVisible();
   expect(screen.queryByText("No direct connections in the currently visible knowledge.")).toBeNull();
 });

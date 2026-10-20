@@ -27,18 +27,23 @@ daemon this worktree recorded.
 - No sibling checkout needed: the monorepo checkout is the backend, and
   `scripts/resolve-backend-dir.sh` probes the repo root first (an explicit
   `WENLAN_BACKEND_DIR` overrides it; a sibling checkout is only a legacy
-  fallback). The driver defaults `CARGO_TARGET_DIR` to the main checkout (a
-  warm cargo cache) via `git rev-parse --git-common-dir`, so worktrees work
-  out of the box.
+  fallback). Cargo builds in the main checkout's warm, shared target
+  (`CARGO_TARGET_DIR` defaults to it via `git rev-parse --git-common-dir`).
+  Never launch `target/debug/wenlan-app` from there: it is whichever checkout
+  built last. `build` clones it and its sidecars into this checkout's
+  `target/wenlan-dev-app/` (APFS `cp -c`: shares blocks until the shared
+  target is rebuilt, ~370 MB per worktree at most) and `launch` runs
+  only that clone. Do not give a worktree its own `CARGO_TARGET_DIR`: that
+  costs ~14 GB per worktree.
 - Terminal needs macOS Screen Recording permission (for `shot`).
 
 ## Run (agent path)
 
 ```bash
-.claude/skills/run-wenlan-app/driver.sh build    # sidecars + cargo build (decoupled from tauri dev)
-.claude/skills/run-wenlan-app/driver.sh launch   # isolated daemon + vite up + launch target/debug/wenlan-app directly → "APP UP"
+.claude/skills/run-wenlan-app/driver.sh build    # clean workspace crates, force sidecars, cargo build with this worktree's devUrl/app id baked in
+.claude/skills/run-wenlan-app/driver.sh launch   # isolated daemon + this worktree's vite + launch target/wenlan-dev-app/wenlan-app directly → "APP UP"
 .claude/skills/run-wenlan-app/driver.sh shot /tmp/shot.png   # window PNG, works while occluded
-.claude/skills/run-wenlan-app/driver.sh stop     # kills only the dev app, vite, and this worktree's daemon; never :7878
+.claude/skills/run-wenlan-app/driver.sh stop     # kills only this checkout's dev app, vite, and daemon; never :7878 or another session's
 ```
 
 Logs land in `$TMPDIR/wenlan-app.log` and `$TMPDIR/wenlan-vite.log`.
@@ -320,12 +325,53 @@ from an empty one.
   180s for vite — on a cold cache it dies with
   `Error Could not connect to `http://localhost:1420/` after 180s`.
   The driver decouples: sidecars → vite → `cargo build` → direct launch.
-- `app/Cargo.toml` has `default = []` (no `custom-protocol`), so a plain
-  debug `cargo build` produces the dev binary that loads `devUrl` :1420.
-  That URL is baked in at build time and no runtime env var overrides it, so
-  `driver.sh vite` pins vite to :1420 even though the isolated runtime config
-  also carries a worktree-scoped `WENLAN_DEV_UI_PORT` (which `pnpm dev:all`
-  does use, since the tauri CLI can rewrite `devUrl` via `--config`).
+- **A dev app loads whatever frontend answers on its baked-in `devUrl`.**
+  `app/Cargo.toml` has `default = []` (no `custom-protocol`), so a debug build
+  loads `devUrl` at runtime, and no env var overrides it. A plain
+  `cargo build` bakes in `app/tauri.conf.json`'s `:1420`, which every
+  checkout shares: a launch once loaded another checkout's vite from :1420
+  and verified the wrong code with no warning. `driver.sh build` passes
+  `TAURI_CONFIG='{"identifier":"<WENLAN_DEV_APP_ID>","build":{"devUrl":"http://localhost:<WENLAN_DEV_UI_PORT>"}}'`
+  (what `pnpm dev:all` gives the tauri CLI; `tauri-build` declares
+  `rerun-if-env-changed=TAURI_CONFIG`, so only the app crate rebuilds), clones
+  the result into `target/wenlan-dev-app/`, greps the clone for both values,
+  and writes `target/wenlan-dev-app/stamp`; `launch` rebuilds when the stamp
+  does not match this checkout and port.
+- **A shared target can hand you another checkout's build, silently.** Cargo
+  names a workspace crate's artifacts by its path *relative to the workspace
+  root*, so the same crate from two worktrees lands on the same files, and it
+  decides freshness by mtime. A checkout whose sources are older than another
+  checkout's last build gets "Finished" and the other checkout's code (proven
+  with two toy worktrees: B's build printed A's string until `cargo clean -p`).
+  `scripts/prepare-sidecars.sh` also reuses any sidecar binary already in the
+  target unless given `--force-build`. So `build` first touches every file of
+  this checkout's workspace packages (newer than any build in the target, so
+  they recompile from these sources) and then runs
+  `prepare-sidecars.sh --force-build`. Never skip either step to save time,
+  and do not swap the touch for `cargo clean -p`: that deletes every
+  checkout's artifacts for those packages, test binaries and incremental
+  caches included (70 GiB in one run). Sources: Cargo `build.build-dir` and build-cache docs
+  (doc.rust-lang.org/cargo/reference/config.html#buildbuild-dir,
+  …/build-cache.html), rust-lang/cargo#16804 (parallel agents) and #16147
+  (per-workspace build dirs).
+- **Never reuse or kill a vite or app another checkout started.** The driver
+  uses the tri-state probes in `scripts/lib/host-process.sh`, so a probe that
+  cannot run refuses instead of reading as "free" or "not ours". `vite`
+  checks the UI-port listener's cwd and refuses with
+  `REFUSING: :<port> is served by pid … from <other checkout>`. The app is
+  tracked by the pid `launch` recorded in `target/wenlan-dev-app/app.pid`,
+  and `stop` kills it only while `ps` still shows this checkout's exact
+  binary path; never a `pgrep`/`pkill` name search, which matches every
+  checkout's dev app. If something foreign holds this worktree's UI port, ask
+  its owner; do not kill it.
+- Changing the driver? Run `bash .claude/skills/run-wenlan-app/driver.test.sh`
+  (unsandboxed, no cargo or GUI). Stand-in processes play another session's
+  vite and app; it fails if the driver reuses or kills either.
+- `ps` is denied in the sandbox, so `launch`, `stop` and the test must run
+  unsandboxed; a sandboxed `stop` prints `warning: dev app NOT stopped` and
+  exits 1 rather than claiming success. With `sccache` as the rustc wrapper,
+  `build` must run unsandboxed too (a sandboxed build dies with
+  `exit status: 254` on some crate).
 - The dev updater toast covers the lower-left sidebar and its Install button
   is live. Never click it. Suppress during verification with a TEMP
   `if (import.meta.env.DEV) return null;` at the top of
@@ -340,7 +386,7 @@ from an empty one.
 
 - `initializing rolling file appender failed ... PermissionDenied` in the app
   log → the binary was spawned through a sandboxed pnpm/tauri chain; launch
-  `target/debug/wenlan-app` directly (what `driver.sh launch` does).
+  the binary directly (what `driver.sh launch` does).
 - `could not create image from window` / `could not create image from rect`
   from `screencapture -l`/`-R` → use `driver.sh shot`.
 - `Assertion failed: (did_initialize), function CGS_REQUIRE_INIT` from a

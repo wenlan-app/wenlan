@@ -37,7 +37,7 @@ export default defineConfig({
     strictPort: true,
     open: false,
     watch: {
-      ignored: ["**/app/**"],
+      ignored: ["**/app/**", "**/target/**"],
       usePolling: true,
       interval: 400,
     },

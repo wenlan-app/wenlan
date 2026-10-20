@@ -76,6 +76,7 @@ pub(super) async fn run(
             LintSeverity::Warning,
         ),
         page_body_result(context).await,
+        super::pages::run_code_basis_drift(context).await,
         query_result(
             context,
             RELATION_VOCABULARY,

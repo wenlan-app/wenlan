@@ -133,14 +133,14 @@ async function selectInspectorTab(user: ReturnType<typeof userEvent.setup>, name
   await user.click(await screen.findByRole("tab", { name }));
 }
 
-describe("PageDetail note inspector", () => {
-  it("opens the dedicated note sidebar with Info selected and no inspector actions in the overflow menu", async () => {
+describe("PageDetail page inspector", () => {
+  it("opens the dedicated page sidebar with Info selected and no inspector actions in the overflow menu", async () => {
     const { user, container } = renderDetail();
     await screen.findByText("libSQL Architecture");
     expect(container.querySelector(".page-detail-top-row")).toBeNull();
     expect(screen.getByRole("button", { name: i18n.t("pageInspector.open") })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Note actions" }).closest(".page-document-title-row")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Note actions" }));
+    expect(screen.getByRole("button", { name: "Page actions" }).closest(".page-document-title-row")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Page actions" }));
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageInspector.info") })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: i18n.t("pageCanvas.tabCanvas") })).toBeNull();
     await user.keyboard("{Escape}");
@@ -151,7 +151,7 @@ describe("PageDetail note inspector", () => {
     expect(screen.getByRole("button", { name: i18n.t("pageInspector.close") })).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("opens the map beside the reading note and returns through the panel close button", async () => {
+  it("opens the map beside the reading page and returns through the panel close button", async () => {
     const { user } = renderDetail();
     await screen.findByText("libSQL Architecture");
     await selectInspectorTab(user, i18n.t("pageCanvas.tabCanvas"));

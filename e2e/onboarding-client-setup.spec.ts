@@ -8,7 +8,7 @@ const enSetupStart = 'Get started';
 // Fixture-only rendering: this does not exercise native APIs or live OAuth.
 const cases = [['en', enFirstUse]] as const;
 for (const [locale, copy] of cases) for (const width of [1440, 375]) {
-  test(`${locale} ${width}: sample ends by opening notes`, async ({ page, baseURL }, info) => {
+  test(`${locale} ${width}: sample ends by opening pages`, async ({ page, baseURL }, info) => {
     await page.setViewportSize({ width, height: 1000 });
     const errors = collectBrowserErrors(page);
     const external: string[] = [];

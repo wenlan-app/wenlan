@@ -15,7 +15,7 @@ vi.mock("./PageInventoryPanel", () => ({
 
 describe("WikiWorkspace", () => {
   beforeEach(() => localStorage.removeItem("wenlan:wiki-inventory:v1"));
-  it("defaults to recent notes and switches modes without remounting the active editor", () => {
+  it("defaults to recent pages and switches modes without remounting the active editor", () => {
     const { getByTestId } = render(
       <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
         <textarea data-testid="active-editor" defaultValue="unsaved text" />
@@ -37,17 +37,17 @@ describe("WikiWorkspace", () => {
     expect(getByTestId("active-editor")).toBe(editor);
   });
 
-  it("shows the Folders note count as a number beside the title, and only in folders mode", () => {
+  it("shows the Folders page count as a number beside the title, and only in folders mode", () => {
     render(<WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea /></WikiWorkspace>);
     const mode = screen.getByRole("combobox");
-    expect(screen.queryByText("145 notes")).not.toBeInTheDocument();
+    expect(screen.queryByText("145 pages")).not.toBeInTheDocument();
     fireEvent.change(mode, { target: { value: "folders" } });
-    const count = screen.getByTitle("145 notes");
+    const count = screen.getByTitle("145 pages");
     expect(count).toHaveTextContent("145");
     expect(count.previousElementSibling).toBe(mode.closest("label"));
-    expect(screen.getByText("145 notes")).toHaveClass("sr-only");
+    expect(screen.getByText("145 pages")).toHaveClass("sr-only");
     fireEvent.change(mode, { target: { value: "recent" } });
-    expect(screen.queryByTitle("145 notes")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("145 pages")).not.toBeInTheDocument();
   });
 
   it("restores the chosen custom mode after remount without entering the folder tree", () => {
@@ -60,7 +60,7 @@ describe("WikiWorkspace", () => {
     expect(screen.queryByTestId("wiki-directory")).not.toBeInTheDocument();
   });
 
-  it("opens the mobile notes panel and registered folder form only in folders mode", async () => {
+  it("opens the mobile pages panel and registered folder form only in folders mode", async () => {
     const openForm = vi.fn();
     function RequestFolder() {
       const folderCreation = useWikiFolderCreation();
@@ -81,7 +81,7 @@ describe("WikiWorkspace", () => {
     expect(openForm).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "folders" } });
     fireEvent.click(screen.getByRole("button", { name: "Request folder" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Notes" })).toHaveAttribute("aria-expanded", "true"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Pages" })).toHaveAttribute("aria-expanded", "true"));
     expect(openForm).toHaveBeenCalledOnce();
   });
 
@@ -103,7 +103,7 @@ describe("WikiWorkspace", () => {
     await waitFor(() => expect(onCreationFolderPathChange).toHaveBeenLastCalledWith("Work/Research"));
   });
 
-  it("reports no folder creation path while recent notes are selected", async () => {
+  it("reports no folder creation path while recent pages are selected", async () => {
     const onCreationFolderPathChange = vi.fn();
     function ReportPath() {
       const folderCreation = useWikiFolderCreation();
@@ -121,12 +121,12 @@ describe("WikiWorkspace", () => {
     await waitFor(() => expect(onCreationFolderPathChange).toHaveBeenLastCalledWith(null));
   });
 
-  it("renders the persisted recent history in visit order and marks the active note", () => {
+  it("renders the persisted recent history in visit order and marks the active page", () => {
     localStorage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify({
       version: 1,
       entries: [
-        { id: "newer", title: "Newer note", visitedAt: Date.now() },
-        { id: "older", title: "Older note", visitedAt: Date.now() - 10 },
+        { id: "newer", title: "Newer page", visitedAt: Date.now() },
+        { id: "older", title: "Older page", visitedAt: Date.now() - 10 },
       ],
     }));
     const onOpenRecentPage = vi.fn();
@@ -136,15 +136,15 @@ describe("WikiWorkspace", () => {
       </WikiWorkspace>,
     );
 
-    const newer = screen.getByRole("button", { name: "Newer note" });
-    const older = screen.getByRole("button", { name: "Older note" });
+    const newer = screen.getByRole("button", { name: "Newer page" });
+    const older = screen.getByRole("button", { name: "Older page" });
     expect(newer.compareDocumentPosition(older) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(older).toHaveAttribute("aria-current", "page");
     fireEvent.click(newer);
     expect(onOpenRecentPage).toHaveBeenCalledWith("newer");
   });
 
-  it("closes the notes drawer after opening a recent note", () => {
+  it("closes the pages drawer after opening a recent page", () => {
     localStorage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify({
       version: 1,
       entries: [{ id: "recent-page", title: "Recent page", visitedAt: Date.now() }],
@@ -155,7 +155,7 @@ describe("WikiWorkspace", () => {
         <textarea data-testid="active-editor" />
       </WikiWorkspace>,
     );
-    const notesToggle = screen.getByRole("button", { name: "Notes" });
+    const notesToggle = screen.getByRole("button", { name: "Pages" });
 
     fireEvent.click(notesToggle);
     expect(notesToggle).toHaveAttribute("aria-expanded", "true");

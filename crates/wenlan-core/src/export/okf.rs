@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
+use wenlan_types::CodeBasisLocator;
 
 pub const OKF_VERSION: &str = "0.2";
 pub(crate) const MARKER_FILE: &str = ".wenlan-okf-export.json";
@@ -565,10 +566,13 @@ pub(crate) fn render_page_file(
     id_to_file: &HashMap<String, String>,
     title_owner: &TitleOwners,
     concept_paths: &ConceptPathMap,
+    code_bases: &[CodeBasisLocator],
 ) -> String {
     let mut out = String::new();
     out.push_str("---\n");
-    out.push_str(&crate::export::knowledge::page_frontmatter(page, false));
+    out.push_str(&crate::export::knowledge::page_frontmatter(
+        page, false, code_bases,
+    ));
     out.push_str("---\n\n");
     out.push_str(&convert_body(
         &page.content,
@@ -679,17 +683,20 @@ fn read_old_marker(root: &Path) -> Result<Option<ExportMarker>, WenlanError> {
 /// with the union of old and planned files, then — after a successful write —
 /// with only the new set and its digests.
 pub fn export_okf(pages: &[Page], target: &Path) -> Result<ExportStats, WenlanError> {
-    export_okf_with_concept_paths(pages, target, &ConceptPathMap::new())
+    export_okf_with_concept_paths(pages, target, &ConceptPathMap::new(), &HashMap::new())
 }
 
 /// [`export_okf`], plus the map that resolves links an imported concept still
 /// spells in its original bundle's terms. Callers with database access build
 /// it with [`concept_path_map`] from `MemoryDB::okf_concept_paths`; an empty
-/// map simply leaves every such link unresolvable.
+/// map simply leaves every such link unresolvable. `code_bases` holds each
+/// page's code bases by page id (callers with database access load them with
+/// `MemoryDB::code_basis_locators_by_page`); a page absent from it lists none.
 pub fn export_okf_with_concept_paths(
     pages: &[Page],
     target: &Path,
     concept_paths: &ConceptPathMap,
+    code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
 ) -> Result<ExportStats, WenlanError> {
     let mut stats = ExportStats::default();
     for dir in [target, &target.join(PAGES_DIR), &target.join(SOURCES_DIR)] {
@@ -769,7 +776,14 @@ pub fn export_okf_with_concept_paths(
     let mut planned_bytes: HashMap<String, Vec<u8>> = HashMap::new();
     for (id, file) in &planned_pairs {
         if let Some(page) = by_id.get(id.as_str()) {
-            let body = render_page_file(page, &id_to_file, &title_owner, concept_paths);
+            let page_code_bases = code_bases.get(id).map_or(&[][..], Vec::as_slice);
+            let body = render_page_file(
+                page,
+                &id_to_file,
+                &title_owner,
+                concept_paths,
+                page_code_bases,
+            );
             planned_bytes.insert(format!("{PAGES_DIR}/{file}"), body.into_bytes());
         }
     }
@@ -1109,7 +1123,13 @@ mod tests {
         let other = test_page("concept_b", "Beta", "body");
         let pages = vec![page.clone(), other];
         let (id_to_file, title_owner) = link_context(&pages);
-        let file = render_page_file(&page, &id_to_file, &title_owner, &ConceptPathMap::new());
+        let file = render_page_file(
+            &page,
+            &id_to_file,
+            &title_owner,
+            &ConceptPathMap::new(),
+            &[],
+        );
         assert!(file.contains("[mem_1](/sources/mem_1.md)"), "{file}");
         assert!(file.contains("[Beta](/pages/beta.md)"), "{file}");
         assert!(
@@ -1124,7 +1144,13 @@ mod tests {
     fn source_less_page_has_no_sources_section() {
         let pages = vec![test_page("concept_a", "Alpha", "plain body")];
         let (id_to_file, title_owner) = link_context(&pages);
-        let file = render_page_file(&pages[0], &id_to_file, &title_owner, &ConceptPathMap::new());
+        let file = render_page_file(
+            &pages[0],
+            &id_to_file,
+            &title_owner,
+            &ConceptPathMap::new(),
+            &[],
+        );
         assert!(!file.contains("## Sources"), "{file}");
         assert!(file.ends_with("plain body\n"), "{file}");
     }
@@ -1216,8 +1242,8 @@ mod tests {
     fn page_frontmatter_matches_projection_minus_related() {
         let mut page = test_page("concept_a", "Alpha", "see [[Beta]]");
         page.source_memory_ids = vec!["mem_1".to_string()];
-        let projection = crate::export::knowledge::page_frontmatter(&page, true);
-        let bundle = crate::export::knowledge::page_frontmatter(&page, false);
+        let projection = crate::export::knowledge::page_frontmatter(&page, true, &[]);
+        let bundle = crate::export::knowledge::page_frontmatter(&page, false, &[]);
         assert!(projection.contains("related:"), "{projection}");
         assert!(!bundle.contains("related:"), "{bundle}");
         let projection_without_related: String = projection
@@ -1228,14 +1254,97 @@ mod tests {
         assert_eq!(projection_without_related, bundle);
     }
 
+    fn locator(path: &str, start: u32, end: u32) -> CodeBasisLocator {
+        CodeBasisLocator {
+            repo_root: "/home/someone/private-checkout".to_string(),
+            path: path.to_string(),
+            line_start: start,
+            line_end: end,
+        }
+    }
+
+    #[test]
+    fn rendered_page_file_lists_code_bases_as_repo_sources() {
+        let mut page = test_page("concept_a", "Alpha", "body");
+        page.source_memory_ids = vec!["mem_1".to_string()];
+        let pages = vec![page];
+        let (id_to_file, title_owner) = link_context(&pages);
+        let file = render_page_file(
+            &pages[0],
+            &id_to_file,
+            &title_owner,
+            &ConceptPathMap::new(),
+            &[locator("src/lib.rs", 10, 20)],
+        );
+        assert!(
+            file.contains(
+                "sources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}\n  \
+                 - {resource: \"repo://src/lib.rs#L10-L20\"}\n"
+            ),
+            "{file}"
+        );
+        assert!(!file.contains("private-checkout"), "{file}");
+        // Same frontmatter the projection writes, minus `related:`.
+        assert!(file.starts_with(&format!(
+            "---\n{}---\n\n",
+            crate::export::knowledge::page_frontmatter(
+                &pages[0],
+                false,
+                &[locator("src/lib.rs", 10, 20)]
+            )
+        )));
+    }
+
+    /// The importer still drops `repo://` sources: a bundle exported with one
+    /// reads back without error and without a source or a link made from it.
+    #[test]
+    fn a_bundle_with_a_repo_source_still_imports_without_creating_a_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        let mut code_bases = HashMap::new();
+        code_bases.insert("concept_a".to_string(), vec![locator("src/lib.rs", 10, 20)]);
+        export_okf_with_concept_paths(&pages, dir.path(), &ConceptPathMap::new(), &code_bases)
+            .unwrap();
+        let file = dir.path().join(PAGES_DIR).join("alpha.md");
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("repo://src/lib.rs#L10-L20"), "{text}");
+
+        let (concept, _body) = crate::sources::okf::parse_concept(dir.path(), &file, &text)
+            .expect("a repo:// source must not make the page unparseable");
+        assert!(
+            concept.links.is_empty(),
+            "a repo:// source is not a link to another concept: {:?}",
+            concept.links
+        );
+        let outcome =
+            crate::sources::okf::concept_file_to_documents("okf-test", &file, dir.path(), None);
+        assert!(
+            !matches!(outcome, crate::sources::okf::ConceptOutcome::Error(_)),
+            "{outcome:?}"
+        );
+        assert!(
+            !matches!(
+                outcome,
+                crate::sources::okf::ConceptOutcome::Ingested { .. }
+            ),
+            "an exported page is Wenlan's own and is never ingested as a source: {outcome:?}"
+        );
+    }
+
     #[test]
     fn rendered_page_file_opens_with_shared_frontmatter() {
         let pages = vec![test_page("concept_a", "Alpha", "body")];
         let (id_to_file, title_owner) = link_context(&pages);
-        let file = render_page_file(&pages[0], &id_to_file, &title_owner, &ConceptPathMap::new());
+        let file = render_page_file(
+            &pages[0],
+            &id_to_file,
+            &title_owner,
+            &ConceptPathMap::new(),
+            &[],
+        );
         let expected_head = format!(
             "---\n{}---\n\n",
-            crate::export::knowledge::page_frontmatter(&pages[0], false)
+            crate::export::knowledge::page_frontmatter(&pages[0], false, &[])
         );
         assert!(file.starts_with(&expected_head), "{file}");
     }

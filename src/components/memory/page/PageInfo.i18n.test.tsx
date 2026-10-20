@@ -91,7 +91,7 @@ describe("PageInfo i18n", () => {
       citationState: "cited",
     });
     expect(screen.getByText("1 backlink · 1 revision · 1 source")).toBeInTheDocument();
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     expect(screen.getByText("1 incoming memory")).toBeInTheDocument();
     expect(
       screen.getByText("Citations: 2 (1 unverified)"),
@@ -110,7 +110,7 @@ describe("PageInfo i18n", () => {
         source("mem-b", { memory_type: "pdfx" }),
       ],
     });
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     const rows = screen.getAllByTestId("page-info-source-row");
     expect(within(rows[0]).getByText("unknown agent")).toBeInTheDocument();
     // Arbitrary data values are never translated.
@@ -206,21 +206,21 @@ describe("PageInfo i18n", () => {
         loading: "Loading revision history…",
         error: "Could not load revision history.",
         retry: "Retry",
-        confirm: "Rebuild this note from its sources? Your edits may be replaced.",
+        confirm: "Update this page from its sources? Your edits may be replaced.",
       },
       {
         language: "zh-Hans",
         loading: "正在加载修订记录…",
         error: "无法加载修订记录。",
         retry: "重试",
-        confirm: "要根据来源重新整理此笔记吗？您的编辑可能会被替换。",
+        confirm: "要按来源更新此笔记吗？您的编辑可能会被替换。",
       },
       {
         language: "zh-Hant",
         loading: "正在載入修訂紀錄…",
         error: "無法載入修訂紀錄。",
         retry: "重試",
-        confirm: "要根據來源重新整理此筆記嗎？您的編輯可能會被取代。",
+        confirm: "要依來源更新此筆記嗎？您的編輯可能會被取代。",
       },
     ] as const;
 
@@ -254,7 +254,7 @@ describe("PageInfo i18n", () => {
         { version: 1, at, edited_by: "migration_99" },
       ],
     });
-    await user.click(screen.getByText("Note info"));
+    await user.click(screen.getByText("Page info"));
     await user.click(screen.getByRole("button", { name: "Show all 4 revisions" }));
     const rows = screen.getAllByRole("listitem").filter((li) => li.className.includes("note-revision-entry"));
     expect(rows.map((row) => row.querySelector(".note-revision-meta")?.textContent)).toEqual([

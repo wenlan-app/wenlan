@@ -1,0 +1,55 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+
+.overflow-menu__trigger {
+  --mem-icon-action-size: 28px;
+}
+
+.overflow-menu__list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 4px;
+}
+
+.overflow-menu__item {
+  display: grid;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--mem-control-radius);
+  background: transparent;
+  color: var(--mem-text);
+  font: 500 13px/1.35 var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.overflow-menu__item:hover:not(:disabled),
+.overflow-menu__item:focus-visible {
+  background: var(--mem-hover);
+}
+
+.overflow-menu__item:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: -2px;
+}
+
+.overflow-menu__item:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.overflow-menu__hint {
+  color: var(--mem-text-tertiary);
+  font-size: 12px;
+  font-weight: 400;
+}

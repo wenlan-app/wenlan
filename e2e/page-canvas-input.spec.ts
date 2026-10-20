@@ -74,10 +74,10 @@ test("a new box stays where it was dropped", async ({ page }) => {
   await page.mouse.dblclick(spot.x, spot.y);
   const field = page.getByRole("textbox", { name: "Name this node" });
   await expect(field).toBeVisible();
-  await field.fill("Deploy notes");
+  await field.fill("Deploy pages");
   await field.press("Enter");
 
-  const made = page.locator(".react-flow__node").filter({ hasText: "Deploy notes" }).first();
+  const made = page.locator(".react-flow__node").filter({ hasText: "Deploy pages" }).first();
   await expect(made).toBeVisible();
   const center = async () => {
     const r = (await made.boundingBox())!;

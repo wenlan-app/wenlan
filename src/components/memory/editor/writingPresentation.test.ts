@@ -189,6 +189,25 @@ describe("writingPresentation", () => {
       .toHaveTextContent("strike");
   });
 
+  it("marks only browser-bound links, labelled or bare, as external", () => {
+    const source = [
+      "See [docs](https://wenlan.app/docs) and [[Wiki]].",
+      "",
+      "Bare https://github.com/wenlan-app/wenlan/ here.",
+      "",
+      "[local](#concept:p-1)",
+    ].join("\n");
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+
+    const external = [...view.contentDOM.querySelectorAll(".cm-writing-link-external")];
+    expect(external.map((node) => node.textContent)).toEqual([
+      "docs",
+      "github.com/wenlan-app/wenlan",
+    ]);
+    expect(view.contentDOM.textContent).not.toContain("https://");
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
   it("reveals every construct on the active line and restores concealment without a document update", async () => {
     const source = "# Heading\n\n**bold** and *italic*\naway";
     const onDocumentUpdate = vi.fn();

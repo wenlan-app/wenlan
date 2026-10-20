@@ -109,6 +109,27 @@ describe("dark theme brand tokens", () => {
     expect(warm.g - warm.b).toBeLessThanOrEqual(35);
   });
 
+  it("keeps reading links calmer than the button accent while staying readable", () => {
+    const link = darkToken("--mem-link");
+    const accent = darkToken("--mem-accent-indigo");
+    expect(luminance(link ?? "")).toBeLessThan(luminance(accent ?? ""));
+    expect(contrastRatio(link, darkToken("--mem-bg"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(link, darkToken("--mem-surface"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(lightToken("--mem-link"), lightToken("--mem-bg"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("styles every reading-text link from the link token with an underline", () => {
+    const rule = css.match(/\.content-renderer a,\s*\.source-document-body a\s*\{(?<body>[^}]*)\}/)?.groups?.body ?? "";
+    expect(rule).toMatch(/color:\s*var\(--mem-link\)/);
+    expect(rule).toMatch(/text-decoration:\s*underline/);
+  });
+
+  it("marks only browser-bound links with an arrow and brightens links on hover", () => {
+    expect(css).toMatch(/\.content-renderer a\[href\^="http"\]::after/);
+    expect(css).toMatch(/\.content-renderer a:hover,\s*\.source-document-body a:hover\s*\{[^}]*color:\s*var\(--mem-link-hover\)/);
+    expect(luminance(darkToken("--mem-link-hover") ?? "")).toBeGreaterThan(luminance(darkToken("--mem-link") ?? ""));
+  });
+
   it("keeps wiki page icons quieter than page emphasis colors", () => {
     expect(darkToken("--mem-page-icon")).toBe("#C19A7B");
     expect(darkToken("--mem-page-icon-hover")).toBe("#D1AF95");

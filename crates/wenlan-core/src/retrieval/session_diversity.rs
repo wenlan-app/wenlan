@@ -141,6 +141,7 @@ mod tests {
     fn sr(id: &str, source_id: &str, score: f32) -> SearchResult {
         SearchResult {
             basis: Vec::new(),
+            code_basis: Vec::new(),
             id: id.to_string(),
             content: String::new(),
             source: "memory".to_string(),

@@ -116,6 +116,7 @@ pub async fn handle_read_brief(
             space: None,
             brief: None,
             related_context: None,
+            code_basis_pending: None,
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
@@ -124,6 +125,7 @@ pub async fn handle_read_brief(
             space: Some(space),
             brief: None,
             related_context: None,
+            code_basis_pending: None,
         }));
     };
 
@@ -203,11 +205,24 @@ pub async fn handle_read_brief(
         }
     };
 
+    // Notes that rely on lines of code are checked against the files as they
+    // read now (no model, one read per file; nothing at all for a Space without
+    // code bases). A failed check leaves the Brief readable without the count.
+    let code_basis_pending =
+        match wenlan_core::code_basis::brief_code_basis_pending(&db, &space).await {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::warn!("[brief] code basis check failed for Space {space}: {error}");
+                None
+            }
+        };
+
     Ok(Json(BriefReadResponse {
         state: BriefReadState::Ready,
         space: Some(space),
         brief: Some(brief),
         related_context,
+        code_basis_pending,
     }))
 }
 

@@ -22,14 +22,14 @@ describe("translation resources", () => {
       "Welcome to Wenlan",
     );
     expect(resources.en.translation.main.searchPlaceholder).toBe(
-      "Search notes, memories, sources...",
+      "Search pages, memories, sources...",
     );
     expect(resources.en.translation.settings.language.label).toBe("Language");
   });
 
   it("explains the page-review requirement before rename in every locale", () => {
     expect(supportedAppLocales.map((locale) => resources[locale].translation.pageDetail.renameReviewRequired)).toEqual([
-      "Review this note before renaming it.",
+      "Review this page before renaming it.",
       "请先复核此笔记，再进行重命名。",
       "請先覆核此筆記，再進行重新命名。",
     ]);
@@ -366,7 +366,7 @@ describe("translation resources", () => {
     // When Pages, Memories, and Updated are read
     // Then all supported locales provide the approved copy
     expect(overviewResources.map((overview) => overview.pages)).toEqual([
-      "Notes",
+      "Pages",
       "笔记",
       "筆記",
     ]);

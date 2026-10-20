@@ -57,6 +57,7 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
             query: query.into(),
             results: Vec::new(),
         }),
+        code_basis_pending: None,
     }
 }
 
@@ -121,6 +122,44 @@ async fn topic_appends_separately_labeled_same_space_context() {
 }
 
 #[tokio::test]
+async fn brief_says_how_many_notes_rely_on_code_that_changed() {
+    for (pending, expected) in [
+        (
+            Some(3_u32),
+            Some("3 notes rely on code that changed; read_page shows which lines"),
+        ),
+        (
+            Some(1),
+            Some("1 note relies on code that changed; read_page shows which lines"),
+        ),
+        (Some(0), None),
+        (None, None),
+    ] {
+        let mock = MockServer::start().await;
+        let mut response = ready_response(None);
+        response.code_basis_pending = pending;
+        Mock::given(method("POST"))
+            .and(path("/api/brief"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock)
+            .await;
+        let result = make_server(&mock)
+            .brief_impl(BriefParams {
+                topic: None,
+                space: Some("wenlan".into()),
+            })
+            .await
+            .expect("brief read succeeds");
+        let text = text_of(&result);
+        match expected {
+            Some(line) => assert!(text.contains(line), "{text}"),
+            None => assert!(!text.contains("rely on code that changed"), "{text}"),
+        }
+        assert!(!text.contains("/wenlan map"), "{text}");
+    }
+}
+
+#[tokio::test]
 async fn missing_brief_explains_that_reads_do_not_create_it() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
@@ -130,6 +169,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
             space: Some("wenlan".into()),
             brief: None,
             related_context: None,
+            code_basis_pending: None,
         }))
         .mount(&mock)
         .await;

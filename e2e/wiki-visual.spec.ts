@@ -30,7 +30,7 @@ async function openWiki(page: BrowserPage, locale: "en" | "zh-Hant", theme: "dar
       ...createSpacesNavigationFixture(),
       folders: [
         { path: "Research", parent_path: "", name: "Research" },
-        { path: "Research/Notes", parent_path: "Research", name: "Notes" },
+        { path: "Research/Notes", parent_path: "Research", name: "Pages" },
       ],
       pages: wikiPages(),
     },
@@ -46,7 +46,7 @@ async function openWiki(page: BrowserPage, locale: "en" | "zh-Hant", theme: "dar
   }
   const primaryNavigation = page.getByRole("navigation", { name: locale === "zh-Hant" ? "主要導覽" : "Primary navigation" });
   await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: locale === "zh-Hant" ? "開啟筆記" : "Open a note" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: locale === "zh-Hant" ? "開啟筆記" : "Open a page" })).toBeVisible();
   if ((page.viewportSize()?.width ?? 0) < 900) await page.waitForTimeout(250);
   return browserErrors;
 }
@@ -65,7 +65,7 @@ for(const locale of ["en","zh-Hant"] as const)for(const theme of ["light","dark"
  await expect(tree.getByTitle("Memory provenance",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toHaveCount(0);
  await expect(right).not.toContainText("Memory provenance");
- await tree.getByRole("button",{name:"Notes",exact:true}).click();
+ await tree.getByRole("button",{name:"Pages",exact:true}).click();
  await expect(tree.getByTitle("Local-first architecture",{exact:true})).toBeVisible();
  await expect(tree.getByTitle("Nash Su",{exact:true})).toHaveCount(0);
  await expect(tree.getByTitle("Grace Hopper",{exact:true})).toHaveCount(0);

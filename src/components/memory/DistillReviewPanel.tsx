@@ -15,6 +15,8 @@ import ReviewDialog, {
 } from "./ReviewDialog";
 import { RecentRevisionsSection } from "./ReviewHistory";
 import { relativeMs } from "./page/format";
+import { BasisUpdatesSection } from "./page/BasisUpdatesSection";
+import { BASIS_UPDATES_REVIEW_ID, useBasisPending } from "./page/useBasisActions";
 import {
   reviewSuppressKey,
   useSuppressedReviewItems,
@@ -487,22 +489,26 @@ export default function DistillReviewPanel({
     new Set(),
   );
   const didLoadInitialReview = useRef(false);
-  const queue = useReviewQueue(true, initialReviewItemId ? "note-context" : "default");
+  // "basis-updates" points at a group, not at one queue item.
+  const focusBasisUpdates = initialReviewItemId === BASIS_UPDATES_REVIEW_ID;
+  const focusedQueueItemId = focusBasisUpdates ? undefined : initialReviewItemId;
+  const queue = useReviewQueue(true, focusedQueueItemId ? "note-context" : "default");
+  const basisPending = useBasisPending();
   const focusedRequestRef = useRef<string | null>(null);
   const [focusedItemMissing, setFocusedItemMissing] = useState(false);
   useEffect(() => {
-    if (!initialReviewItemId || focusedRequestRef.current === initialReviewItemId || queue.isLoading) return;
+    if (!focusedQueueItemId || focusedRequestRef.current === focusedQueueItemId || queue.isLoading) return;
     const match = queue.items.find(item =>
-      isActionableReviewItem(item) && reviewItemId(item) === initialReviewItemId,
+      isActionableReviewItem(item) && reviewItemId(item) === focusedQueueItemId,
     );
     if (!match && queue.error) return;
-    focusedRequestRef.current = initialReviewItemId;
+    focusedRequestRef.current = focusedQueueItemId;
     setFocusedItemMissing(!match);
     if (match) {
       setFilter("all");
-      setOpenId(initialReviewItemId);
+      setOpenId(focusedQueueItemId);
     }
-  }, [initialReviewItemId, queue.isLoading, queue.error, queue.items]);
+  }, [focusedQueueItemId, queue.isLoading, queue.error, queue.items]);
   const { hiddenKeys, hiddenEntries, hide, restore, restoreMany } =
     useSuppressedReviewItems();
   const review = useMutation({
@@ -626,6 +632,7 @@ export default function DistillReviewPanel({
     !review.isPending &&
     !review.error &&
     decisionItems.length === 0 &&
+    basisPending.entries.length === 0 &&
     !stalePageWork;
 
   const refresh = () => {
@@ -975,6 +982,18 @@ export default function DistillReviewPanel({
               </div>
             )}
           </section>
+        )}
+
+        {/* Notes whose source note changed: a group of its own, under the
+         * same "pages" filter as the other note work. */}
+        {(filter === "all" || filter === "pages") && (
+          <BasisUpdatesSection
+            entries={basisPending.entries}
+            focusOnMount={focusBasisUpdates}
+            onPageClick={onPageClick}
+            headingStyle={sectionTitleStyle}
+            countStyle={sectionCountStyle}
+          />
         )}
 
         {/* Changelog, not category work — noise under a category filter. */}

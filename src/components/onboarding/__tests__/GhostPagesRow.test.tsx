@@ -5,7 +5,7 @@ import { GhostPagesRow } from "../GhostPagesRow";
 describe("GhostPagesRow", () => {
   it("renders the hint line", () => {
     render(<GhostPagesRow />);
-    expect(screen.getByText(/Notes will appear here/i)).toBeInTheDocument();
+    expect(screen.getByText(/Pages will appear here/i)).toBeInTheDocument();
   });
 
   it("renders exactly 3 ghost cards", () => {

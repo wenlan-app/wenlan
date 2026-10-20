@@ -21,7 +21,7 @@ describe("revisionWriterLabel", () => {
     ["distill", { en: "Wenlan compiled it from sources", "zh-Hans": "文澜从来源整理", "zh-Hant": "文瀾從來源整理" }],
     ["re_distill", { en: "Wenlan recompiled it", "zh-Hans": "文澜重新整理", "zh-Hant": "文瀾重新整理" }],
     ["page_growth", { en: "Wenlan added new sources", "zh-Hans": "文澜加入新来源", "zh-Hant": "文瀾加入新來源" }],
-    ["refinery_merge", { en: "Wenlan merged notes", "zh-Hans": "文澜合并笔记", "zh-Hant": "文瀾合併筆記" }],
+    ["refinery_merge", { en: "Wenlan merged pages", "zh-Hans": "文澜合并笔记", "zh-Hant": "文瀾合併筆記" }],
     ["revision_accept", { en: "You approved a revision", "zh-Hans": "你核准了修订", "zh-Hant": "你核准了修訂" }],
     ["citation_backfill", { en: "Wenlan filled in citations", "zh-Hans": "文澜补上引用", "zh-Hant": "文瀾補上引用" }],
   ];

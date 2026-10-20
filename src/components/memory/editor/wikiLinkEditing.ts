@@ -292,7 +292,7 @@ export function createWikiLinkEditing(
         const href = target.kind === "page" ? `#concept:${target.id}` : target.kind === "memory" ? `#memory:${target.id}` : `#citation:${target.citation.occurrence}`;
         decorations.push(Decoration.mark({
           tagName: "a",
-          class: `cm-wiki-page-link reference-link reference-link--${kind}${unverified ? " reference-link--unverified" : ""}`,
+          class: `cm-wiki-page-link reference-link reference-link--${kind}${target.kind === "citation" ? " cm-citation-link" : ""}${unverified ? " reference-link--unverified" : ""}`,
           attributes: {
             href, role: "link", tabindex: "0",
             "aria-label": unverified ? `${range.displayText}, ${typeLabel}, ${currentContext.labels?.unverified ?? "Unverified"}` : range.displayText,

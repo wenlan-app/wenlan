@@ -149,7 +149,7 @@ describe("ReviewDialog page-target revision card", () => {
       await within(dialog).findByRole("heading", { name: PAGE_TITLE }),
     ).toBeVisible();
     expect(within(dialog).queryByRole("heading", { name: /Neo4j/ })).toBeNull();
-    expect(within(dialog).getByText("Note revision")).toBeVisible();
+    expect(within(dialog).getByText("Page revision")).toBeVisible();
     expect(within(dialog).queryByText("Memory revision")).toBeNull();
   });
 
@@ -243,9 +243,9 @@ describe("ReviewDialog page-target revision card", () => {
   });
 
   it.each([
-    ["locked", "en", "Reason: this note is set to review every change"],
+    ["locked", "en", "Reason: this page is set to review every change"],
     ["background", "en", "Reason: Wenlan background upkeep"],
-    ["owned", "en", "Reason: the note has your edits"],
+    ["owned", "en", "Reason: the page has your edits"],
     ["locked", "zh-Hant", "原因：這篇筆記設為改動要審核"],
     ["background", "zh-Hans", "原因：文澜背景整理"],
     ["owned", "zh-Hant", "原因：筆記有你的修改"],
@@ -314,7 +314,7 @@ describe("ReviewDialog page-target revision card", () => {
       within(dialog).queryByRole("button", { name: "Open memory" }),
     ).toBeNull();
     const user = userEvent.setup();
-    await user.click(within(dialog).getByRole("button", { name: "Open note" }));
+    await user.click(within(dialog).getByRole("button", { name: "Open page" }));
     expect(onOpenPage).toHaveBeenCalledWith(PAGE_ID);
     expect(onOpenMemory).not.toHaveBeenCalled();
   });
@@ -349,5 +349,22 @@ describe("ReviewDialog page-target revision card", () => {
     );
     expect(getPageRevisions).not.toHaveBeenCalled();
     expect(getPage).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReviewDialog proposer label", () => {
+  it.each([
+    ["en", "proposed by Wenlan"],
+    ["zh-Hant", "由 Wenlan 提議"],
+    ["zh-Hans", "由 Wenlan 提议"],
+  ])("shows the app's own writer id as Wenlan (%s)", async (language, label) => {
+    await i18n.changeLanguage(language);
+    vi.mocked(getPage).mockResolvedValue({ id: PAGE_ID, title: PAGE_TITLE, summary: "", content: PAGE_BODY } as never);
+    vi.mocked(getPageRevisions).mockResolvedValue({ page_id: PAGE_ID, current_version: 1, entries: [] } as never);
+    const item: ReviewItem = { ...pageItem, agent: "wenlan-app" };
+    const dialog = await openDialog(item);
+    expect(within(dialog).getByText(label, { exact: true })).toBeVisible();
+    expect(within(dialog).queryByText(/wenlan-app/)).toBeNull();
+    await i18n.changeLanguage("en");
   });
 });

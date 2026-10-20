@@ -107,7 +107,7 @@ describe("ActivityNow", () => {
     }));
 
     expect(await screen.findByTestId("activity-now-failed")).toHaveTextContent(
-      "2 notes could not be updated.",
+      "2 pages could not be updated.",
     );
     expect(screen.queryByTestId("activity-now-idle")).toBeNull();
   });
@@ -132,10 +132,10 @@ describe("ActivityNow", () => {
   });
 
   it.each([
-    { language: "en", notes: "Notes", idle: "Idle" },
+    { language: "en", notes: "Pages", idle: "Idle" },
     { language: "zh-Hans", notes: "笔记", idle: "待机" },
     { language: "zh-Hant", notes: "筆記", idle: "待機" },
-  ])("localizes the always-visible Notes row in $language", async ({ language, notes, idle }) => {
+  ])("localizes the always-visible Pages row in $language", async ({ language, notes, idle }) => {
     await i18n.changeLanguage(language);
     renderNow(activity({
       assets: [{

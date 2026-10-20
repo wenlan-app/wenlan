@@ -24,6 +24,7 @@ import {
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { createSlashEditing, refreshSlashLabels, slashItems, type SlashLabels } from "./slashEditing";
 import type {
   MarkdownEditorHandle,
@@ -32,6 +33,7 @@ import type {
 } from "./MarkdownEditor";
 import { runMarkdownCommand } from "./markdownCommands";
 import { createWikiLinkEditing, setResolvedWikiLinkTargets, setEditorReferenceContext } from "./wikiLinkEditing";
+import { createLinkCompletion, refreshLinkCompletion, type LinkCompletionLabels, type LinkCompletionNote } from "./wikiLinkCompletion";
 import {
   setWritingCompositionActive,
   writingPresentation,
@@ -51,6 +53,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
 >(function CodeMirrorMarkdownEditor(props, ref) {
   const { t } = useTranslation();
   const slashLabelsRef = useRef<SlashLabels>({ label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels);
+  const linkLabelsRef = useRef<LinkCompletionLabels>(linkCompletionLabels(t));
+  const linkNotesRef = useRef<readonly LinkCompletionNote[]>(props.linkNotes ?? []);
   const mountRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const focusRequestedRef = useRef(false);
@@ -74,6 +78,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     onWikiPageActivate: props.onWikiPageActivate,
     onWikiLinkPreview: props.onWikiLinkPreview,
     onWikiLinkPreviewLeave: props.onWikiLinkPreviewLeave,
+    onLinkPick: props.onLinkPick,
   });
 
   const publishStatus = (view: EditorView): void => {
@@ -139,8 +144,14 @@ export const CodeMirrorMarkdownEditor = forwardRef<
 
   useLayoutEffect(() => {
     slashLabelsRef.current = { label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels;
-    viewRef.current?.dispatch({ effects: refreshSlashLabels.of(null) });
+    linkLabelsRef.current = linkCompletionLabels(t);
+    viewRef.current?.dispatch({ effects: [refreshSlashLabels.of(null), refreshLinkCompletion.of(null)] });
   }, [t]);
+
+  useLayoutEffect(() => {
+    linkNotesRef.current = props.linkNotes ?? [];
+    viewRef.current?.dispatch({ effects: refreshLinkCompletion.of(null) });
+  }, [props.linkNotes]);
 
   useLayoutEffect(() => {
     callbacksRef.current = {
@@ -156,6 +167,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       onWikiPageActivate: props.onWikiPageActivate,
       onWikiLinkPreview: props.onWikiLinkPreview,
       onWikiLinkPreviewLeave: props.onWikiLinkPreviewLeave,
+      onLinkPick: props.onLinkPick,
     };
   }, [
     props.onCancel,
@@ -169,6 +181,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     props.onWikiPageActivate,
     props.onWikiLinkPreview,
     props.onWikiLinkPreviewLeave,
+    props.onLinkPick,
     props.sessionId,
   ]);
 
@@ -204,7 +217,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 { tag: tags.heading, color: "var(--mem-accent-page)", fontWeight: "600" },
                 { tag: tags.strong, color: "var(--mem-text)", fontWeight: "700" },
                 { tag: tags.emphasis, color: "var(--mem-text-secondary)", fontStyle: "italic" },
-                { tag: [tags.link, tags.url], color: "var(--mem-accent-indigo)" },
+                { tag: [tags.link, tags.url], color: "var(--mem-link)" },
                 { tag: tags.monospace, color: "var(--mem-accent-warm)" },
                 { tag: [tags.comment, tags.meta], color: "var(--mem-text-tertiary)" },
                 { tag: [tags.atom, tags.keyword], color: "var(--mem-accent-sage)" },
@@ -243,11 +256,27 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 borderLeftColor: "var(--mem-accent-indigo)",
               },
               ".cm-wiki-page-link": {
-                color: "var(--mem-accent-indigo)",
+                color: "var(--mem-link)",
                 textDecoration: "underline",
-                textDecorationColor: "var(--mem-border)",
+                textDecorationColor: "color-mix(in srgb, currentColor 45%, transparent)",
                 textUnderlineOffset: "2px",
                 cursor: "pointer",
+              },
+              ".cm-wiki-page-link:hover": {
+                color: "var(--mem-link-hover)",
+              },
+              // Syntax highlighting wraps the marker text (the "1" of [1]) in
+              // its own link-coloured span; let the reference decide.
+              ".cm-wiki-page-link *": {
+                color: "inherit",
+              },
+              // Citation markers are footnotes, as in reading mode: grey
+              // until pointed at, so they never outrank the links.
+              ".cm-wiki-page-link.cm-citation-link": {
+                color: "var(--mem-text-tertiary)",
+              },
+              ".cm-wiki-page-link.cm-citation-link:not(.reference-link--unverified):is(:hover, :focus-visible)": {
+                color: "var(--mem-link)",
               },
               ".cm-wiki-page-link:focus-visible": {
                 outline: "2px solid var(--mem-accent-indigo)",
@@ -260,6 +289,12 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             }),
             writingPresentation(),
             createSlashEditing({ labels: () => slashLabelsRef.current, blocked: actionsBlocked }).extension,
+            props.linkNotes ? createLinkCompletion({
+              notes: () => linkNotesRef.current,
+              labels: () => linkLabelsRef.current,
+              blocked: actionsBlocked,
+              onPick: (note, asSource) => callbacksRef.current.onLinkPick?.(note, asSource),
+            }).extension : [],
             createWikiLinkEditing(props.wikiLinkTargets ?? new Map(), {
               onActivate: (pageId, anchor) => callbacksRef.current.onWikiPageActivate?.(pageId, anchor),
               onPreview: (pageId, anchor, keyboard) => callbacksRef.current.onWikiLinkPreview?.(pageId, anchor, keyboard),
@@ -419,4 +454,13 @@ function contentAttributes(props: Pick<MarkdownEditorProps, "ariaLabel" | "descr
     "aria-disabled": String(props.disabled),
     ...(props.describedBy ? { "aria-describedby": props.describedBy } : {}),
   });
+}
+
+function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
+  return {
+    label: t("linkCompletion.label"),
+    empty: t("linkCompletion.empty"),
+    useAsSource: t("noteBasis.useAsSource"),
+    useAsSourceHint: t("noteBasis.useAsSourceHint"),
+  };
 }

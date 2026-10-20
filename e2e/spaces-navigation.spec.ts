@@ -15,7 +15,7 @@ test("Wiki -> Spaces -> Space -> Page -> back and Space -> global Topics -> Topi
   // navigation, and the default Cards grid fits the fixture inside the viewport.
   const fixture = createSpacesNavigationFixture();
   const longNote = fixture.pages.find((item) => item.id === "page-architecture")!;
-  longNote.content = "# Fixture architecture\n\n" + Array.from({ length: 70 }, (_, index) => `Paragraph ${index}: a long note makes the current Wiki reading pane scrollable.\n\n`).join("");
+  longNote.content = "# Fixture architecture\n\n" + Array.from({ length: 70 }, (_, index) => `Paragraph ${index}: a long page makes the current Wiki reading pane scrollable.\n\n`).join("");
   await installTauriMock(page, { fixture, locale: "en", localStorage: { "wenlan-wiki-view-mode": "rows", "wenlan-spaces-view-mode": "rows" }, rawActions: [] });
   await page.goto("/");
 
@@ -37,13 +37,13 @@ test("Wiki -> Spaces -> Space -> Page -> back and Space -> global Topics -> Topi
   await expect(more).not.toHaveAttribute("aria-current");
 
   await primaryNavigation.getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
   await expect(primaryNavigation.getByRole("button", { name: "Wiki" })).toHaveAttribute("aria-current", "page");
   await openWikiNote(page, "Independent research");
   await expect(page.getByRole("heading", { level: 1, name: "Independent research" })).toBeVisible();
   await expect(primaryNavigation.getByRole("button", { name: "Wiki" })).toHaveAttribute("aria-current", "page");
   await page.getByRole("group", { name: "History navigation" }).getByRole("button", { name: "Back", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Open a note" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
 
   await openWikiNote(page, "Fixture architecture");
   const wikiContent = page.locator(".wiki-workspace-content");

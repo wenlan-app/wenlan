@@ -7,10 +7,10 @@ import type { Page as Note } from "../src/lib/tauri";
 import type { AppLocale } from "../src/i18n/locales";
 import { createSpacesNavigationFixture } from "./fixtures/spacesNavigation";
 
-const TITLE = "Reading note";
-const SECOND = "Another note";
+const TITLE = "Reading page";
+const SECOND = "Another page";
 const INTRO = `# ${TITLE}\n\n> This quoted passage stays readable.\n\n## Context\n\nA **bold phrase** and [guide](https://example.com/guide).\n\n`;
-const SOURCE = INTRO + Array.from({ length: 80 }, (_, i) => `Paragraph ${i + 1}: Keep the reading position when returning to this note.\n`).join("\n");
+const SOURCE = INTRO + Array.from({ length: 80 }, (_, i) => `Paragraph ${i + 1}: Keep the reading position when returning to this page.\n`).join("\n");
 function note(id: string, title: string, content: string): Note {
   return { id, title, content, summary: null, entity_id: null, domain: "Wenlan", source_memory_ids: [], version: 7, status: "active", creation_kind: "authored", review_status: "confirmed", created_at: "2026-10-07T12:00:00Z", last_compiled: "2026-10-07T12:00:00Z", last_modified: "2026-10-07T12:00:00Z" };
 }
@@ -53,7 +53,7 @@ async function clickQuotedWord(page: Page, editor: Locator) {
   await page.mouse.click(point.x, point.y);
 }
 
-test("existing note opens and hovers without focus, syntax reveal, or writes", async ({ page }) => {
+test("existing page opens and hovers without focus, syntax reveal, or writes", async ({ page }) => {
   const { editor, runtime, errors } = await start(page);
   await expectReading(editor);
   await editor.locator(".cm-writing-blockquote").hover();
@@ -105,7 +105,7 @@ test("tab return preserves reading scroll independently of the remembered caret"
   expect(errors.pageErrors).toEqual([]); expect(errors.consoleErrors).toEqual([]);
 });
 
-test("a new empty note still focuses its title for immediate input", async ({ page }) => {
+test("a new empty page still focuses its title for immediate input", async ({ page }) => {
   await start(page);
   await page.locator(".note-tab-create").click();
   const title = page.getByRole("textbox", { name: "Title", exact: true });

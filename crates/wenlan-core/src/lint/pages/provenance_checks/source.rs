@@ -276,7 +276,7 @@ fn source_ctes(scope_sql: &str) -> String {
     )
 }
 
-fn scoped_pages(filter: &ScopeFilter) -> (&'static str, libsql::params::Params) {
+pub(super) fn scoped_pages(filter: &ScopeFilter) -> (&'static str, libsql::params::Params) {
     match filter {
         ScopeFilter::Global => ("SELECT id FROM pages", libsql::params::Params::None),
         ScopeFilter::Registered(workspace) => (

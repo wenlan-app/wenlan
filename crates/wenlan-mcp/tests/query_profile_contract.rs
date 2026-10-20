@@ -144,7 +144,8 @@ async fn query_brief_projects_ready_and_related_context() {
             json!({"state":"ready", "space":"fixture",
             "brief":{"last_session_summary":"Current work", "active":[{"text":"Review evidence",
                 "gate":"Approval required"}], "backlog":[]},
-            "related_context":{"query":"evidence", "results":[expected_hit()]}}),
+            "related_context":{"query":"evidence", "results":[expected_hit()]},
+            "code_basis_pending":null}),
         );
         let standard = server(&mock, transport, ToolProfile::Standard)
             .brief_impl(brief_params())
@@ -179,7 +180,8 @@ async fn query_brief_preserves_empty_states() {
             .unwrap();
         assert_output(
             &result,
-            json!({"state":state, "space":space, "brief":null, "related_context":null}),
+            json!({"state":state, "space":space, "brief":null, "related_context":null,
+                "code_basis_pending":null}),
         );
     }
 }

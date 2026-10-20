@@ -47,7 +47,7 @@ test("canonical page and memory references preview automatically and navigate th
   await pageLink.hover();
   const pagePreview = page.getByRole("dialog", { name: "Fixture architecture" });
   await expect(pagePreview).toBeVisible();
-  await expect(pagePreview).toContainText("Note");
+  await expect(pagePreview).toContainText("Page");
   expect(controller.calls().some((call) => call.command === "get_page" && (call.args as { id?: string })?.id === PAGE_ID)).toBe(true);
   expect(controller.calls().some((call) => call.command === "get_page_explicit_browse" && (call.args as { id?: string })?.id === PAGE_ID)).toBe(false);
   await pagePreview.hover();

@@ -17,7 +17,7 @@ async function capture(page: Page, name: string) {
 }
 
 const cases = [
-  { locale: "en", theme: "light", more: "More", title: "Topics", search: "Filter topics", openAda: "Ada Lovelace", options: "Topic options", archived: "View archived topics", archivedTitle: "Archived topics", confirm: "Confirm topic", archive: "Archive", restore: "Restore", back: "Back", edit: "Edit note", noteConfirm: "Mark note confirmed" },
+  { locale: "en", theme: "light", more: "More", title: "Topics", search: "Filter topics", openAda: "Ada Lovelace", options: "Topic options", archived: "View archived topics", archivedTitle: "Archived topics", confirm: "Confirm topic", archive: "Archive", restore: "Restore", back: "Back", edit: "Edit page", noteConfirm: "Mark page confirmed" },
   { locale: "zh-Hant", theme: "dark", more: "更多", title: "主題", search: "篩選主題", openAda: "Ada Lovelace", options: "主題選項", archived: "查看已歸檔主題", archivedTitle: "已歸檔的主題", confirm: "確認主題", archive: "歸檔", restore: "復原", back: "返回", edit: "編輯筆記", noteConfirm: "標記筆記為已確認" },
 ] as const;
 
@@ -62,9 +62,9 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   await capture(page, `${copy.locale}-${copy.theme}-detail`);
 
   await page.getByRole("button", { name: editName("Wrote the first published algorithm"), exact: true }).click();
-  await page.getByRole("textbox", { name: tr.entityDetail.editNote, exact: true }).fill("A revised note about Ada");
+  await page.getByRole("textbox", { name: tr.entityDetail.editNote, exact: true }).fill("A revised page about Ada");
   await page.getByRole("textbox", { name: tr.entityDetail.editNote, exact: true }).press("Escape");
-  await expect(page.getByRole("button", { name: editName("A revised note about Ada"), exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: editName("A revised page about Ada"), exact: true })).toBeVisible();
   await info.getByRole("button", { name: tr.infoActions.keepTopic, exact: true }).click();
   await expect.poll(() => controller.calls().filter(call => call.command === "confirm_entity_cmd").length).toBe(1);
   menu = await openTopicMenu(page, copy.locale);
@@ -73,8 +73,8 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   await expect(menu.getByRole("menuitem", { name: copy.restore, exact: true })).toBeVisible();
   await expect(menu.getByRole("menuitemcheckbox")).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await expect(page.locator(".entity-obs-content")).toHaveText("A revised note about Ada");
-  await expect(page.getByRole("button", { name: editName("A revised note about Ada"), exact: true })).toHaveCount(0);
+  await expect(page.locator(".entity-obs-content")).toHaveText("A revised page about Ada");
+  await expect(page.getByRole("button", { name: editName("A revised page about Ada"), exact: true })).toHaveCount(0);
   await expect(info.getByRole("button", { name: tr.infoActions.releaseTopic, exact: true })).toBeDisabled();
   await page.getByRole("group", { name: /History navigation|歷史導覽|历史导航/ }).getByRole("button", { name: copy.back, exact: true }).click();
   await expect(overview.getByRole("button", { name: copy.openAda, exact: true })).toHaveCount(0);
@@ -89,7 +89,7 @@ for (const copy of cases) test(`${copy.locale} topics browse before managing`, a
   menu = await openTopicMenu(page, copy.locale);
   await expect(menu.getByRole("menuitem", { name: copy.archive, exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("button", { name: editName("A revised note about Ada"), exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: editName("A revised page about Ada"), exact: true })).toBeEnabled();
   await page.getByRole("group", { name: /History navigation|歷史導覽|历史导航/ }).getByRole("button", { name: copy.back, exact: true }).click();
   await expect(overview.getByRole("button", { name: copy.openAda, exact: true })).toBeVisible();
   expect(controller.calls().filter(call => call.command === "archive_entities_cmd").map(call => call.args)).toEqual([{ req: { ids: ["entity-ada"], dry_run: false } }]);

@@ -37,6 +37,13 @@ export function revisionWriterLabel(
   return t("revisionLabel.writer.other");
 }
 
+/** What a note is built on, e.g. "3 source memories · 2 notes". A zero
+ * memory count is left out rather than shown as "0 source memories". */
+export function basisCountLabel(t: TFunction, sourceCount: number, noteCount: number): string {
+  const notes = t("noteBasis.sourceNotesCount", { count: noteCount });
+  return sourceCount > 0 ? `${t("noteBasis.sourceMemoriesCount", { count: sourceCount })} · ${notes}` : notes;
+}
+
 /** One-line summary of what a revision changed. Entries with numeric deltas
  * are localized; older entries only have the daemon's English `delta_summary`,
  * which is shown for an English UI and left out otherwise. */

@@ -361,6 +361,11 @@ html[data-theme="dark"] {
   --mem-accent-amber: #C7AA5C;
   --mem-accent-indigo: #A9AEF2;
   --mem-accent-page: #8FB3EA;
+  /* Links inside reading text. Quieter than --mem-accent-indigo, which stays
+     bright for buttons, chips and focus rings: a light, saturated periwinkle
+     beside cream body text glows. #9095D8 keeps 6.1:1 on --mem-bg. */
+  --mem-link: #9095D8;
+  --mem-link-hover: #A9AEF2;
   --mem-page-icon: #C19A7B;
   --mem-page-icon-hover: #D1AF95;
   --mem-accent-sage: #9DA990;
@@ -481,6 +486,8 @@ html[data-theme="light"] {
   --mem-accent-amber: #B5842E;
   --mem-accent-indigo: #5E58C8;
   --mem-accent-page: #5E58C8;
+  --mem-link: #5E58C8;
+  --mem-link-hover: #524CB8;
   --mem-page-icon: #B46A3A;
   --mem-page-icon-hover: #9F5C32;
   --mem-accent-sage: #6F8F76;
@@ -3778,10 +3785,34 @@ p.entity-error {
   line-height: 1.6;
 }
 
-/* Internal page references read as links, with a quiet underline. */
-.content-renderer a.content-page-link { border-bottom: 1px solid color-mix(in srgb, var(--mem-accent-indigo) 45%, transparent); border-radius: 2px; padding: 0 2px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
-.content-renderer a.content-page-link:hover { background: var(--mem-indigo-bg); }
-.content-renderer a.content-page-link:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
+/* Every link in reading text wears the same quiet underline, so "this is a
+   link" does not depend on colour alone and the colour can stay calm. */
+.content-renderer a,
+.source-document-body a {
+  color: var(--mem-link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--mem-link) 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.content-renderer a:hover,
+.source-document-body a:hover {
+  color: var(--mem-link-hover);
+  text-decoration-color: currentColor;
+}
+/* Links that leave the app for the browser say so; references inside the
+   wiki use "#concept:" and "#memory:" hrefs and keep their type icon. The
+   arrow is decoration, so its alt text is empty. */
+.content-renderer a[href^="http"]::after,
+.source-document-body a[href^="http"]::after {
+  content: "\2197";
+  content: "\2197" / "";
+  display: inline-block;
+  margin-left: 0.15em;
+  font-size: 0.8em;
+  line-height: 1;
+  text-decoration: none;
+}
 
 /* Sidebar Activity button carries the global background state. The pulse fades gently only while
    steeping work can run, so the one moving thing on the page always means

@@ -26,7 +26,7 @@ async function setup(page: Page, empty = false, dark = false) {
   const errors = collectBrowserErrors(page);
   const fixture = createSpacesNavigationFixture();
   const history = fixture.pages.find(item => item.id === "page-history")!;
-  history.content = "# History semantics\n\n" + Array.from({ length: 70 }, (_, i) => `Paragraph ${i}: A longer note for returning to the same reading position.\n\n`).join("");
+  history.content = "# History semantics\n\n" + Array.from({ length: 70 }, (_, i) => `Paragraph ${i}: A longer page for returning to the same reading position.\n\n`).join("");
   await installTauriMock(page, { fixture, locale: "zh-Hant", rawActions: [], localStorage: { "wenlan-theme": dark ? "dark" : "light" } });
   let files = empty ? [] : [...examples];
   const documents = new Map(examples.map(f => [f.source_id, `這是 ${f.title} 的已保存內容。`]));
@@ -214,7 +214,7 @@ test("a concurrent first save preserves the winning excerpt until explicit repla
   expect(state.errors.consoleErrors).toEqual([]);
 });
 
-test("navigation destinations keep one primary workspace and restore note context", async ({ page }) => {
+test("navigation destinations keep one primary workspace and restore page context", async ({ page }) => {
   const state = await setup(page);
   const sidebar = page.locator(".notes-workspace-sidebar");
   await expect(sidebar).toHaveCSS("width", "240px");
@@ -295,17 +295,17 @@ test("Sources stays pinned while occasional people and topics stay in More on a 
 });
 
 
-test("the Notes entry reopens a newly saved draft after browsing sources", async ({ page }) => {
+test("the Pages entry reopens a newly saved draft after browsing sources", async ({ page }) => {
   const state = await setup(page);
   await page.getByRole("button", { name: "Wiki", exact: true }).click();
   await page.locator(".note-tab-create").click();
-  await page.locator(".page-draft-title").fill("A note to return to");
+  await page.locator(".page-draft-title").fill("A page to return to");
   await page.locator(".page-draft-content").fill("Keep this draft when I look at sources.");
   // Leave before the debounce: navigation must flush and remember the assigned id.
   await openPrimaryDestination(page, "來源", "更多");
   await expect(page.getByRole("heading", { name: "來源", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Wiki", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "A note to return to", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A page to return to", exact: true })).toBeVisible();
   await expect(page.locator(".cm-content[contenteditable=true]")).toContainText("Keep this draft when I look at sources.");
   expect(state.errors.pageErrors).toEqual([]); expect(state.errors.consoleErrors).toEqual([]);
 });

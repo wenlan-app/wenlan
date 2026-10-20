@@ -5,7 +5,7 @@ import { createReviewDecisionFixture } from "./fixtures/reviewDecisions";
 import { openWikiNote } from "./helpers/wikiWorkspace";
 
 const dialog = (page: Page) => page.getByRole("dialog", { name: "Search", exact: true });
-const input = (page: Page) => dialog(page).getByPlaceholder("Search notes, memories, sources...");
+const input = (page: Page) => dialog(page).getByPlaceholder("Search pages, memories, sources...");
 async function emitSearch(page: Page) {
   await page.evaluate(async () => { await window.__TAURI_INTERNALS__?.invoke("plugin:event|emit", { event: "toggle-spotlight", payload: null }); });
   await expect(input(page)).toBeFocused();
@@ -79,7 +79,7 @@ test("icon sidebar keeps an accessible Search entry",async({page})=>{
 
 test("search keeps the same live editor, then opens the selected page through its guarded route", async ({ page }) => {
   const {runtime,errors}=await start(page);await openWikiNote(page,"Fixture architecture");
-  const editor=page.getByRole("textbox",{name:"Note editor",exact:true});
+  const editor=page.getByRole("textbox",{name:"Page editor",exact:true});
   await editor.evaluate(el=>{el.setAttribute("data-search-session","same");const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});
   await page.keyboard.insertText("\nText retained through search.");await emitSearch(page);await input(page).fill("fixture");
   await expect(dialog(page).getByRole("button",{name:/Why fixtures stay deterministic/})).toBeVisible();
@@ -94,7 +94,7 @@ test("search keeps the same live editor, then opens the selected page through it
 
 test("failed flush keeps unsaved content and cancellation returns to that editor", async ({ page }) => {
   const {runtime}=await start(page);await openWikiNote(page,"Fixture architecture");
-  const editor=page.getByRole("textbox",{name:"Note editor",exact:true});
+  const editor=page.getByRole("textbox",{name:"Page editor",exact:true});
   await editor.evaluate(el=>{el.setAttribute("data-search-session","failed");const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});
   runtime.failNext("update_page","save refused");await page.keyboard.insertText("\nKeep unsaved search edit.");await emitSearch(page);await input(page).fill("fixture");
   await expect(page.locator(".page-detail [role=alert]")).toBeAttached();
@@ -121,14 +121,14 @@ test("modal shows loading and failure states plus typed groups and source naviga
 });
 
 
-test("Settings keeps keyboard search and slash stays inside the note editor",async({page})=>{
+test("Settings keeps keyboard search and slash stays inside the page editor",async({page})=>{
  await start(page);await page.locator(".identity-menu-trigger").click();
  await page.getByRole("menuitem",{name:"Settings",exact:true}).click();
  const settings=page.locator(".settings-sidebar"),trigger=settings.getByRole("button",{name:"Back to home",exact:true});
  await expect(trigger).toBeVisible();await trigger.focus();await emitSearch(page);await expect(input(page)).toBeFocused();
  await page.keyboard.press("Escape");await expect(trigger).toBeFocused();await expect(page.locator(".memory-workspace-header input")).toHaveCount(0);
  await page.locator(".workspace-history-navigation").getByRole("button",{name:"Back",exact:true}).click();
- await openWikiNote(page,"Fixture architecture");const editor=page.getByRole("textbox",{name:"Note editor",exact:true});
+ await openWikiNote(page,"Fixture architecture");const editor=page.getByRole("textbox",{name:"Page editor",exact:true});
  await editor.evaluate(el=>{const v=(el as any).cmTile.root.view;v.dispatch({selection:{anchor:v.state.doc.length}});v.focus();});
  await page.keyboard.insertText("\n/");await expect(dialog(page)).toHaveCount(0);expect(await source(editor)).toContain("\n/");
 });
