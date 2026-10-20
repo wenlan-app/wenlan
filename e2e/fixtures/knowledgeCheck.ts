@@ -35,7 +35,7 @@ export function knowledgeEntries(): RepairPlanEntry[] {
 }
 export function knowledgeLibrary() {
   const base = createSpacesNavigationFixture();
-  const titles = ['Weekend plan', 'Packing list', 'Rainy-day route', 'Reading pages', 'Design decisions', 'City walk'];
+  const titles = ['Weekend plan', 'Packing list', 'Rainy-day route', 'Reading notes', 'Design decisions', 'City walk'];
   return { ...base, pages: base.pages.map((p, i) => ({ ...p, title: titles[i] ?? p.title, content: '# ' + (titles[i] ?? p.title) + '\n\nA fictional page for Knowledge Check verification.' })), refinements: [{ id: 'knowledge-review-1', action: 'lint_repair_review' as const, source_ids: ['page-cjk'], payload: { action: 'lint_repair_review' as const, check_id: 'pages.duplicate_active_titles', occurrence_digest: digest(103), owner_binding_digest: digest(105), issue: 'Two pages have the same title.', choices: [], suggested_research_queries: [] }, confidence: 1, created_at: '2026-10-09T00:00:00Z' }], distillReview: { ...base.distillReview, pending: [], stale_pages: [], orphan_topics: [] } };
 }
 export async function installKnowledgeProtocol(page: Page, mode: 'normal' | 'incomplete' | 'unknown' | 'verify-failed' | 'empty' | 'unstable' = 'normal') {
