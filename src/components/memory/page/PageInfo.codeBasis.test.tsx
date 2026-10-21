@@ -75,7 +75,12 @@ describe("PageInfo code section", () => {
       "src/gone.rs:1\u20132Not found",
       "src/shifted.rs:40\u201350Moved",
     ]);
-    expect(within(rows[0]).getByText("src/parser.rs:10\u201324")).toHaveClass("note-info-code-path");
+    const path = rows[0].querySelector(".note-info-code-path");
+    expect(path).toHaveTextContent("src/parser.rs:10\u201324");
+    // The range is set in the UI face so the en dash does not read as a hyphen; the path stays mono.
+    expect(path?.querySelector(".note-info-code-range")).toHaveTextContent(":10\u201324");
+    expect(path?.firstChild?.textContent).toBe("src/parser.rs");
+    expect(rows[1].querySelector(".note-info-code-range")).toBeNull();
     // After the pages section; there is no way to add code from here.
     const pages = screen.getByRole("region", { name: "Pages this page relies on" });
     expect(pages.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

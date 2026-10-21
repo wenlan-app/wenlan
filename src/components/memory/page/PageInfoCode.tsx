@@ -16,6 +16,10 @@ function CodeRow({ row, onUnmark }: { row: CodeBasisRef; onUnmark?: (row: CodeBa
   const { copied, copy } = useCopyLocation();
   // Shown as a range, copied as `path:line_start`: the place an editor opens.
   const location = codeBasisLocation(row);
+  const label = codeBasisLocationLabel(row);
+  // The label is `path:20–30`: the path stays mono, the range after it is set
+  // in the UI face so the en dash does not read as a hyphen.
+  const rangeAt = row.line_end > row.line_start ? label.lastIndexOf(`:${row.line_start}`) : -1;
   return <li className="note-info-notes__row">
     <button
       type="button"
@@ -24,7 +28,10 @@ function CodeRow({ row, onUnmark }: { row: CodeBasisRef; onUnmark?: (row: CodeBa
       onClick={() => { void copy(location); }}
     >
       <span className="note-info-link-copy">
-        <span className="note-info-link-label note-info-code-path">{codeBasisLocationLabel(row)}</span>
+        <span className="note-info-link-label note-info-code-path">{rangeAt < 0 ? label : <>
+          {label.slice(0, rangeAt)}
+          <span className="note-info-code-range">{label.slice(rangeAt)}</span>
+        </>}</span>
       </span>
     </button>
     <span className="note-info-link-status" role={copied ? "status" : undefined}>

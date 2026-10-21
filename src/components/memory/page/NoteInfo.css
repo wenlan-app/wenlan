@@ -380,3 +380,5 @@
   font: 12.5px/1.45 var(--mem-font-mono);
   word-break: break-all;
 }
+/* The ":20–30" range is set in the UI face: the mono face draws an en dash like a hyphen. */
+.note-info-code-range { font-family: var(--mem-font-body); }

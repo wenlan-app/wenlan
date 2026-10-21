@@ -40,15 +40,21 @@ function Code({ lines, firstLine, testId, marks, mark }: {
   marks?: readonly boolean[];
   mark: "removed" | "added";
 }) {
-  return <pre className="code-basis__code" data-testid={testId} tabIndex={0}>
-    {lines.map((line, index) => <span
-      key={index}
-      className={marks?.[index] ? `code-basis__line code-basis__line--${mark}` : "code-basis__line"}
-      data-change={marks?.[index] ? mark : undefined}
-    >
-      <span className="code-basis__number" aria-hidden="true">{firstLine + index}</span>
-      <span className="code-basis__text">{line}</span>
-    </span>)}
+  // One focusable scroller per box: the sideways one. Arrow keys on it scroll
+  // sideways and, past its edge, the box up and down.
+  return <pre className="code-basis__code" data-testid={testId}>
+    <div className="code-basis__scroll" tabIndex={0}>
+      <div className="code-basis__lines">
+        {lines.map((line, index) => <span
+          key={index}
+          className={marks?.[index] ? `code-basis__line code-basis__line--${mark}` : "code-basis__line"}
+          data-change={marks?.[index] ? mark : undefined}
+        >
+          <span className="code-basis__number" aria-hidden="true">{firstLine + index}</span>
+          <span className="code-basis__text">{line}</span>
+        </span>)}
+      </div>
+    </div>
   </pre>;
 }
 
@@ -155,7 +161,7 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
           }
           if (event.key !== "Tab") return;
           const controls = Array.from(
-            panelRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), pre[tabindex]") ?? [],
+            panelRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), .code-basis__scroll[tabindex]") ?? [],
           );
           const first = controls[0];
           const last = controls[controls.length - 1];

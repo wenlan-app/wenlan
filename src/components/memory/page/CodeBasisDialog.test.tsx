@@ -61,6 +61,11 @@ describe("CodeBasisDialog", () => {
     expect(getPageCodeBasisCited).toHaveBeenCalledWith("page-1", expect.objectContaining({ line_start: 10, line_end: 12 }));
     expect(readGitBlobLines).toHaveBeenCalledWith("/repo", BLOB, 10, 12);
     expect(readCodeLines).toHaveBeenCalledWith("/repo/src/parser.rs", 10, 12);
+    // The rows sit in one sideways scroller, which is the box's only focus target.
+    for (const box of [before, after]) {
+      expect(box.querySelectorAll("[tabindex]")).toHaveLength(1);
+      expect(box.querySelector(".code-basis__scroll > .code-basis__lines")?.children).toHaveLength(3);
+    }
   });
 
   it("tints the lines that exist on one side only and leaves equal lines plain", async () => {

@@ -228,6 +228,70 @@ for (const locale of LOCALES) {
       expect(errors.consoleErrors).toEqual([]);
     });
 
+    test("keeps the tint to the far edge when scrolled, the box as tall as its lines, and focus out of the layout", async ({ page }) => {
+      const errors = collectBrowserErrors(page);
+      const long = `    let value = some_function_with_a_very_long_name(${Array.from({ length: 12 }, (_, i) => `argument_${i}`).join(", ")});`;
+      const lines = (call: string, tail = "") => `${HEAD}\nfn parse() {\n    ${call}();\n    same();\n${long}${tail}\n}\n`;
+      await install(page, locale, {
+        codeBasis: {
+          rows: [row("page-architecture", { lineEnd: 14 })],
+          files: { [`${REPO}/${FILE}`]: lines("new_call", " // added") },
+          blobs: { [CITED_BLOB]: lines("old_call") },
+        },
+      });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openNote(page);
+      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      const dialog = page.getByRole("dialog");
+      for (const id of ["code-basis-before", "code-basis-after"]) {
+        const box = dialog.getByTestId(id);
+        await expect(box.locator(".code-basis__line")).toHaveCount(5);
+        // Every row, tinted or not, is as wide as the longest line, not as wide as the box.
+        const widths = await box.locator(".code-basis__line").evaluateAll((rows) => rows.map((row) => Math.round(row.getBoundingClientRect().width)));
+        const scroller = box.locator(".code-basis__scroll");
+        const scrollWidth = await scroller.evaluate((el) => el.scrollWidth);
+        const clientWidth = await scroller.evaluate((el) => el.clientWidth);
+        expect(scrollWidth).toBeGreaterThan(clientWidth);
+        expect(new Set(widths)).toEqual(new Set([scrollWidth]));
+        // Scrolled sideways, the tint still reaches the box's right edge.
+        await scroller.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+        const tinted = box.locator("[data-change]").first();
+        const rowRight = await tinted.evaluate((el) => el.getBoundingClientRect().right);
+        const boxRight = await scroller.evaluate((el) => el.getBoundingClientRect().right);
+        expect(rowRight).toBeGreaterThanOrEqual(boxRight - 1);
+        // Five lines fit: the box does not scroll up and down.
+        expect(await box.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+        // One focusable scroller per box.
+        await expect(box.locator("[tabindex]")).toHaveCount(1);
+      }
+      // Focusing a box changes neither its size nor the dialog's position.
+      const after = dialog.getByTestId("code-basis-after");
+      const measure = async () => ({ panel: await dialog.boundingBox(), box: await after.boundingBox(), top: await dialog.evaluate((el) => el.scrollTop) });
+      const resting = await measure();
+      await after.locator(".code-basis__text").nth(1).click();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await expect(after.locator(".code-basis__scroll")).toBeFocused();
+      expect(await measure()).toEqual(resting);
+      expect(errors.pageErrors).toEqual([]);
+    });
+
+    test("sizes the one column to its lines when there is nothing to compare", async ({ page }) => {
+      await install(page, locale, {
+        codeBasis: { rows: [row("page-architecture", { citedBlob: null })], files: { [`${REPO}/${FILE}`]: NOW } },
+      });
+      await openNote(page);
+      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      const box = page.getByRole("dialog").getByTestId("code-basis-after");
+      await expect(box.locator(".code-basis__line")).toHaveCount(4);
+      const { box: boxHeight, lines } = await box.evaluate((el) => ({
+        box: el.getBoundingClientRect().height,
+        lines: el.querySelector(".code-basis__lines")!.getBoundingClientRect().height,
+      }));
+      // The frame and padding around the lines, and nothing more.
+      expect(boxHeight - lines).toBeLessThan(30);
+    });
+
     test("says there is nothing to compare when the lines were never committed, and the file cannot be read when that is so", async ({ page }) => {
       const errors = collectBrowserErrors(page);
       const controller = await install(page, locale, {
@@ -275,6 +339,11 @@ for (const locale of LOCALES) {
       await expect(group.getByRole("heading", { name: t("codeBasis.group"), exact: true })).toBeVisible();
       await expect(group.getByRole("listitem")).toHaveCount(2);
       await expect(group.getByText(`${FILE}:10\u201313`, { exact: true })).toBeVisible();
+      // The range is set in the UI face, so its en dash does not look like a hyphen; the path stays mono.
+      const range = group.locator(".note-info-code-range").first();
+      await expect(range).toHaveText(":10\u201313");
+      expect(await range.evaluate((el) => getComputedStyle(el).fontFamily)).toContain("Instrument Sans");
+      expect(await group.locator(".note-info-code-path").first().evaluate((el) => getComputedStyle(el).fontFamily)).toContain("JetBrains Mono");
       await expect(group.getByText("src/lex.rs:3", { exact: true })).toBeVisible();
       await expect(group.getByText(t("codeBasis.state.pending"), { exact: true })).toBeVisible();
       await expect(group.getByText(t("codeBasis.state.ok"), { exact: true })).toBeVisible();
