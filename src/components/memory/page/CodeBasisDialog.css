@@ -30,10 +30,12 @@
    status backgrounds read as grey for "added", so these are the status hues at
    a stronger alpha; a 3px marker in the status text colour (see the rows) keeps
    the mark from resting on the fill alone. Body text over either stays above
-   7:1 in both themes. */
+   7:1 in both themes. In the dark theme the sage success hue blended to a
+   blue grey on the raised surface, so the added tint there is a plainer
+   green. */
 .code-basis-panel {
   --code-basis-removed-bg: rgba(205, 92, 74, 0.22);
-  --code-basis-added-bg: rgba(157, 169, 144, 0.26);
+  --code-basis-added-bg: rgba(118, 184, 110, 0.24);
 }
 html[data-theme="light"] .code-basis-panel {
   --code-basis-removed-bg: rgba(164, 68, 47, 0.22);
@@ -65,6 +67,9 @@ html[data-theme="light"] .code-basis-panel {
 .code-basis__scroll {
   overflow-x: auto;
   overflow-y: hidden;
+  /* Classic (non overlay) scrollbars take space; reserve it on both sides so
+     the two boxes stay the same height when only one of them scrolls. */
+  scrollbar-gutter: stable;
   border-radius: 6px;
   outline: none;
   scroll-margin: 0;
