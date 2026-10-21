@@ -1919,13 +1919,6 @@ async fn handle_refresh_page_inner(
             .unwrap_or(existing.version);
         return Err(page_moved_conflict(&id, current_version));
     }
-    // A write that changed nothing wrote no transaction for the code bases to
-    // ride on; the lines the agent says it relies on are recorded on their own.
-    if result.outcome == WriteOutcome::Unchanged && !prepared_code_basis.is_empty() {
-        db.upsert_page_code_basis(&id, &prepared_code_basis, proposer.unwrap_or("unknown"))
-            .await
-            .map_err(crate::code_basis_routes::code_basis_error)?;
-    }
     // Metadata follows the canonical result, never a rejected/staged candidate.
     if matches!(
         result.outcome,

@@ -1657,3 +1657,108 @@ async fn a_merge_carries_the_blob_id_to_the_survivor() {
         expected
     );
 }
+
+async fn version_of(db: &MemoryDB, page_id: &str) -> i64 {
+    db.get_page(page_id).await.unwrap().unwrap().version
+}
+
+/// A write that changed nothing records the lines it relies on in the same
+/// transaction as its note marks, against the version it compared itself to.
+#[tokio::test]
+async fn an_unchanged_write_records_its_code_basis_with_its_marks() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", SPACE).await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let at = version_of(&db, "n1").await;
+
+    db.mark_page_bases("n1", at, &[("a".into(), 1)], &prepared, "agent", None)
+        .await
+        .unwrap();
+
+    let row = only(&db, "n1").await;
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+    assert_eq!(db.list_page_basis("n1").await.unwrap().len(), 1);
+}
+
+/// An edit that landed after the unchanged write compared itself refuses the
+/// code basis exactly as it refuses the marks.
+#[tokio::test]
+async fn an_unchanged_write_records_no_code_basis_when_the_note_changed_since() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let compared = version_of(&db, "n1").await;
+    db.conn
+        .lock()
+        .await
+        .execute("UPDATE pages SET version = version + 1 WHERE id = 'n1'", ())
+        .await
+        .unwrap();
+
+    let error = db
+        .mark_page_bases("n1", compared, &[], &prepared, "agent", None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::BasisError::CiterMovedOn { current } if current == compared + 1),
+        "{error:?}"
+    );
+    assert!(rows(&db, "n1").await.is_empty());
+}
+
+/// One transaction: a refused note mark leaves no code basis behind.
+#[tokio::test]
+async fn a_refused_mark_on_an_unchanged_write_records_no_code_basis() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let at = version_of(&db, "n1").await;
+
+    let error = db
+        .mark_page_bases("n1", at, &[("missing".into(), 1)], &prepared, "agent", None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::BasisError::BasisNotFound),
+        "{error:?}"
+    );
+    assert!(rows(&db, "n1").await.is_empty());
+}
+
+/// A Space-locked agent's unchanged write records no code basis on a note that
+/// left its Space.
+#[tokio::test]
+async fn an_unchanged_write_records_no_code_basis_on_a_note_outside_the_space() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let at = version_of(&db, "n1").await;
+    let elsewhere = ReadScope::Space("elsewhere".into());
+
+    let error = db
+        .mark_page_bases("n1", at, &[], &prepared, "agent", Some(&elsewhere))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::BasisError::CiterNotFound),
+        "{error:?}"
+    );
+    assert!(rows(&db, "n1").await.is_empty());
+}
