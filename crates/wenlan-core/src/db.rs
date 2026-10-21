@@ -108,8 +108,8 @@ pub use okf_concepts::OkfConceptRecord;
 pub use page_basis::{
     BasisContext, BasisDiff, BasisDiffOutcome, BasisEdit, BasisError, BasisPendingCiter,
     BasisPendingGroup, BasisSnapshotEntry, BasisUnavailableReason, BasisWrite, BasisWriteOutcome,
-    PageBasisEntry, BASIS_STATE_ARCHIVED, BASIS_STATE_DELETED, BASIS_STATE_OK, BASIS_STATE_PENDING,
-    BASIS_STATE_UNAVAILABLE,
+    PageBasisEntry, StagedBasisMark, BASIS_STATE_ARCHIVED, BASIS_STATE_DELETED, BASIS_STATE_OK,
+    BASIS_STATE_PENDING, BASIS_STATE_UNAVAILABLE,
 };
 pub use presence_review::ReviewOutcome;
 pub use truth_exposure::{
@@ -51256,6 +51256,48 @@ impl MemoryDB {
         workspace: Option<&str>,
         citations_json: Option<&str>,
     ) -> Result<(), WenlanError> {
+        self.insert_page_with_basis(
+            id,
+            title,
+            summary,
+            content,
+            entity_id,
+            space,
+            source_memory_ids,
+            now,
+            creation_kind,
+            review_status,
+            workspace,
+            citations_json,
+            &[],
+            "",
+        )
+        .await
+    }
+
+    /// [`Self::insert_page_with_kind`] plus the notes the new page relies on
+    /// (R7 marks, `(basis_page_id, read_version)`, added by `basis_actor`).
+    /// The marks land in the same transaction as the page row: a refused mark
+    /// rolls the whole create back, so no page exists that silently lost the
+    /// bases its writer named.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn insert_page_with_basis(
+        &self,
+        id: &str,
+        title: &str,
+        summary: Option<&str>,
+        content: &str,
+        entity_id: Option<&str>,
+        space: Option<&str>,
+        source_memory_ids: &[&str],
+        now: &str,
+        creation_kind: &str,
+        review_status: &str,
+        workspace: Option<&str>,
+        citations_json: Option<&str>,
+        basis_marks: &[(String, i64)],
+        basis_actor: &str,
+    ) -> Result<(), WenlanError> {
         let inserted = self
             .insert_page_with_kind_inner(
                 id,
@@ -51271,6 +51313,8 @@ impl MemoryDB {
                 workspace,
                 citations_json,
                 None,
+                basis_marks,
+                basis_actor,
             )
             .await?;
         debug_assert!(inserted, "unguarded Page insert cannot miss its guard");
@@ -51308,6 +51352,8 @@ impl MemoryDB {
             None,
             None,
             Some((queue_source_id, file_path, expected_content_hash)),
+            &[],
+            "",
         )
         .await
     }
@@ -51328,6 +51374,8 @@ impl MemoryDB {
         workspace: Option<&str>,
         citations_json: Option<&str>,
         document_guard: Option<(&str, &str, Option<&str>)>,
+        basis_marks: &[(String, i64)],
+        basis_actor: &str,
     ) -> Result<bool, WenlanError> {
         // M1 honest columns: this is the single storage-layer wrapper every
         // page-insert path funnels through, so both scope columns leave here
@@ -51481,6 +51529,23 @@ impl MemoryDB {
         {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(WenlanError::VectorDb(format!("insert_page history: {e}")));
+        }
+
+        // The notes the new page relies on, in the same transaction: a refused
+        // mark leaves no page behind.
+        for (basis_page_id, read_version) in basis_marks {
+            if let Err(error) = page_basis::mark_page_basis_on_conn(
+                &conn,
+                id,
+                basis_page_id,
+                *read_version,
+                basis_actor,
+            )
+            .await
+            {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(error.into());
+            }
         }
 
         commit_or_rollback(&conn)

@@ -16,7 +16,7 @@ import ReviewDialog, {
 import { RecentRevisionsSection } from "./ReviewHistory";
 import { relativeMs } from "./page/format";
 import { BasisUpdatesSection } from "./page/BasisUpdatesSection";
-import { BASIS_UPDATES_REVIEW_ID, useBasisPending } from "./page/useBasisActions";
+import { BASIS_PENDING_QUERY_KEY, BASIS_UPDATES_REVIEW_ID, useBasisPending } from "./page/useBasisActions";
 import {
   reviewSuppressKey,
   useSuppressedReviewItems,
@@ -640,6 +640,7 @@ export default function DistillReviewPanel({
     queryClient.invalidateQueries({ queryKey: ["pending-revisions"] });
     queryClient.invalidateQueries({ queryKey: ["refinement-proposals"] });
     queryClient.invalidateQueries({ queryKey: ["unconfirmed-captures"] });
+    queryClient.invalidateQueries({ queryKey: BASIS_PENDING_QUERY_KEY });
   };
 
   return (

@@ -7,6 +7,15 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Error-code prefix for a page revision card whose accept was refused because
+/// a basis it carries can no longer be recorded (the basis note was archived,
+/// deleted, its id reused, or it moved to another Space after the card was
+/// proposed). Accepting the card would have to land the prose without the
+/// basis the agent said it relied on, so nothing is written and the card is
+/// discarded; the human's page is unchanged. The error text is
+/// `page_revision_basis_refused: <plain-language reason>`.
+pub const PAGE_REVISION_BASIS_REFUSED: &str = "page_revision_basis_refused";
+
 /// One basis of a note, in any state (`ok`, `pending`, `archived`, `deleted`,
 /// `unavailable`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

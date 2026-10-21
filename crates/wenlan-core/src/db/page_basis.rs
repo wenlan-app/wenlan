@@ -112,8 +112,23 @@ pub enum BasisError {
     MovedOn { current: i64 },
     #[error("this note does not rely on that note")]
     NotABasis,
+    /// The note relying on the basis was edited after the write checked it.
+    #[error("the note changed: it is now at version {current}")]
+    CiterMovedOn { current: i64 },
     #[error("the basis note is not available: {0}")]
     BasisUnavailable(BasisUnavailableReason),
+    /// A mark recorded on a revision card (an agent's write to a locked note)
+    /// could not be applied when the card was accepted. The message starts
+    /// with [`wenlan_types::PAGE_REVISION_BASIS_REFUSED`] so the accept path,
+    /// the app and the MCP client can recognise it.
+    #[error(
+        "{code}: the change relied on note {basis_page_id}, and {reason}",
+        code = wenlan_types::PAGE_REVISION_BASIS_REFUSED
+    )]
+    CardMarkRefused {
+        basis_page_id: String,
+        reason: Box<BasisError>,
+    },
     #[error(transparent)]
     Db(#[from] WenlanError),
 }
@@ -132,9 +147,10 @@ impl From<BasisError> for WenlanError {
             | BasisError::BasisNotFound
             | BasisError::BasisDeleted
             | BasisError::NotABasis => WenlanError::NotFound(error.to_string()),
-            BasisError::MovedOn { .. } | BasisError::BasisUnavailable(_) => {
-                WenlanError::Conflict(error.to_string())
-            }
+            BasisError::MovedOn { .. }
+            | BasisError::CiterMovedOn { .. }
+            | BasisError::BasisUnavailable(_)
+            | BasisError::CardMarkRefused { .. } => WenlanError::Conflict(error.to_string()),
             _ => WenlanError::Validation(error.to_string()),
         }
     }
@@ -207,6 +223,10 @@ pub struct BasisDiff {
 pub enum BasisDiffOutcome {
     Available(BasisDiff),
     Unavailable(BasisUnavailableReason),
+    /// The named note (citer or basis) is not in the caller's read scope at
+    /// the moment the texts would be read. Callers answer as for a missing
+    /// note.
+    OutOfScope(String),
 }
 
 #[derive(Debug, Clone)]
@@ -664,6 +684,38 @@ fn check_basis_facts(
     Ok(())
 }
 
+/// R5: the rules about the CITER side of a mark: an ordinary active note.
+fn check_citer_facts(citer: &PageFacts) -> Result<(), BasisError> {
+    if citer.kind == "entity" {
+        return Err(BasisError::CiterIsEntityPage);
+    }
+    match citer.status.as_str() {
+        "active" => Ok(()),
+        "draft" => Err(BasisError::CiterIsDraft),
+        _ => Err(BasisError::CiterNotActive),
+    }
+}
+
+/// R7 for a staged mark, applied when its revision card is accepted: the same
+/// rules as any mark, plus the basis must still be the note the agent read
+/// (same incarnation). A reconfirm (the pair already exists) upserts like any
+/// mark, so it confirms at the version the agent read.
+async fn apply_card_mark(
+    conn: &libsql::Connection,
+    page_id: &str,
+    mark: &StagedBasisMark,
+    added_by: &str,
+) -> Result<PageBasisEntry, BasisError> {
+    if let Some(now) = load_facts(conn, &mark.basis_page_id, false).await? {
+        if now.incarnation != mark.incarnation {
+            return Err(BasisError::BasisUnavailable(
+                BasisUnavailableReason::IncarnationChanged,
+            ));
+        }
+    }
+    mark_page_basis_on_conn(conn, page_id, &mark.basis_page_id, mark.version, added_by).await
+}
+
 /// R5-R7: mark `basis_page_id` as a basis of `page_id`, on the caller's open
 /// transaction. Confirmed (`ok`) only when the basis is still at
 /// `read_version`; otherwise `pending`, with an empty digest so that no later
@@ -681,14 +733,7 @@ pub(super) async fn mark_page_basis_on_conn(
     let citer = load_facts(conn, page_id, false)
         .await?
         .ok_or(BasisError::CiterNotFound)?;
-    if citer.kind == "entity" {
-        return Err(BasisError::CiterIsEntityPage);
-    }
-    match citer.status.as_str() {
-        "active" => {}
-        "draft" => return Err(BasisError::CiterIsDraft),
-        _ => return Err(BasisError::CiterNotActive),
-    }
+    check_citer_facts(&citer)?;
     let Some(basis) = load_facts(conn, basis_page_id, true).await? else {
         return Err(if known_deleted_basis(conn, basis_page_id).await? {
             BasisError::BasisDeleted
@@ -836,6 +881,11 @@ pub struct BasisWrite {
     /// A basis still at that version is confirmed; one that moved on lands
     /// `pending`. A mark that is refused rolls the whole write back.
     pub marks: Vec<(String, i64)>,
+    /// R7 for an accepted revision card: the marks an agent's write carried
+    /// when it was staged instead of landing (a locked note). Each is applied
+    /// exactly like `marks`, and is refused when the basis note is no longer
+    /// the incarnation the agent read. A refused one rolls the accept back.
+    pub card_marks: Vec<StagedBasisMark>,
     /// R11: confirm one basis in the save's own transaction, only if it is
     /// still at that version.
     pub confirm: Option<(String, i64)>,
@@ -861,6 +911,17 @@ pub struct BasisSnapshotEntry {
     pub incarnation: String,
     pub version: i64,
     pub digest: String,
+}
+
+/// A basis an agent's write relied on, recorded on the revision card the
+/// write was staged as (a locked note), so accepting the card records it. The
+/// incarnation is the basis note's when the card was staged: a note deleted
+/// and recreated under the same id since is not the note the agent read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StagedBasisMark {
+    pub basis_page_id: String,
+    pub version: i64,
+    pub incarnation: String,
 }
 
 /// A basis note's current text, as context for an "update from sources" run.
@@ -889,6 +950,17 @@ pub(super) async fn apply_basis_write_on_conn(
 ) -> Result<BasisWriteOutcome, BasisError> {
     for (basis_page_id, version) in &basis.marks {
         mark_page_basis_on_conn(conn, page_id, basis_page_id, *version, &basis.actor).await?;
+    }
+    for mark in &basis.card_marks {
+        apply_card_mark(conn, page_id, mark, &basis.actor)
+            .await
+            .map_err(|reason| match reason {
+                BasisError::Db(inner) => BasisError::Db(inner),
+                reason => BasisError::CardMarkRefused {
+                    basis_page_id: mark.basis_page_id.clone(),
+                    reason: Box::new(reason),
+                },
+            })?;
     }
     let mut outcome = BasisWriteOutcome::default();
     if let Some((basis_page_id, version)) = &basis.confirm {
@@ -1259,7 +1331,48 @@ impl MemoryDB {
         page_id: &str,
         basis_page_id: &str,
     ) -> Result<BasisDiffOutcome, BasisError> {
+        self.basis_diff_in_scope(
+            page_id,
+            basis_page_id,
+            &crate::read_scope::ReadScope::Global,
+        )
+        .await
+    }
+
+    /// [`Self::basis_diff`] for a caller limited to `scope`. The Space check
+    /// runs under the same connection lock as the read of both texts, so a
+    /// note moved out of the caller's Space after any earlier visibility check
+    /// can never have its text returned: it reads as
+    /// [`BasisDiffOutcome::OutOfScope`], the same as a note that is not there.
+    pub async fn basis_diff_in_scope(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+        scope: &crate::read_scope::ReadScope,
+    ) -> Result<BasisDiffOutcome, BasisError> {
         let conn = self.conn.lock().await;
+        if !matches!(scope, crate::read_scope::ReadScope::Global) {
+            // Citer first, then basis: the order the route's visibility check
+            // names them in.
+            // The column and match are the ones `get_page_scoped_browse` (the
+            // route's visibility check) uses.
+            for id in [page_id, basis_page_id] {
+                let mut rows = conn
+                    .query(
+                        "SELECT workspace FROM pages WHERE id = ?1",
+                        libsql::params![id],
+                    )
+                    .await?;
+                let in_scope = match rows.next().await? {
+                    Some(row) => scope.matches(row.get::<Option<String>>(0)?.as_deref()),
+                    None => false,
+                };
+                drop(rows);
+                if !in_scope {
+                    return Ok(BasisDiffOutcome::OutOfScope(id.to_string()));
+                }
+            }
+        }
         let row = load_row(&conn, page_id, basis_page_id)
             .await?
             .ok_or(BasisError::NotABasis)?;
@@ -1343,6 +1456,87 @@ impl MemoryDB {
             to_content: basis.content,
             edits,
         }))
+    }
+
+    /// R7 for a write that is staged as a revision card instead of landing
+    /// (a locked note): every mark must pass the rules a direct write's mark
+    /// does, checked now so the agent hears of a refusal at once rather than
+    /// when the card is accepted. Returns each mark with the basis note's
+    /// current incarnation, which is what the card records.
+    pub async fn prepare_staged_basis_marks(
+        &self,
+        page_id: &str,
+        marks: &[(String, i64)],
+    ) -> Result<Vec<StagedBasisMark>, BasisError> {
+        if marks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().await;
+        let citer = load_facts(&conn, page_id, false)
+            .await?
+            .ok_or(BasisError::CiterNotFound)?;
+        check_citer_facts(&citer)?;
+        let mut staged = Vec::with_capacity(marks.len());
+        for (basis_page_id, version) in marks {
+            if basis_page_id == page_id {
+                return Err(BasisError::SelfReference);
+            }
+            let Some(basis) = load_facts(&conn, basis_page_id, false).await? else {
+                return Err(if known_deleted_basis(&conn, basis_page_id).await? {
+                    BasisError::BasisDeleted
+                } else {
+                    BasisError::BasisNotFound
+                });
+            };
+            check_basis_facts(&basis, &citer.space, *version)?;
+            staged.push(StagedBasisMark {
+                basis_page_id: basis_page_id.clone(),
+                version: *version,
+                incarnation: basis.incarnation,
+            });
+        }
+        Ok(staged)
+    }
+
+    /// R7 for a write that changed nothing (same text, same sources): there is
+    /// no page write for the marks to ride on, so they land here on their own,
+    /// all in one transaction. A refused mark records none of them. The note
+    /// must still be at `at_version`, the version the write compared itself
+    /// against; an edit that landed since answers [`BasisError::CiterMovedOn`]
+    /// and records nothing.
+    pub async fn mark_page_bases(
+        &self,
+        page_id: &str,
+        at_version: i64,
+        marks: &[(String, i64)],
+        added_by: &str,
+    ) -> Result<(), BasisError> {
+        if marks.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().await;
+        let tx = conn
+            .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
+            .await?;
+        let mut rows = tx
+            .query(
+                "SELECT version FROM pages WHERE id = ?1",
+                libsql::params![page_id],
+            )
+            .await?;
+        let current = match rows.next().await? {
+            Some(row) => row.get::<i64>(0)?,
+            None => return Err(BasisError::CiterNotFound),
+        };
+        drop(rows);
+        if current != at_version {
+            return Err(BasisError::CiterMovedOn { current });
+        }
+        for (basis_page_id, version) in marks {
+            mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by).await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     /// R7, before a NEW note exists: would every `(basis_page_id, version)`

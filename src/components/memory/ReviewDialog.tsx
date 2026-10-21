@@ -8,6 +8,7 @@ import {
   agentDisplayName,
   clipboardWrite,
   daemonErrorMessage,
+  isPageRevisionBasisRefused,
   isPageRevisionOutdated,
   getEntityDetail,
   getMemoryDetail,
@@ -853,12 +854,16 @@ export default function ReviewDialog({
     setResolveError(null);
     setResolvingLocally(true);
     let outdated = false;
+    let discardedNotice: "review.revisionOutdated" | "review.revisionBasisRefused" = "review.revisionOutdated";
     try {
       await onResolve({ item, approve });
     } catch (error) {
-      // The page moved after this revision was proposed; the daemon discarded
-      // the card. Say so and move on, the way a resolved card would.
-      outdated = item.kind === "revision" && isPageRevisionOutdated(error);
+      // The page moved after this revision was proposed, or a page the change
+      // relied on is gone; either way the daemon discarded the card. Say so
+      // and move on, the way a resolved card would.
+      const basisRefused = item.kind === "revision" && isPageRevisionBasisRefused(error);
+      if (basisRefused) discardedNotice = "review.revisionBasisRefused";
+      outdated = basisRefused || (item.kind === "revision" && isPageRevisionOutdated(error));
       if (
         !outdated &&
         resolveRequestRef.current === requestId &&
@@ -883,7 +888,7 @@ export default function ReviewDialog({
     }
     if (outdated) {
       setFlashNotice(true);
-      setFlash(t("review.revisionOutdated"));
+      setFlash(t(discardedNotice));
       window.setTimeout(() => { setFlash(null); setFlashNotice(false); }, 2400);
       if (next) onOpenChange(reviewItemId(next));
       else setShowDone(true);
