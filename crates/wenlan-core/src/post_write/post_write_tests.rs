@@ -7751,6 +7751,7 @@ async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
     let result = page_write(
         &db,
         PageWrite::AgentUpdate {
+            citations: None,
             basis: crate::db::BasisWrite::default(),
             page_id: &page_id,
             req: UpdatePageRequest {
@@ -7806,6 +7807,7 @@ async fn space_locked_agent_write_refused_when_note_moves_out_mid_write() {
     let agent_write = page_write(
         &db,
         PageWrite::AgentUpdate {
+            citations: None,
             basis: crate::db::BasisWrite {
                 actor: "claude-code".into(),
                 space_guard: Some(crate::read_scope::ReadScope::Space("alpha".into())),
@@ -7956,6 +7958,7 @@ async fn changelog_entry_records_agent_and_numeric_delta() {
             page_write(
                 db,
                 PageWrite::AgentUpdate {
+                    citations: None,
                     basis: crate::db::BasisWrite::default(),
                     page_id: &page_id,
                     req: UpdatePageRequest {

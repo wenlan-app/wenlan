@@ -183,8 +183,12 @@ For each coherent cluster:
   clusters: `cluster.entity_name` if specific, otherwise derive from
   the first memory's content.
 - Summary: one sentence — the durable claim.
-- Body: 3-7 paragraphs of wiki prose. Use `[[wikilinks]]`. Cite source
-  ids inline with `(source: mem_XXX)`.
+- Body: 3-7 paragraphs of wiki prose. Use `[[wikilinks]]`. Never write
+  source ids in the prose. Cite a claim by ending its sentence with `[n]`,
+  where n is that source's position in `source_memory_ids` (1 = first). The
+  daemon checks each cited sentence against its source and refuses the write,
+  saving nothing, when too few match: fix the citations it names and write
+  again.
 
 **New cluster** (no `existing_page_id`) — call the MCP tool:
 

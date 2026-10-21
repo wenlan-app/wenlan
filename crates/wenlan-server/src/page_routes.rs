@@ -630,6 +630,17 @@ async fn handle_create_page_inner(
     let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&code_basis)
         .await
         .map_err(crate::code_basis_routes::code_basis_error)?;
+    // `[n]` citations are checked against the named sources now, before
+    // anything is created: a page whose cited sentences do not match their
+    // sources is refused with the reason, and nothing lands.
+    let (citations_json, citations_summary) =
+        match check_write_citations(&db, &req.content, &req.source_memory_ids, &scope).await? {
+            Some((body, json, summary)) => {
+                req.content = body;
+                (Some(json), Some(summary))
+            }
+            None => (None, None),
+        };
     // The marks are recorded in the create transaction itself, so a mark
     // refused at write time (its note archived or moved since the check above)
     // creates nothing: no page row, no page file.
@@ -642,7 +653,7 @@ async fn handle_create_page_inner(
             knowledge_path: page_root.as_deref(),
             page_min_cluster_size,
             page_match_threshold,
-            citations_json: None,
+            citations_json,
             basis_marks: marks.clone(),
             basis_space_guard: (scope != wenlan_core::read_scope::ReadScope::Global)
                 .then(|| scope.clone()),
@@ -702,6 +713,8 @@ async fn handle_create_page_inner(
         );
     }
     Ok(Json(CreatePageResponse {
+        // A create that attached to an existing note wrote no prose of its own.
+        citations: citations_summary.filter(|_| !attached_existing),
         code_basis: written_code_basis,
         basis: written_basis,
         id: result.id,
@@ -1653,6 +1666,31 @@ pub async fn handle_refresh_page(
     result.map(|(_, response)| Json(response))
 }
 
+/// An agent write's `[n]` citations, checked against the sources it names:
+/// `Some((body, citations_json, summary))` when it cited any, `None` when it
+/// cited nothing, and a 422 `citations_unsupported: <counts>` when too few
+/// cited sentences match their source. The counts are all the detail an MCP
+/// client passes on to the agent.
+async fn check_write_citations(
+    db: &wenlan_core::db::MemoryDB,
+    content: &str,
+    source_ids: &[String],
+    scope: &wenlan_core::read_scope::ReadScope,
+) -> Result<Option<(String, String, String)>, ServerError> {
+    use wenlan_core::citations::WriteCitations;
+    match wenlan_core::citations::check_write_citations(db, content, source_ids, scope).await? {
+        Ok(WriteCitations::Uncited) => Ok(None),
+        Ok(WriteCitations::Checked {
+            body,
+            citations_json,
+            summary,
+        }) => Ok(Some((body, citations_json, summary))),
+        Err(counts) => Err(ServerError::ValidationError(format!(
+            "citations_unsupported: {counts}"
+        ))),
+    }
+}
+
 /// 409 for an agent refresh whose `expected_version` no longer matches. The
 /// text is what the MCP `write_page` tool shows the agent, so it says exactly
 /// how to recover.
@@ -1830,6 +1868,16 @@ async fn handle_refresh_page_inner(
     let prepared_code_basis = wenlan_core::code_basis::prepare_code_basis(&req.code_basis)
         .await
         .map_err(crate::code_basis_routes::code_basis_error)?;
+    // `[n]` citations are checked against the sources this write names, so a
+    // refused check stages and writes nothing.
+    let mut req = req;
+    let checked_citations =
+        check_write_citations(&db, &req.content, &req.source_memory_ids, &scope).await?;
+    let citations_summary = checked_citations.as_ref().map(|(_, _, s)| s.clone());
+    let citations = checked_citations.map(|(body, json, summary)| {
+        req.content = body;
+        (json, summary)
+    });
     if requires_review {
         // The notes the write relies on ride the card and are recorded when
         // the human accepts it. Checked now, so a refused mark refuses this
@@ -1864,6 +1912,7 @@ async fn handle_refresh_page_inner(
                 revision_card_id: result.revision_card_id,
                 gated: true,
                 warnings: gated_code_basis_warning(&prepared_code_basis),
+                citations: citations_summary.clone(),
             },
         ));
     }
@@ -1903,6 +1952,7 @@ async fn handle_refresh_page_inner(
             agent: proposer,
             expected_source_revision: source_revision,
             knowledge_path: page_root.as_deref(),
+            citations,
         },
     )
     .await;
@@ -1966,6 +2016,7 @@ async fn handle_refresh_page_inner(
             } else {
                 Vec::new()
             },
+            citations: citations_summary,
         },
     ))
 }
@@ -2693,6 +2744,72 @@ mod create_page_endpoint_tests {
         let (state, tmp) = build_state_with_db(3).await;
         let db = { state.read().await.db.as_ref().cloned().unwrap() };
         (db, crate::router::build_router(state), tmp)
+    }
+
+    #[tokio::test]
+    async fn an_agent_write_whose_citations_its_sources_do_not_back_writes_nothing() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+        let page_id = seed_distilled_page(
+            &db,
+            "Rust Cited Refresh",
+            None,
+            REFRESH_BODY,
+            None,
+            &REFRESH_SOURCES,
+        )
+        .await;
+        let page = db.get_page(&page_id).await.unwrap().unwrap();
+
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}"),
+            json!({
+                "content": "Quarterly revenue tripled after the marketing launch [1].",
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        let text = body["error"].as_str().unwrap_or_default();
+        assert!(
+            text.starts_with("citations_unsupported: 0 verified"),
+            "{body}"
+        );
+        assert_eq!(
+            db.get_page(&page_id).await.unwrap().unwrap().content,
+            page.content,
+            "a refused write leaves the note as it was"
+        );
+
+        let cited = format!("{REFRESH_BODY} [2].");
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{page_id}"),
+            json!({
+                "content": cited,
+                "source_memory_ids": REFRESH_SOURCES,
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            body["citations"]
+                .as_str()
+                .is_some_and(|c| c.starts_with("1 verified")),
+            "{body}"
+        );
+        let after = db.get_page(&page_id).await.unwrap().unwrap();
+        assert_eq!(after.content, cited);
+        assert_eq!(after.citations.len(), 1);
     }
 
     #[tokio::test]

@@ -1006,7 +1006,7 @@ pub struct WritePageParams {
     )]
     pub title: Option<String>,
     #[schemars(
-        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Do not cite source ids inline; pass them in source_memory_ids and the daemon attaches provenance automatically."
+        description = "Markdown body — 3-7 paragraphs of wiki prose with [[wikilinks]]. Never write source ids inline. To cite, end a sentence with [n], where n is the position of its source in source_memory_ids (1 = first); the daemon checks each cited sentence against that source and refuses the write, saving nothing, when too few match. Citing is optional."
     )]
     pub content: String,
     #[schemars(
@@ -1813,6 +1813,35 @@ fn page_write_code_basis_refused_result(error: &WenlanError) -> CallToolResult {
          1-based, line_end not before line_start, and within the file. Fix that entry and \
          retry."
     ))])
+}
+
+/// A write the daemon refused because too few of its `[n]` citations match
+/// the source they point to. Nothing was written. The daemon's counts lead the
+/// message, then how to fix the citations.
+fn page_write_citations_refused_result(error: &WenlanError) -> Option<CallToolResult> {
+    let WenlanError::Api {
+        status: 422,
+        reason: Some(reason),
+    } = error
+    else {
+        return None;
+    };
+    let counts = reason.strip_prefix("citations_unsupported")?;
+    let counts = counts.trim_start_matches(':').trim();
+    let lead = if counts.is_empty() {
+        "write_page refused, nothing was written: too few cited sentences match their source. "
+            .to_string()
+    } else {
+        format!(
+            "write_page refused, nothing was written: too few cited sentences match their \
+             source ({counts}). "
+        )
+    };
+    Some(CallToolResult::error(vec![ContentBlock::text(format!(
+        "{lead}[n] means the n-th id in source_memory_ids (1 = first). Cite each claim with \
+         the source that says it, keep its wording close to that source, or drop a marker \
+         you cannot back, then write again."
+    ))]))
 }
 
 fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
@@ -3198,7 +3227,10 @@ impl WenlanMcpServer {
                         Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
                             return Ok(page_write_code_basis_refused_result(&e));
                         }
-                        Err(e) => return Ok(tool_error(e, "write_page")),
+                        Err(e) => {
+                            return Ok(page_write_citations_refused_result(&e)
+                                .unwrap_or_else(|| tool_error(e, "write_page")));
+                        }
                     };
                 // Ownership gate (spec §5.2): a human-owned page is never overwritten
                 // in place; the daemon stages a revision card. Surface that so the
@@ -3232,7 +3264,10 @@ impl WenlanMcpServer {
                     Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
                         return Ok(page_write_code_basis_refused_result(&e));
                     }
-                    Err(e) => return Ok(tool_error(e, "write_page")),
+                    Err(e) => {
+                        return Ok(page_write_citations_refused_result(&e)
+                            .unwrap_or_else(|| tool_error(e, "write_page")));
+                    }
                 };
                 let text = format_create_page_response(resp);
                 let text = self.with_steep_line(&client, None, text).await;
@@ -3970,9 +4005,19 @@ fn format_update_page_response(
     for warning in &resp.warnings {
         text.push_str(&format!("\nwarning: {warning}"));
     }
+    append_citations(&mut text, resp.citations.as_deref());
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
     text
+}
+
+/// How the `[n]` citations in a write checked out, as one line. Nothing when
+/// the write cited nothing.
+fn append_citations(text: &mut String, citations: Option<&str>) {
+    if let Some(summary) = citations {
+        text.push_str("\ncitations: ");
+        text.push_str(summary);
+    }
 }
 
 /// The page's code bases after a write, as one JSON line in the shape
@@ -4017,6 +4062,7 @@ fn format_create_page_response(resp: CreatePageResponse) -> String {
     for warning in resp.warnings {
         text.push_str(&format!("\nwarning: {warning}"));
     }
+    append_citations(&mut text, resp.citations.as_deref());
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
     text
@@ -8056,6 +8102,7 @@ mod tests {
             space: Some("work".into()),
             space_source: Some(wenlan_types::WriteSpaceSource::Existing),
             write_outcome: Some(wenlan_types::WriteOutcome::AttachedExisting),
+            citations: None,
         });
 
         assert!(
@@ -9288,6 +9335,7 @@ mod tests {
                 ok: true,
                 gated: true,
                 revision_card_id: Some("mem_page_card_1".to_string()),
+                citations: None,
             },
         );
         assert!(

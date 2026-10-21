@@ -443,6 +443,10 @@ pub struct CreatePageResponse {
     /// Every code basis of the new note after the write.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
+    /// How the new note's `[n]` citations checked against their sources, as
+    /// "N verified, N unverified, N stripped". Absent when it cited nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citations: Option<String>,
 }
 
 /// Result of an explicit page-title change. Does not expose page prose.
@@ -761,6 +765,10 @@ pub struct PageWriteResponse {
     /// differently than asked (for example code bases that were not recorded).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// How the write's `[n]` citations checked against their sources, as
+    /// "N verified, N unverified, N stripped". Absent when it cited nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citations: Option<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.

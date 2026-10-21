@@ -753,6 +753,95 @@ async fn run_citation_backfill_with_page_limit(
     Ok(selected)
 }
 
+/// What the daemon made of the `[n]` markers in a page an AI tool wrote.
+pub enum WriteCitations {
+    /// The page cites nothing, so there is nothing to check.
+    Uncited,
+    /// Each cited sentence was checked against its source. `body` is the
+    /// page with markers that point nowhere removed; `summary` is the count
+    /// line recorded on the page's history.
+    Checked {
+        body: String,
+        citations_json: String,
+        summary: String,
+    },
+}
+
+/// Check the `[n]` markers in a page an AI tool is writing, where `[n]` is
+/// the n-th id in `source_ids`. A page with no sources, or no markers, is
+/// left as written. The same check the automatic run and steep on demand
+/// apply, at the moment of writing. `Ok(Err(counts))` when too few cited
+/// sentences match their source: the caller writes nothing and hands the
+/// counts back so the tool can fix its citations. `scope` is the caller's
+/// Space lock: a memory outside it is read as one that is gone, so the check
+/// never tells a locked caller what another Space's memory says.
+pub async fn check_write_citations(
+    db: &MemoryDB,
+    content: &str,
+    source_ids: &[String],
+    scope: &crate::read_scope::ReadScope,
+) -> Result<Result<WriteCitations, String>, WenlanError> {
+    // Without sources a bracketed number is just text the writer typed.
+    if source_ids.is_empty() || !RE_MARKERS.is_match(&normalize_markers(content)) {
+        return Ok(Ok(WriteCitations::Uncited));
+    }
+    let mut texts: std::collections::HashMap<String, String> = db
+        .get_memory_contents_by_ids(source_ids)
+        .await?
+        .into_iter()
+        .collect();
+    if *scope != crate::read_scope::ReadScope::Global {
+        let visible: std::collections::HashSet<String> = db
+            .get_memories_by_source_ids_scoped(source_ids, scope)
+            .await?
+            .into_iter()
+            .map(|memory| memory.source_id)
+            .collect();
+        texts.retain(|id, _| visible.contains(id));
+    }
+    let kinds = db
+        .resolve_source_kinds(source_ids)
+        .await
+        .unwrap_or_default();
+    // Numbered in the caller's order, so `[n]` means what the caller meant.
+    // A source that is gone keeps its number with no text, so a sentence
+    // citing it cannot be verified.
+    let numbered: Vec<NumberedSource> = source_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| NumberedSource {
+            index: u32::try_from(i + 1).unwrap_or(u32::MAX),
+            source_kind: kinds
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| "memory".to_string()),
+            locator: id.clone(),
+            text: texts
+                .get(id)
+                .map(|text| text.chars().take(SOURCE_TEXT_CAP).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
+    check_numbered_citations(content, &numbered)
+}
+
+/// The gate itself, on sources already numbered: refused when no cited
+/// sentence matches its source or more fail than match.
+fn check_numbered_citations(
+    content: &str,
+    numbered: &[NumberedSource],
+) -> Result<Result<WriteCitations, String>, WenlanError> {
+    let (body, cites, stats) = process_citation_output(content, numbered);
+    if stats.verified == 0 || stats.unverified > stats.verified {
+        return Ok(Err(stats.summary()));
+    }
+    Ok(Ok(WriteCitations::Checked {
+        body,
+        citations_json: serde_json::to_string(&cites)?,
+        summary: stats.summary(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2579,6 +2668,113 @@ mod tests {
         assert!(
             changelog.contains("citation backfill gave up"),
             "changelog: {changelog}"
+        );
+    }
+
+    fn numbered(texts: &[&str]) -> Vec<NumberedSource> {
+        texts
+            .iter()
+            .enumerate()
+            .map(|(i, text)| NumberedSource {
+                index: u32::try_from(i + 1).unwrap(),
+                source_kind: "memory".to_string(),
+                locator: format!("mem_w{}", i + 1),
+                text: (*text).to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn write_citations_follow_the_number_the_writer_used() {
+        let sources = numbered(&[
+            "Lunch is served at noon in the cafeteria",
+            BACKFILL_MEM_CONTENT,
+        ]);
+        let checked =
+            check_numbered_citations("The daemon binds to port 7878 by default [2].", &sources)
+                .unwrap();
+        let Ok(WriteCitations::Checked {
+            body,
+            citations_json,
+            summary,
+        }) = checked
+        else {
+            panic!("a supported citation is checked, not refused");
+        };
+        assert!(body.contains("[2]"), "{body}");
+        assert!(summary.starts_with("1 verified"), "{summary}");
+        assert!(citations_json.contains("mem_w2"), "{citations_json}");
+    }
+
+    #[test]
+    fn write_citations_refuse_claims_their_source_does_not_make() {
+        // An invented claim, and a claim citing a source with no text left.
+        let sources = numbered(&[BACKFILL_MEM_CONTENT, ""]);
+        let content = "Quarterly revenue tripled after the marketing launch [1]. \
+                       The cafeteria serves lunch at noon every weekday [2].";
+        let Err(counts) = check_numbered_citations(content, &sources).unwrap() else {
+            panic!("unsupported citations must be refused");
+        };
+        assert!(counts.starts_with("0 verified"), "{counts}");
+    }
+
+    #[tokio::test]
+    async fn write_citations_read_sources_in_the_callers_order() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        insert_test_memory(
+            &db,
+            "mem_w_other",
+            "Lunch is served at noon in the cafeteria",
+        )
+        .await;
+        insert_test_memory(&db, "mem_w_port", BACKFILL_MEM_CONTENT).await;
+        let ids = vec!["mem_w_other".to_string(), "mem_w_port".to_string()];
+        let global = crate::read_scope::ReadScope::Global;
+        let no_markers = check_write_citations(&db, BACKFILL_BODY, &ids, &global)
+            .await
+            .unwrap();
+        assert!(matches!(no_markers, Ok(WriteCitations::Uncited)));
+        // Without sources a bracketed number is the writer's own text.
+        let no_sources = check_write_citations(&db, "Step [1] comes first.", &[], &global)
+            .await
+            .unwrap();
+        assert!(matches!(no_sources, Ok(WriteCitations::Uncited)));
+        let checked = check_write_citations(
+            &db,
+            "The daemon binds to port 7878 by default [2].",
+            &ids,
+            &global,
+        )
+        .await
+        .unwrap();
+        let Ok(WriteCitations::Checked { citations_json, .. }) = checked else {
+            panic!("a supported citation is checked, not refused");
+        };
+        assert!(citations_json.contains("mem_w_port"), "{citations_json}");
+        let refused = check_write_citations(
+            &db,
+            "The daemon binds to port 7878 by default [1].",
+            &ids,
+            &global,
+        )
+        .await
+        .unwrap();
+        assert!(
+            refused.is_err(),
+            "[1] is the lunch source, not the port one"
+        );
+        // A caller locked to another Space cannot learn what the memory says.
+        let elsewhere = check_write_citations(
+            &db,
+            "The daemon binds to port 7878 by default [2].",
+            &ids,
+            &crate::read_scope::ReadScope::Space("elsewhere".into()),
+        )
+        .await
+        .unwrap();
+        assert!(
+            elsewhere.is_err(),
+            "a memory outside the Space reads as gone"
         );
     }
 }
