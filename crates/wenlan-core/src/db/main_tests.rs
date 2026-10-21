@@ -505,6 +505,7 @@ pub async fn test_db() -> (MemoryDB, tempfile::TempDir) {
         // fresh-store chain exactly as `MemoryDB::new` would decide it.
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        steep_leases: crate::steep::SteepLeases::default(),
     };
     memory_db
         .run_migrations(&crate::events::NoopEmitter)
@@ -574,6 +575,7 @@ pub async fn test_db_at(ceiling: i64) -> (MemoryDB, tempfile::TempDir) {
         // fresh-store chain exactly as `MemoryDB::new` would decide it.
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        steep_leases: crate::steep::SteepLeases::default(),
     };
     memory_db
         .run_migrations_up_to(&crate::events::NoopEmitter, ceiling)
@@ -45093,6 +45095,7 @@ async fn startup_reconciles_v79_observations_without_source_memory_id() {
         // fresh-store chain exactly as `MemoryDB::new` would decide it.
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        steep_leases: crate::steep::SteepLeases::default(),
     };
 
     db.run_migrations(&crate::events::NoopEmitter)

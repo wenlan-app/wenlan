@@ -89,6 +89,7 @@ pub mod source_annotations;
 mod source_sync;
 mod space_context;
 mod space_rename;
+mod steep;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -4893,6 +4894,10 @@ pub struct MemoryDB {
     /// Set by `run_migrations_up_to` for the chain it is running and read by
     /// `backup_before_migration`.
     skip_migration_backups: std::sync::atomic::AtomicBool,
+    /// Which notes a steep run (automatic or on demand) holds right now. In
+    /// memory on purpose: both kinds of run live in this daemon process, so a
+    /// restart ends every hold together with the work behind it.
+    steep_leases: crate::steep::SteepLeases,
 }
 
 /// Returns true when a memory title looks like it would make a poor snippet —
@@ -5049,6 +5054,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(false),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
         })
     }
 
@@ -5293,6 +5299,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
         };
 
         // Run schema migrations for existing databases
@@ -5410,6 +5417,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
         };
 
         instance.run_migrations(emitter.as_ref()).await?;

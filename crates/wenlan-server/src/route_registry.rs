@@ -418,6 +418,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // A code basis confirm and remove return a state receipt only; the recheck
     // (it reports note titles) is in the sensitive catalog instead.
     "/api/pages/{id}/code-basis/confirm", "/api/pages/{id}/code-basis",
+    // A steep commit returns a receipt only (outcome, card id, citation
+    // counts); the list and the claim are in the sensitive catalog instead.
+    "/api/steep/commit",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

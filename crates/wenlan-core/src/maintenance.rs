@@ -383,7 +383,10 @@ pub async fn run_maintenance_stage_slice(
                     progressed = true;
                     more = true;
                     retryable = true;
-                } else {
+                } else if let Some(_hold) = crate::steep::hold_for_automatic(db, &page.id) {
+                    // The write itself clears the staleness it settled, under
+                    // the source revision read before generation; a mark that
+                    // lands meanwhile survives for the next round.
                     match refresh_page(
                         db,
                         provider,
@@ -395,7 +398,6 @@ pub async fn run_maintenance_stage_slice(
                     .await
                     {
                         Ok(outcome) if outcome.wrote || outcome.gated => {
-                            db.clear_page_staleness(&page.id).await?;
                             progressed = true;
                             more = true;
                             if human_owned || outcome.gated {
@@ -413,6 +415,12 @@ pub async fn run_maintenance_stage_slice(
                             retryable = true;
                         }
                     }
+                } else {
+                    // An on-demand steep holds this note; its own commit
+                    // settles it, so the model is not paid twice.
+                    progressed = true;
+                    more = true;
+                    retryable = true;
                 }
             }
         }

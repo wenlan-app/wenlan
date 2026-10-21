@@ -674,6 +674,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/pages/{id}/basis/{basis_id}` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `POST` | `/api/pages/code-basis/recheck` | main | yes | automatic | `none` | `handle_code_basis_recheck` | CodeBasisRecheckEntry.title: visible_ids filter on the notes |
 | `POST` | `/api/pages/{id}/code-basis/cited` | main | no | not_applicable | `none` | — | git blob id of the cited file, read from the stored row: no note prose; require_page_visible before the read |
+| `GET` | `/api/steep/worklist` | main | yes | automatic | `none` | `handle_steep_worklist` | SteepWorkItem.title: visible_ids filter on the waiting notes before list and count |
+| `POST` | `/api/steep/claim` | main | yes | automatic | `none` | `handle_steep_claim` | SteepClaimResponse.current_content, SteepSource.text: visible_ids on the one note before the claim reads it |
+| `POST` | `/api/steep/commit` | main | no | not_applicable | `none` | — | receipt only: outcome, card id and citation counts, no prose; the token was issued by a visibility-checked claim |
 | `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `POST` | `/api/sessions` | main | no | not_applicable | `none` | — | AgentSession carries no page prose |
@@ -804,6 +807,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `reject_refinement` | yes | automatic | `none` | tool handler |
 | `rename_page` | yes | automatic | `none` | tool handler |
 | `save_source` | yes | automatic | `none` | tool handler |
+| `steep` | yes | automatic | `none` | tool handler |
 | `update_brief` | yes | automatic | `none` | tool handler |
 | `write_page` | yes | automatic | `none` | tool handler |
 

@@ -30,6 +30,7 @@ CODEX_SKILLS_USING_RESOLVER = {
     "lint",
     "map",
     "recall",
+    "steep",
 }
 # Installed plugins live under ~/.codex/plugins/cache/<marketplace>/wenlan/<version>/;
 # the checkout-relative `plugin-codex/bin/...` path only resolves inside this repo.

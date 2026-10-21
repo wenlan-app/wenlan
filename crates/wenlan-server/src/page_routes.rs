@@ -1587,7 +1587,7 @@ pub async fn handle_update_page(
 /// PUT /api/pages/{id}
 ///
 /// Agent-side refresh of a page from its current sources. Replaces content,
-/// source list, optional summary; clears `stale_reason` so the refinery's
+/// source list, optional summary; clears the `stale_reason` it saw so the refinery's
 /// re-distill skips on its next tick (CAS pattern — see refinery
 /// `re_distill_stale_pages`). Distinct from POST `/api/memory/{id}/update-page`
 /// (manual edit, flips `user_edited`, preserves sources).
@@ -1927,7 +1927,17 @@ async fn handle_refresh_page_inner(
         if let Some(opt) = &summary_update {
             db.update_page_summary(&id, opt.as_deref()).await?;
         }
-        db.clear_page_staleness(&id).await?;
+        // Only the staleness this write saw is cleared: a landed write moved
+        // the source revision one past the fence it was checked against, an
+        // unchanged one left it there. A source change or stale mark that
+        // arrived after the write moved it further and stays.
+        let settled_revision = if result.outcome == WriteOutcome::Wrote {
+            source_revision + 1
+        } else {
+            source_revision
+        };
+        db.clear_page_staleness_at_revision(&id, settled_revision)
+            .await?;
         if let Some(root) = page_root {
             // Re-read so a concurrent human edit cannot be replaced by the
             // original refresh snapshot. Projection failure is post-commit.

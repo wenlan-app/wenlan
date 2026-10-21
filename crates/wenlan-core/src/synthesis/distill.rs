@@ -1375,7 +1375,7 @@ pub(crate) enum CandidateOutcome {
 }
 
 /// Cap on source text length embedded in one numbered source entry.
-const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
+pub(crate) const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
 
 /// Cap on one basis note's text embedded in the "notes this note relies on"
 /// block of an update-from-sources prompt.

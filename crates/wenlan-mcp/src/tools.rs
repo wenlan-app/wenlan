@@ -151,9 +151,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// surface was cut, plus ten percent, raised by 450 for `page_code_basis` and
 /// the `code_basis` sentence on `write_page` (the 31-tool surface sat 4
 /// characters under the old ceiling, so any new tool needs room), then by the
-/// length of `save_source`'s description when that tool was added.
+/// length of `save_source`'s description when that tool was added, then by
+/// the length of `steep`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 15_890;
+const DESCRIPTION_BUDGET_CHARS: usize = 16_640;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1077,6 +1078,49 @@ pub enum PageCodeBasisAction {
     Remove,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SteepAction {
+    /// The notes waiting for steep.
+    List,
+    /// Take one note: its numbered sources and a token.
+    Claim,
+    /// Save the rewrite of a claimed note.
+    Commit,
+    /// The sources changed but the claimed note still holds.
+    StillAccurate,
+    /// Give a claimed note back.
+    Release,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SteepParams {
+    #[schemars(
+        description = "list | claim (page_id) | commit (token, content) | still_accurate (token) | release (token)."
+    )]
+    pub action: SteepAction,
+    #[schemars(description = "claim: the note to take, from list.")]
+    #[serde(default)]
+    pub page_id: Option<String>,
+    #[schemars(description = "commit, still_accurate, release: the token claim returned.")]
+    #[serde(default)]
+    pub token: Option<String>,
+    #[schemars(
+        description = "commit: the new body, citing the claim's sources as [n]. Same title and language."
+    )]
+    #[serde(default)]
+    pub content: Option<String>,
+    #[schemars(description = "list: how many notes (default 20).")]
+    #[serde(default)]
+    pub limit: Option<u32>,
+    #[schemars(description = "list: next_cursor from the previous list.")]
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[schemars(description = "list: only this Space's notes.")]
+    #[serde(default)]
+    pub space: Option<String>,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PageCodeBasisParams {
     #[schemars(description = "The page that relies on the code. Opaque page id.")]
@@ -1635,6 +1679,66 @@ fn page_code_basis_error_result(error: WenlanError, action: PageCodeBasisAction)
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
+/// A `steep` call the daemon refused. Its reasons are already plain words
+/// that say what to do next, so they lead the message.
+fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult {
+    match &error {
+        WenlanError::Api {
+            status: 400 | 404 | 409 | 422,
+            reason: Some(reason),
+        } => {
+            let text = if action == SteepAction::List || action == SteepAction::Claim {
+                format!("steep refused: {reason}")
+            } else {
+                format!("steep refused, nothing written: {reason}")
+            };
+            CallToolResult::error(vec![ContentBlock::text(text)])
+        }
+        _ => tool_error(error, "steep"),
+    }
+}
+
+/// The line an ordinary tool reply carries when notes are waiting for steep,
+/// so the AI tool at work hears of them without being asked. A remote
+/// connection cannot steep, so it is only told who will.
+fn steep_waiting_text(total: u32, transport: &TransportMode) -> Option<String> {
+    let count = match total {
+        0 => return None,
+        1 => "1 note is".to_string(),
+        n => format!("{n} notes are"),
+    };
+    Some(match transport {
+        TransportMode::Stdio => format!(
+            "Steep: {count} waiting because a source they were written from changed. \
+             Bring them up to date with the `steep` tool (list, claim, commit), or tell \
+             the user that /wenlan steep (Codex: $wenlan steep) does it."
+        ),
+        TransportMode::Http => format!(
+            "Steep: {count} waiting because a source they were written from changed. \
+             A local AI tool or automatic steep brings them up to date."
+        ),
+    })
+}
+
+/// For `read_page`: what to do about this note when it is waiting for steep.
+fn steep_page_hint(stale_reason: Option<&str>, transport: &TransportMode) -> Option<String> {
+    let why = match stale_reason? {
+        "source_updated" => "a source it was written from changed",
+        "source_removed" => "a source it was written from was removed",
+        _ => return None,
+    };
+    Some(match transport {
+        TransportMode::Stdio => format!(
+            "This note is waiting for steep: {why}. To update it now, call `steep` with \
+             action claim and this page_id, then commit the rewrite. Do not use write_page for it."
+        ),
+        TransportMode::Http => format!(
+            "This note is waiting for steep: {why}. A local AI tool or automatic steep \
+             brings it up to date."
+        ),
+    })
+}
+
 /// Whether the daemon's 400 to a write that carried `code_basis` was about a
 /// `code_basis` entry. The daemon marks those refusals with the reason
 /// `code_basis_invalid`; any other 400 (a bad source list, content the daemon
@@ -1966,6 +2070,38 @@ impl WenlanMcpServer {
             .await
     }
 
+    /// How many notes in reach wait for steep, as one reply line. Best effort:
+    /// a failed count adds nothing to the reply it rides on.
+    async fn steep_waiting_line(
+        &self,
+        client: &WenlanClient,
+        space: Option<&str>,
+    ) -> Option<String> {
+        let mut path = "/api/steep/worklist?limit=1".to_string();
+        if let Some(space) = space.filter(|space| !space.is_empty()) {
+            path.push_str(&format!("&space={}", url_encode_simple(space)));
+        }
+        let list = client
+            .get::<wenlan_types::SteepWorklistResponse>(&path)
+            .await
+            .ok()?;
+        steep_waiting_text(list.total, &self.transport)
+    }
+
+    /// `output` with the steep line appended when notes are waiting.
+    async fn with_steep_line(
+        &self,
+        client: &WenlanClient,
+        space: Option<&str>,
+        mut output: String,
+    ) -> String {
+        if let Some(line) = self.steep_waiting_line(client, space).await {
+            output.push_str("\n\n");
+            output.push_str(&line);
+        }
+        output
+    }
+
     pub async fn capture_impl(&self, params: CaptureParams) -> Result<CallToolResult, McpError> {
         // Tool was renamed `remember -> capture` in v0.4. The HTTP request
         // body shape (StoreMemoryRequest) is unchanged; only the MCP-facing
@@ -1996,7 +2132,7 @@ impl WenlanMcpServer {
         let req = StoreMemoryRequest {
             content: params.content,
             memory_type: params.memory_type,
-            space: (space_arg).into(),
+            space: space_arg.clone().into(),
             source_agent,
             title: None,
             confidence: params.confidence,
@@ -2010,9 +2146,11 @@ impl WenlanMcpServer {
         let resp: StoreMemoryResponse =
             try_call!(client.post("/api/memory/store", &req), "memory store");
 
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            format_capture_success(&resp),
-        )]))
+        // A capture that replaces a memory can leave notes waiting for steep.
+        let output = self
+            .with_steep_line(&client, space_arg.as_deref(), format_capture_success(&resp))
+            .await;
+        Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
 
     pub async fn save_source_impl(
@@ -2074,6 +2212,9 @@ impl WenlanMcpServer {
                 pages_json
             ));
         }
+        let output = self
+            .with_steep_line(&client, req.space.as_deref(), output)
+            .await;
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
@@ -2140,6 +2281,13 @@ impl WenlanMcpServer {
                     ));
                 }
                 output
+            }
+        };
+        let output = match response.state {
+            wenlan_types::BriefReadState::SpaceNotResolved => output,
+            _ => {
+                self.with_steep_line(&client, response.space.as_deref(), output)
+                    .await
             }
         };
 
@@ -3012,6 +3160,7 @@ impl WenlanMcpServer {
                 // in place; the daemon stages a revision card. Surface that so the
                 // caller does not believe the prose was rewritten.
                 let msg = format_update_page_response(&page_id, resp);
+                let msg = self.with_steep_line(&client, None, msg).await;
                 Ok(CallToolResult::success(vec![ContentBlock::text(msg)]))
             }
             None => {
@@ -3042,6 +3191,7 @@ impl WenlanMcpServer {
                     Err(e) => return Ok(tool_error(e, "write_page")),
                 };
                 let text = format_create_page_response(resp);
+                let text = self.with_steep_line(&client, None, text).await;
                 Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
             }
         }
@@ -3132,6 +3282,97 @@ impl WenlanMcpServer {
                     Err(error) => Ok(page_basis_error_result(error, action)),
                 }
             }
+        }
+    }
+
+    pub async fn steep_impl(&self, params: SteepParams) -> Result<CallToolResult, McpError> {
+        let action = params.action;
+        // Claiming hands out source text and commit writes notes: both stay
+        // on the machine running Wenlan.
+        if action != SteepAction::List && self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Steeping notes is not available over remote connections. \
+                 Use local MCP on the machine running Wenlan."
+                    .to_string(),
+            )]));
+        }
+        let encode = |error: serde_json::Error| {
+            McpError::internal_error(format!("steep encode: {error}"), None)
+        };
+        let missing = |field: &str| {
+            Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "steep {}: pass {field}.",
+                serde_json::to_value(action)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default()
+            ))]))
+        };
+        let result = match action {
+            SteepAction::List => {
+                let mut path = format!("/api/steep/worklist?limit={}", params.limit.unwrap_or(20));
+                if let Some(cursor) = params.cursor.as_deref().filter(|c| !c.is_empty()) {
+                    path.push_str(&format!("&cursor={}", url_encode_simple(cursor)));
+                }
+                if let Some(space) = params.space.as_deref().filter(|s| !s.is_empty()) {
+                    path.push_str(&format!("&space={}", url_encode_simple(space)));
+                }
+                self.client
+                    .get::<wenlan_types::SteepWorklistResponse>(&path)
+                    .await
+                    .map(|list| serde_json::to_value(&list).map_err(encode))
+            }
+            SteepAction::Claim => {
+                let Some(page_id) = params.page_id else {
+                    return missing("page_id");
+                };
+                if !is_opaque_page_id(&page_id) {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        "Invalid page_id. Use the page's opaque identifier, not a URL or file path."
+                            .to_string(),
+                    )]));
+                }
+                self.client
+                    .post::<_, wenlan_types::SteepClaimResponse>(
+                        "/api/steep/claim",
+                        &wenlan_types::SteepClaimRequest { page_id },
+                    )
+                    .await
+                    .map(|claim| serde_json::to_value(&claim).map_err(encode))
+            }
+            SteepAction::Commit | SteepAction::StillAccurate | SteepAction::Release => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                let wire_action = match action {
+                    SteepAction::Commit => wenlan_types::steep::STEEP_ACTION_REWRITE,
+                    SteepAction::StillAccurate => wenlan_types::steep::STEEP_ACTION_STILL_ACCURATE,
+                    _ => wenlan_types::steep::STEEP_ACTION_RELEASE,
+                };
+                if action == SteepAction::Commit
+                    && params
+                        .content
+                        .as_deref()
+                        .is_none_or(|c| c.trim().is_empty())
+                {
+                    return missing("content");
+                }
+                self.client
+                    .post::<_, wenlan_types::SteepCommitResponse>(
+                        "/api/steep/commit",
+                        &wenlan_types::SteepCommitRequest {
+                            token,
+                            action: wire_action.to_string(),
+                            content: params.content,
+                        },
+                    )
+                    .await
+                    .map(|done| serde_json::to_value(&done).map_err(encode))
+            }
+        };
+        match result {
+            Ok(value) => Ok(CallToolResult::structured(value?)),
+            Err(error) => Ok(steep_error_result(error, action)),
         }
     }
 
@@ -3335,6 +3576,11 @@ impl WenlanMcpServer {
             // Notes this page relies on, counted beside (not inside)
             // `source_count`, which stays memory-only.
             object.insert("basis_count".into(), page.basis.len().into());
+            if let Some(hint) =
+                steep_page_hint(page.page.page.stale_reason.as_deref(), &self.transport)
+            {
+                object.insert("steep".into(), hint.into());
+            }
         }
         let mut value = serde_json::json!({
             "page": page_value,
@@ -4149,6 +4395,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<PageCodeBasisParams>,
     ) -> Result<CallToolResult, McpError> {
         self.page_code_basis_impl(params).await
+    }
+
+    #[tool(
+        description = "Steep on demand: bring notes up to date after their sources changed or were removed. `list`: the notes waiting. `claim` (page_id): the note, its surviving sources numbered [1]..[n], a token, and a plan: rewrite; review_card (the user wrote it, so your rewrite becomes a card they accept); needs_you (leave it, tell the user why). `commit` (token, content): the rewrite, each claim cited [n]; Wenlan checks cited sentences against the source text, and refuses with nothing written if the note or its sources changed since the claim (claim again). `still_accurate` (token): sources changed, note still right. `release` (token): give it back. Rewrite with your main model; a small model may only judge still_accurate. Claim and commit: local stdio only.",
+        annotations(
+            title = "Steep",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn steep(
+        &self,
+        Parameters(params): Parameters<SteepParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.steep_impl(params).await
     }
 
     #[tool(
@@ -5410,12 +5673,15 @@ mod tests {
     }
 
     /// `(method, path)` of every request the daemon mock received, in order.
+    /// The requests a tool sent, leaving out the best-effort steep count that
+    /// ordinary replies read on the side (its own tests cover it).
     async fn received(mock: &wiremock::MockServer) -> Vec<(String, String)> {
         mock.received_requests()
             .await
             .unwrap()
             .iter()
             .map(|request| (request.method.to_string(), request.url.path().to_string()))
+            .filter(|(_, path)| path != "/api/steep/worklist")
             .collect()
     }
 
@@ -8973,6 +9239,118 @@ mod tests {
         assert!(!text.contains("human-owned"), "{text}");
     }
 
+    // ===== Steep =====
+
+    #[test]
+    fn steep_line_counts_waiting_notes_and_names_who_updates_them() {
+        assert_eq!(steep_waiting_text(0, &TransportMode::Stdio), None);
+        let one = steep_waiting_text(1, &TransportMode::Stdio).unwrap();
+        assert!(one.starts_with("Steep: 1 note is waiting"), "{one}");
+        assert!(one.contains("`steep` tool"), "{one}");
+        let remote = steep_waiting_text(3, &TransportMode::Http).unwrap();
+        assert!(remote.starts_with("Steep: 3 notes are waiting"), "{remote}");
+        assert!(
+            !remote.contains("`steep` tool"),
+            "a remote connection cannot steep: {remote}"
+        );
+        assert!(!remote.contains("upkeep") && !one.contains("upkeep"));
+    }
+
+    #[test]
+    fn read_page_hint_only_for_notes_waiting_for_steep() {
+        assert_eq!(steep_page_hint(None, &TransportMode::Stdio), None);
+        assert_eq!(steep_page_hint(Some("lint"), &TransportMode::Stdio), None);
+        let removed = steep_page_hint(Some("source_removed"), &TransportMode::Stdio).unwrap();
+        assert!(removed.contains("was removed"), "{removed}");
+        assert!(removed.contains("action claim"), "{removed}");
+        let remote = steep_page_hint(Some("source_updated"), &TransportMode::Http).unwrap();
+        assert!(!remote.contains("action claim"), "{remote}");
+    }
+
+    #[tokio::test]
+    async fn capture_reply_carries_the_steep_count_only_when_notes_wait() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let store = || {
+            Mock::given(method("POST"))
+                .and(path("/api/memory/store"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "source_id": "mem_new", "chunks_created": 1, "memory_type": "fact",
+                    "entity_id": null, "quality": null, "warnings": []
+                })))
+        };
+        let params = || CaptureParams {
+            content: "The deploy runs on Fridays".into(),
+            memory_type: None,
+            space: Some("work".into()),
+            confidence: None,
+            supersedes: Some("mem_old".into()),
+            entity: None,
+            structured_fields: None,
+            retrieval_cue: None,
+            session: None,
+        };
+
+        let mock = MockServer::start().await;
+        store().mount(&mock).await;
+        Mock::given(method("GET"))
+            .and(path("/api/steep/worklist"))
+            .and(query_param("space", "work"))
+            .and(query_param("limit", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "items": [], "total": 2
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let text = text_of(&server.capture_impl(params()).await.unwrap());
+        assert!(text.contains("Steep: 2 notes are waiting"), "{text}");
+
+        // Nothing waiting, or the count failing, leaves the reply as it was.
+        let quiet = MockServer::start().await;
+        store().mount(&quiet).await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(quiet.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let text = text_of(&server.capture_impl(params()).await.unwrap());
+        assert!(!text.contains("Steep"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn steep_claim_and_commit_stay_on_the_local_machine() {
+        let server = make_server(TransportMode::Http, "web", None);
+        for action in [
+            SteepAction::Claim,
+            SteepAction::Commit,
+            SteepAction::Release,
+        ] {
+            let result = server
+                .steep_impl(SteepParams {
+                    action,
+                    page_id: Some("page_1".into()),
+                    token: Some("stp_x".into()),
+                    content: Some("body [1]".into()),
+                    limit: None,
+                    cursor: None,
+                    space: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            assert!(text_of(&result).contains("not available over remote connections"));
+        }
+    }
+
     // ===== Remember request construction =====
 
     #[test]
@@ -10285,6 +10663,7 @@ mod tests {
             ("rename_page", (false, true, false)),
             ("reject_refinement", (false, true, false)),
             ("save_source", (false, true, false)),
+            ("steep", (false, false, false)),
             ("update_brief", (false, false, false)),
             ("write_page", (false, true, false)),
         ]);
@@ -10681,6 +11060,7 @@ mod tests {
             "rename_page",
             "reject_refinement",
             "save_source",
+            "steep",
             "update_brief",
             "write_page",
         ]

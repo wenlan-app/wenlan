@@ -38,6 +38,7 @@ pub mod sessions;
 pub mod source_annotations;
 pub mod sources;
 pub mod space_context;
+pub mod steep;
 pub mod system_info;
 
 // Re-export commonly used types at crate root for convenience.
@@ -102,6 +103,10 @@ pub use sessions::{
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
+pub use steep::{
+    SteepClaimRequest, SteepClaimResponse, SteepCommitRequest, SteepCommitResponse, SteepSource,
+    SteepWorkItem, SteepWorklistResponse,
+};
 
 use serde::{Deserialize, Serialize};
 

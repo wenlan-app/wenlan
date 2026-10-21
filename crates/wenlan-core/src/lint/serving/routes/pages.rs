@@ -28,6 +28,8 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/pages/{id}/basis/{basis_id}/diff","page_basis",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Post,"/api/pages/code-basis/recheck","page_code_basis",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,NoGate,Rejected,Forbidden),
     row!(Post,"/api/pages/{id}/code-basis/cited","page_code_basis",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
+    row!(Get,"/api/steep/worklist","steep_worklist",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,NoGate,Rejected,Forbidden),
+    row!(Post,"/api/steep/claim","steep_claim",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/pages/{id}/map","page_map",HeaderOnly,UnauthenticatedLocal,PageWorkspace,ParentCollectionFiltered,Rejected,Forbidden),
     row!(Get,"/api/source-annotations","source_annotation",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Post,"/api/source-annotations","source_annotation",BodyThenHeader,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
