@@ -91,6 +91,15 @@ fn register_vault(root: &Path) -> Source {
     source
 }
 
+fn loaded_memory_count() -> u64 {
+    wenlan_core::config::load_config()
+        .sources
+        .into_iter()
+        .find(|s| s.id == SOURCE_ID)
+        .expect("source in config")
+        .memory_count
+}
+
 fn server_state(db: &Arc<MemoryDB>) -> Arc<RwLock<ServerState>> {
     Arc::new(RwLock::new(ServerState {
         db: Some(db.clone()),
@@ -161,6 +170,8 @@ async fn vault_sync_follows_edits_new_notes_renames_and_deletions() {
     assert!(alpha_text.contains("Aleph"), "{alpha_text}");
     assert!(!alpha_text.contains("Alpha"), "{alpha_text}");
     assert_eq!(stored_ids(&db).await.len(), 2);
+    // The count shown for the vault is what it holds, not every edit so far.
+    assert_eq!(loaded_memory_count(), 2);
 
     // New note.
     let gamma = write(vault.path(), "gamma.md", &note("Gamma"));

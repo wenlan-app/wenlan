@@ -359,8 +359,8 @@ async fn sync_obsidian_source_locked(
         }
     }
 
-    finalize_sync(
-        db,
+    let stats = finalize_sync(
+        db.clone(),
         &id,
         md_files.len(),
         ingested,
@@ -370,7 +370,30 @@ async fn sync_obsidian_source_locked(
         gdrive_errors,
         None,
     )
-    .await
+    .await?;
+    record_stored_count(&db, &id).await;
+    Ok(stats)
+}
+
+/// `finalize_sync` adds this sync's upserts to `memory_count`, which for a
+/// vault that is re-read on every edit counts each edit again. Store the
+/// number of chunk documents the vault holds now instead.
+async fn record_stored_count(db: &MemoryDB, source_id: &str) {
+    let stored = match db
+        .list_source_ids_with_prefix("memory", &format!("{source_id}::"))
+        .await
+    {
+        Ok(ids) => ids.len() as u64,
+        Err(error) => {
+            tracing::warn!("[sync] stored count failed for {source_id}: {error}");
+            return;
+        }
+    };
+    let mut config = wenlan_core::config::load_config();
+    if let Some(src) = config.sources.iter_mut().find(|s| s.id == source_id) {
+        src.memory_count = stored;
+    }
+    let _ = wenlan_core::config::save_config(&config);
 }
 
 #[cfg(test)]
