@@ -15,6 +15,9 @@ user-invocable: true
 Capture a single memory in the moment. Active verb: agent captures the
 moment of insight, like a photograph.
 
+Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass
+`session: "codex:<that id>"` on `capture` and `write_page`.
+
 ## Resolve the active space
 
 The `/capture` skill accepts one optional inline token of the form

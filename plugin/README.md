@@ -8,7 +8,7 @@ Wenlan is local-first. Memories, pages, and session notes live on your machine u
 
 - **Skills**: one front door, `/wenlan`, plus `/brief`, `/capture`, `/recall`, and `/handoff`. Setup, notes, distill, map, lint, curate, and forget are reached by saying them after `/wenlan` and stay out of the slash menu. Each skill talks to the local daemon over HTTP on `127.0.0.1:7878`.
 - **One local MCP server** (`wenlan`), started by `plugin/scripts/wenlan-mcp-runner.sh`. It exposes memory tools (capture, recall, brief, distill, and friends) to Claude Code and Cowork. Claude chat on the web ignores local MCP servers.
-- **One `SessionStart` hook** (`plugin/hooks/check-daemon.sh`). It probes the local daemon and prints at most a few lines: a reminder if the daemon is not running, a count of handoff notes waiting to sync (from the local `wenlan outbox status` command, parsed with `python3`), and a notice if the daemon and plugin versions have drifted apart. It never blocks a session and never installs anything.
+- **Two `SessionStart` hooks.** `plugin/hooks/session-context.sh` reads the session id Claude Code passes it, exports `WENLAN_SESSION=claude-code:<id>` for the commands Claude runs, and prints one line so Claude can pass that session when it saves a memory, note, or handoff; Wenlan then shows which conversation a memory or note came from. It makes no network call. `plugin/hooks/check-daemon.sh` probes the local daemon and prints at most a few lines: a reminder if the daemon is not running, a count of handoff notes waiting to sync (from the local `wenlan outbox status` command, parsed with `python3`), and a notice if the daemon and plugin versions have drifted apart. It never blocks a session and never installs anything.
 
 ## Setup
 
@@ -32,7 +32,7 @@ Everything the plugin does is listed here so you can decide whether to install i
 | Skills and MCP server | Read and write memories, pages, and session notes | `127.0.0.1:7878` (the local Wenlan daemon on your machine) |
 | `/wenlan` setup | When the runtime is missing, runs `npx -y wenlan@<pinned version> setup` (macOS Apple Silicon). On other platforms it stops and points you to the install guide | `registry.npmjs.org` (npm package `wenlan`), which downloads release binaries from `github.com/wenlan-app/wenlan/releases` (GitHub serves the files from `objects.githubusercontent.com`) |
 | MCP runner fallback | If no local `wenlan-mcp` binary exists, runs `npx -y wenlan-mcp@<pinned version>` | `registry.npmjs.org` (npm package `wenlan-mcp`) |
-| `SessionStart` hook | One health probe of the local daemon, plus the local outbox and version checks above | `127.0.0.1:7878` only |
+| `SessionStart` hooks | One health probe of the local daemon, plus the local outbox and version checks above | `127.0.0.1:7878` only (the session hook makes no network call) |
 | Local daemon, first start | Downloads the search embedding model (about 210 MB, `Qdrant/bge-base-en-v1.5-onnx-Q`) once | `huggingface.co`. No memory content is sent. If a Hugging Face token is already saved on the machine, the download library attaches it |
 
 No memory content, prompts, or file contents leave your machine through this plugin. The daemon's full privacy notes are in [docs/PRIVACY.md](../docs/PRIVACY.md). Steep, the model-backed background enrichment (classification, entity extraction, page synthesis, reranking), is opt-in and configured in the daemon with `wenlan steep configure`, not in the plugin.

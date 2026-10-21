@@ -47,6 +47,7 @@ import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer from "./ContentRenderer";
 import RelatedPages from "./page/RelatedPages";
 import PageInfo from "./page/PageInfo";
+import { PageSessionSources } from "./sessions/SessionSourceSection";
 import PageInfoDrawer from "./page/PageInfoDrawer";
 import { DetailInfoContent, DetailReadingFrame } from "./DetailLayout";
 import { InfoAction } from "./page/InfoAction";
@@ -2725,6 +2726,12 @@ export default function PageDetail({
               basis={basisRefs}
               onMarkBasis={basisEditable ? markBasis : undefined}
               onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
+            />
+            <PageSessionSources
+              pageId={pageId}
+              headingClassName="note-info-section-heading"
+              onOpenMemory={(id) => { setInfoOpen(false); onMemoryClick(id); }}
+              onOpenPage={onPageClick}
             />
           </div>
             </DetailInfoContent>}

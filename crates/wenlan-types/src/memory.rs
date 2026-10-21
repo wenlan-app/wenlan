@@ -135,6 +135,9 @@ pub struct MemoryItem {
     pub pending_revision: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merged_from: Option<Vec<String>>,
+    /// The agent session (`ses_...`) that wrote this memory, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 fn default_version() -> i64 {

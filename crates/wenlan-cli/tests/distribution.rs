@@ -43,6 +43,7 @@ fn plugin_distribution_contains_required_files() {
         "plugin/scripts/wenlan-mcp-runner.sh",
         "plugin/hooks/hooks.json",
         "plugin/hooks/check-daemon.sh",
+        "plugin/hooks/session-context.sh",
         "plugin/skills/brief/SKILL.md",
         "plugin/skills/capture/SKILL.md",
         "plugin/skills/handoff/SKILL.md",

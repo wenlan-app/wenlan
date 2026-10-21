@@ -14,11 +14,14 @@ struct Recorded {
     method: String,
     path: String,
     body: String,
+    session_header: Option<String>,
 }
 
 fn cli() -> Command {
     let mut command = Command::cargo_bin("wenlan").unwrap();
     command.env("WENLAN_NO_AUTOSTART", "1");
+    command.env_remove("WENLAN_SESSION");
+    command.env_remove("CODEX_THREAD_ID");
     command
 }
 
@@ -45,11 +48,15 @@ fn spawn_stub(responses: Vec<String>) -> (String, Arc<Mutex<Vec<Recorded>>>) {
             let method = parts.next().unwrap().to_string();
             let path = parts.next().unwrap().to_string();
             let mut content_length = 0usize;
+            let mut session_header = None;
             loop {
                 let mut line = String::new();
                 reader.read_line(&mut line).unwrap();
                 if line == "\r\n" || line.is_empty() {
                     break;
+                }
+                if let Some(value) = line.to_lowercase().strip_prefix("x-wenlan-session:") {
+                    session_header = Some(value.trim().to_string());
                 }
                 if let Some(value) = line
                     .strip_prefix("content-length:")
@@ -64,6 +71,7 @@ fn spawn_stub(responses: Vec<String>) -> (String, Arc<Mutex<Vec<Recorded>>>) {
                 method,
                 path,
                 body: String::from_utf8(body).unwrap(),
+                session_header,
             });
             reader.get_mut().write_all(response.as_bytes()).unwrap();
         }
@@ -109,6 +117,121 @@ fn brief_response() -> String {
         }
     })
     .to_string()
+}
+
+fn session_response() -> String {
+    serde_json::json!({
+        "id": "ses_test",
+        "tool": "claude-code",
+        "external_id": "abc-123",
+        "first_write_at": 1,
+        "last_write_at": 1
+    })
+    .to_string()
+}
+
+#[test]
+fn brief_update_records_the_session_once_then_stamps_the_write() {
+    let temp = tempfile::tempdir().unwrap();
+    let update = temp.path().join("update.json");
+    std::fs::write(
+        &update,
+        serde_json::json!({
+            "space": "work",
+            "caller_id": "handoff",
+            "operation_id": "operation-1",
+            "mutations": [{"kind": "add", "text": "publish PR", "state": "active"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let receipt = serde_json::json!({
+        "space": "work",
+        "brief_version": 1,
+        "applied": [],
+        "conflicts": [],
+        "projection_path": "/tmp/work.md",
+        "warnings": []
+    })
+    .to_string();
+    let (host, recorded) = spawn_stub(vec![response(&session_response()), response(&receipt)]);
+
+    cli()
+        .env("WENLAN_HOST", host)
+        .env("WENLAN_SESSION", "claude-code:abc-123")
+        .args([
+            "--space",
+            "work",
+            "brief",
+            "update",
+            "--file",
+            update.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(
+        (recorded[0].method.as_str(), recorded[0].path.as_str()),
+        ("POST", "/api/sessions")
+    );
+    let announced: serde_json::Value = serde_json::from_str(&recorded[0].body).unwrap();
+    assert_eq!(announced["session"], "claude-code:abc-123");
+    assert!(announced["cwd"].is_string());
+    assert_eq!(
+        (recorded[1].method.as_str(), recorded[1].path.as_str()),
+        ("PATCH", "/api/brief")
+    );
+    assert_eq!(
+        recorded[1].session_header.as_deref(),
+        Some("claude-code:abc-123")
+    );
+}
+
+#[test]
+fn brief_update_without_a_session_sends_no_header_and_no_announcement() {
+    let temp = tempfile::tempdir().unwrap();
+    let update = temp.path().join("update.json");
+    std::fs::write(
+        &update,
+        serde_json::json!({
+            "space": "work",
+            "caller_id": "handoff",
+            "operation_id": "operation-2",
+            "mutations": [{"kind": "add", "text": "publish PR", "state": "active"}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let receipt = serde_json::json!({
+        "space": "work",
+        "brief_version": 1,
+        "applied": [],
+        "conflicts": [],
+        "projection_path": "/tmp/work.md",
+        "warnings": []
+    })
+    .to_string();
+    let (host, recorded) = spawn_stub(vec![response(&receipt)]);
+
+    cli()
+        .env("WENLAN_HOST", host)
+        .args([
+            "--space",
+            "work",
+            "brief",
+            "update",
+            "--file",
+            update.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].path, "/api/brief");
+    assert_eq!(recorded[0].session_header, None);
 }
 
 #[test]

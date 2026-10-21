@@ -92,6 +92,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     case "list_all_tags": return { tags: [], document_tags: {}, categories: [], document_categories: {} };
     case "get_page_links": return { outbound: [], inbound: [] };
     case "get_page_sources": case "list_registered_sources": return [];
+    // The fixture has no AI conversations: no note lists one, no id resolves.
+    case "get_page_sessions": return { sessions: [] };
+    case "get_session_detail": return null;
     case "list_communities": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, communities: [], next_cursor: null };
     case "list_community_members": return { schema_version: COMMUNITY_READ_SCHEMA_VERSION, members: [], next_cursor: null };
     case "get_page_revisions": return { page_id: optionalString(args, "pageId") ?? "", current_version: 1, user_edited: false, entries: [] };

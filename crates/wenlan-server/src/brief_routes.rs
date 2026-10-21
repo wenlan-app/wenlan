@@ -7,6 +7,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 use std::{future::Future, sync::Arc};
@@ -92,6 +93,7 @@ where
 /// read here.
 pub async fn handle_read_brief(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     SpaceHeader(header_space): SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(request): Json<BriefReadRequest>,
@@ -208,6 +210,18 @@ pub async fn handle_read_brief(
 
     let code_basis_pending = code_basis_pending_for(&db, &space).await;
 
+    // A Brief that was actually read is listed on the session card when the
+    // caller names its session. This is bookkeeping beside the read: it never
+    // creates or changes a Brief or a Space, and nothing is recorded for the
+    // unresolved and not-created answers above.
+    crate::session_routes::note_session_read(
+        db.clone(),
+        &headers,
+        wenlan_types::SessionReadKind::Brief,
+        &space,
+        wenlan_core::db::sessions::session_read_space_of(Some(&space)).into(),
+    );
+
     Ok(Json(BriefReadResponse {
         state: BriefReadState::Ready,
         space: Some(space),
@@ -236,6 +250,7 @@ async fn code_basis_pending_for(db: &MemoryDB, space: &str) -> Option<u32> {
 /// project the committed Brief as a human-readable Markdown receipt.
 pub async fn handle_update_brief(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(request): Json<BriefUpdateRequest>,
 ) -> Result<Json<BriefUpdateReceipt>, ServerError> {
     let (db, status_root, projection_lock) = {
@@ -246,7 +261,10 @@ pub async fn handle_update_brief(
             Arc::clone(&state.brief_projection_lock),
         )
     };
-    let mut receipt = db.apply_brief_update(&request).await?;
+    let session = crate::session_routes::extract_session_ref(&headers);
+    let mut receipt = db
+        .apply_brief_update_in_session(&request, session.as_ref())
+        .await?;
     let _projection_guard = projection_lock.lock().await;
 
     match (

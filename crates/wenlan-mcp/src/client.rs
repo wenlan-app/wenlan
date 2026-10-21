@@ -1,7 +1,10 @@
+use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Serialize};
+use wenlan_types::{session_context, SessionRef, UpsertSessionRequest, SESSION_HEADER};
 
 const DEFAULT_HTTP_URL: &str = "http://127.0.0.1:7878";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -30,6 +33,10 @@ pub struct WenlanClient {
     client: Client,
     base_url: String,
     agent_name: Option<String>,
+    /// The AI session this clone writes for, sent as `x-wenlan-session`.
+    session: Option<SessionRef>,
+    /// Sessions the daemon has been told about, shared by every clone.
+    announced: Arc<tokio::sync::Mutex<HashSet<String>>>,
 }
 
 /// Max retries on connection errors (daemon restarting).
@@ -44,6 +51,73 @@ impl WenlanClient {
             client: Client::new(),
             base_url,
             agent_name: None,
+            session: None,
+            announced: Arc::default(),
+        }
+    }
+
+    /// A clone whose requests carry the caller's session, or `self` unchanged
+    /// when none resolves. `explicit` is the tool's `session` argument; it
+    /// wins over `WENLAN_SESSION` and `CODEX_THREAD_ID`, which are read only
+    /// when `use_env` (a local server, not a remote-facing one). The first
+    /// time a session is seen the daemon is told where it ran. Best effort:
+    /// a bad session or an unreachable daemon never fails the write.
+    pub async fn for_session(&self, explicit: Option<&str>, use_env: bool) -> WenlanClient {
+        let resolved = if use_env {
+            session_context::resolve_session_from_env(explicit)
+        } else {
+            session_context::resolve_session(explicit, None, None)
+        };
+        for warning in &resolved.warnings {
+            tracing::warn!("{warning}");
+        }
+        let Some(session) = resolved.session else {
+            return self.clone();
+        };
+        self.announce_session(&session, use_env).await;
+        let mut client = self.clone();
+        client.session = Some(session);
+        client
+    }
+
+    async fn announce_session(&self, session: &SessionRef, with_context: bool) {
+        let mut announced = self.announced.lock().await;
+        if announced.contains(&session.to_string()) {
+            return;
+        }
+        let owned = session.clone();
+        // The server's cwd and repository describe the caller only for a local
+        // stdio server; a remote-facing one reports just the session name.
+        let request = tokio::task::spawn_blocking(move || {
+            if with_context {
+                session_context::build_upsert_request(
+                    &owned,
+                    session_context::process_work_context(),
+                    &session_context::TranscriptRoots::from_env(dirs::home_dir()),
+                )
+            } else {
+                UpsertSessionRequest {
+                    session: owned.to_string(),
+                    ..UpsertSessionRequest::default()
+                }
+            }
+        })
+        .await;
+        let Ok(request) = request else {
+            return;
+        };
+        let sent = self
+            .client
+            .post(format!("{}/api/sessions", self.base_url))
+            .json(&request)
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await;
+        match sent {
+            Ok(_) => {
+                announced.insert(session.to_string());
+            }
+            Err(error) => tracing::debug!(%error, "could not record session metadata"),
         }
     }
 
@@ -117,13 +191,14 @@ impl WenlanClient {
     }
 
     /// Attach per-request headers common to all daemon calls:
-    /// `x-agent-name` (when set) and `x-wenlan-space` (when space is locked).
-    fn attach_common_headers(
-        mut req: reqwest::RequestBuilder,
-        agent: Option<&str>,
-    ) -> reqwest::RequestBuilder {
-        if let Some(a) = agent {
+    /// `x-agent-name` (when set), `x-wenlan-session` (when the caller has a
+    /// session) and `x-wenlan-space` (when space is locked).
+    fn attach_common_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if let Some(a) = self.agent_name.as_deref() {
             req = req.header("x-agent-name", a);
+        }
+        if let Some(session) = &self.session {
+            req = req.header(SESSION_HEADER, session.to_string());
         }
         if let Some(space) = crate::lock_state::locked_space() {
             req = req.header(SPACE_HEADER, space);
@@ -134,11 +209,10 @@ impl WenlanClient {
     /// GET request, deserialize JSON response.
     pub async fn get<R: DeserializeOwned>(&self, path: &str) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.get(&url);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -151,11 +225,10 @@ impl WenlanClient {
         query: &Q,
     ) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.get(&url).query(query);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -169,11 +242,10 @@ impl WenlanClient {
         body: &B,
     ) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.post(&url).json(body);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -187,11 +259,10 @@ impl WenlanClient {
         body: &B,
     ) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.post(&url).query(query).json(body);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -202,11 +273,10 @@ impl WenlanClient {
     /// Used for mutate endpoints where the id is in the path and no body is needed.
     pub async fn post_empty<R: DeserializeOwned>(&self, path: &str) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.post(&url);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -216,11 +286,10 @@ impl WenlanClient {
     /// DELETE request, deserialize JSON response.
     pub async fn delete<R: DeserializeOwned>(&self, path: &str) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.delete(&url);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -235,11 +304,10 @@ impl WenlanClient {
         body: &B,
     ) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.delete(&url).json(body);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -253,11 +321,10 @@ impl WenlanClient {
         body: &B,
     ) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.put(&url).json(body);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -271,11 +338,10 @@ impl WenlanClient {
         body: &B,
     ) -> Result<R, WenlanError> {
         let url = format!("{}{}", self.base_url, path);
-        let agent = self.agent_name.clone();
         let resp = self
             .send_with_retry(|| {
                 let req = self.client.patch(&url).json(body);
-                Self::attach_common_headers(req, agent.as_deref())
+                self.attach_common_headers(req)
             })
             .await?;
         let bytes = Self::read_body(resp).await?;
@@ -459,10 +525,8 @@ mod tests {
         crate::lock_state::init_from_env();
 
         let client = Client::new();
-        let builder = WenlanClient::attach_common_headers(
-            client.get("http://127.0.0.1:7878/api/health"),
-            None,
-        );
+        let builder = WenlanClient::new("http://127.0.0.1:7878".into())
+            .attach_common_headers(client.get("http://127.0.0.1:7878/api/health"));
         let req = builder.build().unwrap();
         let header = req.headers().get(SPACE_HEADER).unwrap();
         assert_eq!(header.to_str().unwrap(), "career");
@@ -480,10 +544,8 @@ mod tests {
         crate::lock_state::init_from_env();
 
         let client = Client::new();
-        let builder = WenlanClient::attach_common_headers(
-            client.get("http://127.0.0.1:7878/api/health"),
-            None,
-        );
+        let builder = WenlanClient::new("http://127.0.0.1:7878".into())
+            .attach_common_headers(client.get("http://127.0.0.1:7878/api/health"));
         let req = builder.build().unwrap();
         assert!(req.headers().get(SPACE_HEADER).is_none());
     }

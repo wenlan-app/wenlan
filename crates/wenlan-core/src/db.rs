@@ -84,6 +84,7 @@ pub use activity_counts::{
 };
 mod scoped_entities;
 mod scoped_pages;
+pub mod sessions;
 pub mod source_annotations;
 mod source_sync;
 mod space_context;
@@ -200,6 +201,8 @@ mod scoped_entities_test;
 mod scoped_pages_test;
 #[cfg(test)]
 mod scoped_records_test;
+#[cfg(test)]
+mod sessions_test;
 #[cfg(test)]
 mod source_annotations_test;
 #[cfg(test)]
@@ -1489,8 +1492,11 @@ pub const EMBEDDING_DIM: usize = 768;
 /// every machine write.
 /// Migration 138 adds `page_basis` (a note relying on another note),
 /// `page_history.minor` and `pages.basis_revision`.
-/// Migration 139 adds `page_code_basis` (a note relying on lines of code).
-/// Migration 140 adds `page_code_basis.cited_blob` (the git blob id of the
+/// Migration 140 adds `agent_sessions` and `session_id` on `memories`,
+/// `page_history`, and `brief_history`, and backfills one session per past
+/// ChatGPT / Claude.ai import conversation.
+/// Migration 141 adds `session_reads`, what a session looked up in Wenlan.
+/// Migration 142 adds `page_code_basis.cited_blob` (the git blob id of the
 /// cited file as last written or confirmed).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
@@ -1499,7 +1505,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 140;
+pub const SCHEMA_VERSION: u32 = 142;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -10472,14 +10478,30 @@ impl MemoryDB {
             if version < 139 {
                 self.migrate_139_page_code_basis().await?;
             }
-            // Migration 140 adds `page_code_basis.cited_blob`, the git blob id
-            // of the cited file as last written or confirmed. See
-            // migrate_140_code_basis_cited_blob.
+            // Migration 140 records which agent session wrote a memory, note
+            // version, or Brief update. See migrate_140_agent_sessions.
             if ceiling < 140 {
                 return Ok(());
             }
             if version < 140 {
-                self.migrate_140_code_basis_cited_blob(version).await?;
+                self.migrate_140_agent_sessions(version).await?;
+            }
+            // Migration 141 records what a session looked up: recall, Brief
+            // and note reads. See migrate_141_session_reads.
+            if ceiling < 141 {
+                return Ok(());
+            }
+            if version < 141 {
+                self.migrate_141_session_reads().await?;
+            }
+            // Migration 142 adds `page_code_basis.cited_blob`, the git blob id
+            // of the cited file as last written or confirmed. See
+            // migrate_142_code_basis_cited_blob.
+            if ceiling < 142 {
+                return Ok(());
+            }
+            if version < 142 {
+                self.migrate_142_code_basis_cited_blob(version).await?;
             }
         }
 
@@ -17973,18 +17995,18 @@ impl MemoryDB {
         Ok(())
     }
 
-    /// Migration 140: a code basis remembers which git blob it was read from.
+    /// Migration 142: a code basis remembers which git blob it was read from.
     ///
     /// Adds `page_code_basis.cited_blob` (nullable: rows written before this
     /// migration have no text to show). The ALTER is guarded by a column-exists
     /// check, so a database whose table was just created by migration 139 (the
     /// DDL already has the column) and a replay after a crash between the ALTER
     /// and the version bump are both no-ops.
-    async fn migrate_140_code_basis_cited_blob(
+    async fn migrate_142_code_basis_cited_blob(
         &self,
         prior_version: i64,
     ) -> Result<(), WenlanError> {
-        self.backup_before_migration(140, prior_version).await?;
+        self.backup_before_migration(142, prior_version).await?;
         let conn = self.conn.lock().await;
         let has_col: bool = {
             let mut rows = conn
@@ -17994,7 +18016,7 @@ impl MemoryDB {
                     (),
                 )
                 .await
-                .map_err(|e| WenlanError::VectorDb(format!("m140 col check: {e}")))?;
+                .map_err(|e| WenlanError::VectorDb(format!("m142 col check: {e}")))?;
             match rows.next().await {
                 Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
                 _ => false,
@@ -18004,13 +18026,13 @@ impl MemoryDB {
             conn.execute("ALTER TABLE page_code_basis ADD COLUMN cited_blob TEXT", ())
                 .await
                 .map_err(|e| {
-                    WenlanError::VectorDb(format!("m140 add page_code_basis.cited_blob: {e}"))
+                    WenlanError::VectorDb(format!("m142 add page_code_basis.cited_blob: {e}"))
                 })?;
         }
-        conn.execute("PRAGMA user_version = 140", ())
+        conn.execute("PRAGMA user_version = 142", ())
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("m140 bump: {e}")))?;
-        log::info!("[migration] Migration 140 applied: page_code_basis.cited_blob");
+            .map_err(|e| WenlanError::VectorDb(format!("m142 bump: {e}")))?;
+        log::info!("[migration] Migration 142 applied: page_code_basis.cited_blob");
         Ok(())
     }
 
@@ -35401,12 +35423,13 @@ impl MemoryDB {
                 MAX(source_text) as source_text,
                 MAX(version) as version,
                 MAX(changelog) as changelog,
-                {is_archived} AS is_archived"
+                {is_archived} AS is_archived,
+                MAX(session_id) as session_id"
         )
     }
 
     /// Map one `memories` row (the `memory_item_columns` projection, columns
-    /// 0..25) into a `MemoryItem`. Shared by every reader below so a column
+    /// 0..26) into a `MemoryItem`. Shared by every reader below so a column
     /// added to the projection only needs its index added once instead of
     /// once per reader.
     fn memory_item_from_row(row: &libsql::Row) -> MemoryItem {
@@ -35441,6 +35464,7 @@ impl MemoryDB {
             is_archived: row.get::<i64>(25).unwrap_or(0) != 0,
             pending_revision: false,
             merged_from: None,
+            session_id: row.get::<Option<String>>(26).unwrap_or(None),
         }
     }
 
@@ -44571,6 +44595,7 @@ impl MemoryDB {
                 is_archived: false,
                 pending_revision: false,
                 merged_from: None,
+                session_id: None,
             });
         }
         Ok(results)
@@ -59690,6 +59715,9 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("batch import begin: {e}")))?;
 
         let mut count = 0usize;
+        // Each conversation is a session: its write span runs from its first
+        // to its last message, and its rows carry the session id.
+        let mut conversations: HashMap<String, (Option<String>, i64, i64)> = HashMap::new();
         for ((source_id, content, title, created_at, chunk_index), embedding) in
             entries.iter().zip(&embeddings)
         {
@@ -59698,12 +59726,23 @@ impl MemoryDB {
             let created_ts = created_at.map(|ts| ts.timestamp()).unwrap_or(now_ts);
             let title_str = title.as_deref().unwrap_or("");
             let word_count = content.split_whitespace().count() as i64;
+            let session_id = sessions::import_session_ref(source_id)
+                .map(|session| sessions::session_row_id(&session));
+            if session_id.is_some() {
+                let span = conversations.entry(source_id.clone()).or_insert((
+                    title.clone().filter(|t| !t.trim().is_empty()),
+                    created_ts,
+                    created_ts,
+                ));
+                span.1 = span.1.min(created_ts);
+                span.2 = span.2.max(created_ts);
+            }
 
             if let Err(e) = conn.execute(
                 // `origin_class` pinned for the same reason as the single-row
                 // `store_raw_import_memory` above: a chat export is `generated`.
-                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding)
-                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10))",
+                "INSERT INTO memories (id, content, source, source_id, title, chunk_index, last_modified, chunk_type, word_count, created_at, origin_class, embedding, session_id)
+                 VALUES (?1, ?2, 'memory', ?3, ?4, ?5, ?6, 'text', ?7, ?8, ?9, vector32(?10), ?11)",
                 libsql::params![
                     memory_id,
                     content.clone(),
@@ -59715,6 +59754,7 @@ impl MemoryDB {
                     created_ts,
                     crate::origin::OriginClass::Generated.as_str(),
                     Self::vec_to_sql(embedding),
+                    session_id,
                 ],
             ).await {
                 let _ = conn.execute("ROLLBACK", ()).await;
@@ -59735,6 +59775,25 @@ impl MemoryDB {
                 return Err(WenlanError::VectorDb(format!("batch import origin: {e}")));
             }
             count += 1;
+        }
+
+        for (source_id, (title, first, last)) in &conversations {
+            let Some(session) = sessions::import_session_ref(source_id) else {
+                continue;
+            };
+            if let Err(e) = sessions::upsert_session_span(
+                &conn,
+                &session,
+                title.as_deref(),
+                None,
+                *first,
+                *last,
+            )
+            .await
+            {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::VectorDb(format!("batch import session: {e}")));
+            }
         }
 
         commit_or_rollback(&conn)

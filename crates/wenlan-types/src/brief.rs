@@ -221,6 +221,9 @@ pub struct BriefHistoryEntry {
     pub summary: String,
     pub mutation_count: usize,
     pub mutations: Vec<BriefAppliedMutation>,
+    /// The agent session (`ses_...`) that made this update, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -330,6 +333,7 @@ mod tests {
                 item_id: Some("item-1".into()),
                 version: Some(1),
             }],
+            session_id: None,
         };
         let value = serde_json::to_value(&entry).unwrap();
         assert_eq!(value["mutations"][0]["kind"], "add");

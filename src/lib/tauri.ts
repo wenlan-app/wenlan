@@ -1324,6 +1324,8 @@ export interface MemoryItem {
   is_archived?: boolean;
   pending_revision?: boolean;
   merged_from?: string[] | null;
+  /** The AI conversation that wrote this memory (`ses_...`), when one did. */
+  session_id?: string | null;
   structured_fields?: string | null;  // JSON string from Rust
   retrieval_cue?: string | null;
   access_count?: number;
@@ -2188,6 +2190,97 @@ export async function getVersionChain(
   sourceId: string,
 ): Promise<MemoryVersionItem[]> {
   return invoke("get_version_chain_cmd", { sourceId });
+}
+
+/** One AI conversation a write came from. Times are Unix seconds. */
+export interface AgentSession {
+  id: string;
+  tool: string;
+  external_id: string;
+  title?: string | null;
+  cwd?: string | null;
+  repo_root?: string | null;
+  repo_remote?: string | null;
+  repo_branch?: string | null;
+  repo_commit?: string | null;
+  /** Where the tool keeps the transcript. Never shown; only its presence matters. */
+  transcript_path?: string | null;
+  space?: string | null;
+  first_write_at: number;
+  last_write_at: number;
+}
+
+export interface SessionMemoryEntry {
+  source_id: string;
+  title: string;
+  memory_type?: string | null;
+  space?: string | null;
+  created_at: number;
+}
+
+export interface SessionPageEntry {
+  id: string;
+  title: string;
+  version: number;
+  edited_at: number;
+}
+
+export interface SessionHandoffEntry {
+  space: string;
+  brief_version: number;
+  summary: string;
+  created_at: number;
+}
+
+/** `recall`: a memory search (label is the query). `brief`: a Space Brief read (label is the Space). `read_page`: a note read in full (label is the note id). */
+export type SessionReadKind = "recall" | "brief" | "read_page";
+
+export interface SessionReadEntry {
+  kind: SessionReadKind;
+  label: string;
+  /** The note's title, for `read_page` only. */
+  title?: string | null;
+  created_at: number;
+}
+
+/** A note that cites a memory the conversation wrote, without the conversation having written the note. */
+export interface SessionCitedByEntry {
+  id: string;
+  title: string;
+  cited_at: number;
+}
+
+export interface SessionDetail {
+  session: AgentSession;
+  memories: SessionMemoryEntry[];
+  pages: SessionPageEntry[];
+  handoffs: SessionHandoffEntry[];
+  /** What the conversation looked up, newest first (at most 10). Absent from older daemons. */
+  reads?: SessionReadEntry[];
+  /** How many lookups there are in all, which can exceed `reads.length`. */
+  reads_total?: number;
+  /** Notes that later used a memory this conversation wrote. */
+  cited_by?: SessionCitedByEntry[];
+  /** The transcript file named by `session.transcript_path` is still on this machine. */
+  transcript_available?: boolean;
+}
+
+/** `wrote`: the conversation wrote a version of the note. `source`: it wrote a memory the note cites. */
+export type PageSessionVia = "wrote" | "source";
+
+export interface PageSessionEntry {
+  session: AgentSession;
+  via: PageSessionVia;
+}
+
+/** The conversation and what it left behind; null when it is not visible here. */
+export async function getSessionDetail(sessionId: string): Promise<SessionDetail | null> {
+  return invoke("get_session_detail", { sessionId });
+}
+
+export async function getPageSessions(pageId: string): Promise<PageSessionEntry[]> {
+  const response = await invoke<{ sessions?: PageSessionEntry[] }>("get_page_sessions", { pageId });
+  return response?.sessions ?? [];
 }
 
 export async function getMemoryRevisions(

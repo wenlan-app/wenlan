@@ -59,6 +59,7 @@ pub async fn run(
                 space: effective_space,
                 agent_name: agent_name.map(str::to_owned),
                 reconcile_summary_version: false,
+                session: client.session().map(ToString::to_string),
                 payload: OutboxPayload::MemoryStore(request),
             };
             let path = outbox::enqueue(&envelope)?;

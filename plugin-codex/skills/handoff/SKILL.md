@@ -18,6 +18,9 @@ Close the session with three separate artifacts:
 
 It also brings the wiki pages this session used up to date (step 7).
 
+Run `echo $CODEX_THREAD_ID` once; when it is non-empty, pass
+`session: "codex:<that id>"` on `capture`, `write_page` and `update_brief`.
+
 The daemon Brief is current-work authority. Its
 `~/.wenlan/sessions/_status/<space>.md` projection is a one-way human receipt.
 Never read, edit, or overwrite that receipt as authority.

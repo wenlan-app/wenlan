@@ -1485,6 +1485,27 @@ impl WenlanClient {
         self.get_json(&path).await
     }
 
+    /// `GET /api/sessions/{id}`; `None` when the daemon cannot show it.
+    pub async fn get_session_detail(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<wenlan_types::SessionDetailResponse>, String> {
+        let path = format!("/api/sessions/{}", percent_encode_path_segment(session_id));
+        self.get_optional_json(&path).await
+    }
+
+    /// `GET /api/pages/{id}/sessions`.
+    pub async fn get_page_sessions(
+        &self,
+        page_id: &str,
+    ) -> Result<wenlan_types::PageSessionsResponse, String> {
+        let path = format!(
+            "/api/pages/{}/sessions",
+            percent_encode_path_segment(page_id)
+        );
+        self.get_json(&path).await
+    }
+
     pub async fn get_page_links(
         &self,
         page_id: &str,
@@ -4347,6 +4368,46 @@ mod tests {
         let _confirm = WenlanClient::confirm_page_basis;
         let _diff = WenlanClient::get_page_basis_diff;
         let _pending = WenlanClient::list_basis_pending;
+    }
+
+    #[test]
+    fn wenlan_client_exposes_session_methods() {
+        let _detail = WenlanClient::get_session_detail;
+        let _page = WenlanClient::get_page_sessions;
+    }
+
+    #[test]
+    fn session_responses_deserialize_daemon_payloads() {
+        let detail: wenlan_types::SessionDetailResponse =
+            serde_json::from_value(serde_json::json!({
+                "session": {
+                    "id": "ses_1",
+                    "tool": "claude-code",
+                    "external_id": "abc",
+                    "first_write_at": 10,
+                    "last_write_at": 20
+                },
+                "memories": [],
+                "pages": [],
+                "handoffs": []
+            }))
+            .unwrap();
+        // Older daemons omit the field; the UI reads it as "no transcript".
+        assert!(!detail.transcript_available);
+        let pages: wenlan_types::PageSessionsResponse = serde_json::from_value(serde_json::json!({
+            "sessions": [{
+                "session": {
+                    "id": "ses_1",
+                    "tool": "codex",
+                    "external_id": "abc",
+                    "first_write_at": 10,
+                    "last_write_at": 20
+                },
+                "via": "source"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(pages.sessions[0].via, wenlan_types::PageSessionVia::Source);
     }
 
     #[test]

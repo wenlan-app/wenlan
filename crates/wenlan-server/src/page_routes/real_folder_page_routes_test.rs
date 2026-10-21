@@ -95,6 +95,7 @@ async fn publish_reports_committed_page_with_pending_projection_and_retains_inte
     assert_eq!(saved.folder_path, "Missing");
     let Json(reloaded) = handle_get_page(
         State(state.clone()),
+        axum::http::HeaderMap::new(),
         SpaceHeader(None),
         TruthView::automatic(),
         Path(id.into()),
@@ -253,6 +254,7 @@ async fn detail_resolves_a_live_file_when_stored_kind_is_stale_overview() {
 
     let Json(detail) = handle_get_page(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(Some("work".into())),
         TruthView::automatic(),
         Path(page.id),
@@ -307,6 +309,7 @@ async fn move_accepts_a_live_file_when_stored_kind_is_stale_overview() {
     assert_eq!(saved.version, page.version);
     let Json(detail) = handle_get_page(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(Some("work".into())),
         TruthView::automatic(),
         Path(page.id),
@@ -333,6 +336,7 @@ async fn overview_title_with_stale_concept_kind_has_no_file_path() {
 
     let Json(detail) = handle_get_page(
         State(state),
+        axum::http::HeaderMap::new(),
         SpaceHeader(Some("work".into())),
         TruthView::automatic(),
         Path(page.id),

@@ -87,6 +87,12 @@ The refinement trio remains because this review queue has no CLI or replacement
 path. Remote HTTP clients can list it, but `accept_refinement` and
 `reject_refinement` are hidden and hard-rejected remotely.
 
+`capture`, `write_page`, and `update_brief` accept an optional `session`
+(`<tool>:<session id>`, for example `claude-code:<id>`). Wenlan records it so a
+memory, note, or handoff links back to the conversation that wrote it. When the
+argument is absent a local server uses `WENLAN_SESSION`, then `CODEX_THREAD_ID`
+(as `codex:<id>`); a malformed value is ignored and never fails the write.
+
 Lint repair is three tools behind `/wenlan lint repair`: `lint_repair_prepare` opens
 and pages a plan or turns one Review Item into a manifest, `lint_repair_apply`
 applies one approved manifest, and `lint_repair_verify` records the follow-up

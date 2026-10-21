@@ -279,6 +279,7 @@ async fn verify(root: &Path, preseeded: bool) {
 
     let brief = output(
         mcp.brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: None,
         })
@@ -300,6 +301,7 @@ async fn verify(root: &Path, preseeded: bool) {
 
     let related = output(
         mcp.brief_impl(BriefParams {
+            session: None,
             topic: Some("Atlas authentication decision".into()),
             space: None,
         })
@@ -322,6 +324,7 @@ async fn verify(root: &Path, preseeded: bool) {
         .count();
     let recalled = output(
         mcp.recall_impl(RecallParams {
+            session: None,
             query: "Atlas authentication decision".into(),
             limit: Some(3),
             memory_type: None,
@@ -374,6 +377,7 @@ async fn verify(root: &Path, preseeded: bool) {
     // A model-supplied Space must not escape the connector's process pin.
     let pinned = output(
         mcp.brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some(OTHER.into()),
         })

@@ -29,7 +29,7 @@ use wenlan_types::{
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
     BriefUpdateRequest, BriefVersionResponse, EntityDetail, OutboxDrainReport,
-    PageSourceWithMemory,
+    PageSourceWithMemory, SessionRef, SESSION_HEADER,
 };
 
 mod lint;
@@ -82,7 +82,12 @@ pub struct AmbientJobSweepResult {
 pub struct WenlanClient {
     base_url: String,
     http: reqwest::Client,
+    headers: HeaderMap,
     recovery_enabled: bool,
+    /// The AI session this process writes for, sent as `x-wenlan-session`.
+    session: Option<SessionRef>,
+    /// Set once the daemon has been told where the session ran.
+    session_announced: tokio::sync::OnceCell<()>,
 }
 
 impl WenlanClient {
@@ -112,11 +117,75 @@ impl WenlanClient {
         Ok(Self {
             base_url,
             http: reqwest::Client::builder()
-                .default_headers(headers)
+                .default_headers(headers.clone())
                 .build()
                 .context("building Wenlan HTTP client")?,
+            headers,
             recovery_enabled: true,
+            session: None,
+            session_announced: tokio::sync::OnceCell::new(),
         })
+    }
+
+    /// Attribute this client's writes to an AI session by sending
+    /// `x-wenlan-session` on every request (the daemon reads it on writes and on
+    /// the lookups the session card lists: search, recall, Brief and note reads).
+    pub fn with_session(mut self, session: Option<SessionRef>) -> Result<Self> {
+        if let Some(session) = &session {
+            self.headers.insert(
+                SESSION_HEADER,
+                HeaderValue::from_str(&session.to_string()).context("invalid session value")?,
+            );
+            self.http = reqwest::Client::builder()
+                .default_headers(self.headers.clone())
+                .build()
+                .context("building Wenlan HTTP client")?;
+        }
+        self.session = session;
+        Ok(self)
+    }
+
+    /// The session this client writes for, if any.
+    pub fn session(&self) -> Option<&SessionRef> {
+        self.session.as_ref()
+    }
+
+    /// Tell the daemon where the session ran, once per process, before the
+    /// first write. Best effort and short: failure never fails the write, and
+    /// the daemon creates the session from the write's header regardless.
+    async fn announce_session(&self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let _ = self
+            .session_announced
+            .get_or_try_init(|| async {
+                let session = session.clone();
+                let request = tokio::task::spawn_blocking(move || {
+                    wenlan_types::session_context::build_upsert_request(
+                        &session,
+                        wenlan_types::session_context::process_work_context(),
+                        &wenlan_types::session_context::TranscriptRoots::from_env(dirs::home_dir()),
+                    )
+                })
+                .await
+                .map_err(|_| ())?;
+                let url = format!("{}/api/sessions", self.base_url);
+                match self
+                    .http
+                    .post(&url)
+                    .json(&request)
+                    .timeout(std::time::Duration::from_secs(3))
+                    .send()
+                    .await
+                {
+                    // Any answer means the daemon was reachable; a connect
+                    // failure stays retryable by a later write.
+                    Ok(_) => Ok(()),
+                    Err(_) => Err(()),
+                }
+            })
+            .await;
     }
 
     /// Enable or disable recovery by starting the registered daemon service
@@ -317,6 +386,7 @@ impl WenlanClient {
             source_filter: None,
             space: None,
         };
+        self.announce_session().await;
         self.post_json("/api/search", &req).await
     }
 
@@ -330,16 +400,19 @@ impl WenlanClient {
             source_agent: None,
             rerank: false,
         };
+        self.announce_session().await;
         self.post_json("/api/memory/search", &request).await
     }
 
     /// POST /api/brief — complete Brief plus optional same-Space recall.
     pub async fn brief(&self, request: &BriefReadRequest) -> Result<BriefReadResponse> {
+        self.announce_session().await;
         self.post_json("/api/brief", request).await
     }
 
     /// PATCH /api/brief — item-level handoff deltas.
     pub async fn update_brief(&self, request: &BriefUpdateRequest) -> Result<BriefUpdateReceipt> {
+        self.announce_session().await;
         self.patch_json("/api/brief", request).await
     }
 
@@ -362,6 +435,7 @@ impl WenlanClient {
         memory_type: Option<String>,
     ) -> Result<StoreMemoryResponse> {
         let req = Self::store_request(content, memory_type);
+        self.announce_session().await;
         self.post_json("/api/memory/store", &req).await
     }
 
@@ -641,6 +715,7 @@ impl WenlanClient {
 
     /// GET /api/pages/{id} — one page with its live-file metadata.
     pub async fn read_page(&self, id: &str) -> Result<PageReadResponse> {
+        self.announce_session().await;
         self.get_json(&format!("/api/pages/{}", id), true).await
     }
 
@@ -980,7 +1055,10 @@ mod tests {
         WenlanClient {
             base_url: base_url.to_string(),
             http: reqwest::Client::new(),
+            headers: reqwest::header::HeaderMap::new(),
             recovery_enabled: true,
+            session: None,
+            session_announced: tokio::sync::OnceCell::new(),
         }
     }
 

@@ -16,6 +16,8 @@ import {
   MERGE_SOURCES,
   RECENT_CHANGES,
   MEMORY_REVISIONS,
+  PAGE_SESSIONS,
+  SESSION_DETAILS,
   REGISTERED_SOURCES,
   GRAPH_ENTITIES,
   GRAPH_DETAILS,
@@ -122,6 +124,10 @@ export async function invoke(
     }
     case "get_page_links":
       return LINKS;
+    case "get_page_sessions":
+      return { sessions: PAGE_SESSIONS[args?.pageId as string] ?? [] };
+    case "get_session_detail":
+      return SESSION_DETAILS[args?.sessionId as string] ?? null;
     case "get_page_revisions":
       return { ...REVISIONS, page_id: args?.pageId };
     case "list_recent_changes": {

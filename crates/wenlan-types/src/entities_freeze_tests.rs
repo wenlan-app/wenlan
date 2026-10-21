@@ -654,6 +654,7 @@ fn sample_memory_item(entity_id: Option<String>) -> MemoryItem {
         changelog: None,
         pending_revision: false,
         merged_from: None,
+        session_id: None,
     }
 }
 

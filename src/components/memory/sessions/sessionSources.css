@@ -1,0 +1,102 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Source conversation: a quiet link line in the detail panes, and its card. */
+.session-source { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.session-source-heading {
+  margin: 0 0 4px;
+  color: var(--mem-text-secondary);
+  font: 500 13px/1.4 var(--mem-font-body);
+}
+.session-source-list { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; min-width: 0; }
+.session-source-line,
+.session-source-more,
+.session-card-more {
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  font: 400 13px/1.5 var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.session-source-line { color: var(--mem-accent-page); }
+.session-source-line:hover { text-decoration: underline; }
+.session-source-more,
+.session-card-more { color: var(--mem-text-tertiary); }
+.session-source-more:hover,
+.session-card-more:hover { color: var(--mem-text-secondary); text-decoration: underline; }
+.session-source-line:focus-visible,
+.session-source-more:focus-visible,
+.session-card-more:focus-visible,
+.session-card-row:focus-visible,
+.session-card-close:focus-visible,
+.session-card-resume-button:focus-visible { outline: 2px solid var(--mem-focus-ring); outline-offset: 2px; }
+
+.session-card-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 32%); }
+.session-card-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: hidden;
+  border: 1px solid var(--mem-border);
+  border-radius: 12px;
+  background: var(--mem-surface);
+  color: var(--mem-text);
+  box-shadow: 0 16px 64px rgb(0 0 0 / 22%);
+  font: 14px/1.6 var(--mem-font-body);
+  outline: none;
+}
+/* The card can be taller than the window: the body scrolls, Close stays put. */
+.session-card-body { min-height: 0; overflow-y: auto; padding: 24px 24px 0; }
+.session-card-title { margin: 0 0 8px; font: 500 20px/1.3 var(--mem-font-heading); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.session-card-muted { margin: 0; color: var(--mem-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.session-card-section { margin-top: 20px; }
+.session-card-heading { margin: 0 0 8px; color: var(--mem-text); font: 500 14px/1.4 var(--mem-font-body); }
+.session-card-handoffs { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.session-card-handoff-text { margin: 0 0 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.session-card-group + .session-card-group { margin-top: 12px; }
+.session-card-subheading { margin: 0 0 2px; color: var(--mem-text-secondary); font: 400 12px/1.4 var(--mem-font-body); }
+.session-card-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.session-card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  margin-inline: -8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--mem-accent-page);
+  font: 400 14px/1.4 var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.session-card-row:hover { background: var(--mem-hover); }
+.session-card-row-static { color: var(--mem-text); cursor: default; }
+.session-card-row-static:hover { background: none; }
+.session-card-row-icon { display: inline-flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-text-tertiary); }
+.session-card-row-title { min-width: 0; }
+.session-card-resume { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 20px; }
+.session-card-resume-button,
+.session-card-close {
+  padding: 6px 12px;
+  border: 1px solid var(--mem-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mem-text);
+  font: 500 13px/1.4 var(--mem-font-body);
+  cursor: pointer;
+}
+.session-card-resume-button:hover,
+.session-card-close:hover { background: var(--mem-hover); }
+.session-card-body > .session-card-muted { margin-top: 2px; }
+.session-card-section + .session-card-muted { margin-top: 20px; }
+.session-card-actions { display: flex; flex-shrink: 0; justify-content: flex-end; padding: 16px 24px 24px; }
+.session-card-nowrap { white-space: nowrap; }
+@media (max-width: 480px) {
+  .session-card-body { padding: 20px 20px 0; }
+  .session-card-actions { padding: 12px 20px 20px; }
+}

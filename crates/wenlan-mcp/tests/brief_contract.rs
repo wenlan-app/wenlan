@@ -14,6 +14,10 @@ use wiremock::{
 };
 
 fn make_server(mock: &MockServer) -> WenlanMcpServer {
+    // A session exported by the developer's own agent would add a
+    // `POST /api/sessions` request these tests do not expect.
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     WenlanMcpServer::new(
         WenlanClient::new(mock.uri()),
         TransportMode::Stdio,
@@ -76,6 +80,7 @@ async fn no_topic_reads_only_the_complete_brief_and_preserves_versions() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some("wenlan".into()),
         })
@@ -110,6 +115,7 @@ async fn topic_appends_separately_labeled_same_space_context() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: Some("release readiness".into()),
             space: Some("wenlan".into()),
         })
@@ -145,6 +151,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             .await;
         let result = make_server(&mock)
             .brief_impl(BriefParams {
+                session: None,
                 topic: None,
                 space: Some("wenlan".into()),
             })
@@ -187,6 +194,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             .brief_impl(BriefParams {
                 topic: None,
                 space: Some("wenlan".into()),
+                session: None,
             })
             .await
             .expect("missing brief is a successful read state");
@@ -219,6 +227,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some("wenlan".into()),
         })

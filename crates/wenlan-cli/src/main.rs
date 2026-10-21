@@ -32,6 +32,11 @@ struct Cli {
     #[arg(long, global = true)]
     agent_name: Option<String>,
 
+    /// AI session as tool:id (for example claude-code:<session id>); links what you write to that conversation.
+    /// Defaults to WENLAN_SESSION, then CODEX_THREAD_ID.
+    #[arg(long, global = true, value_name = "TOOL:ID")]
+    session: Option<String>,
+
     /// Use one registered Space for scope-aware reads and writes.
     #[arg(long, global = true, conflicts_with = "all_spaces")]
     space: Option<String>,
@@ -280,7 +285,14 @@ async fn main() -> anyhow::Result<ExitCode> {
         &cli.command,
         Commands::Status | Commands::Background { .. } | Commands::Restart
     );
+    let resolved_session =
+        wenlan_types::session_context::resolve_session_from_env(cli.session.as_deref());
+    for warning in &resolved_session.warnings {
+        eprintln!("wenlan: {warning}");
+    }
+    let session = resolved_session.session;
     let base_client = client::WenlanClient::from_env_with_context(agent_name.as_deref(), None)?
+        .with_session(session.clone())?
         .with_recovery(recovery_enabled);
     let is_brief_update = matches!(
         &cli.command,
@@ -351,6 +363,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             agent_name.as_deref(),
             context.space.as_deref(),
         )?
+        .with_session(session.clone())?
         .with_recovery(recovery_enabled)
     } else if is_brief_update {
         let strict_space = std::env::var("WENLAN_SPACE").ok();
@@ -360,6 +373,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             agent_name.as_deref(),
             effective_cli_space.as_deref(),
         )?
+        .with_session(session.clone())?
         .with_recovery(recovery_enabled)
     } else if is_export {
         // Export is a native read: no flag means every Space, `--space X`
@@ -375,6 +389,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             agent_name.as_deref(),
             effective_cli_space.as_deref(),
         )?
+        .with_session(session.clone())?
         .with_recovery(recovery_enabled)
     } else if is_okf_import {
         // An OKF import or a saved source writes into one Space: `--space X`
@@ -390,6 +405,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             agent_name.as_deref(),
             effective_cli_space.as_deref(),
         )?
+        .with_session(session.clone())?
         .with_recovery(recovery_enabled)
     } else if is_lint {
         let strict_space = std::env::var("WENLAN_SPACE").ok();

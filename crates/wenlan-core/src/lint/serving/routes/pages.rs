@@ -23,6 +23,7 @@ pub(super) const ROUTES: &[SensitiveReadRoute] = &[
     row!(Get,"/api/pages/{id}/sources","page_sources",HeaderOnly,UnauthenticatedLocal,PageWorkspace,ParentCollectionFiltered,Rejected,Forbidden),
     row!(Get,"/api/pages/{id}/links","page_links",HeaderOnly,UnauthenticatedLocal,PageWorkspace,ParentCollectionFiltered,Rejected,Forbidden),
     row!(Get,"/api/pages/{id}/revisions","page_revisions",HeaderOnly,UnauthenticatedLocal,PageWorkspace,ParentCollectionFiltered,Rejected,Forbidden),
+    row!(Get,"/api/pages/{id}/sessions","page_sessions",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Get,"/api/pages/basis-pending","page_basis",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,NoGate,Rejected,Forbidden),
     row!(Get,"/api/pages/{id}/basis/{basis_id}/diff","page_basis",HeaderOnly,UnauthenticatedLocal,PageWorkspace,SingleId404,Rejected,Forbidden),
     row!(Post,"/api/pages/code-basis/recheck","page_code_basis",QueryThenHeader,UnauthenticatedLocal,PageWorkspace,NoGate,Rejected,Forbidden),

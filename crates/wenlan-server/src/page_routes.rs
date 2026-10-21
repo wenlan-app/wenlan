@@ -206,6 +206,7 @@ pub async fn handle_list_pages(
 /// GET /api/pages/:id
 pub async fn handle_get_page(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     view: crate::truth_guard::TruthView,
     Path(id): Path<String>,
@@ -229,6 +230,18 @@ pub async fn handle_get_page(
         .map_err(|e| ServerError::SearchFailed(e.to_string()))?
     {
         Some(page) => {
+            // A note read in full is listed on the session card when the caller
+            // names its AI session. Only after scope and truth authorization,
+            // so a hidden note is never recorded.
+            crate::session_routes::note_session_read(
+                db.clone(),
+                &headers,
+                wenlan_types::SessionReadKind::ReadPage,
+                &id,
+                Some(wenlan_core::db::sessions::session_read_space_of(
+                    page.space.as_deref(),
+                )),
+            );
             // An imported OKF concept carries its bundle frontmatter beside the
             // page, for display only. The key is omitted for every other page,
             // so a reader that does not know about OKF sees today's shape.
@@ -586,6 +599,7 @@ async fn handle_create_page_inner(
         )
     };
 
+    let write_started_at = chrono::Utc::now().timestamp();
     let _space_write_guard = db.lock_space_writes().await;
     let target = normalize_page_write_target(&req.space, req.workspace.as_deref())?;
     let resolved = db
@@ -639,6 +653,23 @@ async fn handle_create_page_inner(
         .await?
         .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?
         .space;
+    // Attribution is best effort: the page is already written, so a failure
+    // here is logged and never fails the write.
+    if let Some(session) = crate::session_routes::extract_session_ref(&headers) {
+        if let Err(error) = db
+            .stamp_page_history_session(
+                persisted_page_id,
+                write_started_at,
+                &session,
+                persisted_space.as_deref(),
+            )
+            .await
+        {
+            tracing::warn!(
+                "[session] failed to stamp page {persisted_page_id} with {session}: {error}"
+            );
+        }
+    }
     let attached_existing = result.attached_to.is_some();
     // Marks went on the note this call created, inside its create
     // transaction. A create that attached to an existing note wrote nothing of
@@ -1579,6 +1610,10 @@ pub async fn handle_refresh_page(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let session = crate::session_routes::extract_session_ref(&headers);
+    let write_started_at = chrono::Utc::now().timestamp();
+    let db = state.read().await.db.clone();
+    let page_id = id.clone();
     let result = handle_refresh_page_inner(
         State(state),
         Path(id),
@@ -1587,6 +1622,24 @@ pub async fn handle_refresh_page(
         Json(req),
     )
     .await;
+    if let (Some(session), Some(db), Ok((wenlan_core::post_write::WriteOutcome::Wrote, _))) =
+        (&session, &db, &result)
+    {
+        // Attribution is best effort: the page is already written, so a
+        // failure here is logged and never fails the write.
+        let space = db
+            .get_page(&page_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|p| p.space);
+        if let Err(error) = db
+            .stamp_page_history_session(&page_id, write_started_at, session, space.as_deref())
+            .await
+        {
+            tracing::warn!("[session] failed to stamp page {page_id} with {session}: {error}");
+        }
+    }
     match &result {
         Ok((wenlan_core::post_write::WriteOutcome::Wrote, _)) => {
             telemetry.record(TelemetryEvent::WikiGenerated)

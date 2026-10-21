@@ -89,6 +89,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "list_basis_pending",
     "get_page_revisions",
     "get_page_sources",
+    // Fixtures have no AI conversations; both answer with the quiet shape.
+    "get_page_sessions",
+    "get_session_detail",
     "list_registered_sources",
   ],
   pageDrafts: [

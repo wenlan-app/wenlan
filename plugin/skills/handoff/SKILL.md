@@ -17,6 +17,9 @@ Close the session with three separate artifacts:
 
 It also brings the wiki pages this session used up to date (step 7).
 
+When the session start printed a `Wenlan session:` line, pass its value as
+`session` on `capture`, `write_page` and `update_brief`.
+
 The daemon Brief is current-work authority. Its
 `~/.wenlan/sessions/_status/<space>.md` projection is a one-way human receipt.
 Never read, edit, or overwrite that receipt as authority.

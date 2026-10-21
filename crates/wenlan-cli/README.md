@@ -277,6 +277,7 @@ This section is generated from the same definitions that produce `wenlan --help`
 - `--format <FORMAT>`: Output format. Auto-detects JSON when piped, table on TTY. Possible values: `auto` (Pick automatically based on stdout TTY: terminal → Table, pipe → Json), `json`, `table`. Default: `auto`.
 - `-q, --quiet`: Suppress all non-error output. Useful for scripts.
 - `--agent-name <AGENT_NAME>`: Identify the caller in X-Agent-Name audit metadata.
+- `--session <TOOL:ID>`: AI session as tool:id (for example claude-code:<session id>); links what you write to that conversation. Defaults to WENLAN_SESSION, then CODEX_THREAD_ID.
 - `--space <SPACE>`: Use one registered Space for scope-aware reads and writes.
 - `--all-spaces`: Read across every Space. Invalid for writes and strict WENLAN_SPACE pins.
 

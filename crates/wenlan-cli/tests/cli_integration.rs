@@ -12,6 +12,10 @@ mod common;
 fn cli() -> Command {
     let mut command = Command::cargo_bin("wenlan").expect("origin binary built");
     command.env("WENLAN_NO_AUTOSTART", "1");
+    // A session leaking in from the developer's or CI's own agent would stamp
+    // (and queue) writes these tests do not expect.
+    command.env_remove("WENLAN_SESSION");
+    command.env_remove("CODEX_THREAD_ID");
     command
 }
 
@@ -1237,6 +1241,81 @@ fn unreachable_capture_and_brief_update_are_queued_and_status_is_offline() {
     assert!(files
         .iter()
         .any(|path| path.to_string_lossy().contains("memory_store")));
+}
+
+fn queued_memory_envelope(runtime: &IsolatedRuntime) -> serde_json::Value {
+    let file = fs::read_dir(runtime.data.path().join("outbox"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().contains("memory_store"))
+        .expect("a queued memory_store envelope");
+    serde_json::from_slice(&fs::read(file).unwrap()).unwrap()
+}
+
+#[test]
+fn queued_capture_keeps_its_session_for_replay() {
+    // `--session` wins over the environment.
+    let runtime = IsolatedRuntime::new();
+    let output = cli_with_isolated_runtime(&runtime)
+        .env("WENLAN_SESSION", "cursor:from-env")
+        .args([
+            "--session",
+            "claude-code:from-flag",
+            "capture",
+            "queued with an explicit session",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run capture");
+    assert!(output.status.success(), "stderr: {:?}", output.stderr);
+    assert_eq!(
+        queued_memory_envelope(&runtime)["session"],
+        "claude-code:from-flag"
+    );
+
+    // Codex's thread id is the last resort.
+    let runtime = IsolatedRuntime::new();
+    let output = cli_with_isolated_runtime(&runtime)
+        .env("CODEX_THREAD_ID", "019a-thread")
+        .args(["capture", "queued from a codex thread", "--format", "json"])
+        .output()
+        .expect("run capture");
+    assert!(output.status.success(), "stderr: {:?}", output.stderr);
+    assert_eq!(
+        queued_memory_envelope(&runtime)["session"],
+        "codex:019a-thread"
+    );
+}
+
+#[test]
+fn queued_capture_without_a_session_has_no_session_key() {
+    let runtime = IsolatedRuntime::new();
+    let output = cli_with_isolated_runtime(&runtime)
+        .args(["capture", "queued with no session", "--format", "json"])
+        .output()
+        .expect("run capture");
+    assert!(output.status.success(), "stderr: {:?}", output.stderr);
+    assert!(queued_memory_envelope(&runtime).get("session").is_none());
+}
+
+#[test]
+fn invalid_session_is_ignored_with_a_warning() {
+    let runtime = IsolatedRuntime::new();
+    let output = cli_with_isolated_runtime(&runtime)
+        .args([
+            "--session",
+            "not a session",
+            "capture",
+            "queued despite a bad session",
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run capture");
+    assert!(output.status.success(), "stderr: {:?}", output.stderr);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ignoring invalid session"));
+    assert!(queued_memory_envelope(&runtime).get("session").is_none());
 }
 
 #[test]

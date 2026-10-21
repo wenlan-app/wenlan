@@ -216,7 +216,7 @@ async fn migration_139_adds_the_table_and_index_idempotently() {
 }
 
 #[tokio::test]
-async fn migration_140_adds_cited_blob_to_a_table_that_lacks_it_and_is_a_no_op_otherwise() {
+async fn migration_142_adds_cited_blob_to_a_table_that_lacks_it_and_is_a_no_op_otherwise() {
     // A database that stopped at 139 holds the table without the column.
     let (db, _dir) = test_db_at(139).await;
     let has_column = |db: &MemoryDB| {

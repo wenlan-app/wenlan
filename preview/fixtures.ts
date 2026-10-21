@@ -19,6 +19,8 @@ import type {
   PageChange,
   ListMemoryRevisionsResponse,
   RegisteredSource,
+  SessionDetail,
+  PageSessionEntry,
 } from "../src/lib/tauri";
 
 const cite = (
@@ -1219,6 +1221,61 @@ export const REGISTERED_SOURCES: RegisteredSource[] = [
     memory_count: 0,
   },
 ];
+
+// --- Source conversations (get_page_sessions / get_session_detail) ---
+// "page-cited" shows one conversation that wrote it and one it only cites;
+// the writer's card has a transcript, the other's was pruned by its tool.
+
+const SESSION_WROTE = {
+  id: "ses_preview_wrote",
+  tool: "claude-code",
+  external_id: "00893aaf-19fa-41d2-8238-13269b9b3ca0",
+  title: "Tighten the daemon architecture note",
+  repo_root: "/work/wenlan",
+  repo_branch: "main",
+  repo_commit: "be0283ac71013796e7674387f78b45b82b01d54e",
+  transcript_path: "/home/u/.claude/projects/wenlan/00893aaf.jsonl",
+  space: "wenlan",
+  first_write_at: 1_760_950_320,
+  last_write_at: 1_760_953_200,
+};
+const SESSION_CITED = {
+  id: "ses_preview_cited",
+  tool: "codex",
+  external_id: "019a-thread",
+  transcript_path: "/home/u/.codex/sessions/019a.jsonl",
+  space: "wenlan",
+  first_write_at: 1_760_800_000,
+  last_write_at: 1_760_800_900,
+};
+
+export const PAGE_SESSIONS: Record<string, PageSessionEntry[]> = {
+  "page-cited": [
+    { session: SESSION_WROTE, via: "wrote" },
+    { session: SESSION_CITED, via: "source" },
+  ],
+};
+
+export const SESSION_DETAILS: Record<string, SessionDetail> = {
+  [SESSION_WROTE.id]: {
+    session: SESSION_WROTE,
+    memories: [
+      { source_id: "mem-1", title: "The daemon owns the only database writer", created_at: 1_760_951_000 },
+    ],
+    pages: [{ id: "page-cited", title: "Wenlan Daemon Architecture", version: 2, edited_at: 1_760_952_000 }],
+    handoffs: [
+      { space: "wenlan", brief_version: 7, summary: "Moved the writer into the daemon. Next: document the queue.", created_at: 1_760_953_000 },
+    ],
+    transcript_available: true,
+  },
+  [SESSION_CITED.id]: {
+    session: SESSION_CITED,
+    memories: [{ source_id: "mem-2", title: "Queue replay is idempotent", created_at: 1_760_800_500 }],
+    pages: [],
+    handoffs: [],
+    transcript_available: false,
+  },
+};
 
 // Library fixture for ?mode=sources: documents an agent saved from other apps
 // (source "webpage", source_id = the permanent link) beside a local file.

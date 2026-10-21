@@ -18,6 +18,10 @@ pub struct OutboxEnvelope {
     pub agent_name: Option<String>,
     #[serde(default)]
     pub reconcile_summary_version: bool,
+    /// `<tool>:<external_id>` of the AI session that made the write, sent as
+    /// `x-wenlan-session` on replay. Absent in envelopes queued before sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     #[serde(flatten)]
     pub payload: OutboxPayload,
 }
@@ -81,6 +85,7 @@ mod tests {
             space: Some("demo".into()),
             agent_name: Some("codex".into()),
             reconcile_summary_version: true,
+            session: None,
             payload: OutboxPayload::BriefUpdate(BriefUpdateRequest {
                 space: "demo".into(),
                 caller_id: "wenlan-cli".into(),
@@ -113,6 +118,7 @@ mod tests {
             space: None,
             agent_name: None,
             reconcile_summary_version: false,
+            session: None,
             payload: OutboxPayload::MemoryStore(StoreMemoryRequest {
                 content: "a queued memory with enough content".into(),
                 memory_type: Some("fact".into()),
@@ -131,6 +137,24 @@ mod tests {
         let decoded: OutboxEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, envelope);
         assert_eq!(decoded.payload.kind(), "memory_store");
+    }
+
+    #[test]
+    fn session_survives_the_roundtrip_and_old_files_still_parse() {
+        let mut envelope = brief_envelope();
+        envelope.session = Some("claude-code:abc-123".into());
+        let json = serde_json::to_value(&envelope).unwrap();
+        assert_eq!(json["session"], "claude-code:abc-123");
+        let decoded: OutboxEnvelope = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, envelope);
+
+        // An envelope queued before sessions existed has no `session` key, and
+        // an unattributed one does not write the key back out.
+        let mut old = serde_json::to_value(brief_envelope()).unwrap();
+        assert!(old.get("session").is_none());
+        old.as_object_mut().unwrap().remove("session");
+        let decoded: OutboxEnvelope = serde_json::from_value(old).unwrap();
+        assert_eq!(decoded.session, None);
     }
 
     #[test]

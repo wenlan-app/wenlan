@@ -65,6 +65,7 @@ fn brief() -> BriefReadResponse {
 
 fn recall_params() -> RecallParams {
     RecallParams {
+        session: None,
         query: "decision".into(),
         limit: Some(3),
         memory_type: None,
@@ -75,6 +76,7 @@ fn recall_params() -> RecallParams {
 
 fn brief_params() -> BriefParams {
     BriefParams {
+        session: None,
         topic: Some("evidence".into()),
         space: Some("fixture".into()),
     }

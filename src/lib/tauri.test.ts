@@ -1206,6 +1206,29 @@ describe('Page draft lifecycle wrappers', () => {
   });
 });
 
+describe('session wrappers', () => {
+  it('getSessionDetail asks for one session by id', async () => {
+    mockInvoke.mockResolvedValue(null);
+
+    await expect(tauri.getSessionDetail('ses_1')).resolves.toBeNull();
+
+    expect(mockInvoke).toHaveBeenCalledWith('get_session_detail', { sessionId: 'ses_1' });
+  });
+
+  it('getPageSessions unwraps the sessions list and tolerates an empty answer', async () => {
+    const entry = {
+      via: 'wrote',
+      session: { id: 'ses_1', tool: 'codex', external_id: 'x', first_write_at: 1, last_write_at: 2 },
+    };
+    mockInvoke.mockResolvedValueOnce({ sessions: [entry] });
+    await expect(tauri.getPageSessions('page-1')).resolves.toEqual([entry]);
+    expect(mockInvoke).toHaveBeenCalledWith('get_page_sessions', { pageId: 'page-1' });
+
+    mockInvoke.mockResolvedValueOnce(null);
+    await expect(tauri.getPageSessions('page-1')).resolves.toEqual([]);
+  });
+});
+
 describe('page links wrappers', () => {
   it('getPageLinks invokes the daemon page link command', async () => {
     mockInvoke.mockResolvedValue({ outbound: [], inbound: [] });
