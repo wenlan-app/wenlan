@@ -870,11 +870,10 @@ impl MemoryDB {
             "SELECT e.dst_id, json_extract(e.payload, '$.label'), target.title, \
                     CASE WHEN target.id IS NOT NULL THEN \
                       target.space IS c.space AND target.workspace IS c.workspace END, \
-                    target.workspace, target_space.name \
+                    target.workspace, target.space \
              FROM edges e INNER JOIN pages c ON c.id = e.src_id \
              LEFT JOIN pages target ON target.id = e.dst_id \
                AND target.status = 'active' \
-             LEFT JOIN spaces target_space ON target_space.id = target.space \
              WHERE c.id = ?1 AND e.edge_type = 'links' \
                AND e.src_kind = 'page' AND e.dst_kind = 'page' \
                AND e.valid_until IS NULL{scope_sql}"

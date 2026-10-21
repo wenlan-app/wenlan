@@ -21227,8 +21227,10 @@ async fn outbound_target(
 #[tokio::test]
 async fn space_qualified_wikilink_reaches_the_note_in_the_named_space() {
     let (db, _dir) = test_db().await;
-    let home = db.create_space("Home", None, false).await.unwrap().id;
-    let work = db.create_space("Work", None, false).await.unwrap().id;
+    db.create_space("Home", None, false).await.unwrap();
+    let home = "Home".to_string();
+    db.create_space("Work", None, false).await.unwrap();
+    let work = "Work".to_string();
     insert_scoped_wikilink_page(&db, "work-plan", "Plan", "plan body", &work).await;
     insert_scoped_wikilink_page(&db, "work-notes", "Notes", "notes body", &work).await;
     insert_scoped_wikilink_page(&db, "home-cicd", "CI/CD", "pipeline body", &home).await;
@@ -21282,8 +21284,10 @@ async fn space_qualified_wikilink_reaches_the_note_in_the_named_space() {
 #[tokio::test]
 async fn single_space_qualified_wikilink_resolves_without_the_owner_map() {
     let (db, _dir) = test_db().await;
-    let home = db.create_space("Home", None, false).await.unwrap().id;
-    let work = db.create_space("Work", None, false).await.unwrap().id;
+    db.create_space("Home", None, false).await.unwrap();
+    let home = "Home".to_string();
+    db.create_space("Work", None, false).await.unwrap();
+    let work = "Work".to_string();
     insert_scoped_wikilink_page(&db, "work-plan", "Plan", "plan body", &work).await;
     insert_scoped_wikilink_page(
         &db,
@@ -21303,8 +21307,10 @@ async fn single_space_qualified_wikilink_resolves_without_the_owner_map() {
 #[tokio::test]
 async fn unqualified_link_to_a_note_in_another_space_keeps_no_title() {
     let (db, _dir) = test_db().await;
-    let home = db.create_space("Home", None, false).await.unwrap().id;
-    let work = db.create_space("Work", None, false).await.unwrap().id;
+    db.create_space("Home", None, false).await.unwrap();
+    let home = "Home".to_string();
+    db.create_space("Work", None, false).await.unwrap();
+    let work = "Work".to_string();
     insert_scoped_wikilink_page(&db, "moved", "Moved", "body", &home).await;
     insert_scoped_wikilink_page(&db, "home-source", "Home Source", "see [[Moved]]", &home).await;
     db.set_page_workspace("moved", Some(&work)).await.unwrap();
@@ -21320,8 +21326,10 @@ async fn unqualified_link_to_a_note_in_another_space_keeps_no_title() {
 #[tokio::test]
 async fn orphan_sweep_resolves_a_space_qualified_link_once_its_note_exists() {
     let (db, _dir) = test_db().await;
-    let home = db.create_space("Home", None, false).await.unwrap().id;
-    let work = db.create_space("Work", None, false).await.unwrap().id;
+    db.create_space("Home", None, false).await.unwrap();
+    let home = "Home".to_string();
+    db.create_space("Work", None, false).await.unwrap();
+    let work = "Work".to_string();
     insert_scoped_wikilink_page(
         &db,
         "home-source",
@@ -21345,7 +21353,7 @@ async fn orphan_sweep_resolves_a_space_qualified_link_once_its_note_exists() {
 
 #[test]
 fn space_qualified_readings_try_the_longest_space_prefix_first() {
-    let space_ids: std::collections::HashMap<String, Option<String>> = [
+    let space_names: std::collections::HashMap<String, Option<String>> = [
         ("a".to_string(), Some("space-a".to_string())),
         ("a/b".to_string(), Some("space-ab".to_string())),
         ("twin".to_string(), None),
@@ -21353,17 +21361,17 @@ fn space_qualified_readings_try_the_longest_space_prefix_first() {
     .into_iter()
     .collect();
     assert_eq!(
-        crate::synthesis::wikilinks::space_qualified_readings("A/B/C", &space_ids),
+        crate::synthesis::wikilinks::space_qualified_readings("A/B/C", &space_names),
         vec![
             ("space-ab".to_string(), "C"),
             ("space-a".to_string(), "B/C")
         ]
     );
     assert!(
-        crate::synthesis::wikilinks::space_qualified_readings("Twin/Plan", &space_ids).is_empty(),
+        crate::synthesis::wikilinks::space_qualified_readings("Twin/Plan", &space_names).is_empty(),
         "a prefix two Space names fold to names neither"
     );
-    assert!(crate::synthesis::wikilinks::space_qualified_readings("A/", &space_ids).is_empty());
+    assert!(crate::synthesis::wikilinks::space_qualified_readings("A/", &space_names).is_empty());
 }
 
 #[tokio::test]

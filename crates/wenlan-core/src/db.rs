@@ -55274,46 +55274,44 @@ impl MemoryDB {
         Ok(owners)
     }
 
-    /// Every Space id keyed by its name folded the way a page title folds, so
-    /// the `Space` in `[[Space/Title]]` matches a name the way `Title` matches
-    /// a note. `None` when two names fold together: that prefix names no one
-    /// Space.
-    pub(crate) async fn folded_space_ids(
+    /// Every Space name keyed by its fold (the way a page title folds), so the
+    /// `Space` in `[[Space/Title]]` matches a name the way `Title` matches a
+    /// note. The value is the name `pages.space` stores. `None` when two names
+    /// fold together: that prefix names no one Space.
+    pub(crate) async fn folded_space_names(
         &self,
     ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
         let conn = self.conn.lock().await;
-        Self::folded_space_ids_on_conn(&conn).await
+        Self::folded_space_names_on_conn(&conn).await
     }
 
-    /// [`Self::folded_space_ids`] on an already-held connection guard.
-    async fn folded_space_ids_on_conn(
+    /// [`Self::folded_space_names`] on an already-held connection guard.
+    async fn folded_space_names_on_conn(
         conn: &libsql::Connection,
     ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
         let mut rows = conn
             .query(
-                "SELECT id, name FROM spaces WHERE id != ?1",
+                "SELECT name FROM spaces WHERE id != ?1",
                 libsql::params![UNFILED_SPACE_ID],
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("folded_space_ids: {e}")))?;
-        let mut ids: std::collections::HashMap<String, Option<String>> =
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_names: {e}")))?;
+        let mut names: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
         while let Some(row) = rows
             .next()
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("folded_space_ids row: {e}")))?
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_names row: {e}")))?
         {
-            let id: String = row
+            let name: String = row
                 .get::<String>(0)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
-            let name: String = row
-                .get::<String>(1)
-                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
-            ids.entry(Self::page_title_key(&name))
+            names
+                .entry(Self::page_title_key(&name))
                 .and_modify(|slot| *slot = None)
-                .or_insert(Some(id));
+                .or_insert(Some(name));
         }
-        Ok(ids)
+        Ok(names)
     }
 
     pub async fn find_unique_active_page_id_by_title_scoped(
@@ -55730,8 +55728,8 @@ impl MemoryDB {
             // deletes and edge mints below write into.
             let mut owner_maps = crate::synthesis::wikilinks::OwnersBySpace::new();
             // Read once, and only when some orphan could name another Space.
-            let mut space_ids: Option<crate::synthesis::wikilinks::TitleOwners> = None;
-            let no_space_ids = crate::synthesis::wikilinks::TitleOwners::new();
+            let mut space_names: Option<crate::synthesis::wikilinks::TitleOwners> = None;
+            let no_space_names = crate::synthesis::wikilinks::TitleOwners::new();
             for (source_page_id, label_key, label, scope) in orphan_rows {
                 let trimmed = label_key.trim();
                 if trimmed.is_empty() {
@@ -55742,12 +55740,12 @@ impl MemoryDB {
                         Self::folded_title_owners_scoped_on_conn(&conn, scope.as_deref()).await?;
                     owner_maps.insert(scope.clone(), owners);
                 }
-                if trimmed.contains('/') && space_ids.is_none() {
-                    space_ids = Some(Self::folded_space_ids_on_conn(&conn).await?);
+                if trimmed.contains('/') && space_names.is_none() {
+                    space_names = Some(Self::folded_space_names_on_conn(&conn).await?);
                 }
-                let space_ids_ref = space_ids.as_ref().unwrap_or(&no_space_ids);
+                let space_names_ref = space_names.as_ref().unwrap_or(&no_space_names);
                 for (space, _) in
-                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_ids_ref)
+                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_names_ref)
                 {
                     if let std::collections::hash_map::Entry::Vacant(slot) =
                         owner_maps.entry(Some(space.clone()))
@@ -55761,7 +55759,7 @@ impl MemoryDB {
                     trimmed,
                     scope.as_deref(),
                     &owner_maps,
-                    space_ids_ref,
+                    space_names_ref,
                 ) else {
                     continue;
                 };

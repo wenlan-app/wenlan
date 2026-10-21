@@ -73,12 +73,12 @@ pub(crate) type TitleOwners = HashMap<String, Option<String>>;
 /// Title owners keyed by Space scope (`None`: the pages in no Space).
 pub(crate) type OwnersBySpace = HashMap<Option<String>, TitleOwners>;
 
-/// The `(space id, title)` readings of a `[[Space/Title]]` label, longest
+/// The `(Space name, title)` readings of a `[[Space/Title]]` label, longest
 /// Space prefix first. A prefix counts only when it names exactly one Space,
 /// so a title such as "CI/CD" has no reading unless a Space is called "CI".
 pub(crate) fn space_qualified_readings<'a>(
     label: &'a str,
-    space_ids: &TitleOwners,
+    space_names: &TitleOwners,
 ) -> Vec<(String, &'a str)> {
     label
         .rmatch_indices('/')
@@ -87,7 +87,7 @@ pub(crate) fn space_qualified_readings<'a>(
             if title.is_empty() {
                 return None;
             }
-            let space = space_ids
+            let space = space_names
                 .get(&MemoryDB::page_title_key(&label[..at]))?
                 .clone()?;
             Some((space, title))
@@ -115,7 +115,7 @@ pub(crate) fn resolve_label(
     label: &str,
     scope: Option<&str>,
     owners: &OwnersBySpace,
-    space_ids: &TitleOwners,
+    space_names: &TitleOwners,
 ) -> Option<String> {
     if let Some(owner) = owners
         .get(&scope.map(str::to_string))
@@ -123,7 +123,7 @@ pub(crate) fn resolve_label(
     {
         return owner.clone();
     }
-    space_qualified_readings(label, space_ids)
+    space_qualified_readings(label, space_names)
         .into_iter()
         .find_map(|(space, title)| {
             owners
@@ -164,8 +164,8 @@ pub async fn resolve_against_pages(
         own_scope.clone(),
         db.folded_title_owners_scoped(scope).await?,
     );
-    let space_ids = if qualified {
-        db.folded_space_ids().await?
+    let space_names = if qualified {
+        db.folded_space_names().await?
     } else {
         TitleOwners::new()
     };
@@ -173,7 +173,7 @@ pub async fn resolve_against_pages(
         if owners[&own_scope].contains_key(&MemoryDB::page_title_key(label)) {
             continue;
         }
-        for (space, _) in space_qualified_readings(label, &space_ids) {
+        for (space, _) in space_qualified_readings(label, &space_names) {
             if let std::collections::hash_map::Entry::Vacant(slot) =
                 owners.entry(Some(space.clone()))
             {
@@ -185,7 +185,7 @@ pub async fn resolve_against_pages(
         .iter()
         .map(|label| Wikilink {
             label: label.clone(),
-            target_page_id: resolve_label(label, scope, &owners, &space_ids),
+            target_page_id: resolve_label(label, scope, &owners, &space_names),
         })
         .collect())
 }
