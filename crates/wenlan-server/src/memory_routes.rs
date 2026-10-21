@@ -2839,19 +2839,18 @@ mod store_scheduler_handoff_tests {
             unknown.warnings
         );
 
-        // Two entities answer to "Dana": one by title, one by alias.
-        let (dana_one, _) = db
-            .resolve_or_create_entity("Dana", "person", None, None, None)
+        // Two entities are titled "Dana": a person and a project. Every
+        // entity owns its own name as an alias and aliases are unique, so a
+        // second match always comes from a title.
+        let dana_one = db
+            .store_entity("Dana", "person", None, None, None)
             .await
             .unwrap();
-        let (dana_two, _) = db
-            .resolve_or_create_entity("Dana Whitfield", "person", None, None, None)
+        let dana_two = db
+            .store_entity("dana", "project", None, None, None)
             .await
             .unwrap();
         assert_ne!(dana_one, dana_two);
-        db.add_entity_alias("dana", &dana_two, "test")
-            .await
-            .unwrap();
         let content = "Dana signed off on the onboarding copy for the welcome screen.";
         let refused = store(content, Some("Dana"), Some("person"), None).await;
         match refused {
