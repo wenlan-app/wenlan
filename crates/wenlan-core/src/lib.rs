@@ -38,6 +38,7 @@ pub mod events;
 pub mod export;
 pub mod extract;
 pub mod faithfulness;
+pub mod housekeeping;
 pub mod importer;
 pub mod ingest;
 pub mod kg;

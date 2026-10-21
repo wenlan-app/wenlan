@@ -297,6 +297,38 @@ fn maintenance_round_stays_pending_until_every_stage_attempted() {
 }
 
 #[test]
+fn on_demand_round_runs_only_the_stages_that_need_no_model() {
+    use wenlan_core::maintenance::MaintenanceStage;
+    let mut round = AutomaticMaintenanceRound::model_free();
+    assert_eq!(
+        round.remaining_stages(),
+        [
+            MaintenanceStage::RetroReview,
+            MaintenanceStage::NearDuplicate,
+            MaintenanceStage::OrphanInventory,
+            MaintenanceStage::CrossSpaceDiscovery,
+        ]
+    );
+
+    // A stage with more bounded work goes behind the rest, as in Automatic.
+    let more = AutomaticMaintenanceOutcome {
+        selected: true,
+        progressed: true,
+        more: true,
+        ..AutomaticMaintenanceOutcome::default()
+    };
+    round.complete_stage(MaintenanceStage::RetroReview, more);
+    assert_eq!(
+        round.remaining_stages().last(),
+        Some(&MaintenanceStage::RetroReview)
+    );
+    assert!(round
+        .remaining_stages()
+        .iter()
+        .all(|stage| !stage.needs_model()));
+}
+
+#[test]
 fn maintenance_round_cursor_rotates_a_paused_stage_behind_the_rest() {
     let mut round = AutomaticMaintenanceRound::new(Some(
         wenlan_core::maintenance::MaintenanceStage::RetroReview,

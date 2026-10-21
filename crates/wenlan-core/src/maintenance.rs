@@ -60,6 +60,13 @@ impl MaintenanceStage {
             Self::Overview => "overview",
         }
     }
+
+    /// True for the stages that rewrite pages with a model. The others only
+    /// detect work (review cards, orphan labels) from what is already
+    /// stored, so they run in both steep modes.
+    pub const fn needs_model(self) -> bool {
+        matches!(self, Self::StalePage | Self::Overview)
+    }
 }
 
 impl std::fmt::Display for MaintenanceStage {

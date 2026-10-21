@@ -1003,6 +1003,19 @@ impl AutomaticMaintenanceRound {
         Self { stages }
     }
 
+    /// One pass over the stages that need no model, for On demand mode.
+    /// Automatic mode reaches the same stages through its own round, which
+    /// follows an automatic steep batch.
+    fn model_free() -> Self {
+        Self {
+            stages: wenlan_core::maintenance::MaintenanceStage::ALL
+                .iter()
+                .copied()
+                .filter(|stage| !stage.needs_model())
+                .collect(),
+        }
+    }
+
     fn next_stage(&self) -> Option<wenlan_core::maintenance::MaintenanceStage> {
         self.stages.front().copied()
     }
@@ -1254,6 +1267,7 @@ pub fn spawn_scheduler(
         let mut maintenance_stage_ran_since_steep = false;
         let mut steep_batch: Option<AutomaticSteepBatch> = None;
         let mut maintenance_round: Option<AutomaticMaintenanceRound> = None;
+        let mut on_demand_maintenance_round: Option<AutomaticMaintenanceRound> = None;
         let mut ambient_turn_owed = false;
         let mut last_deferred_resource_reason = None;
         let mut document_prep_claim_log = DocumentPrepClaimLog::default();
@@ -2053,6 +2067,66 @@ pub fn spawn_scheduler(
                 .await
             {
                 tracing::warn!("[scheduler] derived receipt sweep error: {error}");
+            }
+            if crate::lifecycle::shutdown_requested(&shutdown) {
+                break;
+            }
+
+            // --- Housekeeping: model-free upkeep, in both steep modes. ---
+            //
+            // Decay, promotion, pruning and eviction run once a day whatever
+            // the mode. In On demand mode the same daily run also queues one
+            // pass over the maintenance stages that only detect work, so
+            // review cards and orphan labels still appear for the user's AI
+            // to act on. Import priority defers both.
+            if !import_work_ran && !write_signal.import_priority_active() {
+                let now_epoch = chrono::Utc::now().timestamp();
+                if wenlan_core::housekeeping::housekeeping_due(
+                    wenlan_core::housekeeping::last_housekeeping_run(&db).await,
+                    now_epoch,
+                ) {
+                    let report = wenlan_core::housekeeping::run_housekeeping(&db, now_epoch).await;
+                    tracing::info!(
+                        "[scheduler] housekeeping: decayed={} promoted={} rejections_pruned={} orphaned_page_sources={} evicted={} errors={:?}",
+                        report.memories_decayed,
+                        report.memories_promoted,
+                        report.rejections_pruned,
+                        report.orphaned_page_sources,
+                        report.memories_evicted,
+                        report.errors,
+                    );
+                    if !background_ai_enabled && on_demand_maintenance_round.is_none() {
+                        on_demand_maintenance_round = Some(AutomaticMaintenanceRound::model_free());
+                    }
+                }
+                if background_ai_enabled {
+                    // Automatic mode runs these stages in its own round.
+                    on_demand_maintenance_round = None;
+                } else if !automatic_work_ran && resource_status.admitted {
+                    if let Some(stage) = on_demand_maintenance_round
+                        .as_ref()
+                        .and_then(AutomaticMaintenanceRound::next_stage)
+                    {
+                        let outcome = fire_maintenance_stage_safe(
+                            db.as_ref(),
+                            None,
+                            &prompts,
+                            &distillation_cfg,
+                            Some(knowledge_path.as_path()),
+                            stage,
+                            "OnDemand",
+                        )
+                        .await;
+                        let round = on_demand_maintenance_round
+                            .as_mut()
+                            .expect("on-demand maintenance round survives its stage");
+                        if round.complete_stage(stage, outcome)
+                            == AutomaticBatchDisposition::Complete
+                        {
+                            on_demand_maintenance_round = None;
+                        }
+                    }
+                }
             }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
