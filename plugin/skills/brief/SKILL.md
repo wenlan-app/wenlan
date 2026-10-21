@@ -21,7 +21,7 @@ empty `space` means unscoped, so omit `space`.
 
 ```bash
 raw_args="<the full argument string passed to /brief>"
-resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
+resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 source_layer="$(printf '%s\n' "$resolved" | cut -f2)"
 topic_arg="$(printf '%s\n' "$resolved" | cut -f3-)"

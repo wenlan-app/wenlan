@@ -7,7 +7,7 @@
 //! - [`resolve_code_path`] decides whether `repo_root` + `path` is a place the
 //!   daemon may look (absolute root, relative `/`-separated path that cannot
 //!   climb out of it),
-//! - [`read_code_file`] reads one file for a check (UTF-8 lossy, 2 MB cap,
+//! - [`read_code_file`] reads one file for a check (UTF-8 lossy, 8 MB cap,
 //!   symlinks may not leave the repository),
 //! - [`prepare_code_basis`] turns what an agent wrote into `(input, anchor)`
 //!   pairs before the write, so a file that cannot be read fails the request
@@ -28,7 +28,7 @@ use wenlan_types::{CodeBasisInput, CodeBasisLocator, CodeBasisRecheckEntry, Code
 
 /// Largest file a code basis may point into. A bigger file is `unavailable`
 /// (`too_large`) on a check and refused on a write.
-pub const MAX_CODE_FILE_BYTES: u64 = 2 * 1024 * 1024;
+pub const MAX_CODE_FILE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Most code bases one write may carry.
 pub const MAX_CODE_BASIS_PER_WRITE: usize = 100;
@@ -149,7 +149,7 @@ impl std::fmt::Display for CodeFileProblem {
             Self::FileMissing => "the file does not exist",
             Self::OutsideRepo => "the path leads outside the repository",
             Self::Unreadable => "the file could not be read",
-            Self::TooLarge => "the file is larger than 2 MB",
+            Self::TooLarge => "the file is larger than 8 MB",
         })
     }
 }

@@ -22,7 +22,7 @@ scope, run the resolver once and use a non-empty `space`, otherwise omit
 
 ```bash
 raw_args="<the full argument string passed to /wenlan lint>"
-resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
+resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 ```
 

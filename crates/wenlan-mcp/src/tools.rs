@@ -1572,21 +1572,37 @@ fn is_code_basis_refusal(error: &WenlanError, sent_code_basis: bool) -> bool {
     sent_code_basis
         && matches!(
             error,
-            WenlanError::Api { status: 400, reason: Some(reason) } if reason == "code_basis_invalid"
+            WenlanError::Api { status: 400, reason: Some(reason) }
+                if reason.split(':').next() == Some("code_basis_invalid")
         )
 }
 
 /// A write the daemon refused because a `code_basis` entry cannot be relied
-/// on. Nothing was written, including the page text.
-fn page_write_code_basis_refused_result() -> CallToolResult {
-    CallToolResult::error(vec![ContentBlock::text(
-        "write_page refused, nothing was written: a `code_basis` entry is not valid. \
-         repo_root must be an absolute path to a folder; path is relative to it, `/` \
-         separated, with no `..`; the file must be readable and under 2 MB; lines are \
-         1-based, line_end not before line_start, and within the file. Check each entry and \
-         retry."
+/// on. Nothing was written, including the page text. `error` is the refusal
+/// from `is_code_basis_refusal`; its explanation names the entry and why, and
+/// leads the message so the agent can fix that entry.
+fn page_write_code_basis_refused_result(error: &WenlanError) -> CallToolResult {
+    let why = match error {
+        WenlanError::Api {
+            reason: Some(reason),
+            ..
+        } => reason
+            .strip_prefix("code_basis_invalid:")
+            .map(str::trim)
+            .filter(|why| !why.is_empty()),
+        _ => None,
+    };
+    let lead = match why {
+        Some(why) => format!("write_page refused, nothing was written: {why}. "),
+        None => "write_page refused, nothing was written: a `code_basis` entry is not valid. "
             .to_string(),
-    )])
+    };
+    CallToolResult::error(vec![ContentBlock::text(format!(
+        "{lead}A `code_basis` entry needs: repo_root an absolute path to a folder; path \
+         relative to it, `/` separated, with no `..`; the file readable and under 8 MB; lines \
+         1-based, line_end not before line_start, and within the file. Fix that entry and \
+         retry."
+    ))])
 }
 
 fn tool_error(e: WenlanError, verb: &str) -> CallToolResult {
@@ -2791,7 +2807,7 @@ impl WenlanMcpServer {
                             return Ok(page_write_conflict_result(&page_id, current, sent_version));
                         }
                         Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
-                            return Ok(page_write_code_basis_refused_result());
+                            return Ok(page_write_code_basis_refused_result(&e));
                         }
                         Err(e) => return Ok(tool_error(e, "write_page")),
                     };
@@ -2824,7 +2840,7 @@ impl WenlanMcpServer {
                 let resp: CreatePageResponse = match self.client.post("/api/pages", &req).await {
                     Ok(resp) => resp,
                     Err(e) if is_code_basis_refusal(&e, sent_code_basis) => {
-                        return Ok(page_write_code_basis_refused_result());
+                        return Ok(page_write_code_basis_refused_result(&e));
                     }
                     Err(e) => return Ok(tool_error(e, "write_page")),
                 };
@@ -7207,6 +7223,45 @@ mod tests {
         let text = text_of(&result);
         assert!(text.contains("nothing was written"), "{text}");
         assert!(text.contains("`code_basis`"), "{text}");
+        assert!(
+            text.starts_with(
+                "write_page refused, nothing was written: src/gone.rs: file_missing. "
+            ),
+            "{text}"
+        );
+    }
+
+    /// The refusal leads with the daemon's reason, so the agent can tell which
+    /// entry was bad and why, on create and on refresh.
+    #[tokio::test]
+    async fn write_page_code_basis_refusal_names_the_entry_and_the_reason() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        for verb in ["POST", "PUT"] {
+            Mock::given(method(verb))
+                .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "error": "code_basis_invalid: cannot read crates/big/src/db.rs: \
+                              the file is larger than 8 MB (too_large)"
+                })))
+                .mount(&mock)
+                .await;
+        }
+        for page_id in [None, Some("page_x")] {
+            let mut params = write_params(page_id);
+            params.code_basis = vec![code_basis_entry()];
+            let result = stdio_server(mock.uri())
+                .write_page_impl(params)
+                .await
+                .unwrap();
+            assert_eq!(result.is_error, Some(true));
+            let text = text_of(&result);
+            assert!(text.contains("crates/big/src/db.rs"), "{text}");
+            assert!(text.contains("too_large"), "{text}");
+            assert!(text.contains("under 8 MB"), "{text}");
+            assert!(!text.contains("code_basis_invalid"), "{text}");
+        }
     }
 
     /// A 400 that is not about a `code_basis` entry is not blamed on one, on

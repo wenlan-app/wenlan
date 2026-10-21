@@ -39,8 +39,8 @@ done
 Compare daemon version vs plugin manifest version:
 
 ```bash
-PLUGIN_JSON="${CLAUDE_PLUGIN_ROOT:-plugin}/.claude-plugin/plugin.json"
-"${CLAUDE_PLUGIN_ROOT:-plugin}/scripts/version-drift.sh" --health-url http://127.0.0.1:7878/api/health --manifest "$PLUGIN_JSON"
+PLUGIN_JSON="${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"
+"${CLAUDE_PLUGIN_ROOT}/scripts/version-drift.sh" --health-url http://127.0.0.1:7878/api/health --manifest "$PLUGIN_JSON"
 ```
 
 It prints one line, `daemon=<v> expected=<v> release=<v> result=<result>`,

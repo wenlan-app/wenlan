@@ -6,6 +6,8 @@ The skills do not store data themselves. They guide Claude Code to use the local
 
 These files are also the source for the Codex plugin: `scripts/gen-codex-plugin.mjs` turns each menu skill here into `plugin-codex/skills/<skill>/SKILL.md` and each workflow reached through `/wenlan` into `plugin-codex/skills/wenlan/references/<skill>.md`, applying `plugin-codex/overlay.json` for the parts Codex does differently. Edit here, then regenerate.
 
+Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claude Code substitutes that exact form when it loads the skill, and does not export the variable to the Bash tool, so `$CLAUDE_PLUGIN_ROOT` is empty at run time.
+
 ## Commands
 
 <!-- verbs:start -->

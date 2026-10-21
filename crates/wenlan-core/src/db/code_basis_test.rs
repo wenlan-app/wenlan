@@ -11,6 +11,7 @@ use crate::code_basis::{
     brief_code_basis_pending, confirm_code_basis, prepare_code_basis, recheck_code_basis,
     recheck_code_basis_in_scope, resolve_code_path, CodeBasisError, CODE_BASIS_STATE_MOVED,
     CODE_BASIS_STATE_OK, CODE_BASIS_STATE_PENDING, CODE_BASIS_STATE_UNAVAILABLE,
+    MAX_CODE_FILE_BYTES,
 };
 use crate::read_scope::ReadScope;
 use std::collections::BTreeMap;
@@ -373,9 +374,9 @@ async fn a_symlink_may_not_lead_out_of_the_repository() {
 }
 
 #[tokio::test]
-async fn a_file_over_two_megabytes_is_too_large() {
+async fn a_file_over_the_size_cap_is_too_large() {
     let repo = Repo::new();
-    repo.write("big.txt", &"x".repeat(2 * 1024 * 1024 + 1));
+    repo.write("big.txt", &"x".repeat(MAX_CODE_FILE_BYTES as usize + 1));
     let message = invalid(
         prepare_code_basis(&[repo.input("big.txt", 1, 1)])
             .await

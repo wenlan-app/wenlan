@@ -700,7 +700,7 @@ def validate_skill_text(
             if needle not in normalized_text:
                 fail(f"{rel(root, skill_path)} must contain guardrail {needle!r}")
         resolver = (
-            "$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh"
+            "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh"
             if surface == "claude"
             else "plugin-codex/bin/resolve-space.sh"
         )
