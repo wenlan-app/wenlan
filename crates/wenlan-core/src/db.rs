@@ -1490,6 +1490,8 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 138 adds `page_basis` (a note relying on another note),
 /// `page_history.minor` and `pages.basis_revision`.
 /// Migration 139 adds `page_code_basis` (a note relying on lines of code).
+/// Migration 140 adds `page_code_basis.cited_blob` (the git blob id of the
+/// cited file as last written or confirmed).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1497,7 +1499,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 139;
+pub const SCHEMA_VERSION: u32 = 140;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -10470,6 +10472,15 @@ impl MemoryDB {
             if version < 139 {
                 self.migrate_139_page_code_basis().await?;
             }
+            // Migration 140 adds `page_code_basis.cited_blob`, the git blob id
+            // of the cited file as last written or confirmed. See
+            // migrate_140_code_basis_cited_blob.
+            if ceiling < 140 {
+                return Ok(());
+            }
+            if version < 140 {
+                self.migrate_140_code_basis_cited_blob(version).await?;
+            }
         }
 
         // Private M4 builds could already have stamped user_version=95 before
@@ -17959,6 +17970,47 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("m139 bump: {e}")))?;
         log::info!("[migration] Migration 139 applied: page_code_basis");
+        Ok(())
+    }
+
+    /// Migration 140: a code basis remembers which git blob it was read from.
+    ///
+    /// Adds `page_code_basis.cited_blob` (nullable: rows written before this
+    /// migration have no text to show). The ALTER is guarded by a column-exists
+    /// check, so a database whose table was just created by migration 139 (the
+    /// DDL already has the column) and a replay after a crash between the ALTER
+    /// and the version bump are both no-ops.
+    async fn migrate_140_code_basis_cited_blob(
+        &self,
+        prior_version: i64,
+    ) -> Result<(), WenlanError> {
+        self.backup_before_migration(140, prior_version).await?;
+        let conn = self.conn.lock().await;
+        let has_col: bool = {
+            let mut rows = conn
+                .query(
+                    "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') \
+                     WHERE name = 'cited_blob'",
+                    (),
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("m140 col check: {e}")))?;
+            match rows.next().await {
+                Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
+                _ => false,
+            }
+        };
+        if !has_col {
+            conn.execute("ALTER TABLE page_code_basis ADD COLUMN cited_blob TEXT", ())
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("m140 add page_code_basis.cited_blob: {e}"))
+                })?;
+        }
+        conn.execute("PRAGMA user_version = 140", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m140 bump: {e}")))?;
+        log::info!("[migration] Migration 140 applied: page_code_basis.cited_blob");
         Ok(())
     }
 

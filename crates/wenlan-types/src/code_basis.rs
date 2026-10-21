@@ -41,7 +41,8 @@ pub struct CodeBasisRef {
     pub reason: Option<String>,
 }
 
-/// Body of `POST /api/pages/{id}/code-basis/confirm` and
+/// Body of `POST /api/pages/{id}/code-basis/confirm`,
+/// `POST /api/pages/{id}/code-basis/cited` and
 /// `DELETE /api/pages/{id}/code-basis`: which row of the note is meant. The
 /// span is the one the row has now, as a read returned it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +63,23 @@ impl From<&CodeBasisRef> for CodeBasisLocator {
             line_end: row.line_end,
         }
     }
+}
+
+/// Reply of `POST /api/pages/{id}/code-basis/cited`: which version of the file
+/// a note's code basis was last written or confirmed against, as a git blob id.
+/// Kept apart from [`CodeBasisRef`] so it does not ride on every read of a
+/// note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeBasisCitedResponse {
+    /// The git blob id of the whole file (40 lowercase hex characters, what
+    /// `git hash-object` prints for it). `null` for a row written before it
+    /// was kept.
+    pub cited_blob: Option<String>,
+    /// When the row was last written or confirmed (Unix seconds): the moment
+    /// `cited_blob` describes.
+    pub confirmed_at: i64,
+    /// The row's state now: `ok`, `moved`, `pending` or `unavailable`.
+    pub state: String,
 }
 
 /// One note with code bases that need a look, from
@@ -120,6 +138,33 @@ mod tests {
         assert_eq!(row.changed_at, Some(1_700_000_000));
         assert_eq!(row.reason.as_deref(), Some("file_missing"));
         assert_eq!(serde_json::to_value(&row).unwrap(), wire);
+    }
+
+    #[test]
+    fn a_cited_reply_keeps_a_null_blob_on_the_wire() {
+        let reply = CodeBasisCitedResponse {
+            cited_blob: None,
+            confirmed_at: 1_700_000_000,
+            state: "pending".into(),
+        };
+        let wire = serde_json::to_value(&reply).unwrap();
+        assert_eq!(
+            wire,
+            json!({"cited_blob": null, "confirmed_at": 1_700_000_000, "state": "pending"})
+        );
+        assert_eq!(
+            serde_json::from_value::<CodeBasisCitedResponse>(wire).unwrap(),
+            reply
+        );
+        let kept = CodeBasisCitedResponse {
+            cited_blob: Some("ce013625030ba8dba906f756967f9e9ca394464a".into()),
+            confirmed_at: 5,
+            state: "ok".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&kept).unwrap()["cited_blob"],
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
     }
 
     #[test]

@@ -3057,6 +3057,7 @@ mod gated_code_basis_warning_tests {
             anchor: anchor("one\n", LineSpan { start: 1, end: 1 }).unwrap(),
             input,
             stamp: None,
+            cited_blob: None,
         };
         let warnings = gated_code_basis_warning(&[prepared]);
         assert_eq!(warnings.len(), 1);

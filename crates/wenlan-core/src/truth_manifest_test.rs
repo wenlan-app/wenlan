@@ -221,7 +221,7 @@ fn manifest_counts_match_the_spec() {
     // POST `/api/agents` (register a connected tool) adds another.
     assert_eq!(
         HTTP_READERS.len(),
-        212,
+        213,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 33, "#[tool( declarations");
@@ -232,7 +232,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        224,
+        225,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -240,7 +240,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        207,
+        208,
         "main builder entries"
     );
     assert_eq!(
@@ -416,7 +416,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        205 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +3: code basis)
+        206 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis)
     );
 }
 
