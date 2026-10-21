@@ -55274,6 +55274,48 @@ impl MemoryDB {
         Ok(owners)
     }
 
+    /// Every Space id keyed by its name folded the way a page title folds, so
+    /// the `Space` in `[[Space/Title]]` matches a name the way `Title` matches
+    /// a note. `None` when two names fold together: that prefix names no one
+    /// Space.
+    pub(crate) async fn folded_space_ids(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::folded_space_ids_on_conn(&conn).await
+    }
+
+    /// [`Self::folded_space_ids`] on an already-held connection guard.
+    async fn folded_space_ids_on_conn(
+        conn: &libsql::Connection,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let mut rows = conn
+            .query(
+                "SELECT id, name FROM spaces WHERE id != ?1",
+                libsql::params![UNFILED_SPACE_ID],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_ids: {e}")))?;
+        let mut ids: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_ids row: {e}")))?
+        {
+            let id: String = row
+                .get::<String>(0)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let name: String = row
+                .get::<String>(1)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            ids.entry(Self::page_title_key(&name))
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(id));
+        }
+        Ok(ids)
+    }
+
     pub async fn find_unique_active_page_id_by_title_scoped(
         &self,
         label: &str,
@@ -55686,10 +55728,10 @@ impl MemoryDB {
             // One folded-title scan per distinct source scope, built inside
             // this same transaction — the maps read the exact snapshot the
             // deletes and edge mints below write into.
-            let mut owner_maps: std::collections::HashMap<
-                Option<String>,
-                std::collections::HashMap<String, Option<String>>,
-            > = std::collections::HashMap::new();
+            let mut owner_maps = crate::synthesis::wikilinks::OwnersBySpace::new();
+            // Read once, and only when some orphan could name another Space.
+            let mut space_ids: Option<crate::synthesis::wikilinks::TitleOwners> = None;
+            let no_space_ids = crate::synthesis::wikilinks::TitleOwners::new();
             for (source_page_id, label_key, label, scope) in orphan_rows {
                 let trimmed = label_key.trim();
                 if trimmed.is_empty() {
@@ -55700,11 +55742,27 @@ impl MemoryDB {
                         Self::folded_title_owners_scoped_on_conn(&conn, scope.as_deref()).await?;
                     owner_maps.insert(scope.clone(), owners);
                 }
-                let Some(target) = owner_maps
-                    .get(&scope)
-                    .and_then(|owners| owners.get(&Self::page_title_key(trimmed)).cloned())
-                    .flatten()
-                else {
+                if trimmed.contains('/') && space_ids.is_none() {
+                    space_ids = Some(Self::folded_space_ids_on_conn(&conn).await?);
+                }
+                let space_ids_ref = space_ids.as_ref().unwrap_or(&no_space_ids);
+                for (space, _) in
+                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_ids_ref)
+                {
+                    if let std::collections::hash_map::Entry::Vacant(slot) =
+                        owner_maps.entry(Some(space.clone()))
+                    {
+                        slot.insert(
+                            Self::folded_title_owners_scoped_on_conn(&conn, Some(&space)).await?,
+                        );
+                    }
+                }
+                let Some(target) = crate::synthesis::wikilinks::resolve_label(
+                    trimmed,
+                    scope.as_deref(),
+                    &owner_maps,
+                    space_ids_ref,
+                ) else {
                     continue;
                 };
                 // Savepoint per orphan: a row whose repair fails (for example a

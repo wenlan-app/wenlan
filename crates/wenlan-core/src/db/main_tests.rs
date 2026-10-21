@@ -21207,6 +21207,165 @@ async fn orphan_wikilink_repair_is_scoped_per_source_page() {
     );
 }
 
+async fn outbound_target(
+    db: &MemoryDB,
+    source: &str,
+    label: &str,
+    scope: &ReadScope,
+) -> (Option<String>, Option<String>) {
+    let links = db
+        .get_page_outbound_links_scoped(source, scope)
+        .await
+        .unwrap();
+    let link = links
+        .iter()
+        .find(|link| link.label == label)
+        .unwrap_or_else(|| panic!("no link labelled {label}: {links:?}"));
+    (link.target_page_id.clone(), link.target_title.clone())
+}
+
+#[tokio::test]
+async fn space_qualified_wikilink_reaches_the_note_in_the_named_space() {
+    let (db, _dir) = test_db().await;
+    let home = db.create_space("Home", None, false).await.unwrap().id;
+    let work = db.create_space("Work", None, false).await.unwrap().id;
+    insert_scoped_wikilink_page(&db, "work-plan", "Plan", "plan body", &work).await;
+    insert_scoped_wikilink_page(&db, "work-notes", "Notes", "notes body", &work).await;
+    insert_scoped_wikilink_page(&db, "home-cicd", "CI/CD", "pipeline body", &home).await;
+    insert_scoped_wikilink_page(&db, "home-work-notes", "Work/Notes", "own body", &home).await;
+    insert_scoped_wikilink_page(
+        &db,
+        "home-source",
+        "Home Source",
+        "see [[work/plan]], [[Work/Notes]], [[CI/CD]] and [[Nowhere/Plan]]",
+        &home,
+    )
+    .await;
+
+    let global = ReadScope::Global;
+    assert_eq!(
+        outbound_target(&db, "home-source", "work/plan", &global).await,
+        (Some("work-plan".to_string()), Some("Plan".to_string())),
+        "the Space prefix names Work case-insensitively and the rest names its note"
+    );
+    assert_eq!(
+        outbound_target(&db, "home-source", "Work/Notes", &global).await,
+        (
+            Some("home-work-notes".to_string()),
+            Some("Work/Notes".to_string())
+        ),
+        "a note in the page's own Space titled with a slash still wins"
+    );
+    assert_eq!(
+        outbound_target(&db, "home-source", "CI/CD", &global).await,
+        (Some("home-cicd".to_string()), Some("CI/CD".to_string())),
+        "a slash title with no Space prefix resolves the old way"
+    );
+    assert_eq!(
+        outbound_target(&db, "home-source", "Nowhere/Plan", &global).await,
+        (None, None),
+        "a prefix that names no Space is just an unresolved title"
+    );
+
+    let held_to_home = ReadScope::Space(home.clone());
+    assert_eq!(
+        outbound_target(&db, "home-source", "work/plan", &held_to_home).await,
+        (None, None),
+        "a reader held to Home sees the link to Work as plain text"
+    );
+    assert_eq!(
+        outbound_target(&db, "home-source", "CI/CD", &held_to_home).await,
+        (Some("home-cicd".to_string()), Some("CI/CD".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn single_space_qualified_wikilink_resolves_without_the_owner_map() {
+    let (db, _dir) = test_db().await;
+    let home = db.create_space("Home", None, false).await.unwrap().id;
+    let work = db.create_space("Work", None, false).await.unwrap().id;
+    insert_scoped_wikilink_page(&db, "work-plan", "Plan", "plan body", &work).await;
+    insert_scoped_wikilink_page(
+        &db,
+        "home-source",
+        "Home Source",
+        "see [[Work / Plan]]",
+        &home,
+    )
+    .await;
+
+    assert_eq!(
+        outbound_target(&db, "home-source", "Work / Plan", &ReadScope::Global).await,
+        (Some("work-plan".to_string()), Some("Plan".to_string()))
+    );
+}
+
+#[tokio::test]
+async fn unqualified_link_to_a_note_in_another_space_keeps_no_title() {
+    let (db, _dir) = test_db().await;
+    let home = db.create_space("Home", None, false).await.unwrap().id;
+    let work = db.create_space("Work", None, false).await.unwrap().id;
+    insert_scoped_wikilink_page(&db, "moved", "Moved", "body", &home).await;
+    insert_scoped_wikilink_page(&db, "home-source", "Home Source", "see [[Moved]]", &home).await;
+    db.set_page_workspace("moved", Some(&work)).await.unwrap();
+
+    let (target, title) = outbound_target(&db, "home-source", "Moved", &ReadScope::Global).await;
+    assert_eq!(target.as_deref(), Some("moved"));
+    assert_eq!(
+        title, None,
+        "a link that never named Work does not show Work's title"
+    );
+}
+
+#[tokio::test]
+async fn orphan_sweep_resolves_a_space_qualified_link_once_its_note_exists() {
+    let (db, _dir) = test_db().await;
+    let home = db.create_space("Home", None, false).await.unwrap().id;
+    let work = db.create_space("Work", None, false).await.unwrap().id;
+    insert_scoped_wikilink_page(
+        &db,
+        "home-source",
+        "Home Source",
+        "see [[Work/Later]]",
+        &home,
+    )
+    .await;
+    assert_eq!(
+        outbound_target(&db, "home-source", "Work/Later", &ReadScope::Global).await,
+        (None, None)
+    );
+
+    insert_scoped_wikilink_page(&db, "work-later", "Later", "later body", &work).await;
+    assert_eq!(db.resolve_orphan_page_links().await.unwrap(), 1);
+    assert_eq!(
+        outbound_target(&db, "home-source", "Work/Later", &ReadScope::Global).await,
+        (Some("work-later".to_string()), Some("Later".to_string()))
+    );
+}
+
+#[test]
+fn space_qualified_readings_try_the_longest_space_prefix_first() {
+    let space_ids: std::collections::HashMap<String, Option<String>> = [
+        ("a".to_string(), Some("space-a".to_string())),
+        ("a/b".to_string(), Some("space-ab".to_string())),
+        ("twin".to_string(), None),
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        crate::synthesis::wikilinks::space_qualified_readings("A/B/C", &space_ids),
+        vec![
+            ("space-ab".to_string(), "C"),
+            ("space-a".to_string(), "B/C")
+        ]
+    );
+    assert!(
+        crate::synthesis::wikilinks::space_qualified_readings("Twin/Plan", &space_ids).is_empty(),
+        "a prefix two Space names fold to names neither"
+    );
+    assert!(crate::synthesis::wikilinks::space_qualified_readings("A/", &space_ids).is_empty());
+}
+
 #[tokio::test]
 async fn orphan_resolver_preserves_explicit_cross_scope_targets() {
     let (db, _dir) = test_db().await;
