@@ -339,19 +339,86 @@ fn anchors_do_not_depend_on_line_endings_or_trailing_space() {
     );
 }
 
+/// The anchor of lines 10-20 of `base_lines()`, and the outcome of relocating it
+/// in `edited` with the original hint.
+fn relocate_edited(edited: &[String]) -> Relocation {
+    let a = anchor(&text(&base_lines()), span(10, 20)).unwrap();
+    relocate(&text(edited), Some(span(10, 20)), &a)
+}
+
 #[test]
-fn indentation_changes_are_changes() {
-    let lines = vec![
-        "fn a() {".to_string(),
-        "    body();".to_string(),
-        "}".to_string(),
-    ];
-    let a = anchor(&text(&lines), span(1, 3)).unwrap();
-    let mut edited = lines.clone();
-    edited[1] = "  body();".to_string();
+fn reindenting_every_line_is_unchanged() {
+    let edited: Vec<String> = base_lines().iter().map(|l| format!("    {l}")).collect();
     assert_eq!(
-        relocate(&text(&edited), Some(span(1, 3)), &a),
-        Relocation::Changed { span: span(1, 3) }
+        relocate_edited(&edited),
+        Relocation::Unchanged { span: span(10, 20) }
+    );
+    let tabbed: Vec<String> = base_lines().iter().map(|l| format!("\t\t{l}")).collect();
+    assert_eq!(
+        relocate_edited(&tabbed),
+        Relocation::Unchanged { span: span(10, 20) }
+    );
+}
+
+#[test]
+fn trailing_spaces_added_are_unchanged() {
+    let edited: Vec<String> = base_lines().iter().map(|l| format!("{l}   \t")).collect();
+    assert_eq!(
+        relocate_edited(&edited),
+        Relocation::Unchanged { span: span(10, 20) }
+    );
+}
+
+#[test]
+fn respacing_inside_a_line_is_unchanged() {
+    let mut lines = base_lines();
+    lines[14] = "a  =  b".to_string();
+    let a = anchor(&text(&lines), span(10, 20)).unwrap();
+    lines[14] = "a = b".to_string();
+    assert_eq!(
+        relocate(&text(&lines), Some(span(10, 20)), &a),
+        Relocation::Unchanged { span: span(10, 20) }
+    );
+    lines[14] = "a\t=\t\tb".to_string();
+    assert_eq!(
+        relocate(&text(&lines), Some(span(10, 20)), &a),
+        Relocation::Unchanged { span: span(10, 20) }
+    );
+}
+
+#[test]
+fn a_real_token_change_is_still_changed() {
+    let mut lines = base_lines();
+    lines[14] = "a = b".to_string();
+    let a = anchor(&text(&lines), span(10, 20)).unwrap();
+    lines[14] = "a = c".to_string();
+    assert_eq!(
+        relocate(&text(&lines), Some(span(10, 20)), &a),
+        Relocation::Changed { span: span(10, 20) }
+    );
+}
+
+#[test]
+fn whitespace_inside_a_string_literal_is_also_ignored_known_limit() {
+    let mut lines = base_lines();
+    lines[14] = r#"let s = "a  b";"#.to_string();
+    let a = anchor(&text(&lines), span(10, 20)).unwrap();
+    lines[14] = r#"let s = "a b";"#.to_string();
+    assert_eq!(
+        relocate(&text(&lines), Some(span(10, 20)), &a),
+        Relocation::Unchanged { span: span(10, 20) }
+    );
+}
+
+#[test]
+fn a_blank_line_added_inside_the_span_is_not_a_whitespace_edit() {
+    let mut edited = base_lines();
+    edited.insert(14, "   ".to_string());
+    // Whitespace-only lines are blank lines, and a blank line is content: the
+    // span between the old context fences grew by one line.
+    assert_eq!(
+        relocate_edited(&edited),
+        Relocation::Changed { span: span(10, 21) }
     );
 }
 

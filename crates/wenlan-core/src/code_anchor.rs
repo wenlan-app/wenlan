@@ -27,13 +27,19 @@
 //! # Canonical line form
 //!
 //! Text is split into lines after turning `\r\n` and `\r` into `\n`. Each line
-//! loses its trailing whitespace but keeps its indentation. No Unicode
-//! normalization is applied. A trailing newline does not create an extra empty
-//! last line. Because of this, converting a file between LF and CRLF, or
-//! stripping trailing spaces, never changes an anchor.
+//! is then normalized for hashing: leading and trailing whitespace is trimmed
+//! and every run of internal whitespace (spaces and tabs) collapses to one
+//! space. No Unicode normalization is applied. A trailing newline does not
+//! create an extra empty last line, and an empty (or whitespace-only) line
+//! stays an empty line, so adding or removing a blank line is still a change.
+//! Because of this, re-indenting, converting a file between LF and CRLF,
+//! stripping trailing spaces or respacing inside a line never changes an
+//! anchor. The rule is blind to whitespace inside string literals too (`"a  b"`
+//! and `"a b"` hash alike). Normalization affects hashes only: the line numbers
+//! and spans reported to callers are never touched.
 //!
-//! Each line is hashed as the SHA-256 hex of its canonical form; a run of lines
-//! is hashed as the SHA-256 hex of its canonical lines joined with `\n`. A
+//! Each line is hashed as the SHA-256 hex of its normalized form; a run of lines
+//! is hashed as the SHA-256 hex of its normalized lines joined with `\n`. A
 //! context count of 0 means the selection touches the start (or end) of the
 //! file, and `Changed` then fences against the file boundary instead of a hash.
 //!
@@ -65,7 +71,9 @@ impl LineSpan {
 /// Fingerprint of a selected line span and the lines around it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeAnchor {
-    /// SHA-256 hex of the selected lines in canonical form, joined with `\n`.
+    /// SHA-256 hex of the selected lines in normalized form (leading and
+    /// trailing whitespace trimmed, internal whitespace runs collapsed to one
+    /// space), joined with `\n`. Whitespace-only edits leave it unchanged.
     pub digest: String,
     /// Number of lines selected.
     pub selected_line_count: u32,
@@ -239,7 +247,7 @@ enum Side {
     After,
 }
 
-/// A text split into canonical lines, with each line hashed once.
+/// A text split into normalized lines, with each line hashed once.
 struct CanonicalFile {
     lines: Vec<String>,
     line_hashes: Vec<String>,
@@ -248,10 +256,7 @@ struct CanonicalFile {
 impl CanonicalFile {
     fn new(text: &str) -> Self {
         let unix = text.replace("\r\n", "\n").replace('\r', "\n");
-        let mut lines: Vec<String> = unix
-            .split('\n')
-            .map(|line| line.trim_end().to_string())
-            .collect();
+        let mut lines: Vec<String> = unix.split('\n').map(normalize_line).collect();
         // A trailing newline ends the last line; it does not start another.
         // (Empty text splits into one empty piece, which is no lines at all.)
         if unix.is_empty() || unix.ends_with('\n') {
@@ -317,6 +322,12 @@ impl CanonicalFile {
             })
             .collect()
     }
+}
+
+/// A line as hashed: trimmed, with each run of internal whitespace collapsed to
+/// a single space. Whitespace-only lines become empty.
+fn normalize_line(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn sha256_hex(text: &str) -> String {
