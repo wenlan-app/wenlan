@@ -413,8 +413,26 @@ fn build_selector_with(
     format!("wenlan@{name}")
 }
 
+/// A command for the client's own CLI. In an isolated dev run the CLI sees
+/// the run's stand-in home (see `identity_paths::ai_tool_dirs`), so a plugin
+/// installed from a test copy of the app lands there, not in the user's real
+/// `~/.claude` or `~/.codex`.
+fn client_command(bin: &Path) -> Command {
+    let mut command = Command::new(bin);
+    if crate::identity_paths::isolated_dev_state_dir().is_some() {
+        if let (Some(home), _) = crate::identity_paths::ai_tool_dirs() {
+            let _ = std::fs::create_dir_all(&home);
+            command
+                .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("CODEX_HOME", home.join(".codex"));
+        }
+    }
+    command
+}
+
 fn resolve_selector(bin: &Path, parse: impl Fn(&str) -> Option<String>, fallback: &str) -> String {
-    match Command::new(bin)
+    match client_command(bin)
         .args(["plugin", "marketplace", "list", "--json"])
         .output()
     {
@@ -495,7 +513,7 @@ fn classify_step(
 }
 
 fn run_step(bin: &Path, step: &'static str, args: &[&str]) -> Result<(), PluginInstallError> {
-    let output = Command::new(bin)
+    let output = client_command(bin)
         .args(args)
         .output()
         .map_err(|e| PluginInstallError::StepFailed(format!("{step}: {e}")))?;

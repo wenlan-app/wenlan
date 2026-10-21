@@ -249,6 +249,25 @@ pub fn isolated_dev_state_dir() -> Option<PathBuf> {
     }
 }
 
+/// The home and application-configuration directories the AI tools Wenlan
+/// connects to (Claude Code, Codex, Cursor, Claude Desktop, Gemini CLI, Muse
+/// Code) keep their config files under. An isolated dev run gets
+/// `<state>/ai-tools/{home,config}` instead of the real ones, so connecting a
+/// tool from a test copy of the app never rewrites the user's real configs.
+pub fn ai_tool_dirs() -> (Option<PathBuf>, Option<PathBuf>) {
+    ai_tool_dirs_for(isolated_dev_state_dir())
+}
+
+fn ai_tool_dirs_for(state_dir: Option<PathBuf>) -> (Option<PathBuf>, Option<PathBuf>) {
+    match state_dir {
+        Some(state) => {
+            let root = state.join("ai-tools");
+            (Some(root.join("home")), Some(root.join("config")))
+        }
+        None => (dirs::home_dir(), dirs::config_dir()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,5 +522,17 @@ mod mcp_tests {
         std::env::set_var("WENLAN_DEV_STATE_DIR", &state);
 
         assert_eq!(mcp_config_dir(), state.join("mcp-config"));
+    }
+
+    #[test]
+    fn isolated_dev_run_keeps_ai_tool_configs_in_its_state_dir() {
+        let state = PathBuf::from("/scratch/wenlan-app-dev/1");
+        assert_eq!(
+            ai_tool_dirs_for(Some(state.clone())),
+            (
+                Some(state.join("ai-tools").join("home")),
+                Some(state.join("ai-tools").join("config"))
+            )
+        );
     }
 }

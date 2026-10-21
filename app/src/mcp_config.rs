@@ -243,11 +243,8 @@ pub enum ClientConfigPath {
 
 /// The expected config file path for each MCP client.
 pub fn client_config_path(client_type: &str) -> ClientConfigPath {
-    client_config_path_for(
-        client_type,
-        dirs::home_dir().as_deref(),
-        dirs::config_dir().as_deref(),
-    )
+    let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
+    client_config_path_for(client_type, home.as_deref(), config_dir.as_deref())
 }
 
 /// Path construction, split from the directory lookups so the "the platform
@@ -1285,9 +1282,10 @@ fn entry_health_reading(
 pub fn detect_mcp_clients() -> Vec<McpClient> {
     let local_data_dir = dirs::data_local_dir();
     let program_files = program_files_dirs();
+    let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
     detect_mcp_clients_with(
-        dirs::home_dir().as_deref(),
-        dirs::config_dir().as_deref(),
+        home.as_deref(),
+        config_dir.as_deref(),
         &DetectProbes {
             host: HostKind::current(),
             local_data_dir: local_data_dir.as_deref(),
