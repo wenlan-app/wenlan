@@ -286,6 +286,7 @@ async fn link_capture_entity(
     source_id: &str,
     plan: CaptureEntity,
     space: Option<&str>,
+    scope: &wenlan_core::read_scope::ReadScope,
     agent: &str,
     warnings: &mut Vec<String>,
 ) -> Option<String> {
@@ -312,6 +313,21 @@ async fn link_capture_entity(
                 confidence: None,
             };
             match wenlan_core::post_write::create_entity(db, request, agent).await {
+                // Creating resolves the name across every Space, so it can
+                // return an entity the Space-locked caller may not link.
+                Ok(result)
+                    if *scope != wenlan_core::read_scope::ReadScope::Global
+                        && !db
+                            .entity_visible_in_scope(&result.id, scope)
+                            .await
+                            .unwrap_or(false) =>
+                {
+                    warnings.push(format!(
+                        "entity \"{name}\" could not be created in this space, so this memory \
+                         is not linked to it."
+                    ));
+                    return None;
+                }
                 Ok(result) => result.id,
                 Err(e) => {
                     warnings.push(format!(
@@ -997,6 +1013,7 @@ async fn handle_store_memory_inner(
         &source_id,
         entity_plan,
         persisted_space.as_deref(),
+        &entity_scope,
         &resolved_agent,
         &mut warnings,
     )
@@ -2975,11 +2992,19 @@ mod store_scheduler_handoff_tests {
             "a refused capture stores nothing"
         );
 
+        // Entity creation resolves names across Spaces, so the typed name
+        // finds the other Space's entity; the capture stores the memory
+        // unlinked rather than linking it.
         let named = store(content, Some("Erin Park"), None).await.unwrap().0;
-        let linked = named
-            .entity_id
-            .expect("a typed name is created in this Space");
-        assert_ne!(linked, erin, "the other Space's entity is not linked");
+        assert_eq!(
+            named.entity_id, None,
+            "the other Space's entity is not linked"
+        );
+        assert!(
+            named.warnings.iter().all(|w| !w.contains(&erin)),
+            "the warning does not reveal the other Space's entity: {:?}",
+            named.warnings
+        );
         assert_eq!(
             db.get_entity_detail(&erin)
                 .await
