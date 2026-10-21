@@ -1786,3 +1786,361 @@ async fn linked_changed_lists_linked_notes_edited_after_the_note_itself() {
     set_kind(&db, "a", "entity").await;
     assert!(db.linked_changed("b").await.unwrap().is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// Arc 2 review: the diff read carries the caller's scope (finding 2)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_scoped_diff_reads_a_pair_moved_out_of_the_callers_space_as_out_of_scope() {
+    let (db, _dir) = pair().await;
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    let in_sp = crate::read_scope::ReadScope::Space("sp".into());
+    assert!(matches!(
+        db.basis_diff_in_scope("b", "a", &in_sp).await.unwrap(),
+        BasisDiffOutcome::Available(_)
+    ));
+
+    // Both notes move to another Space after the caller's visibility check
+    // passed (the race): the pair is still in one Space, so an unscoped read
+    // hands back the prose. The scoped read must not.
+    db.set_page_workspace("a", Some("sp2")).await.unwrap();
+    db.set_page_workspace("b", Some("sp2")).await.unwrap();
+    assert!(matches!(
+        db.basis_diff("b", "a").await.unwrap(),
+        BasisDiffOutcome::Available(_)
+    ));
+    assert_eq!(
+        db.basis_diff_in_scope("b", "a", &in_sp).await.unwrap(),
+        BasisDiffOutcome::OutOfScope("b".into())
+    );
+    assert!(matches!(
+        db.basis_diff_in_scope("b", "a", &crate::read_scope::ReadScope::Space("sp2".into()))
+            .await
+            .unwrap(),
+        BasisDiffOutcome::Available(_)
+    ));
+
+    // Only the basis is away (the citer came back): the basis is the one named.
+    db.set_page_workspace("b", Some("sp")).await.unwrap();
+    assert_eq!(
+        db.basis_diff_in_scope("b", "a", &in_sp).await.unwrap(),
+        BasisDiffOutcome::OutOfScope("a".into())
+    );
+    // A note that is not there at all reads the same way.
+    assert_eq!(
+        db.basis_diff_in_scope("ghost", "a", &in_sp).await.unwrap(),
+        BasisDiffOutcome::OutOfScope("ghost".into())
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Arc 2 review: a locked note's agent write keeps its marks (finding 3, the
+// in-CAS gate), an unchanged write still marks (finding 4), and a create's
+// marks are atomic with it (finding 5)
+// ---------------------------------------------------------------------------
+
+/// An agent write of `id` through the canonical dispatcher, as the refresh
+/// route sends it once its own checks pass. Going straight to the dispatcher
+/// skips the route's pre-gate, so a locked note is gated by the in-CAS gate.
+async fn agent_write(
+    db: &MemoryDB,
+    id: &str,
+    content: &str,
+    marks: Vec<(String, i64)>,
+) -> Result<crate::post_write::WriteResult, WenlanError> {
+    let expected_version = Some(version_of(db, id).await);
+    let expected_source_revision = db.get_page_source_revision(id).await.unwrap();
+    crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::AgentUpdate {
+            page_id: id,
+            req: wenlan_types::requests::UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version,
+                caller_id: None,
+                operation_id: None,
+            },
+            agent: Some("claude-code"),
+            expected_source_revision,
+            knowledge_path: None,
+            basis: BasisWrite {
+                actor: "claude-code".into(),
+                marks,
+                ..BasisWrite::default()
+            },
+        },
+    )
+    .await
+}
+
+async fn pending_card_ids(db: &MemoryDB) -> Vec<String> {
+    db.list_pending_revisions(50)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|card| card.revision_source_id)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_locked_notes_gated_agent_write_records_its_marks_when_the_card_is_accepted() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "c", "Gamma", "Glossary.", "sp").await;
+    page(&db, "b", "Beta", "Original plans.", "sp").await;
+    // `b` already relies on `c` at version 1, and `c` has moved on since:
+    // the agent's write reconfirms it at version 2.
+    db.mark_page_basis("b", "c", 1, "human").await.unwrap();
+    edit(&db, "c", "Glossary, revised.", false).await;
+    assert_eq!(entry(&db, "b", "c").await.state, BASIS_STATE_PENDING);
+    assert!(db.set_page_review_required("b", true).await.unwrap());
+
+    let staged = agent_write(
+        &db,
+        "b",
+        "Plans built on Alpha.",
+        vec![("a".into(), 1), ("c".into(), 2)],
+    )
+    .await
+    .unwrap();
+    assert_eq!(staged.outcome, crate::post_write::WriteOutcome::Gated);
+    let card_id = staged.revision_card_id.expect("the lock stages a card");
+    // Nothing lands while the card waits.
+    assert_eq!(
+        db.get_page("b").await.unwrap().unwrap().content,
+        "Original plans."
+    );
+    assert_eq!(db.list_page_basis("b").await.unwrap().len(), 1);
+    assert_eq!(entry(&db, "b", "c").await.state, BASIS_STATE_PENDING);
+
+    crate::post_write::accept_pending_revision(&db, &card_id, "human")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_page("b").await.unwrap().unwrap().content,
+        "Plans built on Alpha."
+    );
+    let a = entry(&db, "b", "a").await;
+    assert_eq!(a.state, BASIS_STATE_OK);
+    assert_eq!(a.confirmed_version, 1);
+    let c = entry(&db, "b", "c").await;
+    assert_eq!(c.state, BASIS_STATE_OK, "the reconfirm landed on accept");
+    assert_eq!(c.confirmed_version, 2);
+}
+
+#[tokio::test]
+async fn a_locked_notes_gated_agent_write_with_a_refused_mark_stages_nothing() {
+    let (db, _dir) = test_db().await;
+    page(&db, "b", "Beta", "Original plans.", "sp").await;
+    page(&db, "other", "Elsewhere", "In another Space.", "sp2").await;
+    assert!(db.set_page_review_required("b", true).await.unwrap());
+
+    let error = agent_write(&db, "b", "Plans.", vec![("ghost".into(), 1)])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WenlanError::NotFound(_)), "{error:?}");
+    let error = agent_write(&db, "b", "Plans.", vec![("other".into(), 1)])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WenlanError::Validation(_)), "{error:?}");
+    assert!(pending_card_ids(&db).await.is_empty(), "no card was staged");
+}
+
+#[tokio::test]
+async fn accepting_a_card_whose_basis_can_no_longer_be_relied_on_discards_it_with_a_typed_reason() {
+    for spoil in ["archive", "move", "recreate"] {
+        let (db, _dir) = test_db().await;
+        page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+        page(&db, "b", "Beta", "Original plans.", "sp").await;
+        assert!(db.set_page_review_required("b", true).await.unwrap());
+        let card_id = agent_write(&db, "b", "Plans built on Alpha.", vec![("a".into(), 1)])
+            .await
+            .unwrap()
+            .revision_card_id
+            .unwrap();
+
+        match spoil {
+            "archive" => db.archive_page("a").await.unwrap(),
+            "move" => db.set_page_workspace("a", Some("sp2")).await.unwrap(),
+            _ => {
+                // Deleted and recreated under the same id: not the note the
+                // agent read.
+                let conn = db.conn.lock().await;
+                conn.execute("UPDATE pages SET incarnation = 'reborn' WHERE id = 'a'", ())
+                    .await
+                    .unwrap();
+            }
+        }
+
+        let error = crate::post_write::accept_pending_revision(&db, &card_id, "human")
+            .await
+            .unwrap_err();
+        let WenlanError::Conflict(message) = &error else {
+            panic!("{spoil}: expected a conflict, got {error:?}");
+        };
+        assert!(
+            message.starts_with(wenlan_types::PAGE_REVISION_BASIS_REFUSED),
+            "{spoil}: {message}"
+        );
+        assert!(message.contains(&card_id), "{spoil}: {message}");
+        assert_eq!(
+            db.get_page("b").await.unwrap().unwrap().content,
+            "Original plans.",
+            "{spoil}: the page is unchanged"
+        );
+        assert!(
+            db.list_page_basis("b").await.unwrap().is_empty(),
+            "{spoil}: no mark landed"
+        );
+        assert!(
+            pending_card_ids(&db).await.is_empty(),
+            "{spoil}: the card was discarded, not stranded"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unchanged_agent_write_still_records_and_reconfirms_its_marks() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "c", "Gamma", "Glossary.", "sp").await;
+    page(&db, "b", "Beta", "Plans.", "sp").await;
+    db.mark_page_basis("b", "c", 1, "human").await.unwrap();
+    edit(&db, "c", "Glossary, revised.", false).await;
+    let version = version_of(&db, "b").await;
+
+    let result = agent_write(&db, "b", "Plans.", vec![("a".into(), 1), ("c".into(), 2)])
+        .await
+        .unwrap();
+    assert_eq!(result.outcome, crate::post_write::WriteOutcome::Unchanged);
+    assert_eq!(version_of(&db, "b").await, version, "no page write");
+    let a = entry(&db, "b", "a").await;
+    assert_eq!(a.state, BASIS_STATE_OK);
+    assert_eq!(a.added_by, "claude-code");
+    let c = entry(&db, "b", "c").await;
+    assert_eq!(c.state, BASIS_STATE_OK, "the reconfirm landed");
+    assert_eq!(c.confirmed_version, 2);
+}
+
+#[tokio::test]
+async fn an_unchanged_agent_write_with_a_refused_mark_is_refused_and_records_none() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "text", "sp").await;
+    page(&db, "b", "Beta", "Plans.", "sp").await;
+
+    let error = agent_write(
+        &db,
+        "b",
+        "Plans.",
+        vec![("a".into(), 1), ("ghost".into(), 1)],
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, WenlanError::NotFound(_)), "{error:?}");
+    assert!(
+        db.list_page_basis("b").await.unwrap().is_empty(),
+        "the good mark rolled back with the refused one"
+    );
+}
+
+/// An unchanged write compares itself against one version of the note. An
+/// edit that lands before its marks do means the marks describe text that is
+/// gone, so none are recorded.
+#[tokio::test]
+async fn marks_for_an_unchanged_write_are_refused_when_the_note_changed_since() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "text", "sp").await;
+    page(&db, "b", "Beta", "Plans.", "sp").await;
+    let compared = version_of(&db, "b").await;
+    edit(&db, "b", "Plans, revised by hand.", false).await;
+
+    let error = db
+        .mark_page_bases("b", compared, &[("a".into(), 1)], "claude-code")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, BasisError::CiterMovedOn { current } if current == compared + 1),
+        "{error:?}"
+    );
+    assert!(db.list_page_basis("b").await.unwrap().is_empty());
+}
+
+fn files_under(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.extend(files_under(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
+async fn create_with(
+    db: &MemoryDB,
+    pages: &std::path::Path,
+    title: &str,
+    basis_marks: Vec<(String, i64)>,
+) -> Result<crate::post_write::WriteResult, WenlanError> {
+    crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::Create {
+            page_id: None,
+            req: wenlan_types::requests::CreateConceptRequest {
+                title: title.to_string(),
+                content: format!("{title}, derived from Alpha."),
+                summary: None,
+                entity_id: None,
+                space: wenlan_types::WriteSpaceTarget::Named("sp".into()),
+                source_memory_ids: Vec::new(),
+                creation_kind: Some("authored".to_string()),
+                workspace: Some("sp".into()),
+            },
+            agent: "claude-code",
+            knowledge_path: Some(pages),
+            page_min_cluster_size: 1,
+            // Never attach to an existing note: these tests are about a create.
+            page_match_threshold: 2.0,
+            citations_json: None,
+            basis_marks,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_create_whose_mark_is_refused_at_write_time_creates_nothing() {
+    let (db, dir) = test_db().await;
+    let pages = dir.path().join("pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+
+    // A mark that can be relied on lands with the note, in its transaction.
+    let created = create_with(&db, &pages, "Derived Plan", vec![("a".into(), 1)])
+        .await
+        .unwrap();
+    assert!(created.wrote);
+    assert_eq!(entry(&db, &created.id, "a").await.state, BASIS_STATE_OK);
+    assert_eq!(entry(&db, &created.id, "a").await.added_by, "claude-code");
+
+    // The route checked this basis; it was archived before the create landed.
+    db.archive_page("a").await.unwrap();
+    let files_before = files_under(&pages);
+    let error = create_with(&db, &pages, "Refused Plan", vec![("a".into(), 1)])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WenlanError::Validation(_)), "{error:?}");
+    {
+        let conn = db.conn.lock().await;
+        let mut rows = conn
+            .query("SELECT id FROM pages WHERE title = 'Refused Plan'", ())
+            .await
+            .unwrap();
+        assert!(rows.next().await.unwrap().is_none(), "no page row");
+    }
+    assert_eq!(files_under(&pages), files_before, "no page file");
+}

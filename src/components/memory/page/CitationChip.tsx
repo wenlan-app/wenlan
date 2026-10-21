@@ -7,7 +7,8 @@ import {
   type CitationKindLabels,
 } from "../../../lib/pageCitations";
 import CitationPopover, { openCitationTarget } from "./CitationPopover";
-import { ReferenceTypeIcon, citationReferenceKind } from "../links/ReferenceTypeIcon";
+import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp } from "../links/ReferenceTypeIcon";
+import { SOURCE_APP_NAMES } from "../sources/sourcePresentation";
 import "../links/reference-links.css";
 
 interface CitationChipProps {
@@ -42,7 +43,8 @@ export default function CitationChip({
     external_url: t("citation.kind.url"),
     authored: t("citation.kind.authored"),
   };
-  const displayLabel = citationDisplayLabel(citation, kindLabels);
+  const app = citationSourceApp(citation);
+  const displayLabel = app ? SOURCE_APP_NAMES[app] : citationDisplayLabel(citation, kindLabels);
 
   const clearCloseTimer = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);

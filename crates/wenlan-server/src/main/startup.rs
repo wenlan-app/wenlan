@@ -22,6 +22,12 @@ pub(super) async fn prepare_startup_state(
     startup_repair_claim: &Option<StartupRepairClaim>,
     startup_repair_claimed: bool,
 ) -> anyhow::Result<PreparedStartupState> {
+    // Before anything below can write the projection: startup reconcile
+    // repairs this folder against the database it is about to open.
+    let page_root = wenlan_core::config::load_config().knowledge_path_or_default();
+    tracing::info!("Wenlan pages folder: {}", page_root.display());
+    wenlan_core::config::ensure_isolated_page_root(&page_root).map_err(anyhow::Error::msg)?;
+
     let repair_store = wenlan_core::repair::RepairArtifactStore::new(wenlan_root.join("repairs"));
     if let Some(claim) = startup_repair_claim.as_ref() {
         validate_startup_repair_claim(&repair_store, claim)?;
@@ -199,7 +205,11 @@ pub(super) async fn prepare_startup_state(
     // - Migrate legacy ~/Origin/knowledge/ md files into ~/.wenlan/pages/ if
     //   the new dir is empty. Never deletes the old dir; user can clean up
     //   manually after verifying.
-    if optional_runtime_workers_allowed(repair_recovery_pending) {
+    // An isolated data root keeps its pages to itself (see
+    // `wenlan_core::config::default_pages_root`), so it leaves ~/.wenlan alone.
+    if optional_runtime_workers_allowed(repair_recovery_pending)
+        && wenlan_core::config::isolated_data_root().is_none()
+    {
         if let Some(home) = dirs::home_dir() {
             let wenlan_dot = home.join(".wenlan");
             for sub in ["pages", "sessions", "sessions/_status"] {

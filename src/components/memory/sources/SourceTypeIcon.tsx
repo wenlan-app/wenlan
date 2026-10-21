@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { File, FilePdf, FileText, Folder, Globe, Image as ImageIcon } from "@phosphor-icons/react";
+import {
+  EnvelopeSimple, File, FilePdf, FileText, Folder, GithubLogo, Globe, GoogleDriveLogo, Image as ImageIcon, NotionLogo, SlackLogo,
+} from "@phosphor-icons/react";
 import obsidianLogo from "../../../assets/obsidian-logo-gradient.svg";
-import type { SourceKind } from "./sourcePresentation";
+import type { SourceApp, SourceKind } from "./sourcePresentation";
 
 const ICONS = {
   pdf: FilePdf,
@@ -10,14 +12,20 @@ const ICONS = {
   webpage: Globe,
   file: File,
   folder: Folder,
-} satisfies Record<SourceKind | "folder", typeof File>;
+  // Phosphor has no Gmail mark, so mail uses its envelope.
+  gmail: EnvelopeSimple,
+  googleDrive: GoogleDriveLogo,
+  notion: NotionLogo,
+  slack: SlackLogo,
+  github: GithubLogo,
+} satisfies Record<SourceKind | SourceApp | "folder", typeof File>;
 
 export function SourceTypeIcon({
   kind,
   size = 20,
   className,
 }: {
-  kind: SourceKind | "folder" | "obsidian";
+  kind: SourceKind | SourceApp | "folder" | "obsidian";
   size?: number;
   className?: string;
 }) {

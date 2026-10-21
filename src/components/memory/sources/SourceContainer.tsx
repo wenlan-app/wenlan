@@ -24,7 +24,7 @@ import PageInfoDrawer from "../page/PageInfoDrawer";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import { SourceDocumentLayout } from "./SourceDocumentReader";
 import SourceDocumentContent from "./SourceDocumentContent";
-import { getSourcePresentation } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation } from "./sourcePresentation";
 import { SourceCollection, SourceCollectionBreadcrumbs, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import type { SourceLibraryFilter } from "./SourceLibrary";
@@ -137,13 +137,15 @@ export default function SourceContainer({ location, search, filter, lens, onSear
   const items: SourceCollectionItem[] = entries.filter((entry) => {
     const file = !entry.isDirectory ? indexedByPath.get(`${location.sourceId}::${childPath(location.path, entry.name)}`) : undefined;
     const isLink = file?.source === "webpage";
-    return (filter === "all" || (filter === "folders" ? entry.isDirectory : filter === "links" ? isLink : !entry.isDirectory && !isLink)) &&
+    const app = isLink && file ? getSourceAppFromUrl(file.url ?? file.source_id) : null;
+    return (filter === "all" || (filter === "folders" ? entry.isDirectory : filter === "links" ? isLink && !app
+      : filter === "files" ? !entry.isDirectory && !isLink : app === filter)) &&
       entry.name.toLocaleLowerCase().includes(needle);
   }).map((entry) => {
     const path = childPath(location.path, entry.name);
     const indexed = indexedByPath.get(`${location.sourceId}::${path}`);
     const presentation = getSourcePresentation(indexed ?? { source: "file", source_id: path, title: entry.name }, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt") });
-    const kind = entry.isDirectory ? "folder" : presentation.kind;
+    const kind = entry.isDirectory ? "folder" : presentation.iconKind;
     return {
       id: path,
       title: entry.name,

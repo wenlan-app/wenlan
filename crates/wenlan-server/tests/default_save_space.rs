@@ -343,3 +343,126 @@ async fn create_page_rejects_conflicting_aliases_and_mirrors_default() {
         .count();
     assert_eq!(page_files, 1, "page projection must stay inside TempDir");
 }
+
+#[tokio::test]
+async fn saved_webpage_source_follows_write_space_precedence() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let work = db.create_space("work", None, false).await.unwrap();
+    db.create_space("personal", None, false).await.unwrap();
+    db.create_space("shared", None, false).await.unwrap();
+    db.set_default_space(&work.id).await.unwrap();
+
+    let save = |url: &str, space: Option<Value>| {
+        let mut body = json!({
+            "url": url,
+            "title": "Saved source",
+            "content": "Saved source canary text that came from another app.",
+            "metadata": {"source_label": "gmail"}
+        });
+        if let Some(space) = space {
+            body["space"] = space;
+        }
+        body
+    };
+
+    let cases = [
+        ("https://mail.example/default", None, None, Some("work")),
+        (
+            "https://mail.example/explicit",
+            Some(json!("personal")),
+            Some("shared"),
+            Some("personal"),
+        ),
+        (
+            "https://mail.example/header",
+            None,
+            Some("shared"),
+            Some("shared"),
+        ),
+        (
+            "https://mail.example/unfiled",
+            Some(Value::Null),
+            None,
+            None,
+        ),
+    ];
+    for (url, space, header, expected) in cases {
+        let (status, saved) = request_json(
+            &router,
+            Method::POST,
+            "/api/ingest/webpage/create",
+            Some(save(url, space)),
+            header,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{url}: {saved}");
+        assert_eq!(saved["document_id"], url);
+        assert_eq!(saved["space"].as_str(), expected, "{url}: {saved}");
+        let files = db.list_indexed_files().await.unwrap();
+        let file = files
+            .iter()
+            .find(|file| file.source_id == url)
+            .unwrap_or_else(|| panic!("{url} must be listed as a source"));
+        assert_eq!(file.url.as_deref(), Some(url));
+        assert_eq!(
+            file.space.as_deref(),
+            expected,
+            "{url} must be filed where the receipt says"
+        );
+    }
+
+    let (status, _) = request_json(
+        &router,
+        Method::POST,
+        "/api/ingest/webpage/create",
+        Some(save("https://mail.example/default", None)),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "create-only keeps the saved copy"
+    );
+
+    let (status, missing) = request_json(
+        &router,
+        Method::POST,
+        "/api/ingest/webpage",
+        Some(save("https://mail.example/missing", Some(json!("nowhere")))),
+        None,
+    )
+    .await;
+    assert!(
+        status.is_client_error(),
+        "an unknown Space is refused, not filed elsewhere: {status} {missing}"
+    );
+}
+
+#[tokio::test]
+async fn saved_webpage_source_records_the_saving_agent() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/api/ingest/webpage")
+        .header("content-type", "application/json")
+        .header("x-agent-name", "claude-code")
+        .body(Body::from(
+            json!({
+                "url": "https://notion.example/plan",
+                "title": "Plan",
+                "content": "A Notion page the agent read and the user asked to keep."
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let files = db.list_indexed_files().await.unwrap();
+    let file = files
+        .iter()
+        .find(|file| file.source_id == "https://notion.example/plan")
+        .expect("saved source is listed");
+    assert_eq!(file.source_agent.as_deref(), Some("claude-code"));
+}

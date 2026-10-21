@@ -53,6 +53,7 @@ main|get|/api/pages/{id}/basis/{basis_id}/diff|wenlan_server::page_basis_routes:
 main|get|/api/pages/{id}/links|wenlan_server::page_routes::handle_get_page_links
 main|get|/api/pages/{id}/map|wenlan_server::page_map_routes::handle_get_page_map
 main|get|/api/pages/{id}/revisions|wenlan_server::page_routes::handle_get_page_revisions
+main|get|/api/pages/{id}/sessions|wenlan_server::session_routes::handle_get_page_sessions
 main|get|/api/pages/{id}/sources|wenlan_server::page_routes::handle_get_page_sources
 main|get|/api/profile|wenlan_server::profile_agents_routes::handle_get_profile
 main|get|/api/profile/narrative|wenlan_server::profile_narrative_routes::handle_get_profile_narrative
@@ -60,6 +61,7 @@ main|get|/api/refinery/queue|wenlan_server::refinery_routes::handle_list_refinem
 main|get|/api/repairs/recovery/{review_id}|wenlan_server::repair_read_routes::handle_get_repair_recovery
 main|get|/api/repairs/runtime|wenlan_server::repair_runtime_routes::handle_runtime
 main|get|/api/retrievals/recent|wenlan_server::routes::handle_recent_retrievals
+main|get|/api/sessions/{id}|wenlan_server::session_routes::handle_get_session
 main|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 repair|get|/api/setup/status|wenlan_server::config_routes::handle_get_setup_status
 main|get|/api/snapshots|wenlan_server::snapshot_routes::handle_list_snapshots
@@ -146,6 +148,7 @@ main|post|/api/repairs/prepare-current|wenlan_server::repair_routes::handle_prep
 main|post|/api/repairs/verify|wenlan_server::repair_routes::handle_verify
 main|post|/api/repairs/runtime/resume|wenlan_server::repair_runtime_routes::handle_resume
 main|post|/api/search|wenlan_server::routes::handle_search
+main|post|/api/sessions|wenlan_server::session_routes::handle_upsert_session
 main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source

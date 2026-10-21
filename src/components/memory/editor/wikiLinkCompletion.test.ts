@@ -6,6 +6,7 @@ import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { waitFor } from "@testing-library/react";
 import { createLinkCompletion, linkCompletionMatches, linkableTitle, refreshLinkCompletion, type LinkCompletionNote } from "./wikiLinkCompletion";
+import { pageTitleKey, trimLikeDaemon } from "./pageTitleKey";
 import { installCodeMirrorDomPolyfills, pressKey } from "./editorTestUtils";
 import { setWritingCompositionActive } from "./writingPresentation";
 
@@ -66,6 +67,24 @@ describe("[[ link completion", () => {
     expect(linkCompletionMatches([...notes, ...awkward], "").map((note) => note.id)).toEqual(["p-rust", "p-trust", "p-zh"]);
     expect(linkableTitle("Plain title")).toBe(true);
     expect(linkCompletionMatches(Array.from({ length: 20 }, (_, i) => ({ id: `n${i}`, title: `Note ${i}`, canUseAsSource: true })), "note")).toHaveLength(8);
+  });
+
+  it("trims and folds titles exactly as the daemon does", () => {
+    // Rust `str::trim` keeps a byte-order mark and strips U+0085; JS `trim()` does the reverse.
+    expect(trimLikeDaemon("\ufeffPlan\u0085")).toBe("\ufeffPlan");
+    expect(trimLikeDaemon("\u3000路線圖\u00a0")).toBe("路線圖");
+    expect(pageTitleKey(" Roadmap\t")).toBe("roadmap");
+    // To the daemon "\ufeffPlan" and "Plan" are different titles, so both are offered.
+    const bom = [
+      { id: "bom", title: "\ufeffPlan", canUseAsSource: true },
+      { id: "plain", title: "Plan", canUseAsSource: true },
+    ];
+    expect(linkCompletionMatches(bom, "").map((note) => note.id)).toEqual(["bom", "plain"]);
+    // Inserting keeps the mark, so the label the daemon parses is the stored title.
+    const editor = make("See ", undefined, bom);
+    editor.type("[[");
+    expect(pressKey(editor.view.contentDOM, "Enter").defaultPrevented).toBe(true);
+    expect(editor.view.state.doc.toString()).toBe("See [[\ufeffPlan]]");
   });
 
   it("opens on a typed [[ without changing the text, and filters as the writer types", async () => {

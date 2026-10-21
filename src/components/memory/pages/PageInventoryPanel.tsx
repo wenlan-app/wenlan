@@ -71,7 +71,14 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const selectedPage = pages.find(page => page.id === currentPageId);
   const selectedPath = selectedPage ? pageFolderPath(selectedPage) : currentFolderPath !== undefined ? currentFolderPath : inventoryFolderPath(inventoryScope);
   const [creationPath, setCreationPath] = useState<string | null>(selectedPath);
-  useEffect(() => { setCreationPath(selectedPath); }, [selectedPath, currentPageId]);
+  // Follow the selection during render, not in an effect. The workspace feeds
+  // the reported path back in as currentFolderPath, and an effect's one-render
+  // lag let two values chase each other forever (React's update-depth error).
+  const [creationBasis, setCreationBasis] = useState({ selectedPath, currentPageId });
+  if (creationBasis.selectedPath !== selectedPath || creationBasis.currentPageId !== currentPageId) {
+    setCreationBasis({ selectedPath, currentPageId });
+    setCreationPath(selectedPath);
+  }
   useEffect(() => { folderCreation?.reportCreationFolderPath(creationPath); }, [creationPath, folderCreation?.reportCreationFolderPath]);
   const toggleFolder = (path: string) => {
     setCreationPath(path);

@@ -35,6 +35,7 @@ import { useDetailInfoOpen } from "./useDetailInfoOpen";
 import KnowledgeContext from "./context/KnowledgeContext";
 import ContentRenderer from "./ContentRenderer";
 import { DisclosureButton, PinIcon, RailPanelTitle } from "./MemoryDetailPrimitives";
+import { MemorySessionSource } from "./sessions/SessionSourceSection";
 import { formatRelativeEntityTime } from "./entity-detail/formatEntityMetadata";
 import "./memoryDetailReading.css";
 
@@ -714,6 +715,13 @@ export default function MemoryDetail({
               </div>
             </div>
           </section>
+
+          <MemorySessionSource
+            sessionId={memory.session_id}
+            headingClassName="memory-detail-subsection"
+            onOpenMemory={navigateMemory}
+            onOpenPage={navigatePage}
+          />
 
           {structuredEntries.length > 0 && (
             <section className="memory-detail-structured">

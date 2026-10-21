@@ -33,6 +33,8 @@ pub mod repair_relation;
 pub mod repair_runtime;
 pub mod requests;
 pub mod responses;
+pub mod session_context;
+pub mod sessions;
 pub mod source_annotations;
 pub mod sources;
 pub mod space_context;
@@ -70,7 +72,7 @@ pub use outbox::{
 pub use page_basis::{
     BasisConfirmOutcome, BasisDiffEdit, BasisDiffResponse, BasisInput, BasisPendingCiterRef,
     BasisPendingEntry, BasisRef, BasisRemoveResponse, BasisVersionRequest, ConfirmBasisInput,
-    LinkedChanged,
+    LinkedChanged, PAGE_REVISION_BASIS_REFUSED,
 };
 pub use pages::{Page, PageEvidence};
 pub use repair::*;
@@ -90,6 +92,11 @@ pub use responses::{
     PendingRevisionItem, ProposalAction, RefinementCardAction, RefinementPayload,
     RefinementProposalSummary, RejectRefinementResponse, RevisionAcceptResponse,
     RevisionDismissResponse,
+};
+pub use sessions::{
+    AgentSession, PageSessionEntry, PageSessionVia, PageSessionsResponse, SessionCitedByEntry,
+    SessionDetailResponse, SessionHandoffEntry, SessionMemoryEntry, SessionPageEntry,
+    SessionReadEntry, SessionReadKind, SessionRef, UpsertSessionRequest, SESSION_HEADER,
 };
 pub use sources::{MemoryType, RawDocument, SourceType, StabilityTier, SyncStatus};
 pub use space_context::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};

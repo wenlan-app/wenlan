@@ -277,6 +277,7 @@ This section is generated from the same definitions that produce `wenlan --help`
 - `--format <FORMAT>`: Output format. Auto-detects JSON when piped, table on TTY. Possible values: `auto` (Pick automatically based on stdout TTY: terminal → Table, pipe → Json), `json`, `table`. Default: `auto`.
 - `-q, --quiet`: Suppress all non-error output. Useful for scripts.
 - `--agent-name <AGENT_NAME>`: Identify the caller in X-Agent-Name audit metadata.
+- `--session <TOOL:ID>`: AI session as tool:id (for example claude-code:<session id>); links what you write to that conversation. Defaults to WENLAN_SESSION, then CODEX_THREAD_ID.
 - `--space <SPACE>`: Use one registered Space for scope-aware reads and writes.
 - `--all-spaces`: Read across every Space. Invalid for writes and strict WENLAN_SPACE pins.
 
@@ -788,6 +789,22 @@ Arguments:
 Options:
 
 - `--type <SOURCE_TYPE>`: Kind of source. `okf` imports an OKF bundle (for example an OpenWiki folder) into one Space; pass --space to choose it. Possible values: `directory` (A folder or single file of documents), `okf` (An OKF knowledge bundle). Default: `directory`.
+
+#### `wenlan sources save`
+
+Save one document read elsewhere (an email, a Notion or Drive page, a Slack thread, an article) with its link, so notes cite the original. Text comes from --file or stdin. Saving the same link again replaces the saved copy; Wenlan does not re-fetch the original.
+
+```text
+wenlan sources save [OPTIONS] --url <URL> --title <TITLE>
+```
+
+Options:
+
+- `--url <URL>`: Permanent http(s) link to the original.
+- `--title <TITLE>`: Title of the original.
+- `--label <LABEL>`: Where it came from, e.g. gmail, notion, drive, slack, github, web.
+- `--file <FILE>`: Read the text from this file instead of stdin.
+- `--create-only`: Refuse if this link is already saved instead of replacing it.
 
 ### `wenlan outbox`
 

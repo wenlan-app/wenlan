@@ -2560,7 +2560,9 @@ jobs:
           python3 scripts/validate-plugin-contract.py
           bash scripts/validate-plugin-contract.test.sh
       - name: Run the SessionStart hook tests
-        run: bash plugin/hooks/test-check-daemon.sh
+        run: |
+          bash plugin/hooks/test-check-daemon.sh
+          bash plugin/hooks/test-session-context.sh
       - name: Run the shared plugin script tests
         run: |
           bash plugin/scripts/test/test-resolve-space.sh

@@ -14,6 +14,10 @@ use wiremock::{
 };
 
 fn make_server(mock: &MockServer) -> WenlanMcpServer {
+    // A session exported by the developer's own agent would add a
+    // `POST /api/sessions` request these tests do not expect.
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     WenlanMcpServer::new(
         WenlanClient::new(mock.uri()),
         TransportMode::Stdio,
@@ -76,6 +80,7 @@ async fn no_topic_reads_only_the_complete_brief_and_preserves_versions() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some("wenlan".into()),
         })
@@ -110,6 +115,7 @@ async fn topic_appends_separately_labeled_same_space_context() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: Some("release readiness".into()),
             space: Some("wenlan".into()),
         })
@@ -126,11 +132,11 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
     for (pending, expected) in [
         (
             Some(3_u32),
-            Some("3 notes rely on code that changed; read_page shows which lines"),
+            Some("3 notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"),
         ),
         (
             Some(1),
-            Some("1 note relies on code that changed; read_page shows which lines"),
+            Some("1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"),
         ),
         (Some(0), None),
         (None, None),
@@ -145,6 +151,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             .await;
         let result = make_server(&mock)
             .brief_impl(BriefParams {
+                session: None,
                 topic: None,
                 space: Some("wenlan".into()),
             })
@@ -153,9 +160,53 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
         let text = text_of(&result);
         match expected {
             Some(line) => assert!(text.contains(line), "{text}"),
+            None => {
+                assert!(!text.contains("rely on code that changed"), "{text}");
+                assert!(!text.contains("/wenlan map"), "{text}");
+            }
+        }
+    }
+
+    // A Space with no Brief yet still reports drift.
+    for (pending, expected) in [
+        (
+            Some(2_u32),
+            Some(
+                "2 notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)",
+            ),
+        ),
+        (Some(0), None),
+        (None, None),
+    ] {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/brief"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(BriefReadResponse {
+                state: BriefReadState::BriefNotCreated,
+                space: Some("wenlan".into()),
+                brief: None,
+                related_context: None,
+                code_basis_pending: pending,
+            }))
+            .mount(&mock)
+            .await;
+        let result = make_server(&mock)
+            .brief_impl(BriefParams {
+                topic: None,
+                space: Some("wenlan".into()),
+                session: None,
+            })
+            .await
+            .expect("missing brief is a successful read state");
+        let text = text_of(&result);
+        assert!(
+            text.starts_with("No Brief exists for Space `wenlan` yet."),
+            "{text}"
+        );
+        match expected {
+            Some(line) => assert!(text.contains(line), "{text}"),
             None => assert!(!text.contains("rely on code that changed"), "{text}"),
         }
-        assert!(!text.contains("/wenlan map"), "{text}");
     }
 }
 
@@ -176,6 +227,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
 
     let result = make_server(&mock)
         .brief_impl(BriefParams {
+            session: None,
             topic: None,
             space: Some("wenlan".into()),
         })

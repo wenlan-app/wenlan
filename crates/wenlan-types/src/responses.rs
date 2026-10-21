@@ -892,6 +892,10 @@ pub struct PinnedMemoriesResponse {
 pub struct IngestResponse {
     pub chunks_created: usize,
     pub document_id: String,
+    /// Space the document was filed under; `None` when uncategorized or when
+    /// the route does not resolve a Space.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]

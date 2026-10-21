@@ -589,6 +589,14 @@ pub struct IngestWebpageRequest {
     pub metadata: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub create_only: bool,
+    /// Destination Space. Omitted inherits the Space header, then the default
+    /// Space, like every other write; `null` files it uncategorized.
+    #[serde(
+        default,
+        alias = "domain",
+        skip_serializing_if = "WriteSpaceTarget::is_inherit"
+    )]
+    pub space: WriteSpaceTarget,
 }
 
 fn is_false(value: &bool) -> bool {

@@ -826,6 +826,16 @@ async fn handle_store_memory_inner(
         .get_memory_space(&source_id)
         .await
         .map_err(|error| ServerError::Internal(error.to_string()))?;
+    // Attribution is best effort: the memory is already stored, so a failure
+    // here is logged and never fails the write.
+    if let Some(session) = crate::session_routes::extract_session_ref(&headers) {
+        if let Err(error) = origin_db
+            .stamp_memory_session(&source_id, &session, persisted_space.as_deref())
+            .await
+        {
+            tracing::warn!("[session] failed to stamp {source_id} with {session}: {error}");
+        }
+    }
     let persisted_space_source = if persisted_space.is_some() {
         resolved_write_space.source
     } else {
@@ -1129,6 +1139,15 @@ async fn handle_search_memory_inner(
         // only reads from one that was never used. Throttled and off the
         // response path; this route never writes trust or memory counts.
         crate::agent_presence::note_agent_read(db.clone(), agent_presence, &agent);
+        // When the caller names its AI session, list this lookup on the
+        // session card. Same contract: off the response path, never fails it.
+        crate::session_routes::note_session_read(
+            db.clone(),
+            &headers,
+            wenlan_types::SessionReadKind::Recall,
+            &req.query,
+            wenlan_core::db::sessions::session_read_space(&scope),
+        );
     }
 
     let took_ms = start.elapsed().as_secs_f64() * 1000.0;

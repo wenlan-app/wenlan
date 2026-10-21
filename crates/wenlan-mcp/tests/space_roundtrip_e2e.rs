@@ -23,6 +23,10 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn make_server(client: WenlanClient) -> WenlanMcpServer {
+    // A session exported by the developer's own agent would add a
+    // `POST /api/sessions` request these tests do not expect.
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     WenlanMcpServer::new(client, TransportMode::Stdio, "test-agent".into(), None)
 }
 
@@ -151,6 +155,7 @@ async fn mcp_capture_and_recall_respects_space() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl alpha failed");
@@ -166,6 +171,7 @@ async fn mcp_capture_and_recall_respects_space() {
             supersedes: None,
             structured_fields: None,
             retrieval_cue: None,
+            session: None,
         })
         .await
         .expect("capture_impl beta failed");
@@ -173,6 +179,7 @@ async fn mcp_capture_and_recall_respects_space() {
     // Recall with space=alpha.
     let recall_result = server
         .recall_impl(RecallParams {
+            session: None,
             query: "fact".into(),
             limit: None,
             memory_type: None,

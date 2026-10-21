@@ -331,6 +331,7 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Post, path: "/api/pages/{id}/review", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "receipt only: version, content digest, nonce digest — no prose" },
     HttpReader { method: ReaderMethod::Put, path: "/api/pages/{id}/review-required", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "flag receipt only: page id and review_required — no prose" },
     HttpReader { method: ReaderMethod::Get, path: "/api/pages/{id}/revisions", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::NamedPage, adapter: "handle_get_page_revisions", evidence: "PageChangelogEntry.citations_summary, PageChangelogEntry.delta_sum" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/pages/{id}/sessions", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_get_page_sessions", evidence: "names the page; AgentSession carries no page prose" },
     HttpReader { method: ReaderMethod::Get, path: "/api/pages/{id}/sources", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::NamedPage, adapter: "handle_get_page_sources", evidence: "MemoryItem.content, MemoryItem.source_text, MemoryItem.summary, Me" },
     HttpReader { method: ReaderMethod::Get, path: "/api/profile", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Put, path: "/api/profile", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
@@ -357,6 +358,8 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Post, path: "/api/repairs/verify", builder: Builder::MainAndRepair, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Get, path: "/api/retrievals/recent", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_recent_retrievals", evidence: "RetrievalEvent.memory_snippets, RetrievalEvent.page_titles" },
     HttpReader { method: ReaderMethod::Post, path: "/api/search", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_search", evidence: "SearchResult.content, SearchResult.content_hash, SearchResult.last" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/sessions", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "AgentSession carries no page prose" },
+    HttpReader { method: ReaderMethod::Get, path: "/api/sessions/{id}", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_get_session", evidence: "SessionPageEntry.title" },
     HttpReader { method: ReaderMethod::Delete, path: "/api/setup/anthropic-key", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Put, path: "/api/setup/anthropic-key", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Get, path: "/api/setup/status", builder: Builder::MainAndRepair, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
@@ -392,7 +395,7 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Get, path: "/ws/updates", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
 ];
 
-/// All 30 `#[tool(` declarations in `crates/wenlan-mcp/src/tools.rs`.
+/// All 32 `#[tool(` declarations in `crates/wenlan-mcp/src/tools.rs`.
 #[rustfmt::skip]
 pub const MCP_READERS: &[McpReader] = &[
     McpReader { tool: "accept_refinement", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
@@ -425,6 +428,7 @@ pub const MCP_READERS: &[McpReader] = &[
     McpReader { tool: "recall", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "reject_refinement", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "rename_page", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
+    McpReader { tool: "save_source", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "update_brief", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "write_page", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
 ];

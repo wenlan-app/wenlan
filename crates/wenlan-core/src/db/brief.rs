@@ -323,6 +323,16 @@ impl MemoryDB {
         &self,
         request: &wenlan_types::BriefUpdateRequest,
     ) -> Result<wenlan_types::BriefUpdateReceipt, WenlanError> {
+        self.apply_brief_update_in_session(request, None).await
+    }
+
+    /// [`Self::apply_brief_update`], recording `session` on the history row
+    /// the update produces. A replayed operation records nothing new.
+    pub async fn apply_brief_update_in_session(
+        &self,
+        request: &wenlan_types::BriefUpdateRequest,
+        session: Option<&wenlan_types::SessionRef>,
+    ) -> Result<wenlan_types::BriefUpdateReceipt, WenlanError> {
         validate_update_request(request)?;
         let request_digest = update_request_digest(request)?;
         let _space_write_guard = self.space_write_lock.lock().await;
@@ -731,11 +741,28 @@ impl MemoryDB {
             let snapshot = read_brief(&tx, request.space.trim())
                 .await?
                 .ok_or_else(|| WenlanError::VectorDb("brief missing after update".into()))?;
+            let session_id = match session {
+                Some(session) => Some(
+                    super::sessions::upsert_session_span(
+                        &tx,
+                        session,
+                        None,
+                        Some(request.space.trim()),
+                        now,
+                        now,
+                    )
+                    .await
+                    .map_err(|error| {
+                        WenlanError::VectorDb(format!("brief history session: {error}"))
+                    })?,
+                ),
+                None => None,
+            };
             tx.execute(
                 "INSERT INTO brief_history
                     (space_id, brief_version, created_at, caller_id, operation_id,
-                     summary, mutations_json, snapshot_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                     summary, mutations_json, snapshot_json, session_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 libsql::params![
                     space_id.as_str(),
                     final_brief_version,
@@ -744,7 +771,8 @@ impl MemoryDB {
                     request.operation_id.as_str(),
                     snapshot.last_session_summary.as_str(),
                     serde_json::to_string(&receipt.applied)?,
-                    serde_json::to_string(&snapshot)?
+                    serde_json::to_string(&snapshot)?,
+                    session_id
                 ],
             )
             .await
@@ -791,6 +819,7 @@ fn history_entry_from_row(
         summary: row.get::<String>(4).unwrap_or_default(),
         mutation_count: mutations.len(),
         mutations,
+        session_id: row.get::<Option<String>>(6).unwrap_or(None),
     })
 }
 
@@ -806,7 +835,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 "SELECT h.brief_version, h.created_at, h.caller_id, h.operation_id,
-                        h.summary, h.mutations_json
+                        h.summary, h.mutations_json, h.session_id
                    FROM brief_history h
                    JOIN spaces s ON s.id=h.space_id
                   WHERE s.name=?1
@@ -838,7 +867,7 @@ impl MemoryDB {
         let mut rows = conn
             .query(
                 "SELECT h.brief_version, h.created_at, h.caller_id, h.operation_id,
-                        h.summary, h.mutations_json, h.snapshot_json
+                        h.summary, h.mutations_json, h.session_id, h.snapshot_json
                    FROM brief_history h
                    JOIN spaces s ON s.id=h.space_id
                   WHERE s.name=?1 AND h.brief_version=?2",
@@ -855,7 +884,7 @@ impl MemoryDB {
         };
         let entry = history_entry_from_row(&row)?;
         let mut brief: wenlan_types::Brief =
-            serde_json::from_str(&row.get::<String>(6).unwrap_or_default())?;
+            serde_json::from_str(&row.get::<String>(7).unwrap_or_default())?;
         // The snapshot predates any later Space rename; show the current name.
         brief.space = space_name.to_string();
         Ok(Some(wenlan_types::BriefVersionResponse { entry, brief }))

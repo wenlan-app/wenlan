@@ -599,8 +599,18 @@ async fn brief_history_migration_creates_table_and_stamps_136() {
     }
     db.migrate_136_brief_history().await.unwrap();
     db.migrate_136_brief_history().await.unwrap();
-    assert!(db.list_brief_history("none", 5).await.unwrap().is_empty());
+    // list_brief_history reads session_id, which only migration 140 adds,
+    // so check the bare 136 table directly.
     let conn = db.conn.lock().await;
+    let mut count = conn
+        .query("SELECT COUNT(*) FROM brief_history", ())
+        .await
+        .unwrap();
+    assert_eq!(
+        count.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        0
+    );
+    drop(count);
     let mut rows = conn.query("PRAGMA user_version", ()).await.unwrap();
     assert_eq!(
         rows.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),

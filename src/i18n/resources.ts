@@ -9,6 +9,7 @@ import {
   hantActivityStatus,
 } from "../components/memory/activityCopy";
 
+import { enSessionSource, hansSessionSource, hantSessionSource } from "../components/memory/sessions/sessionCopy";
 import { enSourceAccess, hansSourceAccess, hantSourceAccess } from "../components/memory/sources/sourceAccessCopy";
 import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../components/memory/sources/sourceContainerCopy";
 
@@ -672,6 +673,7 @@ const en = {
     openMemory: "Open memory →",
     openFile: "Open file →",
     openLink: "Open in browser →",
+    openInApp: "Open in {{app}} →",
     unverified: "unverified",
     kind: { memory: "Memory", file: "File", url: "Link", authored: "Written here" },
     openFileFailed: "Could not open this file.",
@@ -2034,6 +2036,7 @@ const en = {
     allCaughtUpHint: "New changes appear here as the daemon refines your memories.",
     actionError: "The review action could not be saved. Try again.",
     revisionOutdated: "This page changed after the revision was proposed, so the revision was discarded.",
+    revisionBasisRefused: "A page this revision relied on was archived, deleted, or moved, so the revision was discarded. The page is unchanged.",
     loadFailed: "Couldn't load review items.",
     loadPartial: "Some review items couldn't load, so this list may be incomplete.",
     retry: "Try again",
@@ -2716,6 +2719,7 @@ const en = {
     "recent": "Recent activity"
 },
   activityStatus: enActivityStatus,
+  sessionSource: enSessionSource,
 };
 
 const zhHans = {
@@ -3361,6 +3365,7 @@ const zhHans = {
     openMemory: "打开记忆 →",
     openFile: "打开文件 →",
     openLink: "在浏览器打开 →",
+    openInApp: "在 {{app}} 打开 →",
     unverified: "未验证",
     kind: { memory: "记忆", file: "文件", url: "链接", authored: "本页撰写" },
     openFileFailed: "无法打开此文件。",
@@ -4700,6 +4705,7 @@ const zhHans = {
     allCaughtUpHint: "守护进程整理记忆后，新变更会出现在这里。",
     actionError: "无法保存此审阅操作，请重试。",
     revisionOutdated: "这篇笔记在提议之后被修改过，这项修订已作废。",
+    revisionBasisRefused: "这项修订依据的笔记已被归档、删除或移走，修订已作废，笔记没有改动。",
     loadFailed: "无法加载待审项目。",
     loadPartial: "部分待审项目未能加载，列表可能不完整。",
     retry: "重试",
@@ -5360,6 +5366,7 @@ const zhHans = {
     "recent": "最近活动"
 },
   activityStatus: hansActivityStatus,
+  sessionSource: hansSessionSource,
 };
 
 const zhHant = {
@@ -6005,6 +6012,7 @@ const zhHant = {
     openMemory: "開啟記憶 →",
     openFile: "開啟檔案 →",
     openLink: "在瀏覽器開啟 →",
+    openInApp: "在 {{app}} 開啟 →",
     unverified: "未驗證",
     kind: { memory: "記憶", file: "檔案", url: "連結", authored: "本筆記撰寫" },
     openFileFailed: "無法開啟此檔案。",
@@ -7344,6 +7352,7 @@ const zhHant = {
     allCaughtUpHint: "守護程序整理記憶後，新變更會出現在這裡。",
     actionError: "無法儲存此審閱操作，請再試一次。",
     revisionOutdated: "這篇筆記在提議之後被改過，這項修訂已作廢。",
+    revisionBasisRefused: "這項修訂依據的筆記已被封存、刪除或移走，修訂已作廢，筆記沒有改動。",
     loadFailed: "無法載入待審項目。",
     loadPartial: "部分待審項目未能載入，清單可能不完整。",
     retry: "重試",
@@ -8004,6 +8013,7 @@ const zhHant = {
     "recent": "最近活動"
 },
   activityStatus: hantActivityStatus,
+  sessionSource: hantSessionSource,
 };
 
 export const resources = {

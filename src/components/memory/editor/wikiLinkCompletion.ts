@@ -3,6 +3,7 @@ import { isolateHistory } from "@codemirror/commands";
 import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorSelection, Prec, StateEffect, StateField, type EditorState, type Extension, type Transaction } from "@codemirror/state";
 import { EditorView, keymap, showTooltip, tooltips, type Tooltip } from "@codemirror/view";
+import { pageTitleKey, trimLikeDaemon } from "./pageTitleKey";
 
 /** A note the writer can link to from the `[[` menu. */
 export interface LinkCompletionNote {
@@ -30,23 +31,23 @@ let nextMenuId = 0;
  * `|`, `#` and line ends, and drops labels carrying `[`.
  */
 export function linkableTitle(title: string): boolean {
-  const trimmed = title.trim();
+  const trimmed = trimLikeDaemon(title);
   return trimmed.length > 0 && !/[[\]|#\n\r]/.test(trimmed);
 }
 
 /** The notes shown for `query`: prefix matches first, then word starts, then any match. */
 export function linkCompletionMatches(notes: readonly LinkCompletionNote[], query: string): LinkCompletionNote[] {
-  const needle = query.trim().toLowerCase();
+  const needle = pageTitleKey(query);
   // A title two notes share links to neither, so neither is offered.
   const titleCount = new Map<string, number>();
   for (const note of notes) {
-    const key = note.title.trim().toLowerCase();
+    const key = pageTitleKey(note.title);
     titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
   }
   const ranked: { note: LinkCompletionNote; rank: number; order: number }[] = [];
   notes.forEach((note, order) => {
     if (!linkableTitle(note.title)) return;
-    const key = note.title.trim().toLowerCase();
+    const key = pageTitleKey(note.title);
     if (titleCount.get(key) !== 1) return;
     if (!needle) { ranked.push({ note, rank: 0, order }); return; }
     const at = key.indexOf(needle);
@@ -158,7 +159,7 @@ export function createLinkCompletion(options: {
     if (matches.length === 0) { close(view); return false; }
     const note = clicked ? matches.find((match) => match.id === clicked.id) : matches[activeIndex(menu, matches.length)];
     if (!note) return false;
-    const insert = `[[${note.title.trim()}]]`;
+    const insert = `[[${trimLikeDaemon(note.title)}]]`;
     view.dispatch({
       changes: { from: menu.from, to: menu.to, insert },
       selection: EditorSelection.cursor(menu.from + insert.length),

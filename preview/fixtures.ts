@@ -19,6 +19,8 @@ import type {
   PageChange,
   ListMemoryRevisionsResponse,
   RegisteredSource,
+  SessionDetail,
+  PageSessionEntry,
 } from "../src/lib/tauri";
 
 const cite = (
@@ -82,6 +84,53 @@ export const PAGES: Record<string, Page> = {
         locator: "/Users/lucian/notes/distillation-design.md",
       }),
       cite(6, 6, { source_kind: "authored", locator: "authored" }),
+    ],
+  } as Page,
+  // Notes citing documents an agent saved from other apps (save_source).
+  "page-saved-sources": {
+    ...base,
+    id: "page-saved-sources",
+    title: "Q4 Launch Planning",
+    content: `# Q4 Launch Planning
+
+The launch date moved to November after the vendor confirmed the revised invoice.[1] The roadmap keeps onboarding as the first milestone and defers the import work.[2] The team agreed to publish the notes once the checklist is complete.[3]
+`,
+    citations: [
+      cite(1, 1, {
+        source_kind: "external_url",
+        locator: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQVxkLpRt",
+      }),
+      cite(2, 2, {
+        source_kind: "external_url",
+        locator: "https://www.notion.so/team/Q4-roadmap-1a2b3c",
+      }),
+      cite(3, 3, {
+        source_kind: "external_url",
+        locator: "https://example.com/blog/local-first",
+      }),
+    ],
+  } as Page,
+  "page-saved-sources-zh": {
+    ...base,
+    id: "page-saved-sources-zh",
+    title: "第四季發表規劃",
+    content: `# 第四季發表規劃
+
+供應商確認修正後的發票後，發表日期延到十一月。[1] 路線圖仍以新手引導為第一個里程碑，匯入功能往後排。[2] 團隊決定在檢查清單完成後公開這份筆記。[3]
+`,
+    citations: [
+      cite(1, 1, {
+        source_kind: "external_url",
+        locator: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQVxkLpRt",
+      }),
+      cite(2, 2, {
+        source_kind: "external_url",
+        locator: "https://www.notion.so/team/Q4-roadmap-1a2b3c",
+      }),
+      cite(3, 3, {
+        source_kind: "external_url",
+        locator: "https://example.com/blog/local-first",
+      }),
     ],
   } as Page,
   "page-cleared": {
@@ -1170,5 +1219,87 @@ export const REGISTERED_SOURCES: RegisteredSource[] = [
     last_sync: null,
     file_count: 0,
     memory_count: 0,
+  },
+];
+
+// --- Source conversations (get_page_sessions / get_session_detail) ---
+// "page-cited" shows one conversation that wrote it and one it only cites;
+// the writer's card has a transcript, the other's was pruned by its tool.
+
+const SESSION_WROTE = {
+  id: "ses_preview_wrote",
+  tool: "claude-code",
+  external_id: "00893aaf-19fa-41d2-8238-13269b9b3ca0",
+  title: "Tighten the daemon architecture note",
+  repo_root: "/work/wenlan",
+  repo_branch: "main",
+  repo_commit: "be0283ac71013796e7674387f78b45b82b01d54e",
+  transcript_path: "/home/u/.claude/projects/wenlan/00893aaf.jsonl",
+  space: "wenlan",
+  first_write_at: 1_760_950_320,
+  last_write_at: 1_760_953_200,
+};
+const SESSION_CITED = {
+  id: "ses_preview_cited",
+  tool: "codex",
+  external_id: "019a-thread",
+  transcript_path: "/home/u/.codex/sessions/019a.jsonl",
+  space: "wenlan",
+  first_write_at: 1_760_800_000,
+  last_write_at: 1_760_800_900,
+};
+
+export const PAGE_SESSIONS: Record<string, PageSessionEntry[]> = {
+  "page-cited": [
+    { session: SESSION_WROTE, via: "wrote" },
+    { session: SESSION_CITED, via: "source" },
+  ],
+};
+
+export const SESSION_DETAILS: Record<string, SessionDetail> = {
+  [SESSION_WROTE.id]: {
+    session: SESSION_WROTE,
+    memories: [
+      { source_id: "mem-1", title: "The daemon owns the only database writer", created_at: 1_760_951_000 },
+    ],
+    pages: [{ id: "page-cited", title: "Wenlan Daemon Architecture", version: 2, edited_at: 1_760_952_000 }],
+    handoffs: [
+      { space: "wenlan", brief_version: 7, summary: "Moved the writer into the daemon. Next: document the queue.", created_at: 1_760_953_000 },
+    ],
+    transcript_available: true,
+  },
+  [SESSION_CITED.id]: {
+    session: SESSION_CITED,
+    memories: [{ source_id: "mem-2", title: "Queue replay is idempotent", created_at: 1_760_800_500 }],
+    pages: [],
+    handoffs: [],
+    transcript_available: false,
+  },
+};
+
+// Library fixture for ?mode=sources: documents an agent saved from other apps
+// (source "webpage", source_id = the permanent link) beside a local file.
+const savedSource = (title: string, link: string, modified: number) => ({
+  source: "webpage",
+  source_id: link,
+  title,
+  url: link,
+  chunk_count: 3,
+  last_modified: modified,
+});
+export const SOURCE_LIBRARY_FILES = [
+  savedSource("Invoice from Acme, revised", "https://mail.google.com/mail/u/0/#inbox/FMfcgzQVxkLpRt", 1_783_000_000),
+  savedSource("Q4 roadmap", "https://www.notion.so/team/Q4-roadmap-1a2b3c", 1_783_100_000),
+  savedSource("Launch checklist thread", "https://acme.slack.com/archives/C024/p1712345678", 1_783_200_000),
+  savedSource("Budget 2027", "https://docs.google.com/spreadsheets/d/1AbCdEf/edit", 1_783_250_000),
+  savedSource("Bug: import stalls on large vaults", "https://github.com/wenlan-app/wenlan/issues/412", 1_783_300_000),
+  savedSource("Local-first software", "https://example.com/blog/local-first", 1_783_400_000),
+  {
+    source: "file",
+    source_id: "/Users/lucian/Research/reading-notes.md",
+    title: "Reading notes",
+    url: null,
+    chunk_count: 4,
+    last_modified: 1_783_500_000,
   },
 ];

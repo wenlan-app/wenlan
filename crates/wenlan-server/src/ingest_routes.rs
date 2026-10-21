@@ -5,6 +5,7 @@ use crate::state::{ServerState, SharedState};
 use crate::telemetry::TelemetryEvent;
 use axum::{
     extract::{Path, State},
+    http::HeaderMap,
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::sources::RawDocument;
+use wenlan_types::WriteSpaceTarget;
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -43,6 +45,9 @@ pub struct IngestWebpageRequest {
     pub title: String,
     pub content: String,
     pub metadata: Option<HashMap<String, String>>,
+    /// Omitted inherits the Space header, then the default Space.
+    #[serde(default, alias = "domain")]
+    pub space: WriteSpaceTarget,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +65,8 @@ pub struct IngestMemoryRequest {
 pub struct IngestResponse {
     pub chunks_created: usize,
     pub document_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,32 +132,39 @@ async fn handle_ingest_text_inner(
     Ok(Json(IngestResponse {
         chunks_created,
         document_id,
+        space: None,
     }))
 }
 
 /// POST /api/ingest/webpage
 pub async fn handle_ingest_webpage(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(req): Json<IngestWebpageRequest>,
 ) -> Result<Json<IngestResponse>, ServerError> {
-    handle_webpage_with_telemetry(state, req, false).await
+    handle_webpage_with_telemetry(state, &headers, header_space, req, false).await
 }
 
 /// POST /api/ingest/webpage/create — create only, never replace an existing excerpt.
 pub async fn handle_create_webpage(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(req): Json<IngestWebpageRequest>,
 ) -> Result<Json<IngestResponse>, ServerError> {
-    handle_webpage_with_telemetry(state, req, true).await
+    handle_webpage_with_telemetry(state, &headers, header_space, req, true).await
 }
 
 async fn handle_webpage_with_telemetry(
     state: Arc<RwLock<ServerState>>,
+    headers: &HeaderMap,
+    header_space: Option<String>,
     req: IngestWebpageRequest,
     create_only: bool,
 ) -> Result<Json<IngestResponse>, ServerError> {
     let telemetry = { state.read().await.telemetry.clone() };
-    let result = handle_ingest_webpage_inner(State(state), Json(req), create_only).await;
+    let result = handle_ingest_webpage_inner(state, headers, header_space, req, create_only).await;
     telemetry.record(if result.is_ok() {
         TelemetryEvent::SaveSuccess
     } else {
@@ -160,11 +174,39 @@ async fn handle_webpage_with_telemetry(
 }
 
 async fn handle_ingest_webpage_inner(
-    State(state): State<Arc<RwLock<ServerState>>>,
-    Json(req): Json<IngestWebpageRequest>,
+    state: Arc<RwLock<ServerState>>,
+    headers: &HeaderMap,
+    header_space: Option<String>,
+    req: IngestWebpageRequest,
     create_only: bool,
 ) -> Result<Json<IngestResponse>, ServerError> {
     let document_id = req.url.clone();
+
+    // Snapshot the DB Arc and drop the guard before any await on it: the
+    // upsert embeds and writes a transaction, the heaviest await in the
+    // daemon, and tokio's write-preferring RwLock would queue every other
+    // handler behind it (AGENTS.md: never hold a tokio RwLock guard across
+    // .await).
+    let db = {
+        let s = state.read().await;
+        s.db.clone().ok_or(ServerError::DbNotInitialized)?
+    };
+    // Same Space precedence as /api/memory/store: body, then header, then
+    // the default Space.
+    let resolved_write_space = db
+        .resolve_write_space(&req.space, header_space.as_deref())
+        .await?;
+    // An agent saving a source it read elsewhere is a write like capture: a
+    // disabled agent is refused, and the source records who saved it.
+    let agent = crate::memory_routes::extract_agent_name(headers, None);
+    let source_agent = if agent == "unknown" {
+        None
+    } else {
+        db.check_agent_for_write(&agent)
+            .await
+            .map_err(ServerError::from)?;
+        Some(agent)
+    };
 
     let mut metadata = req.metadata.unwrap_or_default();
     if let Some(domain) = req
@@ -187,8 +229,8 @@ async fn handle_ingest_webpage_inner(
         last_modified: chrono::Utc::now().timestamp(),
         metadata,
         memory_type: None,
-        source_agent: None,
-        space: None,
+        source_agent,
+        space: resolved_write_space.space_name.clone(),
         confidence: None,
         confirmed: None,
         supersedes: None,
@@ -196,27 +238,23 @@ async fn handle_ingest_webpage_inner(
         ..Default::default()
     };
 
-    // Snapshot the DB Arc and drop the guard before the upsert: it embeds and
-    // writes a transaction, the heaviest await in the daemon, and tokio's
-    // write-preferring RwLock would queue every other handler behind it
-    // (AGENTS.md: never hold a tokio RwLock guard across .await).
-    let db = {
-        let s = state.read().await;
-        s.db.clone().ok_or(ServerError::DbNotInitialized)?
-    };
+    let space = resolved_write_space.space_name.clone();
+    let docs = vec![(doc, Some(resolved_write_space))];
     let chunks_created = if create_only {
-        db.create_documents(vec![doc]).await
+        db.create_documents_with_write_spaces(docs).await
     } else {
-        db.upsert_documents(vec![doc]).await
+        db.upsert_documents_with_write_spaces(docs).await
     }
     .map_err(|e| match e {
         wenlan_core::WenlanError::Conflict(message) => ServerError::Conflict(message),
+        wenlan_core::WenlanError::Validation(message) => ServerError::ValidationError(message),
         other => ServerError::IngestFailed(other.to_string()),
     })?;
 
     Ok(Json(IngestResponse {
         chunks_created,
         document_id,
+        space,
     }))
 }
 
@@ -288,6 +326,7 @@ async fn handle_ingest_memory_inner(
     Ok(Json(IngestResponse {
         chunks_created,
         document_id,
+        space: None,
     }))
 }
 

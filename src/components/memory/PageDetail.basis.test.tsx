@@ -31,6 +31,7 @@ vi.mock("../../lib/tauri", () => ({
   getPageRevisions: vi.fn().mockResolvedValue({ page_id: "note_a", current_version: 3, user_edited: false, stale_reason: null, entries: [] }),
   listOrphanLinks: vi.fn().mockResolvedValue({ min_count: 2, orphan_labels: [] }),
   listPages: vi.fn().mockResolvedValue([]),
+  listPagesExplicitBrowse: vi.fn().mockResolvedValue([]),
   searchPages: vi.fn().mockResolvedValue([]),
   redistillPage: vi.fn(),
   updatePage: vi.fn(),
@@ -56,7 +57,7 @@ vi.mock("../../lib/tauri", () => ({
   unmarkPageBasis: vi.fn(),
 }));
 
-import { getPage, getPageSources, listPages, markPageBasis, redistillPage, updatePage } from "../../lib/tauri";
+import { getPage, getPageSources, listPagesExplicitBrowse, markPageBasis, redistillPage, updatePage } from "../../lib/tauri";
 import { EditorSelection } from "@codemirror/state";
 
 const oneSource = [{
@@ -258,13 +259,13 @@ describe("PageDetail with note bases", () => {
   });
 
   it("links a same-Space note from [[ and can use it as a source in the same step", async () => {
-    vi.mocked(listPages).mockResolvedValue(linkCandidates);
+    vi.mocked(listPagesExplicitBrowse).mockResolvedValue(linkCandidates);
     vi.mocked(markPageBasis).mockReset().mockResolvedValue({ page_id: "basis_b", title: "Price list", state: "current" } as never);
     renderPage({}, { initialMode: "edit" });
     const view = await typeAtEnd(" [[pri");
 
     const menu = await screen.findByRole("listbox", { name: "Link a page" });
-    expect(listPages).toHaveBeenCalledWith("active", undefined, 500);
+    expect(listPagesExplicitBrowse).toHaveBeenCalledWith("active", "uncategorized", 500, 0);
     const rows = await waitFor(() => {
       const options = menu.querySelectorAll('[role="option"]');
       expect(options.length).toBeGreaterThan(0);
@@ -281,7 +282,7 @@ describe("PageDetail with note bases", () => {
   });
 
   it("says so when using a linked note as a source fails, and keeps the link", async () => {
-    vi.mocked(listPages).mockResolvedValue(linkCandidates);
+    vi.mocked(listPagesExplicitBrowse).mockResolvedValue(linkCandidates);
     vi.mocked(markPageBasis).mockReset().mockRejectedValue(new Error("boom"));
     renderPage({}, { initialMode: "edit" });
     const view = await typeAtEnd(" [[price l");

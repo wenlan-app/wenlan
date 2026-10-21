@@ -3,16 +3,18 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Funnel, CaretRight, Plus } from "@phosphor-icons/react";
 import { SourceTypeIcon } from "./SourceTypeIcon";
+import type { SourceApp, SourceKind } from "./sourcePresentation";
 import type { AssetLens } from "../../../lib/assetLens";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import type { SourceLibraryFilter } from "./SourceLibrary";
+import { isSourceApp, SOURCE_APP_NAMES } from "./sourcePresentation";
 import "./SourceCollection.css";
 
 export interface SourceCollectionItem {
   id: string;
   title: string;
   metadata: string;
-  kind: "pdf" | "text" | "image" | "webpage" | "file" | "folder" | "obsidian";
+  kind: SourceKind | SourceApp | "folder" | "obsidian";
   onSelect: () => void;
 }
 
@@ -41,8 +43,10 @@ export function SourceCollectionBreadcrumbs({ children }: { children: ReactNode 
   return <nav className="source-collection-breadcrumbs" aria-label={t("sourceContainer.breadcrumb")}>{children}</nav>;
 }
 
-export function SourceCollectionToolbar({ search, filter, lens, onSearchChange, onFilterChange, onLensChange, onAdd, trailing, breadcrumbs }: {
+export function SourceCollectionToolbar({ search, filter, lens, apps = [], onSearchChange, onFilterChange, onLensChange, onAdd, trailing, breadcrumbs }: {
   search: string;
+  /** Apps with saved sources; each gets its own filter, and none shows when nothing was saved from it. */
+  apps?: readonly SourceApp[];
   filter: SourceLibraryFilter;
   lens: AssetLens;
   onSearchChange: (value: string) => void;
@@ -53,7 +57,7 @@ export function SourceCollectionToolbar({ search, filter, lens, onSearchChange, 
   breadcrumbs?: ReactNode;
 }) {
   const { t } = useTranslation();
-  const filters: SourceLibraryFilter[] = ["all", "files", "links", "folders"];
+  const filters: SourceLibraryFilter[] = ["all", "files", "links", ...apps, "folders"];
   return <>
     {breadcrumbs}
     <div className="source-library-toolbar collection-toolbar">
@@ -68,7 +72,7 @@ export function SourceCollectionToolbar({ search, filter, lens, onSearchChange, 
       </div>
     </div>
     <div className="source-library-filters collection-filter-row" role="group" aria-label={t("sourceLibrary.filterLabel")}>
-      {filters.map((value) => <button className="collection-control" key={value} aria-pressed={filter === value} onClick={() => onFilterChange(value)}>{t(`sourceLibrary.filters.${value}`)}</button>)}
+      {filters.map((value) => <button className="collection-control" key={value} aria-pressed={filter === value} onClick={() => onFilterChange(value)}>{isSourceApp(value) ? SOURCE_APP_NAMES[value] : t(`sourceLibrary.filters.${value}`)}</button>)}
     </div>
   </>;
 }

@@ -1009,3 +1009,430 @@ async fn list_and_recall_carry_only_the_bases_that_are_not_ok() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Arc 2 review: a Space-scoped agent write, and a locked note's basis marks
+// ---------------------------------------------------------------------------
+
+/// An agent's `PUT /api/pages/{id}`, optionally scoped by `x-wenlan-space`.
+async fn agent_put(
+    router: &common::AppRouter,
+    id: &str,
+    body: Value,
+    space: Option<&str>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method(Method::PUT)
+        .uri(format!("/api/pages/{id}"))
+        .header("content-type", "application/json")
+        .header("x-agent-name", "claude-code");
+    if let Some(space) = space {
+        request = request.header("x-wenlan-space", space);
+    }
+    let response = router
+        .clone()
+        .oneshot(request.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+async fn pending_cards(db: &Arc<MemoryDB>) -> Vec<String> {
+    db.list_pending_revisions(50)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|card| card.revision_source_id)
+        .collect()
+}
+
+async fn accept(router: &common::AppRouter, card_id: &str) -> (StatusCode, Value) {
+    call(
+        router,
+        Method::POST,
+        &format!("/api/memory/revision/{card_id}/accept"),
+        None,
+        Caller::Person,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_agent_write_scoped_to_one_space_answers_a_note_in_another_exactly_like_a_missing_one() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("alpha", None, false).await.unwrap();
+    db.create_space("beta", None, false).await.unwrap();
+    let basis = note(
+        &db,
+        "Launch Plan",
+        "The launch is on 2026-03-01.",
+        Some("beta"),
+    )
+    .await;
+    let open = note(&db, "Roadmap", "Original plans.", Some("beta")).await;
+    let locked = note(&db, "Budget", "Original budget.", Some("beta")).await;
+    assert!(db.set_page_review_required(&locked, true).await.unwrap());
+    // The scoped requests carry no basis, so the refusal can only come from
+    // the note itself being out of scope (a basis in another Space is refused
+    // earlier, as absent, by its own check).
+    let body = |version: i64, with_basis: bool| {
+        let mut body = json!({
+            "content": "Changed by an agent scoped elsewhere.",
+            "source_memory_ids": [],
+            "expected_version": version,
+        });
+        if with_basis {
+            body["basis"] = json!([{ "page_id": basis, "version": 1 }]);
+        }
+        body
+    };
+
+    let (missing_status, missing) =
+        agent_put(&router, "ghost", body(1, false), Some("alpha")).await;
+    assert_eq!(
+        missing_status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{missing}"
+    );
+    assert_eq!(missing, json!({ "error": "page ghost not found" }));
+
+    for id in [&open, &locked] {
+        let version = db.get_page(id).await.unwrap().unwrap().version;
+        let before = db.get_page(id).await.unwrap().unwrap();
+        let (status, refused) = agent_put(&router, id, body(version, false), Some("alpha")).await;
+        assert_eq!(status, missing_status, "{id}: {refused}");
+        // The same body as a missing note, id aside: no basis, no card id,
+        // nothing that says the note exists.
+        assert_eq!(refused, json!({ "error": format!("page {id} not found") }));
+        let after = db.get_page(id).await.unwrap().unwrap();
+        assert_eq!(after.content, before.content, "{id}: nothing written");
+        assert_eq!(after.version, before.version, "{id}: nothing written");
+        assert!(
+            db.list_page_basis(id).await.unwrap().is_empty(),
+            "{id}: no mark"
+        );
+        assert!(pending_cards(&db).await.is_empty(), "{id}: no card staged");
+    }
+
+    // The same requests without the header (the app's global scope) work: the
+    // open note takes the write, the locked one stages a card.
+    let version = db.get_page(&open).await.unwrap().unwrap().version;
+    let (status, wrote) = agent_put(&router, &open, body(version, true), None).await;
+    assert_eq!(status, StatusCode::OK, "{wrote}");
+    let wrote: PageWriteResponse = typed(wrote);
+    assert!(wrote.ok && !wrote.gated);
+    assert_eq!(wrote.basis.len(), 1);
+    let version = db.get_page(&locked).await.unwrap().unwrap().version;
+    let (status, gated) = agent_put(&router, &locked, body(version, true), None).await;
+    assert_eq!(status, StatusCode::OK, "{gated}");
+    let gated: PageWriteResponse = typed(gated);
+    assert!(gated.gated && gated.revision_card_id.is_some());
+    // And the right Space header works too.
+    let version = db.get_page(&open).await.unwrap().unwrap().version;
+    let (status, wrote) = agent_put(
+        &router,
+        &open,
+        json!({
+            "content": "Changed again, in its own Space.",
+            "source_memory_ids": [],
+            "expected_version": version,
+        }),
+        Some("beta"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{wrote}");
+}
+
+/// A Space-scoped agent that puts a note id from another Space in its source
+/// list hears exactly what it hears for an id that names nothing, so the
+/// answer cannot confirm the note exists. A note in its own Space is named.
+#[tokio::test]
+async fn a_scoped_agent_cannot_learn_from_the_source_list_that_a_note_in_another_space_exists() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("alpha", None, false).await.unwrap();
+    db.create_space("beta", None, false).await.unwrap();
+    let elsewhere = note(
+        &db,
+        "Launch Plan",
+        "The launch is on 2026-03-01.",
+        Some("beta"),
+    )
+    .await;
+    let sibling = note(&db, "Glossary", "Terms.", Some("alpha")).await;
+    let target = note(&db, "Roadmap", "Original plans.", Some("alpha")).await;
+    let put = |source: String| {
+        let router = router.clone();
+        let target = target.clone();
+        let db = db.clone();
+        async move {
+            let version = db.get_page(&target).await.unwrap().unwrap().version;
+            agent_put(
+                &router,
+                &target,
+                json!({
+                    "content": "Changed by an agent.",
+                    "source_memory_ids": [source],
+                    "expected_version": version,
+                }),
+                Some("alpha"),
+            )
+            .await
+        }
+    };
+
+    let (missing_status, missing) = put("ghost".into()).await;
+    let (status, refused) = put(elsewhere.clone()).await;
+    assert_eq!(status, missing_status, "{refused}");
+    assert_eq!(
+        refused.to_string().replace(&elsewhere, "ghost"),
+        missing.to_string(),
+        "the same answer as a missing id"
+    );
+    assert!(!refused.to_string().contains("is a note"), "{refused}");
+
+    let (status, named) = put(sibling.clone()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{named}");
+    assert!(
+        named.to_string().contains(&format!("{sibling} is a note")),
+        "{named}"
+    );
+}
+
+/// The bases a write answers with are shown within the writer's Space: a
+/// basis that moved to another Space keeps its state, but not its title.
+#[tokio::test]
+async fn a_scoped_write_withholds_the_title_of_a_basis_that_moved_to_another_space() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("alpha", None, false).await.unwrap();
+    db.create_space("beta", None, false).await.unwrap();
+    let basis = note(
+        &db,
+        "Launch Plan",
+        "The launch is on 2026-03-01.",
+        Some("alpha"),
+    )
+    .await;
+    let citer = note(&db, "Roadmap", "Original plans.", Some("alpha")).await;
+    mark(&router, &citer, &basis, 1).await;
+    db.set_page_workspace(&basis, Some("beta")).await.unwrap();
+    let write = |content: &'static str, space: Option<&'static str>| {
+        let router = router.clone();
+        let citer = citer.clone();
+        let db = db.clone();
+        async move {
+            let version = db.get_page(&citer).await.unwrap().unwrap().version;
+            let (status, body) = agent_put(
+                &router,
+                &citer,
+                json!({
+                    "content": content,
+                    "source_memory_ids": [],
+                    "expected_version": version,
+                }),
+                space,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            typed::<PageWriteResponse>(body)
+        }
+    };
+
+    let scoped = write("Changed in its own Space.", Some("alpha")).await;
+    assert_eq!(scoped.basis.len(), 1);
+    assert_eq!(scoped.basis[0].page_id, basis);
+    assert_eq!(scoped.basis[0].title, "", "title withheld");
+
+    let global = write("Changed by the app.", None).await;
+    assert_eq!(global.basis[0].title, "Launch Plan");
+}
+
+#[tokio::test]
+async fn a_locked_notes_agent_write_keeps_its_marks_on_the_card_and_accepting_records_them() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let fresh = note(&db, "Launch Plan", "The launch is on 2026-03-01.", None).await;
+    let moved = note(&db, "Glossary", "Terms that rarely change.", None).await;
+    let citer = note(&db, "Roadmap", "Original plans.", None).await;
+    // The citer already relies on `moved` at version 1; `moved` changes, so
+    // the agent's write reconfirms it at version 2.
+    mark(&router, &citer, &moved, 1).await;
+    person_edits(&router, &moved, "Terms that changed once.").await;
+    assert_eq!(
+        basis_of(&read_note(&router, &citer).await)[0].state,
+        "pending"
+    );
+    assert!(db.set_page_review_required(&citer, true).await.unwrap());
+    let version = version_of(&read_note(&router, &citer).await);
+
+    let (status, gated) = agent_put(
+        &router,
+        &citer,
+        json!({
+            "content": "Plans built on the launch plan and the glossary.",
+            "source_memory_ids": [],
+            "expected_version": version,
+            "basis": [
+                { "page_id": fresh, "version": 1 },
+                { "page_id": moved, "version": 2 }
+            ],
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{gated}");
+    let gated: PageWriteResponse = typed(gated);
+    assert!(gated.gated);
+    let card_id = gated.revision_card_id.unwrap();
+    // Waiting on review: nothing has landed yet.
+    let read = read_note(&router, &citer).await;
+    assert_eq!(read["page"]["content"], "Original plans.");
+    assert_eq!(basis_of(&read).len(), 1);
+    assert_eq!(basis_of(&read)[0].state, "pending");
+
+    let (status, accepted) = accept(&router, &card_id).await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    let read = read_note(&router, &citer).await;
+    assert_eq!(
+        read["page"]["content"],
+        "Plans built on the launch plan and the glossary."
+    );
+    let basis = basis_of(&read);
+    let by_id = |id: &str| basis.iter().find(|b| b.page_id == id).unwrap().clone();
+    assert_eq!(by_id(&fresh).state, "ok");
+    assert_eq!(by_id(&moved).state, "ok", "the reconfirm landed on accept");
+    assert_eq!(by_id(&moved).from_version, 2);
+}
+
+#[tokio::test]
+async fn a_locked_notes_agent_write_with_a_refused_mark_is_refused_before_a_card_is_staged() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let archived = note(&db, "Old Plan", "Superseded plans.", None).await;
+    let citer = note(&db, "Roadmap", "Original plans.", None).await;
+    db.archive_page(&archived).await.unwrap();
+    assert!(db.set_page_review_required(&citer, true).await.unwrap());
+    let version = version_of(&read_note(&router, &citer).await);
+
+    let (status, body) = agent_put(
+        &router,
+        &citer,
+        json!({
+            "content": "Plans built on the old plan.",
+            "source_memory_ids": [],
+            "expected_version": version,
+            "basis": [{ "page_id": archived, "version": 1 }],
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(pending_cards(&db).await.is_empty(), "no card was staged");
+}
+
+#[tokio::test]
+async fn accepting_a_locked_notes_card_whose_basis_was_archived_since_is_409_and_discards_it() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let basis = note(&db, "Launch Plan", "The launch is on 2026-03-01.", None).await;
+    let citer = note(&db, "Roadmap", "Original plans.", None).await;
+    assert!(db.set_page_review_required(&citer, true).await.unwrap());
+    let version = version_of(&read_note(&router, &citer).await);
+    let (status, gated) = agent_put(
+        &router,
+        &citer,
+        json!({
+            "content": "Plans built on the launch plan.",
+            "source_memory_ids": [],
+            "expected_version": version,
+            "basis": [{ "page_id": basis, "version": 1 }],
+        }),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{gated}");
+    let card_id = typed::<PageWriteResponse>(gated).revision_card_id.unwrap();
+
+    db.archive_page(&basis).await.unwrap();
+    let (status, refused) = accept(&router, &card_id).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    let message = refused["error"].as_str().unwrap();
+    assert!(
+        message.starts_with(&format!("{}:", wenlan_types::PAGE_REVISION_BASIS_REFUSED)),
+        "{message}"
+    );
+    assert!(message.contains(&basis), "names the note: {message}");
+    let read = read_note(&router, &citer).await;
+    assert_eq!(read["page"]["content"], "Original plans.");
+    assert_eq!(version_of(&read), version);
+    assert!(basis_of(&read).is_empty());
+    assert!(
+        pending_cards(&db).await.is_empty(),
+        "the card is not stranded"
+    );
+    let (status, _) = accept(&router, &card_id).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a second accept finds nothing"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_write_that_changes_nothing_still_records_its_basis_marks() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let basis = note(&db, "Launch Plan", "The launch is on 2026-03-01.", None).await;
+    let citer = note(&db, "Roadmap", "Original plans.", None).await;
+    let version = version_of(&read_note(&router, &citer).await);
+    let unchanged = |marks: Value| {
+        json!({
+            "content": "Original plans.",
+            "source_memory_ids": [],
+            "expected_version": version,
+            "basis": marks,
+        })
+    };
+
+    // A refused mark still refuses the request, and records nothing.
+    let (status, body) = agent_put(
+        &router,
+        &citer,
+        unchanged(json!([{ "page_id": basis, "version": 1 }, { "page_id": basis, "version": 9 }])),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(basis_of(&read_note(&router, &citer).await).is_empty());
+
+    let (status, wrote) = agent_put(
+        &router,
+        &citer,
+        unchanged(json!([{ "page_id": basis, "version": 1 }])),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{wrote}");
+    let wrote: PageWriteResponse = typed(wrote);
+    assert_eq!(wrote.basis.len(), 1, "{wrote:?}");
+    assert_eq!(wrote.basis[0].state, "ok");
+    let read = read_note(&router, &citer).await;
+    assert_eq!(version_of(&read), version, "the body was not rewritten");
+    assert_eq!(basis_of(&read), wrote.basis);
+}

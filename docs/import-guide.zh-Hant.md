@@ -29,3 +29,9 @@ Wenlan 讀取 vault 裡的 Markdown 筆記，不修改原始檔案。**「同步
 3. 檢查文字後按「匯入」，再開啟「查看記憶」，確認保存的內容。
 
 這種方式適合已有的簡短偏好、決定、事實或經驗；完整對話紀錄請用上方的 ZIP 匯入。
+
+## 透過 AI 工具存下郵件、頁面或討論串
+
+如果你的 AI 工具讀得到 Gmail、Notion、Google Drive、Slack、GitHub 或網頁，可以請它把讀到的內容存進 Wenlan，例如「把這封信存進 Wenlan」。接上 Wenlan 外掛後，工具會連同原文連結一起存下，引用它的筆記就能點回原本的郵件或頁面。也可以用命令列存一份：`wenlan sources save --url <連結> --title <標題> --label gmail < email.txt`。
+
+Wenlan 保留存下的那一份，不會再去抓原文。原文更新後，請工具用同一個連結再存一次，Wenlan 會換成新的內容，並把引用它的筆記標記為需要更新。這要用本機工具，例如 Claude Code 或 Codex；claude.ai 和 ChatGPT 的網頁存取是唯讀的，無法存來源。

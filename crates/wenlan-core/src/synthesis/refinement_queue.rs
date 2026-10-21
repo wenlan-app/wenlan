@@ -321,6 +321,7 @@ async fn apply_cross_space_discovery(
                 .page_min_cluster_size,
             page_match_threshold: crate::tuning::DistillationConfig::default().page_match_threshold,
             citations_json: None,
+            basis_marks: Vec::new(),
         },
     )
     .await?;

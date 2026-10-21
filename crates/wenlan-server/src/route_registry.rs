@@ -389,6 +389,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/spaces/{from}/move-to/{to}", "/api/pages/{id}/archive", "/api/pages/{id}/review",
     "/api/pages/{id}/review-required",
     "/api/pages/drafts", "/api/pages/drafts/{id}", "/api/pages/drafts/{id}/publish",
+    // Records which agent session wrote; metadata only, no user data read.
+    "/api/sessions",
     "/api/refinery/queue/{id}/reject", "/api/refinery/queue/{id}/accept", "/api/sources/{id}", "/api/sources/{id}/sync",
     "/api/config", "/api/config/routing", "/api/setup/status", "/api/setup/anthropic-key", "/api/on-device-model",
     "/api/on-device-model/download", "/api/outbox/drain", "/api/outbox/status", "/api/chunks/{id}/update", "/api/chunks/time-range", "/api/chunks/delete-bulk",

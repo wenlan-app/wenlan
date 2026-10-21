@@ -20,6 +20,10 @@ pub(super) struct PageRevisionCard {
     /// The basis notes an update-from-sources card was written from (R9).
     /// Empty for every other card.
     basis_snapshot: Vec<crate::db::BasisSnapshotEntry>,
+    /// The notes an agent's write relied on when it was staged as this card
+    /// (a locked note). Recorded when the card is accepted. Empty for every
+    /// other card.
+    basis_marks: Vec<crate::db::StagedBasisMark>,
 }
 
 pub(super) async fn resolve_page_revision_card(
@@ -72,6 +76,10 @@ pub(super) async fn resolve_page_revision_card(
         .get("basis_snapshot")
         .and_then(|v| serde_json::from_value::<Vec<crate::db::BasisSnapshotEntry>>(v.clone()).ok())
         .unwrap_or_default();
+    let basis_marks = structured
+        .get("basis_marks")
+        .and_then(|v| serde_json::from_value::<Vec<crate::db::StagedBasisMark>>(v.clone()).ok())
+        .unwrap_or_default();
     let page_version = structured.get("page_version").and_then(|v| v.as_i64());
     // `stage_page_revision_card` now requires every caller to pass a real
     // counter, so a fresh card always carries a concrete number here. `None`
@@ -100,6 +108,7 @@ pub(super) async fn resolve_page_revision_card(
         content: payload.full_body.unwrap_or(payload.content),
         source_memory_ids,
         basis_snapshot,
+        basis_marks,
     }))
 }
 
@@ -191,7 +200,7 @@ pub(super) async fn accept_page_revision_card(
     let projection = knowledge_path.map(|path| {
         crate::export::knowledge::KnowledgeProjectionWrite::new(path.to_path_buf(), db)
     });
-    let wrote = db
+    let accepted = db
         .try_accept_page_revision(
             &card.page_id,
             &card.content,
@@ -203,10 +212,34 @@ pub(super) async fn accept_page_revision_card(
             &crate::db::BasisWrite {
                 actor: actor.to_string(),
                 confirm_snapshot: card.basis_snapshot.clone(),
+                card_marks: card.basis_marks.clone(),
                 ..crate::db::BasisWrite::default()
             },
         )
-        .await?;
+        .await;
+    let wrote = match accepted {
+        Ok(wrote) => wrote,
+        // A note the agent's change relied on can no longer be relied on
+        // (archived, deleted, moved to another Space, id reused). The accept
+        // transaction rolled back, so the page is unchanged. The plan's rule
+        // is that a refused mark refuses the whole write. Nothing tells the
+        // card if or when the note becomes usable again (an archive may never
+        // be undone), so keeping the card would strand it: every accept fails
+        // the same way until then.
+        // Discard it, the same way an outdated card is, and say so with a
+        // code the app and the MCP client both recognise.
+        Err(WenlanError::Conflict(reason))
+            if reason.starts_with(wenlan_types::PAGE_REVISION_BASIS_REFUSED) =>
+        {
+            db.delete_by_source_id("memory", &card.revision_id).await?;
+            return Err(WenlanError::Conflict(format!(
+                "{reason}. Revision card {} for page {} was discarded and the page is \
+                 unchanged. Re-read the page and propose the change again.",
+                card.revision_id, card.page_id
+            )));
+        }
+        Err(error) => return Err(error),
+    };
 
     if !wrote {
         // A concurrent accept or dismiss of this same card consumes it in its

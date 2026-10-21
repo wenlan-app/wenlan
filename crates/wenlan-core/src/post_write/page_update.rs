@@ -184,6 +184,7 @@ pub async fn stage_page_revision_card(
         edited_by,
         None,
         retry,
+        &[],
     )
     .await
 }
@@ -192,6 +193,12 @@ pub async fn stage_page_revision_card(
 /// is the agent the human sees on the card ("proposed by Claude Code"); when
 /// it is `None`, a pipeline writer is shown as Wenlan and any other writer
 /// leaves the card unattributed rather than showing an internal label.
+///
+/// `basis_marks` are the notes the write said it relied on, already checked
+/// with [`MemoryDB::prepare_staged_basis_marks`]. They ride the card
+/// (`basis_marks` in its structured fields) and are recorded when the human
+/// accepts it; see `accept_page_revision_card` for a mark that can no longer
+/// be applied by then.
 #[allow(clippy::too_many_arguments)]
 pub async fn stage_page_revision_card_proposed_by(
     db: &MemoryDB,
@@ -202,6 +209,7 @@ pub async fn stage_page_revision_card_proposed_by(
     edited_by: &str,
     proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
+    basis_marks: &[crate::db::StagedBasisMark],
 ) -> Result<WriteResult, WenlanError> {
     stage_page_revision_card_inner(
         db,
@@ -214,6 +222,7 @@ pub async fn stage_page_revision_card_proposed_by(
         proposer,
         retry,
         None,
+        basis_marks,
     )
     .await?
     .ok_or_else(|| {
@@ -226,6 +235,7 @@ pub async fn stage_page_revision_card_proposed_by(
 /// the exact row it was computed from (active, same version, same source
 /// revision, same incarnation), checked inside the insert's transaction.
 /// `Ok(None)` when the fence no longer holds; nothing was staged or logged.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn stage_page_revision_card_at_fence(
     db: &MemoryDB,
     page: &crate::pages::Page,
@@ -234,6 +244,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
     fence: &PageFence,
     edited_by: &str,
     retry: Option<&RetryIdentity>,
+    basis_marks: &[crate::db::StagedBasisMark],
 ) -> Result<Option<WriteResult>, WenlanError> {
     stage_page_revision_card_inner(
         db,
@@ -246,6 +257,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         None,
         retry,
         None,
+        basis_marks,
     )
     .await
 }
@@ -274,6 +286,7 @@ pub(crate) async fn stage_basis_preview_card(
         None,
         None,
         Some(basis_snapshot),
+        &[],
     )
     .await
 }
@@ -290,6 +303,7 @@ async fn stage_page_revision_card_inner(
     proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
     basis_snapshot: Option<&[crate::db::BasisSnapshotEntry]>,
+    basis_marks: &[crate::db::StagedBasisMark],
 ) -> Result<Option<WriteResult>, WenlanError> {
     crate::export::provenance::validate_canonical_page_content(content)?;
     // Who the human sees on the card. Never the internal `page_write` kind:
@@ -335,6 +349,10 @@ async fn stage_page_revision_card_inner(
     // Only an update-from-sources card carries the notes it was written from.
     if let Some(snapshot) = basis_snapshot {
         structured["basis_snapshot"] = serde_json::to_value(snapshot)?;
+    }
+    // The notes an agent's gated write relied on, recorded when it is accepted.
+    if !basis_marks.is_empty() {
+        structured["basis_marks"] = serde_json::to_value(basis_marks)?;
     }
     let structured = structured.to_string();
     let title: String = format!("Revision: {}", page.title)
@@ -1006,6 +1024,10 @@ async fn update_page_db_impl(
                     Some(source_revision) => source_revision,
                     None => db.get_page_source_revision(page_id).await?,
                 };
+                // The marks this write carried ride the card and land when it
+                // is accepted. They are checked now, so a refused mark refuses
+                // the write here exactly as it would a direct one.
+                let staged_marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
                 let result = match page_fence {
                     Some(fence) => match stage_page_revision_card_at_fence(
                         db,
@@ -1015,6 +1037,7 @@ async fn update_page_db_impl(
                         fence,
                         edited_by,
                         retry.as_ref(),
+                        &staged_marks,
                     )
                     .await?
                     {
@@ -1041,6 +1064,7 @@ async fn update_page_db_impl(
                             edited_by,
                             agent,
                             retry.as_ref(),
+                            &staged_marks,
                         )
                         .await?
                     }
@@ -1118,6 +1142,27 @@ async fn update_page_db_impl(
             // compile done, so acknowledge it; otherwise the sweep re-dispatches the
             // same no-op work forever.
             if delta_summary.is_none() && old_set == new_set {
+                // No page write for the marks to ride on, so the notes this
+                // write relied on (and reconfirms of ones it already had) are
+                // recorded on their own. A refused mark still refuses the write,
+                // and so does an edit that landed after the comparison above.
+                if !basis.marks.is_empty() {
+                    match db
+                        .mark_page_bases(page_id, current_version, &basis.marks, &basis.actor)
+                        .await
+                    {
+                        Ok(()) => {}
+                        Err(crate::db::BasisError::CiterMovedOn { current }) => {
+                            return Ok(no_op(
+                                WriteOutcome::Refused,
+                                vec![format!(
+                                    "page moved to v{current} (expected v{current_version}); write refused"
+                                )],
+                            ));
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
                 let acknowledged = if require_stale || user_forced {
                     if let Some((caller, operation, digest)) = retry.as_ref() {
                         let acknowledged_result = WriteResult {

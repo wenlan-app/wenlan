@@ -7,6 +7,7 @@ use crate::{
 };
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     response::Json,
 };
 use std::{future::Future, sync::Arc};
@@ -92,6 +93,7 @@ where
 /// read here.
 pub async fn handle_read_brief(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     SpaceHeader(header_space): SpaceHeader,
     view: crate::truth_guard::TruthView,
     Json(request): Json<BriefReadRequest>,
@@ -120,12 +122,13 @@ pub async fn handle_read_brief(
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
+        let code_basis_pending = code_basis_pending_for(&db, &space).await;
         return Ok(Json(BriefReadResponse {
             state: BriefReadState::BriefNotCreated,
             space: Some(space),
             brief: None,
             related_context: None,
-            code_basis_pending: None,
+            code_basis_pending,
         }));
     };
 
@@ -205,17 +208,19 @@ pub async fn handle_read_brief(
         }
     };
 
-    // Notes that rely on lines of code are checked against the files as they
-    // read now (no model, one read per file; nothing at all for a Space without
-    // code bases). A failed check leaves the Brief readable without the count.
-    let code_basis_pending =
-        match wenlan_core::code_basis::brief_code_basis_pending(&db, &space).await {
-            Ok(count) => count,
-            Err(error) => {
-                tracing::warn!("[brief] code basis check failed for Space {space}: {error}");
-                None
-            }
-        };
+    let code_basis_pending = code_basis_pending_for(&db, &space).await;
+
+    // A Brief that was actually read is listed on the session card when the
+    // caller names its session. This is bookkeeping beside the read: it never
+    // creates or changes a Brief or a Space, and nothing is recorded for the
+    // unresolved and not-created answers above.
+    crate::session_routes::note_session_read(
+        db.clone(),
+        &headers,
+        wenlan_types::SessionReadKind::Brief,
+        &space,
+        wenlan_core::db::sessions::session_read_space_of(Some(&space)).into(),
+    );
 
     Ok(Json(BriefReadResponse {
         state: BriefReadState::Ready,
@@ -226,10 +231,26 @@ pub async fn handle_read_brief(
     }))
 }
 
+/// Notes that rely on lines of code are checked against the files as they read
+/// now (no model, one read per file; nothing at all for a Space without code
+/// bases), and the notes whose code changed are counted. This holds whether or
+/// not the Space has a Brief yet. A failed check leaves the Brief readable
+/// without the count.
+async fn code_basis_pending_for(db: &MemoryDB, space: &str) -> Option<u32> {
+    match wenlan_core::code_basis::brief_code_basis_pending(db, space).await {
+        Ok(count) => count,
+        Err(error) => {
+            tracing::warn!("[brief] code basis check failed for Space {space}: {error}");
+            None
+        }
+    }
+}
+
 /// PATCH /api/brief — apply item-level handoff deltas, then best-effort
 /// project the committed Brief as a human-readable Markdown receipt.
 pub async fn handle_update_brief(
     State(state): State<SharedState>,
+    headers: HeaderMap,
     Json(request): Json<BriefUpdateRequest>,
 ) -> Result<Json<BriefUpdateReceipt>, ServerError> {
     let (db, status_root, projection_lock) = {
@@ -240,7 +261,10 @@ pub async fn handle_update_brief(
             Arc::clone(&state.brief_projection_lock),
         )
     };
-    let mut receipt = db.apply_brief_update(&request).await?;
+    let session = crate::session_routes::extract_session_ref(&headers);
+    let mut receipt = db
+        .apply_brief_update_in_session(&request, session.as_ref())
+        .await?;
     let _projection_guard = projection_lock.lock().await;
 
     match (

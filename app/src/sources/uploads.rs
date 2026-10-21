@@ -14,7 +14,11 @@ use std::path::{Path, PathBuf};
 pub fn sources_dir() -> PathBuf {
     // Through `identity_paths`, not `dirs`, because `place_upload` below
     // *creates* this directory: a unit test that reached it would file uploads
-    // into the developer's real `~/.wenlan`.
+    // into the developer's real `~/.wenlan`. An isolated dev run keeps its
+    // uploads in its own state directory for the same reason.
+    if let Some(state) = crate::identity_paths::isolated_dev_state_dir() {
+        return state.join("sources");
+    }
     crate::identity_paths::home_base().join(".wenlan/sources")
 }
 

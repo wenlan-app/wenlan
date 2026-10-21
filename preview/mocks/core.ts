@@ -16,11 +16,14 @@ import {
   MERGE_SOURCES,
   RECENT_CHANGES,
   MEMORY_REVISIONS,
+  PAGE_SESSIONS,
+  SESSION_DETAILS,
   REGISTERED_SOURCES,
   GRAPH_ENTITIES,
   GRAPH_DETAILS,
   GRAPH_MEMORIES,
   GRAPH_PAGES,
+  SOURCE_LIBRARY_FILES,
 } from "../fixtures";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
 import { createReviewDecisionFixture } from "../../e2e/fixtures/reviewDecisions";
@@ -85,6 +88,10 @@ export async function invoke(
     if (cmd === "open_file") return null;
     return projectRuntime.invoke(cmd, args);
   }
+  if (new URLSearchParams(window.location.search).get("mode") === "sources") {
+    if (cmd === "list_registered_sources") return [];
+    if (cmd === "list_indexed_files") return SOURCE_LIBRARY_FILES;
+  }
   if (new URLSearchParams(window.location.search).get("mode") === "folders") return folderRuntime.invoke(cmd, args);
   // Fixture previews must never toggle the maintainer's background service.
   if (cmd === "get_background_ai_enabled") return fixtureBackgroundAiEnabled;
@@ -117,6 +124,10 @@ export async function invoke(
     }
     case "get_page_links":
       return LINKS;
+    case "get_page_sessions":
+      return { sessions: PAGE_SESSIONS[args?.pageId as string] ?? [] };
+    case "get_session_detail":
+      return SESSION_DETAILS[args?.sessionId as string] ?? null;
     case "get_page_revisions":
       return { ...REVISIONS, page_id: args?.pageId };
     case "list_recent_changes": {
