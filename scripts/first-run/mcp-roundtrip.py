@@ -12,6 +12,8 @@ Env:
   MCP_BIN               path to wenlan-mcp (required)
   MCP_ARGS              JSON list of extra args (default [])
   EXPECT_TOOL_COUNT     when set, tools/list must return exactly this many tools
+  EXPECT_ENRICHMENT     when set (e.g. "off"), the capture receipt must report
+                        that enrichment state
   MCP_TOOLS             comma list of tools that must be advertised (default
                         "capture,recall"); when it names "brief", brief is also
                         called with {} and must not error
@@ -241,12 +243,24 @@ def do_tools_list():
 
 
 def do_capture():
+    # The caller sets type and entity itself, as the capture description asks:
+    # a new entity name that comes with its type is created and linked even
+    # when nothing runs in the background.
     msg = call("tools/call", {
         "name": "capture",
-        "arguments": {"content": f"The {SENTINEL} sentinel lives in the MCP smoke."}})
+        "arguments": {
+            "content": f"The {SENTINEL} sentinel lives in the MCP smoke.",
+            "memory_type": "fact",
+            "entity": "Walrus Observatory",
+            "entity_type": "project"}})
     log("mcp-capture", json.dumps(msg, indent=2))
-    expect_ok(msg, "capture")
-    return True, "captured sentinel"
+    text = _text_of(expect_ok(msg, "capture"))
+    if not re.search(r"^entity_id: \S+$", text, re.M):
+        raise StepFailed(f"capture did not link the named entity: {text!r}")
+    want = os.environ.get("EXPECT_ENRICHMENT")
+    if want and f"enrichment: {want}." not in text:
+        raise StepFailed(f"capture receipt does not say enrichment: {want}: {text!r}")
+    return True, "captured sentinel, entity linked"
 
 
 def do_recall():

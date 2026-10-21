@@ -1975,6 +1975,7 @@ pub async fn store_memory(
         confidence: req.confidence,
         supersedes: req.supersedes,
         entity: None,
+        entity_type: None,
         entity_id: None,
         structured_fields: req.structured_fields,
         retrieval_cue: req.retrieval_cue,

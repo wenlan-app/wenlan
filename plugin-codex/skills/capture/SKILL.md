@@ -87,14 +87,18 @@ conversation — don't make the user type it.
 capture(content="<args, written as a full sentence with WHY>",
         memory_type="<picked from the 6 types>",
         entity="<primary entity name, if any>",
+        entity_type="<person, project, tool, ...>",
         space=<resolved if non-empty>)
 ```
 
+Set `memory_type` and `entity` yourself on every capture, whether Steep runs
+automatically or on demand. You already know both from the conversation, so
+this is a one-word choice, not extra work; nothing later may classify or link
+the memory for you.
+
 ### `memory_type` — agent picks one of 6
 
-The daemon classifies when a local model or API key is configured. In
-local memory mode it does not, so the agent picks the type from the content itself. Use this
-mapping:
+Pick the type from the content itself with this mapping:
 
 | Type | Use for |
 |---|---|
@@ -111,9 +115,15 @@ decision *also* implies a preference, but `decision` is more specific.
 ### `entity` — extract the anchor
 
 Pick the single most important named thing in the content: a person,
-project, tool, place. Use the exact name. Example: "Alice prefers TDD
-because…" → `entity="Alice"`. If the content has no named anchor,
-omit `entity`.
+project, tool, place. Use the exact full name, and say what it is in
+`entity_type`. Example: "Alice Chen prefers TDD because…" →
+`entity="Alice Chen", entity_type="person"`. A name the wiki already knows
+links; a new name is created and linked. If the content has no named anchor,
+omit both.
+
+When the name matches more than one entity, nothing is stored and the reply
+lists them with their ids. Capture again with `entity_id` set to the one the
+user means; when you cannot tell, ask the user, or capture without `entity`.
 
 ### Space inference
 
@@ -131,8 +141,8 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 ### Multiple entities or relations
 
 Ordinary captures stop after `capture`: pass the single most important named
-anchor through `capture.entity` and let daemon enrichment handle routine
-extraction. Do not call `create_entity` for ordinary captures. Never infer a
+anchor through `capture.entity` with its `entity_type`. Do not call
+`create_entity` for ordinary captures. Never infer a
 relation the user did not state.
 
 Use the explicit KG tools only when the user explicitly states a durable relation:
@@ -216,7 +226,10 @@ the user's say-so.
 
 ### `Warnings:`
 
-Schema-validation notes on `structured_fields`. Fix the fields and capture
-again only when a warning says a field was dropped.
+Schema-validation notes on `structured_fields`, and notes about the entity
+(not linked because the name was new and had no `entity_type`, or could not
+be created). Fix the fields and capture again only when a warning says a
+field was dropped. Pass `entity_type` on later captures when a warning says
+the name was new.
 
 A receipt with none of these stored cleanly; report `Stored <id>` and move on.

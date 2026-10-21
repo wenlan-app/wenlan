@@ -16514,6 +16514,54 @@ async fn test_resolve_entity_by_name_case_insensitive() {
 }
 
 #[tokio::test]
+async fn entity_name_candidates_lists_every_exact_match_and_never_guesses() {
+    let (db, _dir) = test_db().await;
+    let dana_person = db.create_entity("Dana", "person", None).await.unwrap();
+    let dana_project = db.create_entity("dana", "project", None).await.unwrap();
+    let _near = db
+        .create_entity("Dana Whitfield", "person", None)
+        .await
+        .unwrap();
+
+    let ids: Vec<String> = db
+        .entity_name_candidates("DANA")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|c| c.entity_id)
+        .collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "both exact names, and not the longer one: {ids:?}"
+    );
+    assert!(ids.contains(&dana_person) && ids.contains(&dana_project));
+
+    assert!(
+        db.entity_name_candidates("Whit").await.unwrap().is_empty(),
+        "no substring match"
+    );
+
+    let pg = db.create_entity("PostgreSQL", "tool", None).await.unwrap();
+    db.add_entity_alias("postgres", &pg, "test").await.unwrap();
+    assert!(db.archive_entity(&pg).await.unwrap());
+    let by_alias = db.entity_name_candidates("Postgres").await.unwrap();
+    assert_eq!(by_alias.len(), 1);
+    assert_eq!(by_alias[0].entity_id, pg);
+    assert!(
+        !by_alias[0].active,
+        "an archived alias owner is found but flagged"
+    );
+    assert!(
+        db.entity_name_candidates("PostgreSQL")
+            .await
+            .unwrap()
+            .is_empty(),
+        "an archived entity's own title no longer matches"
+    );
+}
+
+#[tokio::test]
 async fn test_resolve_entity_by_name_no_match() {
     let (db, _dir) = test_db().await;
     let resolved = db.resolve_entity_by_name("NonExistent").await.unwrap();

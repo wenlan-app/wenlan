@@ -12,13 +12,13 @@
 //! prose fails CI here — not silently in production.
 
 /// JSON Schema `description` for the `memory_type` parameter on memory-write
-/// tools (e.g. MCP `capture`). Lists the two-level filter values (profile /
-/// knowledge) and the precise types, plus the "auto-classified if omitted"
-/// hint that steers agents away from guessing.
+/// tools (e.g. MCP `capture`). Lists only the precise types: the caller sets
+/// one on every capture, because nothing may classify the memory later when
+/// Steep runs on demand, and the broad "profile" / "knowledge" shorthands
+/// need that later classification.
 pub const MEMORY_TYPE_CAPTURE_DESCRIPTION: &str =
-    "\"profile\" (about the user) or \"knowledge\" (about the world) — or precise: \
-     \"identity\", \"preference\", \"decision\", \"lesson\", \"gotcha\", \"fact\" — \
-     auto-classified if omitted";
+    "One of \"identity\", \"preference\", \"decision\", \"lesson\", \"gotcha\", \"fact\". \
+     Set it on every capture; it is kept as given.";
 
 /// JSON Schema `description` for the `memory_type` parameter on memory-read
 /// filter tools (e.g. MCP `recall`, `list_pending`). Same vocabulary as

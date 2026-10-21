@@ -30,6 +30,11 @@ pub struct StoreMemoryRequest {
     /// Entity name for resolution (e.g. "Alice", "PostgreSQL")
     #[serde(default)]
     pub entity: Option<String>,
+    /// What `entity` is (person, project, tool, ...). With a name that no
+    /// entity has yet, the daemon creates the entity and links the memory to
+    /// it; without one, an unknown name is left unlinked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<String>,
     /// Direct entity ID (bypasses name resolution)
     #[serde(default)]
     pub entity_id: Option<String>,

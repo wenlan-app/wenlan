@@ -4171,6 +4171,16 @@ pub struct EnrichmentOrigin {
     pub space_rejected: bool,
 }
 
+/// One entity a name could refer to; see [`MemoryDB::entity_name_candidates`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityNameCandidate {
+    pub entity_id: String,
+    pub name: String,
+    pub entity_type: String,
+    /// False for an archived entity found through one of its aliases.
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryEnrichmentInput {
     pub source_id: String,
@@ -39540,6 +39550,58 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(e.to_string()))?
             .is_some())
+    }
+
+    /// Every entity a person could mean by `name`: live entities whose title
+    /// matches it case-insensitively, plus the owner of an alias equal to it.
+    /// The alias owner is included even when archived, the same rule
+    /// [`Self::resolve_entity_by_alias`] follows, so a mention of an archived
+    /// entity resolves to it instead of creating a duplicate beside it.
+    ///
+    /// Unlike [`Self::resolve_entity_by_name`] this never guesses: no
+    /// substring or vector step, and every exact match is returned so the
+    /// caller can tell one match from several. A capture names its entity on
+    /// purpose, so a near match is not a reason to link it.
+    pub async fn entity_name_candidates(
+        &self,
+        name: &str,
+    ) -> Result<Vec<EntityNameCandidate>, WenlanError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT epm.entity_id, p.title, COALESCE(p.entity_type, ''), p.status
+                 FROM entity_page_map epm
+                 JOIN pages p ON p.id = epm.page_id
+                 WHERE p.kind = 'entity'
+                   AND ((p.status = 'active' AND LOWER(p.title) = LOWER(?1))
+                        OR EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?2))
+                 ORDER BY p.created_at, epm.entity_id",
+                libsql::params![name.to_string(), name.to_lowercase()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_name_candidates: {e}")))?;
+        let mut candidates: Vec<EntityNameCandidate> = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_name_candidates row: {e}")))?
+        {
+            let entity_id: String = row.get(0).unwrap_or_default();
+            if candidates.iter().any(|c| c.entity_id == entity_id) {
+                continue;
+            }
+            candidates.push(EntityNameCandidate {
+                entity_id,
+                name: row.get(1).unwrap_or_default(),
+                entity_type: row.get(2).unwrap_or_default(),
+                active: row.get::<String>(3).unwrap_or_default() == "active",
+            });
+        }
+        Ok(candidates)
     }
 
     /// Resolve entity by name: exact match → LIKE substring → vector search → None.
