@@ -4,10 +4,10 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 use std::{fmt, num::NonZeroU64};
 
 pub const LINT_REPORT_SCHEMA_VERSION: u16 = 5;
-pub const LINT_CHECK_CATALOG_VERSION: u16 = 3;
+pub const LINT_CHECK_CATALOG_VERSION: u16 = 4;
 pub const LINT_MAX_EVIDENCE_PER_CHECK: u16 = 100;
 pub const LINT_GENERAL_CHECK_COUNT: usize = 56;
-pub const LINT_DEEP_CHECK_COUNT: usize = 74;
+pub const LINT_DEEP_CHECK_COUNT: usize = 75;
 
 pub(crate) const LINT_CANONICAL_CHECK_IDS: [&str; LINT_DEEP_CHECK_COUNT] = [
     "entities.alias_collision_inventory",
@@ -61,6 +61,7 @@ pub(crate) const LINT_CANONICAL_CHECK_IDS: [&str; LINT_DEEP_CHECK_COUNT] = [
     "pages.projection.manifest_inventory",
     "pages.projection.state_contract",
     "pages.projection.version_alignment",
+    "pages.provenance.code_basis_drift",
     "pages.provenance.source_evidence_coverage",
     "pages.review_status_inventory",
     "pages.semantic.evidence_links",
@@ -100,6 +101,7 @@ const LINT_DEEP_ONLY_CHECK_IDS: [&str; LINT_DEEP_CHECK_COUNT - LINT_GENERAL_CHEC
     "operations.source_lifecycle_residue",
     "pages.duplicate_body_inventory",
     "pages.projection.body_alignment",
+    "pages.provenance.code_basis_drift",
     "pages.semantic.evidence_links",
     "pages.semantic.faithfulness",
     "pages.semantic.provenance_adequacy",
@@ -107,7 +109,7 @@ const LINT_DEEP_ONLY_CHECK_IDS: [&str; LINT_DEEP_CHECK_COUNT - LINT_GENERAL_CHEC
     "serving.semantic.retrieval_quality",
 ];
 
-const LINT_ADVISORY_CHECK_IDS: [&str; 15] = [
+const LINT_ADVISORY_CHECK_IDS: [&str; 16] = [
     "entities.alias_collision_inventory",
     "kg.semantic.entity_relations",
     "kg.semantic.memory_entity_links",
@@ -119,6 +121,7 @@ const LINT_ADVISORY_CHECK_IDS: [&str; 15] = [
     "memories.structured_conflict_inventory",
     "observations.duplicate_inventory",
     "pages.duplicate_body_inventory",
+    "pages.provenance.code_basis_drift",
     "pages.semantic.evidence_links",
     "pages.semantic.faithfulness",
     "pages.semantic.provenance_adequacy",

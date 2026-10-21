@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `wenlan sources add <path> [--type directory|okf]` — register a source and
-//! sync it now.
+//! sync it now. `wenlan sources save --url <link> --title <title>` saves one
+//! document read elsewhere (an email, a Notion page) under its link.
 //!
 //! Thin HTTP client: POST /api/sources to register the path as a Directory or
 //! OKF bundle source (idempotent — an already-registered path is treated as
@@ -10,6 +11,7 @@
 //! boundaries).
 
 use anyhow::{Context, Result};
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 
 use crate::client::{SyncStats, WenlanClient};
@@ -25,6 +27,27 @@ pub enum SourcesCommand {
         /// OpenWiki folder) into one Space; pass --space to choose it.
         #[arg(long = "type", value_enum, default_value_t = SourceKind::Directory)]
         source_type: SourceKind,
+    },
+    /// Save one document read elsewhere (an email, a Notion or Drive page, a
+    /// Slack thread, an article) with its link, so notes cite the original.
+    /// Text comes from --file or stdin. Saving the same link again replaces
+    /// the saved copy; Wenlan does not re-fetch the original.
+    Save {
+        /// Permanent http(s) link to the original.
+        #[arg(long)]
+        url: String,
+        /// Title of the original.
+        #[arg(long)]
+        title: String,
+        /// Where it came from, e.g. gmail, notion, drive, slack, github, web.
+        #[arg(long)]
+        label: Option<String>,
+        /// Read the text from this file instead of stdin.
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// Refuse if this link is already saved instead of replacing it.
+        #[arg(long)]
+        create_only: bool,
     },
 }
 
@@ -56,7 +79,105 @@ pub async fn run_sources(
         SourcesCommand::Add { path, source_type } => {
             run(client, format, quiet, path, source_type).await
         }
+        SourcesCommand::Save {
+            url,
+            title,
+            label,
+            file,
+            create_only,
+        } => {
+            let content = match file {
+                Some(path) => std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?,
+                None => {
+                    // An interactive TTY would block waiting for EOF.
+                    if std::io::stdin().is_terminal() {
+                        anyhow::bail!(
+                            "No input. Provide --file <path> or pipe the text via stdin."
+                        );
+                    }
+                    let mut text = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut text)
+                        .context("reading stdin")?;
+                    text
+                }
+            };
+            let req = save_request(url, title, label, content, create_only)?;
+            let resp = client.save_source(&req).await.map_err(|error| {
+                if create_only && is_conflict(&error) {
+                    anyhow::anyhow!(
+                        "Already saved: {}. Nothing was changed; drop --create-only to replace it.",
+                        req.url
+                    )
+                } else {
+                    error
+                }
+            })?;
+            if quiet {
+                return Ok(());
+            }
+            match format {
+                ResolvedFormat::Json => print_json(&resp)?,
+                ResolvedFormat::Table => println!(
+                    "Saved source {} (space: {})",
+                    resp.document_id,
+                    resp.space.as_deref().unwrap_or("uncategorized")
+                ),
+            }
+            Ok(())
+        }
     }
+}
+
+/// Validate `sources save` input. The link becomes the document's identity,
+/// and only an http(s) link lets a note's citation open the original.
+fn save_request(
+    url: String,
+    title: String,
+    label: Option<String>,
+    content: String,
+    create_only: bool,
+) -> Result<wenlan_types::requests::IngestWebpageRequest> {
+    let url = url.trim().to_string();
+    let scheme_ok = url
+        .split_once("://")
+        .map(|(scheme, rest)| {
+            matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") && !rest.is_empty()
+        })
+        .unwrap_or(false);
+    if !scheme_ok {
+        anyhow::bail!("--url must be the original's http(s) link; got `{url}`");
+    }
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        anyhow::bail!("--title is empty");
+    }
+    if content.trim().is_empty() {
+        anyhow::bail!("Empty text. Provide --file or pipe the text via stdin.");
+    }
+    let metadata = label
+        .map(|label| label.trim().to_ascii_lowercase())
+        .filter(|label| !label.is_empty())
+        .map(|label| std::collections::HashMap::from([("source_label".to_string(), label)]));
+    // The Space travels in the client's Space header, like `capture`.
+    Ok(wenlan_types::requests::IngestWebpageRequest {
+        url,
+        title,
+        content,
+        metadata,
+        create_only,
+        space: Default::default(),
+    })
+}
+
+fn is_conflict(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            == Some(reqwest::StatusCode::CONFLICT)
+    })
 }
 
 pub async fn run(
@@ -149,6 +270,47 @@ mod tests {
             queued_files: None,
             waiting_files: None,
         }
+    }
+
+    #[test]
+    fn save_request_keeps_link_label_and_text() {
+        let req = save_request(
+            " https://www.notion.so/team/Plan-abc ".into(),
+            " Plan ".into(),
+            Some(" Notion ".into()),
+            "Body".into(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(req.url, "https://www.notion.so/team/Plan-abc");
+        assert_eq!(req.title, "Plan");
+        assert_eq!(
+            req.metadata
+                .unwrap()
+                .get("source_label")
+                .map(String::as_str),
+            Some("notion")
+        );
+        assert!(req.create_only);
+        assert!(req.space.is_inherit());
+    }
+
+    #[test]
+    fn save_request_refuses_non_http_links_and_empty_input() {
+        for url in ["notion://abc", "example.com/a", "https://"] {
+            assert!(save_request(url.into(), "T".into(), None, "Body".into(), false).is_err());
+        }
+        assert!(save_request(
+            "https://a.b/c".into(),
+            " ".into(),
+            None,
+            "Body".into(),
+            false
+        )
+        .is_err());
+        assert!(
+            save_request("https://a.b/c".into(), "T".into(), None, "\n".into(), false).is_err()
+        );
     }
 
     #[test]

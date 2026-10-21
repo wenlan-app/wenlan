@@ -21,6 +21,7 @@ These files are also the source for the Codex plugin: `scripts/gen-codex-plugin.
 | `/wenlan setup` | set up or repair Wenlan (installs the local runtime) |
 | `/wenlan lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
 | `/wenlan distill [t]` | synthesize or refresh source-backed pages for the active Space |
+| `/wenlan map [space:<name>]` | read this repository and write a small set of orientation notes, each tied to the code lines it relies on |
 | `/wenlan pages [q]` | browse and open distilled pages |
 | `/wenlan curate <surface>` | deep audit of captures, revisions or refinements |
 | `/wenlan forget <id>` | delete one memory by ID, after confirmation |

@@ -673,10 +673,15 @@ const en = {
     openMemory: "Open memory →",
     openFile: "Open file →",
     openLink: "Open in browser →",
+    openInApp: "Open in {{app}} →",
     unverified: "unverified",
     kind: { memory: "Memory", file: "File", url: "Link", authored: "Written here" },
     openFileFailed: "Could not open this file.",
     openLinkFailed: "Could not open this link.",
+  },
+  linkCompletion: {
+    label: "Link a page",
+    empty: "No matching pages",
   },
   slashEditing: {
     label: "Basic editing",
@@ -3352,10 +3357,15 @@ const zhHans = {
     openMemory: "打开记忆 →",
     openFile: "打开文件 →",
     openLink: "在浏览器打开 →",
+    openInApp: "在 {{app}} 打开 →",
     unverified: "未验证",
     kind: { memory: "记忆", file: "文件", url: "链接", authored: "本页撰写" },
     openFileFailed: "无法打开此文件。",
     openLinkFailed: "无法打开此链接。",
+  },
+  linkCompletion: {
+    label: "链接笔记",
+    empty: "没有匹配的笔记",
   },
   slashEditing: {
     label: "基本编辑",
@@ -5986,10 +5996,15 @@ const zhHant = {
     openMemory: "開啟記憶 →",
     openFile: "開啟檔案 →",
     openLink: "在瀏覽器開啟 →",
+    openInApp: "在 {{app}} 開啟 →",
     unverified: "未驗證",
     kind: { memory: "記憶", file: "檔案", url: "連結", authored: "本筆記撰寫" },
     openFileFailed: "無法開啟此檔案。",
     openLinkFailed: "無法開啟此連結。",
+  },
+  linkCompletion: {
+    label: "連結筆記",
+    empty: "沒有相符的筆記",
   },
   slashEditing: {
     label: "基本編輯",

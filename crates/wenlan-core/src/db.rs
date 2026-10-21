@@ -92,6 +92,7 @@ mod space_rename;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
+pub(crate) use code_basis::{row_from as code_basis_row_from, ROW_SELECT as CODE_BASIS_ROW_SELECT};
 pub use code_basis::{CodeBasisRow, CodeBasisVerdict};
 pub(crate) use community_grouping_state::CommunityGroupingLeaseCleanup;
 pub(crate) use eval_temporal_seed::EvalTemporalSeed;
@@ -127,7 +128,7 @@ mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
 #[cfg(test)]
-mod code_basis_test;
+pub(crate) mod code_basis_test;
 #[cfg(test)]
 mod edges_rebuild_test;
 #[cfg(test)]
@@ -26776,6 +26777,30 @@ impl MemoryDB {
         self.upsert_documents_at_optional_page_fence(docs, None, None, None, None, None, None, true)
             .await
             .map(|written| written.unwrap_or(0))
+    }
+
+    /// `create_documents` that also resolves stable Space IDs inside the
+    /// write transaction, as `upsert_documents_with_write_spaces` does.
+    pub async fn create_documents_with_write_spaces(
+        &self,
+        docs: Vec<(
+            RawDocument,
+            Option<crate::space_context::ResolvedWriteSpace>,
+        )>,
+    ) -> Result<usize, WenlanError> {
+        let (docs, write_spaces) = Self::split_write_spaces(docs);
+        self.upsert_documents_at_optional_page_fence(
+            docs,
+            None,
+            None,
+            None,
+            None,
+            Some(write_spaces),
+            None,
+            true,
+        )
+        .await
+        .map(|written| written.unwrap_or(0))
     }
 
     /// Stage page-bound rows (a revision card) only while the page they were

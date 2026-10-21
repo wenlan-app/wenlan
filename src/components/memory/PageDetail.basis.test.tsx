@@ -56,7 +56,8 @@ vi.mock("../../lib/tauri", () => ({
   unmarkPageBasis: vi.fn(),
 }));
 
-import { getPage, getPageSources, redistillPage, updatePage } from "../../lib/tauri";
+import { getPage, getPageSources, listPages, markPageBasis, redistillPage, updatePage } from "../../lib/tauri";
+import { EditorSelection } from "@codemirror/state";
 
 const oneSource = [{
   source: { page_id: "note_a", memory_source_id: "mem_1", linked_at: 1712000000, link_reason: "page_growth" },
@@ -108,6 +109,24 @@ beforeEach(() => {
   vi.mocked(getPageSources).mockReset().mockResolvedValue(oneSource as never);
   vi.mocked(redistillPage).mockReset().mockResolvedValue({ status: "ok", updated: true } as never);
 });
+
+async function typeAtEnd(text: string) {
+  const view = editorViewFromTextbox(await screen.findByRole("textbox", { name: "Page editor" }));
+  act(() => {
+    for (const char of text) {
+      const from = view.state.doc.length;
+      view.dispatch({ changes: { from, insert: char }, selection: EditorSelection.cursor(from + 1), userEvent: "input.type" });
+    }
+  });
+  return view;
+}
+
+const linkCandidates = [
+  notePage({ id: "note_a", title: "Pricing summary" }),
+  notePage({ id: "basis_b", title: "Price list" }),
+  notePage({ id: "entity_c", title: "Price Corp", creation_kind: "entity" } as Partial<Page>),
+  notePage({ id: "elsewhere_d", title: "Price elsewhere", space: "other" } as Partial<Page>),
+];
 
 async function typeIntoEditor(text: string) {
   const editor = await screen.findByRole("textbox", { name: "Page editor" });
@@ -236,5 +255,44 @@ describe("PageDetail with note bases", () => {
     renderPage({ stale_reason: "source_updated", refresh_blocked_reason: "citation_gate" });
     await userEvent.click(await screen.findByRole("button", { name: i18n.t("pageInspector.open") }));
     expect(await screen.findByText("update blocked: citations couldn't be verified")).toBeInTheDocument();
+  });
+
+  it("links a same-Space note from [[ and can use it as a source in the same step", async () => {
+    vi.mocked(listPages).mockResolvedValue(linkCandidates);
+    vi.mocked(markPageBasis).mockReset().mockResolvedValue({ page_id: "basis_b", title: "Price list", state: "current" } as never);
+    renderPage({}, { initialMode: "edit" });
+    const view = await typeAtEnd(" [[pri");
+
+    const menu = await screen.findByRole("listbox", { name: "Link a page" });
+    expect(listPages).toHaveBeenCalledWith("active", undefined, 500);
+    const rows = await waitFor(() => {
+      const options = menu.querySelectorAll('[role="option"]');
+      expect(options.length).toBeGreaterThan(0);
+      return [...options];
+    });
+    // An entity never resolves as a [[link]], so it is not offered.
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Price list"]);
+
+    act(() => { rows[0].querySelector("button")!.click(); });
+    expect(view.state.doc.toString()).toBe("The plan costs 10 dollars. [[Price list]]");
+    await waitFor(() => expect(markPageBasis).toHaveBeenCalledWith("note_a", "basis_b"));
+    await waitFor(() => expect(view.dom.querySelector(".cm-wiki-page-link")?.textContent).toBe("Price list"));
+    await waitFor(() => expect(updatePage).toHaveBeenCalled(), { timeout: 4000 });
+  });
+
+  it("says so when using a linked note as a source fails, and keeps the link", async () => {
+    vi.mocked(listPages).mockResolvedValue(linkCandidates);
+    vi.mocked(markPageBasis).mockReset().mockRejectedValue(new Error("boom"));
+    renderPage({}, { initialMode: "edit" });
+    const view = await typeAtEnd(" [[price l");
+    const menu = await screen.findByRole("listbox", { name: "Link a page" });
+    const action = await waitFor(() => {
+      const button = menu.querySelector("button");
+      expect(button).not.toBeNull();
+      return button!;
+    });
+    act(() => { action.click(); });
+    expect(await screen.findByText(i18n.t("noteBasis.markFailed"))).toBeInTheDocument();
+    expect(view.state.doc.toString()).toBe("The plan costs 10 dollars. [[Price list]]");
   });
 });

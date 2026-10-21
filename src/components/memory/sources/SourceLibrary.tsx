@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Funnel, Plus } from "@phosphor-icons/react";
 import { listIndexedFiles, listRegisteredSources, type IndexedFileInfo } from "../../../lib/tauri";
 import type { AssetLens } from "../../../lib/assetLens";
-import { getSourcePresentation } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation, isSourceApp, SOURCE_APP_NAMES, type SourceApp } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { SourceCollection, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import SourceContainer, { type SourceContainerLocation } from "./SourceContainer";
@@ -14,7 +14,8 @@ import "../assets/assetCards.css";
 import "../assets/collectionToolbar.css";
 import "./SourceLibrary.css";
 
-export type SourceLibraryFilter = "all" | "files" | "links" | "folders";
+/** An app filter lists only that app's saved sources; "links" keeps the ordinary web pages. */
+export type SourceLibraryFilter = "all" | "files" | "links" | "folders" | SourceApp;
 
 export interface SourceLibraryState {
   search: string;
@@ -87,7 +88,13 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
   const documents = useMemo(() => (filesQuery.data ?? []).filter(isLibraryDocument)
     .sort((a, b) => a.title.localeCompare(b.title)), [filesQuery.data]);
   const needle = search.trim().toLocaleLowerCase();
-  const visibleFolders = filter === "files" || filter === "links" ? [] : folders.filter((source) =>
+  const appOf = (file: IndexedFileInfo) => getSourceAppFromUrl(file.url ?? file.source_id);
+  const savedApps = useMemo(() => {
+    const present = new Set(documents.map(appOf).filter((app): app is SourceApp => app !== null));
+    if (isSourceApp(filter)) present.add(filter);
+    return (Object.keys(SOURCE_APP_NAMES) as SourceApp[]).filter((app) => present.has(app));
+  }, [documents, filter]);
+  const visibleFolders = filter !== "all" && filter !== "folders" ? [] : folders.filter((source) =>
     `${pathName(source.path)} ${source.path}`.toLocaleLowerCase().includes(needle));
   const coveredDocuments = useMemo(() => new Set(documents.filter((file) => folders.some((source) => {
     const path = normalizedPath(documentPath(file));
@@ -96,9 +103,11 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
   })).map((file) => `${file.source}:${file.source_id}`)), [documents, folders]);
   const visibleDocuments = filter === "folders" ? [] : documents.filter((file) => {
     const link = file.source === "webpage" || documentUrl(file) !== null;
-    const visibleType = filter === "all" ? (!!needle || !coveredDocuments.has(`${file.source}:${file.source_id}`)) : filter === "links" ? link : !link;
+    const app = appOf(file);
+    const visibleType = filter === "all" ? (!!needle || !coveredDocuments.has(`${file.source}:${file.source_id}`))
+      : filter === "links" ? link && !app : filter === "files" ? !link : app === filter;
     return visibleType &&
-      `${file.title} ${documentPath(file)} ${file.url ?? ""}`.toLocaleLowerCase().includes(needle);
+      `${file.title} ${documentPath(file)} ${file.url ?? ""} ${app ? SOURCE_APP_NAMES[app] : ""}`.toLocaleLowerCase().includes(needle);
   });
   const bothLoaded = foldersQuery.isSuccess && filesQuery.isSuccess;
   const realEmpty = bothLoaded && folders.length === 0 && documents.length === 0;
@@ -141,7 +150,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
         id: `${file.source}:${file.source_id}`,
         title: file.title || pathName(path),
         metadata: presentation.metadata,
-        kind: presentation.kind,
+        kind: presentation.iconKind,
         onSelect: () => {
           updateState({ focusedDocument: `${file.source}:${file.source_id}` });
           onOpenDocument(file);
@@ -154,7 +163,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
     <section ref={libraryRef} className="source-library" aria-labelledby="source-library-title">
       <h1 className="sr-only" id="source-library-title">{t("sourceLibrary.title")}</h1>
 
-      <SourceCollectionToolbar search={search} filter={filter} lens={lens}
+      <SourceCollectionToolbar search={search} filter={filter} lens={lens} apps={savedApps}
         onSearchChange={(value) => updateState({ search: value })}
         onFilterChange={(value) => updateState({ filter: value })}
         onLensChange={(value) => updateState({ lens: value })} onAdd={onAdd} />

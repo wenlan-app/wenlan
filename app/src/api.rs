@@ -3849,6 +3849,7 @@ mod tests {
             content: "A durable article body.".to_string(),
             metadata: Some(metadata),
             create_only: false,
+            space: Default::default(),
         };
 
         let resp = client.ingest_webpage(req).await.unwrap();
@@ -3878,6 +3879,7 @@ mod tests {
             content: "Exact supplied excerpt.".into(),
             metadata: None,
             create_only,
+            space: Default::default(),
         }
     }
 

@@ -14,6 +14,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use wenlan_types::CodeBasisLocator;
 
 #[path = "knowledge_folders.rs"]
 mod folders;
@@ -5169,7 +5170,11 @@ pub(crate) fn page_file_state_value(page: &Page, file: &str) -> serde_json::Valu
 /// `include_related` is true for the projection only: the bundle omits
 /// `related:` because its converted body links already carry the edges.
 /// Every other line is identical in both outputs.
-pub(crate) fn page_frontmatter(page: &Page, include_related: bool) -> String {
+pub(crate) fn page_frontmatter(
+    page: &Page,
+    include_related: bool,
+    code_bases: &[CodeBasisLocator],
+) -> String {
     use crate::export::provenance::{related_frontmatter, sources_frontmatter, yaml_quoted};
     let mut out = String::new();
     out.push_str(&format!("title: {}\n", yaml_quoted(&page.title)));
@@ -5210,7 +5215,7 @@ pub(crate) fn page_frontmatter(page: &Page, include_related: bool) -> String {
     // migrations and `Page` for `confirmed_at`/`reviewed_at`), and the spec
     // forbids fabricating `at`. Add the family back once that column lands.
     // Read-only provenance projection (one-way; the watcher never reads it back).
-    out.push_str(&sources_frontmatter(&page.source_memory_ids));
+    out.push_str(&sources_frontmatter(&page.source_memory_ids, code_bases));
     if include_related {
         let related = related_page_titles(&page.content);
         out.push_str(&related_frontmatter(&related));
@@ -5224,7 +5229,9 @@ fn render_markdown(page: &Page) -> String {
 
     // Frontmatter — OKF v0.2 conformant (see specs/2026-09-16-okf-projection.md).
     out.push_str("---\n");
-    out.push_str(&page_frontmatter(page, true));
+    // The projection never lists code bases: their rows change outside page
+    // writes, so a `repo://` line here would make the file read as edited.
+    out.push_str(&page_frontmatter(page, true, &[]));
     out.push_str("---\n\n");
 
     // Body with wikilinks

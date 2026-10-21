@@ -125,7 +125,8 @@ fn decode(context: &'static str) -> impl Fn(libsql::Error) -> WenlanError {
 
 /// The row-with-anchor shape used by checks: `REF_COLUMNS`, then anchor_json,
 /// page id and the note's title.
-const ROW_SELECT: &str = "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
+pub(crate) const ROW_SELECT: &str =
+    "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
     b.unavailable_reason, b.changed_at, b.anchor_json, b.page_id, c.title, \
     b.file_len, b.file_mtime_ns \
     FROM page_code_basis b JOIN pages c ON c.id = b.page_id";
@@ -137,7 +138,7 @@ fn stamp_from(len: Option<i64>, mtime_ns: Option<i64>) -> Option<FileStamp> {
     })
 }
 
-fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
+pub(crate) fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
     let anchor_json: String = row.get(7)?;
     // An anchor that no longer parses cannot be compared against; leave the
     // row out of checks rather than mislabel it.
@@ -188,7 +189,9 @@ async fn require_citer(conn: &libsql::Connection, page_id: &str) -> Result<(), C
 /// Record that `page_id` relies on each `(span, anchor)` as of now, on the
 /// caller's open transaction. A span the note already has is re-anchored and
 /// returns to `ok`; spans it has that this write does not name stay as they
-/// are (the same rule as `basis`: a write adds, it never silently drops).
+/// are (the same rule as `basis`: a write adds, it never silently drops), except
+/// that a span this write names replaces the note's stale (`pending`, `moved`
+/// or `unavailable`) rows on the same file whose lines overlap it.
 pub(super) async fn upsert_code_basis_on_conn(
     conn: &libsql::Connection,
     page_id: &str,
@@ -207,6 +210,24 @@ pub(super) async fn upsert_code_basis_on_conn(
     } in entries
     {
         let anchor_json = serde_json::to_string(anchor)?;
+        // The note now names where this code reads; a stale row for the lines
+        // it used to occupy would only keep the Brief counting the note. Rows
+        // in state `ok` are deliberate and stay; the exact same span is
+        // updated by the upsert below, keeping its history.
+        conn.execute(
+            "DELETE FROM page_code_basis \
+             WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 AND state <> 'ok' \
+               AND line_start <= ?5 AND line_end >= ?4 \
+               AND NOT (line_start = ?4 AND line_end = ?5)",
+            libsql::params![
+                page_id,
+                input.repo_root.as_str(),
+                input.path.as_str(),
+                i64::from(input.line_start),
+                i64::from(input.line_end)
+            ],
+        )
+        .await?;
         conn.execute(
             "INSERT INTO page_code_basis \
                (page_id, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
@@ -363,6 +384,35 @@ impl MemoryDB {
         let mut out = Vec::new();
         while let Some(row) = rows.next().await.map_err(decode("list_page_code_basis"))? {
             out.push(ref_from(&row).map_err(decode("list_page_code_basis"))?);
+        }
+        Ok(out)
+    }
+
+    /// The code bases of every note that has any, by note id, as the OKF export
+    /// renders them. One query.
+    pub async fn code_basis_locators_by_page(
+        &self,
+    ) -> Result<HashMap<String, Vec<CodeBasisLocator>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let sql = format!(
+            "SELECT {REF_COLUMNS}, page_id FROM page_code_basis \
+             ORDER BY added_at, repo_root, path, line_start, line_end"
+        );
+        let mut rows = conn
+            .query(&sql, ())
+            .await
+            .map_err(decode("code_basis_locators_by_page"))?;
+        let mut out: HashMap<String, Vec<CodeBasisLocator>> = HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(decode("code_basis_locators_by_page"))?
+        {
+            let reference = ref_from(&row).map_err(decode("code_basis_locators_by_page"))?;
+            let page_id: String = row.get(7).map_err(decode("code_basis_locators_by_page"))?;
+            out.entry(page_id)
+                .or_default()
+                .push(CodeBasisLocator::from(&reference));
         }
         Ok(out)
     }

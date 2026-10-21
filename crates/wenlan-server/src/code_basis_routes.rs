@@ -74,6 +74,17 @@ pub(crate) async fn non_ok_code_basis_by_page(
     Ok(db.list_non_ok_code_basis(page_ids).await?)
 }
 
+/// Bring the code bases of the listed scope up to date before a list shows
+/// their states, so a note whose cited code changed is not listed as current.
+/// Rows whose file still shows the stamp they were last read with are skipped,
+/// so a quiet scope costs one query and a `stat` per file. A failed check
+/// leaves the list readable with the states as last recorded.
+pub(crate) async fn recheck_for_list(db: &MemoryDB, scope: &wenlan_core::read_scope::ReadScope) {
+    if let Err(error) = wenlan_core::code_basis::recheck_code_basis_for_scope(db, scope).await {
+        tracing::warn!("[pages] code basis check failed for the list: {error}");
+    }
+}
+
 async fn open_db(state: &Arc<RwLock<ServerState>>) -> Result<Arc<MemoryDB>, ServerError> {
     state
         .read()

@@ -2,6 +2,19 @@
 import type { IndexedFileInfo } from "../../../lib/tauri";
 
 export type SourceKind = "pdf" | "text" | "image" | "webpage" | "file";
+/** Apps whose documents an agent can save with their permanent link. */
+export type SourceApp = "gmail" | "googleDrive" | "notion" | "slack" | "github";
+/** Brand names are not translated. */
+export const SOURCE_APP_NAMES: Readonly<Record<SourceApp, string>> = {
+  gmail: "Gmail",
+  googleDrive: "Google Drive",
+  notion: "Notion",
+  slack: "Slack",
+  github: "GitHub",
+};
+export function isSourceApp(value: string): value is SourceApp {
+  return Object.prototype.hasOwnProperty.call(SOURCE_APP_NAMES, value);
+}
 export type SourcePresentationInput = Pick<IndexedFileInfo, "source" | "source_id" | "title" | "url" | "source_agent">;
 const WEBPAGE_EXTENSIONS = new Set(["html", "htm", "php", "asp", "aspx"]);
 
@@ -12,9 +25,27 @@ export interface SourcePresentationLabels {
 
 export interface SourcePresentation {
   kind: SourceKind;
+  /** Set when a web link comes from a recognized app; its name replaces the generic format and host. */
+  app: SourceApp | null;
+  /** What to draw for this source: the app's icon when recognized, otherwise the kind's. */
+  iconKind: SourceKind | SourceApp;
   format: string;
   origin: string | null;
   metadata: string;
+}
+
+/** Recognize the app behind an http(s) link from its host; null for any other site. */
+export function getSourceAppFromUrl(value: string | URL | null | undefined): SourceApp | null {
+  const url = typeof value === "string" ? httpUrl(value) : value ?? null;
+  if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return null;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  const under = (domain: string) => host === domain || host.endsWith(`.${domain}`);
+  if (host === "mail.google.com") return "gmail";
+  if (host === "docs.google.com" || host === "drive.google.com") return "googleDrive";
+  if (host === "notion.so" || host === "www.notion.so" || host === "app.notion.com" || host.endsWith(".notion.site")) return "notion";
+  if (under("slack.com")) return "slack";
+  if (host === "github.com") return "github";
+  return null;
 }
 
 function httpUrl(value: string | null | undefined): URL | null {
@@ -87,6 +118,7 @@ interface SourceClassification {
   kind: SourceKind;
   format: string | null;
   origin: string | null;
+  app: SourceApp | null;
 }
 
 function classifySource(file: SourcePresentationInput): SourceClassification {
@@ -99,7 +131,7 @@ function classifySource(file: SourcePresentationInput): SourceClassification {
   const host = url?.hostname || null;
 
   if (format) {
-    return { kind: format.kind, format: format.label, origin: host ?? parentFolder(path.value) };
+    return { kind: format.kind, format: format.label, origin: host ?? parentFolder(path.value), app: null };
   }
 
   // A URL without a recognized file format represents a web page. This also
@@ -108,10 +140,10 @@ function classifySource(file: SourcePresentationInput): SourceClassification {
     (url && (!urlExtension || WEBPAGE_EXTENSIONS.has(urlExtension))) ||
     (file.source === "webpage" && (!url || !urlExtension || WEBPAGE_EXTENSIONS.has(urlExtension)))
   ) {
-    return { kind: "webpage", format: null, origin: host };
+    return { kind: "webpage", format: null, origin: host, app: getSourceAppFromUrl(url) };
   }
 
-  return { kind: "file", format: null, origin: host ?? parentFolder(path.value) };
+  return { kind: "file", format: null, origin: host ?? parentFolder(path.value), app: null };
 }
 
 /** Return only the visual resource kind, suitable for icon-only surfaces. */
@@ -128,15 +160,24 @@ export function getSourcePresentation(
   if (classification.format) {
     return {
       kind: classification.kind,
+      app: null,
+      iconKind: classification.kind,
       format: classification.format,
       origin: classification.origin,
       metadata: [classification.format, classification.origin].filter(Boolean).join(" · "),
     };
   }
 
+  if (classification.app) {
+    // The app is the provenance: name it instead of the generic format and raw host.
+    const name = SOURCE_APP_NAMES[classification.app];
+    return { kind: classification.kind, app: classification.app, iconKind: classification.app, format: name, origin: null, metadata: name };
+  }
+
   const format = classification.kind === "webpage" ? labels.webExcerpt : labels.document;
   return {
     ...classification,
+    iconKind: classification.kind,
     format,
     metadata: [format, classification.origin].filter(Boolean).join(" · "),
   };

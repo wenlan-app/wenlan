@@ -101,6 +101,7 @@ pub enum LintMetricCode {
     DeepLifecycleResidueRecords,
     DeepRetrievalSubstrateMissingRecords,
     DeepPageBodyMismatchRecords,
+    CodeBasisUnavailableRows,
     SemanticEligibleRecords,
     SemanticCandidateRecords,
     SemanticPacketCandidates,

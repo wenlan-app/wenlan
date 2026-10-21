@@ -3,6 +3,7 @@
 //! storage validation, and `_sources/` stub projection + GC.
 
 use crate::error::WenlanError;
+use wenlan_types::CodeBasisLocator;
 
 /// Opening delimiter for the export-only `## Sources` block. The block is
 /// generated from DB truth at projection time and stripped at ingress; it is
@@ -98,11 +99,24 @@ pub fn render_sources_block(source_memory_ids: &[String]) -> String {
     out
 }
 
-/// Render the read-only `sources:` frontmatter block as an OKF v0.2 list of
-/// `{id, resource}` objects. Empty string when no sources.
+/// Render the read-only `sources:` frontmatter block as an OKF v0.2 list.
+/// Each cited memory is an `{id, resource}` object; each code basis the note
+/// relies on follows as a resource-only `{resource: "repo://<path>#L<a>-L<b>"}`
+/// entry, sorted by path then line. The repository root is never written: a
+/// reader of the export gets the in-repo path, not where it lives on this
+/// machine. Empty string when there is nothing to list.
+///
+/// Only the OKF bundle export passes code bases. The `.md` projection passes
+/// `&[]`: a note's `page_code_basis` rows change outside page writes (create
+/// stores them after the projection, confirm, remove and recheck move them
+/// without bumping the version), so a projected `repo://` line would go stale
+/// and the file would read as hand-edited.
 /// PROJECTION-OUT ONLY — the watcher never reads this back.
-pub fn sources_frontmatter(source_memory_ids: &[String]) -> String {
-    if source_memory_ids.is_empty() {
+pub fn sources_frontmatter(
+    source_memory_ids: &[String],
+    code_bases: &[CodeBasisLocator],
+) -> String {
+    if source_memory_ids.is_empty() && code_bases.is_empty() {
         return String::new();
     }
     let mut out = String::from("sources:\n");
@@ -111,6 +125,19 @@ pub fn sources_frontmatter(source_memory_ids: &[String]) -> String {
             "  - {{id: {}, resource: {}}}\n",
             yaml_quoted(id),
             yaml_quoted(&format!("wenlan://memory/{id}"))
+        ));
+    }
+    let mut code: Vec<&CodeBasisLocator> = code_bases.iter().collect();
+    code.sort_by(|a, b| {
+        (&a.path, a.line_start, a.line_end).cmp(&(&b.path, b.line_start, b.line_end))
+    });
+    for basis in code {
+        out.push_str(&format!(
+            "  - {{resource: {}}}\n",
+            yaml_quoted(&format!(
+                "repo://{}#L{}-L{}",
+                basis.path, basis.line_start, basis.line_end
+            ))
         ));
     }
     out
@@ -652,7 +679,7 @@ mod tests {
     #[test]
     fn sources_frontmatter_emits_okf_object_list() {
         let ids = ["mem_1".to_string(), "mem_2".to_string()];
-        let fm = sources_frontmatter(&ids);
+        let fm = sources_frontmatter(&ids, &[]);
         assert_eq!(
             fm,
             "sources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}\n  - {id: \"mem_2\", resource: \"wenlan://memory/mem_2\"}\n"
@@ -679,7 +706,7 @@ mod tests {
     #[test]
     fn sources_frontmatter_quotes_odd_character_ids() {
         let ids = ["mem_a: b #c".to_string()];
-        let fm = sources_frontmatter(&ids);
+        let fm = sources_frontmatter(&ids, &[]);
         let yaml = format!("title: x\n{fm}");
         let parsed: serde_yaml::Value =
             serde_yaml::from_str(&yaml).expect("odd-character id must still parse as YAML");
@@ -702,7 +729,64 @@ mod tests {
     #[test]
     fn sources_frontmatter_empty_emits_nothing() {
         let ids: [String; 0] = [];
-        assert_eq!(sources_frontmatter(&ids), String::new());
+        assert_eq!(sources_frontmatter(&ids, &[]), String::new());
+    }
+
+    fn code_basis(path: &str, start: u32, end: u32) -> CodeBasisLocator {
+        CodeBasisLocator {
+            repo_root: "/home/someone/private-checkout".to_string(),
+            path: path.to_string(),
+            line_start: start,
+            line_end: end,
+        }
+    }
+
+    #[test]
+    fn sources_frontmatter_lists_code_bases_as_resource_only_repo_entries() {
+        let code = [code_basis("src/lib.rs", 10, 20)];
+        // Code only: the `sources:` header is still emitted.
+        let fm = sources_frontmatter(&[], &code);
+        assert_eq!(
+            fm,
+            "sources:\n  - {resource: \"repo://src/lib.rs#L10-L20\"}\n"
+        );
+        // After the memory entries, never before.
+        let ids = ["mem_1".to_string()];
+        let both = sources_frontmatter(&ids, &code);
+        assert_eq!(
+            both,
+            "sources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}\n  - {resource: \"repo://src/lib.rs#L10-L20\"}\n"
+        );
+        // The repository root is a fact about one machine; it is never written.
+        assert!(!both.contains("private-checkout"));
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&format!("title: x\n{both}"))
+            .expect("a resource-only entry must be valid YAML");
+        let sources = parsed.get("sources").and_then(|v| v.as_sequence()).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert!(sources[1].get("id").is_none());
+        assert_eq!(
+            sources[1].get("resource").and_then(|v| v.as_str()),
+            Some("repo://src/lib.rs#L10-L20")
+        );
+    }
+
+    #[test]
+    fn sources_frontmatter_sorts_code_bases_by_path_then_line() {
+        let code = [
+            code_basis("src/b.rs", 1, 2),
+            code_basis("src/a.rs", 30, 40),
+            code_basis("src/a.rs", 5, 9),
+        ];
+        let fm = sources_frontmatter(&[], &code);
+        let resources: Vec<&str> = fm.lines().skip(1).collect();
+        assert_eq!(
+            resources,
+            [
+                "  - {resource: \"repo://src/a.rs#L5-L9\"}",
+                "  - {resource: \"repo://src/a.rs#L30-L40\"}",
+                "  - {resource: \"repo://src/b.rs#L1-L2\"}",
+            ]
+        );
     }
 
     #[test]

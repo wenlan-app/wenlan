@@ -69,7 +69,9 @@ async fn build_db(ceiling: Option<i64>) -> (MemoryDB, tempfile::TempDir) {
     (memory_db, dir)
 }
 
-async fn test_db() -> (MemoryDB, tempfile::TempDir) {
+/// [`build_db`] at the current schema; shared with the lint and watcher
+/// tests of the same feature.
+pub(crate) async fn test_db() -> (MemoryDB, tempfile::TempDir) {
     build_db(None).await
 }
 
@@ -867,6 +869,89 @@ async fn a_write_adds_and_re_anchors_but_never_drops_the_spans_it_does_not_name(
     );
 }
 
+/// A note citing `a.rs` 10-20 whose file then gained a line, so the row is
+/// `pending`. The file now has 41 lines.
+async fn a_pending_row_at_10_20(db: &MemoryDB, repo: &Repo) {
+    repo.write("a.rs", &numbered(40));
+    rely(db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    repo.write(
+        "a.rs",
+        &numbered(40).replace("line 15\n", "line 15\nline 15b\n"),
+    );
+    recheck_code_basis(db, None).await.unwrap();
+    assert_eq!(only(db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+}
+
+#[tokio::test]
+async fn a_write_naming_a_changed_span_replaces_the_stale_row_it_overlaps() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    a_pending_row_at_10_20(&db, &repo).await;
+
+    rely(&db, "n1", &[repo.input("a.rs", 10, 21)]).await;
+    let row = only(&db, "n1").await;
+    assert_eq!((row.line_start, row.line_end), (10, 21));
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+    assert_eq!(brief_code_basis_pending(&db, SPACE).await.unwrap(), Some(0));
+}
+
+#[tokio::test]
+async fn a_write_naming_a_span_that_does_not_overlap_leaves_the_stale_row() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    a_pending_row_at_10_20(&db, &repo).await;
+
+    rely(&db, "n1", &[repo.input("a.rs", 30, 40)]).await;
+    let all = rows(&db, "n1").await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    let state_at = |start: u32| {
+        all.iter()
+            .find(|r| r.line_start == start)
+            .unwrap()
+            .state
+            .clone()
+    };
+    assert_eq!(state_at(10), CODE_BASIS_STATE_PENDING);
+    assert_eq!(state_at(30), CODE_BASIS_STATE_OK);
+}
+
+#[tokio::test]
+async fn a_write_never_replaces_an_ok_row_even_when_the_spans_overlap() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+
+    rely(&db, "n1", &[repo.input("a.rs", 10, 21)]).await;
+    let all = rows(&db, "n1").await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(
+        all.iter().all(|r| r.state == CODE_BASIS_STATE_OK),
+        "{all:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_write_replaces_an_unavailable_row_once_the_file_is_back() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    std::fs::remove_file(repo.dir.path().join("a.rs")).unwrap();
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_UNAVAILABLE);
+
+    repo.write("a.rs", &numbered(41));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 21)]).await;
+    let row = only(&db, "n1").await;
+    assert_eq!((row.line_start, row.line_end), (10, 21));
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+}
+
 #[tokio::test]
 async fn only_an_active_note_can_rely_on_code() {
     let (db, _dir) = test_db().await;
@@ -1262,4 +1347,32 @@ async fn a_pending_row_is_always_read_even_when_the_file_looks_untouched() {
     set_mtime(&repo, "a.rs", original + std::time::Duration::from_secs(5));
     recheck_code_basis(&db, None).await.unwrap();
     assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_OK);
+}
+
+/// The `.md` projection never lists a note's code bases; only the OKF bundle
+/// export does. The rows change outside page writes (a create stores them after
+/// the projection, confirm and remove edit them, a recheck moves or deletes
+/// them), so a `repo://` line in the projected file would go stale and the file
+/// would read as hand-edited, which refuses the next rename.
+#[tokio::test]
+async fn the_md_projection_of_a_note_with_a_code_basis_has_no_repo_line() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    let note = db.get_page("n1").await.unwrap().unwrap();
+
+    let root = tempfile::tempdir().unwrap();
+    let writer = crate::export::knowledge::KnowledgeWriter::new(root.path().to_path_buf(), &db);
+    let guard = db.begin_page_projection_write();
+    let file = writer.write_page(&guard, &note).unwrap();
+    let projected = std::fs::read_to_string(&file).unwrap();
+    assert!(!projected.contains("repo://"), "{projected}");
+    assert!(!projected.contains(&repo.root()), "{projected}");
+    // Byte-identical to what a page with no code basis renders.
+    assert_eq!(
+        projected,
+        crate::export::knowledge::render_markdown_for(&note)
+    );
 }

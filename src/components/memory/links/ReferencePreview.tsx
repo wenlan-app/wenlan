@@ -5,7 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getMemoryDetail, getPage, type MemoryItem, type Page, type PageCitation } from "../../../lib/tauri";
 import { citationDisplayLabel } from "../../../lib/pageCitations";
-import { ReferenceTypeIcon, citationReferenceKind, type ReferenceKind } from "./ReferenceTypeIcon";
+import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp, type ReferenceKind } from "./ReferenceTypeIcon";
+import { SOURCE_APP_NAMES } from "../sources/sourcePresentation";
 import type { NavigableReferenceTarget, ReferencePreviewRequest } from "./referenceTypes";
 import { openCitationTarget } from "./openCitationTarget";
 import { useReferencePopoverPosition } from "./useReferencePopoverPosition";
@@ -140,8 +141,10 @@ export function ReferencePreview({
   const anchorLabel = request.anchor.dataset.referenceTargetLabel || request.anchor.dataset.wikiTargetLabel || request.anchor.textContent?.trim() || "";
   const citation = citationTarget?.citation ?? null;
   const kind: ReferenceKind = citation ? citationReferenceKind(citation) : target?.kind === "memory" ? "memory" : "page";
-  const typeLabel = t(`reference.type.${kind}`);
-  const fallbackCitationLabel = citation ? citationDisplayLabel(citation, {
+  const app = citation ? citationSourceApp(citation) : null;
+  const appName = app ? SOURCE_APP_NAMES[app] : null;
+  const typeLabel = appName ?? t(`reference.type.${kind}`);
+  const fallbackCitationLabel = citation ? appName ?? citationDisplayLabel(citation, {
     memory: t("citation.kind.memory"), external_file: t("citation.kind.file"), external_url: t("citation.kind.url"), authored: t("citation.kind.authored"),
   }) : "";
   const title = page?.title ?? memory?.title ?? (citation ? fallbackCitationLabel : anchorLabel);
@@ -177,7 +180,7 @@ export function ReferencePreview({
     ? t("citation.openMemory")
     : target?.kind === "page" || target?.kind === "memory"
     ? t(`${copyPrefix}.open`, { title })
-    : citation?.source_kind === "external_file" ? t("citation.openFile") : citation?.source_kind === "external_url" ? t("citation.openLink") : "";
+    : citation?.source_kind === "external_file" ? t("citation.openFile") : citation?.source_kind === "external_url" ? (appName ? t("citation.openInApp", { app: appName }) : t("citation.openLink")) : "";
   const activeOpenFailure = openFailure?.key === requestKey && openFailure.anchor === request.anchor ? openFailure.message : null;
   const preview = (
     <div
@@ -233,7 +236,10 @@ export function ReferencePreview({
       </details>}
       {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
       {citationTarget?.sourceMemory?.last_modified && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{relativeMs(citationTarget.sourceMemory.last_modified * 1000)}</p>}
-      {canOpen && <button type="button" onClick={open} style={{ alignSelf: "flex-start", color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>}
+      {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}
+      {canOpen && <div data-reference-preview-actions="true" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "6px 12px 12px", background: "var(--mem-surface)" }}>
+        <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>
+      </div>}
     </div>
   );
   return createPortal(preview, document.body);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { getSourceKind, getSourcePresentation, type SourcePresentationInput } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, type SourcePresentationInput } from "./sourcePresentation";
 
 const labels = { document: "Document", webExcerpt: "Web excerpt" };
 const source = (patch: Partial<SourcePresentationInput> = {}): SourcePresentationInput => ({
@@ -31,7 +31,7 @@ describe("source presentation", () => {
     });
     expect(getSourceKind(file)).toBe("pdf");
     expect(getSourcePresentation(file, labels)).toEqual({
-      kind: "pdf", format: "PDF", origin: "docs.example.test", metadata: "PDF · docs.example.test",
+      kind: "pdf", app: null, iconKind: "pdf", format: "PDF", origin: "docs.example.test", metadata: "PDF · docs.example.test",
     });
   });
 
@@ -75,7 +75,7 @@ describe("source presentation", () => {
     const file = source({ source_id: "import::/archive/meeting.backup", title: "Project notes.pdf" });
     expect(getSourceKind(file)).toBe("file");
     expect(getSourcePresentation(file, labels)).toEqual({
-      kind: "file", format: "Document", origin: "archive", metadata: "Document · archive",
+      kind: "file", app: null, iconKind: "file", format: "Document", origin: "archive", metadata: "Document · archive",
     });
   });
 
@@ -83,5 +83,70 @@ describe("source presentation", () => {
     const file = source({ source_id: "opaque-source-id", title: "Notes.md", url: null });
     expect(getSourceKind(file)).toBe("text");
     expect(getSourcePresentation(file, labels).metadata).toBe("Markdown");
+  });
+
+  describe("saved documents from other apps", () => {
+    it.each([
+      ["https://mail.google.com/mail/u/0/#inbox/FMfcgzQ", "gmail"],
+      ["https://docs.google.com/document/d/abc/edit", "googleDrive"],
+      ["https://drive.google.com/file/d/abc/view", "googleDrive"],
+      ["https://notion.so/Q4-roadmap-1a2b3c", "notion"],
+      ["https://www.notion.so/team/Q4-roadmap-1a2b3c", "notion"],
+      ["https://team.notion.site/Public-page-1a2b3c", "notion"],
+      ["https://app.notion.com/p/Q4-roadmap-1a2b3c", "notion"],
+      ["https://slack.com/archives/C024/p1", "slack"],
+      ["https://acme.slack.com/archives/C024/p1712345678", "slack"],
+      ["https://github.com/wenlan-app/wenlan/issues/12", "github"],
+      ["HTTPS://Mail.Google.COM/mail/u/0/", "gmail"],
+    ])("recognizes %s as %s", (url, app) => {
+      expect(getSourceAppFromUrl(url)).toBe(app);
+    });
+
+    it.each([
+      "https://example.com/blog/local-first",
+      "https://google.com/search?q=gmail",
+      "https://evilmail.google.com.example.com/",
+      "https://notgithub.com/x",
+      "https://notion.so.example.com/x",
+      "https://fakeslack.com/x",
+      "https://gist.github.com/x",
+      "ftp://mail.google.com/x",
+      "mail.google.com",
+      "",
+      null,
+      undefined,
+    ])("treats %s as an ordinary web page", (url) => {
+      expect(getSourceAppFromUrl(url)).toBeNull();
+    });
+
+    it("names the app and drops the generic format and raw host for a saved Gmail message", () => {
+      const file = source({ source: "webpage", source_id: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ", title: "Invoice" });
+      expect(getSourceKind(file)).toBe("webpage");
+      expect(getSourcePresentation(file, labels)).toEqual({
+        kind: "webpage", app: "gmail", iconKind: "gmail", format: "Gmail", origin: null, metadata: "Gmail",
+      });
+    });
+
+    it("keeps the app name identical whatever the UI labels say", () => {
+      const file = source({ source: "webpage", source_id: "https://www.notion.so/team/Q4-roadmap-1a2b3c" });
+      expect(getSourcePresentation(file, { document: "文件", webExcerpt: "網頁" }).metadata).toBe("Notion");
+    });
+
+    it("leaves an unrecognized web page exactly as before", () => {
+      const file = source({ source: "webpage", source_id: "https://example.com/blog/local-first" });
+      expect(getSourcePresentation(file, labels)).toEqual({
+        kind: "webpage", app: null, iconKind: "webpage", format: "Web excerpt", origin: "example.com", metadata: "Web excerpt · example.com",
+      });
+    });
+
+    it("keeps file formats ahead of the app when the link points at a file", () => {
+      const file = source({ source: "webpage", source_id: "https://github.com/acme/repo/raw/main/spec.pdf" });
+      expect(getSourcePresentation(file, labels)).toMatchObject({ kind: "pdf", app: null, iconKind: "pdf", metadata: "PDF · github.com" });
+    });
+
+    it("does not treat a local file with an attached app URL as that app", () => {
+      const file = source({ source: "file", source_id: "/Users/me/export.md", url: "https://mail.google.com/mail/u/0/" });
+      expect(getSourcePresentation(file, labels).app).toBeNull();
+    });
   });
 });

@@ -164,6 +164,11 @@ pub async fn handle_list_pages(
     let mut basis_by_page =
         crate::page_basis_routes::non_ok_basis_by_citer(&db, &view.grant, &scope, &page_ids)
             .await?;
+    // The states shown are checked against the files as they read now, so a
+    // list read without a Brief first does not call a changed note current.
+    if !page_ids.is_empty() {
+        crate::code_basis_routes::recheck_for_list(&db, &scope).await;
+    }
     let mut code_basis_by_page =
         crate::code_basis_routes::non_ok_code_basis_by_page(&db, &page_ids).await?;
     let mut folders = HashMap::new();
@@ -1190,10 +1195,16 @@ pub async fn handle_export_pages(
                 .await
                 .map_err(|e| ServerError::Internal(e.to_string()))?,
         );
+        // Each page's code bases ride along as `repo://` sources.
+        let code_bases = db
+            .code_basis_locators_by_page()
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?;
         let mut stats = wenlan_core::export::okf::export_okf_with_concept_paths(
             &exportable,
             std::path::Path::new(&expanded),
             &concept_paths,
+            &code_bases,
         )?;
         // `export_okf` never sets `skipped`: pages the automatic reader may
         // not see are reported here, OKF-branch only. The Obsidian response

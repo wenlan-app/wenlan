@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 32 tools. The table below calls
+The local stdio surface is locked at exactly 33 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -73,6 +73,7 @@ queue.
 | `brief` | Read the current Space Brief; an optional topic appends separately labeled same-Space context. |
 | `update_brief` | Hand off to the next session: replace the summary and add, edit, move, gate, or complete items. Local stdio only. |
 | `capture` | Save one durable memory and return its explicit `source_memory_id`. |
+| `save_source` | Save a document read in another app or on the web (email, Notion or Drive page, Slack thread, article) with its link, so notes cite the original. Saving the same link again replaces the copy. |
 | `recall` | Search memories and pages by natural-language query. |
 | `distill` | Trigger page distillation for new clusters or a specific `page_id`. |
 | `list_pending` | List pending captures waiting for review. |

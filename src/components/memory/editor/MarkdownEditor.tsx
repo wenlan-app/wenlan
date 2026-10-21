@@ -13,6 +13,7 @@ import { NativeMarkdownEditor } from "./NativeMarkdownEditor";
 import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
+import type { LinkCompletionNote } from "./wikiLinkCompletion";
 import type { ReferenceTarget } from "../links/referenceTypes";
 
 export interface MarkdownEditorHandle {
@@ -72,6 +73,9 @@ export interface MarkdownEditorProps {
   onWikiPageActivate?(pageId: string, anchor: HTMLAnchorElement): void;
   onWikiLinkPreview?(pageId: string, anchor: HTMLAnchorElement, keyboard: boolean): void;
   onWikiLinkPreviewLeave?(): void;
+  /** Notes offered after typing `[[`. Leave unset to turn the menu off. */
+  linkNotes?: readonly LinkCompletionNote[];
+  onLinkPick?(note: LinkCompletionNote, asSource: boolean): void;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(

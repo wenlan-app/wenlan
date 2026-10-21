@@ -372,6 +372,8 @@ fn page_check_store_classification_is_closed_over_the_catalog() {
         "pages.db.partitions",
         "pages.citations.partitions",
         "pages.links.orphan_labels",
+        // Reads code files, not the page root.
+        "pages.provenance.code_basis_drift",
     ] {
         assert!(!uses_cross_store(id));
         assert!(!uses_filesystem(id));

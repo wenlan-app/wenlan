@@ -170,6 +170,12 @@ const CATALOG: &[LintCatalogEntry] = &[
         "pages.projection.version_alignment",
         ScopePolicy::DbAnchoredProjection,
     ),
+    deep_entry(
+        "pages.provenance.code_basis_drift",
+        ScopePolicy::ScopedRows,
+        ScopeAxis::PagesWorkspace,
+        LintGateEffect::Advisory,
+    ),
     page_entry(
         "pages.provenance.source_evidence_coverage",
         ScopePolicy::DbAnchoredProjection,
