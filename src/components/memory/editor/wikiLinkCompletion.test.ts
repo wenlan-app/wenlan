@@ -5,7 +5,8 @@ import { markdown } from "@codemirror/lang-markdown";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { waitFor } from "@testing-library/react";
-import { createLinkCompletion, linkCompletionMatches, linkableTitle, pageTitleKey, refreshLinkCompletion, trimLikeDaemon, type LinkCompletionNote } from "./wikiLinkCompletion";
+import { createLinkCompletion, linkCompletionMatches, linkableTitle, refreshLinkCompletion, type LinkCompletionNote } from "./wikiLinkCompletion";
+import { pageTitleKey, trimLikeDaemon } from "./pageTitleKey";
 import { installCodeMirrorDomPolyfills, pressKey } from "./editorTestUtils";
 import { setWritingCompositionActive } from "./writingPresentation";
 

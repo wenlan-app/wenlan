@@ -77,7 +77,8 @@ import {
   type MarkdownEditorStatus,
   type MarkdownEditorSelection,
 } from "./editor/MarkdownEditor";
-import { pageTitleKey, trimLikeDaemon, type LinkCompletionNote } from "./editor/wikiLinkCompletion";
+import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
+import { pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadLinkCandidates } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
