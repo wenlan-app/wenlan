@@ -5650,6 +5650,20 @@ pub async fn add_source(
         "directory" => {
             register_directory_source_with_daemon(&state, &path_buf, follow_changes).await
         }
+        "logseq" => {
+            // Only pages/ and journals/ are read; the daemon validates the
+            // same way, this just fails fast without a round trip.
+            if !wenlan_core::sources::logseq::has_any_page(&path_buf) {
+                return Err(format!("No Logseq pages found in: {}", path));
+            }
+            let client = {
+                let s = state.read().await;
+                s.client.clone()
+            };
+            client
+                .add_source("logseq".to_string(), path, follow_changes)
+                .await
+        }
         other => Err(format!("Unknown source_type: {}", other)),
     }
 }

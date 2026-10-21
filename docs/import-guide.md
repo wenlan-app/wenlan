@@ -12,6 +12,13 @@ Open **Settings → Sources** and choose the route that matches your material.
 
 Wenlan reads the vault’s Markdown notes without changing the original files. **Changes flow one way, into Wenlan; nothing is written back to Obsidian.**
 
+## Connect a Logseq graph — read-only
+
+1. Choose **Add source…**, then **Connect Logseq graph**, and pick the graph folder (the one that holds `pages/`, `journals/`, and `logseq/`).
+2. Keep writing in Logseq. Wenlan follows edits, new pages, renames, and deletions the same way as an Obsidian vault, about every 30 seconds.
+
+Wenlan reads the Markdown pages in `pages/` and `journals/`. Outlines become plain paragraphs and lists, a journal is titled with its date, and block properties such as `id::` are left out. Logseq's backups in `logseq/bak/` are not read, and nothing is written back to Logseq. Graphs made with the newer Logseq database version keep their pages in a database, not in files: export them to Markdown first.
+
 ## Import a ChatGPT or Claude conversation ZIP
 
 1. Request an export from your AI account:

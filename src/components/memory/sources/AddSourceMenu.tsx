@@ -20,7 +20,7 @@ import SourceDialog from "./SourceDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { useTranslation } from "react-i18next";
 
-type ConnectKind = "obsidian" | "folder";
+type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
 
 export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
@@ -63,14 +63,16 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
   const connect = useMutation({
     mutationFn: async (kind: ConnectKind) => {
       const path = await openDialog({
-        title: t(kind === "obsidian" ? "sourceAccess.obsidian" : "sourceAccess.folder"),
+        title: t(kind === "folder" ? "sourceAccess.folder" : `sourceAccess.${kind}`),
         directory: true, multiple: false,
       });
       if (!path || typeof path !== "string") return null;
       const detection = await detectVault(path);
-      if (kind === "obsidian" && detection.unreadable) throw new Error(t("sourceAccess.folderPickFailed"));
+      if (kind !== "folder" && detection.unreadable) throw new Error(t("sourceAccess.folderPickFailed"));
       if (kind === "obsidian" && !detection.isVault) throw new Error(t("sourceAccess.notVault"));
-      return { kind, sourceType: detection.sourceType, path };
+      if (kind === "logseq" && !detection.isLogseqGraph) throw new Error(t("sourceAccess.notLogseqGraph"));
+      const sourceType: SourceTypeStr = kind === "logseq" ? "logseq" : detection.sourceType;
+      return { kind, sourceType, path };
     },
     onSuccess: (folder) => { if (folder) setPicked(folder); },
     onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
@@ -119,6 +121,9 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}
     <button type="button" className="source-add-option source-add-option--vault" disabled={busy} onClick={() => connect.mutate("obsidian")}>
       <SourceTypeIcon kind="obsidian" /><span className="source-add-option-copy"><strong>{t("sourceAccess.obsidian")}</strong><span>{t("sourceAccess.obsidianHint")}</span></span>
+    </button>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
+      <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
       <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>

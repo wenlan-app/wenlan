@@ -47,6 +47,28 @@ describe("detectVault", () => {
     expect(d.hasValidDoc).toBe(true);
   });
 
+  it("detects a Logseq graph and counts only its pages and journals", async () => {
+    fakeFs({
+      "/g": [dir("logseq"), dir("pages"), dir("journals"), file("readme.txt")],
+      "/g/logseq": [dir("bak")],
+      "/g/logseq/bak": [file("old.md")],
+      "/g/pages": [file("atlas.md"), file("diagram.pdf")],
+      "/g/journals": [file("2026_10_21.md")],
+    });
+    const d = await detectVault("/g");
+    expect(d.isVault).toBe(false);
+    expect(d.isLogseqGraph).toBe(true);
+    expect(d.sourceType).toBe("logseq");
+    expect(d.docCount).toBe(2);
+  });
+
+  it("prefers Obsidian when one folder is both a vault and a Logseq graph", async () => {
+    fakeFs({ "/b": [dir(".obsidian"), dir("logseq"), dir("pages")], "/b/pages": [file("a.md")], "/b/logseq": [] });
+    const d = await detectVault("/b");
+    expect(d.isLogseqGraph).toBe(true);
+    expect(d.sourceType).toBe("obsidian");
+  });
+
   it("plain directory counts md/txt/pdf", async () => {
     fakeFs({ "/n": [file("a.md"), file("b.txt"), file("c.pdf"), file("d.docx")] });
     const d = await detectVault("/n");

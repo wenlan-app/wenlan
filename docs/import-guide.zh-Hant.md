@@ -12,6 +12,13 @@
 
 Wenlan 讀取 vault 裡的 Markdown 筆記，不修改原始檔案。**變更只會讀入 Wenlan，不會寫回 Obsidian。**
 
+## 連接 Logseq 圖譜：唯讀
+
+1. 選擇「新增來源…」，再選「連接 Logseq 圖譜」，選取圖譜資料夾（裡面有 `pages/`、`journals/` 和 `logseq/` 的那個）。
+2. 繼續在 Logseq 寫就好。Wenlan 會像 Obsidian vault 一樣，約每 30 秒跟上修改、新增、改名和刪除的頁面。
+
+Wenlan 讀取 `pages/` 和 `journals/` 裡的 Markdown 頁面。大綱會整理成一般段落和清單，日記用日期當標題，`id::` 這類區塊屬性會略過。Logseq 放在 `logseq/bak/` 的備份不會讀取，也不會寫回 Logseq。新版 Logseq 資料庫版把頁面存在資料庫而不是檔案裡，請先匯出成 Markdown 再連接。
+
 ## 匯入 ChatGPT／Claude 對話 ZIP
 
 1. 在 AI 帳戶中申請匯出：

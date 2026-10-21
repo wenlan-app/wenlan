@@ -2027,6 +2027,7 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("continue", "Continue"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
+    ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
     ("obsidian", "Obsidian"),
     ("openai-mcp", "ChatGPT"),

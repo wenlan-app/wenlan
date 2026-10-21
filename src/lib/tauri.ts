@@ -196,7 +196,7 @@ export async function listSources(): Promise<SourceStatus[]> {
 
 // ===== Registered Sources =====
 
-export type SourceTypeStr = "obsidian" | "directory" | "okf";
+export type SourceTypeStr = "obsidian" | "logseq" | "directory" | "okf";
 export type SyncStatusStr =
   | "Active"
   | "Paused"

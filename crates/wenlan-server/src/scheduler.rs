@@ -2244,14 +2244,16 @@ fn should_poll_directory_source(source: &wenlan_types::sources::Source) -> bool 
     ) && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
 }
 
-/// Background polling covers Obsidian vaults too, with the same pause and
-/// recovery rules as Directory sources.
+/// Background polling covers Obsidian vaults and Logseq graphs too, with the
+/// same pause and recovery rules as Directory sources.
 fn should_poll_obsidian_source(source: &wenlan_types::sources::Source) -> bool {
-    source.source_type == wenlan_types::sources::SourceType::Obsidian
-        && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
+    matches!(
+        source.source_type,
+        wenlan_types::sources::SourceType::Obsidian | wenlan_types::sources::SourceType::Logseq
+    ) && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
 }
 
-/// Sync every pollable Obsidian vault inside the poll, like the Directory
+/// Sync every pollable Obsidian vault and Logseq graph inside the poll, like the Directory
 /// pass. A vault whose sync (started by the app) is still running is
 /// skipped, and each pass stores at most `note_limit` changed notes per
 /// vault, so a large batch of edits spreads over several polls instead of

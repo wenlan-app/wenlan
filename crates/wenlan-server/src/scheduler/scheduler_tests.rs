@@ -2093,7 +2093,12 @@ fn directory_sync_tick_polls_recoverable_sources_but_not_paused() {
     source.status = wenlan_types::sources::SyncStatus::Paused;
     assert!(!should_poll_obsidian_source(&source));
 
+    // Logseq graphs share the vault path.
     source.status = wenlan_types::sources::SyncStatus::Active;
+    source.source_type = wenlan_types::sources::SourceType::Logseq;
+    assert!(!should_poll_directory_source(&source));
+    assert!(should_poll_obsidian_source(&source));
+
     source.source_type = wenlan_types::sources::SourceType::Directory;
     assert!(!should_poll_obsidian_source(&source));
 }
