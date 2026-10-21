@@ -16,9 +16,16 @@
 //! | `needs_human` | leaves the row `pending`; stores the sentence and the verdict for a person |
 //! | no verdict    | leaves the row alone and tries again later, at most [`RECHECK_MAX_ATTEMPTS`] times per change |
 //!
-//! "Per change" is the digest of the changed lines as they read now: a file
-//! that changes again is judged afresh. Rows in state `unavailable` and `moved`
-//! never come here.
+//! "Per change" is the digest of the changed lines as they read now together
+//! with the note's version ([`recheck_key`]): a file that changes again, or a
+//! note that is edited, is judged afresh, and a verdict left for an older
+//! version of the note is treated as absent everywhere it is read. Rows in
+//! state `unavailable` and `moved` never come here.
+//!
+//! The same judging is available on demand: [`prepare_code_basis_ask`] builds
+//! the prompt for one row and [`apply_code_basis_judgement`] lands the answer
+//! with the same compare-and-swap, so a caller's own model (the steep pass, with
+//! background AI off) can do what the background job does.
 //!
 //! Nothing here holds the database writer across a model call. A row and its
 //! note are read, everything is dropped, the model is asked, and the verdict is
@@ -68,6 +75,30 @@ pub(crate) const MAX_EXPLANATION_CHARS: usize = 300;
 /// Stored as the changed digest of a row whose lines cannot be found at all,
 /// so the slice does not look at it again until something changes.
 pub(crate) const UNRESOLVED_DIGEST: &str = "unresolved";
+
+/// What `page_code_basis.recheck_digest` holds for a judged change: the digest
+/// of the changed lines and the version of the note they were judged against,
+/// as `<code digest>@v<version>`. A verdict is current only while both still
+/// hold; the database reads it back only then (`recheck_digest LIKE
+/// '%@v' || pages.version`).
+pub fn recheck_key(code_digest: &str, page_version: i64) -> String {
+    format!("{code_digest}@v{page_version}")
+}
+
+/// The file's lines as the model should see them: split the way the anchor
+/// splits them (so numbering agrees), with each line's trailing whitespace
+/// dropped and its indentation kept.
+fn source_lines(text: &str) -> Vec<String> {
+    let unix = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines: Vec<String> = unix
+        .split('\n')
+        .map(|line| line.trim_end().to_string())
+        .collect();
+    if unix.is_empty() || unix.ends_with('\n') {
+        lines.pop();
+    }
+    lines
+}
 
 /// What one slice did, row by row.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -338,7 +369,7 @@ async fn cited_excerpt(db: &MemoryDB, row: &CodeBasisRow) -> Option<Excerpt> {
         Relocation::Unchanged { span } | Relocation::Moved { span } => span,
         Relocation::Changed { .. } | Relocation::Unresolved => return None,
     };
-    let lines = code_anchor::canonical_lines(&text);
+    let lines = source_lines(&text);
     Some(render_excerpt(&lines, span.start, span.end, None))
 }
 
@@ -387,13 +418,22 @@ async fn read_current(row: &CodeBasisRow) -> Reading {
     }
 }
 
-/// A row ready to be put to the model.
-struct Ask {
-    row: CodeBasisRow,
-    digest: String,
-    attempts: i64,
-    prompt: String,
+/// A row ready to be put to the model: the user prompt (the system prompt is
+/// `PromptRegistry::code_basis_recheck`) and what the answer is about.
+pub struct CodeBasisAsk {
+    pub row: CodeBasisRow,
+    /// Digest of the changed lines as the model sees them.
+    pub code_digest: String,
+    /// `pages.version` of the note as the model sees it.
+    pub page_version: i64,
+    /// [`recheck_key`] of the two, as stored.
+    pub key: String,
+    /// Attempts at this key that ended without a verdict so far.
+    pub attempts: i64,
+    pub prompt: String,
 }
+
+type Ask = CodeBasisAsk;
 
 enum Prepared {
     Skip,
@@ -402,7 +442,8 @@ enum Prepared {
     Ask(Box<Ask>),
 }
 
-/// Whether the model has already judged this change or used up its attempts.
+/// Whether the model has already judged this change of this note version or
+/// used up its attempts.
 fn already_handled(row: &CodeBasisRow, digest: &str) -> bool {
     if row.recheck.digest.as_deref() != Some(digest) {
         return false;
@@ -434,25 +475,25 @@ async fn prepare_recheck_input(db: &MemoryDB, row: &CodeBasisRow) -> Result<Prep
             );
         }
     };
-    let digest = current.anchor.digest.clone();
-    if already_handled(row, &digest) {
-        return Ok(Prepared::Skip);
-    }
-    let attempts = if row.recheck.digest.as_deref() == Some(digest.as_str()) {
-        row.recheck.attempts
-    } else {
-        0
-    };
-
     let Some(page) = db.get_page(&row.page_id).await? else {
         return Ok(Prepared::Skip);
     };
     if page.status != "active" {
         return Ok(Prepared::Skip);
     }
+    let code_digest = current.anchor.digest.clone();
+    let key = recheck_key(&code_digest, page.version);
+    if already_handled(row, &key) {
+        return Ok(Prepared::Skip);
+    }
+    let attempts = if row.recheck.digest.as_deref() == Some(key.as_str()) {
+        row.recheck.attempts
+    } else {
+        0
+    };
 
     let cited = cited_excerpt(db, row).await;
-    let lines = code_anchor::canonical_lines(&current.text);
+    let lines = source_lines(&current.text);
     let now = render_excerpt(
         &lines,
         current.span.start.saturating_sub(CONTEXT_LINES),
@@ -473,10 +514,37 @@ async fn prepare_recheck_input(db: &MemoryDB, row: &CodeBasisRow) -> Result<Prep
     });
     Ok(Prepared::Ask(Box::new(Ask {
         row: row.clone(),
-        digest,
+        code_digest,
+        page_version: page.version,
+        key,
         attempts,
         prompt,
     })))
+}
+
+/// The prompt for one `pending` row, for a caller that judges with its own
+/// model. `None` when there is nothing to ask: the change was already judged
+/// for this version of the note, its attempts are used up, the file cannot be
+/// read, or the lines cannot be found (that last case is remembered, as the
+/// background job remembers it).
+pub async fn prepare_code_basis_ask(
+    db: &MemoryDB,
+    row: &CodeBasisRow,
+) -> Result<Option<Box<CodeBasisAsk>>, WenlanError> {
+    match prepare_recheck_input(db, row).await? {
+        Prepared::Ask(ask) => Ok(Some(ask)),
+        Prepared::Skip => Ok(None),
+        Prepared::MarkUnresolved => {
+            mark_unresolved(db, row).await;
+            Ok(None)
+        }
+    }
+}
+
+async fn mark_unresolved(db: &MemoryDB, row: &CodeBasisRow) {
+    let _ = db
+        .record_code_basis_recheck(row, UNRESOLVED_DIGEST, None, None, RECHECK_MAX_ATTEMPTS)
+        .await;
 }
 
 /// One model call; `None` for an error, a timeout or an unusable reply.
@@ -511,17 +579,29 @@ async fn ask_model(
     judgement
 }
 
-enum Applied {
+/// What landing a judgement did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applied {
     NoImpact,
     /// Judged `stale`: the row stays `pending` for the steep pass.
     Stale,
     NeedsHuman,
-    /// A concurrent change made the answer a no-op; nothing is recorded.
+    /// A concurrent change (to the file, the note or the row) made the answer
+    /// a no-op; nothing is recorded.
     Superseded,
 }
 
+/// Count an attempt that ended without a verdict, for a caller whose model gave
+/// no usable answer.
+pub async fn record_code_basis_no_verdict(
+    db: &MemoryDB,
+    ask: &CodeBasisAsk,
+) -> Result<(), WenlanError> {
+    record_no_verdict(db, ask).await
+}
+
 async fn record_no_verdict(db: &MemoryDB, ask: &Ask) -> Result<(), WenlanError> {
-    db.record_code_basis_recheck(&ask.row, &ask.digest, None, None, ask.attempts + 1)
+    db.record_code_basis_recheck(&ask.row, &ask.key, None, None, ask.attempts + 1)
         .await
         .map(|_| ())
 }
@@ -529,9 +609,17 @@ async fn record_no_verdict(db: &MemoryDB, ask: &Ask) -> Result<(), WenlanError> 
 /// Read the file again and confirm it still reads the way the model was told.
 async fn reread_unchanged(ask: &Ask) -> Option<Box<CurrentCode>> {
     match read_current(&ask.row).await {
-        Reading::Changed(current) if current.anchor.digest == ask.digest => Some(current),
+        Reading::Changed(current) if current.anchor.digest == ask.code_digest => Some(current),
         _ => None,
     }
+}
+
+/// Whether the note still is what the model was shown: active, same version.
+async fn note_unchanged(db: &MemoryDB, ask: &Ask) -> Result<bool, WenlanError> {
+    Ok(db
+        .get_page(&ask.row.page_id)
+        .await?
+        .is_some_and(|page| page.status == "active" && page.version == ask.page_version))
 }
 
 async fn confirm_row(
@@ -567,12 +655,28 @@ async fn confirm_row(
     }
 }
 
+/// Land a judgement about `ask` from any model, the way the background job
+/// lands its own: only while the file still reads as the model was told and
+/// the note is still the version it was shown; otherwise nothing is recorded
+/// and the row is judged again later.
+pub async fn apply_code_basis_judgement(
+    db: &MemoryDB,
+    ask: &CodeBasisAsk,
+    judgement: &Judgement,
+) -> Result<Applied, WenlanError> {
+    apply(db, ask, judgement).await
+}
+
 async fn apply(db: &MemoryDB, ask: &Ask, judgement: &Judgement) -> Result<Applied, WenlanError> {
-    // The verdict is about the lines the model was shown. If the file moved on
-    // since, it says nothing about them; the row is judged again.
+    // The verdict is about the lines and the note the model was shown. If
+    // either moved on since, it says nothing about them; the row is judged
+    // again.
     let Some(current) = reread_unchanged(ask).await else {
         return Ok(Applied::Superseded);
     };
+    if !note_unchanged(db, ask).await? {
+        return Ok(Applied::Superseded);
+    }
     let Some(stored) = judgement.verdict.stored() else {
         return confirm_row(db, ask, &current).await;
     };
@@ -581,7 +685,7 @@ async fn apply(db: &MemoryDB, ask: &Ask, judgement: &Judgement) -> Result<Applie
     let landed = db
         .record_code_basis_recheck(
             &ask.row,
-            &ask.digest,
+            &ask.key,
             Some(&judgement.explanation),
             Some(stored),
             ask.attempts,
@@ -626,15 +730,7 @@ pub async fn run_code_basis_recheck_slice(
             }
             Ok(Prepared::MarkUnresolved) => {
                 report.skipped += 1;
-                let _ = db
-                    .record_code_basis_recheck(
-                        &row,
-                        UNRESOLVED_DIGEST,
-                        None,
-                        None,
-                        RECHECK_MAX_ATTEMPTS,
-                    )
-                    .await;
+                mark_unresolved(db, &row).await;
                 continue;
             }
             Err(error) => {

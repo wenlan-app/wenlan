@@ -1141,3 +1141,197 @@ fn long_excerpts_are_cut_and_marked() {
         " 5 | line 5\n>6 | line 6\n>7 | line 7\n 8 | line 8\n"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What the model sees, and what the verdict is about
+// ---------------------------------------------------------------------------
+
+/// `n` lines indented by four spaces, the ones in `changed` replaced by
+/// `<line> changed`; line 13 carries trailing spaces.
+fn indented(n: u32, changed: &[u32]) -> String {
+    (1..=n)
+        .map(|i| {
+            let tail = if i == 13 { "   " } else { "" };
+            if changed.contains(&i) {
+                format!("    line {i} changed{tail}\n")
+            } else {
+                format!("    line {i}{tail}\n")
+            }
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_model_sees_the_lines_with_their_indentation() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::git();
+    note(&db, "n1", BODY).await;
+    repo.track("a.rs", &indented(30, &[]));
+    rely(&db, "n1", repo.input("a.rs", 10, 14)).await;
+    repo.write("a.rs", &indented(30, &[12]));
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+    let provider = ScriptedProvider::saying(&[&verdict("needs_human", "Please look.")]);
+    slice(&db, &provider, 3).await;
+
+    let prompt = provider.user_prompt(0);
+    let cited = prompt
+        .split("<<<CITED")
+        .nth(1)
+        .and_then(|rest| rest.split("CITED>>>").next())
+        .unwrap();
+    // Indentation is kept; trailing whitespace is not.
+    assert!(cited.contains("12 |     line 12\n"), "{cited}");
+    assert!(cited.contains("13 |     line 13\n"), "{cited}");
+    let now = prompt
+        .split("<<<NOW")
+        .nth(1)
+        .and_then(|rest| rest.split("NOW>>>").next())
+        .unwrap();
+    assert!(now.contains(">12 |     line 12 changed\n"), "{now}");
+    assert!(now.contains(" 9 |     line 9\n"), "{now}");
+}
+
+#[tokio::test]
+async fn editing_the_note_hides_the_verdict_and_the_change_is_judged_again() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::git();
+    pending_note(&db, &repo, "n1", BODY).await;
+    let before = db.get_page("n1").await.unwrap().unwrap().version;
+    slice(
+        &db,
+        &ScriptedProvider::saying(&[&verdict("stale", "The note should say 48.")]),
+        3,
+    )
+    .await;
+    let row = only(&db, "n1").await;
+    assert_eq!(row.ai_verdict.as_deref(), Some("stale"));
+    assert_eq!(
+        recheck_columns(&db, "n1").await.digest.unwrap(),
+        format!(
+            "{}@v{before}",
+            recheck_columns(&db, "n1")
+                .await
+                .digest
+                .unwrap()
+                .split("@v")
+                .next()
+                .unwrap()
+        )
+    );
+    assert_eq!(db.list_code_basis_stale(None).await.unwrap().len(), 1);
+    assert!(db.space_code_basis_all_explained(SPACE).await.unwrap());
+
+    // The person rewrites the note. The verdict was about the old wording, so
+    // nothing shows it any more and the row waits to be judged again.
+    db.update_page_content("n1", "Keys are cut to 48 bits.", &[], "edit")
+        .await
+        .unwrap();
+    let after = db.get_page("n1").await.unwrap().unwrap().version;
+    assert!(after > before, "the edit bumps the note's version");
+    let row = only(&db, "n1").await;
+    assert_eq!(row.state, CODE_BASIS_STATE_PENDING);
+    assert_eq!(row.explanation, None);
+    assert_eq!(row.ai_verdict, None);
+    assert!(db.list_code_basis_stale(None).await.unwrap().is_empty());
+    assert!(!db.space_code_basis_all_explained(SPACE).await.unwrap());
+    let wire = serde_json::to_value(&row).unwrap();
+    assert!(wire.get("explanation").is_none() && wire.get("ai_verdict").is_none());
+
+    // The next tick asks about the same change of the new wording, from zero
+    // attempts, and the fresh verdict shows.
+    let second = ScriptedProvider::saying(&[&verdict("no_impact", "It says 48 now.")]);
+    let report = slice(&db, &second, 3).await;
+    assert_eq!(second.calls(), 1);
+    assert!(second.user_prompt(0).contains("Keys are cut to 48 bits."));
+    assert_eq!(report.no_impact, 1);
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_OK);
+    assert_eq!(confirmed_by(&db, "n1").await, RECHECK_CONFIRMED_BY);
+}
+
+#[tokio::test]
+async fn a_note_edited_while_the_model_thinks_makes_the_verdict_a_no_op() {
+    let (db, _dir) = test_db().await;
+    let db = Arc::new(db);
+    let repo = Repo::git();
+    pending_note(&db, &repo, "n1", BODY).await;
+    let provider = ScriptedProvider::saying(&[&verdict("needs_human", "Please look.")]);
+    let edit_db = db.clone();
+    provider.during(Arc::new(move || {
+        let db = edit_db.clone();
+        Box::pin(async move {
+            db.update_page_content("n1", "Rewritten while judging.", &[], "edit")
+                .await
+                .unwrap();
+        })
+    }));
+
+    let report = slice(&db, &provider, 3).await;
+    assert_eq!(report.needs_human, 0);
+    assert_eq!(report.skipped, 1);
+    let row = only(&db, "n1").await;
+    assert_eq!(row.state, CODE_BASIS_STATE_PENDING);
+    assert_eq!(row.ai_verdict, None, "the verdict was about older wording");
+    assert_eq!(recheck_columns(&db, "n1").await, CLEAR);
+
+    // The next tick judges the note as it reads now.
+    let next = ScriptedProvider::saying(&[&verdict("needs_human", "Now look.")]);
+    assert_eq!(slice(&db, &next, 3).await.needs_human, 1);
+    assert!(next.user_prompt(0).contains("Rewritten while judging."));
+}
+
+#[tokio::test]
+async fn a_caller_can_judge_a_row_with_its_own_model() {
+    use crate::code_basis_recheck::{
+        apply_code_basis_judgement, prepare_code_basis_ask, Applied, Judgement,
+    };
+    let (db, _dir) = test_db().await;
+    let repo = Repo::git();
+    pending_note(&db, &repo, "n1", BODY).await;
+    let rows = db.list_code_basis_recheck_candidates(10).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let ask = prepare_code_basis_ask(&db, &rows[0])
+        .await
+        .unwrap()
+        .expect("a pending row with findable lines is asked about");
+    assert!(ask.prompt.contains("NOTE TITLE: Note n1"));
+    assert!(ask.prompt.contains(">12 | line 12 changed\n"));
+    assert_eq!(
+        ask.key,
+        format!("{}@v{}", ask.code_digest, ask.page_version)
+    );
+
+    let judgement = Judgement {
+        verdict: Verdict::NeedsHuman,
+        explanation: "The caller's model looked.".into(),
+    };
+    assert_eq!(
+        apply_code_basis_judgement(&db, &ask, &judgement)
+            .await
+            .unwrap(),
+        Applied::NeedsHuman
+    );
+    let row = only(&db, "n1").await;
+    assert_eq!(
+        row.explanation.as_deref(),
+        Some("The caller's model looked.")
+    );
+    assert_eq!(row.ai_verdict.as_deref(), Some("needs_human"));
+
+    // Judged for this change and this wording: there is nothing more to ask.
+    let rows = db.list_code_basis_recheck_candidates(10).await.unwrap();
+    assert!(prepare_code_basis_ask(&db, &rows[0])
+        .await
+        .unwrap()
+        .is_none());
+    // A stale answer about the old wording lands nowhere.
+    db.update_page_content("n1", "Rewritten.", &[], "edit")
+        .await
+        .unwrap();
+    assert_eq!(
+        apply_code_basis_judgement(&db, &ask, &judgement)
+            .await
+            .unwrap(),
+        Applied::Superseded
+    );
+}
