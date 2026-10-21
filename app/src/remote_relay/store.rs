@@ -147,19 +147,6 @@ impl Store {
         self.with_lock(read_profile)
     }
 
-    /// `load` for background checks. Another task holds the lock only while it
-    /// reads or saves, so a short wait beats reporting Busy: a Busy read in the
-    /// connection monitor turns Web access off.
-    pub fn load_when_free(&self) -> Result<Option<Profile>, StoreError> {
-        for _ in 0..BUSY_RETRIES {
-            match self.load() {
-                Err(StoreError::Busy) => std::thread::sleep(BUSY_WAIT),
-                other => return other,
-            }
-        }
-        self.load()
-    }
-
     /// Select an explicit scope without enabling exposure. A connected or
     /// pending-revocation profile cannot silently be replaced by a new scope.
     pub fn configure(&self, expected: Option<&str>, space: &str) -> Result<Profile, StoreError> {
@@ -314,10 +301,21 @@ impl Store {
         }
         let lock = options.open(&lock_path).map_err(|_| StoreError::Storage)?;
         private_file(&lock)?;
-        lock.try_lock().map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => StoreError::Busy,
-            std::fs::TryLockError::Error(_) => StoreError::Storage,
-        })?;
+        // Another task holds the lock only while it reads or saves, so wait
+        // that out instead of failing: a Busy read in the connection monitor
+        // turns Web access off, and one in the settings panel shows an error.
+        let mut attempts = 0;
+        loop {
+            match lock.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if attempts < BUSY_RETRIES => {
+                    attempts += 1;
+                    std::thread::sleep(BUSY_WAIT);
+                }
+                Err(std::fs::TryLockError::WouldBlock) => return Err(StoreError::Busy),
+                Err(std::fs::TryLockError::Error(_)) => return Err(StoreError::Storage),
+            }
+        }
         // Arm only after acquisition; a failed contender must never unlock.
         let _guard = LockGuard::hold(lock);
         operation(&self.directory.join(FILE_NAME))

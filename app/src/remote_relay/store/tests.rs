@@ -513,7 +513,7 @@ fn windows_dpapi_round_trip_stores_no_plaintext_and_has_no_plaintext_fallback() 
 }
 
 #[test]
-fn background_read_waits_out_a_brief_lock_and_reports_a_held_one() {
+fn a_brief_lock_is_waited_out_and_a_held_one_reports_busy() {
     let (_dir, store) = fixture();
     let original = store.configure(None, "review").unwrap();
     let lock = OpenOptions::new()
@@ -525,14 +525,13 @@ fn background_read_waits_out_a_brief_lock_and_reports_a_held_one() {
     #[cfg(unix)]
     let inherited = lock.try_clone().unwrap();
     assert_eq!(store.load().unwrap_err(), StoreError::Busy);
-    assert_eq!(store.load_when_free().unwrap_err(), StoreError::Busy);
 
     let release = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(60));
         lock.unlock().unwrap();
     });
     assert_eq!(
-        store.load_when_free().unwrap().unwrap().revision(),
+        store.load().unwrap().unwrap().revision(),
         original.revision()
     );
     release.join().unwrap();
