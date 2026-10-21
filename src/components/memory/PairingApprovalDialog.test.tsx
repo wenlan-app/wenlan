@@ -159,7 +159,7 @@ describe("PairingApprovalDialog", () => {
     expect(search).toBeChecked();
     expect(write).not.toBeChecked();
     expect(search).toHaveAccessibleDescription("Search and read. It cannot change anything.");
-    expect(write).toHaveAccessibleDescription("It can also add, edit and delete. It asks you before deleting.");
+    expect(write).toHaveAccessibleDescription("It can also add, edit and delete. The AI app asks you before deleting.");
     expect(screen.getByRole("dialog").textContent).not.toMatch(/[—–]| - /);
   });
 
