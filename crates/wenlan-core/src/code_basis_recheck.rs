@@ -3,16 +3,17 @@
 //!
 //! A code basis row goes `pending` when the lines a note relies on changed in
 //! a way that is not whitespace only ([`crate::code_basis`]). Most such changes
-//! do not make the note wrong, and many of the rest have an obvious fix, so a
-//! person is only needed when the code and the note contradict each other and
-//! the code cannot say why. This module is the background job that asks the
-//! model once per change and acts on the answer:
+//! do not make the note wrong, so a person is only needed when the code and the
+//! note contradict each other and the code cannot say why. This module is the
+//! background job that asks the model once per change. The model only judges:
+//! rewriting a note is the main model's work (the on-demand steep, through a
+//! revision card), and nothing in this job writes a page.
 //!
 //! | verdict       | what Wenlan does                                                        |
 //! |---------------|-------------------------------------------------------------------------|
 //! | `no_impact`   | confirms the row (`confirmed_by = model_recheck`)                       |
-//! | `update`      | rewrites the note (`edited_by = code_recheck`) and re-anchors the row in the same write |
-//! | `needs_human` | leaves the row `pending` and stores one sentence the app shows           |
+//! | `stale`       | leaves the row `pending`; stores the sentence and the verdict for the steep pass ([`crate::db::MemoryDB::list_code_basis_stale`]) |
+//! | `needs_human` | leaves the row `pending`; stores the sentence and the verdict for a person |
 //! | no verdict    | leaves the row alone and tries again later, at most [`RECHECK_MAX_ATTEMPTS`] times per change |
 //!
 //! "Per change" is the digest of the changed lines as they read now: a file
@@ -29,19 +30,15 @@
 
 use crate::code_anchor::{self, CodeAnchor, LineSpan, Relocation};
 use crate::code_basis::{
-    read_code_file_stamped, resolve_code_path, CodeBasisError, FileStamp, PreparedCodeBasis,
-    MAX_CODE_FILE_BYTES,
+    read_code_file_stamped, resolve_code_path, CodeBasisError, FileStamp, MAX_CODE_FILE_BYTES,
 };
-use crate::db::{BasisWrite, CodeBasisRow, MemoryDB};
+use crate::db::{CodeBasisRow, MemoryDB};
 use crate::error::WenlanError;
 use crate::llm_provider::{LlmProvider, LlmRequest};
-use crate::post_write::{page_write, PageWrite, WriteOutcome};
 use crate::prompts::PromptRegistry;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use wenlan_types::requests::UpdatePageRequest;
-use wenlan_types::{CodeBasisInput, CodeBasisLocator};
+use wenlan_types::CodeBasisLocator;
 
 /// Rows one slice asks the model about (one model call each).
 pub const RECHECK_ROWS_PER_SLICE: usize = 3;
@@ -52,9 +49,6 @@ pub const RECHECK_MAX_ATTEMPTS: i64 = 3;
 /// `page_code_basis.confirmed_by` for a row the model settled as `no_impact`.
 pub const RECHECK_CONFIRMED_BY: &str = "model_recheck";
 
-/// `pages.changelog` `edited_by` and `agent` for a note the model updated.
-pub const RECHECK_EDITED_BY: &str = "code_recheck";
-
 /// Pending rows one slice looks through to find `limit` worth asking about.
 const CANDIDATE_SCAN: usize = 60;
 
@@ -62,21 +56,11 @@ const CANDIDATE_SCAN: usize = 60;
 const CONTEXT_LINES: u32 = 3;
 
 /// Most lines of one excerpt shown to the model, and most characters of one
-/// line. An excerpt cut by either is marked, and then `update` is not allowed:
-/// the model cannot judge what it cannot see.
+/// line. An excerpt cut by either is marked as cut in the prompt.
 const MAX_EXCERPT_LINES: usize = 200;
 pub(crate) const MAX_LINE_CHARS: usize = 400;
 
-/// The model rewrites the whole note for `update`; a longer note than this is
-/// left to `no_impact` or `needs_human`.
-const MAX_REWRITE_BODY_CHARS: usize = 4_000;
-
-/// A rewrite that shrinks or grows the note past these bounds (percent of the
-/// old length) is not "only what the change makes wrong"; it is not applied.
-const MIN_REWRITE_PERCENT: usize = 60;
-const MAX_REWRITE_PERCENT: usize = 160;
-
-const MAX_OUTPUT_TOKENS: u32 = 4_096;
+const MAX_OUTPUT_TOKENS: u32 = 1_024;
 const MODEL_TIMEOUT: Duration = Duration::from_secs(90);
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const MAX_EXPLANATION_CHARS: usize = 300;
@@ -90,12 +74,11 @@ pub(crate) const UNRESOLVED_DIGEST: &str = "unresolved";
 pub struct RecheckSliceReport {
     /// Rows confirmed because the change does not touch what the note says.
     pub no_impact: usize,
-    /// Notes rewritten from the code (and their rows re-anchored).
-    pub updated: usize,
+    /// Rows left `pending` because the note states something the code now
+    /// contradicts; they wait for the main model's steep pass.
+    pub stale: usize,
     /// Rows left `pending` with a sentence for a person.
     pub needs_human: usize,
-    /// Rewrites staged as a revision card because the note is review-locked.
-    pub staged: usize,
     /// Model calls that gave no usable answer, or whose answer could not be
     /// applied; the row is tried again later, within the attempt cap.
     pub no_verdict: usize,
@@ -108,9 +91,9 @@ pub struct RecheckSliceReport {
 }
 
 impl RecheckSliceReport {
-    /// Whether the slice settled or explained at least one row.
+    /// Whether the slice settled or judged at least one row.
     pub fn progressed(&self) -> bool {
-        self.no_impact + self.updated + self.needs_human + self.staged > 0
+        self.no_impact + self.stale + self.needs_human > 0
     }
 }
 
@@ -118,16 +101,33 @@ impl RecheckSliceReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     NoImpact,
-    Update { content: String },
+    Stale,
     NeedsHuman,
 }
+
+impl Verdict {
+    /// The word stored in `page_code_basis.recheck_verdict` for a verdict that
+    /// leaves the row `pending` (`None` for `no_impact`, which confirms it).
+    fn stored(&self) -> Option<&'static str> {
+        match self {
+            Verdict::NoImpact => None,
+            Verdict::Stale => Some(STORED_STALE),
+            Verdict::NeedsHuman => Some(STORED_NEEDS_HUMAN),
+        }
+    }
+}
+
+/// `page_code_basis.recheck_verdict` for a note the code now contradicts.
+pub const STORED_STALE: &str = "stale";
+/// `page_code_basis.recheck_verdict` for a note only a person can judge.
+pub const STORED_NEEDS_HUMAN: &str = "needs_human";
 
 /// A validated answer: the verdict and one sentence in the note's language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Judgement {
     pub verdict: Verdict,
     /// One line, whitespace collapsed, at most [`MAX_EXPLANATION_CHARS`]. Empty
-    /// only for `no_impact` and `update`, which do not need one.
+    /// only for `no_impact`, which does not need one.
     pub explanation: String,
 }
 
@@ -136,8 +136,6 @@ struct RawJudgement {
     verdict: String,
     #[serde(default)]
     explanation: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
 }
 
 fn one_line(text: &str) -> String {
@@ -148,40 +146,26 @@ fn one_line(text: &str) -> String {
 /// Read the model's reply as a [`Judgement`], or `None` ("no verdict") for
 /// anything that is not one strict JSON object with a known verdict.
 ///
-/// `needs_human` must carry its sentence. `update` must carry the new note
-/// body. An `update` when `update_allowed` is false (the lines as cited are
-/// not available, or too long to show) is turned into `needs_human` when the
-/// model explained itself, since a note it thinks is wrong is exactly what a
-/// person should look at, and is no verdict otherwise.
-pub fn parse_judgement(raw: &str, update_allowed: bool) -> Option<Judgement> {
+/// `stale` and `needs_human` must carry their sentence: it is what the person
+/// or the steep pass reads.
+pub fn parse_judgement(raw: &str) -> Option<Judgement> {
     let cleaned = crate::engine::strip_think_tags(raw);
     let json = crate::engine::extract_json(&cleaned)?;
     let parsed: RawJudgement = serde_json::from_str(json).ok()?;
     let explanation = one_line(parsed.explanation.as_deref().unwrap_or(""));
-    match parsed.verdict.trim() {
-        "no_impact" => Some(Judgement {
-            verdict: Verdict::NoImpact,
-            explanation,
-        }),
-        "needs_human" => (!explanation.is_empty()).then_some(Judgement {
-            verdict: Verdict::NeedsHuman,
-            explanation,
-        }),
-        "update" => {
-            if !update_allowed {
-                return (!explanation.is_empty()).then_some(Judgement {
-                    verdict: Verdict::NeedsHuman,
-                    explanation,
-                });
-            }
-            let content = parsed.content?;
-            (!content.trim().is_empty()).then_some(Judgement {
-                verdict: Verdict::Update { content },
-                explanation,
-            })
-        }
-        _ => None,
+    let verdict = match parsed.verdict.trim() {
+        "no_impact" => Verdict::NoImpact,
+        "stale" => Verdict::Stale,
+        "needs_human" => Verdict::NeedsHuman,
+        _ => return None,
+    };
+    if verdict != Verdict::NoImpact && explanation.is_empty() {
+        return None;
     }
+    Some(Judgement {
+        verdict,
+        explanation,
+    })
 }
 
 /// Lines of code rendered for the prompt, with their line numbers.
@@ -251,7 +235,6 @@ struct PromptInput<'a> {
     cited: Option<&'a Excerpt>,
     now_span: LineSpan,
     now: &'a Excerpt,
-    update_allowed: bool,
 }
 
 fn build_user_prompt(input: &PromptInput<'_>) -> String {
@@ -285,14 +268,7 @@ fn build_user_prompt(input: &PromptInput<'_>) -> String {
     ));
     prompt.push_str(&input.now.text);
     prompt.push_str("NOW>>>\n\n");
-    if input.update_allowed {
-        prompt.push_str("Choose no_impact, update or needs_human.\n");
-    } else {
-        prompt.push_str(
-            "update is NOT allowed for this note (the lines as cited are missing or cut, or \
-             the note is too long to rewrite here). Choose no_impact or needs_human.\n",
-        );
-    }
+    prompt.push_str("Choose no_impact, stale or needs_human.\n");
     prompt
 }
 
@@ -322,8 +298,6 @@ pub(crate) async fn read_git_blob(repo_root: &str, blob: &str) -> Option<String>
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     let mut child = command.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
     let run = async {
@@ -419,12 +393,6 @@ struct Ask {
     digest: String,
     attempts: i64,
     prompt: String,
-    update_allowed: bool,
-    /// The page as the model saw it.
-    page_version: i64,
-    source_revision: i64,
-    body: String,
-    source_memory_ids: Vec<String>,
 }
 
 enum Prepared {
@@ -434,17 +402,17 @@ enum Prepared {
     Ask(Box<Ask>),
 }
 
-/// Whether the model has already settled this change or used up its attempts.
+/// Whether the model has already judged this change or used up its attempts.
 fn already_handled(row: &CodeBasisRow, digest: &str) -> bool {
     if row.recheck.digest.as_deref() != Some(digest) {
         return false;
     }
-    let has_note = row
+    let has_verdict = row
         .recheck
-        .note
+        .verdict
         .as_deref()
-        .is_some_and(|note| !note.trim().is_empty());
-    has_note || row.recheck.attempts >= RECHECK_MAX_ATTEMPTS
+        .is_some_and(|verdict| !verdict.trim().is_empty());
+    has_verdict || row.recheck.attempts >= RECHECK_MAX_ATTEMPTS
 }
 
 async fn prepare_recheck_input(db: &MemoryDB, row: &CodeBasisRow) -> Result<Prepared, WenlanError> {
@@ -476,11 +444,6 @@ async fn prepare_recheck_input(db: &MemoryDB, row: &CodeBasisRow) -> Result<Prep
         0
     };
 
-    // The source revision before the page, so a source attached in between is
-    // caught by the write's fence.
-    let Some(source_revision) = db.try_get_page_source_revision(&row.page_id).await? else {
-        return Ok(Prepared::Skip);
-    };
     let Some(page) = db.get_page(&row.page_id).await? else {
         return Ok(Prepared::Skip);
     };
@@ -496,9 +459,6 @@ async fn prepare_recheck_input(db: &MemoryDB, row: &CodeBasisRow) -> Result<Prep
         current.span.end.saturating_add(CONTEXT_LINES),
         Some(current.span),
     );
-    let update_allowed = cited.as_ref().is_some_and(|cited| !cited.truncated)
-        && !now.truncated
-        && page.content.chars().count() <= MAX_REWRITE_BODY_CHARS;
     let prompt = build_user_prompt(&PromptInput {
         title: &page.title,
         body: &page.content,
@@ -510,18 +470,12 @@ async fn prepare_recheck_input(db: &MemoryDB, row: &CodeBasisRow) -> Result<Prep
         cited: cited.as_ref(),
         now_span: current.span,
         now: &now,
-        update_allowed,
     });
     Ok(Prepared::Ask(Box::new(Ask {
         row: row.clone(),
         digest,
         attempts,
         prompt,
-        update_allowed,
-        page_version: page.version,
-        source_revision,
-        body: page.content,
-        source_memory_ids: page.source_memory_ids,
     })))
 }
 
@@ -550,43 +504,26 @@ async fn ask_model(
             return None;
         }
     };
-    let judgement = parse_judgement(&reply, ask.update_allowed);
+    let judgement = parse_judgement(&reply);
     if judgement.is_none() {
         log::warn!("[code_basis_recheck] reply was not a usable verdict");
     }
     judgement
 }
 
-/// Whether `rewrite` stays close enough in size to `body` to be "only what the
-/// change makes wrong".
-fn plausible_rewrite(body: &str, rewrite: &str) -> bool {
-    let (old, new) = (body.chars().count(), rewrite.chars().count());
-    old > 0 && new * 100 >= old * MIN_REWRITE_PERCENT && new * 100 <= old * MAX_REWRITE_PERCENT
-}
-
 enum Applied {
     NoImpact,
-    Updated,
-    NeedsHuman,
-    Staged,
-    /// The answer could not be used or applied; the attempt is recorded.
-    NoVerdict,
-    /// A concurrent change made the answer a no-op; nothing is recorded.
+    /// Judged `stale`: the row stays `pending` for the steep pass.
     Stale,
-}
-
-async fn record(
-    db: &MemoryDB,
-    ask: &Ask,
-    note: Option<&str>,
-    attempts: i64,
-) -> Result<bool, WenlanError> {
-    db.record_code_basis_recheck(&ask.row, &ask.digest, note, attempts)
-        .await
+    NeedsHuman,
+    /// A concurrent change made the answer a no-op; nothing is recorded.
+    Superseded,
 }
 
 async fn record_no_verdict(db: &MemoryDB, ask: &Ask) -> Result<(), WenlanError> {
-    record(db, ask, None, ask.attempts + 1).await.map(|_| ())
+    db.record_code_basis_recheck(&ask.row, &ask.digest, None, None, ask.attempts + 1)
+        .await
+        .map(|_| ())
 }
 
 /// Read the file again and confirm it still reads the way the model was told.
@@ -618,137 +555,43 @@ async fn confirm_row(
         .await
     {
         Ok(_) => Ok(Applied::NoImpact),
-        Err(CodeBasisError::NotFound) => Ok(Applied::Stale),
+        Err(CodeBasisError::NotFound) => Ok(Applied::Superseded),
         // The row changed under the call, or its new place is taken by another
         // reliance of the note. Counted against the attempts either way; the
         // record itself only lands while the row still holds the anchor.
         Err(CodeBasisError::Conflict(_)) => {
             record_no_verdict(db, ask).await?;
-            Ok(Applied::Stale)
+            Ok(Applied::Superseded)
         }
         Err(other) => Err(other.into()),
     }
 }
 
-async fn apply_update(
-    db: &MemoryDB,
-    ask: &Ask,
-    current: &CurrentCode,
-    judgement: &Judgement,
-    content: &str,
-    knowledge_path: Option<&Path>,
-) -> Result<Applied, WenlanError> {
-    if content == ask.body {
-        // The model rewrote nothing: the change does not touch the note.
-        return confirm_row(db, ask, current).await;
-    }
-    if !plausible_rewrite(&ask.body, content) {
-        log::warn!(
-            "[code_basis_recheck] rewrite of {} is not a small correction; not applied",
-            ask.row.page_id
-        );
-        record_no_verdict(db, ask).await?;
-        return Ok(Applied::NoVerdict);
-    }
-    let reference = &ask.row.reference;
-    let prepared = PreparedCodeBasis {
-        input: CodeBasisInput {
-            repo_root: reference.repo_root.clone(),
-            path: reference.path.clone(),
-            line_start: current.span.start,
-            line_end: current.span.end,
-        },
-        anchor: current.anchor.clone(),
-        stamp: current.stamp,
-        cited_blob: Some(current.blob.clone()),
-    };
-    let written = page_write(
-        db,
-        PageWrite::AgentUpdate {
-            page_id: &ask.row.page_id,
-            req: UpdatePageRequest {
-                content: content.to_string(),
-                source_memory_ids: ask.source_memory_ids.clone(),
-                expected_version: Some(ask.page_version),
-                caller_id: None,
-                operation_id: None,
-            },
-            edited_by: RECHECK_EDITED_BY,
-            agent: Some(RECHECK_EDITED_BY),
-            expected_source_revision: ask.source_revision,
-            knowledge_path,
-            basis: BasisWrite {
-                actor: RECHECK_EDITED_BY.to_string(),
-                code_basis: vec![prepared],
-                ..BasisWrite::default()
-            },
-        },
-    )
-    .await;
-    let result = match written {
-        Ok(result) => result,
-        Err(error) => {
-            log::warn!(
-                "[code_basis_recheck] update of {} was refused: {error}",
-                ask.row.page_id
-            );
-            record_no_verdict(db, ask).await?;
-            return Ok(Applied::NoVerdict);
-        }
-    };
-    match result.outcome {
-        WriteOutcome::Wrote => Ok(Applied::Updated),
-        // The body came out identical to the stored one after normalization:
-        // nothing to rewrite, and no transaction for the row to ride on.
-        WriteOutcome::Unchanged => confirm_row(db, ask, current).await,
-        WriteOutcome::Gated => {
-            // The note is review-locked: the rewrite waits as a card for its
-            // owner. The row stays pending; the sentence stands in for "the
-            // model has looked", and without one the attempts are used up so
-            // the card is not staged again.
-            let note =
-                (!judgement.explanation.is_empty()).then_some(judgement.explanation.as_str());
-            let attempts = if note.is_some() {
-                ask.attempts
-            } else {
-                RECHECK_MAX_ATTEMPTS
-            };
-            record(db, ask, note, attempts).await?;
-            Ok(Applied::Staged)
-        }
-        // The note moved on while the model was thinking, or the write lost its
-        // races: try again on a later tick, within the cap.
-        WriteOutcome::Refused | WriteOutcome::Contended => {
-            record_no_verdict(db, ask).await?;
-            Ok(Applied::NoVerdict)
-        }
-    }
-}
-
-async fn apply(
-    db: &MemoryDB,
-    ask: &Ask,
-    judgement: &Judgement,
-    knowledge_path: Option<&Path>,
-) -> Result<Applied, WenlanError> {
+async fn apply(db: &MemoryDB, ask: &Ask, judgement: &Judgement) -> Result<Applied, WenlanError> {
     // The verdict is about the lines the model was shown. If the file moved on
     // since, it says nothing about them; the row is judged again.
     let Some(current) = reread_unchanged(ask).await else {
-        return Ok(Applied::Stale);
+        return Ok(Applied::Superseded);
     };
-    match &judgement.verdict {
-        Verdict::NoImpact => confirm_row(db, ask, &current).await,
-        Verdict::Update { content } => {
-            apply_update(db, ask, &current, judgement, content, knowledge_path).await
-        }
-        Verdict::NeedsHuman => {
-            if record(db, ask, Some(&judgement.explanation), ask.attempts).await? {
-                Ok(Applied::NeedsHuman)
-            } else {
-                Ok(Applied::Stale)
-            }
-        }
-    }
+    let Some(stored) = judgement.verdict.stored() else {
+        return confirm_row(db, ask, &current).await;
+    };
+    // `stale` and `needs_human` both leave the row pending and say so; no page
+    // is touched.
+    let landed = db
+        .record_code_basis_recheck(
+            &ask.row,
+            &ask.digest,
+            Some(&judgement.explanation),
+            Some(stored),
+            ask.attempts,
+        )
+        .await?;
+    Ok(match (landed, &judgement.verdict) {
+        (false, _) => Applied::Superseded,
+        (true, Verdict::Stale) => Applied::Stale,
+        (true, _) => Applied::NeedsHuman,
+    })
 }
 
 /// One bounded slice: look through the pending rows (rows the model has not
@@ -762,7 +605,6 @@ pub async fn run_code_basis_recheck_slice(
     db: &MemoryDB,
     provider: &Arc<dyn LlmProvider>,
     prompts: &PromptRegistry,
-    knowledge_path: Option<&Path>,
     limit: usize,
 ) -> Result<RecheckSliceReport, WenlanError> {
     let mut report = RecheckSliceReport::default();
@@ -785,7 +627,13 @@ pub async fn run_code_basis_recheck_slice(
             Ok(Prepared::MarkUnresolved) => {
                 report.skipped += 1;
                 let _ = db
-                    .record_code_basis_recheck(&row, UNRESOLVED_DIGEST, None, RECHECK_MAX_ATTEMPTS)
+                    .record_code_basis_recheck(
+                        &row,
+                        UNRESOLVED_DIGEST,
+                        None,
+                        None,
+                        RECHECK_MAX_ATTEMPTS,
+                    )
                     .await;
                 continue;
             }
@@ -806,13 +654,11 @@ pub async fn run_code_basis_recheck_slice(
             }
             continue;
         };
-        match apply(db, &ask, &judgement, knowledge_path).await {
+        match apply(db, &ask, &judgement).await {
             Ok(Applied::NoImpact) => report.no_impact += 1,
-            Ok(Applied::Updated) => report.updated += 1,
+            Ok(Applied::Stale) => report.stale += 1,
             Ok(Applied::NeedsHuman) => report.needs_human += 1,
-            Ok(Applied::Staged) => report.staged += 1,
-            Ok(Applied::NoVerdict) => report.no_verdict += 1,
-            Ok(Applied::Stale) => report.skipped += 1,
+            Ok(Applied::Superseded) => report.skipped += 1,
             Err(error) => {
                 log::warn!(
                     "[code_basis_recheck] could not apply a verdict to {}: {error}",

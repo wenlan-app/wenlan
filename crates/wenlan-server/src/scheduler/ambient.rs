@@ -668,7 +668,6 @@ pub(super) async fn run_ambient_job(
                 db,
                 provider,
                 prompts,
-                knowledge_path,
                 CODE_BASIS_RECHECK_ROWS_PER_SLICE,
             )
             .await

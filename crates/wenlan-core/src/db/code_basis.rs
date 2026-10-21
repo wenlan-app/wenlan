@@ -53,6 +53,7 @@ pub(super) const PAGE_CODE_BASIS_DDL: &str = "
         file_mtime_ns INTEGER,
         cited_blob TEXT,
         recheck_note TEXT,
+        recheck_verdict TEXT,
         recheck_digest TEXT,
         recheck_attempts INTEGER NOT NULL DEFAULT 0,
         added_by TEXT NOT NULL,
@@ -62,13 +63,17 @@ pub(super) const PAGE_CODE_BASIS_DDL: &str = "
     CREATE INDEX IF NOT EXISTS page_code_basis_by_page ON page_code_basis(page_id, state);";
 
 /// What the background model recheck has recorded about a row
-/// (`crate::code_basis_recheck`). All three clear when the row is confirmed,
+/// (`crate::code_basis_recheck`). All four clear when the row is confirmed,
 /// removed or re-anchored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CodeBasisRecheckState {
-    /// The sentence the model left for a person (`needs_human`). Empty or
+    /// The sentence the model left about the current change: what changed
+    /// (`needs_human`) or what the note should now say (`stale`). Empty or
     /// absent: the model has not judged the current change.
     pub note: Option<String>,
+    /// What the model concluded: `stale` or `needs_human`. Absent while the
+    /// model has not judged the current change (or gave no verdict).
+    pub verdict: Option<String>,
     /// The digest of the changed lines the model was last asked about, so a
     /// further change to the file is judged afresh.
     pub digest: Option<String>,
@@ -113,13 +118,15 @@ pub enum CodeBasisVerdict {
 }
 
 const REF_COLUMNS: &str =
-    "repo_root, path, line_start, line_end, state, unavailable_reason, changed_at, recheck_note";
+    "repo_root, path, line_start, line_end, state, unavailable_reason, changed_at, recheck_note, \
+     recheck_verdict";
 
 fn ref_from(row: &libsql::Row) -> Result<CodeBasisRef, libsql::Error> {
     let state: String = row.get(4)?;
     let reason: Option<String> = row.get(5)?;
     let changed_at: Option<i64> = row.get(6)?;
     let recheck_note: Option<String> = row.get(7)?;
+    let recheck_verdict: Option<String> = row.get(8)?;
     Ok(CodeBasisRef {
         repo_root: row.get(0)?,
         path: row.get(1)?,
@@ -137,12 +144,19 @@ fn ref_from(row: &libsql::Row) -> Result<CodeBasisRef, libsql::Error> {
         } else {
             None
         },
-        // The model's sentence means something only while the row waits for a
-        // person.
+        // The model's sentence and verdict mean something only while the row
+        // waits for the main model or a person.
         explanation: if state == CODE_BASIS_STATE_PENDING {
             recheck_note
                 .map(|note| note.trim().to_string())
                 .filter(|note| !note.is_empty())
+        } else {
+            None
+        },
+        ai_verdict: if state == CODE_BASIS_STATE_PENDING {
+            recheck_verdict
+                .map(|verdict| verdict.trim().to_string())
+                .filter(|verdict| !verdict.is_empty())
         } else {
             None
         },
@@ -158,8 +172,8 @@ fn decode(context: &'static str) -> impl Fn(libsql::Error) -> WenlanError {
 /// page id, the note's title, the file stamp and the model recheck state.
 pub(crate) const ROW_SELECT: &str =
     "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
-    b.unavailable_reason, b.changed_at, b.recheck_note, b.anchor_json, b.page_id, c.title, \
-    b.file_len, b.file_mtime_ns, b.recheck_digest, b.recheck_attempts \
+    b.unavailable_reason, b.changed_at, b.recheck_note, b.recheck_verdict, b.anchor_json, \
+    b.page_id, c.title, b.file_len, b.file_mtime_ns, b.recheck_digest, b.recheck_attempts \
     FROM page_code_basis b JOIN pages c ON c.id = b.page_id";
 
 fn stamp_from(len: Option<i64>, mtime_ns: Option<i64>) -> Option<FileStamp> {
@@ -170,7 +184,7 @@ fn stamp_from(len: Option<i64>, mtime_ns: Option<i64>) -> Option<FileStamp> {
 }
 
 pub(crate) fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql::Error> {
-    let anchor_json: String = row.get(8)?;
+    let anchor_json: String = row.get(9)?;
     // An anchor that no longer parses cannot be compared against; leave the
     // row out of checks rather than mislabel it.
     let Ok(anchor) = serde_json::from_str::<CodeAnchor>(&anchor_json) else {
@@ -179,15 +193,16 @@ pub(crate) fn row_from(row: &libsql::Row) -> Result<Option<CodeBasisRow>, libsql
     Ok(Some(CodeBasisRow {
         recheck: CodeBasisRecheckState {
             note: row.get::<Option<String>>(7)?,
-            digest: row.get::<Option<String>>(13)?,
-            attempts: row.get::<Option<i64>>(14)?.unwrap_or(0),
+            verdict: row.get::<Option<String>>(8)?,
+            digest: row.get::<Option<String>>(14)?,
+            attempts: row.get::<Option<i64>>(15)?.unwrap_or(0),
         },
         reference: ref_from(row)?,
         anchor,
         anchor_json,
-        page_id: row.get(9)?,
-        title: row.get(10)?,
-        stamp: stamp_from(row.get::<Option<i64>>(11)?, row.get::<Option<i64>>(12)?),
+        page_id: row.get(10)?,
+        title: row.get(11)?,
+        stamp: stamp_from(row.get::<Option<i64>>(12)?, row.get::<Option<i64>>(13)?),
     }))
 }
 
@@ -279,7 +294,8 @@ pub(super) async fn upsert_code_basis_on_conn(
                file_len = excluded.file_len, file_mtime_ns = excluded.file_mtime_ns, \
                cited_blob = excluded.cited_blob, \
                state = 'ok', unavailable_reason = NULL, changed_at = NULL, \
-               recheck_note = NULL, recheck_digest = NULL, recheck_attempts = 0",
+               recheck_note = NULL, recheck_verdict = NULL, recheck_digest = NULL, \
+               recheck_attempts = 0",
             libsql::params![
                 page_id,
                 input.repo_root.as_str(),
@@ -449,7 +465,7 @@ impl MemoryDB {
             .map_err(decode("code_basis_locators_by_page"))?
         {
             let reference = ref_from(&row).map_err(decode("code_basis_locators_by_page"))?;
-            let page_id: String = row.get(8).map_err(decode("code_basis_locators_by_page"))?;
+            let page_id: String = row.get(9).map_err(decode("code_basis_locators_by_page"))?;
             out.entry(page_id)
                 .or_default()
                 .push(CodeBasisLocator::from(&reference));
@@ -487,7 +503,7 @@ impl MemoryDB {
                 .map_err(decode("list_non_ok_code_basis"))?
             {
                 let reference = ref_from(&row).map_err(decode("list_non_ok_code_basis"))?;
-                let page_id: String = row.get(8).map_err(decode("list_non_ok_code_basis"))?;
+                let page_id: String = row.get(9).map_err(decode("list_non_ok_code_basis"))?;
                 out.entry(page_id).or_default().push(reference);
             }
         }
@@ -590,8 +606,9 @@ impl MemoryDB {
 
     /// Record what the background model recheck concluded about a `pending`
     /// row without settling it: the digest of the changed lines it was asked
-    /// about, the sentence for a person (if any), and how many attempts at that
-    /// digest ended without a verdict. It lands only while the row still holds
+    /// about, the sentence and the verdict (`stale` or `needs_human`; `None`
+    /// for an attempt that ended without a verdict), and how many attempts at
+    /// that digest ended without a verdict. It lands only while the row still holds
     /// the anchor `row` was read with and is still `pending`; returns whether
     /// it did (a concurrent confirm, write or check wins).
     pub async fn record_code_basis_recheck(
@@ -599,6 +616,7 @@ impl MemoryDB {
         row: &CodeBasisRow,
         digest: &str,
         note: Option<&str>,
+        verdict: Option<&str>,
         attempts: i64,
     ) -> Result<bool, WenlanError> {
         let conn = self.conn.lock().await;
@@ -606,7 +624,8 @@ impl MemoryDB {
         let changed = conn
             .execute(
                 "UPDATE page_code_basis \
-                 SET recheck_note = ?7, recheck_digest = ?8, recheck_attempts = ?9 \
+                 SET recheck_note = ?7, recheck_digest = ?8, recheck_attempts = ?9, \
+                     recheck_verdict = ?10 \
                  WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                    AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6 \
                    AND state = 'pending'",
@@ -619,7 +638,8 @@ impl MemoryDB {
                     row.anchor_json.as_str(),
                     note,
                     digest,
-                    attempts
+                    attempts,
+                    verdict
                 ],
             )
             .await
@@ -628,9 +648,9 @@ impl MemoryDB {
     }
 
     /// Whether the model has looked at every code basis the Brief counts in
-    /// `space` and left a sentence for a person: there is at least one
-    /// `pending` row, every `pending` row carries a note, and no row is
-    /// `unavailable` (those are not the model's to explain).
+    /// `space`: there is at least one `pending` row, every `pending` row has a
+    /// stored verdict, and no row is `unavailable` (those are not the model's
+    /// to judge).
     pub async fn space_code_basis_all_explained(&self, space: &str) -> Result<bool, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
@@ -638,7 +658,7 @@ impl MemoryDB {
                 "SELECT \
                    COALESCE(SUM(CASE WHEN b.state = 'pending' THEN 1 ELSE 0 END), 0), \
                    COALESCE(SUM(CASE WHEN b.state = 'pending' \
-                        AND TRIM(COALESCE(b.recheck_note, '')) <> '' THEN 1 ELSE 0 END), 0), \
+                        AND TRIM(COALESCE(b.recheck_verdict, '')) <> '' THEN 1 ELSE 0 END), 0), \
                    COALESCE(SUM(CASE WHEN b.state = 'unavailable' THEN 1 ELSE 0 END), 0) \
                  FROM page_code_basis b JOIN pages c ON c.id = b.page_id \
                  WHERE c.status = 'active' AND COALESCE(c.kind, 'concept') <> 'entity' \
@@ -660,6 +680,45 @@ impl MemoryDB {
         };
         let (pending, explained, unavailable) = (get(0)?, get(1)?, get(2)?);
         Ok(pending > 0 && explained == pending && unavailable == 0)
+    }
+
+    /// Notes (active, in `space`, or in any Space when `None`) holding a code
+    /// basis that is `pending` and that the background model judged `stale`:
+    /// the note states something the code now contradicts and the correction
+    /// follows from the code. Returns `(page_id, title, row)` ordered by note,
+    /// each row carrying the model's sentence (`explanation`) and verdict
+    /// (`ai_verdict`).
+    ///
+    /// This is the handoff to the on-demand steep: it rewrites these notes with
+    /// the main model through a revision card and confirms the row with the
+    /// existing confirm route. The recheck job never writes a page.
+    pub async fn list_code_basis_stale(
+        &self,
+        space: Option<&str>,
+    ) -> Result<Vec<(String, String, CodeBasisRef)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let sql = format!(
+            "{ROW_SELECT} \
+             WHERE c.status = 'active' AND COALESCE(c.kind, 'concept') <> 'entity' \
+               AND b.state = 'pending' AND b.recheck_verdict = 'stale' \
+               AND (?1 IS NULL OR COALESCE(c.space, ?2) = ?1) \
+             ORDER BY b.page_id, b.added_at, b.repo_root, b.path, b.line_start, b.line_end"
+        );
+        let mut rows = conn
+            .query(&sql, libsql::params![space, UNFILED_SPACE_ID])
+            .await
+            .map_err(decode("list_code_basis_stale"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await.map_err(decode("list_code_basis_stale"))? {
+            out.push((
+                row.get::<String>(10)
+                    .map_err(decode("list_code_basis_stale"))?,
+                row.get::<String>(11)
+                    .map_err(decode("list_code_basis_stale"))?,
+                ref_from(&row).map_err(decode("list_code_basis_stale"))?,
+            ));
+        }
+        Ok(out)
     }
 
     /// The git blob id of the file a code basis was last written or confirmed
@@ -725,9 +784,9 @@ impl MemoryDB {
             .map_err(decode("list_code_basis_needing_attention"))?
         {
             out.push((
-                row.get::<String>(9)
-                    .map_err(decode("list_code_basis_needing_attention"))?,
                 row.get::<String>(10)
+                    .map_err(decode("list_code_basis_needing_attention"))?,
+                row.get::<String>(11)
                     .map_err(decode("list_code_basis_needing_attention"))?,
                 ref_from(&row).map_err(decode("list_code_basis_needing_attention"))?,
             ));
@@ -888,6 +947,7 @@ impl MemoryDB {
             changed_at: None,
             reason: None,
             explanation: None,
+            ai_verdict: None,
         };
         let exists = {
             let mut rows = tx
@@ -938,7 +998,8 @@ impl MemoryDB {
                  confirmed_by = ?10, confirmed_at = ?11, state = 'ok', \
                  unavailable_reason = NULL, changed_at = NULL, \
                  file_len = ?12, file_mtime_ns = ?13, cited_blob = ?14, \
-                 recheck_note = NULL, recheck_digest = NULL, recheck_attempts = 0 \
+                 recheck_note = NULL, recheck_verdict = NULL, recheck_digest = NULL, \
+                 recheck_attempts = 0 \
              WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                AND line_start = ?4 AND line_end = ?5",
             libsql::params![
@@ -1051,7 +1112,8 @@ async fn try_move_row(
         "UPDATE page_code_basis \
          SET line_start = ?7, line_end = ?8, anchor_json = ?9, state = ?10, \
              unavailable_reason = NULL, changed_at = NULL, file_len = ?11, file_mtime_ns = ?12, \
-             recheck_note = NULL, recheck_digest = NULL, recheck_attempts = 0 \
+             recheck_note = NULL, recheck_verdict = NULL, recheck_digest = NULL, \
+             recheck_attempts = 0 \
          WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
            AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
         libsql::params![
@@ -1091,7 +1153,8 @@ async fn apply_verdict(
                  SET state = CASE WHEN state = 'moved' THEN 'moved' ELSE 'ok' END, \
                      unavailable_reason = NULL, changed_at = NULL, \
                      file_len = ?7, file_mtime_ns = ?8, \
-                     recheck_note = NULL, recheck_digest = NULL, recheck_attempts = 0 \
+                     recheck_note = NULL, recheck_verdict = NULL, recheck_digest = NULL, \
+                     recheck_attempts = 0 \
                  WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                    AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
                 libsql::params![

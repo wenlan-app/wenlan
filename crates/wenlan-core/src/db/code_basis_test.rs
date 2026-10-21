@@ -281,7 +281,7 @@ async fn migration_142_adds_cited_blob_to_a_table_that_lacks_it_and_is_a_no_op_o
 #[tokio::test]
 async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_is_a_no_op_otherwise(
 ) {
-    // A database that stopped at 142 holds the table without the three columns.
+    // A database that stopped at 142 holds the table without the four columns.
     let (db, _dir) = test_db_at(142).await;
     let columns = |db: &MemoryDB| {
         let conn = db.conn.clone();
@@ -290,7 +290,8 @@ async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_i
             let mut found = conn
                 .query(
                     "SELECT name FROM pragma_table_info('page_code_basis') \
-                     WHERE name IN ('recheck_note','recheck_digest','recheck_attempts') \
+                     WHERE name IN ('recheck_note','recheck_verdict','recheck_digest', \
+                                   'recheck_attempts') \
                      ORDER BY name",
                     (),
                 )
@@ -332,13 +333,19 @@ async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_i
             .unwrap();
         assert_eq!(
             columns(&db).await,
-            vec!["recheck_attempts", "recheck_digest", "recheck_note"]
+            vec![
+                "recheck_attempts",
+                "recheck_digest",
+                "recheck_note",
+                "recheck_verdict"
+            ]
         );
     }
     let conn = db.conn.lock().await;
     let mut kept = conn
         .query(
-            "SELECT recheck_note, recheck_digest, recheck_attempts, state FROM page_code_basis",
+            "SELECT recheck_note, recheck_digest, recheck_attempts, state, recheck_verdict \
+             FROM page_code_basis",
             (),
         )
         .await
@@ -356,6 +363,7 @@ async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_i
         "pending",
         "the row itself is kept"
     );
+    assert_eq!(row.get::<Option<String>>(4).unwrap(), None);
     let mut version = conn.query("PRAGMA user_version", ()).await.unwrap();
     let user_version: i64 = version.next().await.unwrap().unwrap().get(0).unwrap();
     assert_eq!(user_version, i64::from(crate::db::SCHEMA_VERSION));
@@ -369,14 +377,15 @@ async fn a_fresh_database_has_the_recheck_columns_from_the_ddl() {
     let mut found = conn
         .query(
             "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') \
-             WHERE name IN ('recheck_note','recheck_digest','recheck_attempts')",
+             WHERE name IN ('recheck_note','recheck_verdict','recheck_digest', \
+                              'recheck_attempts')",
             (),
         )
         .await
         .unwrap();
     assert_eq!(
         found.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
-        3
+        4
     );
 }
 

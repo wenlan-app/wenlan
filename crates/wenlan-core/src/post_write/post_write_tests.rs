@@ -6813,7 +6813,6 @@ const WRITER_TABLE: &[(&str, bool, bool, bool)] = &[
     ("page_growth", true, true, true),
     ("refinery_merge", true, true, true),
     ("agent_refresh", true, true, false),
-    ("code_recheck", true, true, false),
     // Persisted in `page_history.edited_by` / `pages.changelog` but never
     // routed through the write gate today — these paths write via the db
     // layer (db.rs `create`/`migration_84`, citations.rs, revision accept).
@@ -7749,7 +7748,6 @@ async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
     let result = page_write(
         &db,
         PageWrite::AgentUpdate {
-            edited_by: "agent_refresh",
             basis: crate::db::BasisWrite::default(),
             page_id: &page_id,
             req: UpdatePageRequest {
@@ -7805,7 +7803,6 @@ async fn space_locked_agent_write_refused_when_note_moves_out_mid_write() {
     let agent_write = page_write(
         &db,
         PageWrite::AgentUpdate {
-            edited_by: "agent_refresh",
             basis: crate::db::BasisWrite {
                 actor: "claude-code".into(),
                 space_guard: Some(crate::read_scope::ReadScope::Space("alpha".into())),
@@ -7955,7 +7952,6 @@ async fn changelog_entry_records_agent_and_numeric_delta() {
             page_write(
                 db,
                 PageWrite::AgentUpdate {
-                    edited_by: "agent_refresh",
                     basis: crate::db::BasisWrite::default(),
                     page_id: &page_id,
                     req: UpdatePageRequest {

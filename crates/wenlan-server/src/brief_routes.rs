@@ -241,7 +241,7 @@ pub async fn handle_read_brief(
 /// bases), and the notes whose code changed are counted. This holds whether or
 /// not the Space has a Brief yet. A failed check leaves the Brief readable
 /// without the count. The flag says the everyday model has already looked at
-/// every one of those code bases and left a sentence for a person.
+/// every one of those code bases.
 async fn code_basis_pending_for(db: &MemoryDB, space: &str) -> (Option<u32>, bool) {
     let count = match wenlan_core::code_basis::brief_code_basis_pending(db, space).await {
         Ok(count) => count,

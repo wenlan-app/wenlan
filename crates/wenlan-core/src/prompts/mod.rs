@@ -202,9 +202,12 @@ mod tests {
         assert_eq!(reg.code_basis_recheck, "Custom recheck");
         // The shipped default names all three verdicts.
         let default = PromptRegistry::default().code_basis_recheck;
-        for verdict in ["no_impact", "update", "needs_human"] {
+        for verdict in ["no_impact", "stale", "needs_human"] {
             assert!(default.contains(verdict), "{verdict}");
         }
+        // The job only judges; the default never offers a rewrite.
+        assert!(!default.contains("\"update\""));
+        assert!(!default.contains("\"content\""));
     }
 
     #[test]

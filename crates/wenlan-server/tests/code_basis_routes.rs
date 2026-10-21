@@ -483,9 +483,9 @@ async fn the_cited_route_serves_the_blob_id_the_row_was_written_or_confirmed_aga
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// The sentence the everyday model leaves for a person reaches the note's own
-/// read while the row is pending, the Brief says every pending note has one,
-/// and a confirm takes it away again.
+/// The sentence and verdict the everyday model leaves reach the note's own read
+/// while the row is pending, the Brief says every pending note was judged, and
+/// a confirm takes both away again.
 #[tokio::test]
 async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() {
     let _guard = data_dir_lock().lock().await;
@@ -502,6 +502,7 @@ async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() 
     // Quiet while the lines are unchanged.
     let read = read_note(&router, &id).await;
     assert!(!read.to_string().contains("explanation"), "{read}");
+    assert!(!read.to_string().contains("ai_verdict"), "{read}");
 
     repo.write(
         "src/lib.rs",
@@ -512,7 +513,7 @@ async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() 
     assert_eq!(rows.len(), 1);
     let sentence = "The note says the span keeps 32 bits on purpose; the code now keeps 48.";
     assert!(db
-        .record_code_basis_recheck(&rows[0], "digest-1", Some(sentence), 1)
+        .record_code_basis_recheck(&rows[0], "digest-1", Some(sentence), Some("stale"), 1)
         .await
         .unwrap());
 
@@ -521,6 +522,11 @@ async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() 
     assert_eq!(basis.len(), 1);
     assert_eq!(basis[0].state, "pending");
     assert_eq!(basis[0].explanation.as_deref(), Some(sentence));
+    assert_eq!(basis[0].ai_verdict.as_deref(), Some("stale"));
+    assert!(
+        read.to_string().contains("\"ai_verdict\":\"stale\""),
+        "{read}"
+    );
 
     let (status, brief) = call(
         &router,
@@ -550,6 +556,7 @@ async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() 
     let read = read_note(&router, &id).await;
     assert_eq!(code_basis_of(&read)[0].state, "ok");
     assert!(!read.to_string().contains("explanation"), "{read}");
+    assert!(!read.to_string().contains("ai_verdict"), "{read}");
 }
 
 #[tokio::test]
