@@ -17,6 +17,7 @@ vi.mock("./PageCanvas", () => ({
 }));
 
 vi.mock("../../lib/tauri", () => ({
+  getResolvedRouting: vi.fn().mockResolvedValue(null),
   getKnowledgeGraph: vi.fn().mockResolvedValue({ entities: [], relations: [], memories: [], memory_links: [], pages: [], page_links: [] }),
   pageReviewSupported: vi.fn().mockResolvedValue("daemon_unsupported"),
   reviewPage: vi.fn(),

@@ -7,6 +7,7 @@ import type { Page, PendingRevisionItem, RefinementProposalSummary } from "../..
 vi.mock("../../../lib/tauri", () => ({
   listPendingRevisions: vi.fn(),
   listRefinements: vi.fn(),
+  getResolvedRouting: vi.fn().mockResolvedValue(null),
 }));
 
 import { listPendingRevisions, listRefinements } from "../../../lib/tauri";

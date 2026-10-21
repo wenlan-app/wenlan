@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { CodeBasisRef, Page } from "../../../lib/tauri";
+import type { CodeBasisRef, Page, ResolvedRouting } from "../../../lib/tauri";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
@@ -11,6 +11,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   confirmPageCodeBasis: vi.fn(),
   removePageCodeBasis: vi.fn(),
   getPageCodeBasisCited: vi.fn(),
+  getResolvedRouting: vi.fn(),
   readCodeLines: vi.fn(),
   readGitBlobLines: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
 import {
   confirmPageCodeBasis,
   getPageCodeBasisCited,
+  getResolvedRouting,
   listPendingRevisions,
   listRefinements,
   readCodeLines,
@@ -35,6 +37,12 @@ const basePage: Page = {
 
 const row = (over: Partial<CodeBasisRef> = {}): CodeBasisRef => ({
   repo_root: "/repo", path: "src/parser.rs", line_start: 10, line_end: 24, state: "pending", changed_at: 5, ...over,
+});
+
+const routing = (source: string): ResolvedRouting => ({
+  everyday: { source, model: null, mode: "auto", pin: null },
+  synthesis: { source: "none", model: null, mode: "auto", pin: null },
+  pool: { anthropic: { configured: source === "anthropic", everyday_model: null, synthesis_model: null }, external: null, on_device: null },
 });
 
 function Harness({ page, onEditToConfirm }: { page: Page; onEditToConfirm: (row: CodeBasisRef) => void }) {
@@ -59,6 +67,8 @@ function renderNotice(page: Page) {
 beforeEach(() => {
   vi.mocked(listPendingRevisions).mockResolvedValue([]);
   vi.mocked(listRefinements).mockResolvedValue({ proposals: [] });
+  // A daemon without the routing endpoint: no background check, so every changed row is a person's.
+  vi.mocked(getResolvedRouting).mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -68,6 +78,7 @@ afterEach(() => {
   vi.mocked(confirmPageCodeBasis).mockReset();
   vi.mocked(removePageCodeBasis).mockReset();
   vi.mocked(getPageCodeBasisCited).mockReset();
+  vi.mocked(getResolvedRouting).mockReset();
   vi.mocked(readCodeLines).mockReset();
   vi.mocked(readGitBlobLines).mockReset();
 });
@@ -96,7 +107,7 @@ describe("NoteReviewNotice with a code basis", () => {
     expect(await screen.findByText("The code this note relies on changed: src/parser.rs line 7")).toBeInTheDocument();
   });
 
-  it("shows what the background check concluded under the changed line, only when it said something", async () => {
+  it("shows what the background check concluded under a row it could not settle, and leaves a stale row to the steep", async () => {
     renderNotice({
       ...basePage,
       code_basis: [
@@ -107,10 +118,49 @@ describe("NoteReviewNotice with a code basis", () => {
     });
 
     expect(await screen.findByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.")).toBeInTheDocument();
-    expect(screen.getByText("AI looked: The constant is now 48, not 32, the next steep fixes it")).toBeInTheDocument();
-    expect(screen.getAllByText(/^AI looked:/)).toHaveLength(2);
-    // The buttons are unchanged: one set per changed row.
-    expect(screen.getAllByRole("button", { name: "Confirm no impact" })).toHaveLength(3);
+    // The stale row is the next steep's, not the person's: no line, no buttons for it.
+    expect(screen.queryByText(/the next steep fixes it/)).toBeNull();
+    expect(screen.queryByText(/b\.rs/)).toBeNull();
+    expect(screen.getAllByText(/^AI looked:/)).toHaveLength(1);
+    // Without a model nobody will look at c.rs, so it is still shown: one set of buttons per shown row.
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Confirm no impact" })).toHaveLength(2));
+    expect(screen.queryByText(/b\.rs/)).toBeNull();
+  });
+
+  it("with a model in the background, shows only the row the check could not settle", async () => {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("anthropic"));
+    renderNotice({
+      ...basePage,
+      code_basis: [
+        row({ path: "a.rs", ai_verdict: "needs_human", explanation: "The note says 32 bits are kept on purpose; the code now keeps 48." }),
+        row({ path: "b.rs", ai_verdict: "stale", explanation: "The constant is now 48, not 32." }),
+        row({ path: "c.rs" }),
+      ],
+    });
+
+    expect(await screen.findByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.")).toBeInTheDocument();
+    await waitFor(() => expect(getResolvedRouting).toHaveBeenCalled());
+    expect(screen.getAllByRole("button", { name: "Confirm no impact" })).toHaveLength(1);
+    expect(screen.queryByText(/c\.rs/)).toBeNull();
+  });
+
+  it("shows nothing at all while every changed row is the background check's to look at", async () => {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("on_device"));
+    const { container, client } = renderNotice({
+      ...basePage,
+      code_basis: [row(), row({ path: "b.rs", ai_verdict: "stale", explanation: "The constant is now 48, not 32." })],
+    });
+
+    await waitFor(() => expect(getResolvedRouting).toHaveBeenCalled());
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("shows an unjudged row when the daemon has no model at all", async () => {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("basic"));
+    renderNotice({ ...basePage, code_basis: [row()] });
+
+    expect(await screen.findByText("The code this note relies on changed: src/parser.rs lines 10–24")).toBeInTheDocument();
   });
 
   it("keeps the check's sentence off a row that is no longer pending", async () => {

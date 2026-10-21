@@ -5,7 +5,7 @@ import type { CodeBasisPendingEntry, CodeBasisRef } from "../../../lib/tauri";
 import { CodeBasisDialog } from "./CodeBasisDialog";
 import { codeBasisLineText } from "./codeBasisShared";
 import { OverflowMenu } from "./OverflowMenu";
-import { codeBasisKeyOf, codeBasisNeedingAttention, useCodeBasisActions } from "./useCodeBasisActions";
+import { codeBasisKeyOf, codeBasisNeedingAttention, useCodeBasisActions, useEverydayModelAvailable } from "./useCodeBasisActions";
 import "./BasisUpdates.css";
 
 /** The review destination for "notes whose code changed". */
@@ -34,6 +34,7 @@ export function CodeBasisUpdatesSection({
 }: CodeBasisUpdatesSectionProps) {
   const { t } = useTranslation();
   const actions = useCodeBasisActions();
+  const modelAvailable = useEverydayModelAvailable();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [viewing, setViewing] = useState<{ pageId: string; row: CodeBasisRef } | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
@@ -65,7 +66,7 @@ export function CodeBasisUpdatesSection({
     <ul className="basis-updates__list">
       {entries.map((entry) => {
         const open = expanded.has(entry.page_id);
-        const rows = codeBasisNeedingAttention(entry.pending);
+        const rows = codeBasisNeedingAttention(entry.pending, modelAvailable);
         return <li key={entry.page_id} className="basis-updates__group">
           <div className="basis-updates__summary">
             <button

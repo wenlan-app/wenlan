@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { BasisPendingEntry, CodeBasisPendingEntry, CodeBasisRef } from "../../../lib/tauri";
+import type { BasisPendingEntry, CodeBasisPendingEntry, CodeBasisRef, ResolvedRouting } from "../../../lib/tauri";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
@@ -11,6 +11,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
   confirmPageCodeBasis: vi.fn(),
   removePageCodeBasis: vi.fn(),
   getPageCodeBasisCited: vi.fn(),
+  getResolvedRouting: vi.fn(),
   readCodeLines: vi.fn(),
   readGitBlobLines: vi.fn(),
 }));
@@ -18,6 +19,7 @@ vi.mock("../../../lib/tauri", async (importOriginal) => ({
 import {
   confirmPageCodeBasis,
   getPageCodeBasisCited,
+  getResolvedRouting,
   listBasisPending,
   listCodeBasisPending,
   readCodeLines,
@@ -38,6 +40,12 @@ const entry = (over: Partial<CodeBasisPendingEntry> = {}): CodeBasisPendingEntry
   ...over,
 });
 
+const routing = (source: string): ResolvedRouting => ({
+  everyday: { source, model: null, mode: "auto", pin: null },
+  synthesis: { source: "none", model: null, mode: "auto", pin: null },
+  pool: { anthropic: { configured: source === "anthropic", everyday_model: null, synthesis_model: null }, external: null, on_device: null },
+});
+
 const basisEntry: BasisPendingEntry = {
   basis_page_id: "pricing",
   title: "Pricing",
@@ -51,10 +59,15 @@ function renderWith(ui: React.ReactElement) {
   return { client, ...render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>) };
 }
 
+beforeEach(() => {
+  // A daemon without the routing endpoint: no background check, so every changed row is a person's.
+  vi.mocked(getResolvedRouting).mockResolvedValue(null);
+});
+
 afterEach(() => {
   cleanup();
   for (const fn of [listBasisPending, listCodeBasisPending, confirmPageCodeBasis, removePageCodeBasis,
-    getPageCodeBasisCited, readCodeLines, readGitBlobLines]) vi.mocked(fn).mockReset();
+    getPageCodeBasisCited, getResolvedRouting, readCodeLines, readGitBlobLines]) vi.mocked(fn).mockReset();
 });
 
 describe("BasisUpdatesSummary with code", () => {
@@ -91,6 +104,20 @@ describe("BasisUpdatesSummary with code", () => {
     expect(container.querySelectorAll(".note-review-notice")).toHaveLength(1);
   });
 
+  it("counts only notes whose changed code needs a person once a model looks in the background", async () => {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("anthropic"));
+    vi.mocked(listBasisPending).mockResolvedValue([]);
+    vi.mocked(listCodeBasisPending).mockResolvedValue([
+      entry({ page_id: "quiet", pending: [ref(), ref({ path: "b.rs", ai_verdict: "stale", explanation: "Now 48." })] }),
+      entry({ page_id: "loud", pending: [ref({ ai_verdict: "needs_human", explanation: "On purpose?" })] }),
+    ]);
+    renderWith(<BasisUpdatesSummary onOpen={vi.fn()} />);
+
+    const list = await screen.findByRole("list", { name: "Code changed" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByRole("listitem")).toHaveTextContent("The code 1 note relies on changed");
+  });
+
   it("renders nothing when neither kind is waiting, or when the code read fails", async () => {
     vi.mocked(listBasisPending).mockResolvedValue([]);
     vi.mocked(listCodeBasisPending).mockResolvedValueOnce([entry({ pending: [ref({ state: "ok" })] })]);
@@ -109,14 +136,14 @@ describe("BasisUpdatesSummary with code", () => {
 });
 
 describe("CodeBasisUpdatesSection in the review panel", () => {
-  it("lists one row per note and opens it to the lines that need a look", () => {
+  it("lists one row per note and opens it to the lines that need a look", async () => {
     const onPageClick = vi.fn();
     renderWith(<CodeBasisUpdatesSection entries={[entry()]} onPageClick={onPageClick} />);
 
     const group = screen.getByRole("region", { name: "Code changed" });
     expect(group).toHaveAttribute("id", "review-code-basis-updates");
     expect(within(group).getByRole("button", { name: "Parser notes" })).toHaveAttribute("aria-expanded", "false");
-    expect(within(group).getByText("2 code references")).toBeInTheDocument();
+    expect(await within(group).findByText("2 code references")).toBeInTheDocument();
     expect(within(group).queryByText(/src\/parser.rs/)).toBeNull();
 
     fireEvent.click(within(group).getByRole("button", { name: "Parser notes" }));
@@ -135,7 +162,7 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
     renderWith(<CodeBasisUpdatesSection entries={[entry()]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Parser notes" }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirm no impact" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm no impact" }));
 
     expect(await screen.findByText("The code changed again, please look once more.")).toBeInTheDocument();
     expect(confirmPageCodeBasis).toHaveBeenCalledWith("note-1", expect.objectContaining({ path: "src/parser.rs", line_start: 10 }));
@@ -164,7 +191,7 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
     renderWith(<CodeBasisUpdatesSection entries={[entry()]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Parser notes" }));
-    fireEvent.click(screen.getByRole("button", { name: "See code" }));
+    fireEvent.click(await screen.findByRole("button", { name: "See code" }));
 
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByTestId("code-basis-before")).toHaveTextContent("old();");

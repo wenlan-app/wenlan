@@ -2,16 +2,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { CodeBasisRef } from "../../../lib/tauri";
+import type { CodeBasisRef, ResolvedRouting } from "../../../lib/tauri";
 
 vi.mock("../../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../lib/tauri")>()),
   listPages: vi.fn(),
   searchPages: vi.fn(),
   clipboardWrite: vi.fn(),
+  getResolvedRouting: vi.fn(),
 }));
 
-import { clipboardWrite } from "../../../lib/tauri";
+import { clipboardWrite, getResolvedRouting } from "../../../lib/tauri";
 import { basisCountLabel } from "./format";
 import PageInfo from "./PageInfo";
 import i18n from "i18next";
@@ -20,7 +21,16 @@ const code = (over: Partial<CodeBasisRef> = {}): CodeBasisRef => ({
   repo_root: "/repo", path: "src/parser.rs", line_start: 10, line_end: 24, state: "ok", ...over,
 });
 
+const routing = (source: string): ResolvedRouting => ({
+  everyday: { source, model: null, mode: "auto", pin: null },
+  synthesis: { source: "none", model: null, mode: "auto", pin: null },
+  pool: { anthropic: { configured: source === "anthropic", everyday_model: null, synthesis_model: null }, external: null, on_device: null },
+});
+
 function setup(props: Partial<React.ComponentProps<typeof PageInfo>> = {}) {
+  if (vi.mocked(getResolvedRouting).getMockImplementation() === undefined) {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("anthropic"));
+  }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   const onUnmarkCodeBasis = vi.fn();
   render(<QueryClientProvider client={client}><PageInfo
@@ -47,6 +57,7 @@ function setup(props: Partial<React.ComponentProps<typeof PageInfo>> = {}) {
 afterEach(() => {
   cleanup();
   vi.mocked(clipboardWrite).mockReset();
+  vi.mocked(getResolvedRouting).mockReset();
 });
 
 describe("PageInfo code section", () => {
@@ -71,7 +82,7 @@ describe("PageInfo code section", () => {
     const rows = within(section).getAllByRole("listitem");
     expect(rows.map((item) => item.textContent?.replace(/\s+/g, " ").trim())).toEqual([
       "src/parser.rs:10\u201324Up to date",
-      "src/lex.rs:3Changed",
+      "src/lex.rs:3ChangedChanged, the next steep looks at it",
       "src/gone.rs:1\u20132Not found",
       "src/shifted.rs:40\u201350Moved",
     ]);
@@ -85,6 +96,34 @@ describe("PageInfo code section", () => {
     const pages = screen.getByRole("region", { name: "Pages this page relies on" });
     expect(pages.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(section).queryByRole("button", { name: /add/i })).toBeNull();
+  });
+
+  it("says quietly what the background check made of a change, or that the next steep will look", async () => {
+    setup({
+      codeBasis: [
+        code({ path: "a.rs", state: "pending", ai_verdict: "stale", explanation: "The constant is now 48, not 32." }),
+        code({ path: "b.rs", state: "pending", ai_verdict: "needs_human", explanation: "The note says 32 bits are kept on purpose; the code now keeps 48." }),
+        code({ path: "c.rs", state: "pending" }),
+        code({ path: "d.rs", state: "ok", ai_verdict: "stale", explanation: "Old news." }),
+      ],
+    });
+
+    const section = screen.getByRole("region", { name: "Code this note relies on" });
+    const notes = await within(section).findAllByText(/AI looked:|the next steep looks at it/);
+    expect(notes.map((note) => note.textContent)).toEqual([
+      "AI looked: The constant is now 48, not 32, the next steep fixes it",
+      "AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.",
+      "Changed, the next steep looks at it",
+    ]);
+    for (const note of notes) expect(note).toHaveClass("note-info-code-ai");
+  });
+
+  it("promises no look at a changed row when the daemon has no model", async () => {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("basic"));
+    setup({ codeBasis: [code({ state: "pending" })] });
+
+    await waitFor(() => expect(screen.queryByText(/the next steep looks at it/)).toBeNull());
+    expect(screen.getByText("Changed")).toBeInTheDocument();
   });
 
   it("copies the location (path and first line) when its row is clicked and says so briefly", async () => {

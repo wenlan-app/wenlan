@@ -12,7 +12,7 @@ import { isActionableReviewItem } from "../reviewDisposition";
 import type { ReviewItem } from "../useReviewQueue";
 import { CodeBasisLines, type NoteCodeBasisHandlers } from "./CodeBasisLines";
 import { NoteBasisLines, basisNeedingAttention, type NoteBasisHandlers } from "./NoteBasisLines";
-import { codeBasisNeedingAttention } from "./useCodeBasisActions";
+import { codeBasisNeedingAttention, useEverydayModelAvailable } from "./useCodeBasisActions";
 import "./NoteReviewNotice.css";
 
 const NOTICE_LIMIT = 500;
@@ -112,6 +112,7 @@ function isBlockingRefreshReason(reason: string | null | undefined): boolean {
 
 export function NoteReviewNotice({ page, onReview, onShowSources, disabled = false, basis, codeBasis }: NoteReviewNoticeProps) {
   const { t } = useTranslation();
+  const modelAvailable = useEverydayModelAvailable();
   const revisions = useQuery({
     queryKey: revisionQueryKey,
     queryFn: () => listPendingRevisions(NOTICE_LIMIT),
@@ -146,7 +147,7 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
         ? "sourceUpdated"
         : null;
   const basisLines = basis ? basisNeedingAttention(page.basis) : [];
-  const codeLines = codeBasis ? codeBasisNeedingAttention(page.code_basis) : [];
+  const codeLines = codeBasis ? codeBasisNeedingAttention(page.code_basis, modelAvailable) : [];
   // Basis lines alone leave the review row empty; drawing it anyway adds a blank row and a gap above them.
   const hasTopRow = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped;
   const hasContent = hasTopRow || basisLines.length > 0 || codeLines.length > 0;

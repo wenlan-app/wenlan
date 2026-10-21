@@ -5,7 +5,7 @@ import type { CodeBasisRef } from "../../../lib/tauri";
 import { CodeBasisDialog } from "./CodeBasisDialog";
 import { codeBasisAiLineText, codeBasisLineText } from "./codeBasisShared";
 import { OverflowMenu } from "./OverflowMenu";
-import { codeBasisKeyOf, codeBasisNeedingAttention, type useCodeBasisActions } from "./useCodeBasisActions";
+import { codeBasisKeyOf, type useCodeBasisActions } from "./useCodeBasisActions";
 
 export interface NoteCodeBasisHandlers {
   actions: ReturnType<typeof useCodeBasisActions>;
@@ -15,6 +15,7 @@ export interface NoteCodeBasisHandlers {
 
 interface CodeBasisLinesProps extends NoteCodeBasisHandlers {
   pageId: string;
+  /** The rows that need a person, as `codeBasisNeedingAttention` picks them. */
   codeBasis: readonly CodeBasisRef[];
   disabled?: boolean;
 }
@@ -29,7 +30,7 @@ export function CodeBasisLines({
 }: CodeBasisLinesProps) {
   const { t } = useTranslation();
   const [viewing, setViewing] = useState<CodeBasisRef | null>(null);
-  const lines = codeBasisNeedingAttention(codeBasis);
+  const lines = codeBasis;
   if (lines.length === 0) return null;
 
   return <>

@@ -13,6 +13,8 @@ vi.mock("../../lib/tauri", async (importOriginal) => ({
   listRecentChanges: vi.fn(),
   listBasisPending: vi.fn(),
   listCodeBasisPending: vi.fn(),
+  // A daemon without the routing endpoint: no background check, so every changed row is a person's.
+  getResolvedRouting: vi.fn().mockResolvedValue(null),
 }));
 
 import {

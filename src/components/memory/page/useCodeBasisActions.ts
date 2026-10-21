@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   confirmPageCodeBasis,
+  getResolvedRouting,
   listCodeBasisPending,
   removePageCodeBasis,
   type CodeBasisLocator,
@@ -16,9 +17,43 @@ export const CODE_BASIS_PENDING_QUERY_KEY = ["code-basis-pending"] as const;
 export const codeBasisKeyOf = (pageId: string, row: CodeBasisLocator) =>
   [pageId, row.repo_root, row.path, row.line_start, row.line_end].join("\u0000");
 
-/** The rows that need a look: changed lines, or code that cannot be found. */
-export function codeBasisNeedingAttention(rows: readonly CodeBasisRef[] | undefined): CodeBasisRef[] {
-  return (rows ?? []).filter((row) => row.state === "pending" || row.state === "unavailable");
+export const RESOLVED_ROUTING_QUERY_KEY = ["resolved-routing"] as const;
+
+/**
+ * The rows that need a person: code that cannot be found, and changed lines the
+ * background check could not settle (`needs_human`). A changed row the check has
+ * judged stale is fixed by the next steep, and one it has not looked at yet is
+ * left to it, so neither is shown as something to do. Without any model
+ * (`modelAvailable` false) nobody else will look, and every changed row counts.
+ */
+export function codeBasisNeedingAttention(
+  rows: readonly CodeBasisRef[] | undefined,
+  modelAvailable = true,
+): CodeBasisRef[] {
+  return (rows ?? []).filter((row) => {
+    if (row.state === "unavailable") return true;
+    if (row.state !== "pending") return false;
+    if (row.ai_verdict === "needs_human") return true;
+    return !row.ai_verdict && !modelAvailable;
+  });
+}
+
+/**
+ * Whether a model will look at changed code in the background: the daemon
+ * resolves an everyday source other than the no-model "basic" one. A daemon
+ * without the routing endpoint has no background check either. While the
+ * answer is loading it is taken as yes, so a notice does not flash and vanish.
+ */
+export function useEverydayModelAvailable(): boolean {
+  const query = useQuery({
+    queryKey: RESOLVED_ROUTING_QUERY_KEY,
+    queryFn: getResolvedRouting,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  if (query.data === undefined) return true;
+  if (query.data === null) return false;
+  return query.data.everyday.source !== "basic";
 }
 
 /**
@@ -27,6 +62,7 @@ export function codeBasisNeedingAttention(rows: readonly CodeBasisRef[] | undefi
  * while rather than on every render.
  */
 export function useCodeBasisPending(enabled = true) {
+  const modelAvailable = useEverydayModelAvailable();
   const query = useQuery({
     queryKey: CODE_BASIS_PENDING_QUERY_KEY,
     queryFn: () => listCodeBasisPending(null),
@@ -35,7 +71,7 @@ export function useCodeBasisPending(enabled = true) {
     retry: false,
   });
   const entries: CodeBasisPendingEntry[] = (query.data ?? []).filter(
-    (entry) => codeBasisNeedingAttention(entry.pending).length > 0,
+    (entry) => codeBasisNeedingAttention(entry.pending, modelAvailable).length > 0,
   );
   return { entries, isLoading: query.isLoading, isError: query.isError };
 }

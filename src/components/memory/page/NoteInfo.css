@@ -341,6 +341,21 @@
   width: auto;
 }
 
+/* A code row may carry a quiet second line: what the background check made of a change. */
+.note-info-code-row {
+  flex-wrap: wrap;
+}
+
+.note-info-code-ai {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0 0 2px;
+  color: var(--mem-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .note-info-notes__add {
   align-self: flex-start;
   padding: 4px 2px;
