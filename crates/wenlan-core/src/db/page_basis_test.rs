@@ -2057,7 +2057,7 @@ async fn marks_for_an_unchanged_write_are_refused_when_the_note_changed_since() 
     edit(&db, "b", "Plans, revised by hand.", false).await;
 
     let error = db
-        .mark_page_bases("b", compared, &[("a".into(), 1)], "claude-code")
+        .mark_page_bases("b", compared, &[("a".into(), 1)], "claude-code", None)
         .await
         .unwrap_err();
     assert!(

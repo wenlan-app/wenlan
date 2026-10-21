@@ -26765,6 +26765,7 @@ impl MemoryDB {
             operation_receipt,
             write_spaces,
             None,
+            None,
             false,
         )
         .await
@@ -26774,9 +26775,11 @@ impl MemoryDB {
     /// Insert new source identities atomically; existing sources remain intact.
     /// The existence predicate is checked inside the same transaction as rows.
     pub async fn create_documents(&self, docs: Vec<RawDocument>) -> Result<usize, WenlanError> {
-        self.upsert_documents_at_optional_page_fence(docs, None, None, None, None, None, None, true)
-            .await
-            .map(|written| written.unwrap_or(0))
+        self.upsert_documents_at_optional_page_fence(
+            docs, None, None, None, None, None, None, None, true,
+        )
+        .await
+        .map(|written| written.unwrap_or(0))
     }
 
     /// `create_documents` that also resolves stable Space IDs inside the
@@ -26796,6 +26799,7 @@ impl MemoryDB {
             None,
             None,
             Some(write_spaces),
+            None,
             None,
             true,
         )
@@ -26826,6 +26830,34 @@ impl MemoryDB {
             operation_receipt,
             None,
             Some((page_id, expected_version, fence)),
+            None,
+            false,
+        )
+        .await
+        .map(|written| written.is_some())
+    }
+
+    /// Stage page-bound rows (a revision card) only while the page is still
+    /// active and in `scope`, read inside the same transaction as the insert
+    /// and the optional receipt. A Space move does not bump the page version,
+    /// so a Space-locked agent's card is fenced on the Space itself. Returns
+    /// `Ok(false)` without writing anything when the page left that Space.
+    pub(crate) async fn upsert_documents_in_page_space(
+        &self,
+        docs: Vec<RawDocument>,
+        operation_receipt: Option<OperationReceipt<'_>>,
+        page_id: &str,
+        scope: &crate::read_scope::ReadScope,
+    ) -> Result<bool, WenlanError> {
+        self.upsert_documents_at_optional_page_fence(
+            docs,
+            None,
+            None,
+            None,
+            operation_receipt,
+            None,
+            None,
+            Some((page_id, scope)),
             false,
         )
         .await
@@ -26833,7 +26865,8 @@ impl MemoryDB {
     }
 
     /// Shared body of the `upsert_documents*` family. `Ok(None)` only when a
-    /// `page_fence` was supplied and did not hold; nothing was written then.
+    /// `page_fence` or `page_space` was supplied and did not hold; nothing
+    /// was written then.
     #[allow(clippy::too_many_arguments)]
     async fn upsert_documents_at_optional_page_fence(
         &self,
@@ -26844,6 +26877,7 @@ impl MemoryDB {
         operation_receipt: Option<OperationReceipt<'_>>,
         write_spaces: Option<HashMap<String, crate::space_context::ResolvedWriteSpace>>,
         page_fence: Option<(&str, i64, &PageFence)>,
+        page_space: Option<(&str, &crate::read_scope::ReadScope)>,
         create_only: bool,
     ) -> Result<Option<usize>, WenlanError> {
         if docs.is_empty() {
@@ -27233,6 +27267,33 @@ impl MemoryDB {
                     .await
                     .map_err(|e| WenlanError::VectorDb(format!("upsert page fence row: {e}")))?
                     .is_some();
+                drop(rows);
+                if !held {
+                    return Ok(false);
+                }
+            }
+            if let Some((page_id, scope)) = page_space {
+                let mut rows = conn
+                    .query(
+                        "SELECT space FROM pages WHERE id = ?1 AND status = 'active'",
+                        libsql::params![page_id],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("upsert page space: {e}")))?;
+                let held = match rows
+                    .next()
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("upsert page space row: {e}")))?
+                {
+                    Some(row) => scope.matches(
+                        row.get::<Option<String>>(0)
+                            .map_err(|e| {
+                                WenlanError::VectorDb(format!("upsert page space value: {e}"))
+                            })?
+                            .as_deref(),
+                    ),
+                    None => false,
+                };
                 drop(rows);
                 if !held {
                     return Ok(false);
@@ -52900,6 +52961,38 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_page_content begin: {e}")))?;
+
+        // A Space-locked write checked the note's Space before it got here,
+        // but moving a note to another Space does not bump its version, so
+        // no CAS below would see the move. The check is repeated in the
+        // write's own transaction; a note no longer in that Space gets
+        // nothing, and the caller re-reads it to tell why.
+        if let Some(scope) = basis.space_guard.as_ref() {
+            let space = match conn
+                .query("SELECT space FROM pages WHERE id = ?1", libsql::params![id])
+                .await
+            {
+                Ok(mut rows) => match rows.next().await {
+                    Ok(Some(row)) => row.get::<Option<String>>(0).map_err(|e| e.to_string()),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(e.to_string()),
+                },
+                Err(e) => Err(e.to_string()),
+            };
+            let in_space = match space {
+                Ok(space) => scope.matches(space.as_deref()),
+                Err(e) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::VectorDb(format!(
+                        "update_page_content space check: {e}"
+                    )));
+                }
+            };
+            if !in_space {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Ok(None);
+            }
+        }
 
         // The automatic refresh never writes over a note that relies on other
         // notes. `refresh_page` checks this before generating, but a basis can
