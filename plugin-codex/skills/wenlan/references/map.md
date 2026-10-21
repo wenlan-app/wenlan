@@ -73,7 +73,7 @@ write_page(space="<space>", title="<note title>", content="<note>",
            code_basis=[{repo_root, path, line_start, line_end}, ...])
 ```
 
-Always pass `space`; the resolver gave it to you, and a write without it goes to the connection's default Space, which may not be this repository's.
+Whenever a tool offers a `space` field, pass the resolved Space in it; a write without it goes to the connection's default Space, which may not be this repository's. When the connection is locked to one Space the field is absent, and nothing needs passing.
 
 Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say map needs local Wenlan and stop. A `warnings`
