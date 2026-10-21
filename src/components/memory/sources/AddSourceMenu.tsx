@@ -30,6 +30,10 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
   const [showChats, setShowChats] = useState(false);
   // A picked folder waits here while the user chooses sync or import-once.
   const [picked, setPicked] = useState<PickedFolder | null>(null);
+  // The main window mounts no toaster (toasts render in the separate overlay
+  // window), so a failure to add a source is shown here in the dialog.
+  const [failure, setFailure] = useState<string | null>(null);
+  const fail = (error: unknown) => setFailure(error instanceof Error ? error.message : String(error));
   const { data: version } = useQuery({ queryKey: ["daemonVersion"], queryFn: getDaemonVersion });
   const ready = version === undefined ? true : daemonMeetsFloor(version);
 
@@ -40,6 +44,7 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
   }
 
   const upload = useMutation({
+    onMutate: () => setFailure(null),
     mutationFn: async () => {
       const picked = await openDialog({
         title: t("sourceAccess.files"), directory: false, multiple: false,
@@ -55,12 +60,13 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       toast(t("sourceAccess.added"), { description: t("sourceAccess.addedBody", { name }) });
       onClose();
     },
-    onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
+    onError: fail,
   });
 
   // Step one, for any kind: pick and validate the folder. Step two
   // (`register`) asks whether to keep it in sync or import it once.
   const connect = useMutation({
+    onMutate: () => setFailure(null),
     mutationFn: async (kind: ConnectKind) => {
       const path = await openDialog({
         title: t(kind === "folder" ? "sourceAccess.folder" : `sourceAccess.${kind}`),
@@ -75,10 +81,11 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       return { kind, sourceType, path };
     },
     onSuccess: (folder) => { if (folder) setPicked(folder); },
-    onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
+    onError: fail,
   });
 
   const register = useMutation({
+    onMutate: () => setFailure(null),
     mutationFn: ({ folder, followChanges }: { folder: PickedFolder; followChanges: boolean }) =>
       addSource(folder.sourceType, folder.path, followChanges),
     onSuccess: (source) => {
@@ -92,7 +99,7 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       });
       onClose();
     },
-    onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
+    onError: fail,
   });
 
   const busy = upload.isPending || connect.isPending || register.isPending;
@@ -105,6 +112,7 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       <DownloadSimple aria-hidden="true" size={20} weight="regular" data-resource-icon="import-once" /><span className="source-add-option-copy"><strong>{t("sourceAccess.followOnce")}</strong><span>{t("sourceAccess.followOnceHint")}</span></span>
     </button>
     {register.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
+    {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
   </SourceDialog>;
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   // Past AI chats use the same import as Settings, so a new user can bring
@@ -138,5 +146,6 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       <SourceTypeIcon kind="folder" /><span className="source-add-option-copy"><strong>{t("sourceAccess.folder")}</strong><span>{t("sourceAccess.folderHint")}</span></span>
     </button>
     {connect.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
+    {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
   </SourceDialog>;
 }

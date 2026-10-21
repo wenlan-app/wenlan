@@ -108,11 +108,13 @@ describe("AddSourceMenu", () => {
   });
 
   it("does not label a normal folder as an Obsidian vault", async () => {
-    const { toast } = await import("sonner");
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Connect Obsidian vault"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Could not add the source", { description: "Error: Choose the root folder of an Obsidian vault." }));
+    // Shown in the dialog: the main window has no toaster.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not add the source");
+    expect(alert).toHaveTextContent("Choose the root folder of an Obsidian vault.");
     expect(mocks.addSource).not.toHaveBeenCalled();
   });
 
@@ -162,11 +164,13 @@ describe("AddSourceMenu", () => {
   });
 
   it("does not label a normal folder as a Logseq graph", async () => {
-    const { toast } = await import("sonner");
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Connect Logseq graph"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Could not add the source", { description: "Error: Choose the root folder of a Logseq graph." }));
+    // Shown in the dialog: the main window has no toaster.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not add the source");
+    expect(alert).toHaveTextContent("Choose the root folder of a Logseq graph.");
     expect(mocks.addSource).not.toHaveBeenCalled();
   });
 
