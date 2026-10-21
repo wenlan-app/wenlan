@@ -630,6 +630,19 @@ pub struct AddSourceRequest {
     /// Filesystem path as a string. Kept as `String` (not `PathBuf`) because
     /// this is an HTTP wire format — the handler converts it to `PathBuf`.
     pub path: String,
+    /// `Some(false)` registers the source as import-once: it is read on the
+    /// first sync and on a manual refresh, but background polling skips it
+    /// (stored as `SyncStatus::Paused`). Omitted means follow changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_changes: Option<bool>,
+}
+
+/// PATCH /api/sources/{id} -- switch a source between following changes
+/// (`Active`) and import-once (`Paused`).
+#[doc(hidden)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateSourceRequest {
+    pub follow_changes: bool,
 }
 
 // ===== Config =====

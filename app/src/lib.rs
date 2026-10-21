@@ -1562,6 +1562,7 @@ pub fn run() {
             search::remove_source,
             search::list_registered_sources,
             search::sync_registered_source,
+            search::set_source_follow_changes,
             search::daemon_version,
             search::upload_source_file,
             search::list_watch_paths,

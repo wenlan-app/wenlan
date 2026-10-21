@@ -73,7 +73,11 @@ describe("AddSourceMenu", () => {
     const close = vi.fn();
     render(wrap(<AddSourceMenu onClose={close} />));
     fireEvent.click(await screen.findByText("Connect a folder"));
-    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("directory", "/Users/me/research"));
+    expect(await screen.findByRole("dialog", { name: "Sync or import once?" })).toBeInTheDocument();
+    expect(screen.getByText("/Users/me/research")).toBeInTheDocument();
+    expect(mocks.addSource).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Keep in sync"));
+    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("directory", "/Users/me/research", true));
     expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect a folder", directory: true, multiple: false });
     expect(mocks.detectVault).toHaveBeenCalledWith("/Users/me/research");
     await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
@@ -87,7 +91,8 @@ describe("AddSourceMenu", () => {
     const vault = await screen.findByText("Connect Obsidian vault");
     expect(vault.closest("button")).toHaveClass("source-add-option--vault");
     fireEvent.click(vault);
-    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault"));
+    fireEvent.click(await screen.findByText("Keep in sync"));
+    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));
     expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect Obsidian vault", directory: true, multiple: false });
   });
 
@@ -116,7 +121,32 @@ describe("AddSourceMenu", () => {
     mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Connect a folder"));
-    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault"));
+    fireEvent.click(await screen.findByText("Keep in sync"));
+    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));
+  });
+
+  it("imports a vault once: registers it without following changes and still reads it now", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/vault");
+    mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
+    mocks.addSource.mockResolvedValue({ id: "obsidian-vault", path: "/Users/me/vault", source_type: "obsidian", status: "Paused" });
+    const close = vi.fn();
+    render(wrap(<AddSourceMenu onClose={close} />));
+    fireEvent.click(await screen.findByText("Connect Obsidian vault"));
+    fireEvent.click(await screen.findByText("Import once"));
+    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", false));
+    await waitFor(() => expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("obsidian-vault"));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing the sync choice registers nothing", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/research");
+    const close = vi.fn();
+    render(wrap(<AddSourceMenu onClose={close} />));
+    fireEvent.click(await screen.findByText("Connect a folder"));
+    await screen.findByRole("dialog", { name: "Sync or import once?" });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(mocks.addSource).not.toHaveBeenCalled();
   });
 
   it("keeps the connection when the first read fails and reports where to retry", async () => {
@@ -125,6 +155,7 @@ describe("AddSourceMenu", () => {
     mocks.syncRegisteredSource.mockRejectedValue(new Error("offline"));
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Connect a folder"));
+    fireEvent.click(await screen.findByText("Import once"));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Source connected, but the first update failed. Try Refresh in Info.", { description: "Error: offline" }));
     expect(mocks.addSource).toHaveBeenCalledTimes(1);
   });

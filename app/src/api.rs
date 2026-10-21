@@ -732,6 +732,28 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    pub async fn patch_json<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .patch(self.url(path))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP PATCH {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP PATCH {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     pub async fn delete_path<Resp: DeserializeOwned>(&self, path: &str) -> Result<Resp, String> {
         let resp = self
             .client
@@ -1341,9 +1363,24 @@ impl WenlanClient {
         &self,
         source_type: String,
         path: String,
+        follow_changes: Option<bool>,
     ) -> Result<wenlan_types::sources::Source, String> {
-        let req = wenlan_types::requests::AddSourceRequest { source_type, path };
+        let req = wenlan_types::requests::AddSourceRequest {
+            source_type,
+            path,
+            follow_changes,
+        };
         self.post_json("/api/sources", &req).await
+    }
+
+    pub async fn set_source_follow_changes(
+        &self,
+        id: &str,
+        follow_changes: bool,
+    ) -> Result<wenlan_types::sources::Source, String> {
+        let path = format!("/api/sources/{}", percent_encode_path_segment(id));
+        let req = wenlan_types::requests::UpdateSourceRequest { follow_changes };
+        self.patch_json(&path, &req).await
     }
 
     pub async fn remove_source(&self, id: &str) -> Result<(), String> {

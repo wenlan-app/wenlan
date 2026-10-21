@@ -219,6 +219,7 @@ async fn okf_source_routes_register_sync_and_report_the_batch_position() {
     let add_source = AddSourceRequest {
         source_type: "okf".to_string(),
         path: bundle.path().to_string_lossy().into_owned(),
+        follow_changes: None,
     };
     let (status, source): (StatusCode, Source) = request_typed(
         &router,
@@ -272,6 +273,7 @@ async fn moved_source_and_config_routes_preserve_typed_http_contracts() {
     let add_source = AddSourceRequest {
         source_type: "directory".to_string(),
         path: source_root.path().to_string_lossy().into_owned(),
+        follow_changes: None,
     };
     let (status, source): (StatusCode, Source) = request_typed(
         &router,
@@ -304,6 +306,7 @@ async fn moved_source_and_config_routes_preserve_typed_http_contracts() {
     let invalid_source = AddSourceRequest {
         source_type: "invalid".to_string(),
         path: source_root.path().to_string_lossy().into_owned(),
+        follow_changes: None,
     };
     let (status, error): (StatusCode, ErrorEnvelope) = request_typed(
         &router,

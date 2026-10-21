@@ -248,11 +248,24 @@ export async function listRegisteredSources(): Promise<RegisteredSource[]> {
   return invoke("list_registered_sources");
 }
 
+/** `followChanges: false` registers an import-once source: read now and on
+ *  Refresh, never by background checks. Omitted means follow changes. */
 export async function addSource(
   sourceType: SourceTypeStr,
   path: string,
+  followChanges?: boolean,
 ): Promise<RegisteredSource> {
-  return invoke("add_source", { sourceType, path });
+  return invoke("add_source", followChanges === undefined ? { sourceType, path } : { sourceType, path, followChanges });
+}
+
+/** Switch a source between following changes and import-once. */
+export async function setSourceFollowChanges(id: string, followChanges: boolean): Promise<RegisteredSource> {
+  return invoke("set_source_follow_changes", { id, followChanges });
+}
+
+/** Import-once sources are stored as `Paused`, which background checks skip. */
+export function sourceFollowsChanges(source: Pick<RegisteredSource, "status">): boolean {
+  return source.status !== "Paused";
 }
 
 export async function removeSource(id: string): Promise<void> {
