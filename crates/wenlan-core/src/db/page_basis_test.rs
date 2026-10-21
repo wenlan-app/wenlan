@@ -255,10 +255,6 @@ async fn acceptance_1_mark_refuses_each_bad_target_with_its_own_reason() {
         BasisError::BasisArchived
     ));
     assert!(matches!(
-        refused(db.mark_page_basis("b", "other", 1, "human").await),
-        BasisError::DifferentSpace
-    ));
-    assert!(matches!(
         refused(db.mark_page_basis("b", "shadow", 1, "human").await),
         BasisError::BasisIsEntityPage
     ));
@@ -298,7 +294,7 @@ async fn acceptance_1_mark_refuses_each_bad_target_with_its_own_reason() {
 }
 
 #[tokio::test]
-async fn unfiled_notes_share_a_space_and_the_unfiled_note_is_not_in_a_named_one() {
+async fn a_note_may_rely_on_a_note_in_any_space() {
     let (db, _dir) = test_db().await;
     db.insert_page_with_kind(
         "u1",
@@ -333,20 +329,23 @@ async fn unfiled_notes_share_a_space_and_the_unfiled_note_is_not_in_a_named_one(
     .await
     .unwrap();
     page(&db, "n1", "Named", "three", "sp").await;
+    page(&db, "n2", "Elsewhere", "four", "sp2").await;
     db.mark_page_basis("u2", "u1", 1, "human").await.unwrap();
-    assert!(matches!(
-        db.mark_page_basis("n1", "u1", 1, "human")
-            .await
-            .unwrap_err(),
-        BasisError::DifferentSpace
-    ));
+    // Named relies on unfiled, unfiled on named, and across two named Spaces.
+    for (citer, basis) in [("n1", "u1"), ("u1", "n1"), ("n1", "n2")] {
+        let marked = db.mark_page_basis(citer, basis, 1, "human").await.unwrap();
+        assert_eq!(marked.state, BASIS_STATE_OK, "{citer} -> {basis}");
+    }
+    edit(&db, "n2", "four, changed", false).await;
+    assert_eq!(entry(&db, "n1", "n2").await.state, BASIS_STATE_PENDING);
+    db.confirm_page_basis("n1", "n2", 2, "human").await.unwrap();
+    assert_eq!(entry(&db, "n1", "n2").await.state, BASIS_STATE_OK);
 }
 
 #[tokio::test]
 async fn basis_errors_map_to_validation_conflict_and_not_found() {
     let validation = [
         BasisError::SelfReference,
-        BasisError::DifferentSpace,
         BasisError::BasisArchived,
         BasisError::CiterIsDraft,
         BasisError::InvalidVersion {
@@ -366,7 +365,7 @@ async fn basis_errors_map_to_validation_conflict_and_not_found() {
     ));
     assert!(matches!(
         WenlanError::from(BasisError::BasisUnavailable(
-            BasisUnavailableReason::OtherSpace
+            BasisUnavailableReason::Archived
         )),
         WenlanError::Conflict(_)
     ));
@@ -755,30 +754,29 @@ async fn acceptance_9_marking_with_a_version_that_moved_on_lands_pending_for_goo
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn acceptance_11_moving_the_basis_to_another_space_is_unavailable_and_moving_back_re_evaluates(
-) {
+async fn acceptance_11_a_basis_moved_to_another_space_is_still_relied_on() {
+    use crate::read_scope::ReadScope;
     let (db, _dir) = pair().await;
     db.set_page_workspace("a", Some("sp2")).await.unwrap();
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
 
-    let moved = entry(&db, "b", "a").await;
-    assert_eq!(moved.state, BASIS_STATE_UNAVAILABLE);
+    // An edit made over there still reaches the note relying on it, and can
+    // be read and confirmed from here.
+    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_PENDING);
     assert!(matches!(
         db.basis_diff("b", "a").await.unwrap(),
-        BasisDiffOutcome::Unavailable(BasisUnavailableReason::OtherSpace)
+        BasisDiffOutcome::Available(_)
     ));
+    // An agent held to the citer's Space still cannot read the other note.
     assert!(matches!(
-        db.confirm_page_basis("b", "a", 1, "human")
+        db.basis_diff_in_scope("b", "a", &ReadScope::Space("sp".into()))
             .await
-            .unwrap_err(),
-        BasisError::BasisUnavailable(BasisUnavailableReason::OtherSpace)
+            .unwrap(),
+        BasisDiffOutcome::OutOfScope(id) if id == "a"
     ));
-
-    // While away it is edited, then it comes back: the row is evaluated
-    // against the text now, so it is pending, not ok.
-    edit(&db, "a", "The launch is on 2026-04-01.", false).await;
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
-    db.set_page_workspace("a", Some("sp")).await.unwrap();
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_PENDING);
+    db.confirm_page_basis("b", "a", 2, "human").await.unwrap();
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
 }
 
 /// The title a citer keeps for a deleted basis is the last one it could read.
@@ -795,7 +793,7 @@ async fn a_rename_in_another_space_does_not_reach_the_title_kept_for_a_deleted_b
             .unwrap();
     }
     edit(&db, "a", "The launch is on 2026-04-01.", false).await;
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_PENDING);
 
     db.delete_page("a").await.unwrap();
 
@@ -825,21 +823,21 @@ async fn the_kept_title_follows_a_rename_again_once_the_basis_is_back_in_the_cit
 }
 
 #[tokio::test]
-async fn moving_the_citer_or_both_notes_follows_the_same_rule() {
+async fn moving_the_citer_or_both_notes_keeps_the_row() {
     let (db, _dir) = pair().await;
-    db.set_page_workspace("b", Some("sp2")).await.unwrap();
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
-    db.set_page_workspace("a", Some("sp2")).await.unwrap();
-    assert_eq!(
-        entry(&db, "b", "a").await.state,
-        BASIS_STATE_OK,
-        "moving both notes together keeps the row"
-    );
-    // Unfiled is a Space like any other.
-    db.set_page_workspace("a", None).await.unwrap();
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
-    db.set_page_workspace("b", None).await.unwrap();
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
+    for (id, space) in [
+        ("b", Some("sp2")),
+        ("a", Some("sp2")),
+        ("a", None),
+        ("b", None),
+    ] {
+        db.set_page_workspace(id, space).await.unwrap();
+        assert_eq!(
+            entry(&db, "b", "a").await.state,
+            BASIS_STATE_OK,
+            "{id} -> {space:?}"
+        );
+    }
 }
 
 async fn deleted_space_brings_a_note_home(action: &str) {
@@ -866,7 +864,7 @@ async fn deleted_space_brings_a_note_home(action: &str) {
     db.create_space("away", None, false).await.unwrap();
     db.mark_page_basis("b", "a", 1, "human").await.unwrap();
     db.set_page_workspace("a", Some("away")).await.unwrap();
-    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
 
     db.delete_space("away", action).await.unwrap();
     assert_eq!(
@@ -896,7 +894,7 @@ async fn delete_space_move_and_reassign_re_evaluate_basis_rows() {
         db.create_space("away", None, false).await.unwrap();
         db.mark_page_basis("b", "a", 1, "human").await.unwrap();
         db.set_page_workspace("a", Some("away")).await.unwrap();
-        assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_UNAVAILABLE);
+        assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
 
         if reassign {
             db.reassign_memories_space("away", "home").await.unwrap();
@@ -1624,24 +1622,12 @@ async fn check_basis_candidates_applies_the_mark_rules_before_a_note_exists() {
             .map(|(id, v)| (id.to_string(), *v))
             .collect::<Vec<_>>()
     };
-    db.check_basis_candidates(Some("sp"), &marks(&[("a", 1)]))
+    db.check_basis_candidates(&marks(&[("a", 1)]))
         .await
         .unwrap();
-    db.check_basis_candidates(Some("sp"), &[]).await.unwrap();
+    db.check_basis_candidates(&[]).await.unwrap();
     assert!(matches!(
-        db.check_basis_candidates(Some("other"), &marks(&[("a", 1)]))
-            .await
-            .unwrap_err(),
-        BasisError::DifferentSpace
-    ));
-    assert!(matches!(
-        db.check_basis_candidates(None, &marks(&[("a", 1)]))
-            .await
-            .unwrap_err(),
-        BasisError::DifferentSpace
-    ));
-    assert!(matches!(
-        db.check_basis_candidates(Some("sp"), &marks(&[("a", 4)]))
+        db.check_basis_candidates(&marks(&[("a", 4)]))
             .await
             .unwrap_err(),
         BasisError::InvalidVersion {
@@ -1650,26 +1636,26 @@ async fn check_basis_candidates_applies_the_mark_rules_before_a_note_exists() {
         }
     ));
     assert!(matches!(
-        db.check_basis_candidates(Some("sp"), &marks(&[("ghost", 1)]))
+        db.check_basis_candidates(&marks(&[("ghost", 1)]))
             .await
             .unwrap_err(),
         BasisError::BasisNotFound
     ));
     assert!(matches!(
-        db.check_basis_candidates(Some("sp"), &marks(&[("gone", 1)]))
+        db.check_basis_candidates(&marks(&[("gone", 1)]))
             .await
             .unwrap_err(),
         BasisError::BasisDeleted
     ));
     assert!(matches!(
-        db.check_basis_candidates(Some("sp"), &marks(&[("ent", 1)]))
+        db.check_basis_candidates(&marks(&[("ent", 1)]))
             .await
             .unwrap_err(),
         BasisError::BasisIsEntityPage
     ));
     // One bad mark refuses the lot.
     assert!(db
-        .check_basis_candidates(Some("sp"), &marks(&[("a", 1), ("ghost", 1)]))
+        .check_basis_candidates(&marks(&[("a", 1), ("ghost", 1)]))
         .await
         .is_err());
 }
@@ -1984,14 +1970,15 @@ async fn editing_a_gated_card_before_accepting_it_keeps_its_marks() {
 async fn a_locked_notes_gated_agent_write_with_a_refused_mark_stages_nothing() {
     let (db, _dir) = test_db().await;
     page(&db, "b", "Beta", "Original plans.", "sp").await;
-    page(&db, "other", "Elsewhere", "In another Space.", "sp2").await;
+    page(&db, "draft", "Draft", "Not finished.", "sp").await;
+    set_status(&db, "draft", "draft").await;
     assert!(db.set_page_review_required("b", true).await.unwrap());
 
     let error = agent_write(&db, "b", "Plans.", vec![("ghost".into(), 1)])
         .await
         .unwrap_err();
     assert!(matches!(error, WenlanError::NotFound(_)), "{error:?}");
-    let error = agent_write(&db, "b", "Plans.", vec![("other".into(), 1)])
+    let error = agent_write(&db, "b", "Plans.", vec![("draft".into(), 1)])
         .await
         .unwrap_err();
     assert!(matches!(error, WenlanError::Validation(_)), "{error:?}");
@@ -2000,7 +1987,9 @@ async fn a_locked_notes_gated_agent_write_with_a_refused_mark_stages_nothing() {
 
 #[tokio::test]
 async fn accepting_a_card_whose_basis_can_no_longer_be_relied_on_discards_it_with_a_typed_reason() {
-    for spoil in ["archive", "move", "recreate"] {
+    // Moving the basis to another Space is not one of these: a note may rely
+    // on a note in any Space.
+    for spoil in ["archive", "recreate"] {
         let (db, _dir) = test_db().await;
         page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
         page(&db, "b", "Beta", "Original plans.", "sp").await;
@@ -2013,7 +2002,6 @@ async fn accepting_a_card_whose_basis_can_no_longer_be_relied_on_discards_it_wit
 
         match spoil {
             "archive" => db.archive_page("a").await.unwrap(),
-            "move" => db.set_page_workspace("a", Some("sp2")).await.unwrap(),
             _ => {
                 // Deleted and recreated under the same id: not the note the
                 // agent read.

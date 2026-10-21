@@ -620,7 +620,7 @@ async fn handle_create_page_inner(
         .map(|b| (b.page_id.clone(), b.version))
         .collect();
     crate::page_basis_routes::require_basis_visible(&db, &scope, &marks).await?;
-    db.check_basis_candidates(resolved.space_name.as_deref(), &marks)
+    db.check_basis_candidates(&marks)
         .await
         .map_err(crate::page_basis_routes::basis_error)?;
     // Lines of code the note relies on are read and fingerprinted before
