@@ -630,7 +630,10 @@ function FileDetail({
                 type="button"
                 className="source-folder-file-path"
                 aria-label={t("sourceAccess.openFile")}
-                onClick={() => openFile(node.path).catch((err) => toast(t("sourceAccess.openFileFailed"), { description: String(err) }))}
+                onClick={() => openFile(node.path).catch((err) => {
+                  console.warn("[sources] open file failed", err);
+                  toast(t("sourceAccess.openFileFailed"));
+                })}
               >
                 {node.path}
               </button>
@@ -733,9 +736,10 @@ function FileDetail({
           <div className="shrink-0">
             <button
               onClick={() =>
-                openFile(node.path).catch((err) =>
-                  toast("Couldn't open file", { description: String(err) })
-                )
+                openFile(node.path).catch((err) => {
+                  console.warn("[sources] open file failed", err);
+                  toast(t("sourceAccess.openFileFailed"));
+                })
               }
               className="rounded-md transition-colors duration-150 hover:bg-[var(--mem-hover)]"
               style={{
@@ -775,6 +779,7 @@ function FileDetail({
 }
 
 function FolderDetail({ node }: { node: Extract<SourcesNode, { kind: "folder" }> }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [syncedFlash, setSyncedFlash] = useState(false);
   const { source, isSourceRoot, path, name } = node;
@@ -806,9 +811,7 @@ function FolderDetail({ node }: { node: Extract<SourcesNode, { kind: "folder" }>
 
   function handleRemove() {
     if (
-      !window.confirm(
-        `Remove ${name}? Indexed notes stay in your library; this source stops syncing.`,
-      )
+      !window.confirm(t("sourceAccess.removeConfirm", { name }))
     )
       return;
     removeSource(source.id)
@@ -816,7 +819,8 @@ function FolderDetail({ node }: { node: Extract<SourcesNode, { kind: "folder" }>
         queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
       })
       .catch((err) => {
-        toast("Couldn't remove source", { description: String(err) });
+        console.warn("[sources] remove failed", err);
+        toast(t("sourceAccess.removeFailed"));
       });
   }
 

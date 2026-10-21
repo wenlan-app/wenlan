@@ -67,11 +67,14 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
     onSuccess: (source) => {
       if (!source) return;
       refreshSources();
-      toast(t("sourceAccess.connected"), { description: source.path });
+      // A failed first read updates this same toast instead of stacking a second.
+      const toastId = `source-connected-${source.id}`;
+      toast(t("sourceAccess.connected"), { id: toastId, description: source.path });
       // Start the first index for either connector. Later Directory checks are
       // automatic; Obsidian checks remain manual until the backend supports them.
       void syncRegisteredSource(source.id).then(refreshSources).catch((error) => {
-        toast(t("sourceAccess.connectedUpdateFailed"), { description: String(error) });
+        console.warn("[sources] first update failed", error);
+        toast(t("sourceAccess.connected"), { id: toastId, description: t("sourceAccess.connectedUpdateFailed") });
         refreshSources();
       });
       onClose();

@@ -125,7 +125,10 @@ describe("AddSourceMenu", () => {
     mocks.syncRegisteredSource.mockRejectedValue(new Error("offline"));
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Connect a folder"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Source connected, but the first update failed. Try Refresh in Info.", { description: "Error: offline" }));
+    await waitFor(() => expect(toast).toHaveBeenLastCalledWith("Source connected", {
+      id: expect.stringMatching(/^source-connected-/),
+      description: "First update failed. Try Refresh in Info.",
+    }));
     expect(mocks.addSource).toHaveBeenCalledTimes(1);
   });
 

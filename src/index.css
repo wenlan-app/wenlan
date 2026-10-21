@@ -4002,3 +4002,33 @@ p.entity-error {
   text-decoration: underline;
 }
 .mem-activity-inline-link:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 2px; }
+
+/* Main-window toasts (AppToaster). Sonner is mounted unstyled; these match the
+   milestone cards' surface so both themes follow the --mem tokens. */
+.mem-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: var(--width);
+  box-sizing: border-box;
+  padding: 12px 16px;
+  font-family: var(--mem-font-body);
+  color: var(--mem-text);
+  background: var(--mem-surface);
+  border: 1px solid var(--mem-border);
+  border-radius: 10px;
+  box-shadow: var(--mem-shadow-toast);
+}
+.mem-toast-content { flex: 1; min-width: 0; }
+.mem-toast-title { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.mem-toast-description {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--mem-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-toast-icon { display: flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-danger); }
+.mem-toast-icon svg { width: 14px; height: 14px; }
