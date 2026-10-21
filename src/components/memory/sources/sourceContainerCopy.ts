@@ -18,7 +18,7 @@ export const enSourceContainer = {
   "unavailable": "Unavailable",
   "syncError": "Sync error",
   "notChecked": "Not checked yet",
-  "folderChecks": "This folder is checked for changes about every 30 seconds.",
+  "folderChecks": "Checked for changes about every 30 seconds.",
   "oneWay": "Wenlan reads files from this location. Changes in Wenlan are not written back to the source files.",
   "empty": "This folder is empty.",
   "folderReadError": "Could not read this folder.",
