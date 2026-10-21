@@ -744,6 +744,11 @@ async fn run_daemon(startup_repair_claim: Option<StartupRepairClaim>) -> anyhow:
     // people to: a daemon pointed at the wrong store looks healthy otherwise.
     // The file name mirrors `MemoryDB` in wenlan-core (`db.rs`).
     tracing::info!("{}", data_root_log_line(&wenlan_root, &data_dir));
+    // Before anything below can write the projection: startup reconcile
+    // repairs this folder against the database it is about to open.
+    let page_root = wenlan_core::config::load_config().knowledge_path_or_default();
+    tracing::info!("Wenlan pages folder: {}", page_root.display());
+    wenlan_core::config::ensure_isolated_page_root(&page_root).map_err(anyhow::Error::msg)?;
     let _data_root_lock = DaemonDataLock::acquire(&wenlan_root, startup_repair_claimed)?;
 
     let startup::PreparedStartupState {

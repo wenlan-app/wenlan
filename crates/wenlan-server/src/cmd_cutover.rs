@@ -64,10 +64,9 @@ pub async fn run(generation: i64, apply: bool) -> Result<()> {
         .await
         .with_context(|| format!("opening MemoryDB at {}", data_dir.display()))?;
 
-    // Read through the same resolver the daemon uses. `WENLAN_DATA_DIR` does NOT
-    // cover the page vault — the projection directory comes from the config's
-    // `knowledge_path`, which defaults to `~/.wenlan/pages` — so an isolated data
-    // dir alone would point this at the user's real vault.
+    // Read through the same resolver the daemon uses: the config's
+    // `knowledge_path`, else `~/.wenlan/pages`, or `<data root>/pages` when
+    // `WENLAN_DATA_DIR` names an isolated root.
     let knowledge_path = wenlan_core::config::load_config().knowledge_path_or_default();
     println!("Projection directory: {}", knowledge_path.display());
     if !knowledge_path.exists() {

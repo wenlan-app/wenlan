@@ -26,13 +26,16 @@ smoke's ownership assertion would fail on a daemon it did not start.
 ## Isolated instance (default for verification)
 
 Never verify against the shared prod daemon on :7878 — dev and prod share the
-platform data dir by default. Isolating the port and `WENLAN_DATA_DIR` is not
-enough: the default pages folder is `.wenlan/pages` under the OS user-home, NOT
-under `WENLAN_DATA_DIR`, so a capture will write into the user's real notes
-unless `knowledge_path` is set explicitly. Write the scratch `config.json`
-BEFORE the daemon starts, then read the live value back from
-`/api/knowledge/path` — the daemon reloads config per request, so a value
-written afterwards proves nothing about what was already ingested.
+platform data dir by default. When `WENLAN_DATA_DIR` names any root other than
+the installed app's own, the default pages folder is `$WENLAN_DATA_DIR/pages`,
+and the daemon refuses to start if a `knowledge_path` points into the real
+`~/.wenlan/pages` (or a custom pages folder in the real config). Builds older
+than that fix used the real `~/.wenlan/pages` by default, so the recipe below
+still writes `knowledge_path` explicitly BEFORE the daemon starts. Then read
+the live value back from `/api/knowledge/path` and the `Wenlan pages folder:`
+startup log line. Use one absolute data dir for every command: on macOS the
+sandboxed and unsandboxed shells see different `TMPDIR`s, so a path derived
+from `TMPDIR` in one shell is a different folder in the other.
 
 `WENLAN_NO_AUTOSTART=1` belongs on every harness command: without it a failed
 connect starts the user's registered background service.

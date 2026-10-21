@@ -150,17 +150,15 @@ impl Config {
         self.watch_paths.clear();
     }
 
-    /// Returns the configured pages path, or `~/.wenlan/pages/` as default.
+    /// Returns the configured pages path, or [`default_pages_root`].
     /// Field name remains `knowledge_path` for back-compat with existing
     /// config files; the default folder is rebranded to `pages/` to match
     /// the user-facing `Page` concept and the consolidated `~/.wenlan/`
     /// data layout.
     pub fn knowledge_path_or_default(&self) -> PathBuf {
-        self.knowledge_path.clone().unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".wenlan/pages")
-        })
+        self.knowledge_path
+            .clone()
+            .unwrap_or_else(default_pages_root)
     }
 
     /// Returns paths for all active Directory-type sources (for indexer compat).
@@ -239,6 +237,104 @@ pub fn data_root() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("wenlan")
         })
+}
+
+/// Where pages go when the config names no folder: `~/.wenlan/pages`, or
+/// `<data root>/pages` for an isolated run (see [`isolated_data_root`]).
+///
+/// An isolated run used to share the home default. A scratch daemon whose own
+/// `config.json` had no `knowledge_path` (written after the first start, or
+/// under a different `TMPDIR` than the one the daemon was given) then
+/// projected into the user's real `~/.wenlan/pages` and rewrote its
+/// `index.md` during startup reconcile.
+pub fn default_pages_root() -> PathBuf {
+    match isolated_data_root() {
+        Some(root) => root.join("pages"),
+        None => home_pages_root(),
+    }
+}
+
+fn home_pages_root() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".wenlan/pages")
+}
+
+/// The installed app's own data roots, the ones an isolated run is not.
+fn production_data_roots() -> Vec<PathBuf> {
+    dirs::data_local_dir()
+        .map(|base| vec![base.join("wenlan"), base.join("origin")])
+        .unwrap_or_default()
+}
+
+/// `WENLAN_DATA_DIR` when it names a root other than the installed app's own:
+/// a dev, test or demo run that must keep to itself. Being set is not enough,
+/// because the desktop app's LaunchAgent sets it to the production root.
+pub fn isolated_data_root() -> Option<PathBuf> {
+    let root = PathBuf::from(crate::env_compat::var_compat("WENLAN_DATA_DIR")?);
+    isolated_root_among(root, &production_data_roots())
+}
+
+fn isolated_root_among(root: PathBuf, production: &[PathBuf]) -> Option<PathBuf> {
+    let is_production = production
+        .iter()
+        .any(|candidate| same_path(&root, candidate));
+    (!is_production).then_some(root)
+}
+
+fn resolved(path: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    a == b || resolved(a) == resolved(b)
+}
+
+fn overlaps(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let (ra, rb) = (resolved(a), resolved(b));
+    a.starts_with(b) || b.starts_with(a) || ra.starts_with(&rb) || rb.starts_with(&ra)
+}
+
+/// Refuse an isolated run whose pages folder overlaps the user's real one.
+///
+/// The default can no longer land there, but an explicit `knowledge_path` can,
+/// for example in a scratch config copied from the real one. Startup reconcile
+/// would then repair the real folder against the scratch database. Production
+/// runs are not checked.
+pub fn ensure_isolated_page_root(page_root: &std::path::Path) -> Result<(), String> {
+    let Some(data_root) = isolated_data_root() else {
+        return Ok(());
+    };
+    // Read-only: the real configs are consulted only for a custom pages folder.
+    let mut protected = vec![home_pages_root()];
+    for root in production_data_roots() {
+        let custom = std::fs::read_to_string(root.join("config.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<Config>(&text).ok())
+            .and_then(|config| config.knowledge_path);
+        protected.extend(custom);
+    }
+    check_isolated_page_root(&data_root, page_root, &protected)
+}
+
+fn check_isolated_page_root(
+    data_root: &std::path::Path,
+    page_root: &std::path::Path,
+    protected: &[PathBuf],
+) -> Result<(), String> {
+    match protected.iter().find(|real| overlaps(page_root, real)) {
+        Some(real) => Err(format!(
+            "refusing to start: this daemon uses the isolated data root {} but its pages \
+             folder {} overlaps the real pages folder {}. Remove `knowledge_path` from {} \
+             (the default is {}) or point it at a scratch folder.",
+            data_root.display(),
+            page_root.display(),
+            real.display(),
+            data_root.join("config.json").display(),
+            data_root.join("pages").display(),
+        )),
+        None => Ok(()),
+    }
 }
 
 /// Directory containing durable CLI writes waiting for daemon replay.
@@ -704,9 +800,79 @@ mod tests {
 
     #[test]
     fn test_config_knowledge_path_default() {
-        let config: Config = serde_json::from_str("{}").unwrap();
-        let default_path = dirs::home_dir().unwrap().join(".wenlan/pages");
-        assert_eq!(config.knowledge_path_or_default(), default_path);
+        temp_env::with_vars(
+            [
+                ("WENLAN_DATA_DIR", None::<&str>),
+                ("ORIGIN_DATA_DIR", None::<&str>),
+            ],
+            || {
+                let config: Config = serde_json::from_str("{}").unwrap();
+                let default_path = dirs::home_dir().unwrap().join(".wenlan/pages");
+                assert_eq!(config.knowledge_path_or_default(), default_path);
+            },
+        );
+    }
+
+    /// The four Mac test runs of 2026-10-20: a scratch daemon with no
+    /// `knowledge_path` in its own config used the real `~/.wenlan/pages`.
+    #[test]
+    fn isolated_data_root_keeps_default_pages_inside_it() {
+        let scratch = tempfile::tempdir().unwrap();
+        temp_env::with_vars(
+            [
+                ("WENLAN_DATA_DIR", Some(scratch.path())),
+                ("ORIGIN_DATA_DIR", None),
+            ],
+            || {
+                let config: Config = serde_json::from_str("{}").unwrap();
+                assert_eq!(
+                    config.knowledge_path_or_default(),
+                    scratch.path().join("pages")
+                );
+                assert_eq!(isolated_data_root().as_deref(), Some(scratch.path()));
+            },
+        );
+    }
+
+    #[test]
+    fn the_production_root_named_explicitly_is_not_isolated() {
+        let base = tempfile::tempdir().unwrap();
+        let production = vec![base.path().join("wenlan"), base.path().join("origin")];
+        for root in &production {
+            assert_eq!(isolated_root_among(root.clone(), &production), None);
+        }
+        let mut with_slash = production[0].clone().into_os_string();
+        with_slash.push("/");
+        assert_eq!(
+            isolated_root_among(PathBuf::from(with_slash), &production),
+            None
+        );
+        let scratch = base.path().join("scratch");
+        assert_eq!(
+            isolated_root_among(scratch.clone(), &production),
+            Some(scratch)
+        );
+    }
+
+    #[test]
+    fn isolated_page_root_may_not_overlap_the_real_pages_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let real = home.path().join(".wenlan/pages");
+        std::fs::create_dir_all(&real).unwrap();
+        let scratch = home.path().join("scratch");
+        let protected = vec![real.clone()];
+
+        for page_root in [real.clone(), real.join("sub"), home.path().join(".wenlan")] {
+            let error = check_isolated_page_root(&scratch, &page_root, &protected).unwrap_err();
+            assert!(error.contains(&real.display().to_string()), "{error}");
+        }
+        assert!(check_isolated_page_root(&scratch, &scratch.join("pages"), &protected).is_ok());
+        assert!(check_isolated_page_root(
+            &scratch,
+            &home.path().join(".wenlan/pages-copy"),
+            &protected
+        )
+        .is_ok());
     }
 
     #[test]

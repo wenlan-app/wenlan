@@ -199,7 +199,11 @@ pub(super) async fn prepare_startup_state(
     // - Migrate legacy ~/Origin/knowledge/ md files into ~/.wenlan/pages/ if
     //   the new dir is empty. Never deletes the old dir; user can clean up
     //   manually after verifying.
-    if optional_runtime_workers_allowed(repair_recovery_pending) {
+    // An isolated data root keeps its pages to itself (see
+    // `wenlan_core::config::default_pages_root`), so it leaves ~/.wenlan alone.
+    if optional_runtime_workers_allowed(repair_recovery_pending)
+        && wenlan_core::config::isolated_data_root().is_none()
+    {
         if let Some(home) = dirs::home_dir() {
             let wenlan_dot = home.join(".wenlan");
             for sub in ["pages", "sessions", "sessions/_status"] {
