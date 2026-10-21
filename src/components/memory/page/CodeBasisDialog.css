@@ -1,0 +1,50 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The panel, backdrop, title, status line and button row come from BasisDiffDialog.css. */
+.code-basis-panel { width: min(960px, 100%); }
+
+.code-basis__columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.code-basis__column {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.code-basis__column-title {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.code-basis__code {
+  max-height: 46dvh;
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--mem-border);
+  border-radius: 10px;
+  background: var(--mem-detail-surface-raised, var(--mem-bg));
+  color: var(--mem-text);
+  font: 12.5px/1.55 var(--mem-font-mono);
+  tab-size: 4;
+}
+
+.code-basis__line { display: flex; gap: 12px; white-space: pre; }
+
+.code-basis__number {
+  flex: none;
+  min-width: 3ch;
+  color: var(--mem-text-tertiary);
+  text-align: right;
+  user-select: none;
+}
+
+@media (max-width: 720px) {
+  .code-basis__columns { grid-template-columns: minmax(0, 1fr); }
+}

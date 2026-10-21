@@ -13,6 +13,7 @@ import type {
   Page as KnowledgePage,
   PageRedistillResponse,
   PageReviewOutcome,
+  CodeBasisLocator,
   RefinementProposalSummary,
   RestoreEntitiesRequest,
   SourceAnnotation,
@@ -26,6 +27,7 @@ import type { SpacesNavigationFixture } from "../fixtures/spacesNavigation";
 import { baseResponse } from "./baseResponses";
 import { ConfiguredTauriFailureError, TauriMockArgumentError } from "./errors";
 import { PageBasisStore } from "./pageBasis";
+import { PageCodeBasisStore } from "./pageCodeBasis";
 import { PageMapStore } from "./pageMap";
 import type { MockCommandCall, MockFailure, TauriMockPageScenario } from "./types";
 
@@ -114,6 +116,17 @@ function requiredBoolean(command: string, args: unknown, key: string): boolean {
   return value;
 }
 
+/** The `locator` argument of a code basis command: the four fields that name a row. */
+function locatorArg(command: string, args: unknown): CodeBasisLocator {
+  const locator = optionalValue(args, "locator");
+  return {
+    repo_root: requiredString(command, locator, "repo_root"),
+    path: requiredString(command, locator, "path"),
+    line_start: requiredNumber(command, locator, "line_start"),
+    line_end: requiredNumber(command, locator, "line_end"),
+  };
+}
+
 function stringArray(args: unknown, key: string): readonly string[] {
   const value = optionalValue(args, key);
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
@@ -138,6 +151,7 @@ export class TauriMockRuntime {
   private readonly pageDraftCreateRequests = new Map<string, PageDraftCreateRequest | null>();
   private readonly pageMaps = new PageMapStore();
   private readonly pageBasis: PageBasisStore;
+  private readonly pageCodeBasis: PageCodeBasisStore;
   private readonly updatePageReceipts = new Map<
     string,
     { readonly input: UpdatePageInput; readonly outcome: UpdatePageOutcome }
@@ -159,6 +173,7 @@ export class TauriMockRuntime {
     this.pages = fixture.pages.map((page) => ({ ...page }));
     this.pageSequence = this.pages.length;
     this.pageBasis = new PageBasisStore(pageScenario.basis);
+    this.pageCodeBasis = new PageCodeBasisStore(pageScenario.codeBasis);
     this.entityDetails = fixture.entityDetails.map((detail) => ({
       entity: { ...detail.entity },
       observations: detail.observations.map((observation) => ({ ...observation })),
@@ -322,6 +337,26 @@ export class TauriMockRuntime {
         );
       case "list_basis_pending":
         return this.pageBasis.pending(optionalString(args, "space"), this.pages);
+      case "list_code_basis_pending":
+        return this.pageCodeBasis.pending(optionalString(args, "space"), this.pages);
+      case "confirm_page_code_basis":
+        return this.pageCodeBasis.confirm(requiredString(command, args, "pageId"), locatorArg(command, args));
+      case "remove_page_code_basis":
+        return this.pageCodeBasis.remove(requiredString(command, args, "pageId"), locatorArg(command, args));
+      case "get_page_code_basis_cited":
+        return this.pageCodeBasis.cited(requiredString(command, args, "pageId"), locatorArg(command, args));
+      case "read_git_blob_lines":
+        return this.pageCodeBasis.readBlobLines(
+          requiredString(command, args, "blob"),
+          requiredNumber(command, args, "lineStart"),
+          requiredNumber(command, args, "lineEnd"),
+        );
+      case "read_code_lines":
+        return this.pageCodeBasis.readLines(
+          requiredString(command, args, "path"),
+          requiredNumber(command, args, "lineStart"),
+          requiredNumber(command, args, "lineEnd"),
+        );
       case "get_page_sources": {
         const pageId = requiredString(command, args, "pageId");
         const page = this.pages.find((entry) => entry.id === pageId);
@@ -514,6 +549,8 @@ export class TauriMockRuntime {
       // Like the real GET: the bases ride with the note.
       const basis = this.pageBasis.refsFor(page.id, this.pages);
       if (basis.length > 0) page.basis = basis;
+      const codeBasis = this.pageCodeBasis.refsFor(page.id);
+      if (codeBasis.length > 0) page.code_basis = codeBasis;
     }
     return page;
   }

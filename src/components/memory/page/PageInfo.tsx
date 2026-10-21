@@ -4,6 +4,7 @@ import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import type {
   BasisRef,
+  CodeBasisRef,
   MemoryItem,
   PageChangelogEntry,
   PageCitation,
@@ -12,6 +13,7 @@ import type {
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
 import { basisCountLabel, prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
+import PageInfoCode from "./PageInfoCode";
 import PageInfoNotes from "./PageInfoNotes";
 import "./NoteInfo.css";
 
@@ -35,6 +37,9 @@ interface PageInfoProps {
   basis?: readonly BasisRef[];
   onMarkBasis?: (pageId: string) => Promise<boolean>;
   onUnmarkBasis?: (pageId: string) => void;
+  /** The lines of code this note relies on, and a way to stop relying on one. */
+  codeBasis?: readonly CodeBasisRef[];
+  onUnmarkCodeBasis?: (row: CodeBasisRef) => void;
 }
 
 // Content chips already carry per-claim provenance; inside this panel the
@@ -105,6 +110,8 @@ export default function PageInfo({
   basis,
   onMarkBasis,
   onUnmarkBasis,
+  codeBasis,
+  onUnmarkCodeBasis,
 }: PageInfoProps) {
   const { t, i18n } = useTranslation();
   // English keeps the legacy abbreviated relatives ("1d ago"); Chinese gets
@@ -182,8 +189,8 @@ export default function PageInfo({
         <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
           {t("pageInfo.backlinks", { count: uniqueInbound.length })} ·{" "}
           {t("pageInfo.revisions", { count: revisions.length })} ·{" "}
-          {basis && basis.length > 0
-            ? basisCountLabel(t, sourceCount, basis.length)
+          {(basis && basis.length > 0) || (codeBasis && codeBasis.length > 0)
+            ? basisCountLabel(t, sourceCount, basis?.length ?? 0, codeBasis?.length ?? 0)
             : t("pageInfo.sources", { count: sourceCount })}
         </span>
       </summary>}
@@ -422,6 +429,9 @@ export default function PageInfo({
             onMarkBasis={onMarkBasis}
             onUnmarkBasis={onUnmarkBasis}
           />
+        )}
+        {codeBasis && codeBasis.length > 0 && (
+          <PageInfoCode codeBasis={codeBasis} onUnmarkCodeBasis={onUnmarkCodeBasis} />
         )}
         {diagnosability && (
           <p

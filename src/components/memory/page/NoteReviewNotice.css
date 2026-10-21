@@ -126,3 +126,6 @@
   color: var(--mem-text-secondary, #666);
   font-size: 12px;
 }
+
+/* The code lines follow the note lines as one list: close the notice's row gap. */
+.note-review-notice__basis-list + .note-review-notice__basis-list { margin-top: -6px; }
