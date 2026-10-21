@@ -1186,6 +1186,7 @@ carrying the authority of agreement.
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/code_basis_recheck.rs::prepare_recheck_input` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/db.rs::archive_entity_in_transaction` | `private` | no | no | — | `core/db.rs::append_page_history` |
 | `core/db.rs::archive_legacy_overview_placeholder` | `pub(crate)` | no | no | — | `core/db.rs::append_page_history` |
 | `core/db.rs::archive_page` | `pub` | no | **yes** | `server/page_routes.rs::handle_archive_page` | `core/db.rs::append_page_history`, `core/db.rs::reject_entity_shadow_page_on_conn` |
@@ -1350,6 +1351,7 @@ carrying the authority of agreement.
 |---|---|---|---|---|---|
 | `core/citations.rs::run_citation_backfill_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_tick` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
+| `core/code_basis_recheck.rs::run_code_basis_recheck_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/code_basis_recheck.rs::prepare_recheck_input` |
 | `core/db.rs::archive_entity` | `pub` | no | **yes** | `server/cmd_prune_junk_entities.rs::run` | `core/db.rs::archive_entity_in_transaction` |
 | `core/db.rs::archive_idle_detected_entities` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/db.rs::archive_entity_in_transaction` |
 | `core/db.rs::bulk_entity_lifecycle` | `private` | no | no | — | `core/db.rs::archive_entity_in_transaction`, `core/db.rs::restore_entity_in_transaction` |

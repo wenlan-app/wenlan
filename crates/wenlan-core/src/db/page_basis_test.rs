@@ -1854,6 +1854,7 @@ async fn agent_write(
     crate::post_write::page_write(
         db,
         crate::post_write::PageWrite::AgentUpdate {
+            edited_by: "agent_refresh",
             page_id: id,
             req: wenlan_types::requests::UpdatePageRequest {
                 content: content.to_string(),

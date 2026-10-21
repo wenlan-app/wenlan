@@ -39,6 +39,13 @@ pub struct CodeBasisRef {
     /// `outside_repo`, `unreadable` or `too_large`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// One sentence from the everyday model about why it could not settle a
+    /// changed code basis by itself (the note states an intent the code cannot
+    /// confirm, the change contradicts it, or the model could not tell). Only
+    /// while `pending`, and only when the model has looked at the current
+    /// change; a person is the one to decide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
 }
 
 /// Body of `POST /api/pages/{id}/code-basis/confirm`,
@@ -108,6 +115,7 @@ mod tests {
             state: "ok".into(),
             changed_at: None,
             reason: None,
+            explanation: None,
         };
         let wire = serde_json::to_value(&row).unwrap();
         assert_eq!(
@@ -138,6 +146,36 @@ mod tests {
         assert_eq!(row.changed_at, Some(1_700_000_000));
         assert_eq!(row.reason.as_deref(), Some("file_missing"));
         assert_eq!(serde_json::to_value(&row).unwrap(), wire);
+    }
+
+    #[test]
+    fn a_ref_carries_the_models_explanation_only_when_there_is_one() {
+        let wire = json!({
+            "repo_root": "/repo",
+            "path": "a.rs",
+            "line_start": 1,
+            "line_end": 2,
+            "state": "pending",
+            "changed_at": 5,
+            "explanation": "The note says 32 bits are kept on purpose; the code now keeps 48."
+        });
+        let row: CodeBasisRef = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            row.explanation.as_deref(),
+            Some("The note says 32 bits are kept on purpose; the code now keeps 48.")
+        );
+        assert_eq!(serde_json::to_value(&row).unwrap(), wire);
+        // An older daemon sends none; a quiet row never grows the key.
+        let old: CodeBasisRef = serde_json::from_value(json!({
+            "repo_root": "/repo", "path": "a.rs", "line_start": 1, "line_end": 2,
+            "state": "pending", "changed_at": 5
+        }))
+        .unwrap();
+        assert_eq!(old.explanation, None);
+        assert!(serde_json::to_value(&old)
+            .unwrap()
+            .get("explanation")
+            .is_none());
     }
 
     #[test]

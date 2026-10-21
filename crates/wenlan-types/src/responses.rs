@@ -693,6 +693,11 @@ pub struct ConfigResponse {
     /// Whether the proactive Page-Map suggestion phase is enabled. Default true.
     #[serde(default)]
     pub page_map_auto_suggest: bool,
+    /// Whether the everyday model may look at a note whose cited code changed
+    /// (in the background, when background AI is on). Missing on an older
+    /// daemon means the feature does not exist there, so it reads as off.
+    #[serde(default)]
+    pub code_basis_model_recheck: bool,
 }
 
 // ===== On-device model =====

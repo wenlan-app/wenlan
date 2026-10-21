@@ -1876,6 +1876,7 @@ async fn handle_refresh_page_inner(
     let result = wenlan_core::post_write::page_write(
         &db,
         wenlan_core::post_write::PageWrite::AgentUpdate {
+            edited_by: "agent_refresh",
             basis: wenlan_core::db::BasisWrite {
                 minor: req.minor.unwrap_or(false),
                 actor: proposer.unwrap_or("unknown").to_string(),

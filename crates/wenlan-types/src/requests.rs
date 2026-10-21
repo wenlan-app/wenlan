@@ -698,6 +698,11 @@ pub struct UpdateConfigRequest {
     /// preserve stored value; present = set. Never gates the explicit improve route.
     #[serde(default)]
     pub page_map_auto_suggest: Option<bool>,
+    /// Lets the everyday model look at a note whose cited code changed, in the
+    /// background (`false` leaves every such note for a person). Omitted =
+    /// preserve stored value; present = set. Needs background AI to be on.
+    #[serde(default)]
+    pub code_basis_model_recheck: Option<bool>,
     /// Scopes `everyday_source` and `synthesis_source` in this same request to
     /// jobs that are currently unpinned. No other field is affected. Omitted or
     /// `false` = overwrite, which is what every caller did before this field

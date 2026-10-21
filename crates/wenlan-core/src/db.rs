@@ -93,7 +93,7 @@ mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
 pub(crate) use code_basis::{row_from as code_basis_row_from, ROW_SELECT as CODE_BASIS_ROW_SELECT};
-pub use code_basis::{CodeBasisRow, CodeBasisVerdict};
+pub use code_basis::{CodeBasisRecheckState, CodeBasisRow, CodeBasisVerdict};
 pub(crate) use community_grouping_state::CommunityGroupingLeaseCleanup;
 pub(crate) use eval_temporal_seed::EvalTemporalSeed;
 pub(crate) use kg_quality_diagnostics::ContradictionObservationCount;
@@ -127,6 +127,8 @@ mod claim_derivation_test;
 mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
+#[cfg(test)]
+mod code_basis_recheck_test;
 #[cfg(test)]
 pub(crate) mod code_basis_test;
 #[cfg(test)]
@@ -1498,6 +1500,9 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 141 adds `session_reads`, what a session looked up in Wenlan.
 /// Migration 142 adds `page_code_basis.cited_blob` (the git blob id of the
 /// cited file as last written or confirmed).
+/// Migration 143 adds `page_code_basis.recheck_note`, `recheck_digest` and
+/// `recheck_attempts` (what the background model recheck concluded about a
+/// changed row).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1505,7 +1510,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 142;
+pub const SCHEMA_VERSION: u32 = 143;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -10503,6 +10508,14 @@ impl MemoryDB {
             if version < 142 {
                 self.migrate_142_code_basis_cited_blob(version).await?;
             }
+            // Migration 143 adds what the background model recheck concluded
+            // about a changed code basis. See migrate_143_code_basis_recheck.
+            if ceiling < 143 {
+                return Ok(());
+            }
+            if version < 143 {
+                self.migrate_143_code_basis_recheck(version).await?;
+            }
         }
 
         // Private M4 builds could already have stamped user_version=95 before
@@ -18033,6 +18046,55 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("m142 bump: {e}")))?;
         log::info!("[migration] Migration 142 applied: page_code_basis.cited_blob");
+        Ok(())
+    }
+
+    /// Migration 143: a code basis remembers what the background model recheck
+    /// concluded about its changed lines.
+    ///
+    /// Adds `recheck_note` (the sentence left for a person), `recheck_digest`
+    /// (the digest of the changed lines the model was asked about) and
+    /// `recheck_attempts` (attempts at that digest without a verdict). Each
+    /// ALTER is guarded by a column-exists check, so a table created by the
+    /// current DDL and a replay after a crash between an ALTER and the version
+    /// bump are both no-ops.
+    async fn migrate_143_code_basis_recheck(&self, prior_version: i64) -> Result<(), WenlanError> {
+        self.backup_before_migration(143, prior_version).await?;
+        let conn = self.conn.lock().await;
+        for (column, ddl) in [
+            ("recheck_note", "recheck_note TEXT"),
+            ("recheck_digest", "recheck_digest TEXT"),
+            (
+                "recheck_attempts",
+                "recheck_attempts INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            let has_col: bool = {
+                let mut rows = conn
+                    .query(
+                        "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') \
+                         WHERE name = ?1",
+                        libsql::params![column],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("m143 col check: {e}")))?;
+                match rows.next().await {
+                    Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
+                    _ => false,
+                }
+            };
+            if !has_col {
+                conn.execute(&format!("ALTER TABLE page_code_basis ADD COLUMN {ddl}"), ())
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("m143 add page_code_basis.{column}: {e}"))
+                    })?;
+            }
+        }
+        conn.execute("PRAGMA user_version = 143", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m143 bump: {e}")))?;
+        log::info!("[migration] Migration 143 applied: page_code_basis recheck columns");
         Ok(())
     }
 
@@ -52951,6 +53013,7 @@ impl MemoryDB {
             && page_growth_guard.is_none()
             && link_reason != "citation_backfill"
             && link_reason != "agent_refresh"
+            && link_reason != "code_recheck"
             && consume_revision_id.is_none()
         {
             return Err(WenlanError::Validation(

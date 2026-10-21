@@ -82,6 +82,12 @@ pub struct BriefReadResponse {
     /// Space has no code bases at all.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_basis_pending: Option<u32>,
+    /// True when the count above is not zero and the everyday model has
+    /// already looked at every one of those code bases and left a sentence
+    /// for a person (none is left unexamined or unavailable). Absent
+    /// otherwise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub code_basis_pending_explained: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

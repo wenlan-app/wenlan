@@ -1797,18 +1797,22 @@ fn recall_hits(results: &[wenlan_types::SearchResult]) -> Vec<RecallHit<'_>> {
 
 /// The Brief's line about notes that rely on code that changed, or `None` when
 /// there are none. The recheck already ran inside the Brief read; nothing for
-/// the agent to run first.
-fn code_basis_drift_line(count: Option<u32>) -> Option<String> {
-    match count? {
-        0 => None,
-        1 => Some(
-            "1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
-                .to_string(),
-        ),
-        count => Some(format!(
+/// the agent to run first. `explained` is true when the everyday model already
+/// looked at every one of them and left a sentence for a person.
+fn code_basis_drift_line(count: Option<u32>, explained: bool) -> Option<String> {
+    let line = match count? {
+        0 => return None,
+        1 => "1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
+            .to_string(),
+        count => format!(
             "{count} notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
-        )),
-    }
+        ),
+    };
+    Some(if explained {
+        format!("{line}. AI has looked at them and a person needs to decide.")
+    } else {
+        line
+    })
 }
 
 /// One Brief item list as text, keeping the stable item ids and versions the
@@ -2103,7 +2107,10 @@ impl WenlanMcpServer {
                     "No Brief exists for Space `{}` yet. Reads never create one; the first handoff update can.",
                     response.space.as_deref().unwrap_or("unknown")
                 );
-                if let Some(line) = code_basis_drift_line(response.code_basis_pending) {
+                if let Some(line) = code_basis_drift_line(
+                    response.code_basis_pending,
+                    response.code_basis_pending_explained,
+                ) {
                     output.push_str(&format!("\n\n{line}\n"));
                 }
                 output
@@ -2124,7 +2131,10 @@ impl WenlanMcpServer {
                 );
                 render_brief_items(&mut output, "Active", &brief.active);
                 render_brief_items(&mut output, "Backlog", &brief.backlog);
-                if let Some(line) = code_basis_drift_line(response.code_basis_pending) {
+                if let Some(line) = code_basis_drift_line(
+                    response.code_basis_pending,
+                    response.code_basis_pending_explained,
+                ) {
                     output.push_str(&format!("\n{line}\n"));
                 }
                 if let Some(related) = response.related_context.as_ref() {

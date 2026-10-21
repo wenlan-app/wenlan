@@ -46,9 +46,12 @@ pub enum PageWrite<'a> {
     /// An agent's `agent_refresh` of a Page it names (`agent`, from the
     /// `x-agent-name` header), under a source-revision fence. Identical to
     /// `Update` for `agent_refresh` except the changelog entry records `agent`.
+    /// `edited_by` is `agent_refresh` for an agent, or `code_recheck` for the
+    /// daemon's own update of a note from the code it relies on.
     AgentUpdate {
         page_id: &'a str,
         req: UpdatePageRequest,
+        edited_by: &'a str,
         agent: Option<&'a str>,
         expected_source_revision: i64,
         knowledge_path: Option<&'a Path>,
@@ -180,6 +183,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
         PageWrite::AgentUpdate {
             page_id,
             req,
+            edited_by,
             agent,
             expected_source_revision,
             knowledge_path,
@@ -189,7 +193,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 db,
                 page_id,
                 req,
-                "agent_refresh",
+                edited_by,
                 false,
                 Some(expected_source_revision),
                 knowledge_path,
