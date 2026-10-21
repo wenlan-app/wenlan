@@ -208,7 +208,7 @@ describe("IntelligenceSection", () => {
     expect(screen.queryByText("Anthropic · Haiku 4.5")).not.toBeInTheDocument();
   });
 
-  it("legacy mode shows a service, not a duplicate on-device model, and leaves synthesis off", async () => {
+  it("legacy mode shows a service, not a duplicate on-device model, and leaves synthesis not set up", async () => {
     mocks.getOnDeviceModel.mockResolvedValue({ loaded: "qwen3-4b-instruct-2507", selected: "qwen3-4b-instruct-2507",
       models: [{ id: "qwen3-4b-instruct-2507", display_name: "Qwen3 4B Instruct", cached: true }] });
     renderSection();
@@ -216,7 +216,7 @@ describe("IntelligenceSection", () => {
     expect(await within(everyday).findByText("On-device")).toBeInTheDocument();
     expect(within(everyday).queryByText("Qwen3 4B Instruct")).not.toBeInTheDocument();
     const synthesis = screen.getByText("Synthesis").closest<HTMLElement>(".settings-task-row")!;
-    expect(within(synthesis).getByText("Off")).toBeInTheDocument();
+    expect(within(synthesis).getByText("Not set up")).toBeInTheDocument();
     expect(within(synthesis).getByRole("button", { name: "Set up" })).toBeInTheDocument();
   });
 
@@ -294,7 +294,7 @@ describe("IntelligenceSection", () => {
     expect(select.closest(".settings-task-row")).toHaveTextContent("The chosen AI is unavailable. This work is paused.");
   });
 
-  it("no providers: Basic and Off each appear once, with a working setup link", async () => {
+  it("no providers: Basic and Not set up each appear once, with a working setup link", async () => {
     const scroll = vi.fn();
     const previousScroll = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scroll;
@@ -302,9 +302,9 @@ describe("IntelligenceSection", () => {
       renderSection();
       const everyday = (await screen.findByText("Everyday work")).closest<HTMLElement>(".settings-task-row")!;
       const synthesis = screen.getByText("Synthesis").closest<HTMLElement>(".settings-task-row")!;
-      await within(synthesis).findByText("Off");
+      await within(synthesis).findByText("Not set up");
       expect(within(everyday).getAllByText("Basic")).toHaveLength(1);
-      expect(within(synthesis).getAllByText("Off")).toHaveLength(1);
+      expect(within(synthesis).getAllByText("Not set up")).toHaveLength(1);
       await userEvent.click(within(everyday).getByRole("button", { name: "Set up" }));
       expect(screen.getByRole("tab", { name: "On-device" })).toHaveAttribute("aria-selected", "true");
       expect(scroll).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
@@ -323,7 +323,7 @@ describe("IntelligenceSection", () => {
     const options = within(select).getAllByRole("option") as HTMLOptionElement[];
     expect(select).toHaveValue("");
     expect(options.filter((option) => !option.disabled)).toHaveLength(0);
-    expect(within(select).getByRole("option", { selected: true })).toHaveTextContent("Off");
+    expect(within(select).getByRole("option", { selected: true })).toHaveTextContent("Not set up");
   });
 
   it("synthesis can directly select On-device without opening an editing mode", async () => {

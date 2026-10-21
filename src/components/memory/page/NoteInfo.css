@@ -217,6 +217,16 @@
   overflow-wrap: anywhere;
 }
 
+/* A Space name beside a picker row stays whole; a long one is cut, not split. */
+.note-info-notes__space {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+
 .note-info-source-list {
   display: flex;
   flex-direction: column;

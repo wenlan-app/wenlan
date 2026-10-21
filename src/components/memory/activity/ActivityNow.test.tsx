@@ -64,7 +64,7 @@ describe("ActivityNow", () => {
       }],
     }));
 
-    expect(await screen.findByTestId("activity-now-running")).toHaveTextContent("Background organization is running.");
+    expect(await screen.findByTestId("activity-now-running")).toHaveTextContent("Steeping is running.");
     expect(screen.getByText("Summarize")).toBeInTheDocument();
     expect(screen.getByTestId("activity-now-running-step")).toHaveTextContent("Running");
     expect(screen.queryByTestId("activity-now-idle")).toBeNull();

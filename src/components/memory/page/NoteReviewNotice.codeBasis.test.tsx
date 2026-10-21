@@ -76,7 +76,7 @@ describe("NoteReviewNotice with a code basis", () => {
   it("says which lines changed, with the visible and tucked-away actions", async () => {
     const { onEditToConfirm } = renderNotice({ ...basePage, code_basis: [row()] });
 
-    expect(await screen.findByText("The code this note relies on changed: src/parser.rs lines 10–24"))
+    expect(await screen.findByText("The code this page relies on changed: src/parser.rs lines 10–24"))
       .toBeInTheDocument();
     expect(screen.getByRole("button", { name: "See code" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm no impact" })).toBeInTheDocument();
@@ -86,14 +86,14 @@ describe("NoteReviewNotice with a code basis", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
     expect(screen.getByRole("menuitem", { name: "Stop relying on this code" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Edit this note yourself" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Edit this page yourself" }));
     expect(onEditToConfirm).toHaveBeenCalledWith(expect.objectContaining({ path: "src/parser.rs", line_start: 10 }));
   });
 
   it("names a single line without a range", async () => {
     renderNotice({ ...basePage, code_basis: [row({ line_start: 7, line_end: 7 })] });
 
-    expect(await screen.findByText("The code this note relies on changed: src/parser.rs line 7")).toBeInTheDocument();
+    expect(await screen.findByText("The code this page relies on changed: src/parser.rs line 7")).toBeInTheDocument();
   });
 
   it("explains code that cannot be found by its reason and offers only a way out", async () => {

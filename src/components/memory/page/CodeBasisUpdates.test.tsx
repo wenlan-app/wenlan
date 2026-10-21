@@ -70,10 +70,10 @@ describe("BasisUpdatesSummary with code", () => {
     const list = await screen.findByRole("list", { name: "Code changed" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent("The code 2 notes rely on changed");
+    expect(rows[0]).toHaveTextContent("The code 2 pages rely on changed");
     expect(listCodeBasisPending).toHaveBeenCalledWith(null);
     const action = within(list).getByRole("button", { name: "Review" });
-    expect(action).toHaveAccessibleDescription("The code 2 notes rely on changed");
+    expect(action).toHaveAccessibleDescription("The code 2 pages rely on changed");
     fireEvent.click(action);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -87,7 +87,7 @@ describe("BasisUpdatesSummary with code", () => {
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
     const rows = within(list).getAllByRole("listitem");
     expect(rows[0]).toHaveTextContent("“Pricing” changed. 1 page to confirm");
-    expect(rows[1]).toHaveTextContent("The code 1 note relies on changed");
+    expect(rows[1]).toHaveTextContent("The code 1 page relies on changed");
     expect(container.querySelectorAll(".note-review-notice")).toHaveLength(1);
   });
 
@@ -121,10 +121,10 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
 
     fireEvent.click(within(group).getByRole("button", { name: "Parser notes" }));
     expect(within(group).getByRole("button", { name: "Parser notes" })).toHaveAttribute("aria-expanded", "true");
-    expect(within(group).getByText("The code this note relies on changed: src/parser.rs lines 10–24")).toBeInTheDocument();
+    expect(within(group).getByText("The code this page relies on changed: src/parser.rs lines 10–24")).toBeInTheDocument();
     expect(within(group).getByText("Code not found: src/gone.rs (the file is gone)")).toBeInTheDocument();
 
-    fireEvent.click(within(group).getByRole("button", { name: "Open note" }));
+    fireEvent.click(within(group).getByRole("button", { name: "Open page" }));
     expect(onPageClick).toHaveBeenCalledWith("note-1");
   });
 
