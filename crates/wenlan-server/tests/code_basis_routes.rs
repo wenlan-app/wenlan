@@ -395,7 +395,9 @@ async fn acceptance_1_to_5_write_move_change_confirm_and_lose_the_file_over_http
 async fn the_cited_route_serves_the_blob_id_the_row_was_written_or_confirmed_against() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();
-    let (router, _tmp, _db) = common::test_app_no_gate().await;
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    // Registers the Space; the create route refuses an unknown one (422).
+    make_brief(&db).await;
     let original = numbered(40);
     let repo = Repo::new("src/lib.rs", &original);
     let (status, created) =
