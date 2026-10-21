@@ -69,7 +69,7 @@ describe("Sources containers", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
     expect(await screen.findByRole("button", { name: "Keep in sync" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByText("Imported once")).toBeInTheDocument();
-    expect(screen.getByText(/come in only when you choose Refresh/)).toBeInTheDocument();
+    expect(screen.getByText(/Later changes wait until you Refresh/)).toBeInTheDocument();
     expect(screen.queryByText(/about every 30 seconds/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^Refresh$/ }));
     await waitFor(() => expect(syncRegisteredSource).toHaveBeenCalledWith("vault-1"));
