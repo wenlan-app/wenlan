@@ -614,14 +614,19 @@ html[data-theme="light"] .memory-shell {
 }
 
 /* M5 truth axes (PageTruthBadges) — independent of the review-status states
-   above: supported/provisional is the support axis, reviewed/unreviewed is
-   the human-review axis. */
+   above: supported/unsupported/unevaluated is the support axis,
+   reviewed/unreviewed is the human-review axis. Unevaluated is not a verdict,
+   so it stays muted; only a failed check gets the warning tone. */
 .wiki-page-state--truth-supported {
   color: var(--mem-accent-sage);
 }
 
-.wiki-page-state--truth-provisional {
+.wiki-page-state--truth-unsupported {
   color: var(--mem-accent-amber);
+}
+
+.wiki-page-state--truth-unevaluated {
+  color: var(--mem-text-meta-aa);
 }
 
 .wiki-page-state--truth-reviewed {

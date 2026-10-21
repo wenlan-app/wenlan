@@ -1580,6 +1580,7 @@ mod tests {
         assert!(serde_json::to_value(&inventory).unwrap()["pages"][0]["storage_path"].is_null());
         inventory.pages[0].page.truth = Some(crate::pages::PageTruth {
             supported: false,
+            support: crate::pages::PageSupport::Unevaluated,
             human_reviewed: true,
         });
         inventory.pages[0].storage_path = Some("original-name.md".into());

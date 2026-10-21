@@ -11,6 +11,7 @@ import { ImportDetailPanel, ImportStatusPill } from "./ImportPhases";
 import { isKnowledgePage, listAllActivePages } from "./pages/listAllPages";
 import { FirstPageMilestone } from "../onboarding/FirstPageMilestone";
 import "./homeEmptyState.css";
+import { useSteepOnDemand } from "../../lib/steepMode";
 
 interface HomePageProps {
   onNavigateGraph: () => void;
@@ -150,6 +151,7 @@ function WikiHome({
 }) {
   const [containerRef, isWideLayout] = useElementMinWidth<HTMLDivElement>(820);
   const [importDetailOpen, setImportDetailOpen] = useState(false);
+  const steepOnDemand = useSteepOnDemand() === true;
   // Background import phases, if any. Asked here — not higher — because this
   // is the only surface whose copy branches on the answer, and the command
   // rejects on flavors that do not serve it: a rejection just means no pill.
@@ -193,7 +195,7 @@ function WikiHome({
 
       {importDetailOpen && importBatches.length > 0 ? (
         <div style={{ gridColumn: "1 / -1", minWidth: 0 }}>
-          <ImportDetailPanel batches={importBatches} onBack={() => setImportDetailOpen(false)} />
+          <ImportDetailPanel batches={importBatches} onBack={() => setImportDetailOpen(false)} onDemand={steepOnDemand} />
         </div>
       ) : (
       <div

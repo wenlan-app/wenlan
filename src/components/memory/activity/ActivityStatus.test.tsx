@@ -74,6 +74,25 @@ describe("ActivityStatus", () => {
     expect(screen.getByTestId("activity-status-icon")).toHaveAttribute("data-icon-kind", "pulse");
   });
 
+  it("never says Steeping in On demand, even with steps waiting", async () => {
+    renderStatus(activity({
+      state: "off",
+      everyday: { job: "everyday", lane: "on_device", model: "a-model", mode: "pinned", available: true },
+      assets: [{
+        kind: "memories",
+        state: "running",
+        done: 1,
+        total: 2,
+        blocked: 0,
+        steps: [{ name: "summarize", state: "running", done: 1, total: 2, failed: 0, job: "everyday" }],
+      }],
+    }));
+
+    const button = await screen.findByRole("button", { name: "Activity" });
+    expect(button).not.toHaveAttribute("data-state");
+    expect(screen.getByTestId("activity-status-icon")).not.toHaveClass("mem-activity-pulse-running");
+  });
+
   it("shows attention only for a failed step and still opens the summary before Activity", async () => {
     const onOpenActivity = vi.fn();
     renderStatus(activity({

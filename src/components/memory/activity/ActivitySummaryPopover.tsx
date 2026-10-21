@@ -5,7 +5,7 @@ import "./activitySummary.css";
 import { useTranslation } from "react-i18next";
 import type { ActivityResponse } from "../../../lib/tauri";
 import { relativeTime } from "../../../lib/relativeTime";
-import { assetCount, assetProgress, assetSentence, knownAssets, type KnownActivityAsset, type KnownActivityAssetKind } from "../../../lib/activitySentence";
+import { assetCount, assetProgress, assetSentence, knownAssets, onDemandPagesWaiting, type KnownActivityAsset, type KnownActivityAssetKind } from "../../../lib/activitySentence";
 
 import { ACTIVITY_ASSET_ORDER } from "./activityPresentation";
 const ASSET_COLOR: Record<KnownActivityAssetKind, string> = {
@@ -68,12 +68,20 @@ export default function ActivitySummaryPopover({ id, activity, isError, firstAct
       ) : activity === undefined ? (
         <p role="status">{t("activityStatus.nowLoading")}</p>
       ) : (
-        <div className="mem-activity-summary-list">
-          {ACTIVITY_ASSET_ORDER.map((kind) => {
-            const asset = byKind.get(kind);
-            return asset ? <AssetRow key={kind} activity={activity} asset={asset} /> : null;
-          })}
-        </div>
+        <>
+          {activity.state === "off" && (
+            <p className="mem-activity-summary-mode" data-testid="activity-summary-on-demand">
+              <span className="mem-activity-summary-mode-name">{t("activityStatus.state.off")}</span>
+              {onDemandPagesWaiting(activity) > 0 && <span>{t("activityStatus.onDemandFinish")}</span>}
+            </p>
+          )}
+          <div className="mem-activity-summary-list">
+            {ACTIVITY_ASSET_ORDER.map((kind) => {
+              const asset = byKind.get(kind);
+              return asset ? <AssetRow key={kind} activity={activity} asset={asset} /> : null;
+            })}
+          </div>
+        </>
       )}
       <footer className="mem-activity-summary-footer">
         {!isError && activity !== undefined && (

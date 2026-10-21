@@ -227,7 +227,8 @@ function PhaseDot({ state }: { state: ImportPhaseState }) {
  * A phase with no known total reads as waiting, never as 0%. `distill` never
  * reports a usable total, so it always renders as a live count with no bar.
  */
-export function ImportPhaseList({ phases }: { phases: ImportPhaseStatus[] }) {
+/** `onDemand`: steeping is On demand, so the handoff names the AI tool, not the background. */
+export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPhaseStatus[]; onDemand?: boolean }) {
   const { t } = useTranslation();
   const byPhase = new Map<ImportPhase, ImportPhaseStatus>();
   for (const p of phases) byPhase.set(p.phase, p);
@@ -340,7 +341,7 @@ export function ImportPhaseList({ phases }: { phases: ImportPhaseStatus[] }) {
           data-testid="import-handoff"
           style={{ margin: "8px 14px", fontSize: "12px", lineHeight: 1.6, color: "var(--mem-text-secondary)" }}
         >
-          {t("activityStatus.importHandoff", { count: stored?.done ?? 0 })}
+          {t(onDemand ? "activityStatus.importHandoffOnDemand" : "activityStatus.importHandoff", { count: stored?.done ?? 0 })}
         </p>
       )}
     </div>
@@ -413,9 +414,11 @@ export function ImportStatusPill({
 export function ImportDetailPanel({
   batches,
   onBack,
+  onDemand = false,
 }: {
   batches: ImportBatchStatus[];
   onBack: () => void;
+  onDemand?: boolean;
 }) {
   const { t } = useTranslation();
   const summary = summarizeImportBatches(batches);
@@ -456,7 +459,7 @@ export function ImportDetailPanel({
         </h2>
       </div>
 
-      <ImportPhaseList phases={summary.phases} />
+      <ImportPhaseList phases={summary.phases} onDemand={onDemand} />
 
       <p style={{
         fontFamily: "var(--mem-font-mono)",

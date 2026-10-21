@@ -631,3 +631,21 @@
   }
 
 }
+
+/* Steeping mode: Automatic or On demand. Same radio treatment as the pairing
+   access choice; both options are always visible so neither reads as "off". */
+.settings-steep-mode-options { display: grid; gap: 8px; margin-top: 10px; }
+.settings-steep-mode-option { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 0 12px; padding: 12px; border: 1px solid var(--mem-border); border-radius: 8px; cursor: pointer; }
+.settings-steep-mode-option:hover { background: var(--mem-hover); }
+.settings-steep-mode-option[data-selected="true"] { border-color: var(--mem-accent-indigo); background: var(--mem-indigo-bg); }
+.settings-steep-mode-option:has(input:focus-visible) { outline: 2px solid var(--mem-focus-ring); outline-offset: 2px; }
+.settings-steep-mode-option[aria-disabled="true"] { cursor: default; opacity: 0.7; }
+.settings-steep-mode-radio { appearance: none; -webkit-appearance: none; box-sizing: border-box; width: 18px; height: 18px; margin: 2px 0 0; border: 1.5px solid var(--mem-text-secondary); border-radius: 50%; background: transparent; display: grid; place-content: center; cursor: inherit; }
+.settings-steep-mode-radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--mem-accent-indigo); transform: scale(0); }
+.settings-steep-mode-radio:checked { border-color: var(--mem-accent-indigo); }
+.settings-steep-mode-radio:checked::after { transform: scale(1); }
+.settings-steep-mode-copy { min-width: 0; }
+.settings-steep-mode-title { display: block; color: var(--mem-text); font-family: var(--mem-font-body); font-size: var(--mem-text-md); font-weight: 500; }
+.settings-steep-mode-hint { display: block; margin-top: 2px; color: var(--mem-text-secondary); font-family: var(--mem-font-body); font-size: var(--mem-text-sm); line-height: 1.5; overflow-wrap: anywhere; }
+.settings-steep-mode-note { margin-top: 10px; overflow-wrap: anywhere; }
+.settings-steep-trust { margin: 0; overflow-wrap: anywhere; }

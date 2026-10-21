@@ -194,9 +194,7 @@ export function assetSentence(
   asset: KnownActivityAsset,
 ): Phrase {
   const kind = asset.kind;
-  if (activity.state === "off") {
-    return { key: `activityStatus.assetOff.${kind}` };
-  }
+  if (activity.state === "off") return onDemandSentence(asset);
   const route = routeFor(activity, kind);
 
   if (asset.blocked > 0) {
@@ -227,6 +225,47 @@ export function assetSentence(
     key: `activityStatus.assetDone.${kind}`,
     params: { count: asset.total },
   };
+}
+
+/**
+ * A row in On demand mode (`state: off`). Nothing runs in the background, so
+ * pending work is not "running" or "blocked": it waits for the user's AI tool.
+ * Each row counts what is still waiting, in its own unit, and falls back to
+ * the settled sentence once nothing is.
+ */
+function onDemandSentence(asset: KnownActivityAsset): Phrase {
+  const kind = asset.kind;
+  if (kind === "memories") {
+    const stored = assetCount(asset);
+    return stored === 0
+      ? { key: "activityStatus.assetEmpty.memories" }
+      : { key: "activityStatus.assetOnDemand.memories", params: { count: stored } };
+  }
+  const waiting = onDemandBacklog(asset);
+  if (waiting > 0) {
+    return { key: `activityStatus.assetOnDemand.${kind}`, params: { count: waiting } };
+  }
+  if (kind === "entities") return entitySentence(asset);
+  return asset.total === 0
+    ? { key: "activityStatus.assetEmpty.pages" }
+    : { key: "activityStatus.assetDone.pages", params: { count: asset.total } };
+}
+
+/** Entities: memories not yet scanned. Pages: pages not yet current. */
+function onDemandBacklog(asset: KnownActivityAsset): number {
+  if (asset.kind === "memories") return 0;
+  const { done, total } = asset.kind === "entities" ? (findStep(asset, "detect") ?? asset) : asset;
+  return Math.max(0, total - done);
+}
+
+/**
+ * How many pages wait for the user's AI tool in On demand mode. Zero in every
+ * other state, where that work belongs to the background.
+ */
+export function onDemandPagesWaiting(activity: ActivityResponse): number {
+  if (activity.state !== "off") return 0;
+  const pages = knownAssets(activity).find((asset) => asset.kind === "pages");
+  return pages === undefined ? 0 : onDemandBacklog(pages);
 }
 
 /**

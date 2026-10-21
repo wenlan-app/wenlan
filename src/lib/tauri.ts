@@ -1382,7 +1382,16 @@ export interface PageCitation {
  */
 export interface PageTruth {
   supported: boolean;
+  /** Three-state support. Older daemons omit it; read it through `pageSupport`. */
+  support?: "supported" | "unsupported" | "unevaluated" | "unknown";
   human_reviewed: boolean;
+}
+
+/** The support axis in three states. A daemon that predates `support`, or a
+ * word this build does not know, reads as unevaluated: never as a verdict. */
+export function pageSupport(truth: PageTruth): "supported" | "unsupported" | "unevaluated" {
+  if (truth.support === "supported" || truth.support === "unsupported" || truth.support === "unevaluated") return truth.support;
+  return truth.supported ? "supported" : "unevaluated";
 }
 
 /** Where the daemon stands on the M5 truth cutover. See `useTruthStatus`. */

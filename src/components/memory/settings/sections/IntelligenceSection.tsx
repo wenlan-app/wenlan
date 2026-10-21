@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -19,7 +19,7 @@ import {
 } from "../../../intelligence/IntelligenceSetup";
 import { presetForEndpoint, type PresetGroup } from "../../../intelligence/providerPresets";
 import { fillUnsetPinsWithRetry } from "../../../../lib/routingPins";
-import { Button, Card, Select, SectionHeader, SegmentedControl, SettingRow } from "../primitives";
+import { Button, Card, Select, SectionHeader, SegmentedControl } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import { SettingsHelp } from "../SettingsHelp";
 
@@ -102,6 +102,99 @@ function TaskRow({ name, nameAddon, view, isPinned, loading, onPickSource, onSet
       {degraded && <p className="settings-task-message" role="status" style={amberStyle}>{t(pinnedDisplay ? "intelligence.pinnedDegradedHintPinned" : "intelligence.pinnedDegradedHint", { pinned: pinnedDisplay })}</p>}
       {saveError && <p className="settings-task-message" role="alert" style={{ ...metaLineStyle, color: "var(--mem-status-danger-text)" }}>{t("intelligence.taskServiceSaveError")}</p>}
       {!loading && (noServiceAvailable || selectedSource === null) && !degraded && <div className="settings-task-setup"><Button variant="ghost" size="sm" onClick={onSetUp}>{t("intelligence.setUpService")}</Button></div>}
+    </div>
+  );
+}
+
+/** Where an external endpoint sends text: a vendor's name, its host, or null
+ * when it is a server on this computer. A cloud preset names its vendor; a
+ * custom endpoint is local only when its host is this machine. */
+function externalVendor(endpoint: string): string | null {
+  const preset = presetForEndpoint(endpoint);
+  if (preset.group === "cloud") return preset.name;
+  if (preset.group === "local") return null;
+  try {
+    const host = new URL(endpoint).hostname;
+    return host === "localhost" || host === "[::1]" || host === "::1" || host.startsWith("127.") ? null : host;
+  } catch {
+    return endpoint;
+  }
+}
+
+/** Says whether steeping in Automatic sends text off this computer, and which
+ * work does. Built from the same routes the task rows show. */
+function SteepTrustRow({ jobs, externalEndpoint }: {
+  jobs: { name: string; source: string | null }[];
+  externalEndpoint: string | null;
+}) {
+  const { t } = useTranslation();
+  const sending: string[] = [];
+  const vendors: string[] = [];
+  for (const job of jobs) {
+    const vendor = job.source === "anthropic"
+      ? t("intelligence.sourceAnthropic")
+      : job.source === "external" && externalEndpoint
+        ? externalVendor(externalEndpoint)
+        : null;
+    if (vendor === null) continue;
+    sending.push(job.name);
+    if (!vendors.includes(vendor)) vendors.push(vendor);
+  }
+  const separator = t("activityStatus.jobSeparator");
+  return (
+    <p className="settings-row settings-steep-trust px-5 py-3" data-testid="steep-trust" style={metaLineStyle}>
+      {sending.length === 0
+        ? t("intelligence.steepTrustLocal")
+        : t("intelligence.steepTrustCloud", { count: sending.length, jobs: sending.join(separator), vendor: vendors.join(separator) })}
+    </p>
+  );
+}
+
+/** The steeping mode: Automatic (`background_ai_enabled` true) or On demand
+ * (false). Both are steeping; neither is "off". */
+function SteepModeRow({ automatic, loading, saving, readiness, error, onChoose }: {
+  automatic: boolean | undefined;
+  loading: boolean;
+  saving: boolean;
+  readiness?: string;
+  error: string | null;
+  onChoose: (automatic: boolean) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const name = useId();
+  const disabled = automatic === undefined || saving;
+  const options = [
+    { automatic: true, id: "automatic", label: t("intelligence.steepModeAutomatic"), hint: t("intelligence.steepModeAutomaticHint") },
+    { automatic: false, id: "on-demand", label: t("intelligence.steepModeOnDemand"), hint: t("intelligence.steepModeOnDemandHint") },
+  ];
+  return (
+    <div className="settings-row settings-steep-mode px-5 py-4" data-testid="steep-mode">
+      <div className="settings-row-title-line flex min-w-0 items-center gap-1.5">
+        <div id={titleId} style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>{t("intelligence.backgroundAiTitle")}</div>
+        <SettingsHelp title={t("intelligence.backgroundAiTitle")} details={t("intelligence.backgroundAiDescription")} />
+      </div>
+      <div role="radiogroup" aria-labelledby={titleId} aria-busy={saving || loading} className="settings-steep-mode-options">
+        {options.map((option) => (
+          <label key={option.id} className="settings-steep-mode-option" data-selected={automatic === option.automatic} aria-disabled={disabled}>
+            <input type="radio" className="settings-steep-mode-radio" name={name} value={option.id}
+              checked={automatic === option.automatic} disabled={disabled}
+              aria-labelledby={`${name}-${option.id}-label`}
+              aria-describedby={`${name}-${option.id}-hint`}
+              onChange={() => void onChoose(option.automatic)} />
+            <span className="settings-steep-mode-copy">
+              <span id={`${name}-${option.id}-label`} className="settings-steep-mode-title">{option.label}</span>
+              <span id={`${name}-${option.id}-hint`} className="settings-steep-mode-hint">{option.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      {automatic === undefined && !error && (
+        <p style={metaLineStyle}>{t(loading ? "settings.controlState.loading" : saving ? "settings.controlState.saving" : "settings.controlState.unavailable")}</p>
+      )}
+      {automatic === true && readiness && <p className="settings-steep-mode-note" role="status" style={amberStyle}>{readiness}</p>}
+      <p className="settings-steep-mode-note" style={metaLineStyle}>{t("intelligence.steepCheckNote")}</p>
+      {error && <p role="alert" style={{ ...metaLineStyle, color: "var(--mem-status-danger-text)" }}>{error}</p>}
     </div>
   );
 }
@@ -238,18 +331,14 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
     <section className="mem-fade-up settings-intelligence" style={{ animationDelay: `${delay}ms` }}>
       <div className="flex flex-col gap-6">
         <SettingsGroup>
-          <SettingRow
-            title={t("intelligence.backgroundAiTitle")}
-            description=""
-            details={t("intelligence.backgroundAiDescription")}
-            statusLine={backgroundReadiness}
-            enabled={backgroundAiValue ?? false}
-            toggleHitArea
-            valueUnknown={backgroundAiValue === undefined || savingBackgroundAi}
-            unknownState={savingBackgroundAi ? "saving" : backgroundAi.isPending ? "loading" : "unavailable"}
-            onToggle={async () => {
-              if (!backgroundAi.isSuccess || backgroundAiValue === undefined || savingBackgroundAi) return;
-              const enabled = !backgroundAiValue;
+          <SteepModeRow
+            automatic={backgroundAiValue}
+            loading={backgroundAi.isPending}
+            saving={savingBackgroundAi}
+            readiness={backgroundReadiness}
+            error={backgroundAiError || backgroundAi.isError ? t("intelligence.backgroundAiSaveError") : null}
+            onChoose={async (enabled) => {
+              if (!backgroundAi.isSuccess || backgroundAiValue === undefined || savingBackgroundAi || enabled === backgroundAiValue) return;
               setSavingBackgroundAi(true);
               setBackgroundAiError(false);
               try {
@@ -266,8 +355,30 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
                 setSavingBackgroundAi(false);
               }
             }}
-            error={backgroundAiError || backgroundAi.isError ? t("intelligence.backgroundAiSaveError") : null}
           />
+          {backgroundAiValue === true && (
+            <>
+              <TaskRow
+                name={t("intelligence.everydayWork")}
+                nameAddon={<SettingsHelp title={t("intelligence.everydayWork")} details={`${t("intelligence.routineModelTipBody")}${!isPinned && !routingQuery.isPending ? ` ${t("intelligence.sourcePinLegacyHint")}` : ""}`} />}
+                view={everydayView} isPinned={isPinned} loading={routingQuery.isPending}
+                onPickSource={(source) => pickSource("everyday", source)} onSetUp={() => setUpService("everyday")}
+              />
+              <TaskRow
+                name={t("intelligence.synthesisWork")}
+                nameAddon={<span className="inline-flex items-center gap-2">
+                  <span className="rounded px-1.5 py-0.5" style={{ fontSize: "var(--mem-text-2xs)", color: "var(--mem-text-secondary)", backgroundColor: "var(--mem-hover)" }}>{t("intelligence.synthesisBeta")}</span>
+                  <SettingsHelp title={t("intelligence.synthesisBeta")} details={`${t("intelligence.synthesisBetaHelp")}${!isPinned && !routingQuery.isPending ? ` ${t("intelligence.sourcePinLegacyHint")}` : ""}`} />
+                </span>}
+                view={synthesisView} isPinned={isPinned} loading={routingQuery.isPending}
+                onPickSource={(source) => pickSource("synthesis", source)} onSetUp={() => setUpService("synthesis")}
+              />
+              <SteepTrustRow jobs={[
+                { name: t("intelligence.everydayWork"), source: everydayView.connected && !everydayView.degraded ? everydayView.source : null },
+                { name: t("intelligence.synthesisWork"), source: synthesisView.connected && !synthesisView.degraded ? synthesisView.source : null },
+              ]} externalEndpoint={routedExternal?.endpoint ?? null} />
+            </>
+          )}
         </SettingsGroup>
         <div ref={servicesRef} className="mem-fade-up" style={{ animationDelay: `${delay + 30}ms` }}>
           <SectionHeader
@@ -312,30 +423,6 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
                 </div>
               )}
             </div>
-          </Card>
-        </div>
-
-        <div className="mem-fade-up" style={{ animationDelay: `${delay + 60}ms` }}>
-          <SectionHeader
-            label={t("intelligence.aiTasks")}
-            help={<SettingsHelp title={t("intelligence.tasksHelpTitle")} details={t("intelligence.tasksHelpBody")} />}
-          />
-          <Card padding="rows">
-            <TaskRow
-              name={t("intelligence.everydayWork")}
-              nameAddon={<SettingsHelp title={t("intelligence.everydayWork")} details={`${t("intelligence.routineModelTipBody")}${!isPinned && !routingQuery.isPending ? ` ${t("intelligence.sourcePinLegacyHint")}` : ""}`} />}
-              view={everydayView} isPinned={isPinned} loading={routingQuery.isPending}
-              onPickSource={(source) => pickSource("everyday", source)} onSetUp={() => setUpService("everyday")}
-            />
-            <TaskRow
-              name={t("intelligence.synthesisWork")}
-              nameAddon={<span className="inline-flex items-center gap-2">
-                <span className="rounded px-1.5 py-0.5" style={{ fontSize: "var(--mem-text-2xs)", color: "var(--mem-text-secondary)", backgroundColor: "var(--mem-hover)" }}>{t("intelligence.synthesisBeta")}</span>
-                <SettingsHelp title={t("intelligence.synthesisBeta")} details={`${t("intelligence.synthesisBetaHelp")}${!isPinned && !routingQuery.isPending ? ` ${t("intelligence.sourcePinLegacyHint")}` : ""}`} />
-              </span>}
-              view={synthesisView} isPinned={isPinned} loading={routingQuery.isPending}
-              onPickSource={(source) => pickSource("synthesis", source)} onSetUp={() => setUpService("synthesis")}
-            />
           </Card>
         </div>
       </div>
