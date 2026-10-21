@@ -41,9 +41,7 @@ pub enum Writer<'a> {
     /// A person edited the page directly — in the app editor, or in the vault
     /// on disk. The only identity that may overwrite a human-owned page.
     Human(&'a str),
-    /// An agent asked for a faithful re-synth of a page it already owns, or
-    /// the daemon's own recheck of a note whose cited code changed
-    /// (`code_recheck`), which writes the way a version-checked agent does.
+    /// An agent asked for a faithful re-synth of a page it already owns.
     Agent(&'a str),
     /// A daemon pipeline stage.
     Pipeline(PipelineStage<'a>),
@@ -54,7 +52,7 @@ impl<'a> Writer<'a> {
     pub fn classify(edited_by: &'a str) -> Self {
         match edited_by {
             "manual_edit" | "fs_edit" => Writer::Human(edited_by),
-            "agent_refresh" | "code_recheck" => Writer::Agent(edited_by),
+            "agent_refresh" => Writer::Agent(edited_by),
             "distill" => Writer::Pipeline(PipelineStage::Distill),
             "re_distill" => Writer::Pipeline(PipelineStage::ReDistill),
             "page_growth" => Writer::Pipeline(PipelineStage::PageGrowth),

@@ -235,7 +235,7 @@ async fn brief_says_when_the_model_has_already_looked_at_every_changed_note() {
         let text = text_of(&result);
         assert!(text.contains("2 notes rely on code that changed"), "{text}");
         assert_eq!(
-            text.contains("AI has looked at them and a person needs to decide."),
+            text.contains("AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person."),
             expect_suffix,
             "{text}"
         );

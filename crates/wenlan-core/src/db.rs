@@ -1500,9 +1500,9 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 141 adds `session_reads`, what a session looked up in Wenlan.
 /// Migration 142 adds `page_code_basis.cited_blob` (the git blob id of the
 /// cited file as last written or confirmed).
-/// Migration 143 adds `page_code_basis.recheck_note`, `recheck_digest` and
-/// `recheck_attempts` (what the background model recheck concluded about a
-/// changed row).
+/// Migration 143 adds `page_code_basis.recheck_note`, `recheck_verdict`,
+/// `recheck_digest` and `recheck_attempts` (what the background model recheck
+/// concluded about a changed row).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -18052,9 +18052,10 @@ impl MemoryDB {
     /// Migration 143: a code basis remembers what the background model recheck
     /// concluded about its changed lines.
     ///
-    /// Adds `recheck_note` (the sentence left for a person), `recheck_digest`
-    /// (the digest of the changed lines the model was asked about) and
-    /// `recheck_attempts` (attempts at that digest without a verdict). Each
+    /// Adds `recheck_note` (the sentence the model left), `recheck_verdict`
+    /// (`stale` or `needs_human`), `recheck_digest` (the digest of the changed
+    /// lines the model was asked about) and `recheck_attempts` (attempts at
+    /// that digest without a verdict). Each
     /// ALTER is guarded by a column-exists check, so a table created by the
     /// current DDL and a replay after a crash between an ALTER and the version
     /// bump are both no-ops.
@@ -18063,6 +18064,7 @@ impl MemoryDB {
         let conn = self.conn.lock().await;
         for (column, ddl) in [
             ("recheck_note", "recheck_note TEXT"),
+            ("recheck_verdict", "recheck_verdict TEXT"),
             ("recheck_digest", "recheck_digest TEXT"),
             (
                 "recheck_attempts",
@@ -53045,7 +53047,6 @@ impl MemoryDB {
             && page_growth_guard.is_none()
             && link_reason != "citation_backfill"
             && link_reason != "agent_refresh"
-            && link_reason != "code_recheck"
             && consume_revision_id.is_none()
         {
             return Err(WenlanError::Validation(
