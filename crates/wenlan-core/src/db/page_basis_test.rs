@@ -1931,6 +1931,54 @@ async fn a_locked_notes_gated_agent_write_records_its_marks_when_the_card_is_acc
 }
 
 #[tokio::test]
+async fn editing_a_gated_card_before_accepting_it_keeps_its_marks() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "c", "Gamma", "Glossary.", "sp").await;
+    page(&db, "b", "Beta", "Original plans.", "sp").await;
+    db.mark_page_basis("b", "c", 1, "human").await.unwrap();
+    edit(&db, "c", "Glossary, revised.", false).await;
+    assert!(db.set_page_review_required("b", true).await.unwrap());
+
+    let staged = agent_write(
+        &db,
+        "b",
+        "Plans built on Alpha.",
+        vec![("a".into(), 1), ("c".into(), 2)],
+    )
+    .await
+    .unwrap();
+    let card_id = staged.revision_card_id.expect("the lock stages a card");
+
+    // The human rewrites the card's text in the review queue, then accepts.
+    let edited = "Plans built on Alpha, reworded by a human.";
+    crate::post_write::update_memory(
+        &db,
+        &card_id,
+        crate::post_write::MemoryUpdate {
+            content: Some(edited),
+            expected_content: None,
+            space: None,
+            confirm: false,
+            memory_type: None,
+        },
+    )
+    .await
+    .unwrap();
+    crate::post_write::accept_pending_revision(&db, &card_id, "human")
+        .await
+        .unwrap();
+
+    assert_eq!(db.get_page("b").await.unwrap().unwrap().content, edited);
+    let a = entry(&db, "b", "a").await;
+    assert_eq!(a.state, BASIS_STATE_OK, "the new basis survived the edit");
+    assert_eq!(a.confirmed_version, 1);
+    let c = entry(&db, "b", "c").await;
+    assert_eq!(c.state, BASIS_STATE_OK, "the reconfirm survived the edit");
+    assert_eq!(c.confirmed_version, 2);
+}
+
+#[tokio::test]
 async fn a_locked_notes_gated_agent_write_with_a_refused_mark_stages_nothing() {
     let (db, _dir) = test_db().await;
     page(&db, "b", "Beta", "Original plans.", "sp").await;
