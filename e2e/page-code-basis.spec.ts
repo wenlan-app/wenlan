@@ -196,11 +196,17 @@ for (const locale of LOCALES) {
       await expect(before).not.toContainText("lex_v2");
       await expect(after).toContainText("lex_v2(input)");
       await expect(after.locator(".code-basis__number")).toHaveText(["10", "11", "12", "13"]);
-      // A plain side by side: the columns sit next to each other, with no diff colouring.
+      // Side by side, with the one changed line tinted on each side and the equal lines plain.
       const beforeBox = await before.boundingBox();
       const afterBox = await after.boundingBox();
       expect(afterBox!.x).toBeGreaterThan(beforeBox!.x + beforeBox!.width - 1);
-      await expect(dialog.locator("ins, del")).toHaveCount(0);
+      await expect(before.locator(".code-basis__line--removed")).toHaveCount(1);
+      await expect(before.locator(".code-basis__line--removed")).toContainText("lex(input)");
+      await expect(after.locator(".code-basis__line--added")).toHaveCount(1);
+      await expect(after.locator(".code-basis__line--added")).toContainText("lex_v2(input)");
+      await expect(dialog.locator(".code-basis__line")).toHaveCount(8);
+      // The title is set in the UI face, not the serif heading face.
+      expect(await dialog.getByRole("heading", { level: 2 }).evaluate((el) => getComputedStyle(el).fontFamily)).toContain("Instrument Sans");
       expect(callsOf(controller, "get_page_code_basis_cited")).toEqual([
         { pageId: "page-architecture", locator: locatorOf() },
       ]);
@@ -268,7 +274,7 @@ for (const locale of LOCALES) {
       await expect(group).toBeVisible();
       await expect(group.getByRole("heading", { name: t("codeBasis.group"), exact: true })).toBeVisible();
       await expect(group.getByRole("listitem")).toHaveCount(2);
-      await expect(group.getByText(`${FILE}:10`, { exact: true })).toBeVisible();
+      await expect(group.getByText(`${FILE}:10\u201313`, { exact: true })).toBeVisible();
       await expect(group.getByText("src/lex.rs:3", { exact: true })).toBeVisible();
       await expect(group.getByText(t("codeBasis.state.pending"), { exact: true })).toBeVisible();
       await expect(group.getByText(t("codeBasis.state.ok"), { exact: true })).toBeVisible();
@@ -278,13 +284,13 @@ for (const locale of LOCALES) {
       await expect(page.getByText(t("codeBasis.codeCount", { count: 2 })).first()).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath(`code-info-${locale}.png`) });
 
-      await group.getByRole("button", { name: `${FILE}:10` }).click();
+      await group.getByRole("button", { name: `${FILE}:10\u201313` }).click();
       await expect(group.getByText(t("codeBasis.copied"), { exact: true })).toBeVisible();
       expect(lastCopied(controller)).toContain(`${FILE}:10`);
 
       await group.getByRole("button", { name: t("codeBasis.moreActions"), exact: true }).first().click();
       await page.getByRole("menuitem", { name: t("codeBasis.stopRelying"), exact: true }).click();
-      await expect(group.getByText(`${FILE}:10`, { exact: true })).toHaveCount(0);
+      await expect(group.getByText(`${FILE}:10\u201313`, { exact: true })).toHaveCount(0);
       expect(callsOf(controller, "remove_page_code_basis")).toHaveLength(1);
       expect(errors.pageErrors).toEqual([]);
       expect(errors.consoleErrors).toEqual([]);

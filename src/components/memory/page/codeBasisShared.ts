@@ -5,9 +5,16 @@ import { clipboardWrite, type CodeBasisRef } from "../../../lib/tauri";
 
 const COPIED_MS = 2_000;
 
-/** `path:line_start`, the place to look in an editor. */
+/** `path:line_start`, the place to look in an editor. This is what gets copied. */
 export function codeBasisLocation(row: Pick<CodeBasisRef, "path" | "line_start">): string {
   return `${row.path}:${row.line_start}`;
+}
+
+/** What is shown for a row: `path:20–30`, or `path:23` when it is one line. */
+export function codeBasisLocationLabel(row: Pick<CodeBasisRef, "path" | "line_start" | "line_end">): string {
+  return row.line_end > row.line_start
+    ? `${row.path}:${row.line_start}\u2013${row.line_end}`
+    : codeBasisLocation(row);
 }
 
 /** The file on disk: the repository root and the relative path joined with "/". */

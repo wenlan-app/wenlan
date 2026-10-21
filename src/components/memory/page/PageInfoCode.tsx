@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useTranslation } from "react-i18next";
 import type { CodeBasisRef } from "../../../lib/tauri";
-import { codeBasisLocation, useCopyLocation } from "./codeBasisShared";
+import { codeBasisLocation, codeBasisLocationLabel, useCopyLocation } from "./codeBasisShared";
 import { OverflowMenu } from "./OverflowMenu";
 import { codeBasisKeyOf } from "./useCodeBasisActions";
 import "./NoteInfo.css";
@@ -14,6 +14,7 @@ interface PageInfoCodeProps {
 function CodeRow({ row, onUnmark }: { row: CodeBasisRef; onUnmark?: (row: CodeBasisRef) => void }) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyLocation();
+  // Shown as a range, copied as `path:line_start`: the place an editor opens.
   const location = codeBasisLocation(row);
   return <li className="note-info-notes__row">
     <button
@@ -23,7 +24,7 @@ function CodeRow({ row, onUnmark }: { row: CodeBasisRef; onUnmark?: (row: CodeBa
       onClick={() => { void copy(location); }}
     >
       <span className="note-info-link-copy">
-        <span className="note-info-link-label note-info-code-path">{location}</span>
+        <span className="note-info-link-label note-info-code-path">{codeBasisLocationLabel(row)}</span>
       </span>
     </button>
     <span className="note-info-link-status" role={copied ? "status" : undefined}>

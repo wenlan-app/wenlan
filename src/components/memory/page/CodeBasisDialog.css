@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* The panel, backdrop, title, status line and button row come from BasisDiffDialog.css. */
+/* The panel, backdrop, status line and button row come from BasisDiffDialog.css. */
 .code-basis-panel { width: min(960px, 100%); }
+
+/* The dialog is read in the UI face like the text around it, not the serif heading face. */
+.code-basis-panel .basis-diff__title { font: 600 17px/1.4 var(--mem-font-body); }
 
 .code-basis__columns {
   display: grid;
@@ -22,11 +25,19 @@
   font-weight: 500;
 }
 
+/* Each column scrolls on its own, both ways; a line never wraps. The lines
+   share one column that is as wide as the longest of them (and at least the
+   box), so a tint reaches the same edge on every line. */
 .code-basis__code {
+  display: grid;
+  grid-auto-columns: minmax(100%, max-content);
+  align-content: start;
+  box-sizing: border-box;
+  min-width: 0;
   max-height: 46dvh;
   margin: 0;
   overflow: auto;
-  padding: 10px 12px;
+  padding: 10px 0 14px;
   border: 1px solid var(--mem-border);
   border-radius: 10px;
   background: var(--mem-detail-surface-raised, var(--mem-bg));
@@ -35,7 +46,18 @@
   tab-size: 4;
 }
 
-.code-basis__line { display: flex; gap: 12px; white-space: pre; }
+.code-basis__line {
+  display: flex;
+  gap: 12px;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.code-basis__text { flex: none; }
+
+/* Lines on one side only: removed on the cited side, added on the current side. */
+.code-basis__line--removed { background: var(--mem-status-danger-bg); }
+.code-basis__line--added { background: var(--mem-status-success-bg); }
 
 .code-basis__number {
   flex: none;
@@ -44,6 +66,9 @@
   text-align: right;
   user-select: none;
 }
+
+/* Nothing to compare: the one column is the current code, at the full width. */
+.code-basis__columns--single { grid-template-columns: minmax(0, 1fr); }
 
 @media (max-width: 720px) {
   .code-basis__columns { grid-template-columns: minmax(0, 1fr); }

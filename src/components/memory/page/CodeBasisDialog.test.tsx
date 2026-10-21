@@ -63,6 +63,32 @@ describe("CodeBasisDialog", () => {
     expect(readCodeLines).toHaveBeenCalledWith("/repo/src/parser.rs", 10, 12);
   });
 
+  it("tints the lines that exist on one side only and leaves equal lines plain", async () => {
+    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
+    vi.mocked(readGitBlobLines).mockResolvedValue(["fn parse() {", "    old();", "}"]);
+    vi.mocked(readCodeLines).mockResolvedValue(["fn parse() {", "    new();", "    more();", "}"]);
+    renderDialog();
+
+    const before = await screen.findByTestId("code-basis-before");
+    const after = await screen.findByTestId("code-basis-after");
+    const changes = (el: HTMLElement) =>
+      Array.from(el.querySelectorAll(".code-basis__line")).map((line) => line.getAttribute("data-change"));
+    expect(changes(before)).toEqual([null, "removed", null]);
+    expect(changes(after)).toEqual([null, "added", "added", null]);
+    expect(before.querySelector(".code-basis__line--removed")).toHaveTextContent("old();");
+    expect(after.querySelector(".code-basis__line--added")).toHaveTextContent("new();");
+  });
+
+  it("marks nothing when the lines read the same", async () => {
+    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: BLOB, confirmed_at: 1, state: "pending" });
+    vi.mocked(readGitBlobLines).mockResolvedValue(["a();", "b();"]);
+    vi.mocked(readCodeLines).mockResolvedValue(["a();", "b();"]);
+    renderDialog();
+
+    await screen.findByTestId("code-basis-after");
+    expect(document.querySelectorAll("[data-change]")).toHaveLength(0);
+  });
+
   it("says there is nothing to compare when the lines were never committed", async () => {
     vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
     vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
@@ -72,6 +98,10 @@ describe("CodeBasisDialog", () => {
       .toBeInTheDocument();
     expect(await screen.findByTestId("code-basis-after")).toHaveTextContent("new();");
     expect(screen.queryByTestId("code-basis-before")).toBeNull();
+    // Nothing is tinted without a cited side, and the message sits above the one column.
+    expect(document.querySelectorAll("[data-change]")).toHaveLength(0);
+    expect(document.querySelector(".code-basis__columns--single")).not.toBeNull();
+    expect(screen.queryByRole("heading", { name: "When cited" })).toBeNull();
     expect(readGitBlobLines).not.toHaveBeenCalled();
   });
 

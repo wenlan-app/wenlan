@@ -11,6 +11,7 @@ import {
   codeBasisSpanVars,
   useCopyLocation,
 } from "./codeBasisShared";
+import { diffCodeLines } from "./codeBasisDiff";
 import { codeBasisKeyOf } from "./useCodeBasisActions";
 import "./BasisDiffDialog.css";
 import "./CodeBasisDialog.css";
@@ -31,18 +32,30 @@ function Column({ title, children }: { title: string; children: React.ReactNode 
   </section>;
 }
 
-function Code({ lines, firstLine, testId }: { lines: readonly string[]; firstLine: number; testId: string }) {
+/** `marks[i]` is "removed" or "added" for a line that exists on this side only. */
+function Code({ lines, firstLine, testId, marks, mark }: {
+  lines: readonly string[];
+  firstLine: number;
+  testId: string;
+  marks?: readonly boolean[];
+  mark: "removed" | "added";
+}) {
   return <pre className="code-basis__code" data-testid={testId} tabIndex={0}>
-    {lines.map((line, index) => <span key={index} className="code-basis__line">
+    {lines.map((line, index) => <span
+      key={index}
+      className={marks?.[index] ? `code-basis__line code-basis__line--${mark}` : "code-basis__line"}
+      data-change={marks?.[index] ? mark : undefined}
+    >
       <span className="code-basis__number" aria-hidden="true">{firstLine + index}</span>
-      <span>{line}</span>
+      <span className="code-basis__text">{line}</span>
     </span>)}
   </pre>;
 }
 
 /**
  * The lines a note relies on, side by side: as they read when the note cited
- * them, and as they read now. A plain comparison; nothing is coloured.
+ * them, and as they read now. Lines that exist on one side only are tinted
+ * (removed on the cited side, added on the current side); equal lines stay plain.
  */
 export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = false }: CodeBasisDialogProps) {
   const { t } = useTranslation();
@@ -84,13 +97,24 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
   const vars = codeBasisSpanVars(row);
   const title = t(row.line_start === row.line_end ? "codeBasis.dialog.titleOne" : "codeBasis.dialog.title", vars);
 
+  const citedLines = cited.isError || cited.data == null ? null : cited.data;
+  const noBefore = !cited.isPending && citedLines == null;
+  const diff = citedLines && now.data ? diffCodeLines(citedLines, now.data) : null;
+
   let before;
   if (cited.isPending) {
     before = <p className="basis-diff__status" role="status">{t("codeBasis.dialog.loading")}</p>;
-  } else if (cited.isError || cited.data == null) {
-    before = <p className="basis-diff__status" role="status">{t("codeBasis.dialog.noBefore")}</p>;
+  } else if (citedLines == null) {
+    // Nothing to compare: the message goes above the one column, see below.
+    before = null;
   } else {
-    before = <Code lines={cited.data} firstLine={row.line_start} testId="code-basis-before" />;
+    before = <Code
+      lines={citedLines}
+      firstLine={row.line_start}
+      testId="code-basis-before"
+      marks={diff?.removed}
+      mark="removed"
+    />;
   }
 
   let after;
@@ -99,7 +123,13 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
   } else if (now.isError) {
     after = <p className="basis-diff__status" role="alert">{t("codeBasis.dialog.unavailable")}</p>;
   } else {
-    after = <Code lines={now.data} firstLine={row.line_start} testId="code-basis-after" />;
+    after = <Code
+      lines={now.data}
+      firstLine={row.line_start}
+      testId="code-basis-after"
+      marks={diff?.added}
+      mark="added"
+    />;
   }
 
   return createPortal(
@@ -139,8 +169,9 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
         }}
       >
         <h2 id={titleId} className="basis-diff__title">{title}</h2>
-        <div className="code-basis__columns">
-          <Column title={t("codeBasis.dialog.before")}>{before}</Column>
+        {noBefore && <p className="basis-diff__status" role="status">{t("codeBasis.dialog.noBefore")}</p>}
+        <div className={noBefore ? "code-basis__columns code-basis__columns--single" : "code-basis__columns"}>
+          {!noBefore && <Column title={t("codeBasis.dialog.before")}>{before}</Column>}
           <Column title={t("codeBasis.dialog.after")}>{after}</Column>
         </div>
         <div className="basis-diff__actions">

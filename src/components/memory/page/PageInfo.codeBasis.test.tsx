@@ -56,7 +56,7 @@ describe("PageInfo code section", () => {
     expect(screen.queryByRole("heading", { name: "Code" })).toBeNull();
   });
 
-  it("lists each code basis as path and first line with its state, after the pages section", () => {
+  it("lists each code basis as path and line range with its state, after the pages section", () => {
     setup({
       codeBasis: [
         code(),
@@ -70,23 +70,23 @@ describe("PageInfo code section", () => {
     expect(within(section).getByRole("heading", { name: "Code" })).toBeInTheDocument();
     const rows = within(section).getAllByRole("listitem");
     expect(rows.map((item) => item.textContent?.replace(/\s+/g, " ").trim())).toEqual([
-      "src/parser.rs:10Up to date",
+      "src/parser.rs:10\u201324Up to date",
       "src/lex.rs:3Changed",
-      "src/gone.rs:1Not found",
-      "src/shifted.rs:40Moved",
+      "src/gone.rs:1\u20132Not found",
+      "src/shifted.rs:40\u201350Moved",
     ]);
-    expect(within(rows[0]).getByText("src/parser.rs:10")).toHaveClass("note-info-code-path");
+    expect(within(rows[0]).getByText("src/parser.rs:10\u201324")).toHaveClass("note-info-code-path");
     // After the pages section; there is no way to add code from here.
     const pages = screen.getByRole("region", { name: "Pages this page relies on" });
     expect(pages.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(section).queryByRole("button", { name: /add/i })).toBeNull();
   });
 
-  it("copies the location when its row is clicked and says so briefly", async () => {
+  it("copies the location (path and first line) when its row is clicked and says so briefly", async () => {
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);
     setup({ codeBasis: [code()] });
 
-    fireEvent.click(screen.getByRole("button", { name: "src/parser.rs:10" }));
+    fireEvent.click(screen.getByRole("button", { name: "src/parser.rs:10\u201324" }));
 
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("src/parser.rs:10"));
     expect(await screen.findByText("Copied")).toBeInTheDocument();

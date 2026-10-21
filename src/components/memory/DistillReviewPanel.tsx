@@ -578,6 +578,10 @@ export default function DistillReviewPanel({
   // Stale pages still offer a real refresh decision. Candidate/topic rows
   // remain in the distill result for Activity and never enter this sequence.
   const actionableItems = [...decisionItems, ...stalePageItems];
+  // "All" counts everything listed under it: the decisions, and the notes whose
+  // source note or code changed (their groups render below the decisions).
+  const allCount =
+    actionableItems.length + basisPending.entries.length + codeBasisPending.entries.length;
   const sectionCounts = actionableItems.reduce<Partial<Record<ReviewSection, number>>>(
     (acc, item) => {
       const section = reviewItemSection(item);
@@ -738,7 +742,7 @@ export default function DistillReviewPanel({
         filter={filter}
         onSelect={setFilter}
         counts={sectionCounts}
-        allCount={actionableItems.length}
+        allCount={allCount}
       />
 
       {queue.decisionsTruncated && (
