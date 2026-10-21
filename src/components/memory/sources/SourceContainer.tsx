@@ -83,7 +83,7 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
         {(source.last_sync_errors ?? 0) > 0 && <div><dt>{t("sourceContainer.syncErrors")}</dt><dd>{source.last_sync_errors!.toLocaleString()}</dd></div>}
       </dl>
     </section>
-    <p>{source.source_type !== "obsidian" ? t("sourceContainer.folderChecks") : t("sourceContainer.manualVaultRefresh")}</p>
+    <p>{t("sourceContainer.folderChecks")}</p>
     <p>{t("sourceContainer.oneWay")}</p>
     <button className="collection-control source-container-refresh" type="button" disabled={refreshing} onClick={onRefresh}>
       <ArrowClockwise size={16} aria-hidden="true" />{refreshing ? t("sourceContainer.refreshing") : t("sourceContainer.refresh")}

@@ -111,7 +111,7 @@ for (const cfg of [
     if (cfg.width >= 1100) {
       await expect(inspector).toBeVisible();
       await expect(inspector).toContainText(t.sourceContainer.oneWay);
-      await expect(inspector).toContainText(t.sourceContainer.manualVaultRefresh);
+      await expect(inspector).toContainText(t.sourceContainer.folderChecks);
       await inspector.getByRole("button", { name: t.sourceContainer.refresh, exact: true }).click();
       expect(calls.filter(c => c.command === "sync_registered_source").map(c => c.args)).toEqual([{ id: "vault" }]);
     } else await expect(inspector).toHaveCount(0);
