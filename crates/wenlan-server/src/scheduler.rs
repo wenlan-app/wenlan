@@ -1443,6 +1443,23 @@ pub fn spawn_scheduler(
                     filesystem_resource_status.block_reason
                 );
             }
+            // Obsidian vaults embed changed notes directly. The ordinary pass
+            // stores up to 50 changed notes per vault; while the CPU is busy
+            // (the first-sync-only scope above) a pass still runs, under the
+            // same memory and thermal gates, but stores only a few, so an
+            // edit made in Obsidian does not wait for the machine to go idle.
+            let obsidian_note_limit = match directory_scope {
+                Some(DirectorySyncScope::All) => {
+                    Some(crate::source_routes::obsidian_sync::OBSIDIAN_POLL_NOTE_LIMIT)
+                }
+                Some(DirectorySyncScope::FirstSyncOnly) => {
+                    Some(crate::source_routes::obsidian_sync::OBSIDIAN_BUSY_NOTE_LIMIT)
+                }
+                None => None,
+            };
+            if let Some(note_limit) = obsidian_note_limit {
+                sync_obsidian_sources(&shared, &db, note_limit).await;
+            }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
             }
@@ -2225,6 +2242,57 @@ fn should_poll_directory_source(source: &wenlan_types::sources::Source) -> bool 
         source.source_type,
         wenlan_types::sources::SourceType::Directory | wenlan_types::sources::SourceType::Okf
     ) && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
+}
+
+/// Background polling covers Obsidian vaults too, with the same pause and
+/// recovery rules as Directory sources.
+fn should_poll_obsidian_source(source: &wenlan_types::sources::Source) -> bool {
+    source.source_type == wenlan_types::sources::SourceType::Obsidian
+        && !matches!(source.status, wenlan_types::sources::SyncStatus::Paused)
+}
+
+/// Sync every pollable Obsidian vault inside the poll, like the Directory
+/// pass. A vault whose sync (started by the app) is still running is
+/// skipped, and each pass stores at most `note_limit` changed notes per
+/// vault, so a large batch of edits spreads over several polls instead of
+/// holding the loop.
+async fn sync_obsidian_sources(
+    shared: &SharedState,
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    note_limit: usize,
+) {
+    let config = wenlan_core::config::load_config();
+    let vaults: Vec<_> = config
+        .sources
+        .into_iter()
+        .filter(should_poll_obsidian_source)
+        .collect();
+    if vaults.is_empty() {
+        return;
+    }
+    let quality_gate = {
+        let state = shared.read().await;
+        state.quality_gate.clone()
+    };
+    for source in vaults {
+        match crate::source_routes::obsidian_sync::try_sync_obsidian_source(
+            db.clone(),
+            &quality_gate,
+            &source,
+            note_limit,
+        )
+        .await
+        {
+            Some(Ok(_)) => {}
+            None => tracing::debug!(
+                "[scheduler] obsidian sync '{}' skipped: a sync is already running",
+                source.id
+            ),
+            Some(Err(e)) => {
+                tracing::warn!("[scheduler] obsidian sync '{}' failed: {e}", source.id);
+            }
+        }
+    }
 }
 
 /// One Directory-source sync + document-enrichment-queue-drive pass (§4).

@@ -91,7 +91,7 @@ export function BasisDiffDialog({
         <ul className="basis-diff__edits">
           {diff.edits.map((edit) => <li key={edit.version}>
             <span className="basis-diff__edit-meta">
-              {HUMAN_WRITERS.has(edit.edited_by) ? t("noteBasis.diff.you") : revisionWriterLabel(t, edit.edited_by)} · {whenLabel(edit.at, i18n.language)}
+              {HUMAN_WRITERS.has(edit.edited_by) ? t("noteBasis.diff.you") : revisionWriterLabel(t, edit.edited_by, edit.agent)} · {whenLabel(edit.at, i18n.language)}
               {edit.minor && <span className="basis-diff__minor">{t("noteBasis.diff.minorEdit")}</span>}
             </span>
           </li>)}

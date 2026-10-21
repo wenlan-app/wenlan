@@ -15,10 +15,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_core::sources::directory::{is_reserved_ingest_root, scan_directory};
-use wenlan_core::sources::obsidian::{has_any_markdown, note_to_documents, scan_vault};
+use wenlan_core::sources::obsidian::has_any_markdown;
 use wenlan_core::sources::{okf, Source};
 use wenlan_types::sources::{SourceType, SyncStatus};
 
+pub(crate) mod obsidian_sync;
 #[cfg(test)]
 #[path = "source_routes/okf_registration_tests.rs"]
 mod okf_registration_tests;
@@ -339,7 +340,7 @@ fn content_hash_bytes(content: &[u8]) -> String {
 
 /// Finalize a sync by categorizing errors, updating source metadata in config,
 /// fetching paused status, and building the response.
-/// Extracted to avoid duplication between Directory and Obsidian sync branches.
+/// Shared by the Directory, OKF, and Obsidian syncs.
 #[allow(clippy::too_many_arguments)]
 async fn finalize_sync(
     db: Arc<wenlan_core::db::MemoryDB>,
@@ -749,9 +750,9 @@ pub(crate) async fn sync_directory_source(
 
 /// POST /api/sources/{id}/sync — Trigger a sync for a source.
 ///
-/// Scans the source directory for markdown files, compares mtime and content
-/// hash against stored sync state, and upserts changed documents through
-/// the quality gate.
+/// Directory and OKF sources queue changed files for document enrichment;
+/// an Obsidian vault upserts changed notes through the quality gate
+/// (`obsidian_sync`). The background scheduler runs the same routines.
 pub async fn handle_sync_source(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
@@ -781,162 +782,13 @@ pub async fn handle_sync_source(
         return Ok(Json(outcome.stats));
     }
 
-    // Vault files are frequently cloud "online-only" placeholders (see the
-    // module doc): every filesystem call below runs off the runtime so one
-    // on-demand download cannot stall a tokio worker, matching the Directory
-    // branch above.
-    let vault_root = source.path.clone();
-    let vault_display = vault_root.display().to_string();
-    let md_files = tokio::task::spawn_blocking(move || scan_vault(&vault_root))
+    let quality_gate = {
+        let s = state.read().await;
+        s.quality_gate.clone()
+    };
+    obsidian_sync::sync_obsidian_source(db, &quality_gate, &source)
         .await
-        .map_err(|error| {
-            ServerError::Internal(format!(
-                "vault scan task failed for source {id} at {vault_display}: {error}"
-            ))
-        })?;
-    let mut ingested: usize = 0;
-    let mut skipped: usize = 0;
-    let mut errors: usize = 0;
-    // Per-file error counters used for the GDrive threshold. Kept separate
-    // from `errors` (which also tallies per-chunk upsert failures) so the
-    // threshold comparison stays in consistent "files" units.
-    let mut file_errors: usize = 0;
-    let mut gdrive_errors: usize = 0;
-
-    for file_path in &md_files {
-        let file_key = file_path.to_string_lossy().to_string();
-        let is_gdrive = is_google_drive_path(file_path);
-
-        // Read file metadata + content.
-        let metadata_path = file_path.clone();
-        let metadata =
-            match tokio::task::spawn_blocking(move || std::fs::metadata(metadata_path)).await {
-                Ok(Ok(m)) => m,
-                Ok(Err(e)) => {
-                    tracing::warn!("[sync] stat failed for {}: {}", file_path.display(), e);
-                    errors += 1;
-                    file_errors += 1;
-                    if is_gdrive {
-                        gdrive_errors += 1;
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!("[sync] stat task failed for {}: {}", file_path.display(), e);
-                    errors += 1;
-                    file_errors += 1;
-                    if is_gdrive {
-                        gdrive_errors += 1;
-                    }
-                    continue;
-                }
-            };
-        let mtime_ns = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-
-        // Check sync state — skip if mtime unchanged.
-        let existing = db.get_sync_state(&id, &file_key).await.ok().flatten();
-        if let Some(ref ss) = existing {
-            if ss.mtime_ns == mtime_ns {
-                skipped += 1;
-                continue;
-            }
-        }
-
-        let read_path = file_path.clone();
-        let content =
-            match tokio::task::spawn_blocking(move || std::fs::read_to_string(read_path)).await {
-                Ok(Ok(c)) => c,
-                Ok(Err(e)) => {
-                    tracing::warn!("[sync] read failed for {}: {}", file_path.display(), e);
-                    errors += 1;
-                    file_errors += 1;
-                    if is_gdrive {
-                        gdrive_errors += 1;
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!("[sync] read task failed for {}: {}", file_path.display(), e);
-                    errors += 1;
-                    file_errors += 1;
-                    if is_gdrive {
-                        gdrive_errors += 1;
-                    }
-                    continue;
-                }
-            };
-
-        // Hash check — skip if content unchanged despite mtime change.
-        let hash = content_hash(&content);
-        if let Some(ref ss) = existing {
-            if ss.content_hash == hash {
-                // mtime changed but content didn't — update mtime only.
-                let _ = db.upsert_sync_state(&id, &file_key, mtime_ns, &hash).await;
-                skipped += 1;
-                continue;
-            }
-        }
-
-        let mtime_secs = mtime_ns / 1_000_000_000;
-        let docs = note_to_documents(&id, file_path, &content, mtime_secs);
-        if docs.is_empty() {
-            // MOC or otherwise empty — still record sync state.
-            let _ = db.upsert_sync_state(&id, &file_key, mtime_ns, &hash).await;
-            skipped += 1;
-            continue;
-        }
-
-        // Filter through quality gate (acquire a brief read guard, then drop).
-        let filtered: Vec<_> = {
-            let s = state.read().await;
-            docs.into_iter()
-                .filter(|d| s.quality_gate.check_content(&d.content).admitted)
-                .collect()
-        };
-        // Guard dropped here — safe to .await below.
-
-        // If everything was filtered out (pure boilerplate), DO NOT mark the
-        // file as synced. Leaving sync_state untouched means a future sync
-        // will re-read the file — giving us a chance to ingest it if the
-        // quality gate rules are later loosened. If we upserted here, the
-        // hash match would make the file permanently invisible until the
-        // user edits it. (Invariant from PR #57.)
-        if filtered.is_empty() {
-            skipped += 1;
-            continue;
-        }
-
-        let count = filtered.len();
-        match db.upsert_documents(filtered).await {
-            Ok(_) => {
-                ingested += count;
-                let _ = db.upsert_sync_state(&id, &file_key, mtime_ns, &hash).await;
-            }
-            Err(e) => {
-                tracing::error!("[sync] upsert failed for {}: {}", file_path.display(), e);
-                errors += count;
-            }
-        }
-    }
-
-    finalize_sync(
-        db,
-        &id,
-        md_files.len(),
-        ingested,
-        skipped,
-        errors,
-        file_errors,
-        gdrive_errors,
-        None,
-    )
-    .await
-    .map(Json)
+        .map(Json)
 }
 
 #[cfg(test)]

@@ -283,6 +283,34 @@ pub enum BasisConfirmResult {
     },
 }
 
+/// What became of "confirm no impact" on a code basis. Like a note basis, a
+/// refusal is an answer: the file changed again (or cannot be read now) and the
+/// person is asked to look once more.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum CodeBasisConfirmResult {
+    Confirmed {
+        code_basis: wenlan_types::CodeBasisRef,
+    },
+    Conflict {
+        message: String,
+    },
+}
+
+/// The file a note cited, as git knew it then
+/// (`POST /api/pages/{id}/code-basis/cited`). `cited_blob` is the 40 hex
+/// character git blob id of the whole file when the note last cited or
+/// confirmed the lines; `null` for rows written before the id was kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeBasisCited {
+    #[serde(default)]
+    pub cited_blob: Option<String>,
+    #[serde(default)]
+    pub confirmed_at: i64,
+    #[serde(default)]
+    pub state: String,
+}
+
 /// The comparison for a basis, or the reason there is none to show.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -1094,6 +1122,93 @@ impl WenlanClient {
             None => "/api/pages/basis-pending".to_string(),
         };
         self.get_json(&path).await
+    }
+
+    // ── Code bases (a note that relies on lines of code) ──────────────
+
+    /// Re-read the files behind every code basis and list the notes with a
+    /// `pending` or `unavailable` one, optionally for one Space.
+    pub async fn list_code_basis_pending(
+        &self,
+        space: Option<&str>,
+    ) -> Result<Vec<wenlan_types::CodeBasisRecheckEntry>, String> {
+        let path = match space.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(space) => format!(
+                "/api/pages/code-basis/recheck?space={}",
+                percent_encode_path_segment(space)
+            ),
+            None => "/api/pages/code-basis/recheck".to_string(),
+        };
+        let (status, text) = self
+            .basis_call::<()>(reqwest::Method::POST, &path, None)
+            .await?;
+        match status {
+            200..=299 => serde_json::from_str(&text).map_err(|e| format!("Parse {path}: {e}")),
+            _ => Err(Self::basis_failure("POST", &path, status, &text)),
+        }
+    }
+
+    /// "I have accounted for the code as it reads now." A 409 means the file
+    /// changed again or cannot be read now: the caller asks the person to look
+    /// once more.
+    pub async fn confirm_page_code_basis(
+        &self,
+        page_id: &str,
+        locator: &wenlan_types::CodeBasisLocator,
+    ) -> Result<CodeBasisConfirmResult, String> {
+        let path = format!("{}/confirm", Self::code_basis_path(page_id));
+        let (status, text) = self
+            .basis_call(reqwest::Method::POST, &path, Some(locator))
+            .await?;
+        match status {
+            200..=299 => serde_json::from_str(&text)
+                .map(|code_basis| CodeBasisConfirmResult::Confirmed { code_basis })
+                .map_err(|e| format!("Parse {path}: {e}")),
+            409 => Ok(CodeBasisConfirmResult::Conflict {
+                message: daemon_error_text(&text),
+            }),
+            _ => Err(Self::basis_failure("POST", &path, status, &text)),
+        }
+    }
+
+    /// Stop relying on the lines the locator names.
+    pub async fn remove_page_code_basis(
+        &self,
+        page_id: &str,
+        locator: &wenlan_types::CodeBasisLocator,
+    ) -> Result<wenlan_types::BasisRemoveResponse, String> {
+        let path = Self::code_basis_path(page_id);
+        let (status, text) = self
+            .basis_call(reqwest::Method::DELETE, &path, Some(locator))
+            .await?;
+        match status {
+            200..=299 => serde_json::from_str(&text).map_err(|e| format!("Parse {path}: {e}")),
+            _ => Err(Self::basis_failure("DELETE", &path, status, &text)),
+        }
+    }
+
+    /// The git blob of the file as the note cited it, for the "when cited"
+    /// side of the before and after view.
+    pub async fn get_page_code_basis_cited(
+        &self,
+        page_id: &str,
+        locator: &wenlan_types::CodeBasisLocator,
+    ) -> Result<CodeBasisCited, String> {
+        let path = format!("{}/cited", Self::code_basis_path(page_id));
+        let (status, text) = self
+            .basis_call(reqwest::Method::POST, &path, Some(locator))
+            .await?;
+        match status {
+            200..=299 => serde_json::from_str(&text).map_err(|e| format!("Parse {path}: {e}")),
+            _ => Err(Self::basis_failure("POST", &path, status, &text)),
+        }
+    }
+
+    fn code_basis_path(page_id: &str) -> String {
+        format!(
+            "/api/pages/{}/code-basis",
+            percent_encode_path_segment(page_id)
+        )
     }
 
     fn basis_path(page_id: &str, basis_page_id: &str) -> String {
@@ -2641,6 +2756,158 @@ mod tests {
             request
         });
         (format!("http://{}", addr), handle)
+    }
+
+    fn code_locator() -> wenlan_types::CodeBasisLocator {
+        wenlan_types::CodeBasisLocator {
+            repo_root: "/repo".to_string(),
+            path: "src/lib.rs".to_string(),
+            line_start: 10,
+            line_end: 20,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_code_basis_pending_posts_to_the_recheck_route_with_the_space_encoded() {
+        let (base_url, requests) = serve_sequence(vec![
+            (
+                "200 OK",
+                r#"[{"page_id":"plan","title":"Plan","pending":[{"repo_root":"/repo","path":"src/lib.rs","line_start":10,"line_end":20,"state":"pending","changed_at":5}]}]"#,
+            ),
+            ("200 OK", "[]"),
+        ])
+        .await;
+        let client = client_at(base_url);
+
+        let entries = client
+            .list_code_basis_pending(Some("Team / R&D"))
+            .await
+            .unwrap();
+        assert_eq!(entries[0].page_id, "plan");
+        assert_eq!(entries[0].pending[0].state, "pending");
+        assert!(client
+            .list_code_basis_pending(Some("  "))
+            .await
+            .unwrap()
+            .is_empty());
+
+        let requests = requests.await.unwrap();
+        assert_eq!(
+            requests[0].lines().next().unwrap_or_default(),
+            "POST /api/pages/code-basis/recheck?space=Team%20%2F%20R%26D HTTP/1.1"
+        );
+        assert_eq!(
+            requests[1].lines().next().unwrap_or_default(),
+            "POST /api/pages/code-basis/recheck HTTP/1.1"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirm_page_code_basis_answers_a_409_as_conflict_not_an_error() {
+        let (base_url, requests) = serve_sequence(vec![
+            ("409 Conflict", r#"{"error":"the file changed again"}"#),
+            (
+                "200 OK",
+                r#"{"repo_root":"/repo","path":"src/lib.rs","line_start":10,"line_end":20,"state":"ok"}"#,
+            ),
+            ("500 Internal Server Error", r#"{"error":"boom"}"#),
+        ])
+        .await;
+        let client = client_at(base_url);
+
+        let refused = client
+            .confirm_page_code_basis("plan", &code_locator())
+            .await
+            .unwrap();
+        assert_eq!(
+            refused,
+            CodeBasisConfirmResult::Conflict {
+                message: "the file changed again".to_string()
+            }
+        );
+        match client
+            .confirm_page_code_basis("plan", &code_locator())
+            .await
+            .unwrap()
+        {
+            CodeBasisConfirmResult::Confirmed { code_basis } => assert_eq!(code_basis.state, "ok"),
+            other => panic!("expected a confirmation, got {other:?}"),
+        }
+        let error = client
+            .confirm_page_code_basis("plan", &code_locator())
+            .await
+            .unwrap_err();
+        assert!(error.contains("500"), "{error}");
+
+        let requests = requests.await.unwrap();
+        assert_eq!(
+            requests[0].lines().next().unwrap_or_default(),
+            "POST /api/pages/plan/code-basis/confirm HTTP/1.1"
+        );
+        assert_eq!(
+            request_body(&requests[0]),
+            serde_json::json!({
+                "repo_root": "/repo",
+                "path": "src/lib.rs",
+                "line_start": 10,
+                "line_end": 20
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_page_code_basis_deletes_with_the_locator_as_the_body() {
+        let (base_url, request) = serve_response_once("200 OK", r#"{"removed":true}"#).await;
+
+        let receipt = client_at(base_url)
+            .remove_page_code_basis("plan", &code_locator())
+            .await
+            .unwrap();
+
+        assert!(receipt.removed);
+        let request = request.await.unwrap();
+        assert_eq!(
+            request.lines().next().unwrap_or_default(),
+            "DELETE /api/pages/plan/code-basis HTTP/1.1"
+        );
+        assert_eq!(request_body(&request)["path"], "src/lib.rs");
+    }
+
+    #[tokio::test]
+    async fn get_page_code_basis_cited_reads_the_blob_id_or_null() {
+        let blob = "0123456789abcdef0123456789abcdef01234567";
+        let (base_url, requests) = serve_sequence(vec![
+            (
+                "200 OK",
+                r#"{"cited_blob":"0123456789abcdef0123456789abcdef01234567","confirmed_at":1700000000,"state":"pending"}"#,
+            ),
+            (
+                "200 OK",
+                r#"{"cited_blob":null,"confirmed_at":1700000000,"state":"ok"}"#,
+            ),
+        ])
+        .await;
+        let client = client_at(base_url);
+
+        let cited = client
+            .get_page_code_basis_cited("plan", &code_locator())
+            .await
+            .unwrap();
+        assert_eq!(cited.cited_blob.as_deref(), Some(blob));
+        assert_eq!(cited.confirmed_at, 1_700_000_000);
+        let none = client
+            .get_page_code_basis_cited("plan", &code_locator())
+            .await
+            .unwrap();
+        assert_eq!(none.cited_blob, None);
+
+        assert_eq!(
+            requests.await.unwrap()[0]
+                .lines()
+                .next()
+                .unwrap_or_default(),
+            "POST /api/pages/plan/code-basis/cited HTTP/1.1"
+        );
     }
 
     #[tokio::test]

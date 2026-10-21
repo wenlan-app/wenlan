@@ -1434,6 +1434,11 @@ export interface Page {
    * when the note relies on nothing and on every inventory/list entry.
    */
   basis?: BasisRef[];
+  /**
+   * The lines of code this note relies on, in any state. Present on a page
+   * read, absent when the note relies on no code and on every list entry.
+   */
+  code_basis?: CodeBasisRef[];
   citations?: PageCitation[];
   /**
    * Both M5 truth axes, present only when this page was fetched via an
@@ -1820,6 +1825,8 @@ export interface BasisDiffEdit {
   at: number;
   minor: boolean;
   delta_summary: string;
+  /** The agent behind an `agent_refresh` edit; absent for other writers. */
+  agent?: string | null;
 }
 
 export interface BasisDiff {
@@ -1888,6 +1895,134 @@ export async function listBasisPending(
   space: string | null = null,
 ): Promise<BasisPendingEntry[]> {
   return invoke("list_basis_pending", { space });
+}
+
+// ── Code bases (a note that relies on lines of code) ─────────────────
+
+/**
+ * `ok`: the lines read as they did. `moved`: the same lines at other numbers
+ * (the span here is already the new one). `pending`: the lines changed.
+ * `unavailable`: the file or repository is gone (see `reason`).
+ */
+export type CodeBasisState = "ok" | "moved" | "pending" | "unavailable";
+
+export type CodeBasisUnavailableReason =
+  | "file_missing"
+  | "repo_missing"
+  | "outside_repo"
+  | "unreadable"
+  | "too_large";
+
+export interface CodeBasisRef {
+  /** Absolute. */
+  repo_root: string;
+  /** Relative to `repo_root`, `/` separated. */
+  path: string;
+  /** 1-based, inclusive. */
+  line_start: number;
+  line_end: number;
+  state: CodeBasisState;
+  /** Unix seconds when the lines were first seen changed; only while pending. */
+  changed_at?: number | null;
+  /** Why the code is unavailable. */
+  reason?: CodeBasisUnavailableReason | null;
+}
+
+/** Which row of a note is meant: the span the row has now. */
+export interface CodeBasisLocator {
+  repo_root: string;
+  path: string;
+  line_start: number;
+  line_end: number;
+}
+
+/** The locator of a row, with exactly the four fields the daemon accepts. */
+export function codeBasisLocator(row: CodeBasisLocator): CodeBasisLocator {
+  return {
+    repo_root: row.repo_root,
+    path: row.path,
+    line_start: row.line_start,
+    line_end: row.line_end,
+  };
+}
+
+export type CodeBasisConfirmResult =
+  | { outcome: "confirmed"; code_basis: CodeBasisRef }
+  | { outcome: "conflict"; message: string };
+
+export interface CodeBasisPendingEntry {
+  page_id: string;
+  title: string;
+  /** The note's pending and unavailable code bases. */
+  pending: CodeBasisRef[];
+}
+
+export interface CodeBasisCited {
+  /**
+   * The git blob id (40 hex characters) of the whole file as it was when the
+   * note last cited or confirmed the lines; null for rows written before the
+   * id was kept.
+   */
+  cited_blob: string | null;
+  /** Unix seconds. */
+  confirmed_at: number;
+  state: string;
+}
+
+/** Notes whose code changed or went missing; `space` narrows it. */
+export async function listCodeBasisPending(
+  space: string | null = null,
+): Promise<CodeBasisPendingEntry[]> {
+  return invoke("list_code_basis_pending", { space });
+}
+
+/** "No impact": the lines as they read now are accounted for. */
+export async function confirmPageCodeBasis(
+  pageId: string,
+  locator: CodeBasisLocator,
+): Promise<CodeBasisConfirmResult> {
+  return invoke("confirm_page_code_basis", { pageId, locator: codeBasisLocator(locator) });
+}
+
+export async function removePageCodeBasis(
+  pageId: string,
+  locator: CodeBasisLocator,
+): Promise<{ removed: boolean }> {
+  return invoke("remove_page_code_basis", { pageId, locator: codeBasisLocator(locator) });
+}
+
+export async function getPageCodeBasisCited(
+  pageId: string,
+  locator: CodeBasisLocator,
+): Promise<CodeBasisCited> {
+  return invoke("get_page_code_basis_cited", { pageId, locator: codeBasisLocator(locator) });
+}
+
+/**
+ * The requested lines (1-based, inclusive) of a code file as it reads now.
+ * Read in Rust like `readSourceText`: the webview cannot reach a repository.
+ * Rejects when the file cannot be read.
+ */
+export async function readCodeLines(
+  path: string,
+  lineStart: number,
+  lineEnd: number,
+): Promise<string[]> {
+  return invoke("read_code_lines", { path, lineStart, lineEnd });
+}
+
+/**
+ * The requested lines (1-based, inclusive) of a file as git stored it: the
+ * blob `blob` of the repository at `repoRoot`. Rejects when git is missing,
+ * the object is gone or the repository moved.
+ */
+export async function readGitBlobLines(
+  repoRoot: string,
+  blob: string,
+  lineStart: number,
+  lineEnd: number,
+): Promise<string[]> {
+  return invoke("read_git_blob_lines", { repoRoot, blob, lineStart, lineEnd });
 }
 
 export async function listOrphanLinks(minCount?: number): Promise<OrphanLinksResponse> {

@@ -34,6 +34,7 @@ import {
   type Entity,
   type BasisConfirmOutcome,
   type BasisRef,
+  type CodeBasisRef,
   type Page,
   type PageReviewOutcome,
   type IndexedFileInfo,
@@ -88,6 +89,7 @@ import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInv
 import { PageAutosave } from "./editor/pageAutosave";
 import { NoteReviewNotice } from "./page/NoteReviewNotice";
 import { useBasisActions } from "./page/useBasisActions";
+import { useCodeBasisActions } from "./page/useCodeBasisActions";
 import { basisCountLabel } from "./page/format";
 
 interface PageDetailProps {
@@ -363,6 +365,7 @@ export default function PageDetail({
   } | null>(null);
   const [reviewNotice, setReviewNotice] = useState<PageReviewNotice | null>(null);
   const basisActions = useBasisActions();
+  const codeBasisActions = useCodeBasisActions();
   // "Edit it yourself" on a changed basis: the next save also confirms it. The
   // ref is what the (once-built) autosave writer reads; the state drives the UI.
   const confirmIntentRef = useRef<{ pageId: string; basis: BasisRef } | null>(null);
@@ -375,6 +378,9 @@ export default function PageDetail({
     return pending;
   };
   const basisSaveOutcomeRef = useRef<(outcome: BasisConfirmOutcome) => void>(() => undefined);
+  // The same for changed code: the next save of this note also confirms these lines.
+  const codeConfirmIntentRef = useRef<{ pageId: string; row: CodeBasisRef } | null>(null);
+  const codeSaveConfirmRef = useRef<(intent: { pageId: string; row: CodeBasisRef }) => void>(() => undefined);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasSwitchPending, setCanvasSwitchPending] = useState(false);
   const [storedActionPending, setStoredActionPending] = useState(false);
@@ -745,6 +751,10 @@ export default function PageDetail({
         if (outcome.outcome === "saved" && intent && outcome.basisConfirm) {
           basisSaveOutcomeRef.current(outcome.basisConfirm);
         }
+        const codeIntent = codeConfirmIntentRef.current;
+        if (outcome.outcome === "saved" && codeIntent?.pageId === input.id) {
+          codeSaveConfirmRef.current(codeIntent);
+        }
         return outcome;
       },
       read: (id) => getPage(id, "explicit"),
@@ -1036,6 +1046,12 @@ export default function PageDetail({
 
   const clearConfirmIntent = () => {
     confirmIntentRef.current = null;
+    codeConfirmIntentRef.current = null;
+  };
+  codeSaveConfirmRef.current = (intent) => {
+    // Once the edit is saved the person has accounted for the code: confirm it.
+    codeConfirmIntentRef.current = null;
+    void codeBasisActions.confirm(intent.pageId, intent.row);
   };
   basisSaveOutcomeRef.current = (outcome) => {
     const intent = confirmIntentRef.current;
@@ -1727,6 +1743,10 @@ export default function PageDetail({
     confirmIntentRef.current = { pageId: page.id, basis };
     if (!editing) void beginEditing();
   };
+  const startCodeConfirmEdit = (row: CodeBasisRef) => {
+    codeConfirmIntentRef.current = { pageId: page.id, row };
+    if (!editing) void beginEditing();
+  };
   const markBasis = async (basisPageId: string): Promise<boolean> => {
     const originPageId = page.id;
     try {
@@ -1739,6 +1759,8 @@ export default function PageDetail({
     }
   };
   const unmarkBasis = (basisPageId: string) => { void basisActions.stop(page.id, basisPageId); };
+  const codeBasisRefs = page.code_basis ?? [];
+  const unmarkCodeBasis = (row: CodeBasisRef) => { void codeBasisActions.stop(page.id, row); };
   const pickLink = (note: LinkCompletionNote, asSource: boolean) => {
     const originPageId = page.id;
     setPickedLinkTargets((current) => ({
@@ -2152,6 +2174,7 @@ export default function PageDetail({
             onUpdateFromSources: () => { void requestStoredPageAction("redistill"); },
             updateFromSourcesDisabled: !canUpdateFromSources || storedActionBlocked || redistillMutation.isPending,
           }}
+          codeBasis={{ actions: codeBasisActions, onEditToConfirm: startCodeConfirmEdit }}
         />}
 
         {page.review_required === true && (
@@ -2650,9 +2673,9 @@ export default function PageDetail({
                       time: relativeTimeFromISO(page.last_compiled, t),
                     })}
               </span>
-              {basisRefs.length > 0
+              {basisRefs.length > 0 || codeBasisRefs.length > 0
                 ? <span className="page-detail-dateline-item">
-                  {basisCountLabel(t, sourceCount, basisRefs.length)}
+                  {basisCountLabel(t, sourceCount, basisRefs.length, codeBasisRefs.length)}
                 </span>
                 : sourceCount > 0 && <span className="page-detail-dateline-item">
                   {t("pageDetail.dateline.sourceMemories", { count: sourceCount })}
@@ -2726,6 +2749,8 @@ export default function PageDetail({
               basis={basisRefs}
               onMarkBasis={basisEditable ? markBasis : undefined}
               onUnmarkBasis={basisEditable ? unmarkBasis : undefined}
+              codeBasis={codeBasisRefs}
+              onUnmarkCodeBasis={unmarkCodeBasis}
             />
             <PageSessionSources
               pageId={pageId}

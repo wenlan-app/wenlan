@@ -949,6 +949,32 @@ async fn accept_7_crlf_and_trailing_spaces_alone_change_nothing() {
 }
 
 #[tokio::test]
+async fn a_whitespace_only_edit_leaves_the_row_ok() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+
+    // Re-indent the whole file, add trailing spaces, respace inside a line.
+    let edited: String = numbered(40)
+        .lines()
+        .map(|line| format!("    {}  \n", line.replace(' ', "   ")))
+        .collect();
+    repo.write("a.rs", &edited);
+    assert_eq!(brief_code_basis_pending(&db, SPACE).await.unwrap(), Some(0));
+    let row = only(&db, "n1").await;
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+    assert_eq!(row.reason, None);
+    assert_eq!((row.line_start, row.line_end), (10, 20));
+
+    // A real edit in the same re-indented file is still pending.
+    repo.write("a.rs", &edited.replace("line   15", "line   fifteen"));
+    assert_eq!(brief_code_basis_pending(&db, SPACE).await.unwrap(), Some(1));
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+}
+
+#[tokio::test]
 async fn accept_8_twenty_notes_on_one_span_are_all_pending_after_one_recheck() {
     let (db, _dir) = test_db().await;
     let repo = Repo::new();

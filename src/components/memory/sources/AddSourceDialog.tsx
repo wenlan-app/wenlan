@@ -25,9 +25,9 @@ export default function AddSourceDialog({ onClose, onSuccess }: Props) {
       addSource(sourceType, sourcePath),
     onSuccess: (newSource, { sourceType }) => {
       queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
-      // Directory sources ride the daemon's 30s scheduler; Obsidian vaults are not
-      // on it, so kick a one-shot first index or a new vault sits at "Indexing…"
-      // forever (integration-review finding: scheduler filters to Directory only).
+      // The daemon's 30s scheduler follows later vault changes, but it leaves a
+      // vault's first import to us so it starts at once even while the
+      // ordinary poll waits for the machine to be idle.
       if (sourceType === "obsidian") {
         syncRegisteredSource(newSource.id).then(() => {
           queryClient.invalidateQueries({ queryKey: ["registeredSources"] });

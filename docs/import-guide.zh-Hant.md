@@ -8,9 +8,9 @@
 
 1. 在「已連接的來源」選擇「新增來源…」（尚未連接時為「新增第一個來源」）。
 2. 瀏覽並選取 vault 資料夾。Wenlan 偵測到 vault 後，按「連接」開始建立索引。
-3. 在 Obsidian 修改筆記後，按來源旁的「同步」，更新 Wenlan 的索引。
+3. 繼續在 Obsidian 編輯就好。Wenlan 執行時約每 30 秒檢查一次 vault 的變更，包括修改、新增、改名和刪除的筆記。想馬上更新，可按來源旁的「同步」。
 
-Wenlan 讀取 vault 裡的 Markdown 筆記，不修改原始檔案。**「同步」是將變更讀入 Wenlan，不會把修改寫回 Obsidian。** 你可以繼續在 Obsidian 編輯原本的筆記。
+Wenlan 讀取 vault 裡的 Markdown 筆記，不修改原始檔案。**變更只會讀入 Wenlan，不會寫回 Obsidian。**
 
 ## 匯入 ChatGPT／Claude 對話 ZIP
 

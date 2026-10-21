@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { BasisPendingEntry, DistillReviewResponse } from "../../lib/tauri";
+import type { BasisPendingEntry, CodeBasisPendingEntry, DistillReviewResponse } from "../../lib/tauri";
 
 vi.mock("../../lib/tauri", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/tauri")>()),
@@ -12,11 +12,13 @@ vi.mock("../../lib/tauri", async (importOriginal) => ({
   listUnconfirmedMemories: vi.fn(),
   listRecentChanges: vi.fn(),
   listBasisPending: vi.fn(),
+  listCodeBasisPending: vi.fn(),
 }));
 
 import {
   distillReview,
   listBasisPending,
+  listCodeBasisPending,
   listPendingRevisions,
   listRecentChanges,
   listRefinements,
@@ -43,6 +45,14 @@ const pricing: BasisPendingEntry = {
   citers: [{ page_id: "note-1", title: "Launch plan", minor_only: false }],
 };
 
+const codeNote = (pageId: string): CodeBasisPendingEntry => ({
+  page_id: pageId,
+  title: `Note ${pageId}`,
+  pending: [{
+    repo_root: "/repo", path: "src/auth.rs", line_start: 10, line_end: 20, state: "pending",
+  }],
+});
+
 function renderPanel(initialReviewItemId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(<QueryClientProvider client={client}>
@@ -63,11 +73,13 @@ beforeEach(() => {
   vi.mocked(listRefinements).mockResolvedValue({ proposals: [] });
   vi.mocked(listUnconfirmedMemories).mockResolvedValue([]);
   vi.mocked(listRecentChanges).mockResolvedValue([]);
+  vi.mocked(listCodeBasisPending).mockResolvedValue([]);
 });
 
 afterEach(() => {
   cleanup();
   vi.mocked(listBasisPending).mockReset();
+  vi.mocked(listCodeBasisPending).mockReset();
 });
 
 describe("DistillReviewPanel source updates", () => {
@@ -113,5 +125,24 @@ describe("DistillReviewPanel source updates", () => {
     } finally {
       HTMLElement.prototype.scrollIntoView = original;
     }
+  });
+
+  it("counts the notes whose code changed under the All chip, like the group listing them", async () => {
+    vi.mocked(listBasisPending).mockResolvedValue([]);
+    vi.mocked(listCodeBasisPending).mockResolvedValue([codeNote("a"), codeNote("b"), codeNote("c")]);
+    renderPanel();
+
+    const group = await screen.findByRole("region", { name: "Code changed" });
+    expect(group).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^All\s*3$/ })).toBeInTheDocument();
+  });
+
+  it("adds the source-update and code-change notes together under the All chip", async () => {
+    vi.mocked(listBasisPending).mockResolvedValue([pricing]);
+    vi.mocked(listCodeBasisPending).mockResolvedValue([codeNote("a"), codeNote("b")]);
+    renderPanel();
+
+    await screen.findByRole("region", { name: "Code changed" });
+    expect(screen.getByRole("button", { name: /^All\s*3$/ })).toBeInTheDocument();
   });
 });

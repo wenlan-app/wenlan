@@ -1437,6 +1437,243 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
+/// Read the requested lines of a code file, for the "now" side of a code
+/// basis' before and after view. Lines are 1-based and inclusive; `line_end`
+/// is clamped to the file, and a `line_start` past the end gives no lines.
+///
+/// Same trust level as `read_text_file` and `open_file`: the caller joins the
+/// note's `repo_root` and `path`, and the webview's `fs:default` scope cannot
+/// reach an arbitrary repository, so the Rust side reads it. Only the requested
+/// lines cross the boundary, never the whole file.
+#[tauri::command]
+pub async fn read_code_lines(
+    path: String,
+    line_start: u32,
+    line_end: u32,
+) -> Result<Vec<String>, String> {
+    // The daemon's own code-file cap: past it the daemon reports the file as
+    // too large, so the app does not try to show it either.
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+    if line_start == 0 || line_end < line_start {
+        return Err("lines are 1-based and line_end must not precede line_start".to_string());
+    }
+    tokio::task::spawn_blocking(move || {
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if meta.len() > MAX_BYTES {
+            return Err(format!(
+                "file is {} KB, too large to read here",
+                meta.len() / 1024
+            ));
+        }
+        let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+        Ok(code_lines_of(
+            &String::from_utf8_lossy(&bytes),
+            line_start,
+            line_end,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Read the requested lines of a file as git stored it, for the "when cited"
+/// side of a code basis' before and after view. `blob` is the 40 character
+/// lowercase hex id of the whole file at cite time; the lines are 1-based and
+/// inclusive, with `line_end` clamped to the file.
+///
+/// Runs `git -C <repo_root> cat-file -p <blob>` with an argument array, never
+/// a shell string, and only after `blob` is checked to be bare hex, so neither
+/// argument can smuggle in an option. A missing git, an object that is gone or
+/// a repository that moved is a short error; the caller shows "nothing to
+/// compare". Output past the code-file cap (8 MiB) and a run past ten seconds
+/// are errors too.
+#[tauri::command]
+pub async fn read_git_blob_lines(
+    repo_root: String,
+    blob: String,
+    line_start: u32,
+    line_end: u32,
+) -> Result<Vec<String>, String> {
+    use tokio::io::AsyncReadExt;
+
+    const MAX_BYTES: u64 = 8 * 1024 * 1024;
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    if line_start == 0 || line_end < line_start {
+        return Err("lines are 1-based and line_end must not precede line_start".to_string());
+    }
+    if !is_git_blob_id(&blob) {
+        return Err("not a git blob id".to_string());
+    }
+    if repo_root.trim().is_empty() {
+        return Err("no repository".to_string());
+    }
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg("-C")
+        .arg(&repo_root)
+        .args(["cat-file", "-p"])
+        .arg(&blob)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let mut child = command
+        .spawn()
+        .map_err(|_| "git is not available".to_string())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "git gave no output".to_string())?;
+    let run = async {
+        let mut bytes = Vec::new();
+        // One byte past the cap tells "exactly the cap" from "more than it".
+        (&mut stdout)
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| "could not read git's output".to_string())?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err("file is too large to read here".to_string());
+        }
+        let status = child
+            .wait()
+            .await
+            .map_err(|_| "git did not finish".to_string())?;
+        if !status.success() {
+            return Err("git could not find that version of the file".to_string());
+        }
+        Ok(bytes)
+    };
+    let bytes = tokio::time::timeout(TIMEOUT, run)
+        .await
+        .map_err(|_| "git took too long".to_string())??;
+    Ok(code_lines_of(
+        &String::from_utf8_lossy(&bytes),
+        line_start,
+        line_end,
+    ))
+}
+
+/// A git blob id: exactly 40 lowercase hex characters.
+fn is_git_blob_id(blob: &str) -> bool {
+    blob.len() == 40 && blob.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Lines `line_start..=line_end` (1-based) of `text`, clamped to its end.
+fn code_lines_of(text: &str, line_start: u32, line_end: u32) -> Vec<String> {
+    text.lines()
+        .skip(line_start.saturating_sub(1) as usize)
+        .take((line_end.saturating_sub(line_start) as usize).saturating_add(1))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(test)]
+mod read_code_lines_tests {
+    use super::*;
+
+    #[test]
+    fn the_requested_lines_are_one_based_and_inclusive() {
+        let text = "one\ntwo\nthree\nfour\n";
+        assert_eq!(code_lines_of(text, 2, 3), vec!["two", "three"]);
+        assert_eq!(code_lines_of(text, 1, 1), vec!["one"]);
+    }
+
+    #[test]
+    fn the_end_is_clamped_to_the_file_and_a_start_past_it_gives_nothing() {
+        let text = "one\r\ntwo\r\nthree";
+        assert_eq!(code_lines_of(text, 2, 99), vec!["two", "three"]);
+        assert!(code_lines_of(text, 4, 6).is_empty());
+    }
+
+    #[test]
+    fn only_bare_lowercase_hex_of_the_right_length_is_a_blob_id() {
+        assert!(is_git_blob_id("0123456789abcdef0123456789abcdef01234567"));
+        assert!(!is_git_blob_id("0123456789ABCDEF0123456789abcdef01234567"));
+        assert!(!is_git_blob_id("0123456789abcdef0123456789abcdef0123456"));
+        assert!(!is_git_blob_id("--output=/tmp/x"));
+        assert!(!is_git_blob_id("0123456789abcdef0123456789abcdef0123456g"));
+        assert!(!is_git_blob_id(""));
+    }
+
+    #[tokio::test]
+    async fn a_git_blob_is_read_by_id_and_a_bad_id_or_repo_is_a_short_error() {
+        let repo = std::env::temp_dir().join(format!("wenlan-git-blob-{}", std::process::id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+        };
+        if !matches!(git(&["init", "-q"]), Ok(output) if output.status.success()) {
+            // No git here: nothing to read through; the error path is covered below.
+            assert!(
+                read_git_blob_lines(repo.to_string_lossy().to_string(), "0".repeat(40), 1, 1)
+                    .await
+                    .is_err()
+            );
+            std::fs::remove_dir_all(&repo).ok();
+            return;
+        }
+        std::fs::write(repo.join("a.rs"), "one\ntwo\nthree\n").unwrap();
+        let blob = String::from_utf8(git(&["hash-object", "-w", "a.rs"]).unwrap().stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        let root = repo.to_string_lossy().to_string();
+
+        assert_eq!(
+            read_git_blob_lines(root.clone(), blob.clone(), 2, 9)
+                .await
+                .unwrap(),
+            vec!["two", "three"]
+        );
+        assert!(read_git_blob_lines(root.clone(), "0".repeat(40), 1, 1)
+            .await
+            .is_err());
+        assert!(read_git_blob_lines(root.clone(), "-p".to_string(), 1, 1)
+            .await
+            .is_err());
+        assert!(read_git_blob_lines(root, blob.clone(), 0, 1).await.is_err());
+        assert!(read_git_blob_lines(
+            repo.join("missing").to_string_lossy().to_string(),
+            blob,
+            1,
+            1
+        )
+        .await
+        .is_err());
+        std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[tokio::test]
+    async fn reads_only_the_requested_lines_of_a_file_and_refuses_a_bad_range() {
+        let dir =
+            std::env::temp_dir().join(format!("wenlan-read-code-lines-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("lib.rs");
+        std::fs::write(&file, "a\nb\nc\nd\n").unwrap();
+        let path = file.to_string_lossy().to_string();
+
+        assert_eq!(
+            read_code_lines(path.clone(), 2, 3).await.unwrap(),
+            vec!["b", "c"]
+        );
+        assert!(read_code_lines(path.clone(), 0, 3).await.is_err());
+        assert!(read_code_lines(path, 3, 2).await.is_err());
+        assert!(
+            read_code_lines(dir.join("gone.rs").to_string_lossy().to_string(), 1, 1)
+                .await
+                .is_err()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
 // ── Index / watch path / source commands (local + config) ─────────────
 
 #[tauri::command]
@@ -3670,11 +3907,13 @@ mod remaining_json_command_type_tests {
 /// fields the daemon added after 0.9.2 (e.g. `citations`); the Rust layer
 /// consumes no Page fields on this path, so TypeScript types the response.
 ///
-/// A note's bases ride beside the page object on the wire (`basis`). They
-/// belong to the note, so they are folded into the page the UI receives; the
-/// page's own fields win.
+/// A note's bases ride beside the page object on the wire (`basis`, and
+/// `code_basis` for lines of code). They belong to the note, so they are folded
+/// into the page the UI receives; the page's own fields win.
 fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
     let basis = wire.get_mut("basis").map(serde_json::Value::take);
+    // The lines of code a note relies on ride beside it the same way.
+    let code_basis = wire.get_mut("code_basis").map(serde_json::Value::take);
     let mut page = match wire.get_mut("page") {
         Some(v) if !v.is_null() => v.take(),
         _ => return None,
@@ -3682,6 +3921,9 @@ fn page_from_wire(mut wire: serde_json::Value) -> Option<serde_json::Value> {
     if let Some(fields) = page.as_object_mut() {
         if let Some(basis) = basis.filter(|b| !b.is_null()) {
             fields.entry("basis").or_insert(basis);
+        }
+        if let Some(code_basis) = code_basis.filter(|b| !b.is_null()) {
+            fields.entry("code_basis").or_insert(code_basis);
         }
     }
     Some(page)
@@ -3739,6 +3981,31 @@ mod get_page_tests {
 
         let plain = page_from_wire(serde_json::json!({ "page": { "id": "p2" } })).unwrap();
         assert!(plain.get("basis").is_none());
+        assert!(plain.get("code_basis").is_none());
+    }
+
+    #[test]
+    fn page_from_wire_folds_the_code_bases_into_the_page() {
+        let wire = serde_json::json!({
+            "page": { "id": "p1" },
+            "code_basis": [{ "path": "src/lib.rs", "state": "pending" }]
+        });
+        let page = page_from_wire(wire).expect("page present");
+        assert_eq!(page["code_basis"][0]["path"], "src/lib.rs");
+
+        let null = page_from_wire(serde_json::json!({
+            "page": { "id": "p3" },
+            "code_basis": null
+        }))
+        .unwrap();
+        assert!(null.get("code_basis").is_none());
+
+        let own = page_from_wire(serde_json::json!({
+            "page": { "id": "p4", "code_basis": [] },
+            "code_basis": [{ "path": "a.rs" }]
+        }))
+        .unwrap();
+        assert_eq!(own["code_basis"], serde_json::json!([]));
     }
 
     #[test]
@@ -4939,6 +5206,45 @@ pub async fn list_basis_pending(
 ) -> Result<Vec<wenlan_types::page_basis::BasisPendingEntry>, String> {
     let client = { state.read().await.client.clone() };
     client.list_basis_pending(space.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn list_code_basis_pending(
+    state: tauri::State<'_, State>,
+    space: Option<String>,
+) -> Result<Vec<wenlan_types::CodeBasisRecheckEntry>, String> {
+    let client = { state.read().await.client.clone() };
+    client.list_code_basis_pending(space.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn confirm_page_code_basis(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    locator: wenlan_types::CodeBasisLocator,
+) -> Result<crate::api::CodeBasisConfirmResult, String> {
+    let client = { state.read().await.client.clone() };
+    client.confirm_page_code_basis(&page_id, &locator).await
+}
+
+#[tauri::command]
+pub async fn remove_page_code_basis(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    locator: wenlan_types::CodeBasisLocator,
+) -> Result<wenlan_types::BasisRemoveResponse, String> {
+    let client = { state.read().await.client.clone() };
+    client.remove_page_code_basis(&page_id, &locator).await
+}
+
+#[tauri::command]
+pub async fn get_page_code_basis_cited(
+    state: tauri::State<'_, State>,
+    page_id: String,
+    locator: wenlan_types::CodeBasisLocator,
+) -> Result<crate::api::CodeBasisCited, String> {
+    let client = { state.read().await.client.clone() };
+    client.get_page_code_basis_cited(&page_id, &locator).await
 }
 
 #[tauri::command]

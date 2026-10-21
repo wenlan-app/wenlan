@@ -374,3 +374,11 @@
 }
 
 .note-info-notes__search:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 1px; }
+
+/* A code location: the file and first line, in the mono face, breaking anywhere in a long path. */
+.note-info-code-path {
+  font: 12.5px/1.45 var(--mem-font-mono);
+  word-break: break-all;
+}
+/* The ":20–30" range is set in the UI face: the mono face draws an en dash like a hyphen. */
+.note-info-code-range { font-family: var(--mem-font-body); }

@@ -8,9 +8,9 @@ Open **Settings → Sources** and choose the route that matches your material.
 
 1. Under **Connected sources**, choose **Add source…** (or **Add your first source**).
 2. Browse to your vault folder. Wenlan detects the vault; choose **Connect** to start indexing.
-3. After changing notes in Obsidian, use **Sync** beside the source to refresh Wenlan’s index.
+3. Keep editing in Obsidian. While Wenlan runs, it checks the vault for changes about every 30 seconds: edited, new, renamed, and deleted notes. To pick up a change right away, use **Sync** beside the source.
 
-Wenlan reads the vault’s Markdown notes without changing the original files. **Sync reads changes into Wenlan; it does not write changes back to Obsidian.** Keep editing your vault in Obsidian.
+Wenlan reads the vault’s Markdown notes without changing the original files. **Changes flow one way, into Wenlan; nothing is written back to Obsidian.**
 
 ## Import a ChatGPT or Claude conversation ZIP
 
