@@ -1185,16 +1185,18 @@ async fn update_page_db_impl(
             // compile done, so acknowledge it; otherwise the sweep re-dispatches the
             // same no-op work forever.
             if delta_summary.is_none() && old_set == new_set {
-                // No page write for the marks to ride on, so the notes this
-                // write relied on (and reconfirms of ones it already had) are
-                // recorded on their own. A refused mark still refuses the write,
-                // and so does an edit that landed after the comparison above.
-                if !basis.marks.is_empty() {
+                // No page write for the marks to ride on, so the notes and
+                // lines of code this write relied on (and reconfirms of ones it
+                // already had) are recorded on their own, in one transaction. A
+                // refused mark still refuses the write, and so does an edit that
+                // landed after the comparison above or a move out of the Space.
+                if !basis.marks.is_empty() || !basis.code_basis.is_empty() {
                     match db
                         .mark_page_bases(
                             page_id,
                             current_version,
                             &basis.marks,
+                            &basis.code_basis,
                             &basis.actor,
                             basis.space_guard.as_ref(),
                         )

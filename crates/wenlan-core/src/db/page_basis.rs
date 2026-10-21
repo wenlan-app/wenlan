@@ -204,6 +204,9 @@ pub struct BasisEdit {
     /// The edit's one-line summary from the basis' changelog; empty when that
     /// version recorded none (a plain human save, or a trimmed changelog).
     pub delta_summary: String,
+    /// The agent behind an `agent_refresh` edit, from the basis' changelog;
+    /// None for other writers, an unattributed refresh, or a trimmed entry.
+    pub agent: Option<String>,
 }
 
 /// The text the citer relied on next to the basis' text now.
@@ -1413,6 +1416,7 @@ impl MemoryDB {
         let from_content: String = from_row.get(0)?;
         drop(rows);
         let mut summaries: HashMap<i64, String> = HashMap::new();
+        let mut agents: HashMap<i64, String> = HashMap::new();
         let mut changelog_rows = conn
             .query(
                 "SELECT changelog FROM pages WHERE id = ?1",
@@ -1425,11 +1429,14 @@ impl MemoryDB {
                 .and_then(|j| serde_json::from_str(&j).ok())
                 .unwrap_or_default();
             for entry in entries {
-                if let (Some(version), Some(summary)) = (
-                    entry.get("version").and_then(|v| v.as_i64()),
-                    entry.get("delta_summary").and_then(|v| v.as_str()),
-                ) {
+                let Some(version) = entry.get("version").and_then(|v| v.as_i64()) else {
+                    continue;
+                };
+                if let Some(summary) = entry.get("delta_summary").and_then(|v| v.as_str()) {
                     summaries.insert(version, summary.to_string());
+                }
+                if let Some(agent) = entry.get("agent").and_then(|v| v.as_str()) {
+                    agents.insert(version, agent.to_string());
                 }
             }
         }
@@ -1450,6 +1457,7 @@ impl MemoryDB {
                 at: edit.get(2)?,
                 minor: edit.get::<i64>(3)? != 0,
                 delta_summary: summaries.get(&version).cloned().unwrap_or_default(),
+                agent: agents.get(&version).cloned(),
             });
         }
         Ok(BasisDiffOutcome::Available(BasisDiff {
@@ -1504,21 +1512,23 @@ impl MemoryDB {
     }
 
     /// R7 for a write that changed nothing (same text, same sources): there is
-    /// no page write for the marks to ride on, so they land here on their own,
-    /// all in one transaction. A refused mark records none of them. The note
-    /// must still be at `at_version`, the version the write compared itself
-    /// against; an edit that landed since answers [`BasisError::CiterMovedOn`]
-    /// and records nothing. A note no longer in `space_guard` answers
+    /// no page write for the marks or the lines of code it relies on to ride
+    /// on, so they land here on their own, all in one transaction. A refused
+    /// mark or code basis records none of them. The note must still be at
+    /// `at_version`, the version the write compared itself against; an edit
+    /// that landed since answers [`BasisError::CiterMovedOn`] and records
+    /// nothing. A note no longer in `space_guard` answers
     /// [`BasisError::CiterNotFound`].
     pub async fn mark_page_bases(
         &self,
         page_id: &str,
         at_version: i64,
         marks: &[(String, i64)],
+        code_basis: &[crate::code_basis::PreparedCodeBasis],
         added_by: &str,
         space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<(), BasisError> {
-        if marks.is_empty() {
+        if marks.is_empty() && code_basis.is_empty() {
             return Ok(());
         }
         let conn = self.conn.lock().await;
@@ -1545,6 +1555,15 @@ impl MemoryDB {
         for (basis_page_id, version) in marks {
             mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by).await?;
         }
+        super::code_basis::upsert_code_basis_on_conn(
+            &tx,
+            page_id,
+            code_basis,
+            added_by,
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+        .map_err(|error| BasisError::Db(error.into()))?;
         tx.commit().await?;
         Ok(())
     }

@@ -1,0 +1,124 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The panel, backdrop, status line and button row come from BasisDiffDialog.css. */
+.code-basis-panel { width: min(960px, 100%); }
+
+/* The dialog is read in the UI face like the text around it, not the serif heading face. */
+.code-basis-panel .basis-diff__title { font: 600 17px/1.4 var(--mem-font-body); }
+
+.code-basis__columns {
+  display: grid;
+  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.code-basis__column {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.code-basis__column-title {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Two tints for the lines on one side only, equally clear in both themes. The
+   status backgrounds read as grey for "added", so these are the status hues at
+   a stronger alpha; a 3px marker in the status text colour (see the rows) keeps
+   the mark from resting on the fill alone. Body text over either stays above
+   7:1 in both themes. In the dark theme the sage success hue blended to a
+   blue grey on the raised surface, so the added tint there is a plainer
+   green. */
+.code-basis-panel {
+  --code-basis-removed-bg: rgba(205, 92, 74, 0.22);
+  --code-basis-added-bg: rgba(118, 184, 110, 0.24);
+}
+html[data-theme="light"] .code-basis-panel {
+  --code-basis-removed-bg: rgba(164, 68, 47, 0.22);
+  --code-basis-added-bg: rgba(111, 143, 118, 0.30);
+}
+
+/* The box (a pre) keeps the frame and scrolls vertically past 46dvh. The lines
+   scroll sideways inside it, in their own scroller, so the horizontal scrollbar
+   never makes the outer box scroll vertically. It is as tall as its lines. */
+.code-basis__code {
+  box-sizing: border-box;
+  align-self: start;
+  min-width: 0;
+  max-height: 46dvh;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 10px 0 14px;
+  border: 1px solid var(--mem-border);
+  border-radius: 10px;
+  background: var(--mem-detail-surface-raised, var(--mem-bg));
+  color: var(--mem-text);
+  font: 12.5px/1.55 var(--mem-font-mono);
+  tab-size: 4;
+}
+
+/* The one focus target of a box: arrow keys scroll it sideways and, past its
+   edge, the box up and down. The ring is drawn inside and takes no room. */
+.code-basis__scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Classic (non overlay) scrollbars take space; reserve it on both sides so
+     the two boxes stay the same height when only one of them scrolls. */
+  scrollbar-gutter: stable;
+  border-radius: 6px;
+  outline: none;
+  scroll-margin: 0;
+}
+.code-basis__scroll:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: -2px;
+}
+
+/* As wide as the longest line (and at least the box), so every row, tinted or
+   not, reaches the same far edge when the box is scrolled sideways. */
+.code-basis__lines {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.code-basis__line {
+  display: flex;
+  gap: 12px;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.code-basis__text { flex: none; }
+
+/* Lines on one side only: removed on the cited side, added on the current side. */
+.code-basis__line--removed {
+  background: var(--code-basis-removed-bg);
+  box-shadow: inset 3px 0 0 var(--mem-status-danger-text);
+}
+.code-basis__line--added {
+  background: var(--code-basis-added-bg);
+  box-shadow: inset 3px 0 0 var(--mem-status-success-text);
+}
+.code-basis__line--removed .code-basis__number,
+.code-basis__line--added .code-basis__number { color: var(--mem-text-secondary); }
+
+.code-basis__number {
+  flex: none;
+  min-width: 3ch;
+  color: var(--mem-text-tertiary);
+  text-align: right;
+  user-select: none;
+}
+
+/* Nothing to compare: the one column is the current code, at the full width. */
+.code-basis__columns--single { grid-template-columns: minmax(0, 1fr); align-items: start; }
+
+@media (max-width: 720px) {
+  .code-basis__columns { grid-template-columns: minmax(0, 1fr); }
+}

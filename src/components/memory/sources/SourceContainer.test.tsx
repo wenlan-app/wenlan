@@ -58,7 +58,7 @@ describe("Sources containers", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
     const toggle = await screen.findByRole("button", { name: "Keep in sync" });
     expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText(/checked for changes about every 30 seconds/)).toBeInTheDocument();
+    expect(screen.getByText(/Checked for changes about every 30 seconds/)).toBeInTheDocument();
     fireEvent.click(toggle);
     await waitFor(() => expect(setSourceFollowChanges).toHaveBeenCalledWith("vault-1", false));
   });

@@ -129,6 +129,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Get, "/api/pages/basis-pending"),
         (Method::Get, "/api/pages/{id}/basis/{basis_id}/diff"),
         (Method::Post, "/api/pages/code-basis/recheck"),
+        (Method::Post, "/api/pages/{id}/code-basis/cited"),
         (Method::Get, "/api/pages/{id}/map"),
         (Method::Post, "/api/memory/entities/list"),
         (Method::Post, "/api/memory/entities/query"),

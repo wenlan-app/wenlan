@@ -10,7 +10,9 @@ import {
 } from "../../../lib/tauri";
 import { isActionableReviewItem } from "../reviewDisposition";
 import type { ReviewItem } from "../useReviewQueue";
+import { CodeBasisLines, type NoteCodeBasisHandlers } from "./CodeBasisLines";
 import { NoteBasisLines, basisNeedingAttention, type NoteBasisHandlers } from "./NoteBasisLines";
+import { codeBasisNeedingAttention } from "./useCodeBasisActions";
 import "./NoteReviewNotice.css";
 
 const NOTICE_LIMIT = 500;
@@ -95,6 +97,8 @@ export interface NoteReviewNoticeProps {
   disabled?: boolean;
   /** Present on the note itself: lines and actions for the notes it relies on. */
   basis?: NoteBasisHandlers;
+  /** Present on the note itself: lines and actions for the code it relies on. */
+  codeBasis?: NoteCodeBasisHandlers;
 }
 
 /**
@@ -106,7 +110,7 @@ function isBlockingRefreshReason(reason: string | null | undefined): boolean {
   return Boolean(reason) && reason !== "has_basis";
 }
 
-export function NoteReviewNotice({ page, onReview, onShowSources, disabled = false, basis }: NoteReviewNoticeProps) {
+export function NoteReviewNotice({ page, onReview, onShowSources, disabled = false, basis, codeBasis }: NoteReviewNoticeProps) {
   const { t } = useTranslation();
   const revisions = useQuery({
     queryKey: revisionQueryKey,
@@ -142,9 +146,10 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
         ? "sourceUpdated"
         : null;
   const basisLines = basis ? basisNeedingAttention(page.basis) : [];
+  const codeLines = codeBasis ? codeBasisNeedingAttention(page.code_basis) : [];
   // Basis lines alone leave the review row empty; drawing it anyway adds a blank row and a gap above them.
   const hasTopRow = pendingItems.length > 0 || staleMessage !== null || queryFailed || capped;
-  const hasContent = hasTopRow || basisLines.length > 0;
+  const hasContent = hasTopRow || basisLines.length > 0 || codeLines.length > 0;
   if (!hasContent) return null;
 
   const retry = () => {
@@ -153,7 +158,7 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
   };
 
   const attention = pendingItems.length > 0 || page.stale_reason === "source_conflict" || refreshBlocked
-    || basisLines.length > 0;
+    || basisLines.length > 0 || codeLines.length > 0;
   return <div className={`note-review-notice${attention ? " note-review-notice--attention" : ""}`} role="status" aria-live="polite">
     {hasTopRow && <div className="note-review-notice__content">
       {pendingItems.length > 0 && <div className="note-review-notice__summary">
@@ -199,6 +204,12 @@ export function NoteReviewNotice({ page, onReview, onShowSources, disabled = fal
       {...basis}
       pageId={page.id}
       basis={basisLines}
+      disabled={disabled}
+    />}
+    {codeBasis && codeLines.length > 0 && <CodeBasisLines
+      {...codeBasis}
+      pageId={page.id}
+      codeBasis={codeLines}
       disabled={disabled}
     />}
   </div>;

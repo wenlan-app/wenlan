@@ -3,8 +3,10 @@ import type { AppLocale } from "../../src/i18n/locales";
 import type { MemoryItem, PageChange, PageReviewAvailability, PageReviewOutcome } from "../../src/lib/tauri";
 import type { SpacesNavigationFixture } from "../fixtures/spacesNavigation";
 import type { TauriMockBasisScenario } from "./pageBasis";
+import type { TauriMockCodeBasisScenario } from "./pageCodeBasis";
 
 export type { TauriMockBasisScenario } from "./pageBasis";
+export type { TauriMockCodeBasisScenario } from "./pageCodeBasis";
 
 export type MockCommandCall = {
   readonly command: string;
@@ -36,6 +38,8 @@ export type TauriMockPageScenario = {
   };
   /** Notes that rely on other notes; see `pageBasis.ts`. */
   readonly basis?: TauriMockBasisScenario;
+  /** Notes that rely on lines of code; see `pageCodeBasis.ts`. */
+  readonly codeBasis?: TauriMockCodeBasisScenario;
   readonly firstWriteRemoteMutation?: {
     readonly pageId: string;
     readonly content: string;

@@ -129,6 +129,7 @@ main|post|/api/pages/{id}/archive|wenlan_server::page_routes::handle_archive_pag
 main|post|/api/pages/{id}/rename|wenlan_server::page_routes::handle_rename_page
 main|post|/api/pages/{id}/review|wenlan_server::page_routes::handle_review_page
 main|post|/api/pages/{id}/basis/{basis_id}/confirm|wenlan_server::page_basis_routes::handle_confirm_basis
+main|post|/api/pages/{id}/code-basis/cited|wenlan_server::code_basis_routes::handle_code_basis_cited
 main|post|/api/pages/{id}/code-basis/confirm|wenlan_server::code_basis_routes::handle_confirm_code_basis
 main|post|/api/pages/{id}/export|wenlan_server::page_routes::handle_export_page
 main|post|/api/pages/{id}/map/edges|wenlan_server::page_map_routes::handle_create_map_edge

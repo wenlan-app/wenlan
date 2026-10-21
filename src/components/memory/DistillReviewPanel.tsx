@@ -16,7 +16,9 @@ import ReviewDialog, {
 import { RecentRevisionsSection } from "./ReviewHistory";
 import { relativeMs } from "./page/format";
 import { BasisUpdatesSection } from "./page/BasisUpdatesSection";
+import { CodeBasisUpdatesSection } from "./page/CodeBasisUpdatesSection";
 import { BASIS_PENDING_QUERY_KEY, BASIS_UPDATES_REVIEW_ID, useBasisPending } from "./page/useBasisActions";
+import { CODE_BASIS_PENDING_QUERY_KEY, useCodeBasisPending } from "./page/useCodeBasisActions";
 import {
   reviewSuppressKey,
   useSuppressedReviewItems,
@@ -494,6 +496,7 @@ export default function DistillReviewPanel({
   const focusedQueueItemId = focusBasisUpdates ? undefined : initialReviewItemId;
   const queue = useReviewQueue(true, focusedQueueItemId ? "note-context" : "default");
   const basisPending = useBasisPending();
+  const codeBasisPending = useCodeBasisPending();
   const focusedRequestRef = useRef<string | null>(null);
   const [focusedItemMissing, setFocusedItemMissing] = useState(false);
   useEffect(() => {
@@ -575,6 +578,10 @@ export default function DistillReviewPanel({
   // Stale pages still offer a real refresh decision. Candidate/topic rows
   // remain in the distill result for Activity and never enter this sequence.
   const actionableItems = [...decisionItems, ...stalePageItems];
+  // "All" counts everything listed under it: the decisions, and the notes whose
+  // source note or code changed (their groups render below the decisions).
+  const allCount =
+    actionableItems.length + basisPending.entries.length + codeBasisPending.entries.length;
   const sectionCounts = actionableItems.reduce<Partial<Record<ReviewSection, number>>>(
     (acc, item) => {
       const section = reviewItemSection(item);
@@ -633,6 +640,7 @@ export default function DistillReviewPanel({
     !review.error &&
     decisionItems.length === 0 &&
     basisPending.entries.length === 0 &&
+    codeBasisPending.entries.length === 0 &&
     !stalePageWork;
 
   const refresh = () => {
@@ -641,6 +649,7 @@ export default function DistillReviewPanel({
     queryClient.invalidateQueries({ queryKey: ["refinement-proposals"] });
     queryClient.invalidateQueries({ queryKey: ["unconfirmed-captures"] });
     queryClient.invalidateQueries({ queryKey: BASIS_PENDING_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: CODE_BASIS_PENDING_QUERY_KEY });
   };
 
   return (
@@ -733,7 +742,7 @@ export default function DistillReviewPanel({
         filter={filter}
         onSelect={setFilter}
         counts={sectionCounts}
-        allCount={actionableItems.length}
+        allCount={allCount}
       />
 
       {queue.decisionsTruncated && (
@@ -991,6 +1000,17 @@ export default function DistillReviewPanel({
           <BasisUpdatesSection
             entries={basisPending.entries}
             focusOnMount={focusBasisUpdates}
+            onPageClick={onPageClick}
+            headingStyle={sectionTitleStyle}
+            countStyle={sectionCountStyle}
+          />
+        )}
+
+        {/* Notes whose code changed: the same filter, right after the notes. */}
+        {(filter === "all" || filter === "pages") && (
+          <CodeBasisUpdatesSection
+            entries={codeBasisPending.entries}
+            focusOnMount={focusBasisUpdates && basisPending.entries.length === 0}
             onPageClick={onPageClick}
             headingStyle={sectionTitleStyle}
             countStyle={sectionCountStyle}

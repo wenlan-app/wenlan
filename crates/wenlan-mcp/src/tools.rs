@@ -10705,6 +10705,44 @@ mod tests {
         );
     }
 
+    /// The first-run gauntlet checks `tools/list` against a count written into
+    /// each channel script; a tool added here without that edit fails every
+    /// channel at release time instead of in this PR.
+    #[test]
+    fn first_run_scripts_expect_the_locked_tool_count() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/first-run");
+        let expected = expected_tool_surface().len().to_string();
+        let mut seen = 0;
+        let mut wrong = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (start, _) in text.match_indices("EXPECT_TOOL_COUNT") {
+                let rest =
+                    text[start + "EXPECT_TOOL_COUNT".len()..].trim_start_matches([' ', '=', '"']);
+                let count: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                if count.is_empty() {
+                    continue;
+                }
+                seen += 1;
+                if count != expected {
+                    wrong.push(format!("{}: {count}", path.display()));
+                }
+            }
+        }
+        assert!(
+            seen > 0,
+            "no EXPECT_TOOL_COUNT found under {}",
+            dir.display()
+        );
+        assert!(
+            wrong.is_empty(),
+            "first-run scripts expect a tool count other than {expected}: {wrong:?}"
+        );
+    }
+
     /// Every MCP tool token in either skill tree must name a live tool.
     #[test]
     fn skills_reference_only_live_tools() {

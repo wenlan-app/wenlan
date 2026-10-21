@@ -43,7 +43,9 @@ pub mod system_info;
 // Re-export commonly used types at crate root for convenience.
 pub use brief::*;
 pub use briefing::{BriefingResponse, ContradictionItem};
-pub use code_basis::{CodeBasisInput, CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef};
+pub use code_basis::{
+    CodeBasisCitedResponse, CodeBasisInput, CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef,
+};
 pub use communities::{
     CommunityListResponse, CommunityMember, CommunityMemberCursor, CommunityMembersResponse,
     CommunityPageAssignment, CommunityPageAssignmentsResponse, CommunityProposalAcceptResponse,

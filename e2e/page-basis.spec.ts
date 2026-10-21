@@ -42,7 +42,7 @@ const BASIS_TITLE = "Pricing";
 
 const edits = {
   "page-history": [
-    { version: 2, edited_by: "agent_refresh", at: 1_783_700_000, minor: false, delta_summary: "Raised the price" },
+    { version: 2, edited_by: "agent_refresh", agent: "claude-code", at: 1_783_700_000, minor: false, delta_summary: "Raised the price" },
     { version: 3, edited_by: "manual_edit", at: 1_783_710_000, minor: false, delta_summary: "Added the annual plan" },
   ],
 };
@@ -213,9 +213,11 @@ for (const locale of LOCALES) {
       await expect(dialog.getByText("Raised the price")).toHaveCount(0);
       await expect(dialog.getByText("Added the annual plan")).toHaveCount(0);
       const editList = dialog.getByRole("region", { name: t("noteBasis.diff.edits") });
-      await expect(editList.getByRole("listitem").nth(0)).toContainText(t("revisionLabel.writer.agentRefresh"));
+      await expect(editList.getByRole("listitem").nth(0)).toContainText(
+        t("revisionLabel.writer.agentRefreshNamed", { agent: "Claude Code" }),
+      );
       await expect(editList.getByRole("listitem").nth(1)).toContainText(t("noteBasis.diff.you"));
-      await expect(editList).not.toContainText(/agent_refresh|manual_edit|human/);
+      await expect(editList).not.toContainText(/agent_refresh|manual_edit|human|claude-code/);
       await page.screenshot({ path: testInfo.outputPath(`pending-diff-${locale}.png`) });
 
       await dialog.getByRole("button", { name: t("noteBasis.confirmNoImpact"), exact: true }).click();

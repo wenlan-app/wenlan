@@ -37,11 +37,19 @@ export function revisionWriterLabel(
   return t("revisionLabel.writer.other");
 }
 
-/** What a note is built on, e.g. "3 source memories · 2 notes". A zero
- * memory count is left out rather than shown as "0 source memories". */
-export function basisCountLabel(t: TFunction, sourceCount: number, noteCount: number): string {
-  const notes = t("noteBasis.sourceNotesCount", { count: noteCount });
-  return sourceCount > 0 ? `${t("noteBasis.sourceMemoriesCount", { count: sourceCount })} · ${notes}` : notes;
+/** What a note is built on, e.g. "3 source memories · 2 notes · 5 code
+ * references". A part that is zero is left out rather than shown as "0 …". */
+export function basisCountLabel(
+  t: TFunction,
+  sourceCount: number,
+  noteCount: number,
+  codeCount = 0,
+): string {
+  const parts: string[] = [];
+  if (sourceCount > 0) parts.push(t("noteBasis.sourceMemoriesCount", { count: sourceCount }));
+  if (noteCount > 0) parts.push(t("noteBasis.sourceNotesCount", { count: noteCount }));
+  if (codeCount > 0) parts.push(t("codeBasis.codeCount", { count: codeCount }));
+  return parts.join(" \u00b7 ");
 }
 
 /** One-line summary of what a revision changed. Entries with numeric deltas

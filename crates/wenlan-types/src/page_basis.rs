@@ -94,6 +94,9 @@ pub struct BasisDiffEdit {
     /// The edit's one-line summary; empty when the edit recorded none.
     #[serde(default)]
     pub delta_summary: String,
+    /// The agent behind an `agent_refresh` edit; None for other writers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 /// `GET /api/pages/{id}/basis/{basis_id}/diff`: the text the citing note

@@ -8,10 +8,10 @@ use super::{build_chunker, BasisWrite, MemoryDB, FTS_SCHEMA, FTS_TRIGGERS, SCHEM
 use crate::cache::EmbeddingCache;
 use crate::code_anchor::{self, LineSpan};
 use crate::code_basis::{
-    brief_code_basis_pending, confirm_code_basis, prepare_code_basis, recheck_code_basis,
-    recheck_code_basis_in_scope, resolve_code_path, CodeBasisError, CODE_BASIS_STATE_MOVED,
-    CODE_BASIS_STATE_OK, CODE_BASIS_STATE_PENDING, CODE_BASIS_STATE_UNAVAILABLE,
-    MAX_CODE_FILE_BYTES,
+    brief_code_basis_pending, confirm_code_basis, git_blob_id, prepare_code_basis,
+    recheck_code_basis, recheck_code_basis_in_scope, resolve_code_path, CodeBasisError,
+    CODE_BASIS_STATE_MOVED, CODE_BASIS_STATE_OK, CODE_BASIS_STATE_PENDING,
+    CODE_BASIS_STATE_UNAVAILABLE, MAX_CODE_FILE_BYTES,
 };
 use crate::read_scope::ReadScope;
 use std::collections::BTreeMap;
@@ -213,6 +213,86 @@ async fn migration_139_adds_the_table_and_index_idempotently() {
         let user_version: i64 = version.next().await.unwrap().unwrap().get(0).unwrap();
         assert!(user_version >= 139, "user_version was {user_version}");
     }
+}
+
+#[tokio::test]
+async fn migration_142_adds_cited_blob_to_a_table_that_lacks_it_and_is_a_no_op_otherwise() {
+    // A database that stopped at 139 holds the table without the column.
+    let (db, _dir) = test_db_at(139).await;
+    let has_column = |db: &MemoryDB| {
+        let conn = db.conn.clone();
+        async move {
+            let conn = conn.lock().await;
+            let mut found = conn
+                .query(
+                    "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') \
+                     WHERE name = 'cited_blob'",
+                    (),
+                )
+                .await
+                .unwrap();
+            found.next().await.unwrap().unwrap().get::<i64>(0).unwrap() > 0
+        }
+    };
+    {
+        // Put the table back in its 139 shape: 139 itself now creates it with
+        // the column, so rebuild it without.
+        let conn = db.conn.lock().await;
+        conn.execute_batch(
+            "DROP TABLE page_code_basis; \
+             CREATE TABLE page_code_basis ( \
+                page_id TEXT NOT NULL, repo_root TEXT NOT NULL, path TEXT NOT NULL, \
+                line_start INTEGER NOT NULL, line_end INTEGER NOT NULL, \
+                anchor_json TEXT NOT NULL, confirmed_digest TEXT NOT NULL, \
+                confirmed_by TEXT NOT NULL, confirmed_at INTEGER NOT NULL, \
+                state TEXT NOT NULL CHECK(state IN ('ok','moved','pending','unavailable')), \
+                unavailable_reason TEXT, changed_at INTEGER, file_len INTEGER, \
+                file_mtime_ns INTEGER, added_by TEXT NOT NULL, added_at INTEGER NOT NULL, \
+                PRIMARY KEY (page_id, repo_root, path, line_start, line_end)); \
+             INSERT INTO page_code_basis VALUES \
+                ('n1','/r','a.rs',1,2,'{}','d','agent',5,'ok',NULL,NULL,NULL,NULL,'agent',5);",
+        )
+        .await
+        .unwrap();
+    }
+    assert!(!has_column(&db).await);
+    for _ in 0..2 {
+        db.run_migrations(&crate::events::NoopEmitter)
+            .await
+            .unwrap();
+        assert!(has_column(&db).await);
+    }
+    let conn = db.conn.lock().await;
+    let mut kept = conn
+        .query("SELECT cited_blob FROM page_code_basis", ())
+        .await
+        .unwrap();
+    let row = kept.next().await.unwrap().unwrap();
+    assert_eq!(
+        row.get::<Option<String>>(0).unwrap(),
+        None,
+        "old rows stay NULL"
+    );
+    let mut version = conn.query("PRAGMA user_version", ()).await.unwrap();
+    let user_version: i64 = version.next().await.unwrap().unwrap().get(0).unwrap();
+    assert_eq!(user_version, i64::from(crate::db::SCHEMA_VERSION));
+}
+
+#[tokio::test]
+async fn a_fresh_database_has_cited_blob_from_the_ddl() {
+    let (db, _dir) = test_db().await;
+    let conn = db.conn.lock().await;
+    let mut found = conn
+        .query(
+            "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') WHERE name = 'cited_blob'",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        found.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -1402,4 +1482,283 @@ async fn the_md_projection_of_a_note_with_a_code_basis_has_no_repo_line() {
         projected,
         crate::export::knowledge::render_markdown_for(&note)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Cited blob
+// ---------------------------------------------------------------------------
+
+async fn cited(db: &MemoryDB, page_id: &str, locator: &CodeBasisLocator) -> Option<String> {
+    db.get_code_basis_cited(page_id, locator)
+        .await
+        .unwrap()
+        .expect("the row exists")
+        .cited_blob
+}
+
+#[tokio::test]
+async fn a_write_keeps_the_blob_id_of_the_file_and_a_confirm_after_an_edit_replaces_it() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    let original = numbered(40);
+    repo.write("src/lib.rs", &original);
+    rely(&db, "n1", &[repo.input("src/lib.rs", 10, 12)]).await;
+    let locator = repo.locator("src/lib.rs", 10, 12);
+
+    let stored = db
+        .get_code_basis_cited("n1", &locator)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.cited_blob.as_deref(),
+        Some(git_blob_id(original.as_bytes()).as_str()),
+        "the whole file, not just the cited lines"
+    );
+    assert_eq!(stored.state, CODE_BASIS_STATE_OK);
+    assert!(stored.confirmed_at > 0);
+
+    let edited = original.replace("line 11\n", "line eleven, rewritten\n");
+    repo.write("src/lib.rs", &edited);
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+    assert_eq!(
+        cited(&db, "n1", &locator).await,
+        stored.cited_blob,
+        "a pending row still points at the version it was confirmed against"
+    );
+
+    confirm_code_basis(&db, "n1", &locator, "agent")
+        .await
+        .unwrap();
+    let after = db
+        .get_code_basis_cited("n1", &locator)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.cited_blob.as_deref(),
+        Some(git_blob_id(edited.as_bytes()).as_str())
+    );
+    assert_ne!(after.cited_blob, stored.cited_blob);
+    assert_eq!(after.state, CODE_BASIS_STATE_OK);
+}
+
+#[tokio::test]
+async fn the_blob_id_is_taken_over_the_raw_bytes_not_the_lossy_text() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    let mut raw = numbered(5).into_bytes();
+    raw.extend_from_slice(&[0xff, 0xfe, b'\n']);
+    std::fs::write(Path::new(&repo.root()).join("bin.rs"), &raw).unwrap();
+    rely(&db, "n1", &[repo.input("bin.rs", 1, 2)]).await;
+    assert_eq!(
+        cited(&db, "n1", &repo.locator("bin.rs", 1, 2))
+            .await
+            .as_deref(),
+        Some(git_blob_id(&raw).as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_recheck_that_marks_a_row_pending_or_unavailable_leaves_the_blob_id() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 12)]).await;
+    let locator = repo.locator("a.rs", 10, 12);
+    let before = cited(&db, "n1", &locator).await;
+    assert!(before.is_some());
+
+    repo.write("a.rs", &numbered(40).replace("line 11\n", "changed\n"));
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+    assert_eq!(cited(&db, "n1", &locator).await, before);
+
+    std::fs::remove_file(Path::new(&repo.root()).join("a.rs")).unwrap();
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_UNAVAILABLE);
+    assert_eq!(cited(&db, "n1", &locator).await, before);
+}
+
+#[tokio::test]
+async fn a_moved_row_keeps_its_blob_id() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 12)]).await;
+    let before = cited(&db, "n1", &repo.locator("a.rs", 10, 12)).await;
+
+    repo.write("a.rs", &format!("// x\n// y\n{}", numbered(40)));
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_MOVED);
+    assert_eq!(
+        cited(&db, "n1", &repo.locator("a.rs", 12, 14)).await,
+        before
+    );
+}
+
+#[tokio::test]
+async fn cited_is_absent_for_an_unknown_row_and_null_for_an_old_one() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 12)]).await;
+
+    assert!(db
+        .get_code_basis_cited("n1", &repo.locator("a.rs", 1, 2))
+        .await
+        .unwrap()
+        .is_none());
+    assert!(db
+        .get_code_basis_cited("nope", &repo.locator("a.rs", 10, 12))
+        .await
+        .unwrap()
+        .is_none());
+
+    // A row written before the blob id was kept reads as null, not as an error.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("UPDATE page_code_basis SET cited_blob = NULL", ())
+            .await
+            .unwrap();
+    }
+    let old = db
+        .get_code_basis_cited("n1", &repo.locator("a.rs", 10, 12))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old.cited_blob, None);
+}
+
+#[tokio::test]
+async fn a_merge_carries_the_blob_id_to_the_survivor() {
+    let (db, _dir) = test_db().await;
+    page(&db, "survivor", "Survivor", SPACE).await;
+    page(&db, "absorbed", "Absorbed", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "absorbed", &[repo.input("a.rs", 3, 4)]).await;
+    let expected = cited(&db, "absorbed", &repo.locator("a.rs", 3, 4)).await;
+    assert!(expected.is_some());
+    {
+        let conn = db.conn.lock().await;
+        super::code_basis::carry_code_basis_into_survivor(&conn, "absorbed", "survivor")
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        cited(&db, "survivor", &repo.locator("a.rs", 3, 4)).await,
+        expected
+    );
+}
+
+async fn version_of(db: &MemoryDB, page_id: &str) -> i64 {
+    db.get_page(page_id).await.unwrap().unwrap().version
+}
+
+/// A write that changed nothing records the lines it relies on in the same
+/// transaction as its note marks, against the version it compared itself to.
+#[tokio::test]
+async fn an_unchanged_write_records_its_code_basis_with_its_marks() {
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", SPACE).await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let at = version_of(&db, "n1").await;
+
+    db.mark_page_bases("n1", at, &[("a".into(), 1)], &prepared, "agent", None)
+        .await
+        .unwrap();
+
+    let row = only(&db, "n1").await;
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+    assert_eq!(db.list_page_basis("n1").await.unwrap().len(), 1);
+}
+
+/// An edit that landed after the unchanged write compared itself refuses the
+/// code basis exactly as it refuses the marks.
+#[tokio::test]
+async fn an_unchanged_write_records_no_code_basis_when_the_note_changed_since() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let compared = version_of(&db, "n1").await;
+    db.conn
+        .lock()
+        .await
+        .execute("UPDATE pages SET version = version + 1 WHERE id = 'n1'", ())
+        .await
+        .unwrap();
+
+    let error = db
+        .mark_page_bases("n1", compared, &[], &prepared, "agent", None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::BasisError::CiterMovedOn { current } if current == compared + 1),
+        "{error:?}"
+    );
+    assert!(rows(&db, "n1").await.is_empty());
+}
+
+/// One transaction: a refused note mark leaves no code basis behind.
+#[tokio::test]
+async fn a_refused_mark_on_an_unchanged_write_records_no_code_basis() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let at = version_of(&db, "n1").await;
+
+    let error = db
+        .mark_page_bases("n1", at, &[("missing".into(), 1)], &prepared, "agent", None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::BasisError::BasisNotFound),
+        "{error:?}"
+    );
+    assert!(rows(&db, "n1").await.is_empty());
+}
+
+/// A Space-locked agent's unchanged write records no code basis on a note that
+/// left its Space.
+#[tokio::test]
+async fn an_unchanged_write_records_no_code_basis_on_a_note_outside_the_space() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    let prepared = prepare_code_basis(&[repo.input("a.rs", 10, 20)])
+        .await
+        .unwrap();
+    let at = version_of(&db, "n1").await;
+    let elsewhere = ReadScope::Space("elsewhere".into());
+
+    let error = db
+        .mark_page_bases("n1", at, &[], &prepared, "agent", Some(&elsewhere))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, super::BasisError::CiterNotFound),
+        "{error:?}"
+    );
+    assert!(rows(&db, "n1").await.is_empty());
 }

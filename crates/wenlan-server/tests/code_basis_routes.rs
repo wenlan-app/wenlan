@@ -392,6 +392,98 @@ async fn acceptance_1_to_5_write_move_change_confirm_and_lose_the_file_over_http
 }
 
 #[tokio::test]
+async fn the_cited_route_serves_the_blob_id_the_row_was_written_or_confirmed_against() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    // Registers the Space; the create route refuses an unknown one (422).
+    make_brief(&db).await;
+    let original = numbered(40);
+    let repo = Repo::new("src/lib.rs", &original);
+    let (status, created) =
+        new_note(&router, "Library", json!([repo.span("src/lib.rs", 10, 20)])).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = typed::<CreatePageResponse>(created).id;
+    let locator = json!({
+        "repo_root": repo.root(), "path": "src/lib.rs", "line_start": 10, "line_end": 20
+    });
+    let uri = format!("/api/pages/{id}/code-basis/cited");
+
+    let (status, cited) = call(
+        &router,
+        Method::POST,
+        &uri,
+        Some(locator.clone()),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cited}");
+    assert_eq!(
+        cited["cited_blob"],
+        json!(wenlan_core::code_basis::git_blob_id(original.as_bytes()))
+    );
+    assert_eq!(cited["state"], "ok");
+    assert!(cited["confirmed_at"].as_i64().unwrap() > 0);
+
+    // The blob id never rides on the note's own read.
+    let read = read_note(&router, &id).await;
+    assert!(!read.to_string().contains("cited_blob"), "{read}");
+
+    // An edit makes the row pending but it keeps pointing at the old file;
+    // a confirm moves it to the file as it reads now.
+    let edited = original.replace("line 15\n", "line fifteen, rewritten\n");
+    repo.write("src/lib.rs", &edited);
+    recheck(&router).await;
+    let (_, pending) = call(
+        &router,
+        Method::POST,
+        &uri,
+        Some(locator.clone()),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(pending["state"], "pending");
+    assert_eq!(pending["cited_blob"], cited["cited_blob"]);
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &format!("/api/pages/{id}/code-basis/confirm"),
+        Some(locator.clone()),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, after) = call(&router, Method::POST, &uri, Some(locator), Caller::Person).await;
+    assert_eq!(
+        after["cited_blob"],
+        json!(wenlan_core::code_basis::git_blob_id(edited.as_bytes()))
+    );
+
+    // An unknown row or note is 404.
+    let unknown = json!({
+        "repo_root": repo.root(), "path": "src/lib.rs", "line_start": 1, "line_end": 2
+    });
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &uri,
+        Some(unknown.clone()),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        "/api/pages/nope/code-basis/cited",
+        Some(unknown),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn acceptance_7_line_endings_and_trailing_spaces_do_not_notify() {
     let _guard = data_dir_lock().lock().await;
     let _vault = ScratchVault::new();

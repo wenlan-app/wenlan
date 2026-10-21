@@ -754,6 +754,23 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     }
   },
   list_basis_pending: (a) => get(`/api/pages/basis-pending${qs({ space: a?.space })}`),
+  // Code bases (a note that relies on lines of code). Mirrors the WenlanClient
+  // methods in app/src/api.rs: the DELETE carries the locator as a JSON body,
+  // and a 409 on confirm comes back as an outcome rather than an error.
+  list_code_basis_pending: (a) => post(`/api/pages/code-basis/recheck${qs({ space: a?.space })}`),
+  confirm_page_code_basis: async (a) => {
+    try {
+      const codeBasis = await post(`/api/pages/${enc(a.pageId)}/code-basis/confirm`, a.locator);
+      return { outcome: "confirmed", code_basis: codeBasis };
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) {
+        return { outcome: "conflict", message: error.message };
+      }
+      throw error;
+    }
+  },
+  remove_page_code_basis: (a) => http("DELETE", `/api/pages/${enc(a.pageId)}/code-basis`, a.locator),
+  get_page_code_basis_cited: (a) => post(`/api/pages/${enc(a.pageId)}/code-basis/cited`, a.locator),
   get_page_revisions: (a) => get(`/api/pages/${enc(a.pageId)}/revisions`),
   redistill_page: (a) => post(`/api/distill/${enc(a.pageId)}`, {}),
   // Mirrors app/src/search.rs `export_pages_okf_checked`: an older daemon

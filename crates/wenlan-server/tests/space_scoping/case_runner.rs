@@ -380,8 +380,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     let rows = wenlan_server::sensitive_read_routes::sensitive_read_routes().collect::<Vec<_>>();
     // The source-annotation GET and POST routes add two PageWorkspace-scoped readers,
     // the basis-pending list and basis diff add two more, the code basis
-    // recheck one, and the session detail and page sessions reads two.
-    assert_eq!(rows.len(), 79);
+    // recheck and cited-blob reads two, and the session detail and page
+    // sessions reads two.
+    assert_eq!(rows.len(), 80);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -392,7 +393,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        59
+        60
     );
     assert_eq!(
         rows.iter()

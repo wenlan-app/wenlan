@@ -148,6 +148,18 @@ describe("NoteReviewNotice with a basis", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("names the agent behind an edit when the source note recorded one", async () => {
+    const named = { ...diff, edits: [{ ...diff.edits[0], agent: "claude-code" }, diff.edits[1]] };
+    vi.mocked(getPageBasisDiff).mockResolvedValue({ outcome: "available", diff: named });
+    renderNotice({ ...basePage, basis: [pending()] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "See changes" }));
+    const dialog = await screen.findByRole("dialog", { name: "Changes since you last checked" });
+    const edits = await within(dialog).findByRole("region", { name: "Edits" });
+    expect(within(edits).getAllByRole("listitem")[0]).toHaveTextContent(/^Updated by Claude Code · /);
+    expect(within(edits).getAllByRole("listitem")[1]).toHaveTextContent(/^You · /);
+  });
+
   it("confirms from the notice at the version the note already knows", async () => {
     vi.mocked(confirmPageBasis).mockResolvedValue({ outcome: "confirmed", basis: pending({ state: "ok" }) });
     renderNotice({ ...basePage, basis: [pending()] });

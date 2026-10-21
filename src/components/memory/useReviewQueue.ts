@@ -24,6 +24,7 @@ import {
   type RevisionTargetKind,
 } from "../../lib/tauri";
 import { BASIS_PENDING_QUERY_KEY } from "./page/useBasisActions";
+import { CODE_BASIS_PENDING_QUERY_KEY } from "./page/useCodeBasisActions";
 
 export type ReviewItem =
   | {
@@ -305,7 +306,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       // or a dismissed card looking pending on return. Accepting an update can
       // confirm a basis, so the "source note changed" group and each note's
       // basis diff refresh too.
-      for (const key of ["page", "pages", "page-revisions", "page-sources", "page-links", "space-pages", "memory-detail", "page-basis-diff", ...BASIS_PENDING_QUERY_KEY]) {
+      for (const key of ["page", "pages", "page-revisions", "page-sources", "page-links", "space-pages", "memory-detail", "page-basis-diff", ...BASIS_PENDING_QUERY_KEY, ...CODE_BASIS_PENDING_QUERY_KEY]) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
       queryClient.invalidateQueries({ queryKey: REVISIONS_KEY });
@@ -325,6 +326,7 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
     void refinements.refetch();
     void captures.refetch();
     void queryClient.invalidateQueries({ queryKey: BASIS_PENDING_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: CODE_BASIS_PENDING_QUERY_KEY });
   };
 
   return {

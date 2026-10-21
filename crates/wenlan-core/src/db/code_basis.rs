@@ -33,7 +33,7 @@ use crate::code_basis::{
 };
 use crate::error::WenlanError;
 use std::collections::HashMap;
-use wenlan_types::{CodeBasisLocator, CodeBasisRef};
+use wenlan_types::{CodeBasisCitedResponse, CodeBasisLocator, CodeBasisRef};
 
 pub(super) const PAGE_CODE_BASIS_DDL: &str = "
     CREATE TABLE IF NOT EXISTS page_code_basis (
@@ -51,6 +51,7 @@ pub(super) const PAGE_CODE_BASIS_DDL: &str = "
         changed_at INTEGER,
         file_len INTEGER,
         file_mtime_ns INTEGER,
+        cited_blob TEXT,
         added_by TEXT NOT NULL,
         added_at INTEGER NOT NULL,
         PRIMARY KEY (page_id, repo_root, path, line_start, line_end)
@@ -207,6 +208,7 @@ pub(super) async fn upsert_code_basis_on_conn(
         input,
         anchor,
         stamp,
+        cited_blob,
     } in entries
     {
         let anchor_json = serde_json::to_string(anchor)?;
@@ -232,14 +234,15 @@ pub(super) async fn upsert_code_basis_on_conn(
             "INSERT INTO page_code_basis \
                (page_id, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
                 confirmed_by, confirmed_at, state, unavailable_reason, changed_at, \
-                file_len, file_mtime_ns, added_by, added_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'ok', NULL, NULL, ?10, ?11, ?8, ?9) \
+                file_len, file_mtime_ns, cited_blob, added_by, added_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'ok', NULL, NULL, ?10, ?11, ?12, ?8, ?9) \
              ON CONFLICT(page_id, repo_root, path, line_start, line_end) DO UPDATE SET \
                anchor_json = excluded.anchor_json, \
                confirmed_digest = excluded.confirmed_digest, \
                confirmed_by = excluded.confirmed_by, \
                confirmed_at = excluded.confirmed_at, \
                file_len = excluded.file_len, file_mtime_ns = excluded.file_mtime_ns, \
+               cited_blob = excluded.cited_blob, \
                state = 'ok', unavailable_reason = NULL, changed_at = NULL",
             libsql::params![
                 page_id,
@@ -252,7 +255,8 @@ pub(super) async fn upsert_code_basis_on_conn(
                 by,
                 now,
                 stamp.map(|s| s.len),
-                stamp.map(|s| s.mtime_ns)
+                stamp.map(|s| s.mtime_ns),
+                cited_blob.as_deref()
             ],
         )
         .await?;
@@ -287,10 +291,10 @@ pub(super) async fn carry_code_basis_into_survivor(
         "INSERT OR IGNORE INTO page_code_basis \
            (page_id, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
             confirmed_by, confirmed_at, state, unavailable_reason, changed_at, \
-            file_len, file_mtime_ns, added_by, added_at) \
+            file_len, file_mtime_ns, cited_blob, added_by, added_at) \
          SELECT ?2, repo_root, path, line_start, line_end, anchor_json, confirmed_digest, \
                 confirmed_by, confirmed_at, state, unavailable_reason, changed_at, \
-                file_len, file_mtime_ns, added_by, added_at \
+                file_len, file_mtime_ns, cited_blob, added_by, added_at \
          FROM page_code_basis WHERE page_id = ?1",
         libsql::params![absorbed_id, survivor_id],
     )
@@ -510,6 +514,44 @@ impl MemoryDB {
         }
     }
 
+    /// The git blob id of the file a code basis was last written or confirmed
+    /// against, with when that was and the row's state now. Reads the stored row only: no file is
+    /// opened and no check runs. `None` when the note has no such row.
+    pub async fn get_code_basis_cited(
+        &self,
+        page_id: &str,
+        locator: &CodeBasisLocator,
+    ) -> Result<Option<CodeBasisCitedResponse>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT cited_blob, confirmed_at, state FROM page_code_basis \
+                 WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+                   AND line_start = ?4 AND line_end = ?5",
+                libsql::params![
+                    page_id,
+                    locator.repo_root.as_str(),
+                    locator.path.as_str(),
+                    i64::from(locator.line_start),
+                    i64::from(locator.line_end)
+                ],
+            )
+            .await
+            .map_err(decode("get_code_basis_cited"))?;
+        match rows.next().await.map_err(decode("get_code_basis_cited"))? {
+            Some(row) => Ok(Some(CodeBasisCitedResponse {
+                cited_blob: row
+                    .get::<Option<String>>(0)
+                    .map_err(decode("get_code_basis_cited"))?,
+                confirmed_at: row.get::<i64>(1).map_err(decode("get_code_basis_cited"))?,
+                state: row
+                    .get::<String>(2)
+                    .map_err(decode("get_code_basis_cited"))?,
+            })),
+            None => Ok(None),
+        }
+    }
+
     /// Notes (active, in `space`) with a `pending` or `unavailable` code basis,
     /// as `(page_id, title, row)` ordered by note.
     pub async fn list_code_basis_needing_attention(
@@ -681,6 +723,7 @@ impl MemoryDB {
         span: LineSpan,
         anchor: &CodeAnchor,
         stamp: Option<FileStamp>,
+        cited_blob: Option<&str>,
         by: &str,
         now: i64,
     ) -> Result<CodeBasisRef, CodeBasisError> {
@@ -745,7 +788,7 @@ impl MemoryDB {
              SET line_start = ?6, line_end = ?7, anchor_json = ?8, confirmed_digest = ?9, \
                  confirmed_by = ?10, confirmed_at = ?11, state = 'ok', \
                  unavailable_reason = NULL, changed_at = NULL, \
-                 file_len = ?12, file_mtime_ns = ?13 \
+                 file_len = ?12, file_mtime_ns = ?13, cited_blob = ?14 \
              WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
                AND line_start = ?4 AND line_end = ?5",
             libsql::params![
@@ -761,7 +804,8 @@ impl MemoryDB {
                 by,
                 now,
                 stamp.map(|s| s.len),
-                stamp.map(|s| s.mtime_ns)
+                stamp.map(|s| s.mtime_ns),
+                cited_blob
             ],
         )
         .await?;

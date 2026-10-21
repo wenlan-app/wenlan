@@ -673,6 +673,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/pages/{id}/basis/{basis_id}/confirm` | main | yes | automatic | `none` | `handle_confirm_basis` | BasisRef.title: visible_ids under the mutation grant |
 | `DELETE` | `/api/pages/{id}/basis/{basis_id}` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `POST` | `/api/pages/code-basis/recheck` | main | yes | automatic | `none` | `handle_code_basis_recheck` | CodeBasisRecheckEntry.title: visible_ids filter on the notes |
+| `POST` | `/api/pages/{id}/code-basis/cited` | main | no | not_applicable | `none` | — | git blob id of the cited file, read from the stored row: no note prose; require_page_visible before the read |
 | `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `POST` | `/api/sessions` | main | no | not_applicable | `none` | — | AgentSession carries no page prose |

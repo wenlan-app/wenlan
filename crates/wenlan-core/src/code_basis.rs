@@ -71,10 +71,28 @@ pub struct PreparedCodeBasis {
     pub input: CodeBasisInput,
     pub anchor: CodeAnchor,
     pub stamp: Option<FileStamp>,
+    /// The git blob id of the whole file as it was read (see [`git_blob_id`]).
+    pub cited_blob: Option<String>,
 }
 
-/// A file as read: its text and the stamp taken before it was read.
-pub type CodeFileRead = Result<(String, Option<FileStamp>), CodeFileProblem>;
+/// The git blob id of a file's bytes: the sha1 of `blob <byte length>\0`
+/// followed by the bytes, as 40 lowercase hex characters. It is what
+/// `git hash-object` prints, so the app can ask git for the file as it was.
+pub fn git_blob_id(bytes: &[u8]) -> String {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A file as read: its text, the stamp taken before it was read, and the git
+/// blob id of the raw bytes (not of the lossy text).
+pub type CodeFileRead = Result<(String, Option<FileStamp>, String), CodeFileProblem>;
 
 /// Typed refusals for the code-basis operations. The server maps each kind to
 /// a status: `Invalid` 400, `NotFound` 404, `Conflict` 409.
@@ -285,7 +303,8 @@ fn read_code_file_blocking(repo_root: &str, path: &str) -> CodeFileRead {
     if bytes.len() as u64 > MAX_CODE_FILE_BYTES {
         return Err(CodeFileProblem::TooLarge);
     }
-    Ok((String::from_utf8_lossy(&bytes).into_owned(), stamp))
+    let blob = git_blob_id(&bytes);
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), stamp, blob))
 }
 
 /// Read one file of a repository for a code-basis check, off the async
@@ -293,7 +312,7 @@ fn read_code_file_blocking(repo_root: &str, path: &str) -> CodeFileRead {
 pub async fn read_code_file(repo_root: &str, path: &str) -> Result<String, CodeFileProblem> {
     read_code_file_stamped(repo_root, path)
         .await
-        .map(|(text, _)| text)
+        .map(|(text, _, _)| text)
 }
 
 /// [`read_code_file`] that also returns the file's stamp.
@@ -376,8 +395,8 @@ pub async fn prepare_code_basis(
     let files = read_code_files(keys).await;
     let mut prepared = Vec::with_capacity(unique.len());
     for input in unique {
-        let (text, stamp) = match files.get(&(input.repo_root.clone(), input.path.clone())) {
-            Some(Ok((text, stamp))) => (text, *stamp),
+        let (text, stamp, blob) = match files.get(&(input.repo_root.clone(), input.path.clone())) {
+            Some(Ok((text, stamp, blob))) => (text, *stamp, blob),
             Some(Err(problem)) => {
                 return Err(CodeBasisError::Invalid(format!(
                     "cannot read {}: {problem} ({})",
@@ -402,6 +421,7 @@ pub async fn prepare_code_basis(
             input,
             anchor,
             stamp,
+            cited_blob: Some(blob.clone()),
         });
     }
     Ok(prepared)
@@ -419,7 +439,7 @@ fn can_skip_by_stamp(row: &CodeBasisRow) -> bool {
 /// What a check of one row decided, given the file as it reads now.
 fn verdict_for(row: &CodeBasisRow, file: &CodeFileRead) -> CodeBasisVerdict {
     let (text, stamp) = match file {
-        Ok((text, stamp)) => (text, *stamp),
+        Ok((text, stamp, _)) => (text, *stamp),
         Err(problem) => return CodeBasisVerdict::Unavailable(problem.as_str()),
     };
     let hint = LineSpan {
@@ -588,7 +608,7 @@ pub async fn confirm_code_basis(
         .get_code_basis_row(page_id, locator)
         .await?
         .ok_or(CodeBasisError::NotFound)?;
-    let (text, stamp) = read_code_file_stamped(&locator.repo_root, &locator.path)
+    let (text, stamp, blob) = read_code_file_stamped(&locator.repo_root, &locator.path)
         .await
         .map_err(|problem| {
             CodeBasisError::Conflict(format!(
@@ -629,8 +649,35 @@ pub async fn confirm_code_basis(
         span,
         &anchor,
         stamp,
+        Some(blob.as_str()),
         by,
         chrono::Utc::now().timestamp(),
     )
     .await
+}
+
+#[cfg(test)]
+mod git_blob_tests {
+    use super::git_blob_id;
+
+    #[test]
+    fn matches_git_hash_object() {
+        assert_eq!(
+            git_blob_id(b"hello\n"),
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
+        // `git hash-object /dev/null`
+        assert_eq!(git_blob_id(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391");
+    }
+
+    #[test]
+    fn hashes_raw_bytes_not_lossy_text() {
+        // Invalid UTF-8 differs from its lossy replacement.
+        let raw = [0x66, 0xff, 0x0a];
+        assert_ne!(
+            git_blob_id(&raw),
+            git_blob_id(String::from_utf8_lossy(&raw).as_bytes())
+        );
+        assert_eq!(git_blob_id(&raw).len(), 40);
+    }
 }

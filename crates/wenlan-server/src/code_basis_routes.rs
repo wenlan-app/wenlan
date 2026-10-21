@@ -19,7 +19,10 @@ use tokio::sync::RwLock;
 
 use wenlan_core::code_basis::CodeBasisError;
 use wenlan_core::db::MemoryDB;
-use wenlan_types::{BasisRemoveResponse, CodeBasisLocator, CodeBasisRecheckEntry, CodeBasisRef};
+use wenlan_types::{
+    BasisRemoveResponse, CodeBasisCitedResponse, CodeBasisLocator, CodeBasisRecheckEntry,
+    CodeBasisRef,
+};
 
 use crate::error::ServerError;
 use crate::page_basis_routes::{actor_from, visible_ids, MUTATION_GRANT};
@@ -35,6 +38,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route(
             "/api/pages/{id}/code-basis/confirm",
             post(handle_confirm_code_basis),
+        )
+        .route(
+            "/api/pages/{id}/code-basis/cited",
+            post(handle_code_basis_cited),
         )
         .route(
             "/api/pages/{id}/code-basis",
@@ -152,6 +159,29 @@ pub async fn handle_confirm_code_basis(
             .await
             .map_err(code_basis_error)?;
     Ok(Json(confirmed))
+}
+
+/// POST /api/pages/{id}/code-basis/cited
+///
+/// The git blob id of the whole file as it was when the row was last written
+/// or confirmed, so the app can ask git for the file "before" and show it next
+/// to the code as it reads now. Reads the
+/// stored row only: no file is opened and nothing is rechecked. The body is a
+/// locator (the repository root and path do not fit a URL). `cited_blob` is
+/// `null` for a row written before the blob id was kept. 404 when the note or the row is not there.
+pub async fn handle_code_basis_cited(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Path(id): Path<String>,
+    Json(locator): Json<CodeBasisLocator>,
+) -> Result<Json<CodeBasisCitedResponse>, ServerError> {
+    let db = open_db(&state).await?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    require_page_visible(&db, &scope, &id).await?;
+    db.get_code_basis_cited(&id, &locator)
+        .await?
+        .map(Json)
+        .ok_or_else(|| code_basis_error(CodeBasisError::NotFound))
 }
 
 /// DELETE /api/pages/{id}/code-basis

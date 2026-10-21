@@ -18,7 +18,7 @@ export const enSourceContainer = {
   "unavailable": "Unavailable",
   "syncError": "Sync error",
   "notChecked": "Not checked yet",
-  "folderChecks": "This folder is checked for changes about every 30 seconds.",
+  "folderChecks": "Checked for changes about every 30 seconds.",
   "importedOnce": "Later changes wait until you Refresh.",
   "followChanges": "Keep in sync",
   "followFailed": "Could not change this setting.",
