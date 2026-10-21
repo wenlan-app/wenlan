@@ -511,3 +511,31 @@ fn windows_dpapi_round_trip_stores_no_plaintext_and_has_no_plaintext_fallback() 
         StoreError::Protection
     );
 }
+
+#[test]
+fn background_read_waits_out_a_brief_lock_and_reports_a_held_one() {
+    let (_dir, store) = fixture();
+    let original = store.configure(None, "review").unwrap();
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(store.directory.join("connection.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    #[cfg(unix)]
+    let inherited = lock.try_clone().unwrap();
+    assert_eq!(store.load().unwrap_err(), StoreError::Busy);
+    assert_eq!(store.load_when_free().unwrap_err(), StoreError::Busy);
+
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        lock.unlock().unwrap();
+    });
+    assert_eq!(
+        store.load_when_free().unwrap().unwrap().revision(),
+        original.revision()
+    );
+    release.join().unwrap();
+    #[cfg(unix)]
+    drop(inherited);
+}

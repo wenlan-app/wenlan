@@ -1506,10 +1506,6 @@ async fn monitor_reverse(
             continue;
         }
         health_tick = 0;
-        // Start the write server for an app allowed since the last check, or
-        // bring it back if it stopped. A task of its own, so a slow start never
-        // delays noticing that the search server or the relay connection ended.
-        tauri::async_runtime::spawn(reconcile_write_process(app.clone(), generation));
         if renewal.due(std::time::SystemTime::now(), std::time::Instant::now()) {
             // Opening a verified same-device replacement renews its route lease.
             // This cannot enroll because the active profile has a device.
@@ -1582,6 +1578,11 @@ async fn monitor_reverse(
                 break error;
             }
         }
+        // Start the write server for an app allowed since the last check, or
+        // bring it back if it stopped. A task of its own, so a slow start never
+        // delays noticing that the search server or the relay connection ended;
+        // started after the checks so its settings read does not race theirs.
+        tauri::async_runtime::spawn(reconcile_write_process(app.clone(), generation));
     };
     recover_remote(app, generation, attempts, failure).await;
 }

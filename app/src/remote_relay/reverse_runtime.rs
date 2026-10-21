@@ -218,7 +218,7 @@ async fn same_profile(store: &Store, expected: &Profile) -> Result<(), String> {
     let revision = expected.revision().to_owned();
     tokio::task::spawn_blocking(move || {
         let current = store
-            .load()?
+            .load_when_free()?
             .filter(Profile::enabled)
             .ok_or(StoreError::NotConfigured)?;
         if current.revision() == revision {

@@ -18,7 +18,7 @@ pub async fn storage<T: Send + 'static>(
 }
 
 pub async fn enabled_profile() -> Result<Profile, String> {
-    storage(|store| require_enabled(store.load()?)).await
+    storage(|store| require_enabled(store.load_when_free()?)).await
 }
 
 pub async fn consent_profile(expected_revision: String) -> Result<Profile, String> {
@@ -342,7 +342,7 @@ async fn same_profile(store: &Store, expected: &Profile) -> Result<(), String> {
     let store = store.clone();
     let revision = expected.revision().to_string();
     tokio::task::spawn_blocking(move || {
-        let current = require_enabled(store.load()?)?;
+        let current = require_enabled(store.load_when_free()?)?;
         if current.revision() != revision {
             return Err(StoreError::Stale);
         }

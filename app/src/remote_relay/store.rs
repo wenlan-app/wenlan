@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 const MAX_BYTES: usize = 16 * 1024;
 const MAX_ENCODED_BYTES: usize = 64 * 1024;
 const FILE_NAME: &str = "connection.dat";
+const BUSY_RETRIES: u32 = 20;
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(25);
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum StoreError {
@@ -143,6 +145,19 @@ impl Store {
             Ok(_) => {}
         }
         self.with_lock(read_profile)
+    }
+
+    /// `load` for background checks. Another task holds the lock only while it
+    /// reads or saves, so a short wait beats reporting Busy: a Busy read in the
+    /// connection monitor turns Web access off.
+    pub fn load_when_free(&self) -> Result<Option<Profile>, StoreError> {
+        for _ in 0..BUSY_RETRIES {
+            match self.load() {
+                Err(StoreError::Busy) => std::thread::sleep(BUSY_WAIT),
+                other => return other,
+            }
+        }
+        self.load()
     }
 
     /// Select an explicit scope without enabling exposure. A connected or
