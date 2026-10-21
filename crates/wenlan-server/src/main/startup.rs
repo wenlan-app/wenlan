@@ -22,6 +22,12 @@ pub(super) async fn prepare_startup_state(
     startup_repair_claim: &Option<StartupRepairClaim>,
     startup_repair_claimed: bool,
 ) -> anyhow::Result<PreparedStartupState> {
+    // Before anything below can write the projection: startup reconcile
+    // repairs this folder against the database it is about to open.
+    let page_root = wenlan_core::config::load_config().knowledge_path_or_default();
+    tracing::info!("Wenlan pages folder: {}", page_root.display());
+    wenlan_core::config::ensure_isolated_page_root(&page_root).map_err(anyhow::Error::msg)?;
+
     let repair_store = wenlan_core::repair::RepairArtifactStore::new(wenlan_root.join("repairs"));
     if let Some(claim) = startup_repair_claim.as_ref() {
         validate_startup_repair_claim(&repair_store, claim)?;
