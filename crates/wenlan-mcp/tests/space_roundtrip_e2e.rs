@@ -22,6 +22,17 @@ use wenlan_types::responses::{SearchMemoryResponse, StoreMemoryResponse};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// The requests a tool sent, leaving out the best-effort steep count that
+/// ordinary replies read on the side; it is not what these tests check.
+async fn requests(mock: &MockServer) -> Vec<wiremock::Request> {
+    mock.received_requests()
+        .await
+        .expect("wiremock captured no requests")
+        .into_iter()
+        .filter(|request| request.url.path() != "/api/steep/worklist")
+        .collect()
+}
+
 fn make_server(client: WenlanClient) -> WenlanMcpServer {
     // A session exported by the developer's own agent would add a
     // `POST /api/sessions` request these tests do not expect.
@@ -204,10 +215,7 @@ async fn mcp_capture_and_recall_respects_space() {
     );
 
     // Verify the recall wire request carried `space = "alpha"`.
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     // 2 store + 1 search = 3 requests total.
     assert_eq!(received.len(), 3, "expected 2 captures + 1 recall request");
 
@@ -294,10 +302,7 @@ async fn mcp_legacy_domain_key_still_works() {
     );
 
     // Verify the wire request sent space=alpha (not null), confirming alias propagated.
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 store request");
     let body: serde_json::Value =
         serde_json::from_slice(&received[0].body).expect("request body must be valid JSON");

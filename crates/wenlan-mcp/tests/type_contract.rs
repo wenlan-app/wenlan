@@ -73,7 +73,7 @@ async fn get_page_sources_rejects_url_path_control_before_daemon_access() {
             assert_eq!(result.is_error, Some(true), "must reject {page_id:?}");
         }
     }
-    assert!(mock.received_requests().await.unwrap().is_empty());
+    assert!(requests(&mock).await.is_empty());
 }
 
 #[tokio::test]
@@ -113,10 +113,7 @@ fn text_of(result: &CallToolResult) -> String {
 }
 
 async fn captured_body(mock: &MockServer) -> serde_json::Value {
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(mock).await;
     assert_eq!(
         received.len(),
         1,
@@ -271,7 +268,7 @@ async fn create_relation_rejects_blank_source_before_network() {
 
     assert!(result.is_error.unwrap_or(false));
     assert!(
-        mock.received_requests().await.unwrap().is_empty(),
+        requests(&mock).await.is_empty(),
         "blank source must reject before any HTTP request"
     );
 }
@@ -297,7 +294,7 @@ async fn create_relation_missing_source_preflight_prevents_post() {
         .unwrap();
 
     assert!(result.is_error.unwrap_or(false));
-    let received = mock.received_requests().await.unwrap();
+    let received = requests(&mock).await;
     assert_eq!(
         received.len(),
         1,
@@ -342,7 +339,7 @@ async fn create_relation_successful_preflight_maps_source_into_post() {
         .unwrap();
 
     assert!(!result.is_error.unwrap_or(false));
-    let received = mock.received_requests().await.unwrap();
+    let received = requests(&mock).await;
     assert_eq!(
         received.len(),
         2,
@@ -906,10 +903,7 @@ async fn origin_client_sends_x_agent_name_header() {
         .await
         .expect("capture_impl failed");
 
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 request");
     let headers = &received[0].headers;
     let value = headers
@@ -964,10 +958,7 @@ async fn origin_client_omits_x_agent_name_when_unset() {
         .await
         .expect("capture_impl failed");
 
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 request");
     let headers = &received[0].headers;
     assert!(
@@ -1142,10 +1133,7 @@ async fn list_rejections_passes_query_params() {
         .await
         .unwrap();
 
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1);
     let url = received[0].url.to_string();
     assert!(url.contains("limit=30"), "got: {url}");
@@ -1252,10 +1240,7 @@ async fn list_pending_revisions_passes_limit() {
         .await
         .expect("list_pending_revisions_impl failed");
 
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1);
     let url = received[0].url.to_string();
     assert!(
@@ -1307,10 +1292,7 @@ async fn origin_client_post_empty_uses_post_verb() {
         .await
         .expect("post_empty should succeed");
 
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 request");
     assert_eq!(
         received[0].method.as_str(),
@@ -1341,10 +1323,7 @@ async fn origin_client_post_empty_forwards_x_agent_name() {
         .await
         .expect("post_empty should succeed");
 
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 request");
     let headers = &received[0].headers;
     let value = headers
@@ -1485,10 +1464,7 @@ async fn accept_revision_forwards_x_agent_name() {
         })
         .await
         .unwrap();
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 request");
     let value = received[0]
         .headers
@@ -1504,6 +1480,17 @@ async fn accept_revision_forwards_x_agent_name() {
 // ===== dismiss_revision =====
 
 use wenlan_mcp::tools::DismissRevisionRequest;
+
+/// The requests a tool sent, leaving out the best-effort steep count that
+/// ordinary replies read on the side; it is not what these tests check.
+async fn requests(mock: &MockServer) -> Vec<wiremock::Request> {
+    mock.received_requests()
+        .await
+        .expect("wiremock captured no requests")
+        .into_iter()
+        .filter(|request| request.url.path() != "/api/steep/worklist")
+        .collect()
+}
 
 #[tokio::test]
 async fn dismiss_revision_happy_path() {
@@ -1601,10 +1588,7 @@ async fn dismiss_revision_forwards_x_agent_name() {
         })
         .await
         .unwrap();
-    let received = mock
-        .received_requests()
-        .await
-        .expect("wiremock captured no requests");
+    let received = requests(&mock).await;
     assert_eq!(received.len(), 1, "expected exactly 1 request");
     let value = received[0]
         .headers

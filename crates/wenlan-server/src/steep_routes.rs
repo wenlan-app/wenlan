@@ -37,7 +37,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 /// the caller fixes the text and commits again), 400 for a malformed ask.
 fn steep_error(error: SteepError) -> ServerError {
     match error {
-        SteepError::NotFound => ServerError::NotFound("note not found".into()),
+        SteepError::NotFound => ServerError::NotFound("page not found".into()),
         SteepError::NotWaiting(_)
         | SteepError::Held(_)
         | SteepError::Changed(_)
@@ -118,7 +118,7 @@ pub async fn handle_steep_claim(
     // may not read in full is not there for it.
     let visible = visible_ids(&db, &view.grant, &scope, std::slice::from_ref(&req.page_id)).await?;
     if !visible.contains(&req.page_id) {
-        return Err(ServerError::NotFound("note not found".into()));
+        return Err(ServerError::NotFound("page not found".into()));
     }
     let claim = wenlan_core::steep::claim(&db, &req.page_id, &scope)
         .await

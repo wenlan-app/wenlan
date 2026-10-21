@@ -1099,7 +1099,7 @@ pub struct SteepParams {
         description = "list | claim (page_id) | commit (token, content) | still_accurate (token) | release (token)."
     )]
     pub action: SteepAction,
-    #[schemars(description = "claim: the note to take, from list.")]
+    #[schemars(description = "claim: the page to take, from list.")]
     #[serde(default)]
     pub page_id: Option<String>,
     #[schemars(description = "commit, still_accurate, release: the token claim returned.")]
@@ -1110,13 +1110,13 @@ pub struct SteepParams {
     )]
     #[serde(default)]
     pub content: Option<String>,
-    #[schemars(description = "list: how many notes (default 20).")]
+    #[schemars(description = "list: how many pages (default 20).")]
     #[serde(default)]
     pub limit: Option<u32>,
     #[schemars(description = "list: next_cursor from the previous list.")]
     #[serde(default)]
     pub cursor: Option<String>,
-    #[schemars(description = "list: only this Space's notes.")]
+    #[schemars(description = "list: only this Space's pages.")]
     #[serde(default)]
     pub space: Option<String>,
 }
@@ -1698,14 +1698,14 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
     }
 }
 
-/// The line an ordinary tool reply carries when notes are waiting for steep,
+/// The line an ordinary tool reply carries when pages are waiting for steep,
 /// so the AI tool at work hears of them without being asked. A remote
 /// connection cannot steep, so it is only told who will.
 fn steep_waiting_text(total: u32, transport: &TransportMode) -> Option<String> {
     let count = match total {
         0 => return None,
-        1 => "1 note is".to_string(),
-        n => format!("{n} notes are"),
+        1 => "1 page is".to_string(),
+        n => format!("{n} pages are"),
     };
     Some(match transport {
         TransportMode::Stdio => format!(
@@ -1729,11 +1729,11 @@ fn steep_page_hint(stale_reason: Option<&str>, transport: &TransportMode) -> Opt
     };
     Some(match transport {
         TransportMode::Stdio => format!(
-            "This note is waiting for steep: {why}. To update it now, call `steep` with \
+            "This page is waiting for steep: {why}. To update it now, call `steep` with \
              action claim and this page_id, then commit the rewrite. Do not use write_page for it."
         ),
         TransportMode::Http => format!(
-            "This note is waiting for steep: {why}. A local AI tool or automatic steep \
+            "This page is waiting for steep: {why}. A local AI tool or automatic steep \
              brings it up to date."
         ),
     })
@@ -2088,7 +2088,7 @@ impl WenlanMcpServer {
         steep_waiting_text(list.total, &self.transport)
     }
 
-    /// `output` with the steep line appended when notes are waiting.
+    /// `output` with the steep line appended when pages are waiting.
     async fn with_steep_line(
         &self,
         client: &WenlanClient,
@@ -4398,7 +4398,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: bring notes up to date after their sources changed or were removed. `list`: the notes waiting. `claim` (page_id): the note, its surviving sources numbered [1]..[n], a token, and a plan: rewrite; review_card (the user wrote it, so your rewrite becomes a card they accept); needs_you (leave it, tell the user why). `commit` (token, content): the rewrite, each claim cited [n]; Wenlan checks cited sentences against the source text, and refuses with nothing written if the note or its sources changed since the claim (claim again). `still_accurate` (token): sources changed, note still right. `release` (token): give it back. Rewrite with your main model; a small model may only judge still_accurate. Claim and commit: local stdio only.",
+        description = "Steep on demand: bring pages up to date after their sources changed or were removed. `list`: the pages waiting. `claim` (page_id): the page, its surviving sources numbered [1]..[n], a token, and a plan: rewrite; review_card (the user wrote it, so your rewrite becomes a card they accept); needs_you (leave it, tell the user why). `commit` (token, content): the rewrite, each claim cited [n]; Wenlan checks cited sentences against the source text, and refuses with nothing written if the page or its sources changed since the claim (claim again). `still_accurate` (token): sources changed, page still right. `release` (token): give it back. Rewrite with your main model; a small model may only judge still_accurate. Claim and commit: local stdio only.",
         annotations(
             title = "Steep",
             read_only_hint = false,
@@ -9245,10 +9245,10 @@ mod tests {
     fn steep_line_counts_waiting_notes_and_names_who_updates_them() {
         assert_eq!(steep_waiting_text(0, &TransportMode::Stdio), None);
         let one = steep_waiting_text(1, &TransportMode::Stdio).unwrap();
-        assert!(one.starts_with("Steep: 1 note is waiting"), "{one}");
+        assert!(one.starts_with("Steep: 1 page is waiting"), "{one}");
         assert!(one.contains("`steep` tool"), "{one}");
         let remote = steep_waiting_text(3, &TransportMode::Http).unwrap();
-        assert!(remote.starts_with("Steep: 3 notes are waiting"), "{remote}");
+        assert!(remote.starts_with("Steep: 3 pages are waiting"), "{remote}");
         assert!(
             !remote.contains("`steep` tool"),
             "a remote connection cannot steep: {remote}"
@@ -9271,6 +9271,10 @@ mod tests {
     async fn capture_reply_carries_the_steep_count_only_when_notes_wait() {
         use wiremock::matchers::{method, path, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // The Space the count asks for comes from the process-wide lock that
+        // the lock_state tests set and clear.
+        let _guard = crate::lock_state::ENV_LOCK.lock().await;
 
         let store = || {
             Mock::given(method("POST"))
@@ -9311,7 +9315,7 @@ mod tests {
             None,
         );
         let text = text_of(&server.capture_impl(params()).await.unwrap());
-        assert!(text.contains("Steep: 2 notes are waiting"), "{text}");
+        assert!(text.contains("Steep: 2 pages are waiting"), "{text}");
 
         // Nothing waiting, or the count failing, leaves the reply as it was.
         let quiet = MockServer::start().await;

@@ -205,7 +205,7 @@ pub fn hold_for_automatic<'a>(db: &'a MemoryDB, page_id: &str) -> Option<Automat
 /// Why a steep call was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum SteepError {
-    #[error("note not found")]
+    #[error("page not found")]
     NotFound,
     /// The note is not waiting for steep (any more).
     #[error("{0}")]
@@ -219,7 +219,7 @@ pub enum SteepError {
     /// The token names no hold: Wenlan restarted, or another run took the
     /// note over after the hold expired.
     #[error(
-        "this claim is gone (Wenlan restarted, or another run took the note); claim the note again"
+        "this claim is gone (Wenlan restarted, or another run took the page); claim the page again"
     )]
     TokenGone,
     #[error("{0}")]
@@ -235,10 +235,10 @@ pub enum SteepError {
 fn held_message(holder: SteepHolder) -> String {
     match holder {
         SteepHolder::Automatic => {
-            "Wenlan is steeping this note in the background right now; pick another note".into()
+            "Wenlan is steeping this page in the background right now; pick another page".into()
         }
         SteepHolder::OnDemand => {
-            "another AI session is rewriting this note right now; pick another note".into()
+            "another AI session is rewriting this page right now; pick another page".into()
         }
     }
 }
@@ -434,12 +434,12 @@ pub async fn claim(
     }
     let Some(stale_reason) = page.stale_reason.clone() else {
         return Err(SteepError::NotWaiting(
-            "this note is not waiting for steep".into(),
+            "this page is not waiting for steep".into(),
         ));
     };
     if page.status != "active" || page.kind == "entity" {
         return Err(SteepError::NotWaiting(
-            "this note is not waiting for steep".into(),
+            "this page is not waiting for steep".into(),
         ));
     }
 
@@ -455,8 +455,8 @@ pub async fn claim(
         .await?;
         return Ok(needs_you(
             &page,
-            "This note relies on other notes. Open it in Wenlan and use Update from sources, \
-             so you can check it against those notes."
+            "This page relies on other pages. Open it in Wenlan and use Update from sources, \
+             so you can check it against those pages."
                 .into(),
         ));
     }
@@ -466,7 +466,7 @@ pub async fn claim(
         return Ok(needs_you(
             &page,
             format!(
-                "This note has more than {STEEP_SOURCE_CAP} sources, too many for one rewrite. \
+                "This page has more than {STEEP_SOURCE_CAP} sources, too many for one rewrite. \
                  Open it in Wenlan and use Update from sources."
             ),
         ));
@@ -478,7 +478,7 @@ pub async fn claim(
         if ids.iter().any(|id| !visible.contains(id.as_str())) {
             return Ok(needs_you(
                 &page,
-                "This note draws on memories outside this Space. Steep it from a session \
+                "This page draws on memories outside this Space. Steep it from a session \
                  that is not locked to one Space."
                     .into(),
             ));
@@ -492,7 +492,7 @@ pub async fn claim(
             .await?;
         return Ok(needs_you(
             &page,
-            "Every source of this note was removed, so there is nothing to rebuild it from. \
+            "Every source of this page was removed, so there is nothing to rebuild it from. \
              The user decides: keep it as their own writing, rewrite it, or archive it."
                 .into(),
         ));
@@ -519,23 +519,23 @@ pub async fn claim(
 
     let removed = stale_reason == "source_removed";
     let mut note = String::from(
-        "Rewrite the note from the numbered sources only. Cite each claim with its source \
-         number, like [1]. Keep the title and the note's language.",
+        "Rewrite the page from the numbered sources only. Cite each claim with its source \
+         number, like [1]. Keep the title and the page's language.",
     );
     if removed {
         note.push_str(
-            " A source of this note was removed: drop everything that only it supported.",
+            " A source of this page was removed: drop everything that only it supported.",
         );
     } else {
         note.push_str(
-            " If the sources changed but the note still says the right thing, commit \
+            " If the sources changed but the page still says the right thing, commit \
              still_accurate instead of rewriting.",
         );
     }
     if human_owned {
         note.push_str(
-            " The user wrote or edited this note, so the rewrite goes to them as a revision \
-             card; the note itself does not change until they accept it.",
+            " The user wrote or edited this page, so the rewrite goes to them as a revision \
+             card; the page itself does not change until they accept it.",
         );
     }
 
@@ -586,7 +586,7 @@ fn replayed(stored: &str) -> Result<SteepCommit, WenlanError> {
     })
 }
 
-const CHANGED: &str = "the note or its sources changed since you claimed it, so nothing was \
+const CHANGED: &str = "the page or its sources changed since you claimed it, so nothing was \
                        written; claim it again and work from the new snapshot";
 
 /// Settle a claimed note: write the rewrite, stage it as a revision card,
@@ -656,8 +656,8 @@ pub async fn commit(
     if action == STEEP_ACTION_STILL_ACCURATE {
         if snapshot.stale_reason != "source_updated" {
             return Err(SteepError::Invalid(
-                "a source of this note was removed, so it must be rewritten without it; \
-                 still_accurate is only for a note whose sources changed"
+                "a source of this page was removed, so it must be rewritten without it; \
+                 still_accurate is only for a page whose sources changed"
                     .into(),
             ));
         }
@@ -702,7 +702,7 @@ pub async fn commit(
     let content = content.map(str::trim).unwrap_or_default();
     if content.is_empty() {
         return Err(SteepError::Invalid(
-            "a rewrite needs content: the new body of the note".into(),
+            "a rewrite needs content: the new body of the page".into(),
         ));
     }
     crate::export::provenance::validate_canonical_page_content(content)?;

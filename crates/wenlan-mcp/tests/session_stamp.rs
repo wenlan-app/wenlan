@@ -81,6 +81,17 @@ fn session_header(request: &wiremock::Request) -> Option<String> {
         .map(|value| value.to_str().unwrap().to_string())
 }
 
+/// The requests the tool sent, leaving out the best-effort steep count each
+/// reply reads on the side; it is not what these tests stamp or announce.
+async fn sent(mock: &MockServer) -> Vec<wiremock::Request> {
+    mock.received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() != "/api/steep/worklist")
+        .collect()
+}
+
 fn is_ok(result: &CallToolResult) -> bool {
     result.is_error != Some(true)
 }
@@ -101,7 +112,7 @@ async fn capture_announces_the_session_once_then_stamps_each_write() {
         assert!(is_ok(&result));
     }
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let paths: Vec<_> = requests.iter().map(|r| r.url.path().to_string()).collect();
     assert_eq!(
         paths,
@@ -133,7 +144,7 @@ async fn no_session_means_no_header_and_no_announcement() {
         .await
         .unwrap();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     assert_eq!(requests.len(), 1);
     assert_eq!(session_header(&requests[0]), None);
 }
@@ -159,7 +170,7 @@ async fn argument_beats_environment_and_invalid_values_are_ignored() {
     assert!(is_ok(&result), "a bad session never fails the write");
     clear_env();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let stamped: Vec<_> = requests
         .iter()
         .filter(|r| r.url.path() == "/api/memory/store")
@@ -188,7 +199,7 @@ async fn codex_thread_id_is_the_last_resort() {
         .unwrap();
     clear_env();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let store = requests
         .iter()
         .find(|r| r.url.path() == "/api/memory/store")
@@ -212,7 +223,7 @@ async fn a_remote_facing_server_ignores_its_own_environment() {
         .unwrap();
     clear_env();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let stores: Vec<_> = requests
         .iter()
         .filter(|r| r.url.path() == "/api/memory/store")
@@ -286,7 +297,7 @@ async fn write_page_and_update_brief_carry_the_session() {
         .await
         .unwrap();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     for wanted in ["/api/pages", "/api/brief"] {
         let request = requests.iter().find(|r| r.url.path() == wanted).unwrap();
         assert_eq!(

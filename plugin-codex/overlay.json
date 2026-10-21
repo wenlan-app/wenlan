@@ -385,14 +385,14 @@
         {
           "from": [
             "   judgment, so give it to a helper on a small model: in Claude Code, start an",
-            "   `Agent` with `model: \"haiku\"`, hand it the note and the numbered sources,",
-            "   and ask one question: does every sentence of the note still match the",
+            "   `Agent` with `model: \"haiku\"`, hand it the page and the numbered sources,",
+            "   and ask one question: does every sentence of the page still match the",
             "   sources, yes or no. When it says yes, call `steep` with"
           ],
           "to": [
             "   judgment, so give it to a helper on a small model when you can start one",
-            "   (a subagent on a smaller model), hand it the note and the numbered sources,",
-            "   and ask one question: does every sentence of the note still match the",
+            "   (a subagent on a smaller model), hand it the page and the numbered sources,",
+            "   and ask one question: does every sentence of the page still match the",
             "   sources, yes or no. When it says yes, call `steep` with"
           ]
         }
