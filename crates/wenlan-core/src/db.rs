@@ -39626,6 +39626,18 @@ impl MemoryDB {
     /// substring or vector step, and every exact match is returned so the
     /// caller can tell one match from several. A capture names its entity on
     /// purpose, so a near match is not a reason to link it.
+    /// Whether `entity_id` is an entity, live or archived, in a Space that
+    /// `scope` covers. A capture from a Space-locked caller links only such
+    /// an entity.
+    pub async fn entity_visible_in_scope(
+        &self,
+        entity_id: &str,
+        scope: &ReadScope,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::entity_in_scope_any_status(&conn, entity_id, scope).await
+    }
+
     pub async fn entity_name_candidates(
         &self,
         name: &str,
@@ -51542,6 +51554,7 @@ impl MemoryDB {
             citations_json,
             &[],
             "",
+            None,
         )
         .await
     }
@@ -51568,6 +51581,7 @@ impl MemoryDB {
         citations_json: Option<&str>,
         basis_marks: &[(String, i64)],
         basis_actor: &str,
+        basis_space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<(), WenlanError> {
         let inserted = self
             .insert_page_with_kind_inner(
@@ -51586,6 +51600,7 @@ impl MemoryDB {
                 None,
                 basis_marks,
                 basis_actor,
+                basis_space_guard,
             )
             .await?;
         debug_assert!(inserted, "unguarded Page insert cannot miss its guard");
@@ -51625,6 +51640,7 @@ impl MemoryDB {
             Some((queue_source_id, file_path, expected_content_hash)),
             &[],
             "",
+            None,
         )
         .await
     }
@@ -51647,6 +51663,7 @@ impl MemoryDB {
         document_guard: Option<(&str, &str, Option<&str>)>,
         basis_marks: &[(String, i64)],
         basis_actor: &str,
+        basis_space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<bool, WenlanError> {
         // M1 honest columns: this is the single storage-layer wrapper every
         // page-insert path funnels through, so both scope columns leave here
@@ -51811,6 +51828,7 @@ impl MemoryDB {
                 basis_page_id,
                 *read_version,
                 basis_actor,
+                basis_space_guard,
             )
             .await
             {

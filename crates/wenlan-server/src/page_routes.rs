@@ -644,6 +644,8 @@ async fn handle_create_page_inner(
             page_match_threshold,
             citations_json: None,
             basis_marks: marks.clone(),
+            basis_space_guard: (scope != wenlan_core::read_scope::ReadScope::Global)
+                .then(|| scope.clone()),
         },
     )
     .await?;

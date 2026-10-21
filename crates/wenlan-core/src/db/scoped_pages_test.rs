@@ -1228,3 +1228,71 @@ async fn search_reports_the_review_lock_globally_and_scoped() {
         .iter()
         .any(|page| page.id == "locked-search-page" && page.review_required));
 }
+
+#[tokio::test]
+async fn a_link_resolved_into_another_space_reads_as_an_orphan_to_a_scoped_reader() {
+    // `[[Personal/Plan]]` resolves across Spaces whatever the writer's lock.
+    // For a reader held to Work it must read like a dangling link, or the
+    // orphan feed would tell it which titles exist in Personal.
+    let (db, _tmp) = test_db().await;
+    let now = chrono::Utc::now().to_rfc3339();
+    for (id, workspace) in [
+        ("work-a", "work"),
+        ("work-b", "work"),
+        ("personal-plan", "personal"),
+    ] {
+        db.insert_page_with_kind(
+            id,
+            id,
+            None,
+            "orphan scope canary",
+            None,
+            Some("decision"),
+            &[],
+            &now,
+            "authored",
+            "confirmed",
+            Some(workspace),
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    let conn = db.conn.lock().await;
+    conn.execute(
+        "INSERT INTO page_links (source_page_id, target_page_id, label, label_key)
+         VALUES ('work-a', 'personal-plan', 'Personal/Plan', 'personal/plan'),
+                ('work-a', NULL, 'Personal/Nothing', 'personal/nothing'),
+                ('work-a', 'work-b', 'work-b', 'work-b')",
+        (),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let keys = |rows: Vec<OrphanLinkRow>| {
+        let mut keys: Vec<String> = rows.into_iter().map(|row| row.label_key).collect();
+        keys.sort();
+        keys
+    };
+    let work = ReadScope::Space("work".to_string());
+    assert_eq!(
+        keys(db.list_orphan_link_rows_scoped(&work).await.unwrap()),
+        vec!["personal/nothing".to_string(), "personal/plan".to_string()]
+    );
+    assert_eq!(
+        db.list_orphan_link_labels_scoped(1, &work)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        keys(
+            db.list_orphan_link_rows_scoped(&ReadScope::Global)
+                .await
+                .unwrap()
+        ),
+        vec!["personal/nothing".to_string()]
+    );
+}

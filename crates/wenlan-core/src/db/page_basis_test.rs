@@ -2145,6 +2145,7 @@ async fn create_with(
             page_match_threshold: 2.0,
             citations_json: None,
             basis_marks,
+            basis_space_guard: None,
         },
     )
     .await
@@ -2181,4 +2182,52 @@ async fn a_create_whose_mark_is_refused_at_write_time_creates_nothing() {
         assert!(rows.next().await.unwrap().is_none(), "no page row");
     }
     assert_eq!(files_under(&pages), files_before, "no page file");
+}
+
+/// A Space-locked caller's mark re-checks both notes' Space inside the mark
+/// itself. Moving a note to another Space does not bump its version, so a
+/// basis moved out after the route's visibility check would otherwise be
+/// marked. A Global caller still marks across Spaces.
+#[tokio::test]
+async fn a_space_locked_mark_refuses_a_note_moved_out_of_its_space() {
+    use crate::read_scope::ReadScope;
+    let (db, _dir) = test_db().await;
+    page(&db, "a", "Alpha", "The launch is on 2026-03-01.", "sp").await;
+    page(&db, "b", "Beta", "Plans built on Alpha.", "sp").await;
+    let locked = ReadScope::Space("sp".into());
+    let marks = [("a".to_string(), 1)];
+
+    db.set_page_workspace("a", Some("sp2")).await.unwrap();
+    assert!(matches!(
+        db.mark_page_basis_in("b", "a", 1, "agent", Some(&locked))
+            .await,
+        Err(BasisError::BasisNotFound)
+    ));
+    assert!(matches!(
+        db.mark_page_bases("b", 1, &marks, &[], "agent", Some(&locked))
+            .await,
+        Err(BasisError::BasisNotFound)
+    ));
+    assert_eq!(
+        scalar(
+            &db,
+            "SELECT COUNT(*) FROM page_basis WHERE page_id = ?1",
+            "b"
+        )
+        .await,
+        0
+    );
+
+    db.set_page_workspace("a", Some("sp")).await.unwrap();
+    db.set_page_workspace("b", Some("sp2")).await.unwrap();
+    assert!(matches!(
+        db.mark_page_basis_in("b", "a", 1, "agent", Some(&locked))
+            .await,
+        Err(BasisError::CiterNotFound)
+    ));
+
+    db.mark_page_basis_in("b", "a", 1, "human", None)
+        .await
+        .unwrap();
+    assert_eq!(entry(&db, "b", "a").await.state, BASIS_STATE_OK);
 }

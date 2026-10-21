@@ -322,6 +322,7 @@ async fn apply_cross_space_discovery(
             page_match_threshold: crate::tuning::DistillationConfig::default().page_match_threshold,
             citations_json: None,
             basis_marks: Vec::new(),
+            basis_space_guard: None,
         },
     )
     .await?;

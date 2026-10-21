@@ -693,6 +693,7 @@ async fn apply_card_mark(
     page_id: &str,
     mark: &StagedBasisMark,
     added_by: &str,
+    space_guard: Option<&crate::read_scope::ReadScope>,
 ) -> Result<PageBasisEntry, BasisError> {
     if let Some(now) = load_facts(conn, &mark.basis_page_id, false).await? {
         if now.incarnation != mark.incarnation {
@@ -701,19 +702,36 @@ async fn apply_card_mark(
             ));
         }
     }
-    mark_page_basis_on_conn(conn, page_id, &mark.basis_page_id, mark.version, added_by).await
+    mark_page_basis_on_conn(
+        conn,
+        page_id,
+        &mark.basis_page_id,
+        mark.version,
+        added_by,
+        space_guard,
+    )
+    .await
 }
 
 /// R5-R7: mark `basis_page_id` as a basis of `page_id`, on the caller's open
 /// transaction. Confirmed (`ok`) only when the basis is still at
 /// `read_version`; otherwise `pending`, with an empty digest so that no later
 /// refresh can promote it (a v1 read must never confirm v2).
+///
+/// `space_guard` is a Space-locked caller's Space. Both notes must still be
+/// in it here, inside the transaction: moving a note to another Space does
+/// not bump its version, so the route's earlier visibility check alone would
+/// let a mark land on a note that left the Space in between. A citer that
+/// left reads as [`BasisError::CiterNotFound`], a basis as
+/// [`BasisError::BasisNotFound`]. `None` (a Global caller) marks across
+/// Spaces.
 pub(super) async fn mark_page_basis_on_conn(
     conn: &libsql::Connection,
     page_id: &str,
     basis_page_id: &str,
     read_version: i64,
     added_by: &str,
+    space_guard: Option<&crate::read_scope::ReadScope>,
 ) -> Result<PageBasisEntry, BasisError> {
     if page_id == basis_page_id {
         return Err(BasisError::SelfReference);
@@ -721,6 +739,9 @@ pub(super) async fn mark_page_basis_on_conn(
     let citer = load_facts(conn, page_id, false)
         .await?
         .ok_or(BasisError::CiterNotFound)?;
+    if space_guard.is_some_and(|scope| !scope.matches(Some(citer.space.as_str()))) {
+        return Err(BasisError::CiterNotFound);
+    }
     check_citer_facts(&citer)?;
     let Some(basis) = load_facts(conn, basis_page_id, true).await? else {
         return Err(if known_deleted_basis(conn, basis_page_id).await? {
@@ -729,6 +750,9 @@ pub(super) async fn mark_page_basis_on_conn(
             BasisError::BasisNotFound
         });
     };
+    if space_guard.is_some_and(|scope| !scope.matches(Some(basis.space.as_str()))) {
+        return Err(BasisError::BasisNotFound);
+    }
     check_basis_facts(&basis, read_version)?;
 
     let now_ts = chrono::Utc::now().timestamp();
@@ -937,18 +961,32 @@ pub(super) async fn apply_basis_write_on_conn(
     basis: &BasisWrite,
 ) -> Result<BasisWriteOutcome, BasisError> {
     for (basis_page_id, version) in &basis.marks {
-        mark_page_basis_on_conn(conn, page_id, basis_page_id, *version, &basis.actor).await?;
+        mark_page_basis_on_conn(
+            conn,
+            page_id,
+            basis_page_id,
+            *version,
+            &basis.actor,
+            basis.space_guard.as_ref(),
+        )
+        .await?;
     }
     for mark in &basis.card_marks {
-        apply_card_mark(conn, page_id, mark, &basis.actor)
-            .await
-            .map_err(|reason| match reason {
-                BasisError::Db(inner) => BasisError::Db(inner),
-                reason => BasisError::CardMarkRefused {
-                    basis_page_id: mark.basis_page_id.clone(),
-                    reason: Box::new(reason),
-                },
-            })?;
+        apply_card_mark(
+            conn,
+            page_id,
+            mark,
+            &basis.actor,
+            basis.space_guard.as_ref(),
+        )
+        .await
+        .map_err(|reason| match reason {
+            BasisError::Db(inner) => BasisError::Db(inner),
+            reason => BasisError::CardMarkRefused {
+                basis_page_id: mark.basis_page_id.clone(),
+                reason: Box::new(reason),
+            },
+        })?;
     }
     let mut outcome = BasisWriteOutcome::default();
     if let Some((basis_page_id, version)) = &basis.confirm {
@@ -1063,12 +1101,33 @@ impl MemoryDB {
         read_version: i64,
         added_by: &str,
     ) -> Result<PageBasisEntry, BasisError> {
+        self.mark_page_basis_in(page_id, basis_page_id, read_version, added_by, None)
+            .await
+    }
+
+    /// [`Self::mark_page_basis`] for a Space-locked caller: both notes must
+    /// still be in `space_guard` inside the mark's transaction.
+    pub async fn mark_page_basis_in(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+        read_version: i64,
+        added_by: &str,
+        space_guard: Option<&crate::read_scope::ReadScope>,
+    ) -> Result<PageBasisEntry, BasisError> {
         let conn = self.conn.lock().await;
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await?;
-        let entry =
-            mark_page_basis_on_conn(&tx, page_id, basis_page_id, read_version, added_by).await?;
+        let entry = mark_page_basis_on_conn(
+            &tx,
+            page_id,
+            basis_page_id,
+            read_version,
+            added_by,
+            space_guard,
+        )
+        .await?;
         tx.commit().await?;
         Ok(entry)
     }
@@ -1525,7 +1584,8 @@ impl MemoryDB {
             return Err(BasisError::CiterMovedOn { current });
         }
         for (basis_page_id, version) in marks {
-            mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by).await?;
+            mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by, space_guard)
+                .await?;
         }
         super::code_basis::upsert_code_basis_on_conn(
             &tx,

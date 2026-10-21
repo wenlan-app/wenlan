@@ -961,6 +961,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             page_match_threshold: 0.86,
             citations_json: None,
             basis_marks: Vec::new(),
+            basis_space_guard: None,
         },
     )
     .await
@@ -1017,6 +1018,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             page_match_threshold: 0.86,
             citations_json: None,
             basis_marks: Vec::new(),
+            basis_space_guard: None,
         },
     );
     let observe_projection = async {
@@ -2823,6 +2825,7 @@ async fn seed_source_page(db: &MemoryDB, page_id: &'static str) -> (&'static str
             page_match_threshold: 0.0,
             citations_json: None,
             basis_marks: Vec::new(),
+            basis_space_guard: None,
         },
     )
     .await

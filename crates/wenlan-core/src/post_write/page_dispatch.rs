@@ -33,6 +33,9 @@ pub enum PageWrite<'a> {
         /// creates nothing). Ignored when the write attaches to an existing
         /// page instead of creating one.
         basis_marks: Vec<(String, i64)>,
+        /// A Space-locked caller's Space: each basis must still be in it
+        /// inside the create transaction. `None` for a Global caller.
+        basis_space_guard: Option<crate::read_scope::ReadScope>,
     },
     Update {
         page_id: &'a str,
@@ -134,6 +137,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             page_match_threshold,
             citations_json,
             basis_marks,
+            basis_space_guard,
         } => {
             create_page_impl(
                 db,
@@ -146,6 +150,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                     page_match_threshold,
                     citations_json: citations_json.as_deref(),
                     basis_marks: &basis_marks,
+                    basis_space_guard: basis_space_guard.as_ref(),
                 },
             )
             .await
@@ -362,6 +367,7 @@ pub async fn create_page_with_tuning(
             page_match_threshold,
             citations_json: None,
             basis_marks: Vec::new(),
+            basis_space_guard: None,
         },
     )
     .await

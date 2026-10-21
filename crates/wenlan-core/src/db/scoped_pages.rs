@@ -50,6 +50,20 @@ pub(super) fn page_scope_clause(
     }
 }
 
+/// When a `page_links` row (joined to its target as `t`) reads as unresolved
+/// for `scope`. A link that resolved to a page outside the caller's scope
+/// reads exactly like a dangling one, so a `[[Space/Title]]` written by a
+/// Space-locked agent cannot tell it whether that title exists elsewhere.
+/// `parameter` is the scope value's placeholder, shared with
+/// [`page_scope_clause`].
+fn unresolved_for_scope(scope: &ReadScope, parameter: usize) -> String {
+    let (target_sql, _) = page_scope_clause(scope, "t.workspace", parameter);
+    if target_sql.is_empty() {
+        return "pl.target_page_id IS NULL".to_string();
+    }
+    format!("(pl.target_page_id IS NULL OR t.id IS NULL OR NOT COALESCE((1 = 1{target_sql}), 0))")
+}
+
 fn page_not_found() -> WenlanError {
     WenlanError::NotFound("page not found".to_string())
 }
@@ -599,10 +613,12 @@ impl MemoryDB {
         scope: &ReadScope,
     ) -> Result<Vec<OrphanLinkRow>, WenlanError> {
         let (scope_sql, scope_value) = page_scope_clause(scope, "p.workspace", 1);
+        let unresolved = unresolved_for_scope(scope, 1);
         let sql = format!(
             "SELECT pl.label_key, pl.label, pl.source_page_id \
              FROM page_links pl INNER JOIN pages p ON p.id = pl.source_page_id \
-             WHERE pl.target_page_id IS NULL AND p.status = 'active'{scope_sql} \
+             LEFT JOIN pages t ON t.id = pl.target_page_id \
+             WHERE {unresolved} AND p.status = 'active'{scope_sql} \
              LIMIT 20000"
         );
         let mut params = Vec::new();
@@ -673,11 +689,13 @@ impl MemoryDB {
             return self.list_orphan_link_labels(min_count).await;
         }
         let (scope_sql, scope_value) = page_scope_clause(scope, "p.workspace", 2);
+        let unresolved = unresolved_for_scope(scope, 2);
         let sql = format!(
             "SELECT MIN(pl.label) AS display_label, \
                     COUNT(DISTINCT pl.source_page_id) AS n \
              FROM page_links pl INNER JOIN pages p ON p.id = pl.source_page_id \
-             WHERE pl.target_page_id IS NULL AND p.status = 'active'{scope_sql} \
+             LEFT JOIN pages t ON t.id = pl.target_page_id \
+             WHERE {unresolved} AND p.status = 'active'{scope_sql} \
              GROUP BY pl.label_key HAVING n >= ?1 \
              ORDER BY n DESC, display_label ASC LIMIT 100"
         );
