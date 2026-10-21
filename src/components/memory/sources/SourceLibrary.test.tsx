@@ -142,6 +142,50 @@ describe("SourceLibrary", () => {
     expect(props.onAdd).toHaveBeenCalledOnce();
   });
 
+  it("shows the app a saved link came from instead of the generic webpage label and host", async () => {
+    vi.mocked(listRegisteredSources).mockResolvedValue([folder()]);
+    vi.mocked(listIndexedFiles).mockResolvedValue([
+      file({ source: "webpage", source_id: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ", title: "Invoice from Acme", url: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ" }),
+      file({ source: "webpage", source_id: "https://example.com/blog/local-first", title: "Local-first essay", url: "https://example.com/blog/local-first" }),
+    ]);
+    renderLibrary();
+    const gmailRow = (await screen.findByText("Invoice from Acme")).closest("button")!;
+    expect(gmailRow).toHaveTextContent(/^Invoice from AcmeGmail$/);
+    expect(gmailRow.querySelector('[data-resource-icon="gmail"]')).not.toBeNull();
+    expect(screen.queryByText(/mail\.google\.com/)).not.toBeInTheDocument();
+    const plainRow = screen.getByText("Local-first essay").closest("button")!;
+    expect(plainRow).toHaveTextContent("Webpage · example.com");
+    expect(plainRow.querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "gmail" } });
+    expect(screen.getByText("Invoice from Acme")).toBeInTheDocument();
+    expect(screen.queryByText("Local-first essay")).not.toBeInTheDocument();
+  });
+
+  it("gives each app with saved sources its own filter and keeps them out of Links", async () => {
+    vi.mocked(listRegisteredSources).mockResolvedValue([folder()]);
+    vi.mocked(listIndexedFiles).mockResolvedValue([
+      file({ source: "webpage", source_id: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ", title: "Invoice from Acme", url: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ" }),
+      file({ source: "webpage", source_id: "https://www.notion.so/team/Q4-roadmap-1a2b3c", title: "Q4 roadmap", url: "https://www.notion.so/team/Q4-roadmap-1a2b3c" }),
+      file({ source: "webpage", source_id: "https://example.com/blog/local-first", title: "Local-first essay", url: "https://example.com/blog/local-first" }),
+    ]);
+    renderLibrary();
+    await screen.findByText("Invoice from Acme");
+    const filters = screen.getByRole("group", { name: "Filter sources" });
+    expect([...filters.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["All", "Files", "Links", "Gmail", "Notion", "Folders"]);
+    fireEvent.click(screen.getByRole("button", { name: "Links" }));
+    expect(screen.getByText("Local-first essay")).toBeInTheDocument();
+    expect(screen.queryByText("Invoice from Acme")).not.toBeInTheDocument();
+    expect(screen.queryByText("Q4 roadmap")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Gmail" }));
+    expect(screen.getByText("Invoice from Acme")).toBeInTheDocument();
+    expect(screen.queryByText("Q4 roadmap")).not.toBeInTheDocument();
+    expect(screen.queryByText("Local-first essay")).not.toBeInTheDocument();
+    expect(screen.queryByText("Research")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Notion" }));
+    expect(screen.getByText("Q4 roadmap")).toBeInTheDocument();
+    expect(screen.queryByText("Invoice from Acme")).not.toBeInTheDocument();
+  });
+
   it("filters links using webpage or http URL and searches URL/title/path", async () => {
     vi.mocked(listRegisteredSources).mockResolvedValue([folder()]);
     vi.mocked(listIndexedFiles).mockResolvedValue([

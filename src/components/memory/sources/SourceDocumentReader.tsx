@@ -10,7 +10,8 @@ import { InfoToggle } from "../page/InfoToggle";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import SourceDocumentContent from "./SourceDocumentContent";
 import SourceAnnotations from "./SourceAnnotations";
-import { getSourcePresentation } from "./sourcePresentation";
+import { getSourcePresentation, getSourceAppFromUrl, SOURCE_APP_NAMES } from "./sourcePresentation";
+import { SourceTypeIcon } from "./SourceTypeIcon";
 import "../readingSurface.css";
 import "../page/detailInfo.css";
 import "../context/knowledge-context.css";
@@ -46,10 +47,14 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
   });
   useEffect(() => { if (!isWebpage && !chunks.isPending) onReady?.(); }, [isWebpage, chunks.isPending, onReady]);
   const originalUrl = safeOriginalUrl(file);
+  const app = isWebpage ? getSourceAppFromUrl(originalUrl) : null;
   const content = [...(chunks.data ?? [])].sort((a, b) => a.chunk_index - b.chunk_index).map((chunk) => chunk.content).join("\n\n");
 
   return <div className={`source-document-reader${frame ? " reading-document-frame" : ""}`}>
     {originalUrl && <div className="source-document-reader-url">
+      {app && <span className="source-document-reader-app" data-source-app={app}>
+        <SourceTypeIcon kind={app} size={16} />{SOURCE_APP_NAMES[app]}
+      </span>}
       <a href={originalUrl} aria-label={t("sourceAccess.openOriginal")} onClick={(event) => {
         event.preventDefault();
         void openSearchResult(originalUrl).catch(() => toast(t("sourceAccess.openFailed")));
@@ -94,7 +99,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
       <section>
         <h3 className="note-info-section-heading">{t("sourceAccess.details")}</h3>
         <dl className="source-info-metadata">
-          <div><dt>{t("sourceAccess.type")}</dt><dd>{file.source === "webpage" ? t("sourceAccess.link") : presentation.format}</dd></div>
+          <div><dt>{t("sourceAccess.type")}</dt><dd>{presentation.app ? presentation.format : file.source === "webpage" ? t("sourceAccess.link") : presentation.format}</dd></div>
           {presentation.origin && <div><dt>{t(file.source === "webpage" ? "sourceAccess.website" : "sourceAccess.folderPath")}</dt><dd>{presentation.origin}</dd></div>}
           {sourceSpace && <div><dt>{t("sourceAccess.space")}</dt><dd>{sourceSpace}</dd></div>}
           {modified && <div><dt>{t("sourceAccess.updated")}</dt><dd>{modified}</dd></div>}

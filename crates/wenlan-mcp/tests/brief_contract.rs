@@ -126,11 +126,11 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
     for (pending, expected) in [
         (
             Some(3_u32),
-            Some("3 notes rely on code that changed; read_page shows which lines"),
+            Some("3 notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"),
         ),
         (
             Some(1),
-            Some("1 note relies on code that changed; read_page shows which lines"),
+            Some("1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"),
         ),
         (Some(0), None),
         (None, None),
@@ -153,9 +153,52 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
         let text = text_of(&result);
         match expected {
             Some(line) => assert!(text.contains(line), "{text}"),
+            None => {
+                assert!(!text.contains("rely on code that changed"), "{text}");
+                assert!(!text.contains("/wenlan map"), "{text}");
+            }
+        }
+    }
+
+    // A Space with no Brief yet still reports drift.
+    for (pending, expected) in [
+        (
+            Some(2_u32),
+            Some(
+                "2 notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)",
+            ),
+        ),
+        (Some(0), None),
+        (None, None),
+    ] {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/brief"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(BriefReadResponse {
+                state: BriefReadState::BriefNotCreated,
+                space: Some("wenlan".into()),
+                brief: None,
+                related_context: None,
+                code_basis_pending: pending,
+            }))
+            .mount(&mock)
+            .await;
+        let result = make_server(&mock)
+            .brief_impl(BriefParams {
+                topic: None,
+                space: Some("wenlan".into()),
+            })
+            .await
+            .expect("missing brief is a successful read state");
+        let text = text_of(&result);
+        assert!(
+            text.starts_with("No Brief exists for Space `wenlan` yet."),
+            "{text}"
+        );
+        match expected {
+            Some(line) => assert!(text.contains(line), "{text}"),
             None => assert!(!text.contains("rely on code that changed"), "{text}"),
         }
-        assert!(!text.contains("/wenlan map"), "{text}");
     }
 }
 

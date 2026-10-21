@@ -419,6 +419,19 @@ impl WenlanClient {
         self.post_json("/api/sources", &req).await
     }
 
+    /// POST /api/ingest/webpage (or `/create`) — save a document under its link.
+    pub async fn save_source(
+        &self,
+        req: &wenlan_types::requests::IngestWebpageRequest,
+    ) -> Result<wenlan_types::responses::IngestResponse> {
+        let path = if req.create_only {
+            "/api/ingest/webpage/create"
+        } else {
+            "/api/ingest/webpage"
+        };
+        self.post_json(path, req).await
+    }
+
     /// POST /api/sources/{id}/sync — sync a registered source, returning stats.
     pub async fn sync_source(&self, id: &str) -> Result<SyncStats> {
         self.post_empty_json(&format!("/api/sources/{}/sync", id))

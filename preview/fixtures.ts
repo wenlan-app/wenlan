@@ -84,6 +84,53 @@ export const PAGES: Record<string, Page> = {
       cite(6, 6, { source_kind: "authored", locator: "authored" }),
     ],
   } as Page,
+  // Notes citing documents an agent saved from other apps (save_source).
+  "page-saved-sources": {
+    ...base,
+    id: "page-saved-sources",
+    title: "Q4 Launch Planning",
+    content: `# Q4 Launch Planning
+
+The launch date moved to November after the vendor confirmed the revised invoice.[1] The roadmap keeps onboarding as the first milestone and defers the import work.[2] The team agreed to publish the notes once the checklist is complete.[3]
+`,
+    citations: [
+      cite(1, 1, {
+        source_kind: "external_url",
+        locator: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQVxkLpRt",
+      }),
+      cite(2, 2, {
+        source_kind: "external_url",
+        locator: "https://www.notion.so/team/Q4-roadmap-1a2b3c",
+      }),
+      cite(3, 3, {
+        source_kind: "external_url",
+        locator: "https://example.com/blog/local-first",
+      }),
+    ],
+  } as Page,
+  "page-saved-sources-zh": {
+    ...base,
+    id: "page-saved-sources-zh",
+    title: "第四季發表規劃",
+    content: `# 第四季發表規劃
+
+供應商確認修正後的發票後，發表日期延到十一月。[1] 路線圖仍以新手引導為第一個里程碑，匯入功能往後排。[2] 團隊決定在檢查清單完成後公開這份筆記。[3]
+`,
+    citations: [
+      cite(1, 1, {
+        source_kind: "external_url",
+        locator: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQVxkLpRt",
+      }),
+      cite(2, 2, {
+        source_kind: "external_url",
+        locator: "https://www.notion.so/team/Q4-roadmap-1a2b3c",
+      }),
+      cite(3, 3, {
+        source_kind: "external_url",
+        locator: "https://example.com/blog/local-first",
+      }),
+    ],
+  } as Page,
   "page-cleared": {
     ...base,
     id: "page-cleared",
@@ -1170,5 +1217,32 @@ export const REGISTERED_SOURCES: RegisteredSource[] = [
     last_sync: null,
     file_count: 0,
     memory_count: 0,
+  },
+];
+
+// Library fixture for ?mode=sources: documents an agent saved from other apps
+// (source "webpage", source_id = the permanent link) beside a local file.
+const savedSource = (title: string, link: string, modified: number) => ({
+  source: "webpage",
+  source_id: link,
+  title,
+  url: link,
+  chunk_count: 3,
+  last_modified: modified,
+});
+export const SOURCE_LIBRARY_FILES = [
+  savedSource("Invoice from Acme, revised", "https://mail.google.com/mail/u/0/#inbox/FMfcgzQVxkLpRt", 1_783_000_000),
+  savedSource("Q4 roadmap", "https://www.notion.so/team/Q4-roadmap-1a2b3c", 1_783_100_000),
+  savedSource("Launch checklist thread", "https://acme.slack.com/archives/C024/p1712345678", 1_783_200_000),
+  savedSource("Budget 2027", "https://docs.google.com/spreadsheets/d/1AbCdEf/edit", 1_783_250_000),
+  savedSource("Bug: import stalls on large vaults", "https://github.com/wenlan-app/wenlan/issues/412", 1_783_300_000),
+  savedSource("Local-first software", "https://example.com/blog/local-first", 1_783_400_000),
+  {
+    source: "file",
+    source_id: "/Users/lucian/Research/reading-notes.md",
+    title: "Reading notes",
+    url: null,
+    chunk_count: 4,
+    last_modified: 1_783_500_000,
   },
 ];

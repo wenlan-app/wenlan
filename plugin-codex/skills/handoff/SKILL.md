@@ -4,7 +4,7 @@ description: >
   End a work session. Stores durable captures, writes a narrative session log,
   and automatically applies typed item-level deltas to the current Space Brief.
   Invoked as `/handoff`.
-allowed-tools: ["Bash", "mcp__wenlan__update_brief", "mcp__wenlan__list_pages", "mcp__wenlan__read_page", "mcp__wenlan__write_page", "mcp__wenlan__page_basis"]
+allowed-tools: ["Bash", "mcp__wenlan__update_brief", "mcp__wenlan__list_pages", "mcp__wenlan__read_page", "mcp__wenlan__write_page", "mcp__wenlan__page_basis", "mcp__wenlan__page_code_basis"]
 user-invocable: true
 ---
 
@@ -224,17 +224,27 @@ To update a page:
    text this page relied on next to the basis note's text now. If the change
    does not touch what this page says, call it with `action: "confirm"` and
    `version` set to the entry's `to_version`; no rewrite is needed. If it does,
-   rewrite the page in steps 3 and 4. A basis that is `archived`, `deleted` or
+   rewrite the page in steps 4 and 5. A basis that is `archived`, `deleted` or
    `unavailable` cannot be confirmed: leave it and note it in the session log.
-3. Edit the current body: keep everything still true, change only what this
+3. Look at `code_basis` the same way. For each entry whose `state` is `pending`,
+   read those lines of the file now. If what this page says about them still
+   holds, call `mcp__wenlan__page_code_basis` with
+   `action: "confirm"` for that entry; if it does not, rewrite the sentence in
+   steps 4 and 5 and name the entry again in `write_page`'s `code_basis` at its
+   current lines, which replaces the stale entry it overlaps. When a sentence
+   this session proved from code is new, add a `code_basis` entry for those
+   lines in the same write. An `unavailable` entry cannot be confirmed: leave
+   it and note it in the session log.
+4. Edit the current body: keep everything still true, change only what this
    session changed. Do not rewrite from memory of an older read.
-4. Call `mcp__wenlan__write_page` with `page_id`, the edited
+5. Call `mcp__wenlan__write_page` with `page_id`, the edited
    `content`, `expected_version` set to that `page.version`, and
    `source_memory_ids` set to the page's existing source ids plus the ids of
    any step 6 captures the new text relies on. Also pass `basis` as
    `[{page_id, version}]` for every note this edit relied on, using the
    `page.version` of each note's own `read_page` (read it first if you have not).
    Memory ids go in `source_memory_ids`; a note's page id goes only in `basis`.
+   `code_basis` is `[{repo_root, path, line_start, line_end}]`.
 
 A `basis:` line in the reply that shows an entry still `pending` means that
 note changed after you read it: go back to step 2 for it.

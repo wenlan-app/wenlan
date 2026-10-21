@@ -869,6 +869,89 @@ async fn a_write_adds_and_re_anchors_but_never_drops_the_spans_it_does_not_name(
     );
 }
 
+/// A note citing `a.rs` 10-20 whose file then gained a line, so the row is
+/// `pending`. The file now has 41 lines.
+async fn a_pending_row_at_10_20(db: &MemoryDB, repo: &Repo) {
+    repo.write("a.rs", &numbered(40));
+    rely(db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    repo.write(
+        "a.rs",
+        &numbered(40).replace("line 15\n", "line 15\nline 15b\n"),
+    );
+    recheck_code_basis(db, None).await.unwrap();
+    assert_eq!(only(db, "n1").await.state, CODE_BASIS_STATE_PENDING);
+}
+
+#[tokio::test]
+async fn a_write_naming_a_changed_span_replaces_the_stale_row_it_overlaps() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    a_pending_row_at_10_20(&db, &repo).await;
+
+    rely(&db, "n1", &[repo.input("a.rs", 10, 21)]).await;
+    let row = only(&db, "n1").await;
+    assert_eq!((row.line_start, row.line_end), (10, 21));
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+    assert_eq!(brief_code_basis_pending(&db, SPACE).await.unwrap(), Some(0));
+}
+
+#[tokio::test]
+async fn a_write_naming_a_span_that_does_not_overlap_leaves_the_stale_row() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    a_pending_row_at_10_20(&db, &repo).await;
+
+    rely(&db, "n1", &[repo.input("a.rs", 30, 40)]).await;
+    let all = rows(&db, "n1").await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    let state_at = |start: u32| {
+        all.iter()
+            .find(|r| r.line_start == start)
+            .unwrap()
+            .state
+            .clone()
+    };
+    assert_eq!(state_at(10), CODE_BASIS_STATE_PENDING);
+    assert_eq!(state_at(30), CODE_BASIS_STATE_OK);
+}
+
+#[tokio::test]
+async fn a_write_never_replaces_an_ok_row_even_when_the_spans_overlap() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+
+    rely(&db, "n1", &[repo.input("a.rs", 10, 21)]).await;
+    let all = rows(&db, "n1").await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert!(
+        all.iter().all(|r| r.state == CODE_BASIS_STATE_OK),
+        "{all:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_write_replaces_an_unavailable_row_once_the_file_is_back() {
+    let (db, _dir) = test_db().await;
+    page(&db, "n1", "Note", SPACE).await;
+    let repo = Repo::new();
+    repo.write("a.rs", &numbered(40));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 20)]).await;
+    std::fs::remove_file(repo.dir.path().join("a.rs")).unwrap();
+    recheck_code_basis(&db, None).await.unwrap();
+    assert_eq!(only(&db, "n1").await.state, CODE_BASIS_STATE_UNAVAILABLE);
+
+    repo.write("a.rs", &numbered(41));
+    rely(&db, "n1", &[repo.input("a.rs", 10, 21)]).await;
+    let row = only(&db, "n1").await;
+    assert_eq!((row.line_start, row.line_end), (10, 21));
+    assert_eq!(row.state, CODE_BASIS_STATE_OK);
+}
+
 #[tokio::test]
 async fn only_an_active_note_can_rely_on_code() {
     let (db, _dir) = test_db().await;

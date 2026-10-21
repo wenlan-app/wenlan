@@ -115,6 +115,11 @@
       "name": "distill",
       "status": "hidden_routed",
       "codex_reference": "wenlan/references/distill.md"
+    },
+    {
+      "name": "map",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/map.md"
     }
   ]
 }

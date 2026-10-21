@@ -789,6 +789,22 @@ Options:
 
 - `--type <SOURCE_TYPE>`: Kind of source. `okf` imports an OKF bundle (for example an OpenWiki folder) into one Space; pass --space to choose it. Possible values: `directory` (A folder or single file of documents), `okf` (An OKF knowledge bundle). Default: `directory`.
 
+#### `wenlan sources save`
+
+Save one document read elsewhere (an email, a Notion or Drive page, a Slack thread, an article) with its link, so notes cite the original. Text comes from --file or stdin. Saving the same link again replaces the saved copy; Wenlan does not re-fetch the original.
+
+```text
+wenlan sources save [OPTIONS] --url <URL> --title <TITLE>
+```
+
+Options:
+
+- `--url <URL>`: Permanent http(s) link to the original.
+- `--title <TITLE>`: Title of the original.
+- `--label <LABEL>`: Where it came from, e.g. gmail, notion, drive, slack, github, web.
+- `--file <FILE>`: Read the text from this file instead of stdin.
+- `--create-only`: Refuse if this link is already saved instead of replacing it.
+
 ### `wenlan outbox`
 
 Inspect or sync notes saved locally while Wenlan was not running.

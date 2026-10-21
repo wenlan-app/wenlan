@@ -6,7 +6,7 @@ description: >
   a preference, makes a decision, corrects you, or shares a durable fact.
   Invoked as `/capture <content>`.
 argument-hint: "<content>"
-allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__list_rejections", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "Bash"]
+allowed-tools: ["mcp__plugin_wenlan_wenlan__capture", "mcp__plugin_wenlan_wenlan__save_source", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__create_entity", "mcp__plugin_wenlan_wenlan__create_relation", "mcp__plugin_wenlan_wenlan__list_rejections", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "Bash"]
 ---
 
 # /capture
@@ -54,6 +54,21 @@ never save the same thing as both a memory and a note in one turn. Turning many
 memories into notes is a different job: that is `/wenlan distill`.
 
 To save a note, follow "Save a note" below and skip the memory steps.
+
+## Something from another app or the web
+
+When the user wants to keep something you read in another app or on the web
+(an email, a Notion or Drive page, a Slack thread, an issue, an article), save
+the original with `save_source` instead of capturing it. Pass its permanent
+link as `url`, its title, the text as you read it (not a summary), a
+`source_label` such as `gmail`, `notion`, `drive`, `slack`, `github` or `web`,
+and `space` when it is non-empty. Never make up a link: if you have no link to
+the original, capture the insight as a memory instead. Save only what the user
+asked to keep; never copy a whole inbox or channel.
+
+The saved copy does not update on its own. When the original changes and the
+user wants Wenlan to follow, save it again with the same link; notes built on
+it are then marked for refresh. Report the link and the Space the result names.
 
 ## How to invoke
 
@@ -155,6 +170,8 @@ wording. Follow it as written; do not keep a second copy here.
 
 - User explicitly says "remember this", "save that", "capture this".
 - User asks to save something from this conversation as a note.
+- User asks to keep an email, page, thread, or article you read elsewhere:
+  `save_source`, as above.
 - User states a durable preference / decision / correction proactively (no
   ask required — that's the floor, not the trigger).
 

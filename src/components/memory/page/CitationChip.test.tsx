@@ -253,6 +253,27 @@ describe("CitationChip", () => {
     expect(vi.mocked(shellOpen)).toHaveBeenCalledWith("https://docs.rs/serde");
   });
 
+  it("names the app a saved link came from and opens the original link", async () => {
+    const user = userEvent.setup();
+    const url = "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ";
+    renderChip({ citation: cite({ source_kind: "external_url", locator: url }), sourceMemory: null });
+    const chip = screen.getByRole("button", { name: /^Gmail/ });
+    expect(chip).not.toHaveTextContent(/Link|mail\.google\.com/);
+    expect(chip.querySelector('[data-resource-icon="gmail"]')).not.toBeNull();
+    fireEvent.focus(chip);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Gmail");
+    await user.click(screen.getByRole("button", { name: "Open in Gmail →" }));
+    expect(vi.mocked(shellOpen)).toHaveBeenCalledWith(url);
+  });
+
+  it("keeps the generic link label for a site that is not a known app", () => {
+    renderChip({ citation: cite({ source_kind: "external_url", locator: "https://example.com/blog" }), sourceMemory: null });
+    const chip = screen.getByRole("button", { name: /Link.*example\.com/ });
+    expect(chip.querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
+    fireEvent.focus(chip);
+    expect(screen.getByRole("button", { name: /Open in browser/ })).toBeInTheDocument();
+  });
+
   it("shows the file path and opens it from the popover action", async () => {
     const user = userEvent.setup();
     renderChip({

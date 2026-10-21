@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import type { MemoryItem, PageCitation } from "../../../lib/tauri";
+import { i18n } from "../../../i18n";
 import { ReferencePreview } from "./ReferencePreview";
 
 afterEach(() => { cleanup(); vi.mocked(invoke).mockReset(); });
@@ -89,5 +90,62 @@ describe("ReferencePreview citation targets", () => {
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "File · original.md" })).toBeInTheDocument();
+  });
+});
+
+describe("ReferencePreview saved app links", () => {
+  const gmail: PageCitation = {
+    ...citation,
+    source_kind: "external_url",
+    locator: "https://mail.google.com/mail/u/0/#inbox/FMfcgzQ",
+    status: "verified",
+  };
+  const renderPreview = (target: PageCitation, onOpenCitationTarget = vi.fn()) => {
+    const anchor = document.body.appendChild(document.createElement("a"));
+    anchor.textContent = "Gmail";
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ReferencePreview
+        request={{ target: { kind: "citation", citation: target, sourceMemory: null, sourcesLoading: false }, anchor, keyboard: false }}
+        onDismiss={vi.fn()}
+        onOpenCitationTarget={onOpenCitationTarget}
+        onPointerEnter={vi.fn()}
+        onPointerLeave={vi.fn()}
+      />
+    </QueryClientProvider>);
+    return onOpenCitationTarget;
+  };
+
+  it.each([
+    ["en", "Open in Gmail →"],
+    ["zh-Hans", "在 Gmail 打开 →"],
+    ["zh-Hant", "在 Gmail 開啟 →"],
+  ])("names the app and offers to open it in that app in %s", async (lng, action) => {
+    await i18n.changeLanguage(lng);
+    try {
+      const onOpen = renderPreview(gmail);
+      const preview = screen.getByRole("dialog");
+      expect(preview).toHaveTextContent("Gmail");
+      expect(preview.querySelector('[data-resource-icon="gmail"]')).not.toBeNull();
+      expect(preview).toHaveTextContent(gmail.locator);
+      fireEvent.click(screen.getByRole("button", { name: action }));
+      expect(onOpen).toHaveBeenCalledWith(gmail);
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
+  it("pins the open action to the bottom of the card so long content cannot scroll it away", () => {
+    renderPreview(gmail);
+    const actions = screen.getByRole("button", { name: "Open in Gmail →" }).closest<HTMLElement>('[data-reference-preview-actions="true"]');
+    expect(actions).not.toBeNull();
+    expect(actions!.style.position).toBe("sticky");
+    expect(screen.getByRole("dialog").lastElementChild).toBe(actions);
+  });
+
+  it("keeps the browser wording for a site that is not a known app", () => {
+    renderPreview({ ...gmail, locator: "https://example.com/blog" });
+    expect(screen.getByRole("button", { name: "Open in browser →" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog").querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
   });
 });

@@ -26757,6 +26757,30 @@ impl MemoryDB {
             .map(|written| written.unwrap_or(0))
     }
 
+    /// `create_documents` that also resolves stable Space IDs inside the
+    /// write transaction, as `upsert_documents_with_write_spaces` does.
+    pub async fn create_documents_with_write_spaces(
+        &self,
+        docs: Vec<(
+            RawDocument,
+            Option<crate::space_context::ResolvedWriteSpace>,
+        )>,
+    ) -> Result<usize, WenlanError> {
+        let (docs, write_spaces) = Self::split_write_spaces(docs);
+        self.upsert_documents_at_optional_page_fence(
+            docs,
+            None,
+            None,
+            None,
+            None,
+            Some(write_spaces),
+            None,
+            true,
+        )
+        .await
+        .map(|written| written.unwrap_or(0))
+    }
+
     /// Stage page-bound rows (a revision card) only while the page they were
     /// computed from is still that exact row: active, at `expected_version`,
     /// at the fence's source revision, and of the fence's incarnation. The
