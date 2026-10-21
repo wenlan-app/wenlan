@@ -293,7 +293,7 @@ test("Activity status stays neutral without configured AI and keeps Activity sec
   await page.getByTestId("activity-summary-open").click();
 
   await expect(page.getByRole("heading", { name: "Activity", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Background organization", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Steeping", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Suggestions", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent activity", level: 2 })).toBeVisible();
   await expect(page.getByTestId("activity-now-blocked")).toBeVisible();

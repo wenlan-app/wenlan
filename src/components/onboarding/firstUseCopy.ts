@@ -100,7 +100,7 @@ export const enFirstUse = {
       },
     },
     steep: {
-      line: "Optional: let Wenlan steep automatically so AI tools look things up faster, cheaper, and more accurately.",
+      line: "Optional: steep automatically for faster, cheaper, better answers.",
       action: "Set up",
     },
   },

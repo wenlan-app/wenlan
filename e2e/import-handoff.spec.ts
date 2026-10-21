@@ -191,7 +191,8 @@ test("an import hands background work to Activity after returning to the workspa
   // ── The handoff sentence, naming the number stored ──
   await expect(page.getByText(/3 memories imported/i)).toBeVisible();
   await expect(page.getByText(/3 memories stored and searchable now/)).toBeVisible();
-  await expect(page.getByText(/See further progress on Activity/)).toBeVisible();
+  // The mock starts On demand, so the handoff names the AI tool, not the background.
+  await expect(page.getByText(/Your AI tool steeps them as it uses Wenlan\. See progress on Activity/)).toBeVisible();
 
   // One chunk, one batch id.
   const calls = await page.evaluate(() => window.__handoffImportCalls ?? []);
