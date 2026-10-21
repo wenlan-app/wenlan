@@ -359,6 +359,7 @@ mod tests {
                 results: vec![result()],
             }),
             code_basis_pending: None,
+            code_basis_pending_explained: false,
         };
 
         let output = format_brief(&response);
@@ -438,6 +439,7 @@ mod tests {
             brief: Some(brief),
             related_context: None,
             code_basis_pending: None,
+            code_basis_pending_explained: false,
         });
 
         assert!(output.starts_with("Version 1 ("));
@@ -453,6 +455,7 @@ mod tests {
             brief: None,
             related_context: None,
             code_basis_pending: None,
+            code_basis_pending_explained: false,
         };
 
         let output = format_brief(&response);

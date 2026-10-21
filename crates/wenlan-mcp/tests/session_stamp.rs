@@ -66,6 +66,8 @@ fn capture(session: Option<&str>) -> CaptureParams {
         memory_type: None,
         space: None,
         entity: None,
+        entity_type: None,
+        entity_id: None,
         confidence: None,
         supersedes: None,
         structured_fields: None,

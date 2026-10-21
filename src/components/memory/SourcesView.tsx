@@ -44,13 +44,13 @@ function ext(name: string): string {
 /** Collapse the daemon's SyncStatus enum to a short label, or null when Active. */
 function statusLabel(status: SyncStatusStr): string | null {
   if (status === "Active") return null;
-  if (status === "Paused") return "Paused";
+  if (status === "Paused") return "Imported once";
   if (typeof status === "object" && "Unavailable" in status) return "Unavailable";
   return "Sync error";
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  Paused: "var(--mem-accent-amber)",
+  "Imported once": "var(--mem-text-tertiary)",
   "Sync error": "#ef4444",
   Unavailable: "var(--mem-text-tertiary)",
 };

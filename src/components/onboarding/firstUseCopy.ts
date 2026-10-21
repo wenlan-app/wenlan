@@ -100,8 +100,8 @@ export const enFirstUse = {
       },
     },
     steep: {
-      line: "Optional: turn on background steeping so AI tools look things up faster, cheaper, and more accurately.",
-      action: "Turn on",
+      line: "Optional: steep automatically for faster, cheaper, better answers.",
+      action: "Set up",
     },
   },
   live: {
@@ -229,8 +229,8 @@ export const hansFirstUse = {
       },
     },
     steep: {
-      line: "可选：开启后台沉淀，AI 工具查你的笔记会更快、更省、更准。",
-      action: "开启",
+      line: "可选：让文澜自动沉淀，AI 工具查你的笔记会更快、更省、更准。",
+      action: "设置",
     },
   },
   live: {
@@ -355,8 +355,8 @@ export const hantFirstUse = {
       },
     },
     steep: {
-      line: "可選：開啟背景沉澱，AI 工具查你的筆記會更快、更省、更準。",
-      action: "開啟",
+      line: "可選：讓文瀾自動沉澱，AI 工具查你的筆記會更快、更省、更準。",
+      action: "設定",
     },
   },
   live: {

@@ -220,7 +220,7 @@ pub(super) async fn accept_page_revision_card(
     let wrote = match accepted {
         Ok(wrote) => wrote,
         // A note the agent's change relied on can no longer be relied on
-        // (archived, deleted, moved to another Space, id reused). The accept
+        // (archived, deleted, id reused). The accept
         // transaction rolled back, so the page is unchanged. The plan's rule
         // is that a refused mark refuses the whole write. Nothing tells the
         // card if or when the note becomes usable again (an archive may never

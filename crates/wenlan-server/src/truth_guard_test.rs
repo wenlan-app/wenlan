@@ -352,7 +352,7 @@ async fn a_named_page_read_returns_both_axes_after_the_cutover() {
     );
     assert_eq!(
         decoded["page"]["truth"],
-        serde_json::json!({ "supported": false, "human_reviewed": false }),
+        serde_json::json!({ "supported": false, "support": "unevaluated", "human_reviewed": false }),
         "and arrives with the state the client is contracted to render: {decoded}"
     );
 }

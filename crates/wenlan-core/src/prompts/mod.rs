@@ -31,6 +31,9 @@ pub struct PromptRegistry {
     pub annotate_citations: String,
     pub refine_clusters: String,
     pub compress_context: String,
+    /// System prompt of the background recheck of a note whose cited code
+    /// changed (`code_basis_recheck`).
+    pub code_basis_recheck: String,
 }
 
 impl Default for PromptRegistry {
@@ -58,6 +61,7 @@ impl Default for PromptRegistry {
             annotate_citations: defaults::ANNOTATE_CITATIONS.to_string(),
             refine_clusters: defaults::REFINE_CLUSTERS.to_string(),
             compress_context: defaults::COMPRESS_CONTEXT.to_string(),
+            code_basis_recheck: defaults::CODE_BASIS_RECHECK.to_string(),
         }
     }
 }
@@ -97,6 +101,7 @@ impl PromptRegistry {
             ("annotate_citations", &mut reg.annotate_citations),
             ("refine_clusters", &mut reg.refine_clusters),
             ("compress_context", &mut reg.compress_context),
+            ("code_basis_recheck", &mut reg.code_basis_recheck),
         ];
         // Legacy filename fallbacks for the Phase 0 (Page) taxonomy refactor.
         // Existing user prompt overrides are likely still under the old names;
@@ -186,6 +191,23 @@ mod tests {
         assert!(!reg.update_page.is_empty());
         assert!(!reg.annotate_citations.is_empty());
         assert!(!reg.compress_context.is_empty());
+        assert!(!reg.code_basis_recheck.is_empty());
+    }
+
+    #[test]
+    fn code_basis_recheck_prompt_is_overridable_like_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("code_basis_recheck.txt"), "Custom recheck").unwrap();
+        let reg = PromptRegistry::load(dir.path());
+        assert_eq!(reg.code_basis_recheck, "Custom recheck");
+        // The shipped default names all three verdicts.
+        let default = PromptRegistry::default().code_basis_recheck;
+        for verdict in ["no_impact", "stale", "needs_human"] {
+            assert!(default.contains(verdict), "{verdict}");
+        }
+        // The job only judges; the default never offers a rewrite.
+        assert!(!default.contains("\"update\""));
+        assert!(!default.contains("\"content\""));
     }
 
     #[test]

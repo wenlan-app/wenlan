@@ -62,6 +62,7 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
             results: Vec::new(),
         }),
         code_basis_pending: None,
+        code_basis_pending_explained: false,
     }
 }
 
@@ -187,6 +188,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
                 brief: None,
                 related_context: None,
                 code_basis_pending: pending,
+                code_basis_pending_explained: false,
             }))
             .mount(&mock)
             .await;
@@ -211,6 +213,60 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
 }
 
 #[tokio::test]
+async fn brief_says_when_the_model_has_already_looked_at_every_changed_note() {
+    for (explained, expect_suffix) in [(true, true), (false, false)] {
+        let mock = MockServer::start().await;
+        let mut response = ready_response(None);
+        response.code_basis_pending = Some(2);
+        response.code_basis_pending_explained = explained;
+        Mock::given(method("POST"))
+            .and(path("/api/brief"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(response))
+            .mount(&mock)
+            .await;
+        let result = make_server(&mock)
+            .brief_impl(BriefParams {
+                session: None,
+                topic: None,
+                space: Some("wenlan".into()),
+            })
+            .await
+            .expect("brief read succeeds");
+        let text = text_of(&result);
+        assert!(text.contains("2 notes rely on code that changed"), "{text}");
+        assert_eq!(
+            text.contains("AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person."),
+            expect_suffix,
+            "{text}"
+        );
+    }
+
+    // The flag never shows when nothing is pending.
+    let mock = MockServer::start().await;
+    let mut response = ready_response(None);
+    response.code_basis_pending = Some(0);
+    response.code_basis_pending_explained = true;
+    Mock::given(method("POST"))
+        .and(path("/api/brief"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(&mock)
+        .await;
+    let result = make_server(&mock)
+        .brief_impl(BriefParams {
+            session: None,
+            topic: None,
+            space: Some("wenlan".into()),
+        })
+        .await
+        .expect("brief read succeeds");
+    assert!(
+        !text_of(&result).contains("AI has looked"),
+        "{}",
+        text_of(&result)
+    );
+}
+
+#[tokio::test]
 async fn missing_brief_explains_that_reads_do_not_create_it() {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
@@ -221,6 +277,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
             brief: None,
             related_context: None,
             code_basis_pending: None,
+            code_basis_pending_explained: false,
         }))
         .mount(&mock)
         .await;

@@ -29,7 +29,7 @@ export const enActivityStatus = {
   // ── Tier 0, the toolbar Activity button ────────────────────────────────
   state: {
     up_to_date: "Up to date",
-    off: "Off",
+    off: "On demand",
     organizing: "Steeping",
     // Steeping that cannot run yet (ActivityState waiting_for_idle).
     waiting_for_idle: "Waiting for a quiet moment",
@@ -44,7 +44,7 @@ export const enActivityStatus = {
   // ── Tier 1, the summary popover ───────────────────────────────────────
   headline: {
     up_to_date: "Everything you have given Wenlan has steeped.",
-    off: "Background steeping is off. Your pages remain available.",
+    off: "Steeping runs on demand. Your AI tool steeps as it uses Wenlan.",
     organizing: "Wenlan is steeping what you have given it.",
     // Pairs with lastActivity: an old time under this line is expected, so it
     // must not claim anything is running. It names every reason the scheduler
@@ -65,11 +65,17 @@ export const enActivityStatus = {
     entitiesWaiting_other: "{{count}} memories awaiting a scan",
   },
   rowAsset: { memories: "Memories", entities: "Entities", pages: "Pages" },
-  assetOff: {
-    memories: "Your pages remain available.",
-    entities: "Entity detection is off.",
-    pages: "Automatic page writing is off.",
+  // On demand: nothing runs in the background, so a row says what is
+  // waiting for the user's AI tool instead of reading as stalled.
+  assetOnDemand: {
+    memories_one: "{{count}} stored, searchable now",
+    memories_other: "{{count}} stored, all searchable now",
+    entities_one: "{{count}} memory not yet scanned for entities",
+    entities_other: "{{count}} memories not yet scanned for entities",
+    pages_one: "{{count}} page still needs steeping",
+    pages_other: "{{count}} pages still need steeping",
   },
+  onDemandFinish: "Your AI tool handles these as it uses them. To finish all now, run /wenlan steep.",
   assetDone: {
     memories_one: "{{count}} stored, summarized and linked",
     memories_other: "{{count}} stored, all summarized and linked",
@@ -135,11 +141,11 @@ export const enActivityStatus = {
   neverActive: "Nothing has run yet",
 
   // ── Tier 2, the Now section on the Activity page ───────────────────────
-  nowTitle: "Background organization",
+  nowTitle: "Steeping",
   nowLoading: "Checking current work…",
   nowError: "Could not read current work.",
   nowIdle: "No work is currently in progress.",
-  nowOff: "Background organization is off.",
+  nowOff: "Steeping runs on demand.",
   nowRunning: "Background organization is running.",
   nowBlocked: "Background organization is blocked.",
   nowWaiting: "Waiting for your computer to be idle.",
@@ -193,6 +199,7 @@ export const enActivityStatus = {
     idle: "Idle",
     running: "Running",
     blocked: "Blocked",
+    waiting: "Waiting",
     unknown: "Status unavailable",
   },
   stepComplete: "Complete",
@@ -255,6 +262,10 @@ export const enActivityStatus = {
     "{{count}} memory stored and searchable now. Wenlan keeps steeping it in the background. See further progress on Activity.",
   importHandoff_other:
     "{{count}} memories stored and searchable now. Wenlan keeps steeping them in the background. See further progress on Activity.",
+  importHandoffOnDemand_one:
+    "{{count}} memory stored and searchable now. Your AI tool steeps it as it uses Wenlan. See progress on Activity.",
+  importHandoffOnDemand_other:
+    "{{count}} memories stored and searchable now. Your AI tool steeps them as it uses Wenlan. See progress on Activity.",
 
   // ── Settings, Appearance ──────────────────────────────────────────────
   layoutSetting: "Activity summary placement",
@@ -271,7 +282,7 @@ export const hansActivityStatus = {
   title: "动态",
   state: {
     up_to_date: "已就绪",
-    off: "已关闭",
+    off: "随叫",
     organizing: "沉淀中",
     // Not 暂停: that word is Blocked in this locale.
     waiting_for_idle: "等电脑空闲",
@@ -282,7 +293,7 @@ export const hansActivityStatus = {
   buttonLabel: "活动，{{state}}",
   headline: {
     up_to_date: "你交给文澜的内容都已沉淀完毕。",
-    off: "后台沉淀已关闭，笔记仍可正常使用。",
+    off: "沉淀随叫进行，你的 AI 工具用文澜时会顺手整理。",
     organizing: "文澜正在沉淀你交给它的内容。",
     waiting_for_idle: "文澜会在电脑空闲时继续沉淀。你使用电脑，或电脑忙碌、内存不足、温度过高时，它会先等一等。",
     blocked: "部分沉淀工作在等你处理。",
@@ -299,11 +310,15 @@ export const hansActivityStatus = {
     entitiesWaiting_other: "{{count}} 条记忆待识别主题",
   },
   rowAsset: { memories: "记忆", entities: "实体", pages: "笔记" },
-  assetOff: {
-    memories: "笔记仍可正常使用。",
-    entities: "实体识别已关闭。",
-    pages: "自动写笔记已关闭。",
+  assetOnDemand: {
+    memories_one: "已存 {{count}} 条，都可以搜索",
+    memories_other: "已存 {{count}} 条，都可以搜索",
+    entities_one: "{{count}} 条记忆还没识别实体",
+    entities_other: "{{count}} 条记忆还没识别实体",
+    pages_one: "{{count}} 篇笔记还没整理",
+    pages_other: "{{count}} 篇笔记还没整理",
   },
+  onDemandFinish: "你的 AI 工具用到时会顺手做；想一次做完，输入 /wenlan steep。",
   assetDone: {
     memories_one: "已存 {{count}} 条，全部已生成摘要并建立关联",
     memories_other: "已存 {{count}} 条，全部已生成摘要并建立关联",
@@ -348,11 +363,11 @@ export const hansActivityStatus = {
   jobSeparator: "和",
   lastActivity: "最近活动于{{time}}",
   neverActive: "尚未运行过",
-  nowTitle: "后台整理",
+  nowTitle: "沉淀",
   nowLoading: "正在查看当前工作…",
   nowError: "无法读取当前工作。",
   nowIdle: "目前没有进行中的工作。",
-  nowOff: "后台整理已关闭。",
+  nowOff: "沉淀随叫进行。",
   nowRunning: "后台整理正在运行。",
   nowBlocked: "后台整理受阻。",
   nowWaiting: "等待电脑空闲时继续。",
@@ -406,6 +421,7 @@ export const hansActivityStatus = {
     idle: "待机",
     running: "进行中",
     blocked: "已暂停",
+    waiting: "等待中",
     unknown: "状态暂不可用",
   },
   stepComplete: "完成",
@@ -458,6 +474,10 @@ export const hansActivityStatus = {
     "已存入 {{count}} 条记忆，现在即可搜索。文澜会在后台继续沉淀。可在「动态」查看后续进度。",
   importHandoff_other:
     "已存入 {{count}} 条记忆，现在即可搜索。文澜会在后台继续沉淀。可在「动态」查看后续进度。",
+  importHandoffOnDemand_one:
+    "已存入 {{count}} 条记忆，现在即可搜索。你的 AI 工具用文澜时会顺手沉淀。可在「动态」查看进度。",
+  importHandoffOnDemand_other:
+    "已存入 {{count}} 条记忆，现在即可搜索。你的 AI 工具用文澜时会顺手沉淀。可在「动态」查看进度。",
   layoutSetting: "动态摘要的位置",
   layoutSettingHelp: "「当前」摘要在动态页面中的位置。仅保存在本设备。",
   layout: {
@@ -471,7 +491,7 @@ export const hantActivityStatus = {
   title: "活動",
   state: {
     up_to_date: "已就緒",
-    off: "已關閉",
+    off: "隨叫",
     organizing: "沉澱中",
     // Not 暫停: that word is Blocked in this locale.
     waiting_for_idle: "等電腦閒置",
@@ -482,7 +502,7 @@ export const hantActivityStatus = {
   buttonLabel: "活動，{{state}}",
   headline: {
     up_to_date: "你交給文瀾的內容都已沉澱完畢。",
-    off: "背景沉澱已關閉，筆記仍可正常使用。",
+    off: "沉澱隨叫進行，你的 AI 工具用文瀾時會順手整理。",
     organizing: "文瀾正在沉澱你交給它的內容。",
     waiting_for_idle: "文瀾會在電腦閒置時繼續沉澱。你使用電腦，或電腦忙碌、記憶體不足、溫度過高時，它會先等一等。",
     blocked: "部分沉澱工作在等你處理。",
@@ -499,11 +519,15 @@ export const hantActivityStatus = {
     entitiesWaiting_other: "{{count}} 筆記憶待辨識主題",
   },
   rowAsset: { memories: "記憶", entities: "實體", pages: "筆記" },
-  assetOff: {
-    memories: "筆記仍可正常使用。",
-    entities: "實體辨識已關閉。",
-    pages: "自動撰寫筆記已關閉。",
+  assetOnDemand: {
+    memories_one: "已存 {{count}} 則，都可以搜尋",
+    memories_other: "已存 {{count}} 則，都可以搜尋",
+    entities_one: "{{count}} 則記憶還沒辨識實體",
+    entities_other: "{{count}} 則記憶還沒辨識實體",
+    pages_one: "{{count}} 篇筆記還沒整理",
+    pages_other: "{{count}} 篇筆記還沒整理",
   },
+  onDemandFinish: "你的 AI 工具用到時會順手做；想一次做完，輸入 /wenlan steep。",
   assetDone: {
     memories_one: "已存 {{count}} 則，全部已產生摘要並建立關聯",
     memories_other: "已存 {{count}} 則，全部已產生摘要並建立關聯",
@@ -548,11 +572,11 @@ export const hantActivityStatus = {
   jobSeparator: "和",
   lastActivity: "最近活動於{{time}}",
   neverActive: "尚未執行過",
-  nowTitle: "背景整理",
+  nowTitle: "沉澱",
   nowLoading: "正在查看目前工作…",
   nowError: "無法讀取目前工作。",
   nowIdle: "目前沒有進行中的工作。",
-  nowOff: "背景整理已關閉。",
+  nowOff: "沉澱隨叫進行。",
   nowRunning: "背景整理正在執行。",
   nowBlocked: "背景整理受阻。",
   nowWaiting: "等待電腦閒置時繼續。",
@@ -606,6 +630,7 @@ export const hantActivityStatus = {
     idle: "待機",
     running: "進行中",
     blocked: "已暫停",
+    waiting: "等待中",
     unknown: "狀態暫時無法取得",
   },
   stepComplete: "完成",
@@ -658,6 +683,10 @@ export const hantActivityStatus = {
     "已存入 {{count}} 則記憶，現在即可搜尋。文瀾會在背景繼續沉澱。可在「活動」查看後續進度。",
   importHandoff_other:
     "已存入 {{count}} 則記憶，現在即可搜尋。文瀾會在背景繼續沉澱。可在「活動」查看後續進度。",
+  importHandoffOnDemand_one:
+    "已存入 {{count}} 則記憶，現在即可搜尋。你的 AI 工具用文瀾時會順手沉澱。可在「活動」查看進度。",
+  importHandoffOnDemand_other:
+    "已存入 {{count}} 則記憶，現在即可搜尋。你的 AI 工具用文瀾時會順手沉澱。可在「活動」查看進度。",
   layoutSetting: "動態摘要的位置",
   layoutSettingHelp: "「目前」摘要在動態頁面中的位置。僅儲存在本裝置。",
   layout: {

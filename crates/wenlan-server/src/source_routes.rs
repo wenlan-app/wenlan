@@ -31,7 +31,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/sources",
             get(handle_list_sources).post(handle_add_source),
         )
-        .route("/api/sources/{id}", delete(handle_remove_source))
+        .route(
+            "/api/sources/{id}",
+            delete(handle_remove_source).patch(handle_update_source),
+        )
         .route("/api/sources/{id}/sync", post(handle_sync_source))
 }
 
@@ -41,6 +44,15 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 pub struct AddSourceRequest {
     pub source_type: String,
     pub path: String,
+    /// `Some(false)` registers an import-once source (see
+    /// `wenlan_types::requests::AddSourceRequest`). Omitted means follow changes.
+    #[serde(default)]
+    pub follow_changes: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSourceRequest {
+    pub follow_changes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +225,11 @@ pub async fn handle_add_source(
         id,
         source_type: st.clone(),
         path: path.clone(),
-        status: SyncStatus::Active,
+        status: if body.follow_changes == Some(false) {
+            SyncStatus::Paused
+        } else {
+            SyncStatus::Active
+        },
         last_sync: None,
         file_count: 0,
         memory_count: 0,
@@ -265,6 +281,30 @@ fn okf_overlap_error(
             )
         })
         .next()
+}
+
+/// PATCH /api/sources/{id}
+///
+/// Switches a source between following changes and import-once. Import-once
+/// is stored as `Paused`, which background polling skips; a manual sync still
+/// reads it. Turning follow back on sets `Active` (an `Unavailable` source also
+/// restarts as `Active`; the next sync re-checks its root).
+pub async fn handle_update_source(
+    Path(id): Path<String>,
+    Json(body): Json<UpdateSourceRequest>,
+) -> Result<Json<Source>, ServerError> {
+    let mut config = wenlan_core::config::load_config();
+    let Some(src) = config.sources.iter_mut().find(|s| s.id == id) else {
+        return Err(ServerError::NotFound(format!("Source not found: {}", id)));
+    };
+    src.status = if body.follow_changes {
+        SyncStatus::Active
+    } else {
+        SyncStatus::Paused
+    };
+    let updated = src.clone();
+    wenlan_core::config::save_config(&config)?;
+    Ok(Json(updated))
 }
 
 /// DELETE /api/sources/{id}
@@ -322,11 +362,15 @@ fn directory_root_is_live(path: &std::path::Path) -> bool {
 /// Mark a source `Unavailable` in config because its root is missing/unreadable.
 /// Deletes nothing (root-gone != file-gone) and stamps `last_sync` so the UI
 /// shows the check happened. Auto-recovers: the next sync against a live root
-/// flips it back to `Active` in `finalize_sync`.
+/// flips it back to `Active` in `finalize_sync`. An import-once (`Paused`)
+/// source stays `Paused`, so a manual refresh of a moved folder never turns
+/// background polling back on.
 fn mark_source_unavailable(id: &str, reason: &str) {
     let mut config = wenlan_core::config::load_config();
     if let Some(src) = config.sources.iter_mut().find(|s| s.id == id) {
-        src.status = SyncStatus::Unavailable(reason.to_string());
+        if !matches!(src.status, SyncStatus::Paused) {
+            src.status = SyncStatus::Unavailable(reason.to_string());
+        }
         src.last_sync = Some(chrono::Utc::now().timestamp());
     }
     let _ = wenlan_core::config::save_config(&config);
@@ -911,6 +955,7 @@ mod tests {
             Json(AddSourceRequest {
                 source_type: "directory".to_string(),
                 path: file_path.to_string_lossy().to_string(),
+                follow_changes: None,
             }),
         )
         .await
@@ -918,6 +963,72 @@ mod tests {
 
         assert_eq!(source.source_type, SourceType::Directory);
         assert_eq!(source.path, file_path);
+    }
+
+    #[tokio::test]
+    async fn import_once_source_registers_paused_and_patch_switches_it() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let source_root = tempfile::tempdir().unwrap();
+        std::fs::write(source_root.path().join("trip.md"), "# Lisbon trip notes").unwrap();
+        let state = Arc::new(RwLock::new(ServerState::default()));
+
+        let Json(source) = handle_add_source(
+            State(state),
+            crate::space_header::SpaceHeader(None),
+            Json(AddSourceRequest {
+                source_type: "obsidian".to_string(),
+                path: source_root.path().to_string_lossy().to_string(),
+                follow_changes: Some(false),
+            }),
+        )
+        .await
+        .expect("import-once vault should register");
+        assert!(matches!(source.status, SyncStatus::Paused));
+        assert!(matches!(
+            loaded_source_status(&source.id),
+            SyncStatus::Paused
+        ));
+
+        let Json(updated) = handle_update_source(
+            Path(source.id.clone()),
+            Json(UpdateSourceRequest {
+                follow_changes: true,
+            }),
+        )
+        .await
+        .expect("turning follow on should succeed");
+        assert!(matches!(updated.status, SyncStatus::Active));
+        assert!(matches!(
+            loaded_source_status(&source.id),
+            SyncStatus::Active
+        ));
+
+        let Json(updated) = handle_update_source(
+            Path(source.id.clone()),
+            Json(UpdateSourceRequest {
+                follow_changes: false,
+            }),
+        )
+        .await
+        .expect("turning follow off should succeed");
+        assert!(matches!(updated.status, SyncStatus::Paused));
+        assert!(matches!(
+            loaded_source_status(&source.id),
+            SyncStatus::Paused
+        ));
+
+        let missing = handle_update_source(
+            Path("directory-missing".to_string()),
+            Json(UpdateSourceRequest {
+                follow_changes: true,
+            }),
+        )
+        .await;
+        assert!(matches!(missing, Err(ServerError::NotFound(_))));
     }
 
     #[tokio::test]
@@ -942,6 +1053,7 @@ mod tests {
             Json(AddSourceRequest {
                 source_type: "directory".to_string(),
                 path: pages_path.to_string_lossy().to_string(),
+                follow_changes: None,
             }),
         )
         .await;
@@ -1246,6 +1358,54 @@ mod tests {
             matches!(loaded_source_status(&source_id), SyncStatus::Unavailable(_)),
             "single-file missing root marks the source Unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn handle_sync_source_reads_import_once_source_and_keeps_it_paused() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("reading");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(
+            root.join("chapter.txt"),
+            "An import-once folder is still read by a manual refresh.",
+        )
+        .unwrap();
+        let source_id = "directory-reading".to_string();
+        register_directory_source(&source_id, &root);
+        let mut config = wenlan_core::config::load_config();
+        config.sources[0].status = SyncStatus::Paused;
+        wenlan_core::config::save_config(&config).unwrap();
+
+        let (db, _db_dir) = new_test_db().await;
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db),
+            ..ServerState::default()
+        }));
+        let Json(stats) = handle_sync_source(State(state.clone()), Path(source_id.clone()))
+            .await
+            .expect("a manual sync reads an import-once source");
+        assert_eq!(stats.files_found, 1);
+        assert_eq!(stats.ingested, 1);
+        assert!(matches!(
+            loaded_source_status(&source_id),
+            SyncStatus::Paused
+        ));
+
+        // The folder moves away: a manual refresh must not turn it into an
+        // Unavailable source, which background polling would pick up again.
+        std::fs::remove_dir_all(&root).unwrap();
+        let _ = handle_sync_source(State(state), Path(source_id.clone()))
+            .await
+            .expect("sync against a missing root should not error");
+        assert!(matches!(
+            loaded_source_status(&source_id),
+            SyncStatus::Paused
+        ));
     }
 
     #[tokio::test]

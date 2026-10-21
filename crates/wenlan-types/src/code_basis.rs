@@ -39,6 +39,19 @@ pub struct CodeBasisRef {
     /// `outside_repo`, `unreadable` or `too_large`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// One sentence from the everyday model about a changed code basis it
+    /// could not settle as unaffected: what changed (`needs_human`) or what
+    /// the note should now say (`stale`). Only while `pending`, and only when
+    /// the model has looked at the current change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    /// What the everyday model concluded about the changed code basis, set
+    /// only while `pending` and only once it has judged the current change:
+    /// `"stale"` (the note states something the code now contradicts and the
+    /// fix follows from the code; the main model's steep pass rewrites it) or
+    /// `"needs_human"` (the code cannot say; a person decides).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_verdict: Option<String>,
 }
 
 /// Body of `POST /api/pages/{id}/code-basis/confirm`,
@@ -108,6 +121,8 @@ mod tests {
             state: "ok".into(),
             changed_at: None,
             reason: None,
+            explanation: None,
+            ai_verdict: None,
         };
         let wire = serde_json::to_value(&row).unwrap();
         assert_eq!(
@@ -138,6 +153,40 @@ mod tests {
         assert_eq!(row.changed_at, Some(1_700_000_000));
         assert_eq!(row.reason.as_deref(), Some("file_missing"));
         assert_eq!(serde_json::to_value(&row).unwrap(), wire);
+    }
+
+    #[test]
+    fn a_ref_carries_the_models_explanation_and_verdict_only_when_there_are_some() {
+        let wire = json!({
+            "repo_root": "/repo",
+            "path": "a.rs",
+            "line_start": 1,
+            "line_end": 2,
+            "state": "pending",
+            "changed_at": 5,
+            "explanation": "The note says 32 bits are kept; the code now keeps 48, so the note should say 48.",
+            "ai_verdict": "stale"
+        });
+        let row: CodeBasisRef = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(
+            row.explanation.as_deref(),
+            Some(
+                "The note says 32 bits are kept; the code now keeps 48, so the note should say 48."
+            )
+        );
+        assert_eq!(row.ai_verdict.as_deref(), Some("stale"));
+        assert_eq!(serde_json::to_value(&row).unwrap(), wire);
+        // An older daemon sends neither; a quiet row never grows the keys.
+        let old: CodeBasisRef = serde_json::from_value(json!({
+            "repo_root": "/repo", "path": "a.rs", "line_start": 1, "line_end": 2,
+            "state": "pending", "changed_at": 5
+        }))
+        .unwrap();
+        assert_eq!(old.explanation, None);
+        assert_eq!(old.ai_verdict, None);
+        let quiet = serde_json::to_value(&old).unwrap();
+        assert!(quiet.get("explanation").is_none());
+        assert!(quiet.get("ai_verdict").is_none());
     }
 
     #[test]

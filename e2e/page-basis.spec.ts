@@ -189,6 +189,38 @@ for (const locale of LOCALES) {
       expect(errors.consoleErrors).toEqual([]);
     });
 
+    test("links a note in another Space as Space/Title and uses it as a source", async ({ page }, testInfo) => {
+      const errors = collectBrowserErrors(page);
+      const controller = await install(page, locale, {
+        pages: [{ id: "page-elsewhere", title: "Price elsewhere", space: "Research", domain: "Research", version: 1, content: "# Price elsewhere\n\nThe research plan costs 8 dollars." } as KnowledgePage],
+      });
+      await openNote(page);
+
+      const editor = page.getByRole("textbox", { name: t("pageDetail.editor.label"), exact: true });
+      await expect(editor).toBeEditable();
+      await editor.click();
+      await page.keyboard.press("ControlOrMeta+End");
+      await page.keyboard.type(" [[pri");
+
+      const menu = page.getByRole("listbox", { name: t("linkCompletion.label"), exact: true });
+      await expect(menu).toBeVisible();
+      // The note's own Space comes first; the other Space's note says where it lives.
+      await expect(menu.getByRole("option")).toHaveText([new RegExp(`^${BASIS_TITLE}`), /^Price elsewhere\s*Research/]);
+      const foreign = menu.getByRole("option", { name: "Research/Price elsewhere", exact: true });
+      await expect(foreign.locator(".cm-link-option-space")).toHaveText("Research");
+      await page.screenshot({ path: testInfo.outputPath(`cross-space-menu-${locale}.png`) });
+      await foreign.getByRole("button", { name: t("noteBasis.useAsSource"), exact: true }).click();
+
+      await expect(menu).toHaveCount(0);
+      await expect.poll(() => callsOf(controller, "mark_page_basis"))
+        .toEqual([{ pageId: "page-architecture", basisPageId: "page-elsewhere" }]);
+      await expect.poll(() => callsOf(controller, "update_page").some((args) =>
+        String((args as { content?: string }).content ?? "").includes("[[Research/Price elsewhere]]"))).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath(`cross-space-picked-${locale}.png`) });
+      expect(errors.pageErrors).toEqual([]);
+      expect(errors.consoleErrors).toEqual([]);
+    });
+
     test("tells the person a source changed, shows the changes and confirms no impact", async ({ page }, testInfo) => {
       const errors = collectBrowserErrors(page);
       const controller = await install(page, locale, {

@@ -10,6 +10,7 @@ import {
 } from "../../lib/tauri";
 import { IMPORT_SOURCE_LABELS, ImportPhaseList, useImportBatchStatus } from "./ImportPhases";
 import { formatImportErrorDetail } from "./importCopy";
+import { useSteepOnDemand } from "../../lib/steepMode";
 
 type Source = "chatgpt" | "claude" | "other";
 
@@ -59,6 +60,7 @@ const TYPE_BADGE_STYLES: Record<string, { bg: string; text: string }> = {
 export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPhaseChange, onSkip, wizardHint }: ImportViewProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
+  const onDemand = useSteepOnDemand() === true;
   const [phase, setPhaseRaw] = useState<Phase>("input");
   const setPhase = useCallback((p: Phase) => {
     setPhaseRaw(p);
@@ -419,7 +421,7 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
           )}
         </div>
 
-        <ImportPhaseList phases={batchStatus?.phases ?? []} />
+        <ImportPhaseList phases={batchStatus?.phases ?? []} onDemand={onDemand} />
       </div>
     );
   }
@@ -544,7 +546,7 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
                 ? t("importBatch.pillFailed")
                 : storedCount === null
                   ? t("importBatch.backgroundRunning")
-                  : t("activityStatus.importHandoff", { count: storedCount })}
+                  : t(onDemand ? "activityStatus.importHandoffOnDemand" : "activityStatus.importHandoff", { count: storedCount })}
             </p>
           )}
         </div>

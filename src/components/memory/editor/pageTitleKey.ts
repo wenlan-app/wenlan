@@ -18,3 +18,8 @@ export function trimLikeDaemon(text: string): string {
 export function pageTitleKey(title: string): string {
   return trimLikeDaemon(title).toLowerCase();
 }
+
+/** The text a `[[` menu pick writes between the brackets: `Space/Title` for a note in another Space, else its title. */
+export function linkCompletionText(note: { title: string; linkText?: string }): string {
+  return trimLikeDaemon(note.linkText ?? note.title);
+}

@@ -54,6 +54,7 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
         synthesis_source: cfg.synthesis_source.clone(),
         background_ai_enabled: Some(cfg.background_ai_enabled()),
         page_map_auto_suggest: cfg.page_map_auto_suggest,
+        code_basis_model_recheck: cfg.code_basis_model_recheck,
     }
 }
 
@@ -169,6 +170,9 @@ pub async fn handle_update_config(
         }
         if let Some(v) = req.page_map_auto_suggest {
             cfg.page_map_auto_suggest = v;
+        }
+        if let Some(v) = req.code_basis_model_recheck {
+            cfg.code_basis_model_recheck = v;
         }
         if let Some(enabled) = req.background_ai_enabled {
             cfg = config::save_config_with_background_ai(&cfg, enabled)
@@ -1430,6 +1434,52 @@ mod config_model_fields_tests {
         let body = put(&app, serde_json::json!({"page_map_auto_suggest": false})).await;
         assert_eq!(body["page_map_auto_suggest"], false);
         assert!(!config::load_config().page_map_auto_suggest);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn put_config_toggles_code_basis_model_recheck_and_preserves_when_omitted() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let state = std::sync::Arc::new(RwLock::new(ServerState::default()));
+        let app = crate::router::build_router(state);
+
+        async fn put(app: &crate::router::AppRouter, body: serde_json::Value) -> Value {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("PUT")
+                        .uri("/api/config")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            response_json(resp).await
+        }
+
+        // A fresh install has it on (the first save writes that down).
+        let body = put(&app, serde_json::json!({"clipboard_enabled": true})).await;
+        assert_eq!(body["code_basis_model_recheck"], true);
+        assert!(config::load_config().code_basis_model_recheck);
+
+        let body = put(&app, serde_json::json!({"code_basis_model_recheck": false})).await;
+        assert_eq!(body["code_basis_model_recheck"], false);
+        assert!(!config::load_config().code_basis_model_recheck);
+
+        // Omitting the field preserves the stored value.
+        let body = put(&app, serde_json::json!({"clipboard_enabled": false})).await;
+        assert_eq!(body["code_basis_model_recheck"], false);
+        assert!(!config::load_config().code_basis_model_recheck);
+
+        let body = put(&app, serde_json::json!({"code_basis_model_recheck": true})).await;
+        assert_eq!(body["code_basis_model_recheck"], true);
+        assert!(config::load_config().code_basis_model_recheck);
     }
 }
 

@@ -279,6 +279,117 @@ async fn migration_142_adds_cited_blob_to_a_table_that_lacks_it_and_is_a_no_op_o
 }
 
 #[tokio::test]
+async fn migration_143_adds_the_recheck_columns_to_a_table_that_lacks_them_and_is_a_no_op_otherwise(
+) {
+    // A database that stopped at 142 holds the table without the four columns.
+    let (db, _dir) = test_db_at(142).await;
+    let columns = |db: &MemoryDB| {
+        let conn = db.conn.clone();
+        async move {
+            let conn = conn.lock().await;
+            let mut found = conn
+                .query(
+                    "SELECT name FROM pragma_table_info('page_code_basis') \
+                     WHERE name IN ('recheck_note','recheck_verdict','recheck_digest', \
+                                   'recheck_attempts') \
+                     ORDER BY name",
+                    (),
+                )
+                .await
+                .unwrap();
+            let mut names = Vec::new();
+            while let Some(row) = found.next().await.unwrap() {
+                names.push(row.get::<String>(0).unwrap());
+            }
+            names
+        }
+    };
+    {
+        // Put the table back in its 142 shape: 139 now creates it with the
+        // columns, so rebuild it without them.
+        let conn = db.conn.lock().await;
+        conn.execute_batch(
+            "DROP TABLE page_code_basis; \
+             CREATE TABLE page_code_basis ( \
+                page_id TEXT NOT NULL, repo_root TEXT NOT NULL, path TEXT NOT NULL, \
+                line_start INTEGER NOT NULL, line_end INTEGER NOT NULL, \
+                anchor_json TEXT NOT NULL, confirmed_digest TEXT NOT NULL, \
+                confirmed_by TEXT NOT NULL, confirmed_at INTEGER NOT NULL, \
+                state TEXT NOT NULL CHECK(state IN ('ok','moved','pending','unavailable')), \
+                unavailable_reason TEXT, changed_at INTEGER, file_len INTEGER, \
+                file_mtime_ns INTEGER, cited_blob TEXT, added_by TEXT NOT NULL, \
+                added_at INTEGER NOT NULL, \
+                PRIMARY KEY (page_id, repo_root, path, line_start, line_end)); \
+             INSERT INTO page_code_basis VALUES \
+                ('n1','/r','a.rs',1,2,'{}','d','agent',5,'pending',NULL,5,NULL,NULL,NULL,'agent',5);",
+        )
+        .await
+        .unwrap();
+    }
+    assert!(columns(&db).await.is_empty());
+    for _ in 0..2 {
+        db.run_migrations(&crate::events::NoopEmitter)
+            .await
+            .unwrap();
+        assert_eq!(
+            columns(&db).await,
+            vec![
+                "recheck_attempts",
+                "recheck_digest",
+                "recheck_note",
+                "recheck_verdict"
+            ]
+        );
+    }
+    let conn = db.conn.lock().await;
+    let mut kept = conn
+        .query(
+            "SELECT recheck_note, recheck_digest, recheck_attempts, state, recheck_verdict \
+             FROM page_code_basis",
+            (),
+        )
+        .await
+        .unwrap();
+    let row = kept.next().await.unwrap().unwrap();
+    assert_eq!(row.get::<Option<String>>(0).unwrap(), None);
+    assert_eq!(row.get::<Option<String>>(1).unwrap(), None);
+    assert_eq!(
+        row.get::<i64>(2).unwrap(),
+        0,
+        "old rows start at zero attempts"
+    );
+    assert_eq!(
+        row.get::<String>(3).unwrap(),
+        "pending",
+        "the row itself is kept"
+    );
+    assert_eq!(row.get::<Option<String>>(4).unwrap(), None);
+    let mut version = conn.query("PRAGMA user_version", ()).await.unwrap();
+    let user_version: i64 = version.next().await.unwrap().unwrap().get(0).unwrap();
+    assert_eq!(user_version, i64::from(crate::db::SCHEMA_VERSION));
+    assert_eq!(user_version, 143);
+}
+
+#[tokio::test]
+async fn a_fresh_database_has_the_recheck_columns_from_the_ddl() {
+    let (db, _dir) = test_db().await;
+    let conn = db.conn.lock().await;
+    let mut found = conn
+        .query(
+            "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') \
+             WHERE name IN ('recheck_note','recheck_verdict','recheck_digest', \
+                              'recheck_attempts')",
+            (),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        found.next().await.unwrap().unwrap().get::<i64>(0).unwrap(),
+        4
+    );
+}
+
+#[tokio::test]
 async fn a_fresh_database_has_cited_blob_from_the_ddl() {
     let (db, _dir) = test_db().await;
     let conn = db.conn.lock().await;

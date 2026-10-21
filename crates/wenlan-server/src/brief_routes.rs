@@ -119,16 +119,19 @@ pub async fn handle_read_brief(
             brief: None,
             related_context: None,
             code_basis_pending: None,
+            code_basis_pending_explained: false,
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
-        let code_basis_pending = code_basis_pending_for(&db, &space).await;
+        let (code_basis_pending, code_basis_pending_explained) =
+            code_basis_pending_for(&db, &space).await;
         return Ok(Json(BriefReadResponse {
             state: BriefReadState::BriefNotCreated,
             space: Some(space),
             brief: None,
             related_context: None,
             code_basis_pending,
+            code_basis_pending_explained,
         }));
     };
 
@@ -208,7 +211,8 @@ pub async fn handle_read_brief(
         }
     };
 
-    let code_basis_pending = code_basis_pending_for(&db, &space).await;
+    let (code_basis_pending, code_basis_pending_explained) =
+        code_basis_pending_for(&db, &space).await;
 
     // A Brief that was actually read is listed on the session card when the
     // caller names its session. This is bookkeeping beside the read: it never
@@ -228,6 +232,7 @@ pub async fn handle_read_brief(
         brief: Some(brief),
         related_context,
         code_basis_pending,
+        code_basis_pending_explained,
     }))
 }
 
@@ -235,15 +240,29 @@ pub async fn handle_read_brief(
 /// now (no model, one read per file; nothing at all for a Space without code
 /// bases), and the notes whose code changed are counted. This holds whether or
 /// not the Space has a Brief yet. A failed check leaves the Brief readable
-/// without the count.
-async fn code_basis_pending_for(db: &MemoryDB, space: &str) -> Option<u32> {
-    match wenlan_core::code_basis::brief_code_basis_pending(db, space).await {
+/// without the count. The flag says the everyday model has already looked at
+/// every one of those code bases.
+async fn code_basis_pending_for(db: &MemoryDB, space: &str) -> (Option<u32>, bool) {
+    let count = match wenlan_core::code_basis::brief_code_basis_pending(db, space).await {
         Ok(count) => count,
         Err(error) => {
             tracing::warn!("[brief] code basis check failed for Space {space}: {error}");
             None
         }
+    };
+    if count.is_none_or(|count| count == 0) {
+        return (count, false);
     }
+    let explained = db
+        .space_code_basis_all_explained(space)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                "[brief] code basis explanation check failed for Space {space}: {error}"
+            );
+            false
+        });
+    (count, explained)
 }
 
 /// PATCH /api/brief — apply item-level handoff deltas, then best-effort

@@ -168,7 +168,9 @@ smoke_scratch() {
     NATIVE_FASTEMBED="$(native_path "${FASTEMBED_CACHE_DIR:-$ROOT/.fastembed_cache}")" ||
         fail "could not spell the fastembed cache directory for the daemon"
 
-    printf '{"knowledge_path":"%s","setup_completed":true}\n' "$NATIVE_PAGES_DIR" \
+    # background_ai_enabled:false is what a new install writes. A config without
+    # the field reads as on, so leaving it out would only ever test Automatic.
+    printf '{"knowledge_path":"%s","setup_completed":true,"background_ai_enabled":false}\n' "$NATIVE_PAGES_DIR" \
         >"$DATA_DIR/config.json.tmp" || fail "could not write the scratch config"
     mv "$DATA_DIR/config.json.tmp" "$DATA_DIR/config.json" || fail "could not install the scratch config"
     grep -qF "\"knowledge_path\":\"$NATIVE_PAGES_DIR\"" "$DATA_DIR/config.json" ||

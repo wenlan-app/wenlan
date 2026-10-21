@@ -80,8 +80,8 @@ import {
   type MarkdownEditorSelection,
 } from "./editor/MarkdownEditor";
 import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
-import { pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
-import { loadLinkCandidates } from "./page/linkCandidates";
+import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
+import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
@@ -500,38 +500,20 @@ export default function PageDetail({
       .map(([label, target]) => [label, target.id] as const),
   ]), [outboundTargetByLabel, pageId, pickedLinkTargets]);
 
-  // A `[[Title]]` link resolves only to a note in the same Space, so the
-  // `[[` menu offers just those.
+  // `[[Title]]` names a note in the page's own Space and `[[Space/Title]]` one
+  // in another, so the `[[` menu reads every Space.
   const linkSpace = page?.space ?? null;
   const { data: linkCandidates } = useQuery({
     // Under ["pages"] so every rename and delete that refreshes the library refreshes this too.
     queryKey: ["pages", "link-notes", linkSpace],
-    queryFn: () => loadLinkCandidates(linkSpace),
+    queryFn: () => loadAllLinkCandidates(linkSpace),
     enabled: editing && !!page,
     staleTime: 30_000,
     retry: false,
   });
-  const linkNotes = useMemo((): LinkCompletionNote[] => {
-    if (!page) return [];
-    const taken = new Set((page.basis ?? []).map((entry) => entry.page_id));
-    const canRely = page.creation_kind !== "entity";
-    // The daemon resolves [[Title]] only to a unique active note in the Space,
-    // never to an entity, so the menu offers exactly those.
-    const linkable = (linkCandidates ?? []).filter((candidate) =>
-      candidate.status === "active" && candidate.creation_kind !== "entity" && (candidate.space ?? null) === linkSpace);
-    const titleCount = new Map<string, number>();
-    for (const candidate of linkable) {
-      const key = normalizeLinkLabel(candidate.title);
-      titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
-    }
-    return linkable
-      .filter((candidate) => candidate.id !== page.id && titleCount.get(normalizeLinkLabel(candidate.title)) === 1)
-      .map((candidate) => ({
-        id: candidate.id,
-        title: candidate.title,
-        canUseAsSource: canRely && candidate.creation_kind !== "entity" && !taken.has(candidate.id),
-      }));
-  }, [linkCandidates, linkSpace, page]);
+  const linkNotes = useMemo((): LinkCompletionNote[] => (
+    page ? linkNotesFor({ page, ownSpace: linkSpace, spaces: linkCandidates ?? [] }) : []
+  ), [linkCandidates, linkSpace, page]);
 
   const showWikiLinkPreview = useCallback((targetId: string, anchor: HTMLAnchorElement, keyboard: boolean) => {
     if (wikiLinkPreviewLeaveTimerRef.current !== null) {
@@ -1765,7 +1747,7 @@ export default function PageDetail({
     const originPageId = page.id;
     setPickedLinkTargets((current) => ({
       pageId: originPageId,
-      targets: new Map([...(current.pageId === originPageId ? current.targets : []), [normalizeLinkLabel(note.title), note.id]]),
+      targets: new Map([...(current.pageId === originPageId ? current.targets : []), [normalizeLinkLabel(linkCompletionText(note)), note.id]]),
     }));
     if (!asSource) return;
     void markBasis(note.id).then((ok) => {
@@ -1785,7 +1767,11 @@ export default function PageDetail({
     const link = parseWikilink(inner);
     const target = outboundTargetByLabel.get(normalizeLinkLabel(link.targetLabel));
     const cid = target?.id;
-    const currentTitle = cid === page.id ? page.title : target?.title;
+    // A `[[Space/Title]]` link reads as written, so it keeps naming the other Space.
+    const labelKey = normalizeLinkLabel(link.targetLabel);
+    const namesOtherSpace = !!target?.title && labelKey !== normalizeLinkLabel(target.title)
+      && labelKey.endsWith(`/${normalizeLinkLabel(target.title)}`);
+    const currentTitle = cid === page.id ? page.title : namesOtherSpace ? link.targetLabel : target?.title;
     const displayText = !link.hasAlias && currentTitle
       ? currentTitle.replace(/[\\`*_[\]<>]/g, "\\$&")
       : link.displayText;

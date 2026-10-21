@@ -863,12 +863,17 @@ impl MemoryDB {
             return Err(page_not_found());
         }
 
+        // A target in another Space shows its title only when the label
+        // named it there (`[[Space/Title]]`), and stays out of sight of a
+        // reader held to this page's Space.
         let edge_sql = format!(
-            "SELECT e.dst_id, json_extract(e.payload, '$.label'), target.title \
+            "SELECT e.dst_id, json_extract(e.payload, '$.label'), target.title, \
+                    CASE WHEN target.id IS NOT NULL THEN \
+                      target.space IS c.space AND target.workspace IS c.workspace END, \
+                    target.workspace, target.space \
              FROM edges e INNER JOIN pages c ON c.id = e.src_id \
              LEFT JOIN pages target ON target.id = e.dst_id \
-               AND target.status = 'active' AND target.space = c.space \
-               AND target.workspace IS c.workspace \
+               AND target.status = 'active' \
              WHERE c.id = ?1 AND e.edge_type = 'links' \
                AND e.src_kind = 'page' AND e.dst_kind = 'page' \
                AND e.valid_until IS NULL{scope_sql}"
@@ -890,12 +895,31 @@ impl MemoryDB {
                 .get::<Option<String>>(1)
                 .unwrap_or(None)
                 .unwrap_or_default();
+            let mut target_page_id = row.get::<String>(0).ok();
+            let mut target_title = row.get::<Option<String>>(2).unwrap_or(None);
+            let same_space = row.get::<Option<i64>>(3).unwrap_or(None);
+            if same_space == Some(0) {
+                let workspace = row.get::<Option<String>>(4).unwrap_or(None);
+                let space_name = row.get::<Option<String>>(5).unwrap_or(None);
+                if !scope.matches(workspace.as_deref()) {
+                    target_page_id = None;
+                    target_title = None;
+                } else if !matches!(
+                    (space_name.as_deref(), target_title.as_deref()),
+                    (Some(space_name), Some(title))
+                        if crate::synthesis::wikilinks::label_names_space_note(
+                            &label, space_name, title,
+                        )
+                ) {
+                    target_title = None;
+                }
+            }
             links.push((
                 page_link_label_key(&label),
                 wenlan_types::responses::PageLinkOutbound {
-                    target_page_id: row.get::<String>(0).ok(),
+                    target_page_id,
                     label,
-                    target_title: row.get::<Option<String>>(2).unwrap_or(None),
+                    target_title,
                 },
             ));
         }

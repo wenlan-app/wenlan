@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.19.3](https://github.com/wenlan-app/wenlan/compare/v0.19.2...v0.19.3) (2026-10-21)
+
+
+### Features
+
+* **app:** link and rely on a note while typing [[ ([#900](https://github.com/wenlan-app/wenlan/issues/900)) ([460e7cc](https://github.com/wenlan-app/wenlan/commit/460e7cc833904b54b53309c4f38a87487680170e))
+* **app:** name the agent behind each edit in a note's basis diff ([#924](https://github.com/wenlan-app/wenlan/issues/924)) ([3282031](https://github.com/wenlan-app/wenlan/commit/3282031be41ae486b5de690dbf1e2cf402973f14))
+* **app:** show and manage a note's bases in the app ([#896](https://github.com/wenlan-app/wenlan/issues/896)) ([4c98c47](https://github.com/wenlan-app/wenlan/commit/4c98c47dc0b0e802f9f62a9345b728e089dcd2f3))
+* **app:** show the code lines a note relies on, with before and after when they changed ([#917](https://github.com/wenlan-app/wenlan/issues/917)) ([fde7722](https://github.com/wenlan-app/wenlan/commit/fde77221655da185eecfe45854137cd4f960fac5))
+* **core,server,mcp:** a note can rely on lines of code ([#898](https://github.com/wenlan-app/wenlan/issues/898)) ([5a2a8cf](https://github.com/wenlan-app/wenlan/commit/5a2a8cf8de970d1e119765ea952a28692b526c80))
+* **core,server,mcp:** a note can rely on other notes and is told when they change ([#891](https://github.com/wenlan-app/wenlan/issues/891)) ([754f06a](https://github.com/wenlan-app/wenlan/commit/754f06ab1b8e849ad8310e7cfee7b27c3e30b547))
+* **core,server:** remember which git blob a code basis was read from, and serve it to the app ([#918](https://github.com/wenlan-app/wenlan/issues/918)) ([776627a](https://github.com/wenlan-app/wenlan/commit/776627a58dc40f284078c6a9085e3fea08652748))
+* **core:** code anchors that survive line moves ([#893](https://github.com/wenlan-app/wenlan/issues/893)) ([49fb240](https://github.com/wenlan-app/wenlan/commit/49fb24062c514f49632a0b712f89e43f20bb51c8))
+* **core:** OKF export carries code bases; lint check pages.provenance.code_basis_drift ([#903](https://github.com/wenlan-app/wenlan/issues/903)) ([dadad39](https://github.com/wenlan-app/wenlan/commit/dadad39aafb7c478ed043e73c4f0ef7c736703ae))
+* let web AI apps write when the user allows it ([#908](https://github.com/wenlan-app/wenlan/issues/908)) ([d00f459](https://github.com/wenlan-app/wenlan/commit/d00f45950b75e356254436f585766d2aa2ee6a3d))
+* **mcp:** save_source keeps documents read in other apps with their link ([#895](https://github.com/wenlan-app/wenlan/issues/895)) ([da93eed](https://github.com/wenlan-app/wenlan/commit/da93eedcc338e1f086d50bf2b4cfa2ee6c8591b3))
+* **plugin:** /wenlan map writes repository orientation notes tied to code lines ([#904](https://github.com/wenlan-app/wenlan/issues/904)) ([8fabcfa](https://github.com/wenlan-app/wenlan/commit/8fabcfa4c362b844f129fe2de72409351cf4ebf5))
+* remember which AI conversation a memory or note came from ([#899](https://github.com/wenlan-app/wenlan/issues/899)) ([f0ab63a](https://github.com/wenlan-app/wenlan/commit/f0ab63ab833fff88e19327dd6cc221f35d039856))
+
+
+### Bug Fixes
+
+* **app:** call Wiki documents pages in the English UI ([#897](https://github.com/wenlan-app/wenlan/issues/897)) ([7f70271](https://github.com/wenlan-app/wenlan/commit/7f7027174184fce22db25c33402c1f88270fbfd5))
+* **app:** calmer reading links, external-link arrow, quieter citation chips ([#901](https://github.com/wenlan-app/wenlan/issues/901)) ([01a147c](https://github.com/wenlan-app/wenlan/commit/01a147cdcf6428977f21d7d73fda2c6e43acbbaa))
+* **core,server,app:** close arc 2 review findings ([#910](https://github.com/wenlan-app/wenlan/issues/910)) ([271ed87](https://github.com/wenlan-app/wenlan/commit/271ed879aac31dda4ec239f091fb9d2d445c15e7))
+* **core,server:** re-check a Space-locked agent's Space inside the write ([#916](https://github.com/wenlan-app/wenlan/issues/916)) ([de6572e](https://github.com/wenlan-app/wenlan/commit/de6572e35d3de0f36b60122492ac7ee196090407))
+* **core,server:** record an unchanged write's code basis in its mark transaction ([#922](https://github.com/wenlan-app/wenlan/issues/922)) ([a1f9235](https://github.com/wenlan-app/wenlan/commit/a1f9235e07abff3d206fef1edc12ff56638ec208))
+* **core:** whitespace-only edits no longer flag a code basis as changed ([#920](https://github.com/wenlan-app/wenlan/issues/920)) ([acba554](https://github.com/wenlan-app/wenlan/commit/acba554f00263c1acd6547fd3717587f80244f1d))
+* **harness:** run-wenlan-app runs this checkout's code and never touches another session's vite or app ([#902](https://github.com/wenlan-app/wenlan/issues/902)) ([866f6de](https://github.com/wenlan-app/wenlan/commit/866f6de4a821cfa2df797d0bc202d0dc4e6f7a31))
+* **plugin,mcp,core:** substitute the plugin root in skills, name the refused code_basis entry, raise the file cap to 8 MB ([#914](https://github.com/wenlan-app/wenlan/issues/914)) ([32095b8](https://github.com/wenlan-app/wenlan/commit/32095b8cac8a2c918d49ca28bb2d0f89914fa483))
+* **scripts:** expect the 33 MCP tools in the first-run gauntlet ([#921](https://github.com/wenlan-app/wenlan/issues/921)) ([0bd6368](https://github.com/wenlan-app/wenlan/commit/0bd63681b9e70cb790c98ab9e9bd353fd040f378))
+* **sources:** Obsidian vaults follow changes in the background ([#909](https://github.com/wenlan-app/wenlan/issues/909)) ([bccf358](https://github.com/wenlan-app/wenlan/commit/bccf358e501fc826537153cb1b4f05d1be405044))
+* **sources:** say Obsidian vaults are checked every 30 seconds ([#923](https://github.com/wenlan-app/wenlan/issues/923)) ([3b5a6d0](https://github.com/wenlan-app/wenlan/commit/3b5a6d06b35467e38d17192d71dd4c9422b2f479))
+* test daemons and dev apps keep to their own data, pages and AI tool configs ([#911](https://github.com/wenlan-app/wenlan/issues/911)) ([3a0e25c](https://github.com/wenlan-app/wenlan/commit/3a0e25c141b707bfcad472aeba6a0b94a64c2c91))
+
 ## [0.19.2](https://github.com/wenlan-app/wenlan/compare/v0.19.1...v0.19.2) (2026-10-19)
 
 

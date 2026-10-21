@@ -44,7 +44,8 @@ describe("restored activity summary",()=>{
   setup({...response,state:"off"});await userEvent.click(screen.getByTestId("activity-status"));
   await screen.findByTestId("activity-asset-count-memories");
   expect(screen.queryByTestId("activity-asset-bar-memories")).toBeNull();
-  expect(screen.getByTestId("activity-asset-memories")).toHaveTextContent("Your pages remain available.");
+  expect(screen.getByTestId("activity-asset-memories")).toHaveTextContent("8 stored, all searchable now");
+  expect(screen.getByTestId("activity-summary-on-demand")).toHaveTextContent("On demand");
  });
  it("closes on Escape with focus returned, and reopens from the keyboard",async()=>{
   setup();const trigger=screen.getByTestId("activity-status");await userEvent.click(trigger);

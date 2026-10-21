@@ -102,6 +102,15 @@ pub struct Config {
     /// `page_map_auto_suggest: true` in config.json (or via `PUT /api/config`).
     #[serde(default)]
     pub page_map_auto_suggest: bool,
+    /// Lets the everyday model look, in the background, at a note whose cited
+    /// code changed and settle it when the code can say why (see
+    /// `code_basis_recheck`). It runs only while background AI is on and an
+    /// everyday source is pinned; this flag is the per-feature off switch.
+    /// A config file without the field keeps it on. `Config::default()` is
+    /// `false` like every `default_true` field here, so a fresh install gets
+    /// `true` from `new_install_config`.
+    #[serde(default = "default_true")]
+    pub code_basis_model_recheck: bool,
 }
 
 /// Generate a source ID slug from a directory path (last component, lowercased, sanitized).
@@ -386,6 +395,7 @@ pub fn load_config() -> Config {
 fn new_install_config() -> Config {
     Config {
         background_ai_enabled: Some(false),
+        code_basis_model_recheck: true,
         ..Config::default()
     }
 }
@@ -763,6 +773,21 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let restored: Config = serde_json::from_str(&json).unwrap();
         assert!(restored.page_map_auto_suggest);
+    }
+
+    #[test]
+    fn code_basis_model_recheck_is_on_for_old_files_and_new_installs() {
+        // A config file written before the flag existed keeps the feature on.
+        let old: Config = serde_json::from_str(r#"{"clipboard_enabled": true}"#).unwrap();
+        assert!(old.code_basis_model_recheck);
+        // An explicit off survives a round trip.
+        let off: Config = serde_json::from_str(r#"{"code_basis_model_recheck": false}"#).unwrap();
+        assert!(!off.code_basis_model_recheck);
+        let back: Config = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert!(!back.code_basis_model_recheck);
+        // `Config::default()` is false for every `default_true` field, so a new
+        // install must set the flag itself.
+        assert!(new_install_config().code_basis_model_recheck);
     }
 
     #[test]
