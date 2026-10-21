@@ -582,8 +582,19 @@ async fn handle_store_memory_inner(
     // memory never leaves an orphan entity behind.
     // A Space-locked caller (the `x-wenlan-space` header) links only an
     // entity in its own Space, the same as every other by-id write.
-    let entity_scope =
-        crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    // The header is only a fallback for where the memory lands, so a name the
+    // daemon does not know must not fail the store: it still narrows the
+    // lookup, to a Space that holds no entities.
+    let entity_scope = match header_space
+        .as_deref()
+        .map(str::trim)
+        .filter(|h| !h.is_empty())
+    {
+        None => wenlan_core::read_scope::ReadScope::Global,
+        Some(header) => crate::read_scope::effective_read_scope(&db, None, Some(header))
+            .await
+            .unwrap_or_else(|_| wenlan_core::read_scope::ReadScope::Space(header.to_string())),
+    };
     let entity_plan = match (
         req.entity_id.as_deref(),
         req.entity.as_deref().map(str::trim),
