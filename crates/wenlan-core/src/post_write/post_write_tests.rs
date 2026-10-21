@@ -7927,6 +7927,7 @@ async fn space_locked_basis_marks_refused_when_note_moved_out() {
             &page_id,
             version,
             &[("some-basis".into(), 1)],
+            &[],
             "claude-code",
             Some(&alpha),
         )

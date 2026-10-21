@@ -1512,21 +1512,23 @@ impl MemoryDB {
     }
 
     /// R7 for a write that changed nothing (same text, same sources): there is
-    /// no page write for the marks to ride on, so they land here on their own,
-    /// all in one transaction. A refused mark records none of them. The note
-    /// must still be at `at_version`, the version the write compared itself
-    /// against; an edit that landed since answers [`BasisError::CiterMovedOn`]
-    /// and records nothing. A note no longer in `space_guard` answers
+    /// no page write for the marks or the lines of code it relies on to ride
+    /// on, so they land here on their own, all in one transaction. A refused
+    /// mark or code basis records none of them. The note must still be at
+    /// `at_version`, the version the write compared itself against; an edit
+    /// that landed since answers [`BasisError::CiterMovedOn`] and records
+    /// nothing. A note no longer in `space_guard` answers
     /// [`BasisError::CiterNotFound`].
     pub async fn mark_page_bases(
         &self,
         page_id: &str,
         at_version: i64,
         marks: &[(String, i64)],
+        code_basis: &[crate::code_basis::PreparedCodeBasis],
         added_by: &str,
         space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<(), BasisError> {
-        if marks.is_empty() {
+        if marks.is_empty() && code_basis.is_empty() {
             return Ok(());
         }
         let conn = self.conn.lock().await;
@@ -1553,6 +1555,15 @@ impl MemoryDB {
         for (basis_page_id, version) in marks {
             mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by).await?;
         }
+        super::code_basis::upsert_code_basis_on_conn(
+            &tx,
+            page_id,
+            code_basis,
+            added_by,
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+        .map_err(|error| BasisError::Db(error.into()))?;
         tx.commit().await?;
         Ok(())
     }
