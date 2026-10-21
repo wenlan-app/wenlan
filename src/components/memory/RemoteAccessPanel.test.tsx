@@ -44,7 +44,7 @@ async function connectedPanel() {
   return view;
 }
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
-const TOGGLE = "Let web and phone AI apps search your library";
+const TOGGLE = "Let web and phone AI apps use your library";
 /** The switch is a button only once its value is known; before that it is a status. */
 const findToggle = () => screen.findByRole("button", { name: TOGGLE });
 /** Flips Web access on while Spaces exist, which asks the one question. */
@@ -609,6 +609,36 @@ describe("connected apps", () => {
     expect(screen.getByText("synthetic-client-id")).toBeInTheDocument();
   });
 
+  it("tags each active app with what it may do, and reads a missing access as search only", async () => {
+    mocks.listRemoteGrants.mockResolvedValue({ items: [
+      grant({ id: "g1", access: "write" }),
+      grant({ id: "g2", clientId: "client-two", redirectHost: "chatgpt.com", access: "query" }),
+      // A relay that predates the choice sends no access at all.
+      grant({ id: "g3", clientId: "client-three", redirectHost: "agent.meta.ai" }),
+      grant({ id: "g4", clientId: "client-four", redirectHost: "notes.example.org", knownClient: false, status: "inactive", endReason: "revoked", access: "write" }),
+    ], cursor: null });
+    await connectedPanel();
+    expect(await screen.findAllByText("Search only")).toHaveLength(2);
+    expect(screen.getAllByText("Can write")).toHaveLength(1);
+    const claude = screen.getByText("Claude").closest("li")!;
+    expect(within(claude).getByText("Can write")).toBeInTheDocument();
+    const chatgpt = screen.getByText("ChatGPT").closest("li")!;
+    expect(within(chatgpt).getByText("Search only")).toBeInTheDocument();
+  });
+
+  it("tags the apps in Traditional Chinese", async () => {
+    await i18n.changeLanguage("zh-Hant");
+    mocks.listRemoteGrants.mockResolvedValue({ items: [
+      grant({ access: "write" }),
+      grant({ id: "g2", clientId: "client-two", redirectHost: "chatgpt.com", access: "query" }),
+    ], cursor: null });
+    mocks.getRemoteAccessProfile.mockResolvedValue(profile);
+    mocks.getRemoteAccessStatus.mockResolvedValue(connected);
+    panel();
+    expect(await screen.findByText("可以寫入")).toBeInTheDocument();
+    expect(screen.getByText("只能搜尋")).toBeInTheDocument();
+  });
+
   it("names a whole-library connection in words behind Details", async () => {
     mocks.listRemoteGrants.mockResolvedValue({ items: [grant({ space: "*" })], cursor: null });
     await connectedPanel();
@@ -782,7 +812,7 @@ describe("in every language", () => {
     ["zh-Hant", "網頁存取", "分享整個資料庫", "新增到 Claude", "正在分享：整個資料庫"],
     ["zh-Hans", "网页访问", "共享整个资料库", "添加到 Claude", "正在共享：整个资料库"],
   ])("renders %s without English fallback", async (locale, title, whole, addToClaude, sharingWhole) => {
-    const toggleTitle = locale === "zh-Hant" ? "讓網頁和手機上的 AI 搜尋你的資料庫" : "让网页和手机上的 AI 搜索你的资料库";
+    const toggleTitle = locale === "zh-Hant" ? "讓網頁和手機上的 AI 使用你的資料庫" : "让网页和手机上的 AI 使用你的资料库";
     await i18n.changeLanguage(locale);
     panel();
     expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();

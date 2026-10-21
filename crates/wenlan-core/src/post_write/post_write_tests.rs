@@ -7636,6 +7636,7 @@ async fn staged_page_card_names_its_proposer() {
             proposer,
             None,
             &[],
+            None,
         )
         .await
         .unwrap();
@@ -7772,6 +7773,168 @@ async fn core_gated_agent_refresh_keeps_the_agent_on_the_card() {
         .expect("a staged card for the page");
     assert_eq!(card.source_agent.as_deref(), Some("claude-code"));
     assert_eq!(card.review_reason.as_deref(), Some("locked"));
+}
+
+/// A Space-locked agent's write that the route allowed (the note was in its
+/// Space) must not land once the note moves to another Space before the
+/// write commits. A Space move leaves the version alone, so only a Space
+/// check inside the write's own transaction sees it.
+///
+/// Mutation check: drop the check in `try_update_page_content` and the
+/// CAS-loop recheck, and the parked write lands on the moved note.
+#[tokio::test]
+async fn space_locked_agent_write_refused_when_note_moves_out_mid_write() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-space-race", "space race source").await;
+    let page_id = seed_page(&db, "mem-space-race", "space race source").await;
+    db.set_page_workspace(&page_id, Some("alpha"))
+        .await
+        .unwrap();
+    let before = db.get_page(&page_id).await.unwrap().unwrap();
+    let revision = db.get_page_source_revision(&page_id).await.unwrap();
+
+    let (parked_tx, parked_rx) = tokio::sync::oneshot::channel();
+    let (go_tx, go_rx) = tokio::sync::oneshot::channel();
+    PRE_WRITE_GATE
+        .lock()
+        .unwrap()
+        .push((page_id.clone(), parked_tx, go_rx));
+
+    let agent_write = page_write(
+        &db,
+        PageWrite::AgentUpdate {
+            basis: crate::db::BasisWrite {
+                actor: "claude-code".into(),
+                space_guard: Some(crate::read_scope::ReadScope::Space("alpha".into())),
+                ..crate::db::BasisWrite::default()
+            },
+            page_id: &page_id,
+            req: UpdatePageRequest {
+                content: "space race source, written by the alpha agent".to_string(),
+                source_memory_ids: vec!["mem-space-race".to_string()],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            agent: Some("claude-code"),
+            expected_source_revision: revision,
+            knowledge_path: None,
+        },
+    );
+    let move_out = async {
+        parked_rx
+            .await
+            .expect("agent write must reach the pre-write gate");
+        db.set_page_workspace(&page_id, Some("beta")).await.unwrap();
+        go_tx.send(()).expect("agent write must still be parked");
+    };
+    let (result, ()) = tokio::join!(agent_write, move_out);
+
+    assert!(
+        matches!(result, Err(crate::error::WenlanError::NotFound(_))),
+        "a note moved out of the agent's Space reads as not found: {result:?}"
+    );
+    let after = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(after.space.as_deref(), Some("beta"));
+    assert_eq!(after.content, before.content, "the body must be untouched");
+    assert_eq!(after.version, before.version, "no version may land");
+    let pending = db.list_pending_revisions(10).await.unwrap();
+    assert!(
+        pending.iter().all(|p| p.target_source_id != page_id),
+        "no revision card either: {pending:?}"
+    );
+}
+
+/// The locked-note path: the route read the note while it was in the agent's
+/// Space and stages a revision card from that read. A note moved to another
+/// Space since then gets no card, checked inside the insert's transaction.
+///
+/// Mutation check: pass `None` as the guard and the card is staged, filed
+/// under the Space the note already left.
+#[tokio::test]
+async fn space_locked_revision_card_refused_when_note_moved_out() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-space-card", "space card source").await;
+    let page_id = seed_page(&db, "mem-space-card", "space card source").await;
+    db.set_page_workspace(&page_id, Some("alpha"))
+        .await
+        .unwrap();
+    db.set_page_review_required(&page_id, true).await.unwrap();
+    // The route's read, taken while the note was still in `alpha`.
+    let read_in_alpha = db.get_page(&page_id).await.unwrap().unwrap();
+    let revision = db.get_page_source_revision(&page_id).await.unwrap();
+    db.set_page_workspace(&page_id, Some("beta")).await.unwrap();
+
+    let alpha = crate::read_scope::ReadScope::Space("alpha".into());
+    let staged = crate::post_write::stage_page_revision_card_proposed_by(
+        &db,
+        &read_in_alpha,
+        "space card source, proposed by the alpha agent",
+        &["mem-space-card".to_string()],
+        revision,
+        "agent_refresh",
+        Some("claude-code"),
+        None,
+        &[],
+        Some(&alpha),
+    )
+    .await;
+
+    assert!(
+        matches!(staged, Err(crate::error::WenlanError::NotFound(_))),
+        "{staged:?}"
+    );
+    let pending = db.list_pending_revisions(10).await.unwrap();
+    assert!(
+        pending.iter().all(|p| p.target_source_id != page_id),
+        "no revision card may be staged: {pending:?}"
+    );
+
+    // Control: the same card for a note still in the agent's Space stages.
+    db.set_page_workspace(&page_id, Some("alpha"))
+        .await
+        .unwrap();
+    let staged = crate::post_write::stage_page_revision_card_proposed_by(
+        &db,
+        &read_in_alpha,
+        "space card source, proposed by the alpha agent",
+        &["mem-space-card".to_string()],
+        revision,
+        "agent_refresh",
+        Some("claude-code"),
+        None,
+        &[],
+        Some(&alpha),
+    )
+    .await
+    .unwrap();
+    assert!(staged.revision_card_id.is_some(), "{staged:?}");
+}
+
+/// The unchanged-write path records basis marks on their own; a note moved
+/// out of the agent's Space gets none.
+#[tokio::test]
+async fn space_locked_basis_marks_refused_when_note_moved_out() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "mem-space-mark", "space mark source").await;
+    let page_id = seed_page(&db, "mem-space-mark", "space mark source").await;
+    db.set_page_workspace(&page_id, Some("beta")).await.unwrap();
+    let version = db.get_page(&page_id).await.unwrap().unwrap().version;
+
+    let alpha = crate::read_scope::ReadScope::Space("alpha".into());
+    let refused = db
+        .mark_page_bases(
+            &page_id,
+            version,
+            &[("some-basis".into(), 1)],
+            "claude-code",
+            Some(&alpha),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(crate::db::BasisError::CiterNotFound)),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]

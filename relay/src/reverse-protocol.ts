@@ -13,6 +13,8 @@ const REQUEST_HEADER_NAMES = new Set([
   'mcp-protocol-version',
   'last-event-id',
   'authorization',
+  // Set by the relay for a write grant only; the desktop picks its MCP process by it.
+  'x-wenlan-access',
 ]);
 const RESPONSE_HEADER_NAMES = new Set(['content-type', 'mcp-session-id', 'mcp-protocol-version']);
 

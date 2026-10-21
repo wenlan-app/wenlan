@@ -12,6 +12,8 @@ use super::reverse_protocol::{
 use super::{valid_id, RelayError};
 use reqwest::{Client, Method, Response};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinSet};
@@ -26,6 +28,41 @@ const OUTGOING_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 const TOMBSTONE_LIMIT: usize = 32;
 
 type EventSender = mpsc::Sender<TaskEvent>;
+
+/// Set by the relay on a request that belongs to a write grant. It is read here
+/// to pick the local server and never forwarded to either of them.
+pub(crate) const ACCESS_HEADER: &str = "x-wenlan-access";
+
+/// The loopback port of the web-write server, when one is running. The
+/// connection holds a clone and reads it for each request, so the server can
+/// start or stop without reopening the relay connection. Empty means that
+/// requests for a write grant fall back to the search-only server, which
+/// refuses them.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WriteRoute(Arc<AtomicU16>);
+
+impl WriteRoute {
+    pub(crate) fn set(&self, port: Option<u16>) {
+        self.0.store(port.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    pub(crate) fn get(&self) -> Option<u16> {
+        Some(self.0.load(Ordering::SeqCst)).filter(|port| *port != 0)
+    }
+}
+
+/// Pick the local port for one request and remove the routing header. Only the
+/// exact value `write` reaches the write server, and only while it runs. A
+/// request without the header always goes to the search-only server.
+fn route(headers: &mut HeaderMap, query_port: u16, write_port: Option<u16>) -> u16 {
+    let wants_write = headers
+        .remove(ACCESS_HEADER)
+        .is_some_and(|value| value == "write");
+    match (wants_write, write_port) {
+        (true, Some(port)) => port,
+        _ => query_port,
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {
@@ -111,6 +148,7 @@ struct Driver {
     incoming: mpsc::Receiver<Frame>,
     outgoing: mpsc::Sender<Frame>,
     local_port: u16,
+    write_route: WriteRoute,
     backend_authorization: String,
     client: Client,
     events: mpsc::Receiver<TaskEvent>,
@@ -123,6 +161,7 @@ struct Driver {
 
 pub(crate) async fn run_peer(
     port: u16,
+    write_route: WriteRoute,
     backend_token: String,
     incoming: mpsc::Receiver<super::reverse_protocol::Frame>,
     outgoing: mpsc::Sender<Frame>,
@@ -143,6 +182,7 @@ pub(crate) async fn run_peer(
         incoming,
         outgoing,
         local_port: port,
+        write_route,
         backend_authorization: format!("Bearer {backend_token}"),
         client,
         events,
@@ -205,7 +245,7 @@ impl Driver {
         id: String,
         path: String,
         method: String,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         body: String,
     ) -> Result<(), RelayError> {
         let anonymous_probe =
@@ -232,7 +272,8 @@ impl Driver {
             "DELETE" => Method::DELETE,
             _ => return Err(RelayError::InvalidInput),
         };
-        let url = format!("http://127.0.0.1:{}{path}", self.local_port);
+        let port = route(&mut headers, self.local_port, self.write_route.get());
+        let url = format!("http://127.0.0.1:{port}{path}");
         let (command_sender, command_receiver) = mpsc::channel(1);
         let tag = self.next_tag;
         self.next_tag = self.next_tag.checked_add(1).unwrap_or(1);
@@ -854,10 +895,153 @@ mod tests {
         mpsc::Receiver<Frame>,
         JoinHandle<Result<(), RelayError>>,
     ) {
+        routed_peer(port, WriteRoute::default()).await
+    }
+
+    async fn routed_peer(
+        port: u16,
+        write_route: WriteRoute,
+    ) -> (
+        mpsc::Sender<Frame>,
+        mpsc::Receiver<Frame>,
+        JoinHandle<Result<(), RelayError>>,
+    ) {
         let (incoming, input) = mpsc::channel(32);
         let (output, outgoing) = mpsc::channel(32);
-        let task = tokio::spawn(run_peer(port, TOKEN.to_owned(), input, output));
+        let task = tokio::spawn(run_peer(port, write_route, TOKEN.to_owned(), input, output));
         (incoming, outgoing, task)
+    }
+
+    fn write_request(id: &str) -> Frame {
+        let authorization = format!("Bearer {TOKEN}");
+        request(
+            id,
+            "/mcp",
+            "POST",
+            &[("authorization", &authorization), (ACCESS_HEADER, "write")],
+            b"tool-call",
+        )
+    }
+
+    /// Send one frame and wait until it has been answered and ended.
+    async fn complete(rx: &mut mpsc::Receiver<Frame>, id: &str) {
+        assert!(matches!(next_frame(rx).await, Frame::Response { .. }));
+        assert_eq!(next_frame(rx).await, Frame::End { id: id.to_owned() });
+    }
+
+    #[test]
+    fn routing_picks_the_write_port_only_for_the_exact_word_and_always_strips_the_header() {
+        let headers = |value: Option<&str>| {
+            let mut headers = HeaderMap::new();
+            headers.insert("accept".into(), "application/json".into());
+            if let Some(value) = value {
+                headers.insert(ACCESS_HEADER.into(), value.into());
+            }
+            headers
+        };
+        for (value, write_port, expected) in [
+            (Some("write"), Some(18081), 18081),
+            (Some("write"), None, 18080),
+            (Some("query"), Some(18081), 18080),
+            (Some("WRITE"), Some(18081), 18080),
+            (Some(""), Some(18081), 18080),
+            (None, Some(18081), 18080),
+            (None, None, 18080),
+        ] {
+            let mut map = headers(value);
+            assert_eq!(route(&mut map, 18080, write_port), expected, "{value:?}");
+            assert!(!map.contains_key(ACCESS_HEADER), "{value:?}");
+            assert_eq!(
+                map.get("accept").map(String::as_str),
+                Some("application/json")
+            );
+        }
+    }
+
+    #[test]
+    fn write_route_is_shared_between_clones_and_empty_by_default() {
+        let route = WriteRoute::default();
+        let seen_by_connection = route.clone();
+        assert_eq!(seen_by_connection.get(), None);
+        route.set(Some(18081));
+        assert_eq!(seen_by_connection.get(), Some(18081));
+        route.set(None);
+        assert_eq!(seen_by_connection.get(), None);
+    }
+
+    #[tokio::test]
+    async fn a_write_request_goes_to_the_write_server_without_the_routing_header() {
+        let query = test_server().await;
+        let write = test_server().await;
+        let route = WriteRoute::default();
+        route.set(Some(write.port));
+        let (tx, mut rx, task) = routed_peer(query.port, route).await;
+
+        tx.send(write_request("write")).await.unwrap();
+        complete(&mut rx, "write").await;
+
+        assert!(query.requests.lock().await.is_empty());
+        let received = write.requests.lock().await.clone();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].path, "/mcp");
+        assert_eq!(received[0].body, b"tool-call");
+        assert_eq!(
+            received[0].headers.get("authorization"),
+            Some(&format!("Bearer {TOKEN}"))
+        );
+        assert!(!received[0].headers.contains_key(ACCESS_HEADER));
+
+        drop(tx);
+        assert_eq!(peer_result(task).await, Ok(()));
+        query.stop().await;
+        write.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_write_request_falls_back_to_the_query_server_when_no_write_server_runs() {
+        let query = test_server().await;
+        let (tx, mut rx, task) = routed_peer(query.port, WriteRoute::default()).await;
+
+        tx.send(write_request("write")).await.unwrap();
+        complete(&mut rx, "write").await;
+
+        let received = query.requests.lock().await.clone();
+        assert_eq!(received.len(), 1);
+        assert!(!received[0].headers.contains_key(ACCESS_HEADER));
+
+        drop(tx);
+        assert_eq!(peer_result(task).await, Ok(()));
+        query.stop().await;
+    }
+
+    #[tokio::test]
+    async fn a_request_without_the_header_always_goes_to_the_query_server() {
+        let query = test_server().await;
+        let write = test_server().await;
+        let route = WriteRoute::default();
+        route.set(Some(write.port));
+        let (tx, mut rx, task) = routed_peer(query.port, route.clone()).await;
+
+        tx.send(protected_request("search", "/mcp", "POST", b"search"))
+            .await
+            .unwrap();
+        complete(&mut rx, "search").await;
+
+        assert_eq!(query.requests.lock().await.len(), 1);
+        assert!(write.requests.lock().await.is_empty());
+
+        // The write server stopping mid connection sends the next write request
+        // to the query server, which refuses it, without reopening anything.
+        route.set(None);
+        tx.send(write_request("after-stop")).await.unwrap();
+        complete(&mut rx, "after-stop").await;
+        assert_eq!(query.requests.lock().await.len(), 2);
+        assert!(write.requests.lock().await.is_empty());
+
+        drop(tx);
+        assert_eq!(peer_result(task).await, Ok(()));
+        query.stop().await;
+        write.stop().await;
     }
 
     async fn next_frame(receiver: &mut mpsc::Receiver<Frame>) -> Frame {
@@ -890,14 +1074,14 @@ mod tests {
         let (_tx, input) = mpsc::channel(1);
         let (output, _rx) = mpsc::channel(1);
         assert_eq!(
-            run_peer(0, TOKEN.to_owned(), input, output).await,
+            run_peer(0, WriteRoute::default(), TOKEN.to_owned(), input, output).await,
             Err(RelayError::InvalidInput)
         );
 
         let (_tx, input) = mpsc::channel(1);
         let (output, _rx) = mpsc::channel(1);
         assert_eq!(
-            run_peer(1, "short".to_owned(), input, output).await,
+            run_peer(1, WriteRoute::default(), "short".to_owned(), input, output).await,
             Err(RelayError::InvalidInput)
         );
     }

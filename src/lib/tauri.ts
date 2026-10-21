@@ -3539,6 +3539,9 @@ export interface RemotePairing {
   knownClient?: boolean;
 }
 
+/** What an allowed app may do: search and read, or also add, edit and delete. */
+export type RemoteAccess = "query" | "write";
+
 export type RemoteGrantEndReason = 'revoked' | 'reset' | 'expired' | 'replaced';
 
 export interface RemoteGrant {
@@ -3556,6 +3559,8 @@ export interface RemoteGrant {
   lastUsedAt?: number | null;
   /** Only on an inactive grant. An unknown reason arrives as "other". */
   endReason?: RemoteGrantEndReason | 'other' | null;
+  /** A relay that predates the choice sends nothing, which means "query". */
+  access?: RemoteAccess;
 }
 
 export interface RemoteGrantPage { items: RemoteGrant[]; cursor: string | null }
@@ -3572,8 +3577,9 @@ export async function lookupRemotePairing(expectedRevision: string, code: string
 export async function denyRemotePairing(expectedRevision: string, pairingId: string): Promise<void> {
   return invoke("deny_remote_pairing", { expectedRevision, pairingId });
 }
-export async function approveRemotePairing(expectedRevision: string, inspected: RemotePairing): Promise<void> {
-  return invoke("approve_remote_pairing", { expectedRevision, inspected });
+/** `access` is the person's choice in the dialog; search only unless they chose write. */
+export async function approveRemotePairing(expectedRevision: string, inspected: RemotePairing, access: RemoteAccess = "query"): Promise<void> {
+  return invoke("approve_remote_pairing", { expectedRevision, inspected, access });
 }
 export async function listRemoteGrants(expectedRevision: string, cursor: string | null = null): Promise<RemoteGrantPage> {
   return invoke("list_remote_grants", { expectedRevision, cursor });

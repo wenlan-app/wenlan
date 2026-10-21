@@ -110,7 +110,7 @@ test('device management lists only its own grants without secrets or internal au
   const page = await listDeviceGrants(store, device.id, device.managementToken);
   assert.equal(page!.items.length, 2);
   assert.deepEqual(Object.keys(page!.items[0]).sort(), ['id', 'clientId', 'space', 'createdAt', 'expiresAt', 'status', 'cleanupPending',
-    'clientName', 'redirectHost', 'knownClient', 'lastUsedAt'].sort());
+    'clientName', 'redirectHost', 'knownClient', 'lastUsedAt', 'access'].sort());
   const serialized = JSON.stringify(page);
   for (const secret of [device.managementToken, 'b'.repeat(43), 'credentialHash', 'owner', 'connectorId']) assert(!serialized.includes(secret));
   assert.equal((await listDeviceGrants(store, other.id, other.managementToken))!.items.length, 0);
@@ -209,4 +209,30 @@ test('replacement consent invalidates old access and late code claims without af
   const page = (await listDeviceGrants(store, device.id, device.managementToken))!;
   assert.equal(page.items.find(item => item.id === first.grantId)!.status, 'inactive');
   assert.equal(page.items.find(item => item.id === current.grantId)!.status, 'active');
+});
+
+test('a grant records and lists the access its scopes carry; receipts without it read as query', async () => {
+  const { store, device, permission } = await managed();
+  const access = async () => Object.fromEntries((await listDeviceGrants(store, device.id, device.managementToken))!.items
+    .map(item => [item.clientId, item.access]));
+  // managed() claimed both grants with no scopes: the search-only default.
+  assert.deepEqual(await access(), { 'client-a': 'query', 'client-b': 'query' });
+  const claim = async (n: string, scopes?: string[]) => {
+    await replaceClientAuthorization(store, permission.subject, `client-${n}`, authorizationId);
+    return claimAuthorizationGrant(store, { grantId: n.repeat(16), clientId: `client-${n}` },
+      scopes ? { ...permission, scopes } : permission, authorizationId);
+  };
+  assert.equal(await claim('w', ['wenlan:query', 'wenlan:write']), true);
+  assert.equal(await claim('q', ['wenlan:query']), true);
+  assert.deepEqual(await access(), { 'client-a': 'query', 'client-b': 'query', 'client-w': 'write', 'client-q': 'query' });
+  // A receipt written before the field existed has no access key at all.
+  const key = `oauth-grant:${permission.subject}:${'q'.repeat(16)}`;
+  const stored = (await store.transaction(tx => tx.get<Record<string, unknown>>(key)))!;
+  assert.equal(stored.access, 'query');
+  const { access: _dropped, ...legacy } = stored;
+  await store.transaction(tx => tx.put(key, legacy));
+  assert.equal((await access())['client-q'], 'query');
+  // An unknown stored value never reads as write.
+  await store.transaction(tx => tx.put(key, { ...legacy, access: 'admin' }));
+  assert.equal((await access())['client-q'], 'query');
 });

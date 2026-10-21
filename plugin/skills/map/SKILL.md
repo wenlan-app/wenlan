@@ -26,7 +26,7 @@ bundled resolver strips it and prints the resolved Space line itself:
 
 ```bash
 raw_args="<the full argument string passed to /wenlan map>"
-resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
+resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 repo_root="$(git -C "$PWD" rev-parse --show-toplevel)"
 ```
@@ -53,7 +53,7 @@ repository's own name for another one (`What <project> is`, `<project>是什麼`
 
 ## 3. Decide per note: write, refresh, or leave
 
-Call `list_pages` for the Space once. For each of the six topics, find its note
+Call `list_pages` with `space="<space>"` once. For each of the six topics, find its note
 by title in the user's language: an exact title match against the list, never
 fuzzy.
 
@@ -63,6 +63,8 @@ fuzzy.
 - Present with nothing outstanding: leave it, and say so in the report.
   `list_pages` rechecks the cited files first and lists only code bases that
   are not `ok`, so a note with none listed is current.
+
+Do not call `read_page` on a note you are leaving as is.
 
 ## 4. Writing a note
 
@@ -81,13 +83,15 @@ write_page(space="<space>", title="<note title>", content="<note>",
            code_basis=[{repo_root, path, line_start, line_end}, ...])
 ```
 
+Whenever a tool offers a `space` field, pass the resolved Space in it; a write without it goes to the connection's default Space, which may not be this repository's. When the connection is locked to one Space the field is absent, and nothing needs passing.
+
 Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say map needs local Wenlan and stop. A `warnings`
 entry saying a code basis was not recorded is reported, not hidden.
 
 ## 5. Refreshing a note
 
-Call `read_page` for the note's `version` and full `code_basis`. For each entry
+Call `read_page` for the note's `version` and full `code_basis` (only for notes you are refreshing). For each entry
 in state `pending`, read those lines of the file now (the entry gives the path
 and lines) and decide whether what the note says still holds.
 

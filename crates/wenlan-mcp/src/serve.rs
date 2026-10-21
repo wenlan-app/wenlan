@@ -30,8 +30,14 @@ pub const QUERY_ONLY_SPACE_ERROR: &str =
 /// every Space plus everything not in a Space. Core refuses it as a Space name.
 pub const WHOLE_LIBRARY_SPACE: &str = "*";
 
+pub const WEB_WRITE_AUTH_ERROR: &str =
+    "Web-write tool profile requires bearer token authentication; --no-auth is not allowed.";
+
+pub const WEB_WRITE_SPACE_ERROR: &str =
+    "Web-write tool profile requires a strict WENLAN_SPACE pin or --whole-library; WENLAN_DEFAULT_SPACE alone does not satisfy it.";
+
 pub const WHOLE_LIBRARY_PROFILE_ERROR: &str =
-    "--whole-library is only valid with --tool-profile query-only.";
+    "--whole-library is only valid with --tool-profile query-only or web-write.";
 
 pub const WHOLE_LIBRARY_PIN_CONFLICT_ERROR: &str =
     "--whole-library cannot be combined with a WENLAN_SPACE pin; choose one scope.";
@@ -52,11 +58,29 @@ pub struct ServeConfig {
     pub whole_library: bool,
 }
 
-/// Resolve the scope a query-only connector reports in `/connector-info`:
-/// the strict Space pin, or [`WHOLE_LIBRARY_SPACE`]. Exactly one must be chosen,
-/// and a pin can never spell the reserved value, so a one-Space connector is
-/// never widened into the whole library.
-pub fn query_only_scope(locked: Option<String>, whole_library: bool) -> anyhow::Result<String> {
+/// The profiles served to a web AI app through the relay: bearer-authenticated
+/// and pinned to exactly one scope (a Space or the whole library).
+pub fn is_connector_profile(tool_profile: ToolProfile) -> bool {
+    matches!(tool_profile, ToolProfile::QueryOnly | ToolProfile::WebWrite)
+}
+
+/// The startup auth refusal for a connector profile.
+pub fn connector_auth_error(tool_profile: ToolProfile) -> &'static str {
+    match tool_profile {
+        ToolProfile::WebWrite => WEB_WRITE_AUTH_ERROR,
+        _ => QUERY_ONLY_AUTH_ERROR,
+    }
+}
+
+/// Resolve the scope a connector reports in `/connector-info`: the strict Space
+/// pin, or [`WHOLE_LIBRARY_SPACE`]. Exactly one must be chosen, and a pin can
+/// never spell the reserved value, so a one-Space connector is never widened
+/// into the whole library. Query-only and web-write share these rules.
+pub fn connector_scope(
+    tool_profile: ToolProfile,
+    locked: Option<String>,
+    whole_library: bool,
+) -> anyhow::Result<String> {
     match (locked, whole_library) {
         (Some(_), true) => anyhow::bail!(WHOLE_LIBRARY_PIN_CONFLICT_ERROR),
         (Some(space), false) if space == WHOLE_LIBRARY_SPACE => {
@@ -64,8 +88,16 @@ pub fn query_only_scope(locked: Option<String>, whole_library: bool) -> anyhow::
         }
         (Some(space), false) => Ok(space),
         (None, true) => Ok(WHOLE_LIBRARY_SPACE.to_string()),
+        (None, false) if tool_profile == ToolProfile::WebWrite => {
+            anyhow::bail!(WEB_WRITE_SPACE_ERROR)
+        }
         (None, false) => anyhow::bail!(QUERY_ONLY_SPACE_ERROR),
     }
+}
+
+/// Resolve the scope a query-only connector reports in `/connector-info`.
+pub fn query_only_scope(locked: Option<String>, whole_library: bool) -> anyhow::Result<String> {
+    connector_scope(ToolProfile::QueryOnly, locked, whole_library)
 }
 
 async fn health() -> impl IntoResponse {
@@ -84,21 +116,22 @@ pub async fn run_serve_with_profile(
     config: ServeConfig,
     tool_profile: ToolProfile,
 ) -> anyhow::Result<()> {
-    if tool_profile == ToolProfile::QueryOnly
+    if is_connector_profile(tool_profile)
         && config
             .token
             .as_deref()
             .is_none_or(|token| token.trim().is_empty())
     {
-        anyhow::bail!(QUERY_ONLY_AUTH_ERROR);
+        anyhow::bail!(connector_auth_error(tool_profile));
     }
-    if config.whole_library && tool_profile != ToolProfile::QueryOnly {
+    if config.whole_library && !is_connector_profile(tool_profile) {
         anyhow::bail!(WHOLE_LIBRARY_PROFILE_ERROR);
     }
     // A Space pin scopes retrieval to one Space; it is a data-scoping control,
     // not authentication or per-caller tenant isolation.
-    let connector_space = if tool_profile == ToolProfile::QueryOnly {
-        Some(query_only_scope(
+    let connector_space = if is_connector_profile(tool_profile) {
+        Some(connector_scope(
+            tool_profile,
             lock_state::locked_space(),
             config.whole_library,
         )?)
@@ -124,7 +157,7 @@ pub async fn run_serve_with_profile(
     if token.is_some() {
         mcp_config = mcp_config.disable_allowed_hosts();
     }
-    if tool_profile == ToolProfile::QueryOnly {
+    if is_connector_profile(tool_profile) {
         // Let the SDK frame heartbeats between complete SSE events. Frequent
         // writes also expose a disconnected HTTP reader to the relay runtime.
         mcp_config = mcp_config.with_sse_keep_alive(Some(std::time::Duration::from_secs(1)));
@@ -151,6 +184,7 @@ pub async fn run_serve_with_profile(
         .route("/health", get(health));
 
     if let Some(space) = connector_space {
+        let profile_name = tool_profile.wire_name();
         // Enrollment reads this only through the same bearer gate as MCP.
         // Never put the Space pin in the public health response.
         router = router.route(
@@ -163,7 +197,7 @@ pub async fn run_serve_with_profile(
                         axum::Json(serde_json::json!({
                             "contract_version": 1,
                             "server": "wenlan-mcp",
-                            "tool_profile": "query-only",
+                            "tool_profile": profile_name,
                             "space": space,
                             "authentication": "bearer",
                         })),

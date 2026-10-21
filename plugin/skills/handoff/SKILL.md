@@ -28,7 +28,7 @@ Never read, edit, or overwrite that receipt as authority.
 
 ```bash
 handoff_arg="<the Space name passed to /handoff, empty when none>"
-resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --arg "$handoff_arg" --new-repo-fallback 2>/dev/null)"
+resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --arg "$handoff_arg" --new-repo-fallback 2>/dev/null)"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 source_layer="$(printf '%s\n' "$resolved" | cut -f2)"
 ```

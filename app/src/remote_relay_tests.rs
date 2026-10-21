@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 use super::reverse_client::{PreparedReverse, ReverseCandidate};
+use super::reverse_peer::WriteRoute;
 use super::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -276,7 +277,7 @@ async fn only_explicit_approved_response_completes_pairing() {
         known_client: false,
     };
     client
-        .approve_pairing(&credential(), &view, "review")
+        .approve_pairing(&credential(), &view, "review", GrantAccess::Query)
         .await
         .unwrap();
     let request = capture.await.unwrap();
@@ -408,16 +409,23 @@ async fn actual_worker_contract() {
             .unwrap()
             .parse::<u16>()
             .unwrap();
-        let active = reverse_runtime::connect_at(store.clone(), client.clone(), enabled, port)
-            .await
-            .unwrap();
+        let active = reverse_runtime::connect_at(
+            store.clone(),
+            client.clone(),
+            enabled,
+            port,
+            WriteRoute::default(),
+        )
+        .await
+        .unwrap();
         let saved = store.load().unwrap().unwrap();
         let device = saved.device().unwrap().clone();
         assert_eq!(saved.revision(), active.profile.revision());
         assert_eq!(device.id, active.profile.device().unwrap().id);
-        let replacement = reverse_runtime::connect_at(store, client.clone(), saved, port)
-            .await
-            .unwrap();
+        let replacement =
+            reverse_runtime::connect_at(store, client.clone(), saved, port, WriteRoute::default())
+                .await
+                .unwrap();
         assert_eq!(replacement.profile.device().unwrap().id, device.id);
         tokio::time::timeout(Duration::from_secs(4), async {
             while !active.connection.is_finished() {
@@ -436,7 +444,12 @@ async fn actual_worker_contract() {
         let prepared = client.prepare_reverse(&reverse_candidate()).await.unwrap();
         let device = prepared.credential;
         let connection = client
-            .connect_reverse(&device, port, reverse_candidate().backend_token)
+            .connect_reverse(
+                &device,
+                port,
+                WriteRoute::default(),
+                reverse_candidate().backend_token,
+            )
             .await
             .unwrap();
         let mut ready = false;
@@ -499,7 +512,7 @@ async fn actual_worker_contract() {
     let view = client.inspect_pairing(&device, pairing_id).await.unwrap();
     assert_eq!(view.client_id, client_id);
     client
-        .approve_pairing(&device, &view, "review")
+        .approve_pairing(&device, &view, "review", GrantAccess::Query)
         .await
         .unwrap();
     let completion = client
@@ -680,7 +693,12 @@ async fn public_reverse_socket_helper() {
     let client =
         RelayClient::new().unwrap_or_else(|_| panic!("production relay client unavailable"));
     let connection = client
-        .connect_reverse(&input.device, port, input.backend_token)
+        .connect_reverse(
+            &input.device,
+            port,
+            WriteRoute::default(),
+            input.backend_token,
+        )
         .await
         .unwrap_or_else(|_| panic!("reverse connection could not be established"));
 

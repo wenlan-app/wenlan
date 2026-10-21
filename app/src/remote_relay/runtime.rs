@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Native startup boundary shared by initial connection and process recovery.
 use super::store::{Profile, Store, StoreError};
-use super::{ConnectorCandidate, RelayClient, RelayError};
+use super::{ConnectorCandidate, GrantAccess, RelayClient, RelayError};
 use serde::Deserialize;
 
 pub const TOKEN_ENV: &str = "WENLAN_REMOTE_MCP_TOKEN";
@@ -40,12 +40,22 @@ async fn consent_profile_at(store: Store, expected_revision: String) -> Result<P
 
 /// Re-read both local consent and the server intent immediately before approval.
 /// A frontend-provided label or a stale inspection cannot authorize another client.
+/// The access the person chose goes to the relay with the approval; choosing
+/// write also records it in the profile, so the web-write process can start.
 pub async fn approve_inspected(
     expected_revision: String,
     inspected: super::PairingView,
+    access: GrantAccess,
 ) -> Result<(), String> {
     let client = RelayClient::new().map_err(|e| e.to_string())?;
-    approve_inspected_at(Store::current(), client, expected_revision, inspected).await
+    approve_inspected_at(
+        Store::current(),
+        client,
+        expected_revision,
+        inspected,
+        access,
+    )
+    .await
 }
 
 async fn approve_inspected_at(
@@ -53,6 +63,7 @@ async fn approve_inspected_at(
     client: RelayClient,
     expected_revision: String,
     inspected: super::PairingView,
+    access: GrantAccess,
 ) -> Result<(), String> {
     let profile = consent_profile_at(store.clone(), expected_revision.clone()).await?;
     let device = profile
@@ -65,11 +76,21 @@ async fn approve_inspected_at(
     if current != inspected {
         return Err(StoreError::Stale.to_string());
     }
-    consent_profile_at(store, expected_revision).await?;
+    consent_profile_at(store.clone(), expected_revision.clone()).await?;
     client
-        .approve_pairing(device, &current, profile.space())
+        .approve_pairing(device, &current, profile.space(), access)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    if access == GrantAccess::Write {
+        // The relay already holds the write grant. If this cannot be saved the
+        // grant is not lost: it can be removed from the apps list, and writes
+        // are refused until the process runs.
+        tokio::task::spawn_blocking(move || store.enable_write(&expected_revision))
+            .await
+            .map_err(|_| "Remote access storage task failed".to_string())?
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 /// Replace the saved management key with a fresh one for the same device.
@@ -115,7 +136,45 @@ fn require_enabled(profile: Option<Profile>) -> Result<Profile, StoreError> {
         .ok_or(StoreError::NotConfigured)
 }
 
+/// The two local servers a connection can run. Both are protected by the same
+/// bearer token and pinned to the same scope; they differ in the tools they
+/// expose and the name their requests carry in the daemon's activity history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpKind {
+    /// Search and read only. Always runs.
+    Query,
+    /// Search, read, add, edit and delete. Runs only after an app was allowed to write.
+    Write,
+}
+
+impl McpKind {
+    /// The `--tool-profile` value, which `/connector-info` reports back.
+    pub fn tool_profile(self) -> &'static str {
+        match self {
+            McpKind::Query => "query-only",
+            McpKind::Write => "web-write",
+        }
+    }
+
+    fn agent_name(self) -> &'static str {
+        match self {
+            McpKind::Query => "remote-mcp",
+            McpKind::Write => "web-ai",
+        }
+    }
+}
+
 pub fn mcp_args(origin_url: &str, port: u16, profile: &Profile) -> Vec<String> {
+    serve_args(McpKind::Query, origin_url, port, profile)
+}
+
+/// Arguments for the web-write process: the same launch as [`mcp_args`] with the
+/// write tool profile and its own agent name.
+pub fn write_mcp_args(origin_url: &str, port: u16, profile: &Profile) -> Vec<String> {
+    serve_args(McpKind::Write, origin_url, port, profile)
+}
+
+fn serve_args(kind: McpKind, origin_url: &str, port: u16, profile: &Profile) -> Vec<String> {
     let mut args: Vec<String> = [
         "--origin-url",
         origin_url,
@@ -125,11 +184,11 @@ pub fn mcp_args(origin_url: &str, port: u16, profile: &Profile) -> Vec<String> {
         "--port",
         &port.to_string(),
         "--tool-profile",
-        "query-only",
+        kind.tool_profile(),
         "--token-env",
         TOKEN_ENV,
         "--agent-name",
-        "remote-mcp",
+        kind.agent_name(),
     ]
     .map(str::to_string)
     .into();
@@ -167,6 +226,15 @@ struct ConnectorInfo {
 /// Probe the protected contract, not only a public /health response. Never
 /// follow a redirect with the backend credential or report raw response text.
 pub async fn verify_backend(port: u16, profile: &Profile) -> Result<(), RelayError> {
+    verify_backend_as(McpKind::Query, port, profile).await
+}
+
+/// The same probe for either local server, matching the tool profile it reports.
+pub async fn verify_backend_as(
+    kind: McpKind,
+    port: u16,
+    profile: &Profile,
+) -> Result<(), RelayError> {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
@@ -198,7 +266,7 @@ pub async fn verify_backend(port: u16, profile: &Profile) -> Result<(), RelayErr
         serde_json::from_slice(&bytes).map_err(|_| RelayError::InvalidResponse)?;
     if info.contract_version != 1
         || info.server != "wenlan-mcp"
-        || info.tool_profile != "query-only"
+        || info.tool_profile != kind.tool_profile()
         || info.space != profile.space()
         || info.authentication != "bearer"
     {

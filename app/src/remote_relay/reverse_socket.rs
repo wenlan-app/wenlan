@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Owned outbound socket. Successful upgrade is not verified readiness or consent.
 
-use super::reverse_peer::run_peer;
+use super::reverse_peer::{run_peer, WriteRoute};
 use super::reverse_protocol::{decode_frame, encode_frame, Frame, MAX_WIRE_BYTES};
 use super::{valid_id, DeviceCredential, RelayClient, RelayError, RELAY_ORIGIN};
 use futures_util::{SinkExt, StreamExt};
@@ -189,6 +189,7 @@ impl RelayClient {
         &self,
         credential: &DeviceCredential,
         port: u16,
+        write_route: WriteRoute,
         backend_token: String,
     ) -> Result<ReverseConnection, RelayError> {
         if port == 0 || !valid_id(&backend_token, 32) {
@@ -214,7 +215,13 @@ impl RelayClient {
         .map_err(upgrade_error)?;
         let id = connection_id(&response)?;
         let (stop, stopped) = oneshot::channel();
-        let task = tokio::spawn(run_socket(socket, port, backend_token, stopped));
+        let task = tokio::spawn(run_socket(
+            socket,
+            port,
+            write_route,
+            backend_token,
+            stopped,
+        ));
         Ok(ReverseConnection {
             connection_id: id,
             stop: Some(stop),
@@ -246,6 +253,7 @@ fn close_reason(frame: Option<&CloseFrame>) -> String {
 async fn run_socket(
     socket: Socket,
     port: u16,
+    write_route: WriteRoute,
     token: String,
     mut stopped: oneshot::Receiver<()>,
 ) -> Result<(), RelayError> {
@@ -253,7 +261,7 @@ async fn run_socket(
     let (requests, incoming) = mpsc::channel::<Frame>(16);
     let (outgoing, mut frames) = mpsc::channel::<Frame>(16);
     let mut peers = JoinSet::new();
-    peers.spawn(run_peer(port, token, incoming, outgoing));
+    peers.spawn(run_peer(port, write_route, token, incoming, outgoing));
     let mut ping = tokio::time::interval(Duration::from_secs(20));
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping.tick().await;

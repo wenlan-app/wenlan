@@ -33,7 +33,7 @@ in a later check becomes its line, and the remaining checks still run.
 2. Space: resolve it.
 
    ```bash
-   resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "")"
+   resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "")"
    space="$(printf '%s\n' "$resolved" | cut -f1)"
    ```
 

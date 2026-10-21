@@ -1524,6 +1524,7 @@ pub async fn handle_update_page(
                 confirm_snapshot: Vec::new(),
                 card_marks: Vec::new(),
                 code_basis: Vec::new(),
+                space_guard: None,
             },
         },
     )
@@ -1667,6 +1668,36 @@ fn page_moved_conflict(id: &str, current_version: i64) -> ServerError {
     ))
 }
 
+/// What a Space-locked agent hears about a note outside its Space: the same
+/// not found as a note that does not exist.
+fn page_outside_scope(id: &str) -> ServerError {
+    ServerError::ValidationError(format!("page {} not found", id))
+}
+
+/// A Space-locked write refused by its own Space check (the note left the
+/// agent's Space after the route's check) answers like that check did. Any
+/// other not found, such as a basis note that is gone, keeps its own answer.
+async fn space_locked_write_error(
+    db: &wenlan_core::db::MemoryDB,
+    scope: &wenlan_core::read_scope::ReadScope,
+    id: &str,
+    error: wenlan_core::WenlanError,
+) -> ServerError {
+    if matches!(error, wenlan_core::WenlanError::NotFound(_))
+        && *scope != wenlan_core::read_scope::ReadScope::Global
+    {
+        let moved_out = match db.get_page(id).await {
+            Ok(Some(page)) => !scope.matches(page.space.as_deref()),
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        if moved_out {
+            return page_outside_scope(id);
+        }
+    }
+    ServerError::from(error)
+}
+
 async fn handle_refresh_page_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
@@ -1733,11 +1764,12 @@ async fn handle_refresh_page_inner(
     // A note outside the caller's Space answers exactly as a missing one, so
     // a locked agent learns nothing about it, not even that it exists.
     if !scope.matches(existing.space.as_deref()) {
-        return Err(ServerError::ValidationError(format!(
-            "page {} not found",
-            id
-        )));
+        return Err(page_outside_scope(&id));
     }
+    // Moving a note to another Space leaves its version alone, so the write
+    // below repeats this check in its own transaction. Without it, a note
+    // moved out after this check would still take the write or the card.
+    let space_guard = (scope != wenlan_core::read_scope::ReadScope::Global).then(|| scope.clone());
     // `existing` just proved the page row exists, so the counter read a
     // moment earlier must also have found one; `None` here means the page
     // was deleted in the gap between the two reads — an internal race, not
@@ -1814,9 +1846,13 @@ async fn handle_refresh_page_inner(
             proposer,
             None,
             &staged_marks,
+            space_guard.as_ref(),
         )
-        .await
-        .map_err(ServerError::from)?;
+        .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => return Err(space_locked_write_error(&db, &scope, &id, error).await),
+        };
         return Ok((
             wenlan_core::post_write::WriteOutcome::Gated,
             wenlan_types::responses::PageWriteResponse {
@@ -1852,6 +1888,7 @@ async fn handle_refresh_page_inner(
                 confirm_snapshot: Vec::new(),
                 card_marks: Vec::new(),
                 code_basis: prepared_code_basis.clone(),
+                space_guard: space_guard.clone(),
             },
             page_id: &id,
             req: wenlan_types::requests::UpdatePageRequest {
@@ -1866,7 +1903,11 @@ async fn handle_refresh_page_inner(
             knowledge_path: page_root.as_deref(),
         },
     )
-    .await?;
+    .await;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => return Err(space_locked_write_error(&db, &scope, &id, error).await),
+    };
     // The core gate refused because the page moved past `expected_version`
     // between the pre-check above and the write. Nothing landed.
     if result.outcome == WriteOutcome::Refused {

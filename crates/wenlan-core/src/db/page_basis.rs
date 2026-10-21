@@ -901,6 +901,11 @@ pub struct BasisWrite {
     /// Recorded in this write's transaction, only if the write lands. A span
     /// the note already has is re-anchored and `ok`; others are untouched.
     pub code_basis: Vec<crate::code_basis::PreparedCodeBasis>,
+    /// A Space-locked agent's write lands only while the note is still in
+    /// this Space, checked in the write's own transaction. A note moved out
+    /// of it after the caller's check reads as not found: nothing is written,
+    /// marked, or staged as a revision card. `None` writes wherever it is.
+    pub space_guard: Option<crate::read_scope::ReadScope>,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the
@@ -1503,13 +1508,15 @@ impl MemoryDB {
     /// all in one transaction. A refused mark records none of them. The note
     /// must still be at `at_version`, the version the write compared itself
     /// against; an edit that landed since answers [`BasisError::CiterMovedOn`]
-    /// and records nothing.
+    /// and records nothing. A note no longer in `space_guard` answers
+    /// [`BasisError::CiterNotFound`].
     pub async fn mark_page_bases(
         &self,
         page_id: &str,
         at_version: i64,
         marks: &[(String, i64)],
         added_by: &str,
+        space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<(), BasisError> {
         if marks.is_empty() {
             return Ok(());
@@ -1520,15 +1527,18 @@ impl MemoryDB {
             .await?;
         let mut rows = tx
             .query(
-                "SELECT version FROM pages WHERE id = ?1",
+                "SELECT version, space FROM pages WHERE id = ?1",
                 libsql::params![page_id],
             )
             .await?;
-        let current = match rows.next().await? {
-            Some(row) => row.get::<i64>(0)?,
+        let (current, space) = match rows.next().await? {
+            Some(row) => (row.get::<i64>(0)?, row.get::<Option<String>>(1)?),
             None => return Err(BasisError::CiterNotFound),
         };
         drop(rows);
+        if space_guard.is_some_and(|scope| !scope.matches(space.as_deref())) {
+            return Err(BasisError::CiterNotFound);
+        }
         if current != at_version {
             return Err(BasisError::CiterMovedOn { current });
         }

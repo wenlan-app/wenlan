@@ -684,12 +684,21 @@ pub async fn deny_remote_pairing(
         .map_err(|e| e.to_string())
 }
 
+/// Allow the inspected app. `access` is the person's choice in the dialog; a
+/// frontend that sends none gets search only, the narrower one.
 #[tauri::command]
 pub async fn approve_remote_pairing(
+    app_handle: tauri::AppHandle,
     expected_revision: String,
     inspected: crate::remote_relay::PairingView,
+    access: Option<crate::remote_relay::GrantAccess>,
 ) -> Result<(), String> {
-    crate::remote_relay::runtime::approve_inspected(expected_revision, inspected).await
+    let access = access.unwrap_or_default();
+    crate::remote_relay::runtime::approve_inspected(expected_revision, inspected, access).await?;
+    if access == crate::remote_relay::GrantAccess::Write {
+        crate::remote_access::ensure_write_process(&app_handle).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -252,9 +252,15 @@ async fn approval_rechecks_current_server_intent_before_sending_explicit_consent
         |_| {},
     )
     .await;
-    approve_inspected_at(store, client(port), profile.revision().into(), view.clone())
-        .await
-        .unwrap();
+    approve_inspected_at(
+        store.clone(),
+        client(port),
+        profile.revision().into(),
+        view.clone(),
+        GrantAccess::Query,
+    )
+    .await
+    .unwrap();
     let requests = task.await.unwrap();
     assert!(requests[0].starts_with("GET /pairings/"));
     assert!(requests[1].starts_with("POST /pairings/"));
@@ -263,6 +269,68 @@ async fn approval_rechecks_current_server_intent_before_sending_explicit_consent
     assert_eq!(body["space"], "review");
     assert_eq!(body["clientId"], view.client_id);
     assert_eq!(body["approved"], true);
+    assert_eq!(body["access"], "query");
+    // Search only never switches the write server on.
+    assert!(!store.load().unwrap().unwrap().write_enabled());
+}
+
+#[tokio::test]
+async fn approving_write_sends_the_choice_and_records_it_without_changing_the_revision() {
+    let (_dir, store, profile) = configured();
+    let profile = store.attach_device(profile.revision(), device()).unwrap();
+    assert!(!profile.write_enabled());
+    let view = inspected();
+    let (port, task) = serve(
+        vec![
+            (200, serde_json::to_string(&view).unwrap()),
+            (200, "{\"approved\":true}".into()),
+        ],
+        |_| {},
+    )
+    .await;
+    approve_inspected_at(
+        store.clone(),
+        client(port),
+        profile.revision().into(),
+        view,
+        GrantAccess::Write,
+    )
+    .await
+    .unwrap();
+    let requests = task.await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_str(requests[1].split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(body["access"], "write");
+    let saved = store.load().unwrap().unwrap();
+    assert!(saved.write_enabled());
+    // A running connection captured at this revision stays current.
+    assert_eq!(saved.revision(), profile.revision());
+}
+
+#[tokio::test]
+async fn a_refused_write_approval_leaves_write_off() {
+    let (_dir, store, profile) = configured();
+    let profile = store.attach_device(profile.revision(), device()).unwrap();
+    let view = inspected();
+    let (port, task) = serve(
+        vec![
+            (200, serde_json::to_string(&view).unwrap()),
+            (409, "{}".into()),
+        ],
+        |_| {},
+    )
+    .await;
+    approve_inspected_at(
+        store.clone(),
+        client(port),
+        profile.revision().into(),
+        view,
+        GrantAccess::Write,
+    )
+    .await
+    .unwrap_err();
+    task.await.unwrap();
+    assert!(!store.load().unwrap().unwrap().write_enabled());
 }
 
 #[tokio::test]
@@ -286,8 +354,14 @@ async fn approval_rejects_changed_client_or_local_stop_without_posting_consent()
             },
         )
         .await;
-        let result =
-            approve_inspected_at(store, client(port), profile.revision().into(), view).await;
+        let result = approve_inspected_at(
+            store,
+            client(port),
+            profile.revision().into(),
+            view,
+            GrantAccess::Query,
+        )
+        .await;
         assert_eq!(
             result.unwrap_err(),
             if stop {
@@ -333,6 +407,80 @@ fn whole_library() -> (tempfile::TempDir, Store, Profile) {
         .unwrap();
     let profile = store.enable(profile.revision()).unwrap();
     (dir, store, profile)
+}
+
+#[test]
+fn write_launch_matches_the_query_launch_except_profile_and_agent() {
+    let (_dir, _store, pinned) = configured();
+    let query = mcp_args("http://127.0.0.1:17917", 18080, &pinned);
+    let write = write_mcp_args("http://127.0.0.1:17917", 18081, &pinned);
+    for pair in [
+        ["--host", "127.0.0.1"],
+        ["--port", "18081"],
+        ["--tool-profile", "web-write"],
+        ["--token-env", TOKEN_ENV],
+        ["--agent-name", "web-ai"],
+        ["--origin-url", "http://127.0.0.1:17917"],
+    ] {
+        assert!(
+            write
+                .windows(2)
+                .any(|args| args[0] == pair[0] && args[1] == pair[1]),
+            "{pair:?}"
+        );
+    }
+    assert!(write.iter().any(|arg| arg == "serve"));
+    assert!(!write.contains(&"--whole-library".to_string()));
+    let line = write.join(" ");
+    for forbidden in [
+        "--no-auth",
+        "query-only",
+        pinned.backend_token(),
+        pinned.space(),
+    ] {
+        assert!(!line.contains(forbidden), "{forbidden}");
+    }
+    // The search-only launch is unchanged beside it.
+    assert!(query
+        .windows(2)
+        .any(|pair| pair[0] == "--tool-profile" && pair[1] == "query-only"));
+    assert!(query
+        .windows(2)
+        .any(|pair| pair[0] == "--agent-name" && pair[1] == "remote-mcp"));
+
+    let (_dir, _store, whole) = whole_library();
+    let write = write_mcp_args("http://127.0.0.1:17917", 18081, &whole);
+    assert_eq!(write.last().map(String::as_str), Some("--whole-library"));
+    assert!(write
+        .windows(2)
+        .any(|pair| pair[0] == "--tool-profile" && pair[1] == "web-write"));
+    assert!(!write.iter().any(|arg| arg == "*"));
+}
+
+#[tokio::test]
+async fn write_readiness_requires_the_write_profile_and_query_readiness_refuses_it() {
+    let (_dir, _store, profile) = configured();
+    let write_info = |tool_profile: &str| {
+        serde_json::json!({"contract_version":1,"server":"wenlan-mcp","tool_profile":tool_profile,"authentication":"bearer","space":"review"}).to_string()
+    };
+    let (port, task) = serve(
+        vec![(200, write_info("web-write")), (401, "denied".into())],
+        |_| {},
+    )
+    .await;
+    verify_backend_as(McpKind::Write, port, &profile)
+        .await
+        .unwrap();
+    task.await.unwrap();
+    // A search-only server on the write port, or the reverse, is not accepted.
+    let (port, task) = serve(vec![(200, write_info("query-only"))], |_| {}).await;
+    assert!(verify_backend_as(McpKind::Write, port, &profile)
+        .await
+        .is_err());
+    task.await.unwrap();
+    let (port, task) = serve(vec![(200, write_info("web-write"))], |_| {}).await;
+    assert!(verify_backend(port, &profile).await.is_err());
+    task.await.unwrap();
 }
 
 #[test]

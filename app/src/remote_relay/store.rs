@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 const MAX_BYTES: usize = 16 * 1024;
 const MAX_ENCODED_BYTES: usize = 64 * 1024;
 const FILE_NAME: &str = "connection.dat";
+const BUSY_RETRIES: u32 = 20;
+const BUSY_WAIT: std::time::Duration = std::time::Duration::from_millis(25);
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum StoreError {
@@ -40,6 +42,11 @@ pub struct Profile {
     backend_token: String,
     enabled: bool,
     device: Option<DeviceCredential>,
+    /// An app was allowed to write, so the web-write process runs beside the
+    /// search-only one. Missing in a profile saved before the choice existed;
+    /// not written while false, so an older build can still read the file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    write_enabled: bool,
 }
 
 impl std::fmt::Debug for Profile {
@@ -87,6 +94,10 @@ impl Profile {
     }
     pub fn device(&self) -> Option<&DeviceCredential> {
         self.device.as_ref()
+    }
+    /// Whether the local web-write process should run for this profile.
+    pub fn write_enabled(&self) -> bool {
+        self.write_enabled
     }
 
     fn validate(&self) -> Result<(), StoreError> {
@@ -161,6 +172,7 @@ impl Store {
                 backend_token: secret()?,
                 enabled: false,
                 device: None,
+                write_enabled: false,
             };
             write_profile(path, &profile)?;
             Ok(profile)
@@ -174,6 +186,7 @@ impl Store {
             }
             profile.backend_token = secret()?;
             profile.enabled = true;
+            profile.write_enabled = false;
             Ok(())
         })
     }
@@ -197,8 +210,33 @@ impl Store {
             {
                 return Err(StoreError::Stale);
             }
+            // A new or rotated key ends every grant the relay holds for this
+            // computer, so no write approval survives it.
             profile.device = Some(device);
+            profile.write_enabled = false;
             Ok(())
+        })
+    }
+
+    /// Record that an app was allowed to write. Unlike every other change this
+    /// keeps the revision: it only adds a process beside the running one, so a
+    /// connection captured at this revision stays current. It applies only to
+    /// the enabled, enrolled profile the person approved against, and a stale
+    /// caller cannot switch writing on for a newer profile.
+    pub fn enable_write(&self, expected: &str) -> Result<Profile, StoreError> {
+        self.with_lock(|path| {
+            let mut profile = read_profile(path)?.ok_or(StoreError::NotConfigured)?;
+            if profile.revision != expected {
+                return Err(StoreError::Stale);
+            }
+            if !profile.enabled || profile.device.is_none() {
+                return Err(StoreError::Stale);
+            }
+            if !profile.write_enabled {
+                profile.write_enabled = true;
+                write_profile(path, &profile)?;
+            }
+            Ok(profile)
         })
     }
 
@@ -207,6 +245,7 @@ impl Store {
     pub fn disable(&self, expected: &str) -> Result<Profile, StoreError> {
         self.change(expected, |profile| {
             profile.enabled = false;
+            profile.write_enabled = false;
             Ok(())
         })
     }
@@ -224,6 +263,7 @@ impl Store {
             }
             profile.device = None;
             profile.backend_token = secret()?;
+            profile.write_enabled = false;
             Ok(())
         })
     }
@@ -261,10 +301,21 @@ impl Store {
         }
         let lock = options.open(&lock_path).map_err(|_| StoreError::Storage)?;
         private_file(&lock)?;
-        lock.try_lock().map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => StoreError::Busy,
-            std::fs::TryLockError::Error(_) => StoreError::Storage,
-        })?;
+        // Another task holds the lock only while it reads or saves, so wait
+        // that out instead of failing: a Busy read in the connection monitor
+        // turns Web access off, and one in the settings panel shows an error.
+        let mut attempts = 0;
+        loop {
+            match lock.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if attempts < BUSY_RETRIES => {
+                    attempts += 1;
+                    std::thread::sleep(BUSY_WAIT);
+                }
+                Err(std::fs::TryLockError::WouldBlock) => return Err(StoreError::Busy),
+                Err(std::fs::TryLockError::Error(_)) => return Err(StoreError::Storage),
+            }
+        }
         // Arm only after acquisition; a failed contender must never unlock.
         let _guard = LockGuard::hold(lock);
         operation(&self.directory.join(FILE_NAME))

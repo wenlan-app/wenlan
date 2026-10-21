@@ -2,6 +2,7 @@ use super::{page_dispatch::PageGrowthCommit, WriteOutcome, WriteResult};
 use crate::{
     db::{BasisWrite, BasisWriteOutcome, MemoryDB, PageFence},
     error::WenlanError,
+    read_scope::ReadScope,
 };
 use std::path::Path;
 use wenlan_types::{requests::UpdatePageRequest, RawDocument};
@@ -185,6 +186,7 @@ pub async fn stage_page_revision_card(
         None,
         retry,
         &[],
+        None,
     )
     .await
 }
@@ -199,6 +201,10 @@ pub async fn stage_page_revision_card(
 /// (`basis_marks` in its structured fields) and are recorded when the human
 /// accepts it; see `accept_page_revision_card` for a mark that can no longer
 /// be applied by then.
+///
+/// `space_guard` is a Space-locked agent's Space: the card is staged only
+/// while the note is still in it, checked in the insert's transaction, and a
+/// note moved out of it answers not found with no card.
 #[allow(clippy::too_many_arguments)]
 pub async fn stage_page_revision_card_proposed_by(
     db: &MemoryDB,
@@ -210,6 +216,7 @@ pub async fn stage_page_revision_card_proposed_by(
     proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
     basis_marks: &[crate::db::StagedBasisMark],
+    space_guard: Option<&ReadScope>,
 ) -> Result<WriteResult, WenlanError> {
     stage_page_revision_card_inner(
         db,
@@ -218,6 +225,7 @@ pub async fn stage_page_revision_card_proposed_by(
         source_memory_ids,
         source_revision,
         None,
+        space_guard,
         edited_by,
         proposer,
         retry,
@@ -225,9 +233,25 @@ pub async fn stage_page_revision_card_proposed_by(
         basis_marks,
     )
     .await?
-    .ok_or_else(|| {
-        WenlanError::VectorDb("unfenced revision card staging reported a lost page fence".into())
+    .ok_or_else(|| match space_guard {
+        Some(_) => page_not_in_space(&page.id),
+        None => WenlanError::VectorDb(
+            "unfenced revision card staging reported a lost page fence".into(),
+        ),
     })
+}
+
+/// What a Space-locked write answers once the note is no longer in its
+/// Space: the same not found as a note that was never there.
+fn page_not_in_space(page_id: &str) -> WenlanError {
+    WenlanError::NotFound(format!("page {page_id} not found"))
+}
+
+fn in_space_guard(basis: &BasisWrite, page: &crate::pages::Page) -> bool {
+    basis
+        .space_guard
+        .as_ref()
+        .is_none_or(|scope| scope.matches(page.space.as_deref()))
 }
 
 /// [`stage_page_revision_card`] for a caller that captured the page fence
@@ -253,6 +277,7 @@ pub(crate) async fn stage_page_revision_card_at_fence(
         source_memory_ids,
         fence.source_revision,
         Some(fence),
+        None,
         edited_by,
         None,
         retry,
@@ -282,6 +307,7 @@ pub(crate) async fn stage_basis_preview_card(
         source_memory_ids,
         fence.source_revision,
         Some(fence),
+        None,
         edited_by,
         None,
         None,
@@ -299,6 +325,7 @@ async fn stage_page_revision_card_inner(
     source_memory_ids: &[String],
     source_revision: i64,
     fence: Option<&PageFence>,
+    space_guard: Option<&ReadScope>,
     edited_by: &str,
     proposer: Option<&str>,
     retry: Option<&RetryIdentity>,
@@ -403,16 +430,27 @@ async fn stage_page_revision_card_inner(
         }),
         _ => None,
     };
-    let write = match (fence, receipt) {
-        (Some(fence), receipt) => {
+    let write = match (fence, space_guard, receipt) {
+        // Only an agent's write carries a Space and only a pipeline rebuild
+        // carries a page fence; a card is never fenced on both.
+        (Some(_), Some(_), _) => {
+            return Err(WenlanError::Validation(
+                "a revision card is fenced on its page row or on its Space, not both".into(),
+            ));
+        }
+        (Some(fence), None, receipt) => {
             db.upsert_documents_at_page_fence(vec![row], receipt, &page.id, page.version, fence)
                 .await
         }
-        (None, Some(receipt)) => db
+        (None, Some(scope), receipt) => {
+            db.upsert_documents_in_page_space(vec![row], receipt, &page.id, scope)
+                .await
+        }
+        (None, None, Some(receipt)) => db
             .upsert_documents_with_operation_receipt(vec![row], receipt)
             .await
             .map(|_| true),
-        (None, None) => db.upsert_documents(vec![row]).await.map(|_| true),
+        (None, None, None) => db.upsert_documents(vec![row]).await.map(|_| true),
     };
     match (write, retry) {
         (Ok(true), _) => {}
@@ -788,7 +826,8 @@ async fn update_page_db_impl(
     let carries_basis = basis.minor
         || !basis.marks.is_empty()
         || basis.confirm.is_some()
-        || !basis.code_basis.is_empty();
+        || !basis.code_basis.is_empty()
+        || basis.space_guard.is_some();
     if carries_basis && (page_growth.is_some() || user_forced || require_stale) {
         return Err(WenlanError::Validation(
             "a basis or minor flag rides only an agent refresh or a human save".into(),
@@ -918,6 +957,9 @@ async fn update_page_db_impl(
             let current = db.get_page(page_id).await?.ok_or_else(|| {
                 WenlanError::Validation(format!("page '{page_id}' does not exist"))
             })?;
+            if !in_space_guard(basis, &current) {
+                return Err(page_not_in_space(page_id));
+            }
             if machine_empty_sources && !current.source_memory_ids.is_empty() {
                 return Err(WenlanError::Validation(
                     "page must cite at least one source memory".into(),
@@ -1065,6 +1107,7 @@ async fn update_page_db_impl(
                             agent,
                             retry.as_ref(),
                             &staged_marks,
+                            basis.space_guard.as_ref(),
                         )
                         .await?
                     }
@@ -1148,7 +1191,13 @@ async fn update_page_db_impl(
                 // and so does an edit that landed after the comparison above.
                 if !basis.marks.is_empty() {
                     match db
-                        .mark_page_bases(page_id, current_version, &basis.marks, &basis.actor)
+                        .mark_page_bases(
+                            page_id,
+                            current_version,
+                            &basis.marks,
+                            &basis.actor,
+                            basis.space_guard.as_ref(),
+                        )
                         .await
                     {
                         Ok(()) => {}
@@ -1159,6 +1208,11 @@ async fn update_page_db_impl(
                                     "page moved to v{current} (expected v{current_version}); write refused"
                                 )],
                             ));
+                        }
+                        Err(crate::db::BasisError::CiterNotFound)
+                            if basis.space_guard.is_some() =>
+                        {
+                            return Err(page_not_in_space(page_id));
                         }
                         Err(error) => return Err(error.into()),
                     }
@@ -1420,6 +1474,13 @@ async fn update_page_db_impl(
             // the question it asked, not a discarded write, and it is the common
             // path on every re-distill sweep.
             let landed = db.get_page(page_id).await?;
+            // The write's own Space check refused it: the note left the
+            // Space-locked agent's Space after the check at the top.
+            if basis.space_guard.is_some()
+                && !landed.as_ref().is_some_and(|p| in_space_guard(basis, p))
+            {
+                return Err(page_not_in_space(page_id));
+            }
             let landed_version = landed.as_ref().map(|p| p.version);
             // A review lock set after the gate read leaves the version alone,
             // but the UPDATE's lock predicate matched zero rows. Re-read so

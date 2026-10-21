@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { PairingStore, Transaction } from './pairing.ts';
-import type { QueryGrant } from './proxy.ts';
+import type { PairingStore, Transaction, WebAccess } from './pairing.ts';
+import { WRITE_SCOPE, type QueryGrant } from './proxy.ts';
 import type { SessionIdentity } from './sessions.ts';
 import { hashSecret } from './secrets.ts';
 import { authenticatedDeviceTransaction, deviceKey, type DeviceRecord } from './devices.ts';
@@ -19,6 +19,8 @@ export interface GrantReceipt {
   knownClient?: boolean;
   lastUsedAt?: number;
   revokedAt?: number;
+  // Receipts written before write access existed read as 'query'.
+  access?: WebAccess;
 }
 export interface ClientDisplay { clientName: string | null; redirectHost: string; knownClient: boolean }
 export interface ClientAuthorization extends Partial<ClientDisplay> { authorizationId: string; expiresAt: number }
@@ -28,6 +30,7 @@ export interface GrantView {
   status: 'active' | 'inactive'; cleanupPending: boolean;
   clientName: string | null; redirectHost: string | null; knownClient: boolean;
   lastUsedAt: number | null;
+  access: WebAccess;
   endReason?: GrantEndReason;
 }
 /** lastUsedAt is written at most once per window per grant. */
@@ -69,7 +72,7 @@ async function binding(identity: SessionIdentity, grant: Pick<QueryGrant, 'subje
  */
 export async function claimAuthorizationGrant(
   store: PairingStore, identity: SessionIdentity,
-  grant: Pick<QueryGrant, 'subject' | 'connectorId' | 'space' | 'generation'>,
+  grant: Pick<QueryGrant, 'subject' | 'connectorId' | 'space' | 'generation'> & { scopes?: readonly string[] },
   authorizationId: string,
 ): Promise<boolean> {
   const bound = await binding(identity, grant);
@@ -89,7 +92,8 @@ export async function claimAuthorizationGrant(
       owner: bound.owner, active: true, createdAt: now, expiresAt: now + MAX_GRANT_MS,
       clientName: typeof consent?.clientName === 'string' ? consent.clientName : null,
       redirectHost: typeof consent?.redirectHost === 'string' && consent.redirectHost ? consent.redirectHost : null,
-      knownClient: consent?.knownClient === true } satisfies GrantReceipt);
+      knownClient: consent?.knownClient === true,
+      access: grant.scopes?.includes(WRITE_SCOPE) ? 'write' : 'query' } satisfies GrantReceipt);
     return true;
   });
 }
@@ -118,6 +122,7 @@ export async function listDeviceGrants(store: PairingStore, deviceId: string, cr
         redirectHost: typeof record.redirectHost === 'string' && record.redirectHost ? record.redirectHost : null,
         knownClient: record.knownClient === true,
         lastUsedAt: Number.isFinite(record.lastUsedAt) ? record.lastUsedAt! : null,
+        access: record.access === 'write' ? 'write' : 'query',
         ...(endReason ? { endReason } : {}) });
     }
     return { items, ...(records.size > 25 ? { cursor: page.at(-1)!.id } : {}) };

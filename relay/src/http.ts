@@ -352,8 +352,11 @@ export async function handlePublicRequest(
     }
     const body = await jsonObject(request);
     if (body.approved !== true) throw new HttpFailure(400, 'Explicit consent required');
+    // Older desktop builds omit access and keep the search-only default.
+    const access = body.access === undefined ? 'query' : body.access;
+    if (access !== 'query' && access !== 'write') throw new HttpFailure(400, 'Invalid request fields');
     const success = await approvePairing(store, pairMatch[1], identity, {
-      clientId: stringField(body, 'clientId'), resource: stringField(body, 'resource'), space: stringField(body, 'space', 256),
+      clientId: stringField(body, 'clientId'), resource: stringField(body, 'resource'), space: stringField(body, 'space', 256), access,
     });
     return success ? Response.json({ approved: true }, { headers: { 'cache-control': 'no-store' } }) : failure(409, 'Pairing approval rejected');
   }

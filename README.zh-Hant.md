@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5a4a4b887bb26ec4cc193050b02b7ffa6a40dca76287fa57ccd05b9043a07446 -->
+<!-- README_SYNC: source=README.md sha256=8447e871795222fb622ae3cab0a58671cacaa09db06b77db5acd17b9b20393a2 -->
 
 <p align="center">
   <picture>
@@ -184,7 +184,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 **即將推出（Coming soon）：** Spaces 的程式碼儲存庫（coding repo）支援。
 
-在「設定」中開啟「網頁存取」開關，即可讓 Claude、ChatGPT 或 Muse 等支援的網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。此功能仍在實驗階段；查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
+在「設定」中開啟「網頁存取」開關，即可讓 Claude、ChatGPT 或 Muse 等支援的網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。允許應用程式時可以選「只能搜尋」或「搜尋和寫入」；可以寫入的應用程式還能新增、修改和刪除內容，AI 應用程式可以在每次改動前先問你。此功能仍在實驗階段；查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>

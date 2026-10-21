@@ -164,6 +164,31 @@ and three negative test cases. The cases explicitly identify pending synthetic
 fixtures and public-host execution. Schema validation is not a test pass, an
 authentication implementation, or approval to upload or submit the draft.
 
+### Web-write HTTP profile
+
+`--tool-profile web-write` is the query-only profile plus the writes a user
+allowed one web AI app to make. The desktop app runs it as a second process,
+next to the query-only one, for apps that were approved with write access.
+Startup requires the same bearer token and the same strict `WENLAN_SPACE` pin
+or `--whole-library` as query-only, and `/connector-info` reports
+`"tool_profile": "web-write"`.
+
+It advertises exactly `brief`, `recall`, `get_page_sources`, `read_page`,
+`list_pages`, `capture`, `write_page`, `rename_page`, `forget`, and
+`delete_page`; any other name is refused before dispatch. `brief`, `recall`,
+and `get_page_sources` answer with the query-only projection and output
+schemas. In this profile only, the remote-connection blocks on `forget`,
+`delete_page`, `rename_page`, and `write_page` refresh are lifted. Every other
+remote restriction stays, including `code_basis`. `forget` and `delete_page`
+declare `destructiveHint: true` so web clients ask before running them.
+
+Under a one-Space pin, an id-based call is checked against that Space before it
+acts. The daemon scopes `read_page` and `rename_page` by the Space header
+itself; for `forget`, `delete_page`, `write_page` refresh, and `capture` with
+`supersedes`, the server first reads the target through the same scoped route
+and refuses when the daemon does not return it. A whole-library connection has
+no pin and no such check.
+
 ## Setup Modes
 
 Wenlan works immediately: storage, search, recall, pages your agent writes, and every MCP tool need no local model or API key.

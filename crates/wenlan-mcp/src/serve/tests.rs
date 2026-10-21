@@ -2,7 +2,11 @@ use super::*;
 
 #[tokio::test]
 async fn initialization_guard_rejects_before_sdk_session_allocation() {
-    for profile in [ToolProfile::Standard, ToolProfile::QueryOnly] {
+    for profile in [
+        ToolProfile::Standard,
+        ToolProfile::QueryOnly,
+        ToolProfile::WebWrite,
+    ] {
         initialization_guard_case(profile).await;
     }
 }

@@ -10,7 +10,7 @@ import {
 import { clearAwaitingConnection, useAwaitingConnection } from "../../lib/pairingLink";
 import { clientIdentity } from "../../lib/remoteClient";
 import { relativeTime } from "../../lib/relativeTime";
-import { Button } from "./settings/primitives";
+import { Button, Tag } from "./settings/primitives";
 import { Disclosure, InlineConfirm, RemoteErrorMessage, secondaryText } from "./remoteAccessParts";
 import { scopeLabel } from "./remoteScope";
 import { REMOTE_GRANTS } from "./useRemoteAccess";
@@ -151,7 +151,14 @@ function GrantRow({ grant, language, busy, confirming, onAskRemove, onCancelRemo
     <li className="min-w-0 space-y-2">
       <div className="flex flex-wrap items-start gap-3">
         <div className="flex-1 min-w-0 basis-40 space-y-1">
-          <p className="text-sm font-medium break-words">{name}</p>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium break-words">
+            <span>{name}</span>
+            {active && (
+              <Tag tone={grant.access === "write" ? "accent" : "neutral"}>
+                {grant.access === "write" ? t("remoteAccess.accessTagWrite") : t("remoteAccess.accessTagQuery")}
+              </Tag>
+            )}
+          </p>
           {active
             ? <p className={secondaryText + " break-words"}>{[lastUsed, ends].filter(Boolean).join(" · ")}</p>
             : <p className={secondaryText + " break-words"}>{reasonKey ? t(reasonKey) : t("remoteAccess.ended")}</p>}

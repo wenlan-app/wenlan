@@ -71,10 +71,10 @@ describe("PairingApprovalDialog", () => {
   it("looks a short code up by its code, not by pairing id, and names a known app", async () => {
     setPendingPairingCode(SHORT.toLowerCase().replace("-", " - "));
     mount();
-    expect(await screen.findByRole("heading", { name: "Allow Claude to search your library?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Allow Claude to use your library?" })).toBeInTheDocument();
     expect(mocks.lookupRemotePairing).toHaveBeenCalledWith("r1", SHORT_NORMAL);
     expect(mocks.inspectRemotePairing).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog")).toHaveAccessibleName("Allow Claude to search your library?");
+    expect(screen.getByRole("dialog")).toHaveAccessibleName("Allow Claude to use your library?");
     expect(screen.getByText("It can search and read memories in review. Your other Spaces stay private.")).toBeInTheDocument();
     expect(screen.queryByText(/wenlan doesn't recognize/i)).not.toBeInTheDocument();
     // Never the raw client id or a status code in the main dialog.
@@ -86,7 +86,7 @@ describe("PairingApprovalDialog", () => {
     mocks.getRemoteAccessProfile.mockResolvedValue({ ...profile, space: "*" });
     setPendingPairingCode(SHORT);
     mount();
-    await screen.findByRole("heading", { name: "Allow Claude to search your library?" });
+    await screen.findByRole("heading", { name: "Allow Claude to use your library?" });
     expect(screen.getByText("It can search and read your whole library: every Space, plus everything not in a Space.")).toBeInTheDocument();
     expect(screen.queryByText(/\*|other Spaces stay private/)).not.toBeInTheDocument();
   });
@@ -103,7 +103,7 @@ describe("PairingApprovalDialog", () => {
     mocks.lookupRemotePairing.mockResolvedValue(stranger);
     setPendingPairingCode(SHORT);
     mount();
-    expect(await screen.findByRole("heading", { name: "Allow evil.example to search your library?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Allow evil.example to use your library?" })).toBeInTheDocument();
     expect(screen.queryByText(/Totally Claude/)).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /Allow Claude/ })).not.toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("Wenlan doesn't recognize this app. Continue only if you started this yourself.");
@@ -116,7 +116,7 @@ describe("PairingApprovalDialog", () => {
     mocks.lookupRemotePairing.mockResolvedValue({ ...claude, clientName: "Muse", redirectHost: "agent.meta.ai", knownClient: true });
     setPendingPairingCode(SHORT);
     mount();
-    expect(await screen.findByRole("heading", { name: "Allow Muse to search your library?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Allow Muse to use your library?" })).toBeInTheDocument();
     expect(screen.queryByText(/wenlan doesn't recognize/i)).not.toBeInTheDocument();
   });
 
@@ -124,7 +124,7 @@ describe("PairingApprovalDialog", () => {
     mocks.lookupRemotePairing.mockResolvedValue({ ...claude, redirectHost: "claude.ai.evil.example", knownClient: true });
     setPendingPairingCode(SHORT);
     mount();
-    expect(await screen.findByRole("heading", { name: "Allow claude.ai.evil.example to search your library?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Allow claude.ai.evil.example to use your library?" })).toBeInTheDocument();
     expect(screen.getByRole("note")).toBeInTheDocument();
   });
 
@@ -132,14 +132,14 @@ describe("PairingApprovalDialog", () => {
     mocks.lookupRemotePairing.mockResolvedValue({ pairingId: claude.pairingId, clientId: "c", resource: claude.resource, scopes: claude.scopes, expiresAt: claude.expiresAt });
     setPendingPairingCode(SHORT);
     mount();
-    expect(await screen.findByRole("heading", { name: "Allow this app to search your library?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Allow this app to use your library?" })).toBeInTheDocument();
   });
 
   it("allows with the exact inspected request, then watches for the connection", async () => {
     setPendingPairingCode(SHORT);
     const { invalidate } = mount();
     fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
-    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude));
+    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude, "query"));
     expect(await screen.findByRole("heading", { name: "Allowed" })).toBeInTheDocument();
     expect(screen.getByText("Claude is connecting. You can go back to it now.")).toBeInTheDocument();
     expect(screen.getByTestId("awaiting")).toHaveTextContent("yes");
@@ -147,6 +147,60 @@ describe("PairingApprovalDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByTestId("code")).toHaveTextContent("none");
+  });
+
+  it("asks what the app can do, with search only chosen by default", async () => {
+    setPendingPairingCode(SHORT);
+    mount();
+    await screen.findByRole("heading", { name: "Allow Claude to use your library?" });
+    const group = screen.getByRole("radiogroup", { name: "What can it do?" });
+    const search = within(group).getByRole("radio", { name: "Search only" });
+    const write = within(group).getByRole("radio", { name: "Search and write" });
+    expect(search).toBeChecked();
+    expect(write).not.toBeChecked();
+    expect(search).toHaveAccessibleDescription("Search and read. It cannot change anything.");
+    expect(write).toHaveAccessibleDescription("It can also add, edit and delete. The AI app asks you before deleting.");
+    expect(screen.getByRole("dialog").textContent).not.toMatch(/[—–]| - /);
+  });
+
+  it("sends search only when the person allows without touching the choice", async () => {
+    setPendingPairingCode(SHORT);
+    mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude, "query"));
+  });
+
+  it("sends write only after the person chooses it", async () => {
+    setPendingPairingCode(SHORT);
+    mount();
+    fireEvent.click(await screen.findByRole("radio", { name: "Search and write" }));
+    expect(screen.getByRole("radio", { name: "Search and write" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Search only" })).not.toBeChecked();
+    expect(mocks.approveRemotePairing).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude, "write"));
+    expect(await screen.findByRole("heading", { name: "Allowed" })).toBeInTheDocument();
+  });
+
+  it("can go back from write to search only before allowing", async () => {
+    setPendingPairingCode(SHORT);
+    mount();
+    fireEvent.click(await screen.findByRole("radio", { name: "Search and write" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Search only" }));
+    fireEvent.click(screen.getByRole("button", { name: "Allow" }));
+    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude, "query"));
+  });
+
+  it("puts both choices in one native radio group that can take focus", async () => {
+    setPendingPairingCode(SHORT);
+    mount();
+    const search = await screen.findByRole("radio", { name: "Search only" });
+    const write = screen.getByRole("radio", { name: "Search and write" });
+    expect(search).toHaveAttribute("name", write.getAttribute("name"));
+    expect(search).not.toBeDisabled();
+    // Only the chosen radio is a tab stop; the arrow keys move within the group.
+    search.focus();
+    expect(document.activeElement).toBe(search);
   });
 
   it("never allows on its own", async () => {
@@ -301,7 +355,7 @@ describe("PairingApprovalDialog", () => {
     expect(mocks.lookupRemotePairing).toHaveBeenCalledTimes(1);
     expect(mocks.lookupRemotePairing).toHaveBeenCalledWith("r1", SHORT_NORMAL);
     fireEvent.click(screen.getByRole("button", { name: "Allow" }));
-    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude));
+    await waitFor(() => expect(mocks.approveRemotePairing).toHaveBeenCalledWith("r1", claude, "query"));
   });
 
   it("takes a newer link once the open request has an outcome", async () => {
@@ -345,7 +399,7 @@ describe("PairingApprovalDialog", () => {
       fireEvent.click(within(question).getByRole("button", { name: "Share this Space" }));
       await waitFor(() => expect(mocks.toggleRemoteAccess).toHaveBeenCalledWith(true, "r2"));
       expect(mocks.configureRemoteAccess).toHaveBeenCalledWith({ kind: "space", name: "private" }, "r0");
-      expect(await screen.findByRole("heading", { name: "Allow Claude to search your library?" })).toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Allow Claude to use your library?" })).toBeInTheDocument();
       expect(mocks.approveRemotePairing).not.toHaveBeenCalled();
     });
 
@@ -454,11 +508,14 @@ describe("PairingApprovalDialog", () => {
       mount();
       const allow = await screen.findByRole("button", { name: "Allow" });
       const deny = screen.getByRole("button", { name: "Deny" });
+      // The chosen radio is the first stop, ahead of Deny and Allow.
+      const chosen = screen.getByRole("radio", { name: "Search only" });
       allow.focus();
       fireEvent.keyDown(allow, { key: "Tab" });
-      expect(deny).toHaveFocus();
-      fireEvent.keyDown(deny, { key: "Tab", shiftKey: true });
+      expect(chosen).toHaveFocus();
+      fireEvent.keyDown(chosen, { key: "Tab", shiftKey: true });
       expect(allow).toHaveFocus();
+      expect(deny).not.toHaveFocus();
     });
 
     it("does not close from a click on the backdrop", async () => {
@@ -471,15 +528,19 @@ describe("PairingApprovalDialog", () => {
   });
 
   it.each([
-    ["zh-Hant", "允許 Claude 搜尋你的資料庫嗎？", "允許", "拒絕"],
-    ["zh-Hans", "允许 Claude 搜索你的资料库吗？", "允许", "拒绝"],
-  ])("speaks %s, with no English left in it", async (locale, title, allow, deny) => {
+    ["zh-Hant", "允許 Claude 使用你的資料庫嗎？", "允許", "拒絕", "它可以做什麼？", "只能搜尋", "搜尋和寫入"],
+    ["zh-Hans", "允许 Claude 使用你的资料库吗？", "允许", "拒绝", "它可以做什么？", "只能搜索", "搜索和写入"],
+  ])("speaks %s, with no English left in it", async (locale, title, allow, deny, question, queryLabel, writeLabel) => {
     await i18n.changeLanguage(locale);
     setPendingPairingCode(SHORT);
     mount();
     expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: allow })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: deny })).toBeInTheDocument();
-    expect(screen.getByRole("dialog").textContent).not.toMatch(/Allow|Deny|search|library|private|Sends/);
+    expect(screen.getByRole("radiogroup", { name: question })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: queryLabel })).toBeChecked();
+    expect(screen.getByRole("radio", { name: writeLabel })).not.toBeChecked();
+    expect(screen.getByRole("dialog").textContent).not.toMatch(/Allow|Deny|search|library|private|Sends|write/i);
+    expect(screen.getByRole("dialog").textContent).not.toMatch(/[—–]| - /);
   });
 });

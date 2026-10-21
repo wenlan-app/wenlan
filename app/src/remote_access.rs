@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 use crate::remote_relay::{
+    reverse_peer::WriteRoute,
     reverse_runtime::{self, ActiveReverse},
     runtime as relay_runtime,
-    runtime::RenewalError,
+    runtime::{McpKind, RenewalError},
     store::Profile,
     RelayError, RELAY_ORIGIN,
 };
@@ -155,6 +156,17 @@ pub struct RemoteAccessState {
     pub mcp_child: Option<tauri_plugin_shell::process::CommandChild>,
     reverse: Option<ActiveReverse>,
     pub port: Option<u16>,
+    /// The web-write server, which runs only after an app was allowed to write.
+    /// The search-only server above never depends on it.
+    pub write_child: Option<tauri_plugin_shell::process::CommandChild>,
+    pub write_port: Option<u16>,
+    /// Where the relay connection sends requests for a write grant. Set while
+    /// the write server is ready; empty otherwise, which sends them to the
+    /// search-only server, and it refuses them.
+    write_route: WriteRoute,
+    /// One start of the write server at a time, so a failed start can discard
+    /// what it spawned without touching another start's process.
+    write_starting: bool,
     pending_stops: Vec<crate::remote_relay::shutdown::PendingProcess>,
     orphan_cleanup_failed: bool,
     /// Invalidates stale start/reconnect tasks when the user turns access off.
@@ -173,6 +185,10 @@ impl Default for RemoteAccessState {
             mcp_child: None,
             reverse: None,
             port: None,
+            write_child: None,
+            write_port: None,
+            write_route: WriteRoute::default(),
+            write_starting: false,
             pending_stops: Vec::new(),
             orphan_cleanup_failed: false,
             generation: 0,
@@ -267,6 +283,34 @@ fn validate_mcp_spawn(ra: &RemoteAccessState, generation: u64) -> Result<(), Str
     }
     if ra.mcp_child.is_some() {
         return Err(format!("{} is already running.", MCP_SIDECAR_NAME));
+    }
+    Ok(())
+}
+
+fn validate_write_spawn(ra: &RemoteAccessState, generation: u64) -> Result<(), String> {
+    if !generation_is_current(ra.generation, generation) {
+        return Err("Remote access start cancelled.".into());
+    }
+    if !matches!(
+        ra.status,
+        RemoteAccessStatus::Starting | RemoteAccessStatus::Connected { .. }
+    ) {
+        return Err("Remote access is not active.".into());
+    }
+    if !ra.pending_stops.is_empty() || ra.orphan_cleanup_failed {
+        return Err(SHUTDOWN_UNCONFIRMED.into());
+    }
+    if ra.mcp_child.is_none() {
+        return Err(format!(
+            "{} search server is not running.",
+            MCP_SIDECAR_NAME
+        ));
+    }
+    if ra.write_child.is_some() {
+        return Err(format!(
+            "{} web-write is already running.",
+            MCP_SIDECAR_NAME
+        ));
     }
     Ok(())
 }
@@ -897,10 +941,13 @@ fn is_expected_remote_mcp_command(command: &str, port: u16) -> bool {
         args.windows(2)
             .any(|pair| pair[0] == flag && pair[1] == value)
     };
+    // The search-only server, or the web-write one an allowed app starts.
+    let ours = has_pair("--agent-name", "remote-mcp")
+        || (has_pair("--agent-name", "web-ai") && has_pair("--tool-profile", "web-write"));
     expected_executable
         && args.iter().any(|arg| arg == "serve")
         && has_pair("--port", &port.to_string())
-        && has_pair("--agent-name", "remote-mcp")
+        && ours
 }
 
 #[cfg(windows)]
@@ -1199,10 +1246,12 @@ async fn toggle_on_inner(
 
 const MAX_RECONNECT_RETRIES: u32 = 3;
 
-/// Spawn the protected local wenlan-mcp listener on a given port.
-/// Reusable for both initial start and MCP-only restarts.
+/// Spawn a protected local wenlan-mcp listener on a given port: the search-only
+/// one, or the web-write one beside it. Reusable for both initial start and
+/// MCP-only restarts.
 async fn spawn_mcp(
     app_handle: &tauri::AppHandle,
+    kind: McpKind,
     port: u16,
     generation: u64,
     profile: &Profile,
@@ -1214,31 +1263,45 @@ async fn spawn_mcp(
     String,
 > {
     log::warn!(
-        "[remote-access] spawning {} serve on port {}",
+        "[remote-access] spawning {} serve ({}) on port {}",
         MCP_SIDECAR_NAME,
+        kind.tool_profile(),
         port
     );
     let origin_url = crate::api::WenlanClient::new().base_url().to_string();
     let (mcp_rx, child_pid) = {
         let remote = remote_access_mutex(app_handle).await;
         let mut ra = remote.lock().await;
-        let validation = validate_mcp_spawn(&ra, generation);
+        let validation = match kind {
+            McpKind::Query => validate_mcp_spawn(&ra, generation),
+            McpKind::Write => validate_write_spawn(&ra, generation),
+        };
         let RemoteAccessState {
-            mcp_child: mcp_slot,
-            port: port_slot,
+            mcp_child,
+            port: query_port,
+            write_child,
+            write_port,
             ..
         } = &mut *ra;
+        let (mcp_slot, port_slot) = match kind {
+            McpKind::Query => (mcp_child, query_port),
+            McpKind::Write => (write_child, write_port),
+        };
         spawn_and_store_child(
             validation,
             mcp_slot,
             port_slot,
             port,
             || {
+                let args = match kind {
+                    McpKind::Query => relay_runtime::mcp_args(&origin_url, port, profile),
+                    McpKind::Write => relay_runtime::write_mcp_args(&origin_url, port, profile),
+                };
                 let (mcp_rx, mcp_child) = app_handle
                     .shell()
                     .sidecar(MCP_SIDECAR_NAME)
                     .map_err(|e| format!("{} sidecar not found: {}", MCP_SIDECAR_NAME, e))?
-                    .args(relay_runtime::mcp_args(&origin_url, port, profile))
+                    .args(args)
                     .env(relay_runtime::TOKEN_ENV, profile.backend_token())
                     .envs(relay_runtime::mcp_scope_env(profile))
                     .env("WENLAN_NO_AUTOSTART", "1")
@@ -1255,7 +1318,10 @@ async fn spawn_mcp(
             if !remote_generation_is_current(app_handle, generation).await {
                 return Err("Remote access start cancelled.".to_string());
             }
-            if relay_runtime::verify_backend(port, profile).await.is_ok() {
+            if relay_runtime::verify_backend_as(kind, port, profile)
+                .await
+                .is_ok()
+            {
                 match listener_pid_for_port(port) {
                     Some(listener_pid) if listener_pid == child_pid => return Ok(()),
                     Some(listener_pid) => {
@@ -1407,7 +1473,7 @@ async fn monitor_reverse(
             _ = wait_for_generation_change(&app, generation) => return,
             _ = sleep(Duration::from_secs(5)) => {}
         }
-        let (profile, id, port, finished) = {
+        let (profile, id, port, write_route, finished) = {
             let remote = remote_access_mutex(&app).await;
             let ra = remote.lock().await;
             if !generation_is_current(ra.generation, generation)
@@ -1423,6 +1489,7 @@ async fn monitor_reverse(
                 active.profile.clone(),
                 active.connection.connection_id().to_owned(),
                 port,
+                ra.write_route.clone(),
                 active.connection.is_finished(),
             )
         };
@@ -1442,7 +1509,7 @@ async fn monitor_reverse(
         if renewal.due(std::time::SystemTime::now(), std::time::Instant::now()) {
             // Opening a verified same-device replacement renews its route lease.
             // This cannot enroll because the active profile has a device.
-            let refreshed = reverse_runtime::connect(profile.clone(), port).await;
+            let refreshed = reverse_runtime::connect(profile.clone(), port, write_route).await;
             match refreshed {
                 Ok(active) => {
                     let previous = {
@@ -1511,6 +1578,11 @@ async fn monitor_reverse(
                 break error;
             }
         }
+        // Start the write server for an app allowed since the last check, or
+        // bring it back if it stopped. A task of its own, so a slow start never
+        // delays noticing that the search server or the relay connection ended;
+        // started after the checks so its settings read does not race theirs.
+        tauri::async_runtime::spawn(reconcile_write_process(app.clone(), generation));
     };
     recover_remote(app, generation, attempts, failure).await;
 }
@@ -1560,12 +1632,24 @@ async fn start_reverse(
     }
     let port = find_available_port()
         .ok_or_else(|| RenewalError::Profile("All remote access ports are in use.".into()))?;
-    let (mcp_rx, _) = spawn_mcp(app, port, generation, &profile)
+    let (mcp_rx, _) = spawn_mcp(app, McpKind::Query, port, generation, &profile)
         .await
         .map_err(RenewalError::Profile)?;
+    // An app allowed to write before this start (an app restart, a reconnect)
+    // still needs its write server. Search does not wait on it: if it cannot
+    // start now, the monitor keeps trying and writes are refused meanwhile.
+    if profile.write_enabled() {
+        if let Err(error) = start_write_process(app, generation, &profile).await {
+            log::warn!("[remote-access] web-write server not started: {error}");
+        }
+    }
+    let write_route = {
+        let ra = remote.lock().await;
+        ra.write_route.clone()
+    };
     // Once enrollment begins, retain its future through durable credential
     // storage. User cancellation still stops the owned local process promptly.
-    let connection = reverse_runtime::connect(profile, port);
+    let connection = reverse_runtime::connect(profile, port, write_route);
     tokio::pin!(connection);
     let active = tokio::select! {
         result = &mut connection => result?,
@@ -1578,6 +1662,124 @@ async fn start_reverse(
         }
     };
     Ok((port, mcp_rx, active))
+}
+
+/// Start the web-write server on its own port and open the route to it.
+/// Only the search-only server and the connection are needed first; the route
+/// opens once this server answers its protected probe as the write profile.
+async fn start_write_process(
+    app: &tauri::AppHandle,
+    generation: u64,
+    profile: &Profile,
+) -> Result<(), String> {
+    let port =
+        find_available_port().ok_or_else(|| "All remote access ports are in use.".to_string())?;
+    match spawn_mcp(app, McpKind::Write, port, generation, profile).await {
+        Ok((mut events, pid)) => {
+            let remote = remote_access_mutex(app).await;
+            let ra = remote.lock().await;
+            let ours = generation_is_current(ra.generation, generation)
+                && ra
+                    .write_child
+                    .as_ref()
+                    .is_some_and(|child| child.pid() == pid);
+            if !ours {
+                // A stop took this process, or a newer start owns the slot.
+                return Err("Remote access changed while the web-write server started.".into());
+            }
+            ra.write_route.set(Some(port));
+            drop(ra);
+            // Something must read its events or the process can stall; the
+            // same task notices it ending and takes the route down.
+            let watcher = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let reason = wait_for_exit(&mut events).await;
+                log::warn!("[remote-access] {MCP_SIDECAR_NAME} web-write exited: {reason}");
+                let remote = remote_access_mutex(&watcher).await;
+                let mut ra = remote.lock().await;
+                if generation_is_current(ra.generation, generation)
+                    && ra
+                        .write_child
+                        .as_ref()
+                        .is_some_and(|child| child.pid() == pid)
+                {
+                    stop_write_process(&mut ra).await;
+                }
+            });
+            Ok(())
+        }
+        Err(error) => {
+            let remote = remote_access_mutex(app).await;
+            let mut ra = remote.lock().await;
+            // Only this start's own process can be in the slot, and only while
+            // its generation is still current.
+            if generation_is_current(ra.generation, generation) {
+                stop_write_process(&mut ra).await;
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Take the route down and stop the write server alone, leaving search and the
+/// relay connection running.
+async fn stop_write_process(ra: &mut RemoteAccessState) {
+    ra.write_route.set(None);
+    ra.write_port = None;
+    let children: Vec<_> = ra.write_child.take().into_iter().collect();
+    request_stops_into_state(ra, children).await;
+    ra.pending_stops =
+        crate::remote_relay::shutdown::confirm_exits(std::mem::take(&mut ra.pending_stops)).await;
+}
+
+/// Make the write server match the saved profile: running once an app was
+/// allowed to write, absent otherwise. Idempotent, and safe to call from the
+/// approval command and from the monitor at the same time.
+pub(crate) async fn reconcile_write_process(app: tauri::AppHandle, generation: u64) {
+    let profile = match relay_runtime::enabled_profile().await {
+        Ok(profile) => profile,
+        Err(_) => return,
+    };
+    let remote = remote_access_mutex(&app).await;
+    {
+        let mut ra = remote.lock().await;
+        if !generation_is_current(ra.generation, generation)
+            || !matches!(ra.status, RemoteAccessStatus::Connected { .. })
+            || ra.write_starting
+        {
+            return;
+        }
+        if !profile.write_enabled() {
+            if ra.write_child.is_some() {
+                stop_write_process(&mut ra).await;
+            }
+            return;
+        }
+        if ra.write_child.is_some() {
+            return;
+        }
+        ra.write_starting = true;
+    }
+    let result = start_write_process(&app, generation, &profile).await;
+    remote.lock().await.write_starting = false;
+    if let Err(error) = result {
+        log::warn!("[remote-access] web-write server not started: {error}");
+    }
+}
+
+/// After an app is allowed to write: start the write server now, so the app can
+/// write without Web access being turned off and on. Does nothing unless
+/// connected; the monitor and the next start pick it up from the saved profile.
+pub(crate) async fn ensure_write_process(app: &tauri::AppHandle) {
+    let remote = remote_access_mutex(app).await;
+    let generation = {
+        let ra = remote.lock().await;
+        if !matches!(ra.status, RemoteAccessStatus::Connected { .. }) {
+            return;
+        }
+        ra.generation
+    };
+    reconcile_write_process(app.clone(), generation).await;
 }
 
 async fn preflight_cleanup(
@@ -1655,7 +1857,13 @@ async fn stop_with_cleanup(
     }
 
     let reverse = ra.reverse.take();
-    let children: Vec<_> = [ra.mcp_child.take()].into_iter().flatten().collect();
+    // Requests for a write grant stop reaching the write server before it is
+    // told to stop, and every grant ends with this generation.
+    ra.write_route.set(None);
+    let children: Vec<_> = [ra.mcp_child.take(), ra.write_child.take()]
+        .into_iter()
+        .flatten()
+        .collect();
     let generation = {
         let RemoteAccessState {
             status, generation, ..
@@ -1676,6 +1884,7 @@ async fn stop_with_cleanup(
         crate::remote_relay::shutdown::confirm_exits(std::mem::take(&mut ra.pending_stops)).await;
     if ra.pending_stops.is_empty() && !ra.orphan_cleanup_failed {
         ra.port = None;
+        ra.write_port = None;
         ra.status = RemoteAccessStatus::Off;
     } else {
         ra.status = RemoteAccessStatus::Error {
@@ -2841,6 +3050,117 @@ mod tests {
             "/tmp/wenlan-mcp-aarch64-apple-darwin serve --port 22000 --agent-name another-agent",
             22000,
         ));
+    }
+
+    #[test]
+    fn orphan_cleanup_also_recognizes_only_the_exact_web_write_process() {
+        let write = "/tmp/wenlan-mcp-aarch64-apple-darwin --origin-url http://127.0.0.1:17777 serve --host 127.0.0.1 --port 22001 --tool-profile web-write --token-env WENLAN_REMOTE_MCP_TOKEN --agent-name web-ai";
+        assert!(is_expected_remote_mcp_command(write, 22001));
+        assert!(!is_expected_remote_mcp_command(write, 22000));
+        // The agent name alone, or the profile alone, is not our process.
+        assert!(!is_expected_remote_mcp_command(
+            "/tmp/wenlan-mcp serve --port 22001 --agent-name web-ai",
+            22001
+        ));
+        assert!(!is_expected_remote_mcp_command(
+            "/tmp/wenlan-mcp serve --port 22001 --tool-profile web-write --agent-name another-agent",
+            22001
+        ));
+        assert!(!is_expected_remote_mcp_command(
+            "/tmp/wenlan-mcp-malicious serve --port 22001 --tool-profile web-write --agent-name web-ai",
+            22001
+        ));
+    }
+
+    #[test]
+    fn a_fresh_state_has_no_write_server_and_an_empty_route() {
+        let state = RemoteAccessState::default();
+        assert!(state.write_child.is_none());
+        assert!(state.write_port.is_none());
+        assert_eq!(state.write_route.get(), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_ends_the_write_server_and_empties_the_route_with_the_search_one() {
+        let app = shell_test_app();
+        let mut state = RemoteAccessState {
+            status: RemoteAccessStatus::Starting,
+            generation: 7,
+            ..Default::default()
+        };
+        let validation = validate_mcp_spawn(&state, 7);
+        let (_query_events, query_pid) = spawn_and_store_child(
+            validation,
+            &mut state.mcp_child,
+            &mut state.port,
+            PORT_RANGE_START,
+            || {
+                let (events, child) = app
+                    .shell()
+                    .command("/bin/sleep")
+                    .arg("5")
+                    .spawn()
+                    .map_err(|_| "owned fixture spawn failed".to_string())?;
+                Ok(((events, child.pid()), child))
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        // The write server needs the search one to exist first, and only once.
+        let validation = validate_write_spawn(&state, 7);
+        assert!(validation.is_ok());
+        let (_write_events, write_pid) = spawn_and_store_child(
+            validation,
+            &mut state.write_child,
+            &mut state.write_port,
+            PORT_RANGE_START + 1,
+            || {
+                let (events, child) = app
+                    .shell()
+                    .command("/bin/sleep")
+                    .arg("5")
+                    .spawn()
+                    .map_err(|_| "owned fixture spawn failed".to_string())?;
+                Ok(((events, child.pid()), child))
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+        state.write_route.set(state.write_port);
+        assert!(validate_write_spawn(&state, 7).is_err());
+        assert!(validate_write_spawn(&state, 6).is_err());
+        let route = state.write_route.clone();
+        let state = tokio::sync::Mutex::new(state);
+
+        let generation = stop_with_cleanup(&state, Some(7), |_| {}, async { Ok(()) }).await;
+
+        assert_eq!(generation, Some(8));
+        assert_eq!(route.get(), None);
+        let stopped = state.lock().await;
+        assert!(stopped.mcp_child.is_none() && stopped.write_child.is_none());
+        assert!(stopped.write_port.is_none() && stopped.pending_stops.is_empty());
+        for pid in [query_pid, write_pid] {
+            assert_eq!(
+                measured_process_identity(pid),
+                crate::remote_relay::orphan::Observation::Gone
+            );
+        }
+    }
+
+    #[test]
+    fn the_write_server_is_refused_without_the_search_one_or_when_inactive() {
+        let mut state = RemoteAccessState {
+            status: RemoteAccessStatus::Connected {
+                tunnel_url: None,
+                relay_url: None,
+            },
+            generation: 3,
+            ..Default::default()
+        };
+        assert!(validate_write_spawn(&state, 3).is_err(), "no search server");
+        state.status = RemoteAccessStatus::Off;
+        assert!(validate_write_spawn(&state, 3).is_err(), "not active");
     }
 
     #[test]

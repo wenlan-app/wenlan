@@ -440,8 +440,30 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "unknown"
             | "code_basis_invalid"
     );
-    safe.then(|| code.to_string())
+    if !safe {
+        return None;
+    }
+    // A refused `code_basis` entry is explained in words built only from the
+    // caller's own entry (its path) and a fixed problem phrase, so the agent
+    // can tell which entry was bad. Every other reason stays a bare code.
+    if code == "code_basis_invalid" {
+        if let Some((_, detail)) = reason.split_once(':') {
+            let detail: String = detail
+                .trim()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(CODE_BASIS_DETAIL_MAX_CHARS)
+                .collect();
+            if !detail.is_empty() {
+                return Some(format!("{code}: {detail}"));
+            }
+        }
+    }
+    Some(code.to_string())
 }
+
+/// Longest `code_basis_invalid` explanation kept for the agent.
+const CODE_BASIS_DETAIL_MAX_CHARS: usize = 300;
 
 #[cfg(test)]
 mod tests {
@@ -488,6 +510,18 @@ mod tests {
         assert_eq!(
             parse_api_error_reason(quality_gate).as_deref(),
             Some("duplicate")
+        );
+        assert_eq!(
+            parse_api_error_reason(
+                br#"{"error":"code_basis_invalid: cannot read src/a.rs: the file is larger than 8 MB (too_large)"}"#
+            )
+            .as_deref(),
+            Some("code_basis_invalid: cannot read src/a.rs: the file is larger than 8 MB (too_large)"),
+            "a refused code_basis entry keeps its own explanation"
+        );
+        assert_eq!(
+            parse_api_error_reason(br#"{"error":"code_basis_invalid"}"#).as_deref(),
+            Some("code_basis_invalid")
         );
         assert_eq!(
             parse_api_error_reason(br#"{"error":"private_project_codename"}"#),

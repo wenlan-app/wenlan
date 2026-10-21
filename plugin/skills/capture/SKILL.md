@@ -25,7 +25,7 @@ and returns the rest as the content. It prints the resolved Space line itself:
 
 ```bash
 raw_args="<the full argument string passed to /capture>"
-resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
+resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 source_layer="$(printf '%s\n' "$resolved" | cut -f2)"
 content="$(printf '%s\n' "$resolved" | cut -f3-)"

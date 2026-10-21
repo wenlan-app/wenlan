@@ -51,9 +51,9 @@ Intro for Claude Code. Run \`/wenlan:sample\` again if it fails.
 
 \`\`\`bash
 raw_args="<args>"
-resolved="$("$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
-PLUGIN_JSON="\${CLAUDE_PLUGIN_ROOT:-plugin}/.claude-plugin/plugin.json"
-"\${CLAUDE_PLUGIN_ROOT:-plugin}/scripts/version-drift.sh" --manifest "$PLUGIN_JSON"
+resolved="$("\${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
+PLUGIN_JSON="\${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"
+"\${CLAUDE_PLUGIN_ROOT}/scripts/version-drift.sh" --manifest "$PLUGIN_JSON"
 \`\`\`
 
 ## Keep

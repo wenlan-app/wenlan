@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5a4a4b887bb26ec4cc193050b02b7ffa6a40dca76287fa57ccd05b9043a07446 -->
+<!-- README_SYNC: source=README.md sha256=8447e871795222fb622ae3cab0a58671cacaa09db06b77db5acd17b9b20393a2 -->
 
 <p align="center">
   <picture>
@@ -170,7 +170,7 @@ Un agente puede leer archivos y escribir texto. Wenlan añade una **base de cono
 
 **Próximamente:** Compatibilidad con repositorios de código en Espacios.
 
-Activa el interruptor **Web access** en Settings para que clientes web de IA compatibles, como Claude, ChatGPT o Muse, puedan buscar en toda la biblioteca o en un Espacio elegido mientras el ordenador con Wenlan esté conectado. Esta función es experimental; las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
+Activa el interruptor **Web access** en Settings para que clientes web de IA compatibles, como Claude, ChatGPT o Muse, puedan buscar en toda la biblioteca o en un Espacio elegido mientras el ordenador con Wenlan esté conectado. Al permitir una app eliges solo búsqueda o búsqueda y escritura; una app con escritura también puede añadir, editar y borrar, y las apps de IA pueden pedirte confirmación antes de cada cambio. Esta función es experimental; las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>

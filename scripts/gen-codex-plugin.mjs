@@ -18,9 +18,9 @@
 //   4. frontmatter         : drop AskUserQuestion and Skill, Bash first,
 //                            user-invocable: true, optional `description`
 //                            override; a reference drops the frontmatter
-//   5. resolver line       : "$CLAUDE_PLUGIN_ROOT/scripts/resolve-space.sh" -> the
+//   5. resolver line       : "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" -> the
 //                            Codex locator block
-//   6. plugin paths        : ${CLAUDE_PLUGIN_ROOT:-plugin}/.claude-plugin/plugin.json and
+//   6. plugin paths        : ${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json and
 //                            /scripts/version-drift.sh -> Codex paths
 //   7. host words          : "caller_id": "claude-code" -> "codex"; Claude Code -> Codex;
 //                            `/wenlan` -> `$wenlan`
@@ -42,7 +42,7 @@ const CODEX_RESOLVER_BLOCK = [
   "resolver=\"$(find \"$HOME/.codex/plugins/cache\" -path '*/wenlan/*/bin/resolve-space.sh' 2>/dev/null | head -1)\"",
 ];
 const CLAUDE_RESOLVER_RE =
-  /^(\s*)resolved="\$\("\$CLAUDE_PLUGIN_ROOT\/scripts\/resolve-space\.sh"(.*)\)"$/;
+  /^(\s*)resolved="\$\("\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/resolve-space\.sh"(.*)\)"$/;
 
 // Any of these in a generated skill means the overlay or a swap rule missed a
 // Claude-only detail. `/wenlan:` is the Claude namespaced slash form (Codex
@@ -230,14 +230,14 @@ function swapResolver(skill, lines, codexRoot) {
   return out;
 }
 
-function swapPluginPaths(text, claudeRoot, codexRoot) {
+function swapPluginPaths(text, codexRoot) {
   return text
     .replaceAll(
-      `\${CLAUDE_PLUGIN_ROOT:-${claudeRoot}}/.claude-plugin/plugin.json`,
+      `\${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`,
       `\${CODEX_PLUGIN_ROOT:-${codexRoot}}/.codex-plugin/plugin.json`,
     )
     .replaceAll(
-      `\${CLAUDE_PLUGIN_ROOT:-${claudeRoot}}/scripts/version-drift.sh`,
+      `\${CLAUDE_PLUGIN_ROOT}/scripts/version-drift.sh`,
       `\${CODEX_PLUGIN_ROOT:-${codexRoot}}/bin/version-drift.sh`,
     );
 }
@@ -300,7 +300,7 @@ function finish(skill, text, contract) {
   const claude = contract.surfaces.claude;
   const codex = contract.surfaces.codex;
   let out = text.replaceAll(claude.skill_mcp_tool_prefix, codex.skill_mcp_tool_prefix);
-  out = swapPluginPaths(out, claude.plugin_root, codex.plugin_root);
+  out = swapPluginPaths(out, codex.plugin_root);
   out = swapHostWords(out);
   guardLeftovers(skill, out, claude.skill_mcp_tool_prefix, codex.skill_mcp_tool_prefix);
   return out;

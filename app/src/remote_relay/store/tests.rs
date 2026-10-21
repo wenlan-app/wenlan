@@ -137,6 +137,95 @@ fn stale_selection_and_cross_device_rotation_are_rejected_without_overwriting_st
 }
 
 #[test]
+fn write_is_off_by_default_and_a_profile_saved_before_it_existed_still_loads() {
+    let (_dir, store) = fixture();
+    let active = enrolled(&store);
+    assert!(!active.write_enabled());
+    // Not written while false, so an older build reads the same file.
+    let json = serde_json::to_value(&active).unwrap();
+    assert!(json.get("write_enabled").is_none());
+    let legacy: Profile = serde_json::from_value(json).unwrap();
+    assert!(!legacy.write_enabled());
+}
+
+#[test]
+fn enable_write_keeps_the_revision_and_needs_the_current_enrolled_profile() {
+    let (_dir, store) = fixture();
+    let active = enrolled(&store);
+    assert_eq!(
+        store.enable_write("stale-revision").unwrap_err(),
+        StoreError::Stale
+    );
+    assert!(!store.load().unwrap().unwrap().write_enabled());
+    let written = store.enable_write(active.revision()).unwrap();
+    assert!(written.write_enabled());
+    assert_eq!(written.revision(), active.revision());
+    let reloaded = store.load().unwrap().unwrap();
+    assert!(reloaded.write_enabled());
+    assert_eq!(reloaded.revision(), active.revision());
+    // Asking again changes nothing.
+    assert!(store
+        .enable_write(active.revision())
+        .unwrap()
+        .write_enabled());
+
+    // A profile that is not on, or has no device yet, cannot be written to.
+    let (_dir, other) = fixture();
+    let configured = other.configure(None, "review").unwrap();
+    assert_eq!(
+        other.enable_write(configured.revision()).unwrap_err(),
+        StoreError::Stale
+    );
+    let enabled = other.enable(configured.revision()).unwrap();
+    assert_eq!(
+        other.enable_write(enabled.revision()).unwrap_err(),
+        StoreError::Stale
+    );
+}
+
+#[test]
+fn write_ends_whenever_the_grants_end() {
+    // Turning off, then the disconnect finishing.
+    let (_dir, store) = fixture();
+    let active = enrolled(&store);
+    store.enable_write(active.revision()).unwrap();
+    let off = store.disable(active.revision()).unwrap();
+    assert!(!off.write_enabled());
+    assert!(!store.load().unwrap().unwrap().write_enabled());
+    let finished = store
+        .finish_disconnect(off.revision(), &device().id)
+        .unwrap();
+    assert!(!finished.write_enabled());
+
+    // Turning it on again starts from search only.
+    let again = store.enable(finished.revision()).unwrap();
+    assert!(!again.write_enabled());
+
+    // Renewing the key (a same device rotation) ends every grant too.
+    let (_dir, store) = fixture();
+    let active = enrolled(&store);
+    store.enable_write(active.revision()).unwrap();
+    let mut rotated = device();
+    rotated.management_token = "n".repeat(64);
+    let renewed = store.attach_device(active.revision(), rotated).unwrap();
+    assert!(!renewed.write_enabled());
+    assert!(!store.load().unwrap().unwrap().write_enabled());
+
+    // Choosing a different Space is a new profile, which starts from search only.
+    let (_dir, store) = fixture();
+    let active = enrolled(&store);
+    store.enable_write(active.revision()).unwrap();
+    let off = store.disable(active.revision()).unwrap();
+    let finished = store
+        .finish_disconnect(off.revision(), &device().id)
+        .unwrap();
+    let other_space = store
+        .configure(Some(finished.revision()), "private")
+        .unwrap();
+    assert!(!other_space.write_enabled());
+}
+
+#[test]
 fn concurrent_creators_have_one_winner_and_never_share_a_partial_file() {
     let (_dir, store) = fixture();
     prepare_directory(&store.directory).unwrap();
@@ -421,4 +510,31 @@ fn windows_dpapi_round_trip_stores_no_plaintext_and_has_no_plaintext_fallback() 
         unprotect(&serde_json::to_vec(&profile).unwrap()).unwrap_err(),
         StoreError::Protection
     );
+}
+
+#[test]
+fn a_brief_lock_is_waited_out_and_a_held_one_reports_busy() {
+    let (_dir, store) = fixture();
+    let original = store.configure(None, "review").unwrap();
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(store.directory.join("connection.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    #[cfg(unix)]
+    let inherited = lock.try_clone().unwrap();
+    assert_eq!(store.load().unwrap_err(), StoreError::Busy);
+
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        lock.unlock().unwrap();
+    });
+    assert_eq!(
+        store.load().unwrap().unwrap().revision(),
+        original.revision()
+    );
+    release.join().unwrap();
+    #[cfg(unix)]
+    drop(inherited);
 }
