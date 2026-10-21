@@ -146,6 +146,28 @@ describe("[[ link completion", () => {
     expect(editor.menu()).toBeNull();
   });
 
+  it("lists notes from other Spaces after the page's own, tagged with their Space, and links them as Space/Title", async () => {
+    const work = [
+      ...notes,
+      { id: "w-plan", title: "Travel plan", canUseAsSource: true, space: "Home", linkText: "Home/Travel plan" },
+      { id: "w-road", title: "Roadmap", canUseAsSource: true, space: "Home", linkText: "Home/Roadmap" },
+    ];
+    // Same title in two Spaces: two different links, both offered, own Space first.
+    expect(linkCompletionMatches(work, "road").map((note) => note.id)).toEqual(["p-roadmap", "w-road"]);
+    // A note in another Space matches on its Space name too.
+    expect(linkCompletionMatches(work, "home/").map((note) => note.id)).toEqual(["w-plan", "w-road"]);
+    expect(linkCompletionMatches(work, "plan").map((note) => note.id)).toEqual(["w-plan"]);
+    const editor = make("See ", 4, work);
+    editor.type("[[travel");
+    const row = editor.menuElement()?.querySelector(".cm-link-option");
+    expect(row?.querySelector(".cm-link-option-title")?.textContent).toBe("Travel plan");
+    expect(row?.querySelector(".cm-link-option-space")?.textContent).toBe("Home");
+    expect(row?.getAttribute("aria-label")).toBe("Home/Travel plan");
+    pressKey(editor.view.contentDOM, "Enter");
+    expect(editor.view.state.doc.toString()).toBe("See [[Home/Travel plan]]");
+    expect(editor.onPick).toHaveBeenCalledWith(work[4], false);
+  });
+
   it("uses a note as a source from its row action or Shift+Enter, and only when offered", async () => {
     const button = make();
     button.type("[[road");

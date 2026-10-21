@@ -108,10 +108,6 @@ export class PageBasisStore {
     if (!row) return { outcome: "unavailable", reason: "not_a_basis", message: "this note does not rely on that note" };
     if (!basis) return { outcome: "unavailable", reason: "deleted", message: "the basis note was deleted" };
     if (basis.status !== "active") return { outcome: "unavailable", reason: "archived", message: "the basis note is archived" };
-    const citer = pages.find((page) => page.id === pageId);
-    if (citer && (citer.space ?? null) !== (basis.space ?? null)) {
-      return { outcome: "unavailable", reason: "other_space", message: "the two notes are in different Spaces" };
-    }
     return {
       outcome: "available",
       diff: {
@@ -168,12 +164,12 @@ export class PageBasisStore {
     }
     let state: BasisState = "ok";
     if (basis.status !== "active") state = "archived";
-    else if (citer && (citer.space ?? null) !== (basis.space ?? null)) state = "unavailable";
     else if (basis.version > row.fromVersion) state = "pending";
     const edits = this.editsSince(row);
     return {
       page_id: row.basisPageId,
-      title: state === "unavailable" ? "" : basis.title,
+      // Like the daemon, the title follows a basis only while both notes share a Space.
+      title: !citer || (citer.space ?? null) === (basis.space ?? null) ? basis.title : row.basisTitle,
       state,
       from_version: row.fromVersion,
       to_version: basis.version,
