@@ -1820,6 +1820,8 @@ export interface BasisDiffEdit {
   at: number;
   minor: boolean;
   delta_summary: string;
+  /** The agent behind an `agent_refresh` edit; absent for other writers. */
+  agent?: string | null;
 }
 
 export interface BasisDiff {

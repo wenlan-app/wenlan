@@ -372,6 +372,7 @@ pub async fn handle_basis_diff(
                     at: edit.at,
                     minor: edit.minor,
                     delta_summary: edit.delta_summary,
+                    agent: edit.agent,
                 })
                 .collect(),
         })),

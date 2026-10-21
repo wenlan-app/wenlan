@@ -1516,7 +1516,7 @@ async fn the_minor_flag_lands_on_the_history_row_of_the_write() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn the_diff_lists_each_edit_since_the_confirmed_version_with_its_summary() {
+async fn the_diff_lists_each_edit_since_the_confirmed_version_with_its_summary_and_agent() {
     let (db, _dir) = pair().await;
     edit(&db, "a", "The launch is on 2026-04-01.", false).await;
     edit(&db, "a", "The launch is on 2026-04-01 .", true).await;
@@ -1526,7 +1526,7 @@ async fn the_diff_lists_each_edit_since_the_confirmed_version_with_its_summary()
         conn.execute(
             "UPDATE pages SET changelog = ?1 WHERE id = 'a'",
             libsql::params![
-                r#"[{"version":2,"delta_summary":"Moved the launch to April."},{"version":9,"delta_summary":"unrelated"}]"#
+                r#"[{"version":2,"delta_summary":"Moved the launch to April.","agent":"claude-code"},{"version":9,"delta_summary":"unrelated"}]"#
             ],
         )
         .await
@@ -1545,6 +1545,8 @@ async fn the_diff_lists_each_edit_since_the_confirmed_version_with_its_summary()
     assert_eq!(diff.edits[1].version, 3);
     assert_eq!(diff.edits[1].delta_summary, "", "no summary recorded");
     assert!(diff.edits[1].minor);
+    assert_eq!(diff.edits[0].agent.as_deref(), Some("claude-code"));
+    assert_eq!(diff.edits[1].agent, None, "no agent recorded");
 }
 
 // ---------------------------------------------------------------------------

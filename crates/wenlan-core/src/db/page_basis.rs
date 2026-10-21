@@ -204,6 +204,9 @@ pub struct BasisEdit {
     /// The edit's one-line summary from the basis' changelog; empty when that
     /// version recorded none (a plain human save, or a trimmed changelog).
     pub delta_summary: String,
+    /// The agent behind an `agent_refresh` edit, from the basis' changelog;
+    /// None for other writers, an unattributed refresh, or a trimmed entry.
+    pub agent: Option<String>,
 }
 
 /// The text the citer relied on next to the basis' text now.
@@ -1413,6 +1416,7 @@ impl MemoryDB {
         let from_content: String = from_row.get(0)?;
         drop(rows);
         let mut summaries: HashMap<i64, String> = HashMap::new();
+        let mut agents: HashMap<i64, String> = HashMap::new();
         let mut changelog_rows = conn
             .query(
                 "SELECT changelog FROM pages WHERE id = ?1",
@@ -1425,11 +1429,14 @@ impl MemoryDB {
                 .and_then(|j| serde_json::from_str(&j).ok())
                 .unwrap_or_default();
             for entry in entries {
-                if let (Some(version), Some(summary)) = (
-                    entry.get("version").and_then(|v| v.as_i64()),
-                    entry.get("delta_summary").and_then(|v| v.as_str()),
-                ) {
+                let Some(version) = entry.get("version").and_then(|v| v.as_i64()) else {
+                    continue;
+                };
+                if let Some(summary) = entry.get("delta_summary").and_then(|v| v.as_str()) {
                     summaries.insert(version, summary.to_string());
+                }
+                if let Some(agent) = entry.get("agent").and_then(|v| v.as_str()) {
+                    agents.insert(version, agent.to_string());
                 }
             }
         }
@@ -1450,6 +1457,7 @@ impl MemoryDB {
                 at: edit.get(2)?,
                 minor: edit.get::<i64>(3)? != 0,
                 delta_summary: summaries.get(&version).cloned().unwrap_or_default(),
+                agent: agents.get(&version).cloned(),
             });
         }
         Ok(BasisDiffOutcome::Available(BasisDiff {
