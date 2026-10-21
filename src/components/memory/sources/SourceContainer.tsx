@@ -11,6 +11,8 @@ import {
   openFile,
   readSourceDir,
   readSourceText,
+  setSourceFollowChanges,
+  sourceFollowsChanges,
   syncRegisteredSource,
   type IndexedFileInfo,
   type RegisteredSource,
@@ -20,6 +22,7 @@ import type { AssetLens } from "../../../lib/assetLens";
 import { DetailInfoContent } from "../DetailLayout";
 import { CollectionFrame } from "../CollectionLayout";
 import { InfoToggle } from "../page/InfoToggle";
+import { Toggle } from "../settings/primitives";
 import PageInfoDrawer from "../page/PageInfoDrawer";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import { SourceDocumentLayout } from "./SourceDocumentReader";
@@ -70,6 +73,13 @@ function formattedDate(ts: number | null, language: string, missing: string) {
 
 function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { source: RegisteredSource; refreshing: boolean; onRefresh: () => void; heading?: string }) {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
+  const following = sourceFollowsChanges(source);
+  const followMutation = useMutation({
+    mutationFn: (followChanges: boolean) => setSourceFollowChanges(source.id, followChanges),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["registeredSources"] }),
+    onError: (error) => toast(t("sourceContainer.followFailed"), { description: String(error) }),
+  });
   return <>
     <section>
       <h3 className="note-info-section-heading">{heading ?? t("sourceAccess.details")}</h3>
@@ -83,7 +93,13 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
         {(source.last_sync_errors ?? 0) > 0 && <div><dt>{t("sourceContainer.syncErrors")}</dt><dd>{source.last_sync_errors!.toLocaleString()}</dd></div>}
       </dl>
     </section>
-    <p>{t("sourceContainer.folderChecks")}</p>
+    <div className="source-follow-row">
+      <span>{t("sourceContainer.followChanges")}</span>
+      <Toggle enabled={following} onToggle={() => followMutation.mutate(!following)}
+        valueUnknown={followMutation.isPending} unknownState="saving"
+        aria-label={t("sourceContainer.followChanges")} />
+    </div>
+    <p>{t(following ? "sourceContainer.folderChecks" : "sourceContainer.importedOnce")}</p>
     <p>{t("sourceContainer.oneWay")}</p>
     <button className="collection-control source-container-refresh" type="button" disabled={refreshing} onClick={onRefresh}>
       <ArrowClockwise size={16} aria-hidden="true" />{refreshing ? t("sourceContainer.refreshing") : t("sourceContainer.refresh")}

@@ -449,6 +449,7 @@ impl WenlanClient {
             confidence: None,
             supersedes: None,
             entity: None,
+            entity_type: None,
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,

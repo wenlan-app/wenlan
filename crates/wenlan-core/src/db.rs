@@ -94,7 +94,7 @@ mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
 pub(crate) use code_basis::{row_from as code_basis_row_from, ROW_SELECT as CODE_BASIS_ROW_SELECT};
-pub use code_basis::{CodeBasisRow, CodeBasisVerdict};
+pub use code_basis::{CodeBasisRecheckState, CodeBasisRow, CodeBasisVerdict};
 pub(crate) use community_grouping_state::CommunityGroupingLeaseCleanup;
 pub(crate) use eval_temporal_seed::EvalTemporalSeed;
 pub(crate) use kg_quality_diagnostics::ContradictionObservationCount;
@@ -128,6 +128,8 @@ mod claim_derivation_test;
 mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
+#[cfg(test)]
+mod code_basis_recheck_test;
 #[cfg(test)]
 pub(crate) mod code_basis_test;
 #[cfg(test)]
@@ -1499,6 +1501,9 @@ pub const EMBEDDING_DIM: usize = 768;
 /// Migration 141 adds `session_reads`, what a session looked up in Wenlan.
 /// Migration 142 adds `page_code_basis.cited_blob` (the git blob id of the
 /// cited file as last written or confirmed).
+/// Migration 143 adds `page_code_basis.recheck_note`, `recheck_verdict`,
+/// `recheck_digest` and `recheck_attempts` (what the background model recheck
+/// concluded about a changed row).
 ///
 /// This constant is also the **downgrade barrier**. `run_migrations` refuses
 /// to open a database whose `user_version` exceeds it, so a build that
@@ -1506,7 +1511,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 142;
+pub const SCHEMA_VERSION: u32 = 143;
 
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
@@ -4170,6 +4175,16 @@ pub struct EnrichmentOrigin {
     pub memory_type_explicit: bool,
     pub structured_fields_explicit: bool,
     pub space_rejected: bool,
+}
+
+/// One entity a name could refer to; see [`MemoryDB::entity_name_candidates`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityNameCandidate {
+    pub entity_id: String,
+    pub name: String,
+    pub entity_type: String,
+    /// False for an archived entity found through one of its aliases.
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10510,6 +10525,14 @@ impl MemoryDB {
             }
             if version < 142 {
                 self.migrate_142_code_basis_cited_blob(version).await?;
+            }
+            // Migration 143 adds what the background model recheck concluded
+            // about a changed code basis. See migrate_143_code_basis_recheck.
+            if ceiling < 143 {
+                return Ok(());
+            }
+            if version < 143 {
+                self.migrate_143_code_basis_recheck(version).await?;
             }
         }
 
@@ -18041,6 +18064,57 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("m142 bump: {e}")))?;
         log::info!("[migration] Migration 142 applied: page_code_basis.cited_blob");
+        Ok(())
+    }
+
+    /// Migration 143: a code basis remembers what the background model recheck
+    /// concluded about its changed lines.
+    ///
+    /// Adds `recheck_note` (the sentence the model left), `recheck_verdict`
+    /// (`stale` or `needs_human`), `recheck_digest` (the digest of the changed
+    /// lines the model was asked about) and `recheck_attempts` (attempts at
+    /// that digest without a verdict). Each
+    /// ALTER is guarded by a column-exists check, so a table created by the
+    /// current DDL and a replay after a crash between an ALTER and the version
+    /// bump are both no-ops.
+    async fn migrate_143_code_basis_recheck(&self, prior_version: i64) -> Result<(), WenlanError> {
+        self.backup_before_migration(143, prior_version).await?;
+        let conn = self.conn.lock().await;
+        for (column, ddl) in [
+            ("recheck_note", "recheck_note TEXT"),
+            ("recheck_verdict", "recheck_verdict TEXT"),
+            ("recheck_digest", "recheck_digest TEXT"),
+            (
+                "recheck_attempts",
+                "recheck_attempts INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            let has_col: bool = {
+                let mut rows = conn
+                    .query(
+                        "SELECT COUNT(*) FROM pragma_table_info('page_code_basis') \
+                         WHERE name = ?1",
+                        libsql::params![column],
+                    )
+                    .await
+                    .map_err(|e| WenlanError::VectorDb(format!("m143 col check: {e}")))?;
+                match rows.next().await {
+                    Ok(Some(row)) => row.get::<i64>(0).unwrap_or(0) > 0,
+                    _ => false,
+                }
+            };
+            if !has_col {
+                conn.execute(&format!("ALTER TABLE page_code_basis ADD COLUMN {ddl}"), ())
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("m143 add page_code_basis.{column}: {e}"))
+                    })?;
+            }
+        }
+        conn.execute("PRAGMA user_version = 143", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("m143 bump: {e}")))?;
+        log::info!("[migration] Migration 143 applied: page_code_basis recheck columns");
         Ok(())
     }
 
@@ -39550,6 +39624,58 @@ impl MemoryDB {
             .is_some())
     }
 
+    /// Every entity a person could mean by `name`: live entities whose title
+    /// matches it case-insensitively, plus the owner of an alias equal to it.
+    /// The alias owner is included even when archived, the same rule
+    /// [`Self::resolve_entity_by_alias`] follows, so a mention of an archived
+    /// entity resolves to it instead of creating a duplicate beside it.
+    ///
+    /// Unlike [`Self::resolve_entity_by_name`] this never guesses: no
+    /// substring or vector step, and every exact match is returned so the
+    /// caller can tell one match from several. A capture names its entity on
+    /// purpose, so a near match is not a reason to link it.
+    pub async fn entity_name_candidates(
+        &self,
+        name: &str,
+    ) -> Result<Vec<EntityNameCandidate>, WenlanError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT epm.entity_id, p.title, COALESCE(p.entity_type, ''), p.status
+                 FROM entity_page_map epm
+                 JOIN pages p ON p.id = epm.page_id
+                 WHERE p.kind = 'entity'
+                   AND ((p.status = 'active' AND LOWER(p.title) = LOWER(?1))
+                        OR EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?2))
+                 ORDER BY p.created_at, epm.entity_id",
+                libsql::params![name.to_string(), name.to_lowercase()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_name_candidates: {e}")))?;
+        let mut candidates: Vec<EntityNameCandidate> = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_name_candidates row: {e}")))?
+        {
+            let entity_id: String = row.get(0).unwrap_or_default();
+            if candidates.iter().any(|c| c.entity_id == entity_id) {
+                continue;
+            }
+            candidates.push(EntityNameCandidate {
+                entity_id,
+                name: row.get(1).unwrap_or_default(),
+                entity_type: row.get(2).unwrap_or_default(),
+                active: row.get::<String>(3).unwrap_or_default() == "active",
+            });
+        }
+        Ok(candidates)
+    }
+
     /// Resolve entity by name: exact match → LIKE substring → vector search → None.
     /// G6 Stage 1.5a: steps A/B migrated onto the `kind='entity'` shadow
     /// page's `title` (mirrors `entities.name`), joined via `entity_page_map`.
@@ -55282,6 +55408,46 @@ impl MemoryDB {
         Ok(owners)
     }
 
+    /// Every Space name keyed by its fold (the way a page title folds), so the
+    /// `Space` in `[[Space/Title]]` matches a name the way `Title` matches a
+    /// note. The value is the name `pages.space` stores. `None` when two names
+    /// fold together: that prefix names no one Space.
+    pub(crate) async fn folded_space_names(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::folded_space_names_on_conn(&conn).await
+    }
+
+    /// [`Self::folded_space_names`] on an already-held connection guard.
+    async fn folded_space_names_on_conn(
+        conn: &libsql::Connection,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let mut rows = conn
+            .query(
+                "SELECT name FROM spaces WHERE id != ?1",
+                libsql::params![UNFILED_SPACE_ID],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_names: {e}")))?;
+        let mut names: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_names row: {e}")))?
+        {
+            let name: String = row
+                .get::<String>(0)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            names
+                .entry(Self::page_title_key(&name))
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(name));
+        }
+        Ok(names)
+    }
+
     pub async fn find_unique_active_page_id_by_title_scoped(
         &self,
         label: &str,
@@ -55694,10 +55860,10 @@ impl MemoryDB {
             // One folded-title scan per distinct source scope, built inside
             // this same transaction — the maps read the exact snapshot the
             // deletes and edge mints below write into.
-            let mut owner_maps: std::collections::HashMap<
-                Option<String>,
-                std::collections::HashMap<String, Option<String>>,
-            > = std::collections::HashMap::new();
+            let mut owner_maps = crate::synthesis::wikilinks::OwnersBySpace::new();
+            // Read once, and only when some orphan could name another Space.
+            let mut space_names: Option<crate::synthesis::wikilinks::TitleOwners> = None;
+            let no_space_names = crate::synthesis::wikilinks::TitleOwners::new();
             for (source_page_id, label_key, label, scope) in orphan_rows {
                 let trimmed = label_key.trim();
                 if trimmed.is_empty() {
@@ -55708,11 +55874,27 @@ impl MemoryDB {
                         Self::folded_title_owners_scoped_on_conn(&conn, scope.as_deref()).await?;
                     owner_maps.insert(scope.clone(), owners);
                 }
-                let Some(target) = owner_maps
-                    .get(&scope)
-                    .and_then(|owners| owners.get(&Self::page_title_key(trimmed)).cloned())
-                    .flatten()
-                else {
+                if trimmed.contains('/') && space_names.is_none() {
+                    space_names = Some(Self::folded_space_names_on_conn(&conn).await?);
+                }
+                let space_names_ref = space_names.as_ref().unwrap_or(&no_space_names);
+                for (space, _) in
+                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_names_ref)
+                {
+                    if let std::collections::hash_map::Entry::Vacant(slot) =
+                        owner_maps.entry(Some(space.clone()))
+                    {
+                        slot.insert(
+                            Self::folded_title_owners_scoped_on_conn(&conn, Some(&space)).await?,
+                        );
+                    }
+                }
+                let Some(target) = crate::synthesis::wikilinks::resolve_label(
+                    trimmed,
+                    scope.as_deref(),
+                    &owner_maps,
+                    space_names_ref,
+                ) else {
                     continue;
                 };
                 // Savepoint per orphan: a row whose repair fails (for example a

@@ -44,3 +44,9 @@
 
 .source-chat-export-steps { margin:8px 0 14px; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; font-size:13px; line-height:1.5; color:var(--mem-text-secondary); }
 .source-chat-export-steps strong { color:var(--mem-text); font-weight:500; margin-right:6px; }
+.source-dialog .source-follow-path { overflow-wrap:anywhere; margin:0 0 4px; }
+.source-dialog .source-follow-choice { border:0; margin:14px 0 0; padding:0; }
+.source-dialog .source-follow-choice legend { font-size:13px; margin-bottom:4px; padding:0; }
+.source-dialog .source-follow-choice label { flex-direction:row; align-items:flex-start; gap:8px; margin:8px 0; color:var(--mem-text-secondary); line-height:1.5; }
+.source-dialog .source-follow-choice input { width:auto; margin:3px 0 0; padding:0; }
+.source-dialog .source-follow-choice strong { color:var(--mem-text); font-weight:500; }

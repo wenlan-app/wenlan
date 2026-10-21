@@ -738,6 +738,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/sources` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/sources` | main | no | not_applicable | `none` | — | no prose fields |
 | `DELETE` | `/api/sources/{id}` | main | no | not_applicable | `none` | — | no prose fields |
+| `PATCH` | `/api/sources/{id}` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/sources/{id}/sync` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/spaces` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `POST` | `/api/spaces` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
@@ -970,6 +971,7 @@ carrying the authority of agreement.
 | `core/db.rs::append_page_history_with_minor` | `private` | no | no | — | — |
 | `core/db.rs::backfill_page_embeddings` | `pub` | no | no | — | — |
 | `core/db.rs::commit_entity_enrichment_at_version` | `private` | no | no | — | — |
+| `core/db.rs::entity_name_candidates` | `pub` | no | **yes** | `server/memory_routes.rs::plan_capture_entity` | — |
 | `core/db.rs::entity_shadow_page_owner_on_conn` | `private` | no | no | — | — |
 | `core/db.rs::find_active_machine_overview_id` | `pub(crate)` | no | no | — | — |
 | `core/db.rs::find_active_page_id_by_title` | `pub` | no | no | — | — |
@@ -1010,7 +1012,7 @@ carrying the authority of agreement.
 | `core/db.rs::query_distillation_staging_pool` | `private` | no | no | — | — |
 | `core/db.rs::read_entity_page` | `private` | no | no | — | — |
 | `core/db.rs::rebind_source_page_in_transaction` | `private` | no | no | — | — |
-| `core/db.rs::resolve_entity_by_name` | `pub` | no | **yes** | `server/memory_routes.rs::handle_store_memory_inner` | — |
+| `core/db.rs::resolve_entity_by_name` | `pub` | no | no | — | — |
 | `core/db.rs::run_migrations_up_to` | `pub(crate)` | no | no | — | — |
 | `core/db.rs::search_entities_by_name` | `pub` | no | no | — | — |
 | `core/db.rs::search_entities_by_vector` | `pub` | no | no | — | — |
@@ -1177,7 +1179,7 @@ carrying the authority of agreement.
 | `server/entity_graph_routes.rs::handle_search_entities` | `pub` | no | no | — | `core/db/scoped_entities.rs::search_entities_by_vector_scoped` |
 | `server/main/startup.rs::prepare_startup_state` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/page_summary_backfill.rs::backfill_page_summaries` |
 | `server/memory_revision_routes.rs::handle_list_pending_revisions` | `pub` | no | no | — | `core/db.rs::list_pending_revisions_scoped` |
-| `server/memory_routes.rs::handle_store_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_store_memory` | `core/db.rs::resolve_entity_by_name` |
+| `server/memory_routes.rs::plan_capture_entity` | `private` | no | no | `server/memory_routes.rs::handle_store_memory_inner` | `core/db.rs::entity_name_candidates` |
 | `server/page_map_routes.rs::compute_ref_state` | `private` | no | no | `server/page_map_routes.rs::wire_node` | `core/db.rs::get_entity_name_type` |
 | `server/page_routes.rs::handle_get_page` | `pub` | no | **yes** | `server/repair_read_routes.rs::handle_get_repair_page` | `core/db/page_basis.rs::linked_changed` |
 | `server/page_routes.rs::handle_get_page_links` | `pub` | no | no | — | `core/db/scoped_pages.rs::get_page_outbound_links_scoped` |
@@ -1193,6 +1195,7 @@ carrying the authority of agreement.
 | Reader | Visibility | Ambiguous | Exposure | External callers | Reaches prose via |
 |---|---|---|---|---|---|
 | `core/citations.rs::run_citation_backfill_with_page_limit` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/code_basis_recheck.rs::prepare_recheck_input` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/db.rs::archive_entity_in_transaction` | `private` | no | no | — | `core/db.rs::append_page_history` |
 | `core/db.rs::archive_legacy_overview_placeholder` | `pub(crate)` | no | no | — | `core/db.rs::append_page_history` |
 | `core/db.rs::archive_page` | `pub` | no | **yes** | `server/page_routes.rs::handle_archive_page` | `core/db.rs::append_page_history`, `core/db.rs::reject_entity_shadow_page_on_conn` |
@@ -1334,7 +1337,7 @@ carrying the authority of agreement.
 | `server/main.rs::run_daemon` | `private` | no | no | `server/main.rs::main` | `server/main/startup.rs::prepare_startup_state` |
 | `server/main/runtime.rs::register_optional_runtime_workers` | `pub(super)` | no | no | `server/main.rs::run_daemon` | `core/db/claim_derivation.rs::reconcile_supported_pages` |
 | `server/memory_routes.rs::handle_search_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_search_memory` | `core/db.rs::search_memory` |
-| `server/memory_routes.rs::handle_store_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_store_memory_inner` |
+| `server/memory_routes.rs::handle_store_memory_inner` | `private` | no | no | `server/memory_routes.rs::handle_store_memory` | `server/memory_routes.rs::plan_capture_entity` |
 | `server/page_basis_routes.rs::handle_basis_diff` | `pub` | no | no | — | `core/db/page_basis.rs::basis_diff_in_scope` |
 | `server/page_basis_routes.rs::handle_basis_pending` | `pub` | no | no | — | `core/db/page_basis.rs::list_basis_pending_in_scope` |
 | `server/page_map_routes.rs::ensure_page_is_active` | `private` | no | no | `server/page_map_routes.rs::handle_create_map_edge`, `server/page_map_routes.rs::handle_create_map_node`, `server/page_map_routes.rs::handle_delete_map_edge`, `server/page_map_routes.rs::handle_delete_map_node`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_patch_map_edge`, `server/page_map_routes.rs::handle_patch_map_node`, `server/page_map_routes.rs::handle_put_page_map_layout`, `server/page_map_routes.rs::handle_reset_page_map` | `core/db.rs::get_page` |
@@ -1360,6 +1363,7 @@ carrying the authority of agreement.
 |---|---|---|---|---|---|
 | `core/citations.rs::run_citation_backfill_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/citations.rs::run_citation_backfill_with_page_limit` |
 | `core/citations.rs::run_citation_backfill_tick` | `pub` | no | no | — | `core/citations.rs::run_citation_backfill_with_page_limit` |
+| `core/code_basis_recheck.rs::run_code_basis_recheck_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/code_basis_recheck.rs::prepare_recheck_input` |
 | `core/db.rs::archive_entity` | `pub` | no | **yes** | `server/cmd_prune_junk_entities.rs::run` | `core/db.rs::archive_entity_in_transaction` |
 | `core/db.rs::archive_idle_detected_entities` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/db.rs::archive_entity_in_transaction` |
 | `core/db.rs::bulk_entity_lifecycle` | `private` | no | no | — | `core/db.rs::archive_entity_in_transaction`, `core/db.rs::restore_entity_in_transaction` |
@@ -1441,6 +1445,7 @@ carrying the authority of agreement.
 | `server/lint_routes.rs::prepare_current_repair` | `pub(crate)` | no | no | `server/repair_routes.rs::handle_prepare_current` | `core/repair/current.rs::prepare_current_repair_with_pages` |
 | `server/main.rs::main` | `private` | yes | no | — | `server/main.rs::run_daemon` |
 | `server/memory_routes.rs::handle_search_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_search_memory_inner` |
+| `server/memory_routes.rs::handle_store_memory` | `pub` | no | no | — | `server/memory_routes.rs::handle_store_memory_inner` |
 | `server/page_basis_routes.rs::handle_confirm_basis` | `pub` | no | no | — | `core/db/page_basis.rs::confirm_page_basis` |
 | `server/page_basis_routes.rs::handle_mark_basis` | `pub` | no | no | — | `core/db/page_basis.rs::mark_page_basis` |
 | `server/page_map_routes.rs::build_map_response` | `private` | no | no | `server/page_map_routes.rs::handle_get_page_map`, `server/page_map_routes.rs::handle_improve_page_map`, `server/page_map_routes.rs::handle_put_page_map_layout` | `server/page_map_routes.rs::wire_node` |

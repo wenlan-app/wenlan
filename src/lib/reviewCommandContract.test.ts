@@ -143,6 +143,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "set_model_choice",
   "set_run_at_login",
   "set_telemetry_enabled",
+  "set_source_follow_changes",
   "set_source_pin",
   "start_daemon_sidecar",
   "store_memory",

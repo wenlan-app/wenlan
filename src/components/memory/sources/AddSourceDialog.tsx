@@ -19,16 +19,18 @@ export default function AddSourceDialog({ onClose, onSuccess }: Props) {
   const [detection, setDetection] = useState<VaultDetection | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [followChanges, setFollowChanges] = useState(true);
 
   const addMutation = useMutation({
-    mutationFn: ({ sourceType, sourcePath }: { sourceType: "obsidian" | "directory"; sourcePath: string }) =>
-      addSource(sourceType, sourcePath),
-    onSuccess: (newSource, { sourceType }) => {
+    mutationFn: ({ sourceType, sourcePath, follow }: { sourceType: "obsidian" | "directory"; sourcePath: string; follow: boolean }) =>
+      addSource(sourceType, sourcePath, follow),
+    onSuccess: (newSource, { sourceType, follow }) => {
       queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
       // The daemon's 30s scheduler follows later vault changes, but it leaves a
       // vault's first import to us so it starts at once even while the
-      // ordinary poll waits for the machine to be idle.
-      if (sourceType === "obsidian") {
+      // ordinary poll waits for the machine to be idle. An import-once source
+      // is never polled, so its only automatic read is this one.
+      if (sourceType === "obsidian" || !follow) {
         syncRegisteredSource(newSource.id).then(() => {
           queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
         }).catch(() => toast(t("sourceAccess.addFailed")));
@@ -64,8 +66,9 @@ export default function AddSourceDialog({ onClose, onSuccess }: Props) {
     addMutation.mutate({
       sourceType: detection?.sourceType ?? "directory",
       sourcePath: path,
+      follow: followChanges,
     });
-  }, [addMutation, detection, path]);
+  }, [addMutation, detection, path, followChanges]);
 
   const canSubmit = path.length > 0 && !detecting && !addMutation.isPending;
 
@@ -75,6 +78,11 @@ export default function AddSourceDialog({ onClose, onSuccess }: Props) {
     <button type="button" onClick={handleBrowse} className="page-editor-action">{t("sourceAccess.browse")}</button>
     {detecting && <p role="status">{t("sourceAccess.scanning")}</p>}
     {detection && !detecting && <p>{detection.isVault ? t("sourceAccess.vaultDetected") : detection.docCount > 0 ? detection.countCapped ? t("vaultConnect.filesFoundCapped") : t("vaultConnect.filesFound", {count:detection.docCount}) : t("vaultConnect.noneFound")}</p>}
+    <fieldset className="source-follow-choice">
+      <legend>{t("sourceAccess.followTitle")}</legend>
+      <label><input type="radio" name="source-follow" checked={followChanges} onChange={() => setFollowChanges(true)} /><span><strong>{t("sourceAccess.followSync")}</strong> {t("sourceAccess.followSyncHint")}</span></label>
+      <label><input type="radio" name="source-follow" checked={!followChanges} onChange={() => setFollowChanges(false)} /><span><strong>{t("sourceAccess.followOnce")}</strong> {t("sourceAccess.followOnceHint")}</span></label>
+    </fieldset>
     {error && <p role="alert" className="source-dialog-error">{error}</p>}
     <div className="source-dialog-actions">
       <button type="button" className="page-editor-action" onClick={onClose}>{t("sourceAccess.cancel")}</button>

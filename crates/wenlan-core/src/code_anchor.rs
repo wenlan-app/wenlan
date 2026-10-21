@@ -158,6 +158,12 @@ pub fn anchor(text: &str, span: LineSpan) -> Result<CodeAnchor, AnchorError> {
     })
 }
 
+/// The canonical lines of `text` (see "Canonical line form" above), in order.
+/// Line `n` (1-based) is element `n - 1`.
+pub fn canonical_lines(text: &str) -> Vec<String> {
+    CanonicalFile::new(text).lines
+}
+
 /// Find where the lines described by `anchor` are in `text`.
 ///
 /// `hint` is the span recorded last time. A hint that does not fit the text is

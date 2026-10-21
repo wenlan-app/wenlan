@@ -22,7 +22,7 @@ use wenlan_types::responses::{
     StoreMemoryResponse,
 };
 use wenlan_types::sources::{stability_tier, MemoryType, RawDocument, StabilityTier};
-use wenlan_types::{WriteOutcome, WriteSpaceSource};
+use wenlan_types::{WriteOutcome, WriteSpaceSource, WriteSpaceTarget};
 
 // ===== Route Handlers =====
 
@@ -200,6 +200,126 @@ async fn record_near_duplicate_flag(
     ))
 }
 
+/// What a capture's `entity` / `entity_id` asks for, decided before the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CaptureEntity {
+    None,
+    /// Link to this entity: a caller-supplied id, or the one entity the name
+    /// means.
+    Existing(String),
+    /// No entity has this name yet; create it once the memory is stored.
+    Create {
+        name: String,
+        entity_type: String,
+    },
+    /// No entity has this name and the caller gave no type to create it with.
+    Unknown(String),
+}
+
+/// Decide which entity a captured name refers to. Exact name or alias only:
+/// one live match links, several live matches refuse the store so the caller
+/// can pass the `entity_id` it means, and an archived entity owning the name
+/// as an alias is reused rather than duplicated.
+async fn plan_capture_entity(
+    db: &wenlan_core::db::MemoryDB,
+    name: &str,
+    entity_type: Option<&str>,
+) -> Result<CaptureEntity, ServerError> {
+    let candidates = match db.entity_name_candidates(name).await {
+        Ok(candidates) => candidates,
+        Err(e) => {
+            tracing::warn!("[memory] entity lookup for '{name}' failed: {e}");
+            return Ok(CaptureEntity::Unknown(name.to_string()));
+        }
+    };
+    let active: Vec<_> = candidates.iter().filter(|c| c.active).collect();
+    match active.as_slice() {
+        [only] => return Ok(CaptureEntity::Existing(only.entity_id.clone())),
+        [] => {}
+        several => {
+            let listed = several
+                .iter()
+                .map(|c| format!("{} ({}, entity_id {})", c.name, c.entity_type, c.entity_id))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(ServerError::Conflict(format!(
+                "entity \"{name}\" matches {} entities, so nothing was stored: {listed}. \
+                 Capture again with entity_id set to the one you mean, or without entity \
+                 to store the memory unlinked.",
+                several.len()
+            )));
+        }
+    }
+    if let Some(archived) = candidates.first() {
+        return Ok(CaptureEntity::Existing(archived.entity_id.clone()));
+    }
+    Ok(match entity_type.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(entity_type) => CaptureEntity::Create {
+            name: name.to_string(),
+            entity_type: entity_type.to_string(),
+        },
+        None => CaptureEntity::Unknown(name.to_string()),
+    })
+}
+
+/// Link a stored memory to the entity its capture named, creating the entity
+/// first when the plan says so. The memory is already stored, so a failure
+/// here becomes a warning and never fails the write. Linking goes through
+/// `update_memory_entity_id`, which also records the link the entity's
+/// memory count and auto-establish read.
+async fn link_capture_entity(
+    db: &wenlan_core::db::MemoryDB,
+    source_id: &str,
+    plan: CaptureEntity,
+    space: Option<&str>,
+    agent: &str,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let entity_id = match plan {
+        CaptureEntity::None => return None,
+        CaptureEntity::Unknown(name) => {
+            warnings.push(format!(
+                "entity \"{name}\" is not in the wiki yet, so this memory is not linked to it. \
+                 Pass entity_type (person, project, tool, ...) with the name to create it."
+            ));
+            return None;
+        }
+        CaptureEntity::Existing(id) => id,
+        CaptureEntity::Create { name, entity_type } => {
+            let _space_write_guard = db.lock_space_writes().await;
+            let request = wenlan_types::requests::CreateEntityRequest {
+                name: name.clone(),
+                entity_type,
+                space: match space {
+                    Some(space) => WriteSpaceTarget::Named(space.to_string()),
+                    None => WriteSpaceTarget::Uncategorized,
+                },
+                source_agent: (agent != "unknown").then(|| agent.to_string()),
+                confidence: None,
+            };
+            match wenlan_core::post_write::create_entity(db, request, agent).await {
+                Ok(result) => result.id,
+                Err(e) => {
+                    warnings.push(format!(
+                        "entity \"{name}\" could not be created, so this memory is not linked: {e}"
+                    ));
+                    return None;
+                }
+            }
+        }
+    };
+    match db.update_memory_entity_id(source_id, &entity_id).await {
+        Ok(_) => Some(entity_id),
+        Err(e) => {
+            tracing::warn!("[memory] linking {source_id} to {entity_id} failed: {e}");
+            warnings.push(format!(
+                "this memory could not be linked to entity {entity_id}: {e}"
+            ));
+            None
+        }
+    }
+}
+
 fn fixed_enrichment_origin(
     caller_supplied_memory_type: bool,
     caller_supplied_profile_alias: bool,
@@ -347,6 +467,12 @@ async fn handle_store_memory_inner(
         .unwrap_or(false);
     let validated_memory_type: Option<String> = match req.memory_type.as_deref() {
         None | Some("") => None,
+        Some(mt) if MemoryType::is_knowledge_alias(mt) => {
+            return Err(ServerError::ValidationError(
+                "memory_type \"knowledge\" is too broad to store; pass fact, lesson, or gotcha"
+                    .into(),
+            ));
+        }
         Some(mt) if MemoryType::is_profile_alias(mt) => {
             // Stored as "identity" as a conservative placeholder; ambient classify
             // replaces with the actual subtype (identity/preference/goal/fact).
@@ -435,39 +561,26 @@ async fn handle_store_memory_inner(
         req.structured_fields.as_ref(),
         &memory_type_str,
     );
-    // Phase 2c: Entity resolution
-    let resolved_entity_id = if let Some(ref direct_id) = req.entity_id {
-        Some(direct_id.clone())
-    } else if let Some(ref entity_name) = req.entity {
-        let db = {
-            let s = state.read().await;
-            s.db.clone()
-        };
-        if let Some(db) = db {
+    // Phase 2c: Entity resolution. A capture names its entity on purpose, so
+    // only an exact name or alias links it. Several matches refuse the store
+    // before anything is written; a new name that comes with its type is
+    // created after the store succeeds (`link_capture_entity`), so a rejected
+    // memory never leaves an orphan entity behind.
+    let entity_plan = match (
+        req.entity_id.as_deref(),
+        req.entity.as_deref().map(str::trim),
+    ) {
+        (Some(direct_id), _) => CaptureEntity::Existing(direct_id.to_string()),
+        (None, Some(name)) if !name.is_empty() => {
             #[cfg(test)]
             wait_at_store_lock_test_hook(StoreLockTestStage::EntityResolution).await;
-            match db.resolve_entity_by_name(entity_name).await {
-                Ok(Some(id)) => {
-                    tracing::info!("[memory] resolved entity '{}' → {}", entity_name, id);
-                    Some(id)
-                }
-                Ok(None) => {
-                    tracing::debug!(
-                        "[memory] entity '{}' not found, will be linked post-ingest",
-                        entity_name
-                    );
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!("[memory] entity resolution failed: {e}");
-                    None
-                }
-            }
-        } else {
-            None
+            plan_capture_entity(&db, name, req.entity_type.as_deref()).await?
         }
-    } else {
-        None
+        _ => CaptureEntity::None,
+    };
+    let resolved_entity_id = match &entity_plan {
+        CaptureEntity::Existing(id) => Some(id.clone()),
+        _ => None,
     };
 
     // Phase 3: Confidence + auto-confirm + supersede gating
@@ -841,6 +954,15 @@ async fn handle_store_memory_inner(
     } else {
         WriteSpaceSource::Uncategorized
     };
+    let linked_entity_id = link_capture_entity(
+        &origin_db,
+        &source_id,
+        entity_plan,
+        persisted_space.as_deref(),
+        &resolved_agent,
+        &mut warnings,
+    )
+    .await;
 
     // Classified tags are now written by the ambient classification lane —
     // `classified_tags` is always empty at this point because classify moved
@@ -973,11 +1095,20 @@ async fn handle_store_memory_inner(
         }
     };
 
+    if caller_supplied_a_profile_alias && enrichment != "pending" {
+        warnings.push(
+            "memory_type \"profile\" is a shorthand that only automatic Steep resolves, \
+             and it is not running, so this memory stays \"identity\". Pass identity or \
+             preference yourself."
+                .to_string(),
+        );
+    }
+
     Ok(Json(StoreMemoryResponse {
         source_id,
         chunks_created,
         memory_type: memory_type_str,
-        entity_id: resolved_entity_id,
+        entity_id: linked_entity_id,
         quality: classified_quality,
         warnings,
         extraction_method,
@@ -2235,6 +2366,7 @@ mod store_scheduler_handoff_tests {
                 supersedes: None,
                 entity: (stage == StoreLockTestStage::EntityResolution)
                     .then(|| "missing-lock-test-entity".to_string()),
+                entity_type: None,
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
@@ -2307,6 +2439,7 @@ mod store_scheduler_handoff_tests {
             confidence: None,
             supersedes: None,
             entity: None,
+            entity_type: None,
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
@@ -2419,6 +2552,7 @@ mod store_scheduler_handoff_tests {
                     confidence: None,
                     supersedes: None,
                     entity: None,
+                    entity_type: None,
                     entity_id: None,
                     structured_fields: None,
                     retrieval_cue: None,
@@ -2479,6 +2613,7 @@ mod store_scheduler_handoff_tests {
                 confidence: None,
                 supersedes: None,
                 entity: None,
+                entity_type: None,
                 entity_id: None,
                 structured_fields: None,
                 retrieval_cue: None,
@@ -2532,6 +2667,7 @@ mod store_scheduler_handoff_tests {
             confidence: None,
             supersedes: None,
             entity: None,
+            entity_type: None,
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
@@ -2592,6 +2728,232 @@ mod store_scheduler_handoff_tests {
                 .as_deref(),
             Some("external")
         );
+    }
+
+    /// A capture's `entity` links an exact name, creates a new one that comes
+    /// with a type, leaves an untyped unknown name unlinked with a warning,
+    /// and refuses to guess between two entities of the same name.
+    #[tokio::test]
+    async fn store_links_creates_or_refuses_the_named_entity() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            wenlan_core::db::MemoryDB::new(dir.path(), Arc::new(wenlan_core::events::NoopEmitter))
+                .await
+                .unwrap(),
+        );
+        let gate = wenlan_core::quality_gate::QualityGate::new(wenlan_core::tuning::GateConfig {
+            enabled: false,
+            ..Default::default()
+        });
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db.clone()),
+            quality_gate: gate,
+            ..Default::default()
+        }));
+        let store = |content: &str,
+                     entity: Option<&str>,
+                     entity_type: Option<&str>,
+                     entity_id: Option<&str>| {
+            handle_store_memory(
+                State(state.clone()),
+                HeaderMap::new(),
+                crate::space_header::SpaceHeader(None),
+                Json(StoreMemoryRequest {
+                    content: content.to_string(),
+                    memory_type: Some("fact".to_string()),
+                    space: (None).into(),
+                    source_agent: Some("test-agent".to_string()),
+                    title: None,
+                    confidence: None,
+                    supersedes: None,
+                    entity: entity.map(str::to_string),
+                    entity_type: entity_type.map(str::to_string),
+                    entity_id: entity_id.map(str::to_string),
+                    structured_fields: None,
+                    retrieval_cue: None,
+                }),
+            )
+        };
+
+        let created = store(
+            "Alice Chen leads the Ridgeback launch review every Thursday.",
+            Some("Alice Chen"),
+            Some("person"),
+            None,
+        )
+        .await
+        .unwrap()
+        .0;
+        let alice = created
+            .entity_id
+            .clone()
+            .expect("a new typed name is created and linked");
+        let detail = db.get_entity_detail(&alice).await.unwrap();
+        assert_eq!(detail.entity.name, "Alice Chen");
+        assert_eq!(detail.entity.entity_type, "person");
+        assert_eq!(
+            detail.entity.memory_count, 1,
+            "the link counts toward the entity"
+        );
+
+        let again = store(
+            "Alice Chen prefers written review notes over live meetings.",
+            Some("alice chen"),
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(again.entity_id.as_deref(), Some(alice.as_str()));
+        assert_eq!(
+            db.get_entity_detail(&alice)
+                .await
+                .unwrap()
+                .entity
+                .memory_count,
+            2
+        );
+
+        let unknown = store(
+            "Bob owns the release checklist for the desktop app.",
+            Some("Bob"),
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(unknown.entity_id, None);
+        assert!(
+            unknown
+                .warnings
+                .iter()
+                .any(|w| w.contains("not in the wiki yet")),
+            "an untyped unknown name says why it was not linked: {:?}",
+            unknown.warnings
+        );
+
+        // Two entities are titled "Dana": a person and a project. Every
+        // entity owns its own name as an alias and aliases are unique, so a
+        // second match always comes from a title.
+        let dana_one = db
+            .store_entity("Dana", "person", None, None, None)
+            .await
+            .unwrap();
+        let dana_two = db
+            .store_entity("dana", "project", None, None, None)
+            .await
+            .unwrap();
+        assert_ne!(dana_one, dana_two);
+        let content = "Dana signed off on the onboarding copy for the welcome screen.";
+        let refused = store(content, Some("Dana"), Some("person"), None).await;
+        match refused {
+            Err(ServerError::Conflict(message)) => {
+                assert!(
+                    message.contains(&dana_one) && message.contains(&dana_two),
+                    "{message}"
+                );
+            }
+            other => panic!("two entities named Dana must refuse the store, got {other:?}"),
+        }
+        assert!(
+            !db.has_memory_content(content).await.unwrap(),
+            "a refused capture stores nothing"
+        );
+
+        let chosen = store(content, Some("Dana"), None, Some(&dana_two))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(chosen.entity_id.as_deref(), Some(dana_two.as_str()));
+    }
+
+    #[tokio::test]
+    async fn store_profile_alias_warns_when_nothing_will_classify_it() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            wenlan_core::db::MemoryDB::new(dir.path(), Arc::new(wenlan_core::events::NoopEmitter))
+                .await
+                .unwrap(),
+        );
+        let gate = wenlan_core::quality_gate::QualityGate::new(wenlan_core::tuning::GateConfig {
+            enabled: false,
+            ..Default::default()
+        });
+        let state = Arc::new(RwLock::new(ServerState {
+            db: Some(db),
+            quality_gate: gate,
+            ..Default::default()
+        }));
+        wenlan_core::config::save_config_with_background_ai(
+            &wenlan_core::config::Config::default(),
+            false,
+        )
+        .unwrap();
+        let request = |content: &str, memory_type: &str| StoreMemoryRequest {
+            content: content.to_string(),
+            memory_type: Some(memory_type.to_string()),
+            space: (None).into(),
+            source_agent: Some("test-agent".to_string()),
+            title: None,
+            confidence: None,
+            supersedes: None,
+            entity: None,
+            entity_type: None,
+            entity_id: None,
+            structured_fields: None,
+            retrieval_cue: None,
+        };
+
+        let profile = handle_store_memory(
+            State(state.clone()),
+            HeaderMap::new(),
+            crate::space_header::SpaceHeader(None),
+            Json(request(
+                "The user writes release notes in Traditional Chinese first.",
+                "profile",
+            )),
+        )
+        .await
+        .unwrap()
+        .0;
+        assert_eq!(profile.memory_type, "identity");
+        assert!(
+            profile
+                .warnings
+                .iter()
+                .any(|w| w.contains("Pass identity or preference")),
+            "{:?}",
+            profile.warnings
+        );
+
+        let knowledge = handle_store_memory(
+            State(state),
+            HeaderMap::new(),
+            crate::space_header::SpaceHeader(None),
+            Json(request(
+                "Release builds need the signing key loaded first.",
+                "knowledge",
+            )),
+        )
+        .await;
+        match knowledge {
+            Err(ServerError::ValidationError(message)) => {
+                assert!(message.contains("fact, lesson, or gotcha"), "{message}");
+            }
+            other => panic!("knowledge is too broad to store, got {other:?}"),
+        }
     }
 }
 
@@ -2721,6 +3083,7 @@ mod novelty_store_tests {
             confidence: None,
             supersedes: supersedes.map(str::to_string),
             entity: None,
+            entity_type: None,
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,
@@ -2908,6 +3271,7 @@ mod content_length_gate_tests {
             confidence: None,
             supersedes: None,
             entity: None,
+            entity_type: None,
             entity_id: None,
             structured_fields: None,
             retrieval_cue: None,

@@ -310,7 +310,6 @@ async fn a_comparison_that_cannot_be_made_is_409_with_a_reason_and_bad_pairs_are
     let (router, _tmp, db) = common::test_app_no_gate().await;
     let basis = note(&db, "Launch Plan", "The launch is on 2026-03-01.", None).await;
     let citer = note(&db, "Roadmap", "Built on the launch plan.", None).await;
-    let elsewhere = note(&db, "Elsewhere", "Another Space.", Some("other")).await;
     mark(&router, &citer, &basis, 1).await;
 
     // Not 404, not 422: a note that is not a basis of this one.
@@ -332,13 +331,8 @@ async fn a_comparison_that_cannot_be_made_is_409_with_a_reason_and_bad_pairs_are
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    // The rules the daemon enforces: not itself, not another Space, a version
-    // the note has had.
-    for (target, version) in [
-        (citer.as_str(), 1),
-        (elsewhere.as_str(), 1),
-        (basis.as_str(), 9),
-    ] {
+    // The rules the daemon enforces: not itself, a version the note has had.
+    for (target, version) in [(citer.as_str(), 1), (basis.as_str(), 9)] {
         let (status, body) = call(
             &router,
             Method::PUT,
@@ -418,6 +412,78 @@ async fn a_comparison_that_cannot_be_made_is_409_with_a_reason_and_bad_pairs_are
 // ---------------------------------------------------------------------------
 // R7 and acceptance 9: an agent's write carries what it relied on
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_note_relies_on_a_note_in_another_space_unless_the_caller_is_held_to_one() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    db.create_space("home", None, false).await.unwrap();
+    db.create_space("work", None, false).await.unwrap();
+    let citer = note(&db, "Roadmap", "Built on the work plan.", Some("home")).await;
+    let basis = note(&db, "Work Plan", "Ship in March.", Some("work")).await;
+
+    // An agent held to Home cannot see the Work note: absent, as on a read.
+    let scoped = |method: Method, uri: String| {
+        let router = router.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .header("x-agent-name", "claude-code")
+                        .header("x-wenlan-space", "home")
+                        .body(Body::from(json!({ "version": 1 }).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            response.status()
+        }
+    };
+    assert_eq!(
+        scoped(Method::PUT, basis_uri(&citer, &basis)).await,
+        StatusCode::NOT_FOUND
+    );
+    assert!(basis_of(&read_note(&router, &citer).await).is_empty());
+
+    // The app can, and the note it relies on is named, compared and confirmed
+    // like one in the same Space.
+    let marked = mark(&router, &citer, &basis, 1).await;
+    assert_eq!(marked.title, "Work Plan");
+    assert_eq!(marked.state, "ok");
+    person_edits(&router, &basis, "Ship in April.").await;
+    let (status, diff) = call(
+        &router,
+        Method::GET,
+        &format!("{}/diff", basis_uri(&citer, &basis)),
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{diff}");
+    let (status, confirmed) = call(
+        &router,
+        Method::POST,
+        &format!("{}/confirm", basis_uri(&citer, &basis)),
+        Some(json!({ "version": 2 })),
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed}");
+    assert_eq!(confirmed["state"], "ok");
+    // Still out of reach for the agent held to Home.
+    assert_eq!(
+        scoped(
+            Method::POST,
+            format!("{}/confirm", basis_uri(&citer, &basis))
+        )
+        .await,
+        StatusCode::NOT_FOUND
+    );
+}
 
 #[tokio::test]
 async fn acceptance_9_an_agent_write_marks_a_moved_basis_pending_and_a_current_one_ok() {

@@ -246,6 +246,32 @@ describe("DiagnosticsSection", () => {
       expect(onOpenActivity).toHaveBeenCalledTimes(1);
     });
 
+    it("reports On demand as a mode, not as blocked or off", async () => {
+      vi.mocked(getActivity).mockResolvedValue(activity({
+        state: "off",
+        assets: [
+          asset("memories", { done: 143, total: 143, steps: [step("store", { done: 143, total: 143 })] }),
+          asset("pages", {
+            state: "blocked",
+            done: 9,
+            total: 12,
+            blocked: 3,
+            steps: [step("write", { state: "blocked", done: 9, total: 12, job: "synthesis" })],
+          }),
+        ],
+        everyday: { ...activity().everyday, mode: "pinned_unavailable", available: false },
+      }));
+      renderDiagnostics();
+
+      const summary = await screen.findByTestId("diagnostics-activity-summary");
+      expect(summary).toHaveTextContent("On demand");
+      expect(summary).toHaveTextContent("3 pages still need steeping");
+      expect(summary).not.toHaveTextContent("Off");
+      expect(summary).not.toHaveTextContent("Some background work is blocked.");
+      expect(summary).not.toHaveTextContent("The pinned everyday model is unavailable.");
+      expect(within(summary).getByText("On demand").closest("span[class*='status-danger']")).toBeNull();
+    });
+
     it("preserves unknown and unavailable-model warnings in the compact summary", async () => {
       vi.mocked(getActivity).mockResolvedValue(activity({
         state: "unknown",

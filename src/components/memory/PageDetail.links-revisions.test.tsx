@@ -228,6 +228,27 @@ describe("PageDetail page links", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads a link to a note in another Space as written, naming that Space", async () => {
+    tauriMocks.getPage.mockResolvedValueOnce({
+      ...LINKED_PAGE,
+      content: "Intro sentence.\n\nSee [[Home/Travel plan]] and [[Old name]].",
+    });
+    tauriMocks.getPageLinks.mockResolvedValue({
+      outbound: [
+        { label: "Home/Travel plan", target_page_id: "travel-page", target_title: "Travel Plan" },
+        { label: "Old name", target_page_id: "renamed-page", target_title: "New name" },
+      ],
+      inbound: [],
+    });
+
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
+
+    await user.click(await screen.findByRole("link", { name: "Home/Travel plan" }));
+    expect(defaultProps.onPageClick).toHaveBeenCalledWith("travel-page");
+    // A link in the same Space still follows its note's current title.
+    expect(screen.getByRole("link", { name: "New name" })).toBeInTheDocument();
+  });
+
   it("keeps the page visible and hides links when the daemon route fails", async () => {
     tauriMocks.getPageLinks.mockRejectedValue(new Error("HTTP GET /api/pages/page-1/links returned 404"));
 

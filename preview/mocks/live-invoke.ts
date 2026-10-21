@@ -1085,7 +1085,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       id: `preview-source-${enc(a.path)}`,
       source_type: a.sourceType,
       path: a.path,
-      status: "Active",
+      status: a.followChanges === false ? "Paused" : "Active",
+      last_sync: null,
+      file_count: 0,
+      memory_count: 0,
+    }),
+  set_source_follow_changes: (a) =>
+    Promise.resolve({
+      id: a.id,
+      source_type: "directory",
+      path: "",
+      status: a.followChanges ? "Active" : "Paused",
       last_sync: null,
       file_count: 0,
       memory_count: 0,

@@ -30,6 +30,11 @@ pub struct StoreMemoryRequest {
     /// Entity name for resolution (e.g. "Alice", "PostgreSQL")
     #[serde(default)]
     pub entity: Option<String>,
+    /// What `entity` is (person, project, tool, ...). With a name that no
+    /// entity has yet, the daemon creates the entity and links the memory to
+    /// it; without one, an unknown name is left unlinked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<String>,
     /// Direct entity ID (bypasses name resolution)
     #[serde(default)]
     pub entity_id: Option<String>,
@@ -630,6 +635,19 @@ pub struct AddSourceRequest {
     /// Filesystem path as a string. Kept as `String` (not `PathBuf`) because
     /// this is an HTTP wire format — the handler converts it to `PathBuf`.
     pub path: String,
+    /// `Some(false)` registers the source as import-once: it is read on the
+    /// first sync and on a manual refresh, but background polling skips it
+    /// (stored as `SyncStatus::Paused`). Omitted means follow changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_changes: Option<bool>,
+}
+
+/// PATCH /api/sources/{id} -- switch a source between following changes
+/// (`Active`) and import-once (`Paused`).
+#[doc(hidden)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateSourceRequest {
+    pub follow_changes: bool,
 }
 
 // ===== Config =====
@@ -698,6 +716,11 @@ pub struct UpdateConfigRequest {
     /// preserve stored value; present = set. Never gates the explicit improve route.
     #[serde(default)]
     pub page_map_auto_suggest: Option<bool>,
+    /// Lets the everyday model look at a note whose cited code changed, in the
+    /// background (`false` leaves every such note for a person). Omitted =
+    /// preserve stored value; present = set. Needs background AI to be on.
+    #[serde(default)]
+    pub code_basis_model_recheck: Option<bool>,
     /// Scopes `everyday_source` and `synthesis_source` in this same request to
     /// jobs that are currently unpinned. No other field is affected. Omitted or
     /// `false` = overwrite, which is what every caller did before this field

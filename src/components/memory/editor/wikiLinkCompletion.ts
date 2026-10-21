@@ -3,7 +3,9 @@ import { isolateHistory } from "@codemirror/commands";
 import { ensureSyntaxTree } from "@codemirror/language";
 import { EditorSelection, Prec, StateEffect, StateField, type EditorState, type Extension, type Transaction } from "@codemirror/state";
 import { EditorView, keymap, showTooltip, tooltips, type Tooltip } from "@codemirror/view";
-import { pageTitleKey, trimLikeDaemon } from "./pageTitleKey";
+import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./pageTitleKey";
+
+export { linkCompletionText };
 
 /** A note the writer can link to from the `[[` menu. */
 export interface LinkCompletionNote {
@@ -11,6 +13,10 @@ export interface LinkCompletionNote {
   title: string;
   /** Whether the "Use as a source" action is offered for this note. */
   canUseAsSource: boolean;
+  /** The note's Space name when it lives in another Space than the page being written. */
+  space?: string;
+  /** What goes between the brackets: `Space/Title` for a note in another Space, else the title. */
+  linkText?: string;
 }
 export interface LinkCompletionLabels { label: string; empty: string; useAsSource: string; useAsSourceHint: string }
 export const closeLinkCompletion = StateEffect.define<null>();
@@ -35,27 +41,42 @@ export function linkableTitle(title: string): boolean {
   return trimmed.length > 0 && !/[[\]|#\n\r]/.test(trimmed);
 }
 
-/** The notes shown for `query`: prefix matches first, then word starts, then any match. */
+/** How well `key` matches `needle`: 0 a prefix, 1 a word start, 2 anywhere, null no match. */
+function matchRank(key: string, needle: string): number | null {
+  const at = key.indexOf(needle);
+  if (at < 0) return null;
+  return at === 0 ? 0 : /[\s\-_/.(]/.test(key[at - 1]) ? 1 : 2;
+}
+
+/**
+ * The notes shown for `query`: the page's own Space first, then other Spaces,
+ * each by prefix matches, then word starts, then any match. A note in another
+ * Space matches on its title or on `Space/Title`.
+ */
 export function linkCompletionMatches(notes: readonly LinkCompletionNote[], query: string): LinkCompletionNote[] {
   const needle = pageTitleKey(query);
-  // A title two notes share links to neither, so neither is offered.
-  const titleCount = new Map<string, number>();
+  // A link two notes share links to neither, so neither is offered.
+  const linkCount = new Map<string, number>();
   for (const note of notes) {
-    const key = pageTitleKey(note.title);
-    titleCount.set(key, (titleCount.get(key) ?? 0) + 1);
+    const key = pageTitleKey(linkCompletionText(note));
+    linkCount.set(key, (linkCount.get(key) ?? 0) + 1);
   }
-  const ranked: { note: LinkCompletionNote; rank: number; order: number }[] = [];
+  const ranked: { note: LinkCompletionNote; foreign: number; rank: number; order: number }[] = [];
   notes.forEach((note, order) => {
-    if (!linkableTitle(note.title)) return;
-    const key = pageTitleKey(note.title);
-    if (titleCount.get(key) !== 1) return;
-    if (!needle) { ranked.push({ note, rank: 0, order }); return; }
-    const at = key.indexOf(needle);
-    if (at < 0) return;
-    const rank = at === 0 ? 0 : /[\s\-_/.(]/.test(key[at - 1]) ? 1 : 2;
-    ranked.push({ note, rank, order });
+    const text = linkCompletionText(note);
+    if (!linkableTitle(text)) return;
+    const key = pageTitleKey(text);
+    if (linkCount.get(key) !== 1) return;
+    const foreign = note.space === undefined ? 0 : 1;
+    if (!needle) { ranked.push({ note, foreign, rank: 0, order }); return; }
+    const ranks = [matchRank(pageTitleKey(note.title), needle), matchRank(key, needle)].filter((rank) => rank !== null);
+    if (ranks.length === 0) return;
+    ranked.push({ note, foreign, rank: Math.min(...ranks), order });
   });
-  return ranked.sort((a, b) => a.rank - b.rank || a.order - b.order).slice(0, MAX_ROWS).map(({ note }) => note);
+  return ranked
+    .sort((a, b) => a.foreign - b.foreign || a.rank - b.rank || a.order - b.order)
+    .slice(0, MAX_ROWS)
+    .map(({ note }) => note);
 }
 
 function permittedContext(state: EditorState, position: number): boolean {
@@ -159,7 +180,7 @@ export function createLinkCompletion(options: {
     if (matches.length === 0) { close(view); return false; }
     const note = clicked ? matches.find((match) => match.id === clicked.id) : matches[activeIndex(menu, matches.length)];
     if (!note) return false;
-    const insert = `[[${trimLikeDaemon(note.title)}]]`;
+    const insert = `[[${linkCompletionText(note)}]]`;
     view.dispatch({
       changes: { from: menu.from, to: menu.to, insert },
       selection: EditorSelection.cursor(menu.from + insert.length),
@@ -208,10 +229,17 @@ export function createLinkCompletion(options: {
         row.id = `${menuId}-${index}`;
         row.className = "cm-link-option";
         row.setAttribute("role", "option");
-        row.setAttribute("aria-label", note.title.trim());
+        row.setAttribute("aria-label", note.space === undefined ? note.title.trim() : linkCompletionText(note));
         title.className = "cm-link-option-title";
         title.textContent = note.title.trim();
         row.append(title);
+        if (note.space !== undefined) {
+          const space = document.createElement("span");
+          title.classList.add("cm-link-option-title-foreign");
+          space.className = "cm-link-option-space";
+          space.textContent = note.space.trim();
+          row.append(space);
+        }
         if (note.canUseAsSource) {
           const action = document.createElement("button");
           action.type = "button";
@@ -288,6 +316,9 @@ export function createLinkCompletion(options: {
         ".cm-link-menu": { padding: "4px", border: "1px solid var(--mem-border)", borderRadius: "var(--mem-radius-md)", backgroundColor: "var(--mem-detail-surface)", color: "var(--mem-text)", boxShadow: "0 6px 24px rgba(0,0,0,0.12)", width: "320px", maxWidth: "calc(100vw - 16px)", maxHeight: "min(320px, calc(100vh - 76px))", overflowY: "auto", fontFamily: "var(--mem-font-body, system-ui, sans-serif)", fontSize: "var(--mem-text-sm)", zIndex: "1200" },
         ".cm-link-option": { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", minHeight: "32px", padding: "4px 6px 4px 10px", borderRadius: "var(--mem-radius-sm)", cursor: "pointer" },
         ".cm-link-option-title": { flex: "1 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+        // A note in another Space keeps its title whole first, then names the Space in the room left.
+        ".cm-link-option-title-foreign": { flex: "0 1 auto" },
+        ".cm-link-option-space": { flex: "1 1 auto", minWidth: "0", marginLeft: "-4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--mem-text-tertiary)", fontSize: "var(--mem-text-label)" },
         // Shown on every row it applies to, so a touch screen can reach it; quiet until the row is active.
         ".cm-link-option-action": { flex: "0 0 auto", padding: "2px 8px", border: "1px solid transparent", borderRadius: "var(--mem-radius-sm)", backgroundColor: "transparent", color: "var(--mem-text-tertiary)", font: "inherit", fontSize: "var(--mem-text-label)", cursor: "pointer" },
         ".cm-link-option-action:hover": { color: "var(--mem-accent-page)", borderColor: "var(--mem-accent-page)" },

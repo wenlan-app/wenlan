@@ -49,6 +49,10 @@ const ENRICHMENT_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const RECONCILE_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const CITATION_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const EDGE_GROUNDING_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);
+const CODE_BASIS_RECHECK_SWEEP_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// Changed code basis rows one recheck slice asks the model about; also the
+/// slice's model-call budget.
+const CODE_BASIS_RECHECK_ROWS_PER_SLICE: usize = 3;
 /// Daily cadence for the detected-entity idle-archive housekeeping sweep
 /// (#708). The rule is measured in days, so a finer cadence would only find
 /// the same rows again; a selected (non-empty) sweep stays due regardless.
@@ -545,24 +549,42 @@ fn charge_lap_thermal_cooldown(
     }
 }
 
-/// Ambient-only provider facade that fails closed after forwarding one LLM
-/// request. The scheduler is serialized today; this guard keeps the thermal
-/// invariant true if a slice later gains a hidden nested call.
+/// Ambient-only provider facade that fails closed after forwarding its call
+/// budget of LLM requests (one, unless a job declares a larger slice). The
+/// scheduler is serialized today; this guard keeps the thermal invariant true
+/// if a slice later gains a hidden nested call.
 struct AmbientBudgetProvider {
     inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
     calls: Arc<std::sync::atomic::AtomicUsize>,
+    max_calls: usize,
 }
 
 impl AmbientBudgetProvider {
+    #[cfg(test)]
     fn new(inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>) -> Self {
-        Self::with_shared_calls(inner, Arc::new(std::sync::atomic::AtomicUsize::new(0)))
+        Self::with_limit(inner, 1)
+    }
+
+    fn with_limit(
+        inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
+        max_calls: usize,
+    ) -> Self {
+        Self {
+            inner,
+            calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_calls,
+        }
     }
 
     fn with_shared_calls(
         inner: Arc<dyn wenlan_core::llm_provider::LlmProvider>,
         calls: Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
-        Self { inner, calls }
+        Self {
+            inner,
+            calls,
+            max_calls: 1,
+        }
     }
 
     fn call_count(&self) -> usize {
@@ -586,13 +608,13 @@ impl wenlan_core::llm_provider::LlmProvider for AmbientBudgetProvider {
         Self: 'async_trait,
     {
         Box::pin(async move {
+            let max_calls = self.max_calls;
             if self
                 .calls
-                .compare_exchange(
-                    0,
-                    1,
+                .fetch_update(
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
+                    |used| (used < max_calls).then_some(used + 1),
                 )
                 .is_err()
             {

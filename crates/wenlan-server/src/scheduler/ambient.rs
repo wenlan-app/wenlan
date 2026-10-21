@@ -15,10 +15,14 @@ pub(super) enum AmbientJob {
     /// entities idle for `refinery.entity_archive_idle_days`. Pure SQL, no
     /// provider, so it stays available when every inference lane is parked.
     EntityIdleArchive,
+    /// Ask the everyday model about code basis rows whose cited lines changed:
+    /// settle the harmless ones, rewrite the note where the change makes it
+    /// wrong, and leave a one-sentence note for a person on the rest.
+    CodeBasisRecheck,
 }
 
 impl AmbientJob {
-    pub(super) const ALL: [Self; 10] = [
+    pub(super) const ALL: [Self; 11] = [
         Self::Document,
         Self::Classification,
         Self::StructuredExtract,
@@ -29,6 +33,7 @@ impl AmbientJob {
         Self::Citation,
         Self::EdgeGroundingPromote,
         Self::EntityIdleArchive,
+        Self::CodeBasisRecheck,
     ];
 
     /// Stable key for this job, used for the `app_metadata` last-run record
@@ -46,6 +51,7 @@ impl AmbientJob {
             Self::Citation => "citation",
             Self::EdgeGroundingPromote => "edge_grounding_promote",
             Self::EntityIdleArchive => "entity_idle_archive",
+            Self::CodeBasisRecheck => "code_basis_recheck",
         }
     }
 }
@@ -82,6 +88,18 @@ pub(super) struct AmbientAvailability {
     pub(super) citation: bool,
     pub(super) edge_grounding_promote: bool,
     pub(super) entity_idle_archive: bool,
+    pub(super) code_basis_recheck: bool,
+}
+
+/// The model recheck of changed code basis rows spends inference on the
+/// person's behalf, so it needs all three: a pinned and healthy provider,
+/// background AI on, and its own switch on.
+pub(super) const fn code_basis_recheck_allowed(
+    provider_available: bool,
+    background_ai_enabled: bool,
+    recheck_flag: bool,
+) -> bool {
+    provider_available && background_ai_enabled && recheck_flag
 }
 
 impl AmbientAvailability {
@@ -90,6 +108,7 @@ impl AmbientAvailability {
     /// source data becomes searchable; all inference lanes stay parked until
     /// the pinned provider is both authorized and healthy.
     pub(super) fn for_provider(provider_available: bool) -> Self {
+        let config = wenlan_core::config::load_config();
         Self {
             document: true,
             classification: provider_available,
@@ -110,6 +129,11 @@ impl AmbientAvailability {
             // on/off switch,
             // checked inside the job arm.
             entity_idle_archive: true,
+            code_basis_recheck: code_basis_recheck_allowed(
+                provider_available,
+                config.background_ai_enabled(),
+                config.code_basis_model_recheck,
+            ),
         }
     }
 
@@ -125,6 +149,7 @@ impl AmbientAvailability {
             AmbientJob::Citation => self.citation,
             AmbientJob::EdgeGroundingPromote => self.edge_grounding_promote,
             AmbientJob::EntityIdleArchive => self.entity_idle_archive,
+            AmbientJob::CodeBasisRecheck => self.code_basis_recheck,
         }
     }
 }
@@ -141,6 +166,7 @@ pub(super) struct AmbientSchedule {
     pub(super) last_citation: Option<Instant>,
     last_edge_grounding_promote: Option<Instant>,
     pub(super) last_entity_idle_archive: Option<Instant>,
+    pub(super) last_code_basis_recheck: Option<Instant>,
 }
 
 impl AmbientSchedule {
@@ -157,6 +183,7 @@ impl AmbientSchedule {
             last_citation: None,
             last_edge_grounding_promote: None,
             last_entity_idle_archive: None,
+            last_code_basis_recheck: None,
         }
     }
 
@@ -199,6 +226,9 @@ impl AmbientSchedule {
                     .is_none_or(|last| now.duration_since(last) >= EDGE_GROUNDING_SWEEP_INTERVAL),
                 AmbientJob::EntityIdleArchive => self.last_entity_idle_archive.is_none_or(|last| {
                     now.duration_since(last) >= ENTITY_IDLE_ARCHIVE_SWEEP_INTERVAL
+                }),
+                AmbientJob::CodeBasisRecheck => self.last_code_basis_recheck.is_none_or(|last| {
+                    now.duration_since(last) >= CODE_BASIS_RECHECK_SWEEP_INTERVAL
                 }),
             };
             if !due {
@@ -249,6 +279,12 @@ impl AmbientSchedule {
     /// thermal cooldown still limits actual work; this only prevents a second
     /// 30-minute delay from turning catch-up into a multi-week drain.
     pub(super) fn note_job_result(&mut self, job: AmbientJob, now: Instant, selected: bool) {
+        // A slice of model calls is paced, not drained: every attempt waits
+        // the full interval, whether or not it found work.
+        if job == AmbientJob::CodeBasisRecheck {
+            self.last_code_basis_recheck = Some(now);
+            return;
+        }
         if selected {
             return;
         }
@@ -269,6 +305,7 @@ impl AmbientSchedule {
             // stays due so the next tick drains the rest of the backlog in
             // 500-row slices; an empty or disabled sweep backs off a day.
             AmbientJob::EntityIdleArchive => self.last_entity_idle_archive = Some(now),
+            AmbientJob::CodeBasisRecheck => self.last_code_basis_recheck = Some(now),
         }
     }
 
@@ -397,8 +434,12 @@ pub(super) async fn run_ambient_job(
     knowledge_path: Option<&std::path::Path>,
 ) -> AmbientTurnReport {
     let started = Instant::now();
+    let call_budget = match job {
+        AmbientJob::CodeBasisRecheck => CODE_BASIS_RECHECK_ROWS_PER_SLICE,
+        _ => 1,
+    };
     let observed = resolve_ambient_provider(everyday_pin, api_llm, external_llm, llm)
-        .map(|provider| Arc::new(AmbientBudgetProvider::new(provider)));
+        .map(|provider| Arc::new(AmbientBudgetProvider::with_limit(provider, call_budget)));
     let provider: Option<Arc<dyn wenlan_core::llm_provider::LlmProvider>> = observed
         .as_ref()
         .map(|provider| provider.clone() as Arc<dyn wenlan_core::llm_provider::LlmProvider>);
@@ -596,6 +637,44 @@ pub(super) async fn run_ambient_job(
                 Ok(report) => report.progressed,
                 Err(error) => {
                     tracing::warn!("[scheduler] edge grounding slice error: {error}");
+                    false
+                }
+            }
+        }
+        AmbientJob::CodeBasisRecheck => {
+            let Some(provider) = provider.as_ref() else {
+                return AmbientTurnReport {
+                    job,
+                    selected: false,
+                    page_growth_terminal_no_match_committed: false,
+                    llm_calls: 0,
+                    panicked: false,
+                    elapsed: started.elapsed(),
+                };
+            };
+            // Re-read the switch here too: a forced sweep reaches this arm
+            // without passing through the availability check of a tick.
+            if !wenlan_core::config::load_config().code_basis_model_recheck {
+                return AmbientTurnReport {
+                    job,
+                    selected: false,
+                    page_growth_terminal_no_match_committed: false,
+                    llm_calls: 0,
+                    panicked: false,
+                    elapsed: started.elapsed(),
+                };
+            }
+            match wenlan_core::code_basis_recheck::run_code_basis_recheck_slice(
+                db,
+                provider,
+                prompts,
+                CODE_BASIS_RECHECK_ROWS_PER_SLICE,
+            )
+            .await
+            {
+                Ok(report) => report.progressed(),
+                Err(error) => {
+                    tracing::warn!("[scheduler] code basis recheck slice error: {error}");
                     false
                 }
             }

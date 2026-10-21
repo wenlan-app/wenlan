@@ -24,6 +24,7 @@ import { useActivity } from "../../../../lib/useActivity";
 import {
   knownLane,
   knownState,
+  onDemandPagesWaiting,
   laneKey,
   ROUTE_JOBS,
   STEP_UNIT,
@@ -854,24 +855,31 @@ function activityOverview(t: TFunction, activity: ActivityResponse): {
     !knownLane(activity.synthesis.lane) ||
     !["auto", "pinned", "pinned_unavailable", "unconfigured"].includes(activity.everyday.mode) ||
     !["auto", "pinned", "pinned_unavailable", "unconfigured"].includes(activity.synthesis.mode);
+  // On demand (`off`) runs no background model, so pending work and an
+  // unavailable model are not faults here: the user's AI tool does the work.
+  // It says what is waiting instead, the same as Activity.
+  const onDemand = state === "off";
+  const pagesWaiting = onDemandPagesWaiting(activity);
   const messages: string[] = [];
   if (failed) messages.push(t("settings.diagnostics.overview.backgroundFailed"));
-  if (blocked) messages.push(t("settings.diagnostics.overview.backgroundBlocked"));
-  if (everydayUnavailable) messages.push(t("settings.diagnostics.overview.everydayUnavailable"));
-  if (synthesisUnavailable) messages.push(t("settings.diagnostics.overview.synthesisUnavailable"));
+  if (blocked && !onDemand) messages.push(t("settings.diagnostics.overview.backgroundBlocked"));
+  if (everydayUnavailable && !onDemand) messages.push(t("settings.diagnostics.overview.everydayUnavailable"));
+  if (synthesisUnavailable && !onDemand) messages.push(t("settings.diagnostics.overview.synthesisUnavailable"));
+  if (pagesWaiting > 0) messages.push(t("activityStatus.assetOnDemand.pages", { count: pagesWaiting }));
   if (hasUnknownDetails || hasUnknownRoute || state === undefined) messages.push(t("settings.diagnostics.overview.backgroundUnknown"));
 
   let probe: ProbeState = { kind: "up" };
   if (state === undefined) probe = { kind: "unknown" };
-  else if (state === "blocked" || failed || blocked || everydayUnavailable || synthesisUnavailable) probe = { kind: "down" };
-  else if (state === "off") probe = { kind: "idle" };
+  else if (failed) probe = { kind: "down" };
+  else if (onDemand) probe = { kind: "idle" };
+  else if (state === "blocked" || blocked || everydayUnavailable || synthesisUnavailable) probe = { kind: "down" };
   else if (hasUnknownDetails || hasUnknownRoute) probe = { kind: "unknown" };
 
   return {
     state: probe,
     label: state === undefined ? t("settings.diagnostics.overview.unknown") : t(`activityStatus.state.${state}`),
     messages,
-    needsIntelligence: everydayUnavailable || synthesisUnavailable,
+    needsIntelligence: !onDemand && (everydayUnavailable || synthesisUnavailable),
   };
 }
 

@@ -193,7 +193,7 @@ describe("ActivityNow", () => {
 
   it("distinguishes the turned-off state from idle", async () => {
     renderNow(activity({ state: "off" }));
-    expect(await screen.findByTestId("activity-now-off")).toHaveTextContent("Background organization is off.");
+    expect(await screen.findByTestId("activity-now-off")).toHaveTextContent("Steeping runs on demand.");
     expect(screen.queryByTestId("activity-now-idle")).toBeNull();
   });
 

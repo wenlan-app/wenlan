@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ChatsCircle } from "@phosphor-icons/react";
+import { ArrowsClockwise, ChatsCircle, DownloadSimple } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -11,6 +11,7 @@ import {
   openFile,
   addSource,
   syncRegisteredSource,
+  type SourceTypeStr,
 } from "../../../lib/tauri";
 import { detectVault } from "../../../lib/vaultDetection";
 import AddWebSourceDialog from "./AddWebSourceDialog";
@@ -19,11 +20,16 @@ import SourceDialog from "./SourceDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { useTranslation } from "react-i18next";
 
+type ConnectKind = "obsidian" | "folder";
+type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
+
 export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [showWeb, setShowWeb] = useState(false);
   const [showChats, setShowChats] = useState(false);
+  // A picked folder waits here while the user chooses sync or import-once.
+  const [picked, setPicked] = useState<PickedFolder | null>(null);
   const { data: version } = useQuery({ queryKey: ["daemonVersion"], queryFn: getDaemonVersion });
   const ready = version === undefined ? true : daemonMeetsFloor(version);
 
@@ -52,24 +58,32 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
     onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
   });
 
+  // Step one, for any kind: pick and validate the folder. Step two
+  // (`register`) asks whether to keep it in sync or import it once.
   const connect = useMutation({
-    mutationFn: async (kind: "obsidian" | "folder") => {
-      const picked = await openDialog({
+    mutationFn: async (kind: ConnectKind) => {
+      const path = await openDialog({
         title: t(kind === "obsidian" ? "sourceAccess.obsidian" : "sourceAccess.folder"),
         directory: true, multiple: false,
       });
-      if (!picked || typeof picked !== "string") return null;
-      const detection = await detectVault(picked);
+      if (!path || typeof path !== "string") return null;
+      const detection = await detectVault(path);
       if (kind === "obsidian" && detection.unreadable) throw new Error(t("sourceAccess.folderPickFailed"));
       if (kind === "obsidian" && !detection.isVault) throw new Error(t("sourceAccess.notVault"));
-      return addSource(detection.sourceType, picked);
+      return { kind, sourceType: detection.sourceType, path };
     },
+    onSuccess: (folder) => { if (folder) setPicked(folder); },
+    onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
+  });
+
+  const register = useMutation({
+    mutationFn: ({ folder, followChanges }: { folder: PickedFolder; followChanges: boolean }) =>
+      addSource(folder.sourceType, folder.path, followChanges),
     onSuccess: (source) => {
-      if (!source) return;
       refreshSources();
       toast(t("sourceAccess.connected"), { description: source.path });
-      // Start the first index for either connector. Later Directory checks are
-      // automatic; Obsidian checks remain manual until the backend supports them.
+      // Both choices read the source once now; only a synced source is
+      // checked again in the background.
       void syncRegisteredSource(source.id).then(refreshSources).catch((error) => {
         toast(t("sourceAccess.connectedUpdateFailed"), { description: String(error) });
         refreshSources();
@@ -79,7 +93,17 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
     onError: (error) => toast(t("sourceAccess.addFailed"), { description: String(error) }),
   });
 
-  const busy = upload.isPending || connect.isPending;
+  const busy = upload.isPending || connect.isPending || register.isPending;
+  if (picked) return <SourceDialog key="follow" title={t("sourceAccess.followTitle")} onClose={onClose}>
+    <p className="source-follow-path">{picked.path}</p>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => register.mutate({ folder: picked, followChanges: true })}>
+      <ArrowsClockwise aria-hidden="true" size={20} weight="regular" data-resource-icon="sync" /><span className="source-add-option-copy"><strong>{t("sourceAccess.followSync")}</strong><span>{t("sourceAccess.followSyncHint")}</span></span>
+    </button>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => register.mutate({ folder: picked, followChanges: false })}>
+      <DownloadSimple aria-hidden="true" size={20} weight="regular" data-resource-icon="import-once" /><span className="source-add-option-copy"><strong>{t("sourceAccess.followOnce")}</strong><span>{t("sourceAccess.followOnceHint")}</span></span>
+    </button>
+    {register.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
+  </SourceDialog>;
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   // Past AI chats use the same import as Settings, so a new user can bring
   // earlier decisions in from the home without hunting for it.

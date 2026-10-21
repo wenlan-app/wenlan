@@ -6,7 +6,9 @@
 //!   1. Pull `[[Label]]` occurrences out of a page body.
 //!   2. Resolve each label against current page titles (case-insensitive,
 //!      trimmed). No fuzzy matching in v1 — the LLM's job is to use exact
-//!      titles, and the orphan-by-label feed surfaces drift.
+//!      titles, and the orphan-by-label feed surfaces drift. A label first
+//!      names a note in the linking page's own Space; only when none carries
+//!      that title does `[[Space/Title]]` name a note in another Space.
 //!   3. Persist resolved/unresolved pairs into the `page_links` table so the
 //!      refinery can re-resolve later (when a target page is created) and
 //!      emergence can mine repeated orphan labels as topic candidates.
@@ -20,7 +22,7 @@
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
 use crate::sources::obsidian;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// A wikilink reference stored in or read from the `page_links` table.
 /// `target_page_id` is `None` when the resolver couldn't find a matching
@@ -64,6 +66,73 @@ pub fn extract_wikilinks(content: &str) -> Vec<String> {
     out
 }
 
+/// Folded title to its unique owner page (`None`: ambiguous), as built by
+/// `MemoryDB::folded_title_owners_scoped`.
+pub(crate) type TitleOwners = HashMap<String, Option<String>>;
+
+/// Title owners keyed by Space scope (`None`: the pages in no Space).
+pub(crate) type OwnersBySpace = HashMap<Option<String>, TitleOwners>;
+
+/// The `(Space name, title)` readings of a `[[Space/Title]]` label, longest
+/// Space prefix first. A prefix counts only when it names exactly one Space,
+/// so a title such as "CI/CD" has no reading unless a Space is called "CI".
+pub(crate) fn space_qualified_readings<'a>(
+    label: &'a str,
+    space_names: &TitleOwners,
+) -> Vec<(String, &'a str)> {
+    label
+        .rmatch_indices('/')
+        .filter_map(|(at, _)| {
+            let title = label[at + 1..].trim();
+            if title.is_empty() {
+                return None;
+            }
+            let space = space_names
+                .get(&MemoryDB::page_title_key(&label[..at]))?
+                .clone()?;
+            Some((space, title))
+        })
+        .collect()
+}
+
+/// True when `label` spells `[[space_name/title]]`, so a link that reached a
+/// note in another Space did so by naming it there.
+pub(crate) fn label_names_space_note(label: &str, space_name: &str, title: &str) -> bool {
+    let space_key = MemoryDB::page_title_key(space_name);
+    let title_key = MemoryDB::page_title_key(title);
+    label.rmatch_indices('/').any(|(at, _)| {
+        MemoryDB::page_title_key(&label[..at]) == space_key
+            && MemoryDB::page_title_key(&label[at + 1..]) == title_key
+    })
+}
+
+/// Resolve `label` written in a page whose Space is `scope`. A title in the
+/// page's own Space wins, even an ambiguous one; otherwise the first
+/// `[[Space/Title]]` reading that names a unique note in that Space. Every
+/// Space a reading names must already be loaded into `owners`; a missing map
+/// reads as no match.
+pub(crate) fn resolve_label(
+    label: &str,
+    scope: Option<&str>,
+    owners: &OwnersBySpace,
+    space_names: &TitleOwners,
+) -> Option<String> {
+    if let Some(owner) = owners
+        .get(&scope.map(str::to_string))
+        .and_then(|own| own.get(&MemoryDB::page_title_key(label)))
+    {
+        return owner.clone();
+    }
+    space_qualified_readings(label, space_names)
+        .into_iter()
+        .find_map(|(space, title)| {
+            owners
+                .get(&Some(space))?
+                .get(&MemoryDB::page_title_key(title))?
+                .clone()
+        })
+}
+
 /// Resolve each extracted label against the current `pages` table.
 /// Case-insensitive exact match on title, restricted to `status='active'`.
 /// Unresolved labels keep `target_page_id = None` so the caller can persist
@@ -76,9 +145,10 @@ pub async fn resolve_against_pages(
     if labels.is_empty() {
         return Ok(Vec::new());
     }
+    let qualified = labels.iter().any(|label| label.contains('/'));
     // The common single-link page takes the keep-nothing scan instead of
     // paying for a full owner map it would use once.
-    if let [label] = labels {
+    if let ([label], false) = (labels, qualified) {
         return Ok(vec![Wikilink {
             label: label.clone(),
             target_page_id: db
@@ -88,15 +158,34 @@ pub async fn resolve_against_pages(
     }
     // One scope scan for the whole label set — the fold and the ambiguity
     // contract live in `folded_title_owners_scoped`.
-    let owners = db.folded_title_owners_scoped(scope).await?;
+    let mut owners = OwnersBySpace::new();
+    let own_scope = scope.map(str::to_string);
+    owners.insert(
+        own_scope.clone(),
+        db.folded_title_owners_scoped(scope).await?,
+    );
+    let space_names = if qualified {
+        db.folded_space_names().await?
+    } else {
+        TitleOwners::new()
+    };
+    for label in labels {
+        if owners[&own_scope].contains_key(&MemoryDB::page_title_key(label)) {
+            continue;
+        }
+        for (space, _) in space_qualified_readings(label, &space_names) {
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                owners.entry(Some(space.clone()))
+            {
+                slot.insert(db.folded_title_owners_scoped(Some(&space)).await?);
+            }
+        }
+    }
     Ok(labels
         .iter()
         .map(|label| Wikilink {
             label: label.clone(),
-            target_page_id: owners
-                .get(&MemoryDB::page_title_key(label))
-                .cloned()
-                .flatten(),
+            target_page_id: resolve_label(label, scope, &owners, &space_names),
         })
         .collect())
 }

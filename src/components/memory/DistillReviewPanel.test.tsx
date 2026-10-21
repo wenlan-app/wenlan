@@ -38,6 +38,7 @@ vi.mock("../../lib/tauri", async () => {
     search: vi.fn(),
     redistillPage: vi.fn(),
     listRecentChanges: vi.fn(),
+    clipboardWrite: vi.fn(),
   };
 });
 
@@ -58,6 +59,7 @@ import {
   getPageSources,
   search,
   redistillPage,
+  clipboardWrite,
   listRecentChanges,
 } from "../../lib/tauri";
 
@@ -293,6 +295,25 @@ describe("DistillReviewPanel", () => {
     await waitFor(() => {
       expect(redistillPage).toHaveBeenCalledWith("page_stale");
     });
+  });
+
+  it("keeps a stale page card when the daemon has no model to rebuild it", async () => {
+    vi.mocked(redistillPage).mockResolvedValue({ status: "skipped", updated: false, hint: "needs an LLM" });
+    vi.mocked(clipboardWrite).mockResolvedValue(undefined);
+    const { user } = renderPanel();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Review Retrieval Pipeline/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Refresh page" }));
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Copy command" })).toBeInTheDocument());
+    expect(within(dialog).queryByRole("button", { name: "Refresh page" })).toBeNull();
+    expect(within(dialog).getByText("Page refresh")).toBeInTheDocument();
+    expect(within(dialog).getByText(/run \/wenlan steep/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Copy command" }));
+    expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep");
   });
 
   it("keeps the last successful result visible after refresh failure", async () => {

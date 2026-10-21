@@ -141,7 +141,7 @@ describe("AddSourceDialog", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect folder" }));
     await waitFor(() => {
-      expect(tauri.addSource).toHaveBeenCalledWith("directory", "/Users/test/papers");
+      expect(tauri.addSource).toHaveBeenCalledWith("directory", "/Users/test/papers", true);
     });
     // Directory sources ride the daemon's background scheduler — no on-add sync.
     expect(tauri.syncRegisteredSource).not.toHaveBeenCalled();
@@ -162,13 +162,34 @@ describe("AddSourceDialog", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Connect folder" }));
     await waitFor(() => {
-      expect(tauri.addSource).toHaveBeenCalledWith("obsidian", "/Users/test/vault");
+      expect(tauri.addSource).toHaveBeenCalledWith("obsidian", "/Users/test/vault", true);
     });
     // Obsidian vaults are NOT on the daemon scheduler, so a one-shot first index
     // must fire on add or the vault sits at "Indexing…" forever.
     await waitFor(() => {
       expect(tauri.syncRegisteredSource).toHaveBeenCalledWith("src");
     });
+  });
+
+  it("imports a folder once: registers it without following changes and reads it now", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { readDir } = await import("@tauri-apps/plugin-fs");
+    (open as ReturnType<typeof vi.fn>).mockResolvedValue("/Users/test/papers");
+    (readDir as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: "paper.pdf", isDirectory: false, isFile: true, isSymlink: false },
+    ]);
+    vi.mocked(tauri.addSource).mockResolvedValue({
+      id: "src", source_type: "directory", path: "/Users/test/papers", status: "Paused",
+      last_sync: null, file_count: 0, memory_count: 0,
+    });
+    vi.mocked(tauri.syncRegisteredSource).mockResolvedValue({ files_found: 1, ingested: 1, skipped: 0, errors: 0 });
+    render(<AddSourceDialog onClose={vi.fn()} onSuccess={vi.fn()} />, { wrapper });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
+    await waitFor(() => expect(screen.getByText(/1 supported file/)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("radio", { name: /Import once/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect folder" }));
+    await waitFor(() => expect(tauri.addSource).toHaveBeenCalledWith("directory", "/Users/test/papers", false));
+    await waitFor(() => expect(tauri.syncRegisteredSource).toHaveBeenCalledWith("src"));
   });
 
   it("invalidates registered sources after a successful add before background sync completes", async () => {

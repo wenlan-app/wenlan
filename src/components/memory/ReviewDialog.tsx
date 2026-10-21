@@ -22,6 +22,8 @@ import { reviewItemId, type ReviewItem } from "./useReviewQueue";
 import { PageMergeStripOff, usePageMergeEvidence } from "./ReviewPageMerge";
 import { MemoryRevisionChain, PageRevisionChain } from "./ReviewHistory";
 import SourceRepairReview from "./SourceRepairReview";
+import { useActivity } from "../../lib/useActivity";
+import { STEEP_COMMAND, SteepNeedsAiToolError } from "../../lib/steepMode";
 
 // The writer id the desktop app sends on its own saves and rebuilds.
 const APP_AGENT_ID = "wenlan-app";
@@ -667,6 +669,21 @@ export default function ReviewDialog({
   const done = open && !repairBusy && (showDone || items.length === 0);
   const resolving = isResolving || resolvingLocally || repairBusy;
   const summary = useReviewItemSummary(item);
+  // "Refresh page" rebuilds with the daemon's model. With none, the card stays
+  // and hands the update to the user's AI tool instead of silently vanishing.
+  const activity = useActivity().data;
+  const [staleNeedsAiToolIds, setStaleNeedsAiToolIds] = useState<ReadonlySet<string>>(() => new Set());
+  const noDaemonModel = activity !== undefined && !activity.everyday.available && !activity.synthesis.available;
+  const staleNeedsAiTool = item?.kind === "stale_page" && (noDaemonModel || staleNeedsAiToolIds.has(item.id));
+  const copySteepCommand = async () => {
+    try {
+      await clipboardWrite(STEEP_COMMAND);
+      setFlash(t("review.commandCopied"));
+      window.setTimeout(() => setFlash(null), 1200);
+    } catch {
+      setResolveError(t("review.actionError"));
+    }
+  };
 
   // The diff's "before" side. Both revision kinds resolve through the same two
   // accept/dismiss verbs, but a memory revision reads its target from the
@@ -858,6 +875,11 @@ export default function ReviewDialog({
     try {
       await onResolve({ item, approve });
     } catch (error) {
+      if (error instanceof SteepNeedsAiToolError && item.kind === "stale_page") {
+        const staleId = item.id;
+        setStaleNeedsAiToolIds((ids) => new Set(ids).add(staleId));
+        return;
+      }
       // The page moved after this revision was proposed, or a page the change
       // relied on is gone; either way the daemon discarded the card. Say so
       // and move on, the way a resolved card would.
@@ -1512,7 +1534,7 @@ export default function ReviewDialog({
                       margin: 0,
                     }}
                   >
-                    {t("review.refreshHint")}
+                    {t(staleNeedsAiTool ? "review.refreshNeedsAiTool" : "review.refreshHint")}
                   </p>
                   {item.summary && <div style={paneStyle}>{item.summary}</div>}
                 </div>
@@ -1852,7 +1874,12 @@ export default function ReviewDialog({
                 </button>
               )}
               {item.kind === "refinement" && item.action === "lint_repair_review" && <div className="source-repair-actions" ref={setRepairActionHost} />}
-              {!reviewApproveBlocked(item) && (
+              {staleNeedsAiTool && (
+                <button type="button" data-testid="review-copy-steep-command" onClick={() => void copySteepCommand()} style={actionButtonStyle}>
+                  {t("review.copyCommand")}
+                </button>
+              )}
+              {!reviewApproveBlocked(item) && !staleNeedsAiTool && (
                 <button
                   type="button"
                   disabled={resolving || !canApprove}

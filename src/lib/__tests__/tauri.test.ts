@@ -36,6 +36,25 @@ describe("sources, page export, and knowledge wrappers", () => {
     });
   });
 
+  it("addSource passes followChanges only when the caller chooses", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { addSource } = await import("../tauri");
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    await addSource("directory", "/notes", false);
+    expect(invoke).toHaveBeenCalledWith("add_source", { sourceType: "directory", path: "/notes", followChanges: false });
+  });
+
+  it("setSourceFollowChanges passes id and followChanges", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { setSourceFollowChanges, sourceFollowsChanges } = await import("../tauri");
+    (invoke as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    await setSourceFollowChanges("obsidian-vault", true);
+    expect(invoke).toHaveBeenCalledWith("set_source_follow_changes", { id: "obsidian-vault", followChanges: true });
+    expect(sourceFollowsChanges({ status: "Paused" })).toBe(false);
+    expect(sourceFollowsChanges({ status: "Active" })).toBe(true);
+    expect(sourceFollowsChanges({ status: { Unavailable: "gone" } })).toBe(true);
+  });
+
   it("removeSource passes id", async () => {
     const { invoke } = await import("@tauri-apps/api/core");
     const { removeSource } = await import("../tauri");

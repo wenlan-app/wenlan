@@ -483,6 +483,82 @@ async fn the_cited_route_serves_the_blob_id_the_row_was_written_or_confirmed_aga
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// The sentence and verdict the everyday model leaves reach the note's own read
+/// while the row is pending, the Brief says every pending note was judged, and
+/// a confirm takes both away again.
+#[tokio::test]
+async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() {
+    let _guard = data_dir_lock().lock().await;
+    let _vault = ScratchVault::new();
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    make_brief(&db).await;
+    let original = numbered(40);
+    let repo = Repo::new("src/lib.rs", &original);
+    let (status, created) =
+        new_note(&router, "Library", json!([repo.span("src/lib.rs", 10, 20)])).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let id = typed::<CreatePageResponse>(created).id;
+
+    // Quiet while the lines are unchanged.
+    let read = read_note(&router, &id).await;
+    assert!(!read.to_string().contains("explanation"), "{read}");
+    assert!(!read.to_string().contains("ai_verdict"), "{read}");
+
+    repo.write(
+        "src/lib.rs",
+        &original.replace("line 15\n", "line fifteen, rewritten\n"),
+    );
+    recheck(&router).await;
+    let rows = db.list_code_basis_recheck_candidates(10).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let sentence = "The note says the span keeps 32 bits on purpose; the code now keeps 48.";
+    assert!(db
+        .record_code_basis_recheck(&rows[0], "digest-1", Some(sentence), Some("stale"), 1)
+        .await
+        .unwrap());
+
+    let read = read_note(&router, &id).await;
+    let basis = code_basis_of(&read);
+    assert_eq!(basis.len(), 1);
+    assert_eq!(basis[0].state, "pending");
+    assert_eq!(basis[0].explanation.as_deref(), Some(sentence));
+    assert_eq!(basis[0].ai_verdict.as_deref(), Some("stale"));
+    assert!(
+        read.to_string().contains("\"ai_verdict\":\"stale\""),
+        "{read}"
+    );
+
+    let (status, brief) = call(
+        &router,
+        Method::POST,
+        "/api/brief",
+        Some(json!({ "space": SPACE })),
+        Caller::Agent("code-basis-route-contract"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{brief}");
+    let brief: BriefReadResponse = typed(brief);
+    assert_eq!(brief.code_basis_pending, Some(1));
+    assert!(brief.code_basis_pending_explained);
+
+    let locator = json!({
+        "repo_root": repo.root(), "path": "src/lib.rs", "line_start": 10, "line_end": 20
+    });
+    let (status, _) = call(
+        &router,
+        Method::POST,
+        &format!("/api/pages/{id}/code-basis/confirm"),
+        Some(locator),
+        Caller::Agent("claude-code"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let read = read_note(&router, &id).await;
+    assert_eq!(code_basis_of(&read)[0].state, "ok");
+    assert!(!read.to_string().contains("explanation"), "{read}");
+    assert!(!read.to_string().contains("ai_verdict"), "{read}");
+}
+
 #[tokio::test]
 async fn acceptance_7_line_endings_and_trailing_spaces_do_not_notify() {
     let _guard = data_dir_lock().lock().await;

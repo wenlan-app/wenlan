@@ -17,6 +17,7 @@ pub mod claim_judge;
 pub mod classify;
 pub mod code_anchor;
 pub mod code_basis;
+pub mod code_basis_recheck;
 pub mod community_grouping;
 pub mod community_partition;
 pub mod community_routing;

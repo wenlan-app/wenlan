@@ -88,37 +88,80 @@ describe("IntelligenceSection", () => {
     // Default to LEGACY mode — the live 0.13.2 daemon has no routing endpoint.
     mocks.getResolvedRouting.mockResolvedValue(null);
     mocks.setSourcePin.mockResolvedValue(undefined);
-    mocks.getBackgroundAiEnabled.mockResolvedValue(false);
+    // Automatic by default, so the task rows under it render.
+    mocks.getBackgroundAiEnabled.mockResolvedValue(true);
     mocks.setBackgroundAiEnabled.mockResolvedValue(undefined);
   });
 
-  it("lets a note-only install opt into background AI without choosing a model", async () => {
+  it("offers steeping as two modes, never as an on/off switch", async () => {
+    mocks.getBackgroundAiEnabled.mockResolvedValue(false);
+    renderSection();
+
+    const group = await screen.findByRole("radiogroup", { name: "Steeping" });
+    const onDemand = within(group).getByRole("radio", { name: "On demand" });
+    await waitFor(() => expect(onDemand).toBeChecked());
+    expect(within(group).getByRole("radio", { name: "Automatic" })).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: "Steeping" })).not.toBeInTheDocument();
+    expect(screen.getByText(/run \/wenlan steep/)).toBeInTheDocument();
+    // On demand needs no model, so the task rows stay out of the way.
+    expect(screen.queryByText("Everyday work")).not.toBeInTheDocument();
+  });
+
+  it("lets a note-only install choose Automatic without choosing a model", async () => {
+    mocks.getBackgroundAiEnabled.mockResolvedValue(false);
     mocks.setBackgroundAiEnabled.mockImplementation(async (enabled: boolean) => {
       mocks.getBackgroundAiEnabled.mockResolvedValue(enabled);
     });
     renderSection();
 
-    const toggle = await screen.findByRole("button", { name: "Background steeping" });
-    await waitFor(() => expect(toggle).toBeEnabled());
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    await userEvent.click(toggle);
+    const automatic = await screen.findByRole("radio", { name: "Automatic" });
+    await waitFor(() => expect(automatic).toBeEnabled());
+    await userEvent.click(automatic);
     expect(mocks.setBackgroundAiEnabled).toHaveBeenCalledWith(true);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Background steeping" })).toHaveAttribute("aria-pressed", "true"));
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Automatic" })).toBeChecked());
     expect(mocks.setSourcePin).not.toHaveBeenCalled();
+    expect(await screen.findByText("Everyday work")).toBeInTheDocument();
+  });
+
+  it("says where text goes in Automatic", async () => {
+    mocks.getResolvedRouting.mockResolvedValue(pinnedRouting({
+      everyday: { source: "on_device", model: "qwen3-4b-instruct-2507", mode: "pinned" },
+      synthesis: { source: "anthropic", model: "claude-sonnet-4-6", mode: "pinned" },
+    }));
+    renderSection();
+    expect(await screen.findByTestId("steep-trust")).toHaveTextContent("Synthesis sends its text to Anthropic. Everything else stays on this computer.");
+  });
+
+  it("counts a cloud vendor behind the external slot as leaving the computer", async () => {
+    mocks.getResolvedRouting.mockResolvedValue(pinnedRouting({
+      everyday: { source: "external", model: "gpt-5.2", mode: "pinned" },
+      synthesis: { source: "on_device", model: "qwen3-4b-instruct-2507", mode: "pinned" },
+    }));
+    renderSection();
+    expect(await screen.findByTestId("steep-trust")).toHaveTextContent(/^Everyday work sends its text to OpenAI/);
+  });
+
+  it("says nothing leaves when every job runs on this computer", async () => {
+    mocks.getResolvedRouting.mockResolvedValue(pinnedRouting({
+      everyday: { source: "on_device", model: "qwen3-4b-instruct-2507", mode: "pinned" },
+      synthesis: { source: "on_device", model: "qwen3-4b-instruct-2507", mode: "pinned" },
+    }));
+    renderSection();
+    expect(await screen.findByTestId("steep-trust")).toHaveTextContent("Everything stays on this computer.");
   });
 
   it("keeps ordinary Background AI readiness out of the settings copy", async () => {
-    mocks.getBackgroundAiEnabled.mockResolvedValue(true);
     mocks.getResolvedRouting.mockResolvedValue(pinnedRouting());
     renderSection();
 
-    await screen.findByRole("button", { name: "Background steeping" });
+    await screen.findByRole("radio", { name: "Automatic" });
     expect(screen.queryByText("AI available")).not.toBeInTheDocument();
     expect(screen.queryByText("Background AI is off")).not.toBeInTheDocument();
     expect(screen.queryByText("Some tasks still need an AI service.")).not.toBeInTheDocument();
   });
 
-  it("fills unset jobs when AI is enabled after providers were set up while Off", async () => {
+  it("fills unset jobs when Automatic is chosen after providers were set up On demand", async () => {
+    mocks.getBackgroundAiEnabled.mockResolvedValue(false);
     mocks.getResolvedRouting.mockResolvedValue(pinnedRouting({
       everyday: { source: "basic", model: null, mode: "unconfigured", pin: null },
       synthesis: { source: "none", model: null, mode: "unconfigured", pin: null },
@@ -128,34 +171,30 @@ describe("IntelligenceSection", () => {
     });
     const qc = renderSection();
     const invalidateSpy = vi.spyOn(qc, "invalidateQueries");
-    const toggle = await screen.findByRole("button", { name: "Background steeping" });
-    await waitFor(() => expect(toggle).toBeEnabled());
+    const automatic = await screen.findByRole("radio", { name: "Automatic" });
+    await waitFor(() => expect(automatic).toBeEnabled());
 
-    await userEvent.click(toggle);
+    await userEvent.click(automatic);
 
     await waitFor(() => expect(mocks.setSourcePin).toHaveBeenCalledWith("on_device", "anthropic", true));
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["resolvedRouting"] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["activity"] });
   });
 
-  it("shows unavailable when the latest Background AI read fails", async () => {
+  it("shows unavailable when the latest steeping read fails", async () => {
     mocks.getBackgroundAiEnabled
       .mockResolvedValueOnce(false)
       .mockRejectedValueOnce(new Error("settings unavailable"));
     const qc = renderSection();
-    await screen.findByRole("button", { name: "Background steeping" });
+    await waitFor(() => expect(screen.getByRole("radio", { name: "On demand" })).toBeChecked());
 
     await qc.invalidateQueries({ queryKey: ["backgroundAiEnabled"] });
 
-    await waitFor(() => expect(screen.getByRole("status", { name: "Background steeping" })).toHaveAttribute("data-state", "unavailable"));
-    expect(screen.queryByRole("button", { name: "Background steeping" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Background steeping" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("radio", { name: "On demand" })).not.toBeChecked());
+    expect(screen.getByRole("radio", { name: "On demand" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Automatic" })).not.toBeChecked();
     expect(await screen.findByText("Could not save this setting. Try again.")).toBeInTheDocument();
   });
-
-
-
-
 
   it("shows independent Anthropic models without a task disclosure or model summary", async () => {
     mocks.getApiKey.mockResolvedValue("sk-ant-***configured");
@@ -407,7 +446,7 @@ describe("IntelligenceSection", () => {
 
   it("Synthesis Beta help explains plugin/MCP even without a model", async () => {
     renderSection();
-    await userEvent.click(screen.getByRole("button", { name: "Details: Beta" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Details: Beta" }));
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Background synthesis is in Beta");
     expect(tooltip).toHaveTextContent("Wenlan's plugin or MCP with Claude or Codex");

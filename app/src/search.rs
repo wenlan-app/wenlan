@@ -1975,6 +1975,7 @@ pub async fn store_memory(
         confidence: req.confidence,
         supersedes: req.supersedes,
         entity: None,
+        entity_type: None,
         entity_id: None,
         structured_fields: req.structured_fields,
         retrieval_cue: req.retrieval_cue,
@@ -5586,17 +5587,21 @@ fn already_registered(err: &str) -> bool {
 /// Register a directory (folder in place, or the managed uploads dir) with the
 /// daemon, which owns ingestion (§1, §6). On repeat registration the daemon
 /// returns "Source already registered" — resolve the existing source instead
-/// of erroring.
+/// of erroring. `follow_changes: Some(false)` registers it as import-once.
 async fn register_directory_source_with_daemon(
     state: &tauri::State<'_, State>,
     path: &std::path::Path,
+    follow_changes: Option<bool>,
 ) -> Result<crate::sources::Source, String> {
     let client = {
         let s = state.read().await;
         s.client.clone()
     };
     let path_str = path.to_string_lossy().to_string();
-    match client.add_source("directory".to_string(), path_str).await {
+    match client
+        .add_source("directory".to_string(), path_str, follow_changes)
+        .await
+    {
         Ok(source) => Ok(source),
         Err(e) if already_registered(&e) => client
             .list_sources()
@@ -5614,6 +5619,7 @@ pub async fn add_source(
     _watcher: tauri::State<'_, WatcherState>,
     source_type: String,
     path: String,
+    follow_changes: Option<bool>,
 ) -> Result<crate::sources::Source, String> {
     let path_buf = PathBuf::from(&path);
     if !path_buf.exists() {
@@ -5637,9 +5643,13 @@ pub async fn add_source(
                 let s = state.read().await;
                 s.client.clone()
             };
-            client.add_source("obsidian".to_string(), path).await
+            client
+                .add_source("obsidian".to_string(), path, follow_changes)
+                .await
         }
-        "directory" => register_directory_source_with_daemon(&state, &path_buf).await,
+        "directory" => {
+            register_directory_source_with_daemon(&state, &path_buf, follow_changes).await
+        }
         other => Err(format!("Unknown source_type: {}", other)),
     }
 }
@@ -5701,6 +5711,17 @@ mod managed_blob_paths_tests {
         };
         assert!(super::managed_blob_paths(sources_dir, &in_place).is_empty());
     }
+}
+
+/// Switch a registered source between following changes and import-once.
+#[tauri::command]
+pub async fn set_source_follow_changes(
+    state: tauri::State<'_, State>,
+    id: String,
+    follow_changes: bool,
+) -> Result<crate::sources::Source, String> {
+    let client = daemon_client(&state).await;
+    client.set_source_follow_changes(&id, follow_changes).await
 }
 
 #[tauri::command]
@@ -5975,7 +5996,7 @@ pub async fn upload_source_file(
     }
     let dir = crate::sources::uploads::sources_dir();
     crate::sources::uploads::place_upload_file(&dir, &src).map_err(|e| e.to_string())?;
-    register_directory_source_with_daemon(&state, &dir).await
+    register_directory_source_with_daemon(&state, &dir, None).await
 }
 
 // ---------------------------------------------------------------------------

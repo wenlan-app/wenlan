@@ -32,6 +32,7 @@ vi.mock("../../lib/tauri", () => ({
   listOrphanLinks: vi.fn().mockResolvedValue({ min_count: 2, orphan_labels: [] }),
   listPages: vi.fn().mockResolvedValue([]),
   listPagesExplicitBrowse: vi.fn().mockResolvedValue([]),
+  listSpaces: vi.fn().mockResolvedValue([]),
   searchPages: vi.fn().mockResolvedValue([]),
   redistillPage: vi.fn(),
   updatePage: vi.fn(),
@@ -57,7 +58,7 @@ vi.mock("../../lib/tauri", () => ({
   unmarkPageBasis: vi.fn(),
 }));
 
-import { getPage, getPageSources, listPagesExplicitBrowse, markPageBasis, redistillPage, updatePage } from "../../lib/tauri";
+import { getPage, getPageSources, listPagesExplicitBrowse, listSpaces, markPageBasis, redistillPage, updatePage, type Space } from "../../lib/tauri";
 import { EditorSelection } from "@codemirror/state";
 
 const oneSource = [{
@@ -279,6 +280,32 @@ describe("PageDetail with note bases", () => {
     await waitFor(() => expect(markPageBasis).toHaveBeenCalledWith("note_a", "basis_b"));
     await waitFor(() => expect(view.dom.querySelector(".cm-wiki-page-link")?.textContent).toBe("Price list"));
     await waitFor(() => expect(updatePage).toHaveBeenCalled(), { timeout: 4000 });
+  });
+
+  it("links a note in another Space as Space/Title and can use it as a source", async () => {
+    vi.mocked(listSpaces).mockResolvedValue([{ id: "other", name: "other" } as Space]);
+    vi.mocked(listPagesExplicitBrowse).mockImplementation(async (_status, space) =>
+      linkCandidates.filter((candidate) => (candidate.space ?? "uncategorized") === space));
+    vi.mocked(markPageBasis).mockReset().mockResolvedValue({ page_id: "elsewhere_d", title: "Price elsewhere", state: "current" } as never);
+    renderPage({}, { initialMode: "edit" });
+    const view = await typeAtEnd(" [[pri");
+
+    const menu = await screen.findByRole("listbox", { name: "Link a page" });
+    const rows = await waitFor(() => {
+      const options = [...menu.querySelectorAll('[role="option"]')];
+      expect(options).toHaveLength(2);
+      return options;
+    });
+    // The page's own Space first, then the other Space, tagged with its name.
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual(["Price list", "other/Price elsewhere"]);
+    expect(rows[1].querySelector(".cm-link-option-space")?.textContent).toBe("other");
+
+    act(() => { rows[1].querySelector("button")!.click(); });
+    expect(view.state.doc.toString()).toBe("The plan costs 10 dollars. [[other/Price elsewhere]]");
+    await waitFor(() => expect(markPageBasis).toHaveBeenCalledWith("note_a", "elsewhere_d"));
+    await waitFor(() => expect(view.dom.querySelector(".cm-wiki-page-link")).not.toBeNull());
+    vi.mocked(listSpaces).mockResolvedValue([]);
+    vi.mocked(listPagesExplicitBrowse).mockReset().mockResolvedValue([]);
   });
 
   it("says so when using a linked note as a source fails, and keeps the link", async () => {

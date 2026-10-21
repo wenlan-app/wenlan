@@ -15,9 +15,10 @@ fn ambient_schedule_includes_fixed_memory_stages() {
         citation: true,
         edge_grounding_promote: true,
         entity_idle_archive: true,
+        code_basis_recheck: true,
     };
     assert_eq!(
-        (0..10)
+        (0..11)
             .filter_map(|_| schedule.select_due(now, available))
             .collect::<Vec<_>>(),
         vec![
@@ -31,6 +32,7 @@ fn ambient_schedule_includes_fixed_memory_stages() {
             AmbientJob::Citation,
             AmbientJob::EdgeGroundingPromote,
             AmbientJob::EntityIdleArchive,
+            AmbientJob::CodeBasisRecheck,
         ]
     );
 }
@@ -90,6 +92,7 @@ fn entity_idle_archive_is_scheduled_and_available_without_a_provider() {
         citation: false,
         edge_grounding_promote: false,
         entity_idle_archive: true,
+        code_basis_recheck: false,
     };
     assert_eq!(
         schedule.select_due(now, only),
@@ -412,6 +415,7 @@ fn ambient_schedule_round_robins_all_due_jobs() {
         citation: true,
         edge_grounding_promote: true,
         entity_idle_archive: true,
+        code_basis_recheck: false,
     };
 
     assert_eq!(
@@ -464,6 +468,7 @@ fn drain_due_returns_the_full_lap_in_cursor_order_when_everything_is_due() {
         citation: true,
         edge_grounding_promote: true,
         entity_idle_archive: true,
+        code_basis_recheck: false,
     };
     assert_eq!(
         schedule.drain_due(now, available),
@@ -503,6 +508,7 @@ fn drain_due_lets_a_later_cursor_job_run_alongside_an_always_due_earlier_one() {
         citation: true,
         edge_grounding_promote: true,
         entity_idle_archive: true,
+        code_basis_recheck: false,
     };
     // Mark every periodic lane except Citation as freshly run-and-empty so it
     // is not due again this instant. Citation and Document are left alone:
@@ -546,6 +552,7 @@ fn selected_backlog_lane_stays_due_after_global_cooldown() {
         citation: true,
         edge_grounding_promote: true,
         entity_idle_archive: true,
+        code_basis_recheck: false,
     };
 
     assert_eq!(
@@ -1626,6 +1633,109 @@ async fn ambient_provider_hard_caps_forwarded_inference_calls() {
         "a second inference in one ambient slice must fail closed"
     );
     assert_eq!(provider.call_count(), 1, "telemetry counts forwarded calls");
+}
+
+#[tokio::test]
+async fn a_larger_ambient_call_budget_forwards_exactly_that_many_calls() {
+    use wenlan_core::llm_provider::{LlmProvider, LlmRequest};
+
+    let inner = Arc::new(MaintenanceTestProvider {
+        body: "response".to_string(),
+    });
+    let provider = AmbientBudgetProvider::with_limit(inner, 3);
+    let request = || LlmRequest {
+        system_prompt: None,
+        user_prompt: "test".to_string(),
+        max_tokens: 8,
+        temperature: 0.0,
+        label: Some("ambient_budget_test".to_string()),
+        timeout_secs: None,
+    };
+    for _ in 0..3 {
+        assert!(provider.generate(request()).await.is_ok());
+    }
+    assert!(
+        provider.generate(request()).await.is_err(),
+        "a fourth inference in a three-call slice must fail closed"
+    );
+    assert_eq!(provider.call_count(), 3);
+}
+
+/// The model recheck of changed code basis rows needs a healthy provider,
+/// background AI on, and its own switch on; any one missing parks the lane.
+#[test]
+fn code_basis_recheck_needs_provider_background_ai_and_its_own_flag() {
+    assert!(code_basis_recheck_allowed(true, true, true));
+    assert!(
+        !code_basis_recheck_allowed(false, true, true),
+        "no provider"
+    );
+    assert!(
+        !code_basis_recheck_allowed(true, false, true),
+        "background AI off"
+    );
+    assert!(!code_basis_recheck_allowed(true, true, false), "switch off");
+    assert_eq!(AmbientJob::CodeBasisRecheck.as_key(), "code_basis_recheck");
+    assert!(AmbientJob::ALL.contains(&AmbientJob::CodeBasisRecheck));
+}
+
+#[tokio::test]
+async fn availability_follows_the_config_flag_and_background_ai_switch() {
+    let _lock = crate::TEST_DATA_DIR_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let _env = DataDirGuard::new();
+    let mut config = wenlan_core::config::load_config();
+    config.code_basis_model_recheck = true;
+    wenlan_core::config::save_config_with_background_ai(&config, true).unwrap();
+    assert!(AmbientAvailability::for_provider(true).supports(AmbientJob::CodeBasisRecheck));
+    assert!(
+        !AmbientAvailability::for_provider(false).supports(AmbientJob::CodeBasisRecheck),
+        "no provider parks the lane"
+    );
+
+    config.code_basis_model_recheck = false;
+    wenlan_core::config::save_config(&config).unwrap();
+    assert!(!AmbientAvailability::for_provider(true).supports(AmbientJob::CodeBasisRecheck));
+
+    config.code_basis_model_recheck = true;
+    wenlan_core::config::save_config_with_background_ai(&config, false).unwrap();
+    assert!(!AmbientAvailability::for_provider(true).supports(AmbientJob::CodeBasisRecheck));
+}
+
+/// A recheck slice is paced, not drained: even a slice that did work waits the
+/// full half hour, so three rows go to the model per half hour at most.
+#[test]
+fn code_basis_recheck_is_due_every_half_hour_whatever_the_slice_found() {
+    let now = Instant::now();
+    let mut schedule = AmbientSchedule::new(now);
+    let only = AmbientAvailability {
+        document: false,
+        classification: false,
+        structured_extract: false,
+        entity: false,
+        title: false,
+        page_growth: false,
+        reconcile: false,
+        citation: false,
+        edge_grounding_promote: false,
+        entity_idle_archive: false,
+        code_basis_recheck: true,
+    };
+    assert_eq!(
+        schedule.select_due(now, only),
+        Some(AmbientJob::CodeBasisRecheck)
+    );
+    schedule.note_job_result(AmbientJob::CodeBasisRecheck, now, true);
+    assert_eq!(
+        schedule.select_due(now + Duration::from_secs(30 * 60 - 1), only),
+        None
+    );
+    assert_eq!(
+        schedule.select_due(now + Duration::from_secs(30 * 60), only),
+        Some(AmbientJob::CodeBasisRecheck)
+    );
 }
 
 #[tokio::test]
@@ -4119,6 +4229,7 @@ async fn ambient_reconcile_backpressure_uses_lane_rescan_backoff() {
         citation: false,
         edge_grounding_promote: false,
         entity_idle_archive: false,
+        code_basis_recheck: false,
     };
     assert_eq!(
         schedule.select_due(
