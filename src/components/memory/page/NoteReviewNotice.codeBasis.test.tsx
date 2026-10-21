@@ -96,6 +96,33 @@ describe("NoteReviewNotice with a code basis", () => {
     expect(await screen.findByText("The code this note relies on changed: src/parser.rs line 7")).toBeInTheDocument();
   });
 
+  it("shows what the background check concluded under the changed line, only when it said something", async () => {
+    renderNotice({
+      ...basePage,
+      code_basis: [
+        row({ path: "a.rs", ai_verdict: "needs_human", explanation: "The note says 32 bits are kept on purpose; the code now keeps 48." }),
+        row({ path: "b.rs", ai_verdict: "stale", explanation: "The constant is now 48, not 32." }),
+        row({ path: "c.rs" }),
+      ],
+    });
+
+    expect(await screen.findByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.")).toBeInTheDocument();
+    expect(screen.getByText("AI looked: The constant is now 48, not 32, the next steep fixes it")).toBeInTheDocument();
+    expect(screen.getAllByText(/^AI looked:/)).toHaveLength(2);
+    // The buttons are unchanged: one set per changed row.
+    expect(screen.getAllByRole("button", { name: "Confirm no impact" })).toHaveLength(3);
+  });
+
+  it("keeps the check's sentence off a row that is no longer pending", async () => {
+    renderNotice({
+      ...basePage,
+      code_basis: [row(), row({ path: "ok.rs", state: "ok", ai_verdict: "stale", explanation: "Old news." })],
+    });
+
+    expect(await screen.findByText(/The code this note relies on changed: src\/parser.rs/)).toBeInTheDocument();
+    expect(screen.queryByText(/^AI looked:/)).not.toBeInTheDocument();
+  });
+
   it("explains code that cannot be found by its reason and offers only a way out", async () => {
     renderNotice({
       ...basePage,

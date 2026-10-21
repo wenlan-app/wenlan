@@ -41,6 +41,22 @@ export function codeBasisLineText(t: TFunction, row: CodeBasisRef): string {
   return "";
 }
 
+/**
+ * What the background check concluded about a changed row, for the second line
+ * of the notice: its sentence as sent, plus "the next steep fixes it" when it
+ * judged the note stale. Null when there is nothing to say.
+ */
+export function codeBasisAiLineText(t: TFunction, row: CodeBasisRef): string | null {
+  if (row.state !== "pending") return null;
+  const sentence = row.explanation?.trim();
+  if (!sentence) return null;
+  if (row.ai_verdict !== "stale") return t("codeBasis.aiLooked", { sentence });
+  const suffix = t("codeBasis.aiStaleSuffix");
+  if (sentence.endsWith(suffix)) return t("codeBasis.aiLooked", { sentence });
+  const bare = sentence.replace(/[.。!！]+$/u, "");
+  return t("codeBasis.aiLooked", { sentence: bare.endsWith(suffix) ? bare : `${bare}${suffix}` });
+}
+
 async function writeClipboard(text: string): Promise<boolean> {
   try {
     await clipboardWrite(text);

@@ -114,8 +114,20 @@
   gap: 4px 12px;
 }
 
+.note-review-notice__basis-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .note-review-notice__basis-text {
   color: var(--mem-text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* What the background check said: the first line's size, in secondary colour. */
+.note-review-notice__basis-ai {
   min-width: 0;
   overflow-wrap: anywhere;
 }

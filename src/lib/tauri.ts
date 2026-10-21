@@ -1926,6 +1926,10 @@ export interface CodeBasisRef {
   changed_at?: number | null;
   /** Why the code is unavailable. */
   reason?: CodeBasisUnavailableReason | null;
+  /** What the background check concluded about a pending row: `"stale"` or `"needs_human"`. */
+  ai_verdict?: string;
+  /** One sentence from that check, in the note's language. */
+  explanation?: string;
 }
 
 /** Which row of a note is meant: the span the row has now. */
