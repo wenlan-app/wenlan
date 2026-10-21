@@ -1421,11 +1421,22 @@ pub fn spawn_scheduler(
                     filesystem_resource_status.block_reason
                 );
             }
-            // Obsidian vaults embed changed notes directly, so they follow
-            // only the ordinary resource-admitted pass; the app runs a
-            // vault's first import itself when it is connected.
-            if directory_scope == Some(DirectorySyncScope::All) {
-                sync_obsidian_sources(&shared, &db).await;
+            // Obsidian vaults embed changed notes directly. The ordinary pass
+            // stores up to 50 changed notes per vault; while the CPU is busy
+            // (the first-sync-only scope above) a pass still runs, under the
+            // same memory and thermal gates, but stores only a few, so an
+            // edit made in Obsidian does not wait for the machine to go idle.
+            let obsidian_note_limit = match directory_scope {
+                Some(DirectorySyncScope::All) => {
+                    Some(crate::source_routes::obsidian_sync::OBSIDIAN_POLL_NOTE_LIMIT)
+                }
+                Some(DirectorySyncScope::FirstSyncOnly) => {
+                    Some(crate::source_routes::obsidian_sync::OBSIDIAN_BUSY_NOTE_LIMIT)
+                }
+                None => None,
+            };
+            if let Some(note_limit) = obsidian_note_limit {
+                sync_obsidian_sources(&shared, &db, note_limit).await;
             }
             if crate::lifecycle::shutdown_requested(&shutdown) {
                 break;
@@ -2220,11 +2231,14 @@ fn should_poll_obsidian_source(source: &wenlan_types::sources::Source) -> bool {
 
 /// Sync every pollable Obsidian vault inside the poll, like the Directory
 /// pass. A vault whose sync (started by the app) is still running is
-/// skipped, and each pass embeds at most
-/// [`OBSIDIAN_POLL_NOTE_LIMIT`](crate::source_routes::obsidian_sync::OBSIDIAN_POLL_NOTE_LIMIT)
-/// changed notes per vault, so a large batch of edits spreads over several
-/// polls instead of holding the loop.
-async fn sync_obsidian_sources(shared: &SharedState, db: &Arc<wenlan_core::db::MemoryDB>) {
+/// skipped, and each pass stores at most `note_limit` changed notes per
+/// vault, so a large batch of edits spreads over several polls instead of
+/// holding the loop.
+async fn sync_obsidian_sources(
+    shared: &SharedState,
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    note_limit: usize,
+) {
     let config = wenlan_core::config::load_config();
     let vaults: Vec<_> = config
         .sources
@@ -2243,6 +2257,7 @@ async fn sync_obsidian_sources(shared: &SharedState, db: &Arc<wenlan_core::db::M
             db.clone(),
             &quality_gate,
             &source,
+            note_limit,
         )
         .await
         {

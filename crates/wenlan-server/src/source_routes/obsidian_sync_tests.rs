@@ -279,13 +279,13 @@ async fn background_pass_stores_a_bounded_number_of_notes() {
     let source = register_vault(vault.path());
     let gate = ServerState::default().quality_gate;
 
-    try_sync_obsidian_source(db.clone(), &gate, &source)
+    try_sync_obsidian_source(db.clone(), &gate, &source, OBSIDIAN_POLL_NOTE_LIMIT)
         .await
         .expect("no other sync is running")
         .expect("first pass succeeds");
     assert_eq!(stored_ids(&db).await.len(), OBSIDIAN_POLL_NOTE_LIMIT);
 
-    try_sync_obsidian_source(db.clone(), &gate, &source)
+    try_sync_obsidian_source(db.clone(), &gate, &source, OBSIDIAN_POLL_NOTE_LIMIT)
         .await
         .expect("no other sync is running")
         .expect("second pass succeeds");

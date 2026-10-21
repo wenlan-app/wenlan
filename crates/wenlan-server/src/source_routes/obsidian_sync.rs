@@ -19,8 +19,9 @@
 //! - One sync per source runs at a time. The HTTP handler waits for a running
 //!   sync; the scheduler skips a source whose sync is still running.
 //! - The scheduler's pass stores at most [`OBSIDIAN_POLL_NOTE_LIMIT`] changed
-//!   notes, so it never holds the serial poll loop for a whole vault; the
-//!   rest are picked up by the next polls. The HTTP sync has no limit.
+//!   notes ([`OBSIDIAN_BUSY_NOTE_LIMIT`] while the machine is busy), so it
+//!   never holds the serial poll loop for a whole vault; the rest are picked
+//!   up by the next polls. The HTTP sync has no limit.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -39,6 +40,11 @@ use crate::error::ServerError;
 
 /// The most changed notes one scheduler pass stores per vault.
 pub(crate) const OBSIDIAN_POLL_NOTE_LIMIT: usize = 50;
+
+/// The most changed notes one scheduler pass stores per vault while the CPU
+/// is busy: enough that an edit made in Obsidian still shows up within a
+/// poll or two, small enough that embedding it costs little.
+pub(crate) const OBSIDIAN_BUSY_NOTE_LIMIT: usize = 5;
 
 type SyncLock = Arc<tokio::sync::Mutex<()>>;
 
@@ -97,17 +103,16 @@ pub(crate) async fn sync_obsidian_source(
 
 /// Sync an Obsidian source unless a sync of it is already running, in which
 /// case return `None` at once. Used by the background poll, so it stores at
-/// most [`OBSIDIAN_POLL_NOTE_LIMIT`] changed notes.
+/// most `note_limit` changed notes.
 pub(crate) async fn try_sync_obsidian_source(
     db: Arc<MemoryDB>,
     quality_gate: &QualityGate,
     source: &Source,
+    note_limit: usize,
 ) -> Option<Result<SyncStatsResponse, ServerError>> {
     let lock = sync_lock(&source.id);
     let _guard = lock.try_lock().ok()?;
-    Some(
-        sync_obsidian_source_locked(db, quality_gate, source, Some(OBSIDIAN_POLL_NOTE_LIMIT)).await,
-    )
+    Some(sync_obsidian_source_locked(db, quality_gate, source, Some(note_limit)).await)
 }
 
 fn note_chunk_prefix(source_id: &str, path: &str) -> String {
