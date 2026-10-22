@@ -125,11 +125,13 @@ fn attempt_key(db: &MemoryDB, claimed: &SteepClaim, token: &str) -> String {
 
 fn user_prompt(claimed: &SteepClaim) -> String {
     let mut prompt = format!(
-        "Title: {}\n\nThe note now:\n{}\n",
+        "Title: {}\n\nThe note as it reads:\n{}\n",
         claimed.title, claimed.current_content
     );
-    if !claimed.sources.is_empty() {
-        prompt.push_str("\nNumbered sources:\n");
+    if claimed.sources.is_empty() {
+        prompt.push_str("\nThis note has no numbered sources: write no [n] markers.\n");
+    } else {
+        prompt.push_str("\nNumbered sources (cite only these numbers):\n");
         for source in &claimed.sources {
             prompt.push_str(&format!("[{}] {}\n", source.n, source.text));
         }
@@ -141,7 +143,8 @@ fn user_prompt(claimed: &SteepClaim) -> String {
         ));
         if !code.what_changed.is_empty() {
             prompt.push_str(&format!(
-                "What the note should now say: {}\n",
+                "What the code means for the note (describes the change; do not copy its \
+                 wording): {}\n",
                 code.what_changed
             ));
         }
@@ -174,6 +177,13 @@ async fn generate(
             None
         }
     }
+}
+
+/// `body` without `[n]` citation markers (and the space before each).
+fn drop_markers(body: &str) -> String {
+    static MARKER: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r" ?\[\d+(?:\s*,\s*\d+)*\]").unwrap());
+    MARKER.replace_all(body, "").into_owned()
 }
 
 /// The reply without a code fence wrapped around all of it.
@@ -212,6 +222,16 @@ async fn land(
             return Ok(CodeRewriteOutcome::Failed);
         }
         (STEEP_ACTION_REWRITE, Some(reply))
+    };
+    // With no sources there is no number a marker could name, so any the
+    // model wrote anyway are dropped rather than refusing the whole rewrite.
+    let unmarked;
+    let content = match content {
+        Some(body) if claimed.sources.is_empty() => {
+            unmarked = drop_markers(body);
+            Some(unmarked.as_str())
+        }
+        other => other,
     };
     match commit(db, token, action, content, &[], knowledge_path, None).await {
         Ok(done) => Ok(match done.outcome {

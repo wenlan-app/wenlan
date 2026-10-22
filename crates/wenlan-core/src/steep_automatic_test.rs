@@ -85,6 +85,7 @@ async fn a_note_judged_stale_is_rewritten_by_the_automatic_model_and_settled() {
     assert!(prompt.contains("line 12 changed"), "{prompt}");
     assert!(prompt.contains("The note should say 48 bits."), "{prompt}");
     assert!(prompt.contains("32 bits"), "{prompt}");
+    assert!(prompt.contains("write no [n] markers"), "{prompt}");
     assert_eq!(body_of(&db, "page_a").await, FIXED);
     assert_eq!(only(&db, "page_a").await.state, CODE_BASIS_STATE_OK);
 
@@ -125,8 +126,8 @@ async fn an_answer_that_does_not_land_is_not_asked_for_again() {
     let (db, _dir) = test_db().await;
     let repo = Repo::new();
     stale_note(&db, &repo, "page_a").await;
-    // The note has no sources, so [9] points nowhere and is refused.
-    let model = Scripted::new("Keys are cut to 48 bits on purpose [9].");
+    // Loses a sentence that still holds, so it is refused.
+    let model = Scripted::new("Keys are cut to 48 bits.");
 
     assert_eq!(run(&db, &model).await, Some(CodeRewriteOutcome::Failed));
     assert_eq!(body_of(&db, "page_a").await, BODY);
@@ -139,6 +140,19 @@ async fn an_answer_that_does_not_land_is_not_asked_for_again() {
     assert!(super::super::claim(&db, "page_a", &ReadScope::Global, None)
         .await
         .is_ok());
+}
+
+#[tokio::test]
+async fn markers_on_a_note_with_no_sources_are_dropped_not_refused() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::new();
+    stale_note(&db, &repo, "page_a").await;
+    let model = Scripted::new(
+        "Keys are cut to 48 bits on purpose [2].\n\nThe cut happens in truncate(). [1, 3]",
+    );
+
+    assert_eq!(run(&db, &model).await, Some(CodeRewriteOutcome::Written));
+    assert_eq!(body_of(&db, "page_a").await, FIXED);
 }
 
 #[tokio::test]
