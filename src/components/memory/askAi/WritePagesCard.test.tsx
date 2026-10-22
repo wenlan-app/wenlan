@@ -162,6 +162,7 @@ describe("WritePagesCard", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Ask AI to write pages" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-card")).toHaveTextContent("The command is copied. Paste it into Codex"));
+    expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
   });
 
   it("offers to connect a tool or use the local model when no tool is connected", async () => {

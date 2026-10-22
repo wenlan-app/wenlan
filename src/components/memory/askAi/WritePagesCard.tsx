@@ -43,6 +43,10 @@ export interface WritePagesRun {
   readonly startedAt: number;
   /** The tool's display name, for "Claude Code is writing pages". */
   readonly tool: string | null;
+  /** How the command reached the tool: typed into it, or copied for the
+   *  user to paste. Kept with the run so a remount (a language switch, a new
+   *  window) still says the right thing. */
+  readonly handedOver?: "opened" | "copied";
 }
 
 export type WritePagesView =
@@ -173,7 +177,6 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
   const command = useAskAiCommand("steep");
   const [run, setRunState] = useState<WritePagesRun | null>(() => readJson<WritePagesRun>(RUN_KEY));
   const [dismissedTotal, setDismissedTotal] = useState<number | null>(() => readJson<number>(DISMISSED_KEY));
-  const [handedOver, setHandedOver] = useState<"opened" | "copied" | null>(null);
   const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const list = useQuery({
@@ -240,7 +243,6 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
     writeJson(DISMISSED_KEY, total);
     setDismissedTotal(total);
     setRun(null);
-    setHandedOver(null);
   };
   const copyCommand = async () => {
     if (command === null) return false;
@@ -253,18 +255,19 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
     const startedAt = Date.now();
     setNow(startedAt);
     setLastChangeAt(startedAt);
-    setRun({ startedAt, tool: tool?.name ?? null });
+    const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null };
+    setRun(begun);
     if (opensTool && tool) {
       try {
         await openToolWithPrompt(tool.family, command);
-        setHandedOver("opened");
+        setRun({ ...begun, handedOver: "opened" });
         return;
       } catch {
         // Not installed here; the copied command still works.
       }
     }
     await copyCommand();
-    setHandedOver("copied");
+    setRun({ ...begun, handedOver: "copied" });
   };
 
   const closeButton = (
@@ -383,7 +386,7 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
         </div>
         {view.written.length === 0 && !view.writing ? (
           <p className="write-pages-sub">
-            {handedOver === "copied"
+            {run?.handedOver !== "opened"
               ? t("askAi.writePages.pasteIt", { tool: toolName })
               : t("askAi.writePages.pressEnter", { tool: toolName })}
           </p>
