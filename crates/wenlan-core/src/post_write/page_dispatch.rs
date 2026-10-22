@@ -437,6 +437,20 @@ pub async fn update_page_preserving_sources(
     edited_by: &str,
     knowledge_path: Option<&Path>,
 ) -> Result<WriteResult, WenlanError> {
+    update_page_preserving_sources_with_lock(db, page_id, req, edited_by, knowledge_path, false)
+        .await
+}
+
+/// [`update_page_preserving_sources`], also turning on the review lock when
+/// this human write is the page's first (`Config::lock_my_pages`).
+pub async fn update_page_preserving_sources_with_lock(
+    db: &MemoryDB,
+    page_id: &str,
+    req: UpdatePageRequest,
+    edited_by: &str,
+    knowledge_path: Option<&Path>,
+    lock_on_first_human_edit: bool,
+) -> Result<WriteResult, WenlanError> {
     page_write(
         db,
         PageWrite::UpdatePreservingSources {
@@ -444,7 +458,10 @@ pub async fn update_page_preserving_sources(
             req,
             edited_by,
             knowledge_path,
-            basis: BasisWrite::default(),
+            basis: BasisWrite {
+                lock_on_first_human_edit,
+                ..BasisWrite::default()
+            },
         },
     )
     .await

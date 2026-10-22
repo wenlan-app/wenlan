@@ -913,6 +913,11 @@ pub struct BasisWrite {
     /// of it after the caller's check reads as not found: nothing is written,
     /// marked, or staged as a revision card. `None` writes wherever it is.
     pub space_guard: Option<crate::read_scope::ReadScope>,
+    /// "Lock pages I've written" (`Config::lock_my_pages`): a human write
+    /// that turns a page into a user-edited one also turns on its review
+    /// lock. Only that first edit locks, so a page the user unlocked by hand
+    /// stays unlocked through later edits. Machine writers ignore it.
+    pub lock_on_first_human_edit: bool,
 }
 
 /// One basis note as an "update from sources" run read it, recorded on the
