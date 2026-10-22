@@ -455,6 +455,18 @@ async fn a_note_relies_on_a_note_in_another_space_unless_the_caller_is_held_to_o
     assert_eq!(marked.title, "Work Plan");
     assert_eq!(marked.state, "ok");
     person_edits(&router, &basis, "Ship in April.").await;
+    // The app filtering Home still names the Work note its note waits on.
+    let (status, pending) = call(
+        &router,
+        Method::GET,
+        "/api/pages/basis-pending?space=home",
+        None,
+        Caller::Person,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pending}");
+    assert_eq!(pending[0]["basis_page_id"], basis.as_str(), "{pending}");
+    assert_eq!(pending[0]["title"], "Work Plan", "{pending}");
     let (status, diff) = call(
         &router,
         Method::GET,

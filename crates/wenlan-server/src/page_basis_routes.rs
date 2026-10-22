@@ -422,15 +422,20 @@ pub async fn handle_basis_pending(
     )
     .await?;
     let groups = db.list_basis_pending_in_scope(&scope).await?;
+    // `?space=` only picks which citing notes are listed. What the caller may
+    // see follows its Space lock alone, as on the other basis routes, so the
+    // app filtering to one Space still names a basis kept in another (#927).
+    let visibility =
+        crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // A citing note the caller may not read in full is left out, and so is its
     // title; a basis group with no visible citer is left out whole.
     let citer_ids: Vec<String> = groups
         .iter()
         .flat_map(|g| g.citers.iter().map(|c| c.page_id.clone()))
         .collect();
-    let visible_citers = visible_ids(&db, &view.grant, &scope, &citer_ids).await?;
+    let visible_citers = visible_ids(&db, &view.grant, &visibility, &citer_ids).await?;
     let basis_ids: Vec<String> = groups.iter().map(|g| g.basis_page_id.clone()).collect();
-    let visible_bases = visible_ids(&db, &view.grant, &scope, &basis_ids).await?;
+    let visible_bases = visible_ids(&db, &view.grant, &visibility, &basis_ids).await?;
     let mut out = Vec::new();
     for group in groups {
         let citers: Vec<BasisPendingCiterRef> = group
