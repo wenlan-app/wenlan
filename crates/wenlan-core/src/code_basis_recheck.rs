@@ -25,7 +25,10 @@
 //! The same judging is available on demand: [`prepare_code_basis_ask`] builds
 //! the prompt for one row and [`apply_code_basis_judgement`] lands the answer
 //! with the same compare-and-swap, so a caller's own model (the steep pass, with
-//! background AI off) can do what the background job does.
+//! background AI off) can do what the background job does. A `stale` row then
+//! waits for the steep pass ([`crate::steep`], reason `code_changed`), which
+//! rewrites the note from [`current_code_excerpt`] and settles the row with
+//! [`confirm_code_basis_as_seen`].
 //!
 //! Nothing here holds the database writer across a model call. A row and its
 //! note are read, everything is dropped, the model is asked, and the verdict is
@@ -577,6 +580,63 @@ async fn ask_model(
         log::warn!("[code_basis_recheck] reply was not a usable verdict");
     }
     judgement
+}
+
+/// The changed lines a `stale` row relies on, as they read now, for a caller
+/// that rewrites the note from them: the digest of those lines (pass it back
+/// to [`confirm_code_basis_as_seen`]), where they are, and the numbered
+/// excerpt with a few lines of context. `None` when the lines are not changed
+/// any more, cannot be found, or the file cannot be read.
+pub async fn current_code_excerpt(row: &CodeBasisRow) -> Option<(String, LineSpan, String)> {
+    let Reading::Changed(current) = read_current(row).await else {
+        return None;
+    };
+    let lines = source_lines(&current.text);
+    let excerpt = render_excerpt(
+        &lines,
+        current.span.start.saturating_sub(CONTEXT_LINES),
+        current.span.end.saturating_add(CONTEXT_LINES),
+        Some(current.span),
+    );
+    Some((current.anchor.digest.clone(), current.span, excerpt.text))
+}
+
+/// Settle `row` after its note was rewritten from the code as
+/// [`current_code_excerpt`] showed it (`code_digest`): the row returns to `ok`
+/// at those lines, confirmed `by`. Lands only while the file still reads that
+/// way and the row still holds the anchor it was read with; returns whether it
+/// did. A row that moved on is judged again later.
+pub async fn confirm_code_basis_as_seen(
+    db: &MemoryDB,
+    row: &CodeBasisRow,
+    code_digest: &str,
+    by: &str,
+) -> Result<bool, WenlanError> {
+    let Reading::Changed(current) = read_current(row).await else {
+        return Ok(false);
+    };
+    if current.anchor.digest != code_digest {
+        return Ok(false);
+    }
+    let locator = CodeBasisLocator::from(&row.reference);
+    match db
+        .confirm_code_basis(
+            &row.page_id,
+            &locator,
+            &row.anchor_json,
+            current.span,
+            &current.anchor,
+            current.stamp,
+            Some(current.blob.as_str()),
+            by,
+            chrono::Utc::now().timestamp(),
+        )
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(CodeBasisError::NotFound | CodeBasisError::Conflict(_)) => Ok(false),
+        Err(other) => Err(other.into()),
+    }
 }
 
 /// What landing a judgement did.

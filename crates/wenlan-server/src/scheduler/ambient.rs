@@ -94,8 +94,9 @@ pub(super) struct AmbientAvailability {
 /// The model recheck of changed code basis rows spends inference on the
 /// person's behalf, so it rides the one switch every automatic lane rides:
 /// a pinned and healthy provider with background AI on. There is no second
-/// switch; with background AI off the same judging happens on demand
-/// (`/api/pages/code-basis/judge`), so a changed note is never left unlooked at.
+/// switch; without it the same judging happens on demand, in the caller's
+/// steep (`code_check` work, `/api/steep`), so a changed note is never left
+/// unlooked at.
 pub(super) const fn code_basis_recheck_allowed(
     provider_available: bool,
     background_ai_enabled: bool,

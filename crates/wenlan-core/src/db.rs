@@ -211,6 +211,8 @@ mod source_annotations_test;
 #[cfg(test)]
 mod space_rename_test;
 #[cfg(test)]
+pub(crate) mod steep_code_test;
+#[cfg(test)]
 #[path = "db/test_support_test.rs"]
 pub(crate) mod test_support;
 #[cfg(test)]

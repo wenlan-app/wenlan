@@ -481,7 +481,8 @@ pub async fn update_page_at_source_revision(
 /// on the changelog and on a revision card, and `space_guard` is the Space the
 /// agent was locked to when it claimed the page: the rewrite, or its card,
 /// lands only while the page is still there, checked in the write's own
-/// transaction.
+/// transaction. `require_stale` is false for a rewrite made because the code
+/// the page relies on changed: such a page is not stale by its sources.
 #[allow(clippy::too_many_arguments)]
 pub async fn steep_update_page(
     db: &MemoryDB,
@@ -490,6 +491,7 @@ pub async fn steep_update_page(
     agent: Option<&str>,
     space_guard: Option<crate::read_scope::ReadScope>,
     expected_source_revision: i64,
+    require_stale: bool,
     knowledge_path: Option<&Path>,
     citations: Option<(String, String)>,
 ) -> Result<WriteResult, WenlanError> {
@@ -498,7 +500,7 @@ pub async fn steep_update_page(
         page_id,
         req,
         "re_distill",
-        true,
+        require_stale,
         Some(expected_source_revision),
         knowledge_path,
         citations,

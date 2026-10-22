@@ -41,6 +41,67 @@ impl MemoryDB {
         Ok(pages)
     }
 
+    /// Active notes not otherwise waiting for steep that hold `pending` code
+    /// basis rows steep can act on, newest change first, ties by id. Each comes
+    /// with how many rows a model judged `stale` for its current version (the
+    /// note needs rewriting from the code) and how many no model has judged
+    /// yet (not counting rows whose lines cannot be found or whose attempts
+    /// for this change are used up).
+    pub(crate) async fn list_steep_code_pages(&self) -> Result<Vec<(Page, u32, u32)>, WenlanError> {
+        use super::code_basis::RECHECK_CURRENT;
+        let unresolved = crate::code_basis_recheck::UNRESOLVED_DIGEST;
+        let max_attempts = crate::code_basis_recheck::RECHECK_MAX_ATTEMPTS;
+        let sql = format!(
+            "SELECT c.id, c.title, c.summary, c.content, c.entity_id, c.space, \
+                    c.source_memory_ids, c.version, c.status, c.created_at, c.last_compiled, \
+                    c.last_modified, COALESCE(c.sources_updated_count, 0), c.stale_reason, \
+                    COALESCE(c.user_edited, 0), COALESCE(c.changelog, '[]'), \
+                    COALESCE(c.creation_kind, 'distilled'), \
+                    COALESCE(c.review_status, 'confirmed'), c.workspace, c.citations, \
+                    COALESCE(c.kind, 'concept'), c.refresh_blocked_reason, \
+                    COALESCE(c.review_required, 0), \
+                    SUM(CASE WHEN b.recheck_verdict = 'stale' AND {RECHECK_CURRENT} \
+                        THEN 1 ELSE 0 END), \
+                    SUM(CASE WHEN COALESCE(b.recheck_digest, '') = '{unresolved}' THEN 0 \
+                        WHEN {RECHECK_CURRENT} AND (TRIM(COALESCE(b.recheck_verdict, '')) <> '' \
+                             OR b.recheck_attempts >= {max_attempts}) THEN 0 \
+                        ELSE 1 END) \
+             FROM pages c JOIN page_code_basis b ON b.page_id = c.id \
+             WHERE c.status = 'active' AND COALESCE(c.kind, 'concept') != 'entity' \
+               AND (c.stale_reason IS NULL OR c.stale_reason NOT IN (?1, ?2)) \
+               AND b.state = 'pending' \
+             GROUP BY c.id \
+             ORDER BY c.last_modified DESC, c.id ASC"
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &sql,
+                libsql::params![STEEP_STALE_REASONS[0], STEEP_STALE_REASONS[1]],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_steep_code_pages: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_steep_code_pages row: {e}")))?
+        {
+            let count = |index: i32| -> Result<u32, WenlanError> {
+                let n = row
+                    .get::<Option<i64>>(index)
+                    .map_err(|e| WenlanError::VectorDb(format!("list_steep_code_pages: {e}")))?
+                    .unwrap_or(0);
+                Ok(u32::try_from(n).unwrap_or(0))
+            };
+            let (stale, unjudged) = (count(23)?, count(24)?);
+            if stale + unjudged > 0 {
+                out.push((Self::row_to_page(&row)?, stale, unjudged));
+            }
+        }
+        Ok(out)
+    }
+
     /// Clear a note's staleness only while its source revision is still
     /// `source_revision`: the value a write just left behind. A source change
     /// or stale mark that landed after that write moved the revision on, and

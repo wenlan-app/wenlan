@@ -1097,14 +1097,24 @@ pub enum SteepAction {
     Commit,
     /// The sources changed but the claimed note still holds.
     StillAccurate,
+    /// The answers to a claim whose plan is judge.
+    Judge,
     /// Give a claimed note back.
     Release,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SteepAnswer {
+    #[schemars(description = "The check's n.")]
+    pub n: u32,
+    #[schemars(description = "The small model's reply, unchanged.")]
+    pub answer: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SteepParams {
     #[schemars(
-        description = "list | claim (page_id) | commit (token, content) | still_accurate (token) | release (token)."
+        description = "list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
     )]
     pub action: SteepAction,
     #[schemars(description = "claim: the page to take, from list.")]
@@ -1118,6 +1128,9 @@ pub struct SteepParams {
     )]
     #[serde(default)]
     pub content: Option<String>,
+    #[schemars(description = "judge: one answer per code check of the claim.")]
+    #[serde(default)]
+    pub answers: Option<Vec<SteepAnswer>>,
     #[schemars(description = "list: how many pages (default 20).")]
     #[serde(default)]
     pub limit: Option<u32>,
@@ -1731,12 +1744,12 @@ fn steep_waiting_text(total: u32, transport: &TransportMode) -> Option<String> {
     };
     Some(match transport {
         TransportMode::Stdio => format!(
-            "Steep: {count} waiting because a source {it} written from changed. \
+            "Steep: {count} waiting because what {it} written from changed. \
              Bring {them} up to date with the `steep` tool (list, claim, commit), or tell \
              the user that /wenlan steep (Codex: $wenlan steep) does it."
         ),
         TransportMode::Http => format!(
-            "Steep: {count} waiting because a source {it} written from changed. \
+            "Steep: {count} waiting because what {it} written from changed. \
              A local AI tool or automatic steep brings {them} up to date."
         ),
     })
@@ -3373,15 +3386,31 @@ impl WenlanMcpServer {
                     .await
                     .map(|claim| serde_json::to_value(&claim).map_err(encode))
             }
-            SteepAction::Commit | SteepAction::StillAccurate | SteepAction::Release => {
+            SteepAction::Commit
+            | SteepAction::StillAccurate
+            | SteepAction::Judge
+            | SteepAction::Release => {
                 let Some(token) = params.token else {
                     return missing("token");
                 };
                 let wire_action = match action {
                     SteepAction::Commit => wenlan_types::steep::STEEP_ACTION_REWRITE,
                     SteepAction::StillAccurate => wenlan_types::steep::STEEP_ACTION_STILL_ACCURATE,
+                    SteepAction::Judge => wenlan_types::steep::STEEP_ACTION_JUDGE,
                     _ => wenlan_types::steep::STEEP_ACTION_RELEASE,
                 };
+                let answers: Vec<wenlan_types::steep::SteepCodeAnswer> = params
+                    .answers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| wenlan_types::steep::SteepCodeAnswer {
+                        n: a.n,
+                        answer: a.answer,
+                    })
+                    .collect();
+                if action == SteepAction::Judge && answers.is_empty() {
+                    return missing("answers");
+                }
                 if action == SteepAction::Commit
                     && params
                         .content
@@ -3400,6 +3429,7 @@ impl WenlanMcpServer {
                             token,
                             action: wire_action.to_string(),
                             content: params.content,
+                            answers,
                         },
                     )
                     .await
@@ -4434,7 +4464,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: bring pages up to date after their sources changed or were removed. `list`: the pages waiting. `claim` (page_id): the page, its surviving sources numbered [1]..[n], a token, and a plan: rewrite; review_card (the user wrote it, so your rewrite becomes a card they accept); needs_you (leave it, tell the user why). `commit` (token, content): the rewrite, each claim cited [n]; Wenlan checks cited sentences against the source text, and refuses with nothing written if the page or its sources changed since the claim (claim again). `still_accurate` (token): sources changed, page still right. `release` (token): give it back. Rewrite with your main model; a small model may only judge still_accurate. Claim and commit: local stdio only.",
+        description = "Steep on demand: bring pages up to date after their sources, or the code they rely on, changed. `list`: pages waiting. `claim` (page_id): the page, surviving sources numbered [1]..[n] (plus the code as it reads now when code changed), a token, and a plan: rewrite; review_card (the user wrote it; your rewrite becomes a card); judge (put each code check to a small model, pass replies back with `judge`); needs_you (tell the user why). `commit` (token, content): the rewrite, claims cited [n]; refused with nothing written if anything changed since the claim (claim again). `still_accurate` (token): still right. `judge` (token, answers). `release` (token). Write with your main model; a small model only judges. Claim and commit: local stdio only.",
         annotations(
             title = "Steep",
             read_only_hint = false,
@@ -9286,13 +9316,16 @@ mod tests {
         assert_eq!(steep_waiting_text(0, &TransportMode::Stdio), None);
         let one = steep_waiting_text(1, &TransportMode::Stdio).unwrap();
         assert!(one.starts_with("Steep: 1 page is waiting"), "{one}");
-        assert!(one.contains("a source it was written from"), "{one}");
+        assert!(
+            one.contains("because what it was written from changed"),
+            "{one}"
+        );
         assert!(one.contains("Bring it up to date"), "{one}");
         assert!(one.contains("`steep` tool"), "{one}");
         let remote = steep_waiting_text(3, &TransportMode::Http).unwrap();
         assert!(remote.starts_with("Steep: 3 pages are waiting"), "{remote}");
         assert!(
-            remote.contains("a source they were written from"),
+            remote.contains("because what they were written from changed"),
             "{remote}"
         );
         assert!(
@@ -9408,6 +9441,7 @@ mod tests {
         for action in [
             SteepAction::Claim,
             SteepAction::Commit,
+            SteepAction::Judge,
             SteepAction::Release,
         ] {
             let result = server
@@ -9416,6 +9450,7 @@ mod tests {
                     page_id: Some("page_1".into()),
                     token: Some("stp_x".into()),
                     content: Some("body [1]".into()),
+                    answers: None,
                     limit: None,
                     cursor: None,
                     space: None,

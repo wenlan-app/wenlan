@@ -395,6 +395,16 @@
             "   and ask one question: does every sentence of the page still match the",
             "   sources, yes or no. When it says yes, call `steep` with"
           ]
+        },
+        {
+          "from": [
+            "   judged whether that matters. Give each entry of `code_checks` to a helper",
+            "   on a small model (in Claude Code, an `Agent` with `model: \"haiku\"`):"
+          ],
+          "to": [
+            "   judged whether that matters. Give each entry of `code_checks` to a helper",
+            "   on a small model when you can start one (a subagent on a smaller model):"
+          ]
         }
       ]
     }
