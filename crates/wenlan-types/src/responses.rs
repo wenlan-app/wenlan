@@ -693,11 +693,6 @@ pub struct ConfigResponse {
     /// Whether the proactive Page-Map suggestion phase is enabled. Default true.
     #[serde(default)]
     pub page_map_auto_suggest: bool,
-    /// Whether the everyday model may look at a note whose cited code changed
-    /// (in the background, when background AI is on). Missing on an older
-    /// daemon means the feature does not exist there, so it reads as off.
-    #[serde(default)]
-    pub code_basis_model_recheck: bool,
 }
 
 // ===== On-device model =====
@@ -1585,6 +1580,7 @@ mod tests {
         assert!(serde_json::to_value(&inventory).unwrap()["pages"][0]["storage_path"].is_null());
         inventory.pages[0].page.truth = Some(crate::pages::PageTruth {
             supported: false,
+            support: crate::pages::PageSupport::Unevaluated,
             human_reviewed: true,
         });
         inventory.pages[0].storage_path = Some("original-name.md".into());

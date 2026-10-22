@@ -108,6 +108,7 @@ pub async fn seed(db: &MemoryDB, pages: &Path) {
                 page_match_threshold: 0.95,
                 citations_json: None,
                 basis_marks: Vec::new(),
+                basis_space_guard: None,
             },
         )
         .await

@@ -187,7 +187,7 @@ End here. Do not invoke `/wenlan` or any other skill after the report; the
 
 ## Optional upgrades
 
-Steep, the optional model-backed background upkeep, is off by default; a connected AI tool writes pages without it. To turn it on:
+Steep keeps pages in step with their sources. It runs in two modes: On demand, where a connected AI tool does it with `/wenlan steep`, and Automatic, where Wenlan's own model does it in the background. Automatic needs a model and is not set up by default. To set it up:
 
 Run `wenlan steep status`, help the user choose the exact Everyday and Synthesis
 sources, then run `wenlan steep configure --everyday <source> --synthesis

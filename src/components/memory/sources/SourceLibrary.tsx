@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Funnel, Plus } from "@phosphor-icons/react";
 import { listIndexedFiles, listRegisteredSources, type IndexedFileInfo } from "../../../lib/tauri";
 import type { AssetLens } from "../../../lib/assetLens";
-import { getSourceAppFromUrl, getSourcePresentation, isSourceApp, SOURCE_APP_NAMES, type SourceApp } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation, isNoteApp, isSourceApp, SOURCE_APP_NAMES, type SourceApp } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { SourceCollection, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import SourceContainer, { type SourceContainerLocation } from "./SourceContainer";
@@ -50,7 +50,7 @@ function documentPath(file: IndexedFileInfo): string {
 export function isLibraryDocument(file: IndexedFileInfo): boolean {
   if (file.memory_type === "recap") return false;
   return ["file", "webpage", "directory", "obsidian"].includes(file.source) ||
-    (file.source === "memory" && ["folder", "obsidian"].includes(file.source_agent ?? ""));
+    (file.source === "memory" && (file.source_agent === "folder" || isNoteApp(file.source_agent)));
 }
 
 function documentUrl(file: IndexedFileInfo): URL | null {
@@ -139,8 +139,8 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
     ...visibleFolders.map((source) => ({
       id: `container:${source.id}`,
       title: pathName(source.path),
-      metadata: `${source.source_type === "obsidian" ? t("sourceContainer.obsidianVault") : t("sourceLibrary.folder")} · ${source.path}`,
-      kind: source.source_type === "obsidian" ? "obsidian" as const : "folder" as const,
+      metadata: `${source.source_type === "obsidian" ? t("sourceContainer.obsidianVault") : source.source_type === "logseq" ? t("sourceContainer.logseqGraph") : t("sourceLibrary.folder")} · ${source.path}`,
+      kind: isNoteApp(source.source_type) ? source.source_type : "folder" as const,
       onSelect: () => updateState({ search: "", filter: "all", container: { sourceId: source.id, path: source.path } }),
     })),
     ...visibleDocuments.map((file) => {

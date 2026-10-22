@@ -13,8 +13,8 @@ Distillation is four operations bundled into one flow:
 - **emerge** — cluster new memories into new pages
 - **absorb** — assign orphan memories to existing pages, propose new pages
   from topics that 2+ existing pages link to but no page is named for
-- **refresh** — regenerate stale pages from their source memories (only when
-  the user has not edited the page; pages you have touched stay locked)
+- **refresh** — pages whose sources changed are steep's job, not
+  distill's: distill reports how many wait and points to `$wenlan steep`
 - **merge** — combine duplicate pages flagged by the daemon's global review
 
 The default flow runs all four. The `rebuild` verb is a destructive opt-in
@@ -199,41 +199,15 @@ write_page(page_id=cluster.existing_page_id,
            summary="...")
 ```
 
-### 3.5 Refresh stale pages
+### 3.5 Stale pages go to steep
 
-The `stale_pages` block in the response lists pages whose sources
-changed since last compile. Shape:
-
-```
-stale_pages: [
-  { page_id, title, summary, source_memory_ids,
-    sources_updated_count, stale_reason, user_edited },
-  ...
-]
-stale_truncated: <bool>   # true when 10+ stale pages exist
-```
-
-For each stale page:
-
-- **`user_edited == true`** → never auto-rewrite. The user touched
-  the page; the upstream memories also changed. Surface in the
-  "Conflict" report block and stop. The user resolves by hand, OR
-  runs `$wenlan distill rebuild <page-id>` to wipe their edits and
-  regenerate from sources.
-- **`user_edited == false`** → fetch source memories via
-  `get_page_sources(page_id="<id>")`, run the same coherence check
-  used for clusters, then call `write_page` with `page_id` and the existing
-  `source_memory_ids` and freshly synthesized prose.
-
-```
-write_page(page_id=stale.page_id,
-           content="<refreshed prose>",
-           source_memory_ids=stale.source_memory_ids,
-           summary="<optional refreshed claim>")
-```
-
-When `stale_truncated == true`, tell the user "more stale pages
-remain — re-run `$wenlan distill` after this pass to continue."
+The `stale_pages` block in the response lists pages whose sources changed
+since they were written (`stale_truncated` is true when there are more).
+Do not rewrite them here, and never call `write_page` on one: bringing them
+up to date is steep, which checks the rewrite against the exact sources it
+handed out, keeps the user's own pages as revision cards, and holds each page
+so Wenlan's background run does not work on it at the same time. Count them
+for the report (section 4).
 
 ### 3.55 Pages that rely on other pages
 
@@ -274,7 +248,7 @@ print(f"~/.wenlan/pages/{filename}" if filename else "(no md projection on disk)
 
 For new-page calls, parse `<page_id>` from either `Created page <id>` or
 `Attached to existing page <id>`. For refreshes, use the known
-`existing_page_id` or `stale.page_id`.
+`existing_page_id`.
 
 ### 3.7 Surface orphan-topic suggestions
 
@@ -351,31 +325,14 @@ topics scatter; would produce a grab-bag page):
   ...
 ```
 
-**If at least one stale page was refreshed:**
+**If `stale_pages` was not empty:**
 
 ```
-Refreshed K stale page(s):
-  - <Title>  v2 → v3: +mem_abc, +180 chars
-    Open:     ~/.wenlan/pages/<slug>.md
-  - <Title>  refreshed
-    Open:     ~/.wenlan/pages/<slug>.md
-  ...
+K page(s) are out of date because their sources changed.
+Run $wenlan steep to bring them up to date.
 ```
 
-Same delta-line rule as new/refresh clusters: render the first
-`warning: <delta>` payload from the `write_page` tool output verbatim;
-fall back to `refreshed` when absent.
-
-**If at least one stale page was skipped because `user_edited`:**
-
-```
-Conflict on L stale page(s) — page has user edits, sources also
-changed. Open and reconcile manually:
-  - <Title>  (~/.wenlan/pages/<slug>.md)
-```
-
-Distinct wording from the coherence-skip block so the user can tell
-the two reasons apart at a glance.
+Say "more than K" when `stale_truncated` is true.
 
 Emit the blocks back-to-back when more than one outcome happened in
 the same pass.

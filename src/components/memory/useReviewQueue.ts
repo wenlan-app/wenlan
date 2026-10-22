@@ -25,6 +25,7 @@ import {
 } from "../../lib/tauri";
 import { BASIS_PENDING_QUERY_KEY } from "./page/useBasisActions";
 import { CODE_BASIS_PENDING_QUERY_KEY } from "./page/useCodeBasisActions";
+import { SteepNeedsAiToolError } from "../../lib/steepMode";
 
 export type ReviewItem =
   | {
@@ -237,7 +238,11 @@ export function useReviewQueue(enabled: boolean = true, scope: "default" | "note
       if (item.kind === "stale_page") {
         // Approve rebuilds the page from its sources; dismiss has no verb and
         // the dialog never offers it.
-        return approve ? redistillPage(item.id) : undefined;
+        if (!approve) return undefined;
+        const result = await redistillPage(item.id);
+        // No model in the daemon: nothing was rebuilt, so the card must stay.
+        if (result.status === "skipped") throw new SteepNeedsAiToolError();
+        return result;
       }
       if (item.kind === "page_candidate" || item.kind === "topic") {
         // Read-only discovery — no daemon verb; the dialog never offers one.

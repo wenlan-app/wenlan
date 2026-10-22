@@ -120,6 +120,11 @@
       "name": "map",
       "status": "hidden_routed",
       "codex_reference": "wenlan/references/map.md"
+    },
+    {
+      "name": "steep",
+      "status": "hidden_routed",
+      "codex_reference": "wenlan/references/steep.md"
     }
   ]
 }

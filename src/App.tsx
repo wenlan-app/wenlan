@@ -24,6 +24,7 @@ import {
 import Main from "./components/memory/Main";
 import SetupWizard from "./components/SetupWizard";
 import { RuntimeOverlays } from "./components/RuntimeOverlays";
+import { AppToaster } from "./components/AppToaster";
 import { dragStripHeight } from "./lib/windowChrome";
 
 export default function App() {
@@ -337,6 +338,7 @@ export default function App() {
         <FallbackServiceBanner onDismiss={() => setFallbackDismissed(true)} />
       )}
       {body}
+      <AppToaster />
       <RuntimeOverlays
         variant={
           wizardPending || showWizard || wizardError || migration

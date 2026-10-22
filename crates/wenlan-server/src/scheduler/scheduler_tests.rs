@@ -297,6 +297,38 @@ fn maintenance_round_stays_pending_until_every_stage_attempted() {
 }
 
 #[test]
+fn on_demand_round_runs_only_the_stages_that_need_no_model() {
+    use wenlan_core::maintenance::MaintenanceStage;
+    let mut round = AutomaticMaintenanceRound::model_free();
+    assert_eq!(
+        round.remaining_stages(),
+        [
+            MaintenanceStage::RetroReview,
+            MaintenanceStage::NearDuplicate,
+            MaintenanceStage::OrphanInventory,
+            MaintenanceStage::CrossSpaceDiscovery,
+        ]
+    );
+
+    // A stage with more bounded work goes behind the rest, as in Automatic.
+    let more = AutomaticMaintenanceOutcome {
+        selected: true,
+        progressed: true,
+        more: true,
+        ..AutomaticMaintenanceOutcome::default()
+    };
+    round.complete_stage(MaintenanceStage::RetroReview, more);
+    assert_eq!(
+        round.remaining_stages().last(),
+        Some(&MaintenanceStage::RetroReview)
+    );
+    assert!(round
+        .remaining_stages()
+        .iter()
+        .all(|stage| !stage.needs_model()));
+}
+
+#[test]
 fn maintenance_round_cursor_rotates_a_paused_stage_behind_the_rest() {
     let mut round = AutomaticMaintenanceRound::new(Some(
         wenlan_core::maintenance::MaintenanceStage::RetroReview,
@@ -1661,33 +1693,28 @@ async fn a_larger_ambient_call_budget_forwards_exactly_that_many_calls() {
     assert_eq!(provider.call_count(), 3);
 }
 
-/// The model recheck of changed code basis rows needs a healthy provider,
-/// background AI on, and its own switch on; any one missing parks the lane.
+/// The model recheck of changed code basis rows needs a healthy provider and
+/// background AI on; either missing parks the lane. There is no third switch.
 #[test]
-fn code_basis_recheck_needs_provider_background_ai_and_its_own_flag() {
-    assert!(code_basis_recheck_allowed(true, true, true));
+fn code_basis_recheck_needs_provider_and_background_ai() {
+    assert!(code_basis_recheck_allowed(true, true));
+    assert!(!code_basis_recheck_allowed(false, true), "no provider");
     assert!(
-        !code_basis_recheck_allowed(false, true, true),
-        "no provider"
-    );
-    assert!(
-        !code_basis_recheck_allowed(true, false, true),
+        !code_basis_recheck_allowed(true, false),
         "background AI off"
     );
-    assert!(!code_basis_recheck_allowed(true, true, false), "switch off");
     assert_eq!(AmbientJob::CodeBasisRecheck.as_key(), "code_basis_recheck");
     assert!(AmbientJob::ALL.contains(&AmbientJob::CodeBasisRecheck));
 }
 
 #[tokio::test]
-async fn availability_follows_the_config_flag_and_background_ai_switch() {
+async fn availability_follows_the_background_ai_switch() {
     let _lock = crate::TEST_DATA_DIR_LOCK
         .get_or_init(|| tokio::sync::Mutex::new(()))
         .lock()
         .await;
     let _env = DataDirGuard::new();
-    let mut config = wenlan_core::config::load_config();
-    config.code_basis_model_recheck = true;
+    let config = wenlan_core::config::load_config();
     wenlan_core::config::save_config_with_background_ai(&config, true).unwrap();
     assert!(AmbientAvailability::for_provider(true).supports(AmbientJob::CodeBasisRecheck));
     assert!(
@@ -1695,11 +1722,6 @@ async fn availability_follows_the_config_flag_and_background_ai_switch() {
         "no provider parks the lane"
     );
 
-    config.code_basis_model_recheck = false;
-    wenlan_core::config::save_config(&config).unwrap();
-    assert!(!AmbientAvailability::for_provider(true).supports(AmbientJob::CodeBasisRecheck));
-
-    config.code_basis_model_recheck = true;
     wenlan_core::config::save_config_with_background_ai(&config, false).unwrap();
     assert!(!AmbientAvailability::for_provider(true).supports(AmbientJob::CodeBasisRecheck));
 }
@@ -2093,7 +2115,12 @@ fn directory_sync_tick_polls_recoverable_sources_but_not_paused() {
     source.status = wenlan_types::sources::SyncStatus::Paused;
     assert!(!should_poll_obsidian_source(&source));
 
+    // Logseq graphs share the vault path.
     source.status = wenlan_types::sources::SyncStatus::Active;
+    source.source_type = wenlan_types::sources::SourceType::Logseq;
+    assert!(!should_poll_directory_source(&source));
+    assert!(should_poll_obsidian_source(&source));
+
     source.source_type = wenlan_types::sources::SourceType::Directory;
     assert!(!should_poll_obsidian_source(&source));
 }

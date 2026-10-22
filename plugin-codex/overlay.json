@@ -13,7 +13,7 @@
             "then follow that skill to the end. Its arguments:"
           ],
           "to": [
-            "For setup, distill, pages, lint, curate, forget and map, read",
+            "For setup, distill, steep, pages, lint, curate, forget and map, read",
             "`references/<workflow>.md` beside this SKILL.md and follow it to the end,",
             "treating the arguments below as what the user typed after that workflow word.",
             "For brief, capture, recall and handoff, use that Wenlan skill. Arguments:"
@@ -376,6 +376,24 @@
           ],
           "to": [
             "- Right after installing the Wenlan plugin."
+          ]
+        }
+      ]
+    },
+    "steep": {
+      "replace": [
+        {
+          "from": [
+            "   judgment, so give it to a helper on a small model: in Claude Code, start an",
+            "   `Agent` with `model: \"haiku\"`, hand it the page and the numbered sources,",
+            "   and ask one question: does every sentence of the page still match the",
+            "   sources, yes or no. When it says yes, call `steep` with"
+          ],
+          "to": [
+            "   judgment, so give it to a helper on a small model when you can start one",
+            "   (a subagent on a smaller model), hand it the page and the numbered sources,",
+            "   and ask one question: does every sentence of the page still match the",
+            "   sources, yes or no. When it says yes, call `steep` with"
           ]
         }
       ]

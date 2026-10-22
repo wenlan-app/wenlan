@@ -71,6 +71,7 @@ async fn add(
         Json(AddSourceRequest {
             source_type: source_type.to_string(),
             path: path.to_string_lossy().to_string(),
+            follow_changes: None,
         }),
     )
     .await

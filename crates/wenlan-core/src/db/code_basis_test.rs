@@ -56,6 +56,7 @@ async fn build_db(ceiling: Option<i64>) -> (MemoryDB, tempfile::TempDir) {
         ),
         opened_fresh_file: std::sync::atomic::AtomicBool::new(true),
         skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+        steep_leases: crate::steep::SteepLeases::default(),
     };
     match ceiling {
         Some(ceiling) => memory_db

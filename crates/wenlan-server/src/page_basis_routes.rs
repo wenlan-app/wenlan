@@ -285,8 +285,17 @@ pub async fn handle_mark_basis(
     let db = open_db(&state).await?;
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     require_pair_visible(&db, &MUTATION_GRANT, &scope, &id, &basis_id).await?;
+    // Checked again inside the mark: a note moved out of a locked caller's
+    // Space after the check above is not marked.
+    let space_guard = (scope != wenlan_core::read_scope::ReadScope::Global).then(|| scope.clone());
     let entry = db
-        .mark_page_basis(&id, &basis_id, req.version, &actor_from(&headers))
+        .mark_page_basis_in(
+            &id,
+            &basis_id,
+            req.version,
+            &actor_from(&headers),
+            space_guard.as_ref(),
+        )
         .await
         .map_err(basis_error)?;
     Ok(Json(pair_ref(&db, &MUTATION_GRANT, &scope, entry).await?))

@@ -512,8 +512,11 @@ async fn the_models_explanation_reaches_the_note_read_and_a_confirm_clears_it() 
     let rows = db.list_code_basis_recheck_candidates(10).await.unwrap();
     assert_eq!(rows.len(), 1);
     let sentence = "The note says the span keeps 32 bits on purpose; the code now keeps 48.";
+    // A verdict is read back only while it is about the note's current version.
+    let version = db.get_page(&id).await.unwrap().unwrap().version;
+    let key = wenlan_core::code_basis_recheck::recheck_key("digest-1", version);
     assert!(db
-        .record_code_basis_recheck(&rows[0], "digest-1", Some(sentence), Some("stale"), 1)
+        .record_code_basis_recheck(&rows[0], &key, Some(sentence), Some("stale"), 1)
         .await
         .unwrap());
 

@@ -124,8 +124,29 @@ pub struct PageTruth {
     /// The claim-entailment axis: are this page's claims entailed by its
     /// evidence? Absence of a support record is not evidence of support.
     pub supported: bool,
+    /// The same axis in three states, so a page nobody has judged is not
+    /// shown as one that failed. `supported` stays for older readers; it is
+    /// true exactly when this is `Supported`. Defaulted for older daemons.
+    #[serde(default)]
+    pub support: PageSupport,
     /// The human axis, bound to a page version + digest.
     pub human_reviewed: bool,
+}
+
+/// Whether a page's claims have been checked against its evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageSupport {
+    /// Checked, and the cited evidence backs the prose.
+    Supported,
+    /// Checked, and it does not.
+    Unsupported,
+    /// Never checked. Not a verdict.
+    #[default]
+    Unevaluated,
+    /// A value from a newer daemon.
+    #[serde(other)]
+    Unknown,
 }
 
 fn default_creation_kind() -> String {

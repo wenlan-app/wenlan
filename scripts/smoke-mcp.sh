@@ -86,6 +86,7 @@ echo "==> Driving wenlan-mcp over stdio JSON-RPC"
 MCP_TOOLS="${MCP_TOOLS:-capture,recall,brief,update_brief,write_page,list_pages,read_page}"
 export MCP_TOOLS
 GAUNTLET_OUT="$NATIVE_GAUNTLET_OUT" GAUNTLET_CHANNEL=smoke-mcp \
+EXPECT_ENRICHMENT=off \
 WENLAN_NO_AUTOSTART=1 \
 WENLAN_MCP_CACHE_DIR="$NATIVE_MCP_CACHE" \
 MCP_BIN="$NATIVE_MCP_BIN" \

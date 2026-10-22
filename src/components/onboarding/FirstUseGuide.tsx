@@ -17,6 +17,7 @@ import {
 } from "../memory/ImportPhases";
 import { FirstUseSample } from "./FirstUseSample";
 import "./firstUseGuide.css";
+import { useSteepOnDemand } from "../../lib/steepMode";
 
 export type FirstUseGuideView = "sample" | "live";
 
@@ -85,6 +86,7 @@ function FirstUseLive({
   batchId?: string;
 }) {
   const { t } = useTranslation();
+  const steepOnDemand = useSteepOnDemand() === true;
   const pagesQuery = useQuery({
     queryKey: ["first-use-pages"],
     queryFn: listAllActivePages,
@@ -209,7 +211,7 @@ function FirstUseLive({
           <h2 id="fus-live-active" className="fus-section-title">
             {t("firstUse.live.activeTitle")}
           </h2>
-          <ImportPhaseList phases={displayPhases} />
+          <ImportPhaseList phases={displayPhases} onDemand={steepOnDemand} />
           <p className="fus-note">
             {t("importBatch.summaryImported", {
               count: summary.memoriesImported,

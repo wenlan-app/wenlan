@@ -9,7 +9,10 @@ import "./NoteInfo.css";
 
 interface PageInfoNotesProps {
   pageId: string;
-  /** The note's Space. Only notes in the same Space can be relied on. */
+  /**
+   * The note's Space. Notes in it come first; notes in other named Spaces
+   * follow with their Space shown, the same notes the `[[` menu offers.
+   */
   space: string | null;
   basis: readonly BasisRef[];
   onPageClick?: (pageId: string) => void;
@@ -39,15 +42,28 @@ export default function PageInfoNotes({
     enabled: picking,
     staleTime: 10_000,
     retry: false,
-    queryFn: () => (term ? searchPages(term, PICKER_LIMIT) : listPages("active", space ?? undefined, PICKER_LIMIT)),
+    queryFn: async () => {
+      if (term) return searchPages(term, PICKER_LIMIT);
+      // The own Space first, so a busy library elsewhere cannot crowd it out.
+      const [own, all] = await Promise.all([
+        listPages("active", space ?? undefined, PICKER_LIMIT),
+        listPages("active", undefined, PICKER_LIMIT),
+      ]);
+      return [...own, ...all];
+    },
   });
   const taken = new Set(basis.map((entry) => entry.page_id));
-  const choices = (candidates.data ?? []).filter((page: Page) =>
-    page.status === "active"
-    && page.id !== pageId
-    && !taken.has(page.id)
-    && page.creation_kind !== "entity"
-    && (page.space ?? null) === space);
+  const seen = new Set<string>();
+  const choices = (candidates.data ?? []).filter((page: Page) => {
+    if (seen.has(page.id)) return false;
+    seen.add(page.id);
+    return page.status === "active"
+      && page.id !== pageId
+      && !taken.has(page.id)
+      && page.creation_kind !== "entity"
+      // A note in no Space is reachable only from no Space, as for `[[`.
+      && ((page.space ?? null) === space || !!page.space);
+  }).sort((a, b) => Number((a.space ?? null) !== space) - Number((b.space ?? null) !== space));
 
   const add = (target: string) => {
     setFailed(false);
@@ -110,6 +126,7 @@ export default function PageInfoNotes({
                 <PageIcon />
                 <span className="note-info-link-label">{page.title}</span>
               </span>
+              {(page.space ?? null) !== space && <span className="note-info-link-status note-info-notes__space">{page.space}</span>}
             </button>
           </li>)}
         </ul>

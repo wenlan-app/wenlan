@@ -86,14 +86,15 @@ describe("PageInfo notes group", () => {
     expect(onUnmarkBasis).toHaveBeenCalledWith("basis-a");
   });
 
-  it("picks only active notes of the same Space that are not already sources", async () => {
+  it("picks active notes that are not already sources, own Space first, then other Spaces", async () => {
     vi.mocked(listPages).mockResolvedValue([
+      page("page-7", { title: "Other space", space: "Elsewhere" }),
       page("page-1"),
       page("basis-a", { title: "Pricing" }),
       page("page-9", { title: "Eligible" }),
       page("page-8", { title: "Archived one", status: "archived" }),
-      page("page-7", { title: "Other space", space: "Elsewhere" }),
       page("page-6", { title: "Entity page", creation_kind: "entity" }),
+      page("page-5", { title: "In no space", space: null }),
     ]);
     const { onMarkBasis } = setup({ basis: [basis()] });
 
@@ -101,7 +102,11 @@ describe("PageInfo notes group", () => {
     const picker = screen.getByRole("group", { name: "Choose a page to use as a source" });
     expect(await within(picker).findByRole("button", { name: "Eligible" })).toBeInTheDocument();
     expect(listPages).toHaveBeenCalledWith("active", "Wenlan", 40);
-    for (const hidden of ["Pricing", "Note page-1", "Archived one", "Other space", "Entity page"]) {
+    expect(listPages).toHaveBeenCalledWith("active", undefined, 40);
+    // A note in another named Space is offered with its Space, after the own Space.
+    const names = within(picker).getAllByRole("button").map((button) => button.textContent);
+    expect(names).toEqual(["Eligible", "Other spaceElsewhere"]);
+    for (const hidden of ["Pricing", "Note page-1", "Archived one", "Entity page", "In no space"]) {
       expect(within(picker).queryByRole("button", { name: hidden })).toBeNull();
     }
 

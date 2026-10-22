@@ -89,6 +89,7 @@ pub mod source_annotations;
 mod source_sync;
 mod space_context;
 mod space_rename;
+mod steep;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -2027,6 +2028,7 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("continue", "Continue"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
+    ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
     ("obsidian", "Obsidian"),
     ("openai-mcp", "ChatGPT"),
@@ -4176,6 +4178,16 @@ pub struct EnrichmentOrigin {
     pub space_rejected: bool,
 }
 
+/// One entity a name could refer to; see [`MemoryDB::entity_name_candidates`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityNameCandidate {
+    pub entity_id: String,
+    pub name: String,
+    pub entity_type: String,
+    /// False for an archived entity found through one of its aliases.
+    pub active: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryEnrichmentInput {
     pub source_id: String,
@@ -4898,6 +4910,10 @@ pub struct MemoryDB {
     /// Set by `run_migrations_up_to` for the chain it is running and read by
     /// `backup_before_migration`.
     skip_migration_backups: std::sync::atomic::AtomicBool,
+    /// Which notes a steep run (automatic or on demand) holds right now. In
+    /// memory on purpose: both kinds of run live in this daemon process, so a
+    /// restart ends every hold together with the work behind it.
+    steep_leases: crate::steep::SteepLeases,
 }
 
 /// Returns true when a memory title looks like it would make a poor snippet —
@@ -5054,6 +5070,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(false),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
         })
     }
 
@@ -5298,6 +5315,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
         };
 
         // Run schema migrations for existing databases
@@ -5415,6 +5433,7 @@ impl MemoryDB {
             ),
             opened_fresh_file: std::sync::atomic::AtomicBool::new(created_in_this_open),
             skip_migration_backups: std::sync::atomic::AtomicBool::new(false),
+            steep_leases: crate::steep::SteepLeases::default(),
         };
 
         instance.run_migrations(emitter.as_ref()).await?;
@@ -39606,6 +39625,70 @@ impl MemoryDB {
             .is_some())
     }
 
+    /// Every entity a person could mean by `name`: live entities whose title
+    /// matches it case-insensitively, plus the owner of an alias equal to it.
+    /// The alias owner is included even when archived, the same rule
+    /// [`Self::resolve_entity_by_alias`] follows, so a mention of an archived
+    /// entity resolves to it instead of creating a duplicate beside it.
+    ///
+    /// Unlike [`Self::resolve_entity_by_name`] this never guesses: no
+    /// substring or vector step, and every exact match is returned so the
+    /// caller can tell one match from several. A capture names its entity on
+    /// purpose, so a near match is not a reason to link it.
+    /// Whether `entity_id` is an entity, live or archived, in a Space that
+    /// `scope` covers. A capture from a Space-locked caller links only such
+    /// an entity.
+    pub async fn entity_visible_in_scope(
+        &self,
+        entity_id: &str,
+        scope: &ReadScope,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::entity_in_scope_any_status(&conn, entity_id, scope).await
+    }
+
+    pub async fn entity_name_candidates(
+        &self,
+        name: &str,
+    ) -> Result<Vec<EntityNameCandidate>, WenlanError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT epm.entity_id, p.title, COALESCE(p.entity_type, ''), p.status
+                 FROM entity_page_map epm
+                 JOIN pages p ON p.id = epm.page_id
+                 WHERE p.kind = 'entity'
+                   AND ((p.status = 'active' AND LOWER(p.title) = LOWER(?1))
+                        OR EXISTS (SELECT 1 FROM json_each(p.aliases) WHERE value = ?2))
+                 ORDER BY p.created_at, epm.entity_id",
+                libsql::params![name.to_string(), name.to_lowercase()],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_name_candidates: {e}")))?;
+        let mut candidates: Vec<EntityNameCandidate> = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_name_candidates row: {e}")))?
+        {
+            let entity_id: String = row.get(0).unwrap_or_default();
+            if candidates.iter().any(|c| c.entity_id == entity_id) {
+                continue;
+            }
+            candidates.push(EntityNameCandidate {
+                entity_id,
+                name: row.get(1).unwrap_or_default(),
+                entity_type: row.get(2).unwrap_or_default(),
+                active: row.get::<String>(3).unwrap_or_default() == "active",
+            });
+        }
+        Ok(candidates)
+    }
+
     /// Resolve entity by name: exact match → LIKE substring → vector search → None.
     /// G6 Stage 1.5a: steps A/B migrated onto the `kind='entity'` shadow
     /// page's `title` (mirrors `entities.name`), joined via `entity_page_map`.
@@ -51480,6 +51563,7 @@ impl MemoryDB {
             citations_json,
             &[],
             "",
+            None,
         )
         .await
     }
@@ -51506,6 +51590,7 @@ impl MemoryDB {
         citations_json: Option<&str>,
         basis_marks: &[(String, i64)],
         basis_actor: &str,
+        basis_space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<(), WenlanError> {
         let inserted = self
             .insert_page_with_kind_inner(
@@ -51524,6 +51609,7 @@ impl MemoryDB {
                 None,
                 basis_marks,
                 basis_actor,
+                basis_space_guard,
             )
             .await?;
         debug_assert!(inserted, "unguarded Page insert cannot miss its guard");
@@ -51563,6 +51649,7 @@ impl MemoryDB {
             Some((queue_source_id, file_path, expected_content_hash)),
             &[],
             "",
+            None,
         )
         .await
     }
@@ -51585,6 +51672,7 @@ impl MemoryDB {
         document_guard: Option<(&str, &str, Option<&str>)>,
         basis_marks: &[(String, i64)],
         basis_actor: &str,
+        basis_space_guard: Option<&crate::read_scope::ReadScope>,
     ) -> Result<bool, WenlanError> {
         // M1 honest columns: this is the single storage-layer wrapper every
         // page-insert path funnels through, so both scope columns leave here
@@ -51749,6 +51837,7 @@ impl MemoryDB {
                 basis_page_id,
                 *read_version,
                 basis_actor,
+                basis_space_guard,
             )
             .await
             {
@@ -55338,6 +55427,46 @@ impl MemoryDB {
         Ok(owners)
     }
 
+    /// Every Space name keyed by its fold (the way a page title folds), so the
+    /// `Space` in `[[Space/Title]]` matches a name the way `Title` matches a
+    /// note. The value is the name `pages.space` stores. `None` when two names
+    /// fold together: that prefix names no one Space.
+    pub(crate) async fn folded_space_names(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let conn = self.conn.lock().await;
+        Self::folded_space_names_on_conn(&conn).await
+    }
+
+    /// [`Self::folded_space_names`] on an already-held connection guard.
+    async fn folded_space_names_on_conn(
+        conn: &libsql::Connection,
+    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+        let mut rows = conn
+            .query(
+                "SELECT name FROM spaces WHERE id != ?1",
+                libsql::params![UNFILED_SPACE_ID],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_names: {e}")))?;
+        let mut names: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("folded_space_names row: {e}")))?
+        {
+            let name: String = row
+                .get::<String>(0)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            names
+                .entry(Self::page_title_key(&name))
+                .and_modify(|slot| *slot = None)
+                .or_insert(Some(name));
+        }
+        Ok(names)
+    }
+
     pub async fn find_unique_active_page_id_by_title_scoped(
         &self,
         label: &str,
@@ -55750,10 +55879,10 @@ impl MemoryDB {
             // One folded-title scan per distinct source scope, built inside
             // this same transaction — the maps read the exact snapshot the
             // deletes and edge mints below write into.
-            let mut owner_maps: std::collections::HashMap<
-                Option<String>,
-                std::collections::HashMap<String, Option<String>>,
-            > = std::collections::HashMap::new();
+            let mut owner_maps = crate::synthesis::wikilinks::OwnersBySpace::new();
+            // Read once, and only when some orphan could name another Space.
+            let mut space_names: Option<crate::synthesis::wikilinks::TitleOwners> = None;
+            let no_space_names = crate::synthesis::wikilinks::TitleOwners::new();
             for (source_page_id, label_key, label, scope) in orphan_rows {
                 let trimmed = label_key.trim();
                 if trimmed.is_empty() {
@@ -55764,11 +55893,27 @@ impl MemoryDB {
                         Self::folded_title_owners_scoped_on_conn(&conn, scope.as_deref()).await?;
                     owner_maps.insert(scope.clone(), owners);
                 }
-                let Some(target) = owner_maps
-                    .get(&scope)
-                    .and_then(|owners| owners.get(&Self::page_title_key(trimmed)).cloned())
-                    .flatten()
-                else {
+                if trimmed.contains('/') && space_names.is_none() {
+                    space_names = Some(Self::folded_space_names_on_conn(&conn).await?);
+                }
+                let space_names_ref = space_names.as_ref().unwrap_or(&no_space_names);
+                for (space, _) in
+                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_names_ref)
+                {
+                    if let std::collections::hash_map::Entry::Vacant(slot) =
+                        owner_maps.entry(Some(space.clone()))
+                    {
+                        slot.insert(
+                            Self::folded_title_owners_scoped_on_conn(&conn, Some(&space)).await?,
+                        );
+                    }
+                }
+                let Some(target) = crate::synthesis::wikilinks::resolve_label(
+                    trimmed,
+                    scope.as_deref(),
+                    &owner_maps,
+                    space_names_ref,
+                ) else {
                     continue;
                 };
                 // Savepoint per orphan: a row whose repair fails (for example a
@@ -56148,7 +56293,10 @@ impl MemoryDB {
             // Flag OFF: exact legacy path (byte-identical)
             vec![query.to_string(), Self::fts_or_query(query)]
         };
-        for fts_q in &fts_queries {
+        // Only the first query requires every word; the legacy OR fallback
+        // matches any one of them.
+        let mut fts_matched_all_terms = false;
+        for (fts_index, fts_q) in fts_queries.iter().enumerate() {
             let fts_result = if let Some(pt) = page_type {
                 conn.query(
                     &fts_sql,
@@ -56194,6 +56342,7 @@ impl MemoryDB {
                 }
             }
             if !fts_results.is_empty() {
+                fts_matched_all_terms = fts_index == 0;
                 break; // AND matched, skip OR fallback
             }
         }
@@ -56201,31 +56350,23 @@ impl MemoryDB {
         drop(conn);
 
         // --- RRF fusion (distance-weighted, same as search_memory) ---
-        let rrf_k = 60.0f32;
-        let fts_weight = 0.2f32;
-        let mut score_map: std::collections::HashMap<String, f32> =
-            std::collections::HashMap::new();
+        let vector_ranked: Vec<(String, f64)> = vector_results
+            .iter()
+            .map(|(id, distance, _)| (id.clone(), *distance))
+            .collect();
+        let fts_ranked: Vec<String> = fts_results.iter().map(|(id, _)| id.clone()).collect();
+        let score_map = crate::pages::fuse_page_channel_scores(
+            &vector_ranked,
+            &fts_ranked,
+            fts_matched_all_terms,
+        );
         let mut concept_map: std::collections::HashMap<String, Page> =
             std::collections::HashMap::new();
-
-        for (rank, (id, distance, page)) in vector_results.into_iter().enumerate() {
-            let similarity = (1.0 - distance as f32).max(0.01);
-            let rrf_score = similarity / (rrf_k + rank as f32);
-            *score_map.entry(id.clone()).or_default() += rrf_score;
+        for (id, _, page) in vector_results {
             concept_map.entry(id).or_insert(page);
         }
-
-        for (rank, (id, page)) in fts_results.into_iter().enumerate() {
-            let rrf_score = fts_weight / (rrf_k + rank as f32);
-            *score_map.entry(id.clone()).or_default() += rrf_score;
+        for (id, page) in fts_results {
             concept_map.entry(id).or_insert(page);
-        }
-
-        // Normalize scores to 0.0-1.0 (RRF-only, no multipliers — pages
-        // don't have the recency/confidence/domain boosts that search_memory applies)
-        let theoretical_max_rrf = (1.0 + fts_weight) / rrf_k;
-        for score in score_map.values_mut() {
-            *score = (*score / theoretical_max_rrf).min(1.0);
         }
 
         // Sort by combined RRF score, attach to pages, return top limit. The

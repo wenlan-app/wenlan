@@ -26,7 +26,7 @@ export const ACTIVITY_QUERY_KEY = ["activity"] as const;
 export function useActivity(): UseQueryResult<ActivityResponse> {
   return useQuery({
     queryKey: ACTIVITY_QUERY_KEY,
-    queryFn: getActivity,
+    queryFn: () => getActivity(),
     refetchInterval: (query) => {
       const data = query.state.data as ActivityResponse | undefined;
       // Unknown state polls at the busy rate: a first load that has not landed

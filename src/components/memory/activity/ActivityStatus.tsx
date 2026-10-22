@@ -40,7 +40,9 @@ export default function ActivityStatus({
   const failed = measuredActivity?.assets.some((asset) =>
     asset.steps.some((step) => step.failed > 0),
   ) ?? false;
-  const running = measuredActivity !== undefined && measuredActivity.assets.some((asset) =>
+  // On demand (`off`) runs nothing in the background, so pending steps there
+  // wait for the user's AI tool and must not read as Steeping.
+  const running = measuredActivity !== undefined && measuredActivity.state !== "off" && measuredActivity.assets.some((asset) =>
     asset.steps.some((step) => step.state === "running"),
   );
   const stateWord = failed

@@ -45,6 +45,7 @@ main|get|/api/on-device-model|wenlan_server::config_routes::handle_get_on_device
 main|get|/api/onboarding/milestones|wenlan_server::onboarding_routes::handle_list_milestones
 main|get|/api/pages|wenlan_server::page_routes::handle_list_pages
 main|get|/api/pages/basis-pending|wenlan_server::page_basis_routes::handle_basis_pending
+main|get|/api/steep/worklist|wenlan_server::steep_routes::handle_steep_worklist
 main|get|/api/pages/orphan-links|wenlan_server::page_routes::handle_list_orphan_links
 main|get|/api/pages/recent|wenlan_server::routes::handle_recent_pages
 main|get|/api/pages/recent-changes|wenlan_server::routes::handle_recent_page_changes
@@ -130,6 +131,8 @@ main|post|/api/pages/{id}/rename|wenlan_server::page_routes::handle_rename_page
 main|post|/api/pages/{id}/review|wenlan_server::page_routes::handle_review_page
 main|post|/api/pages/{id}/basis/{basis_id}/confirm|wenlan_server::page_basis_routes::handle_confirm_basis
 main|post|/api/pages/{id}/code-basis/cited|wenlan_server::code_basis_routes::handle_code_basis_cited
+main|post|/api/steep/claim|wenlan_server::steep_routes::handle_steep_claim
+main|post|/api/steep/commit|wenlan_server::steep_routes::handle_steep_commit
 main|post|/api/pages/{id}/code-basis/confirm|wenlan_server::code_basis_routes::handle_confirm_code_basis
 main|post|/api/pages/{id}/export|wenlan_server::page_routes::handle_export_page
 main|post|/api/pages/{id}/map/edges|wenlan_server::page_map_routes::handle_create_map_edge
@@ -200,6 +203,7 @@ main|delete|/api/spaces/default|wenlan_server::spaces_routes::handle_clear_defau
 main|delete|/api/spaces/{name}|wenlan_server::spaces_routes::handle_delete_space
 main|delete|/api/tags/{name}|wenlan_server::activity_tag_routes::handle_delete_tag
 main|patch|/api/brief|wenlan_server::brief_routes::handle_update_brief
+main|patch|/api/sources/{id}|wenlan_server::source_routes::handle_update_source
 main|get|/api/outbox/status|wenlan_server::outbox_routes::handle_status
 main|patch|/api/pages/{id}/map/edges/{edge_id}|wenlan_server::page_map_routes::handle_patch_map_edge
 main|patch|/api/pages/{id}/map/nodes/{node_id}|wenlan_server::page_map_routes::handle_patch_map_node

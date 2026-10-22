@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import type { PageTruth } from "../../lib/tauri";
+import { pageSupport, type PageTruth } from "../../lib/tauri";
 
 interface PageTruthBadgesProps {
   readonly cutoverLive: boolean;
@@ -11,7 +11,8 @@ interface PageTruthBadgesProps {
 }
 
 /**
- * Renders both M5 truth axes for one page: support (supported/provisional)
+ * Renders both M5 truth axes for one page: support (supported, unsupported,
+ * or not checked yet)
  * and human review (reviewed/unreviewed). Renders nothing before the
  * daemon's cutover goes live, and nothing for a page with no `truth` — a
  * badge without a real axis value would be a guess, not a status, so this
@@ -23,9 +24,8 @@ export function PageTruthBadges({ cutoverLive, truth, wrapperClassName, wrapperS
     return null;
   }
 
-  const supportLabel = truth.supported
-    ? t("pages.overview.truth.supported")
-    : t("pages.overview.truth.provisional");
+  const support = pageSupport(truth);
+  const supportLabel = t(`pages.overview.truth.${support}`);
   const reviewLabel = truth.human_reviewed
     ? t("pages.overview.truth.reviewed")
     : t("pages.overview.truth.unreviewed");
@@ -34,7 +34,7 @@ export function PageTruthBadges({ cutoverLive, truth, wrapperClassName, wrapperS
     <>
       <span
         aria-label={`${t("pages.overview.truth.supportAxis")}: ${supportLabel}`}
-        className={`wiki-page-state wiki-page-state--truth-${truth.supported ? "supported" : "provisional"}`}
+        className={`wiki-page-state wiki-page-state--truth-${support}`}
         data-testid="page-truth-support"
       >
         {supportLabel}

@@ -138,6 +138,7 @@ async fn verdicts(
                 let truth = states.get(&id).map_or_else(unknown_axes, |state| {
                     wenlan_types::pages::PageTruth {
                         supported: state.supported(),
+                        support: wire_support(state.support),
                         human_reviewed: state.human_reviewed,
                     }
                 });
@@ -155,7 +156,18 @@ async fn verdicts(
 fn unknown_axes() -> wenlan_types::pages::PageTruth {
     wenlan_types::pages::PageTruth {
         supported: false,
+        support: wenlan_types::pages::PageSupport::Unevaluated,
         human_reviewed: false,
+    }
+}
+
+fn wire_support(support: crate::truth_contract::Support) -> wenlan_types::pages::PageSupport {
+    use crate::truth_contract::Support;
+    use wenlan_types::pages::PageSupport;
+    match support {
+        Support::Supported => PageSupport::Supported,
+        Support::Unsupported => PageSupport::Unsupported,
+        Support::Unevaluated => PageSupport::Unevaluated,
     }
 }
 

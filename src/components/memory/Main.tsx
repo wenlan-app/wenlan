@@ -1168,7 +1168,8 @@ export default function Main({
       try {
         await openSearchResultTarget(target.url);
       } catch (err) {
-        toast.error(String(err));
+        console.warn("[search] open file failed", err);
+        toast(t("sourceAccess.openFileFailed"));
       }
     } else {
       navigateTo({ kind: "memory", sourceId: result.source_id });

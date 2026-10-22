@@ -12,6 +12,7 @@ import {
   knownLane,
   knownState,
   laneKey,
+  onDemandPagesWaiting,
   routeFor,
   routeSentence,
   stepCount,
@@ -113,8 +114,31 @@ describe("blockedCauses", () => {
     });
     expect(blockedCauses(a)).toEqual([]);
     expect(assetSentence(a, asset("memories", { total: 5, blocked: 5 }))).toEqual({
-      key: "activityStatus.assetOff.memories",
+      key: "activityStatus.assetOnDemand.memories",
+      params: { count: 5 },
     });
+  });
+
+  it("counts what waits for the AI tool in On demand, in each row's own unit", () => {
+    const pages = asset("pages", { total: 5, done: 2, blocked: 3 });
+    const entities = asset("entities", {
+      steps: [
+        { name: "detect", state: "blocked", done: 6, total: 10, failed: 0, job: "everyday" },
+        { name: "confirm", state: "idle", done: 1, total: 4, failed: 0, job: null },
+      ],
+    });
+    const a = activity({ state: "off", assets: [pages, entities] });
+    expect(assetSentence(a, pages)).toEqual({ key: "activityStatus.assetOnDemand.pages", params: { count: 3 } });
+    expect(assetSentence(a, entities)).toEqual({ key: "activityStatus.assetOnDemand.entities", params: { count: 4 } });
+    expect(onDemandPagesWaiting(a)).toBe(3);
+    expect(onDemandPagesWaiting({ ...a, state: "blocked" })).toBe(0);
+  });
+
+  it("settles On demand rows once nothing waits", () => {
+    const pages = asset("pages", { total: 4, done: 4 });
+    const a = activity({ state: "off", assets: [pages] });
+    expect(assetSentence(a, pages)).toEqual({ key: "activityStatus.assetDone.pages", params: { count: 4 } });
+    expect(onDemandPagesWaiting(a)).toBe(0);
   });
 
   it("lists each missing model once, in job order", () => {

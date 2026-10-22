@@ -289,6 +289,7 @@ pub(super) struct CreatePageInput<'a> {
     pub(super) page_match_threshold: f64,
     pub(super) citations_json: Option<&'a str>,
     pub(super) basis_marks: &'a [(String, i64)],
+    pub(super) basis_space_guard: Option<&'a crate::read_scope::ReadScope>,
 }
 
 pub(super) async fn create_page_impl(
@@ -304,6 +305,7 @@ pub(super) async fn create_page_impl(
         page_match_threshold,
         citations_json,
         basis_marks,
+        basis_space_guard,
     } = input;
 
     // Pre-write validation
@@ -490,6 +492,7 @@ pub(super) async fn create_page_impl(
             citations_json,
             basis_marks,
             agent,
+            basis_space_guard,
         )
         .await
     {

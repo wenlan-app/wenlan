@@ -248,6 +248,9 @@ impl Default for RawDocument {
 pub enum SourceType {
     Obsidian,
     Directory,
+    /// A file-based Logseq graph: the Markdown pages under `pages/` and
+    /// `journals/`, followed like an Obsidian vault.
+    Logseq,
     /// An Open Knowledge Format (OKF) bundle, such as an OpenWiki wiki: one
     /// source page per concept, provenance kept for display, one Space.
     Okf,
@@ -258,6 +261,7 @@ impl SourceType {
         match self {
             Self::Obsidian => "obsidian",
             Self::Directory => "directory",
+            Self::Logseq => "logseq",
             Self::Okf => "okf",
         }
     }

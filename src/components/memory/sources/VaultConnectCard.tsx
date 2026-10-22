@@ -113,9 +113,9 @@ export default function VaultConnectCard({ variant, onConnected, onPick }: Props
       const sourceType = pickedVault ? "obsidian" : (detection?.sourceType ?? "directory");
       const source = await addSource(sourceType, path);
       queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
-      // Kick the vault's first import now; the daemon's 30s scheduler
-      // follows later changes (same rationale as AddSourceDialog).
-      if (source.source_type === "obsidian") {
+      // Kick the vault's (or graph's) first import now; the daemon's 30s
+      // scheduler follows later changes (same rationale as AddSourceDialog).
+      if (source.source_type === "obsidian" || source.source_type === "logseq") {
         syncRegisteredSource(source.id).then(() => {
           queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
           queryClient.invalidateQueries({ queryKey: ["vault-connect-progress", source.id] });

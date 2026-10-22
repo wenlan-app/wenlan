@@ -8,6 +8,7 @@ import {
   blockedCauses,
   knownAssets,
   knownState,
+  onDemandPagesWaiting,
   STEP_UNIT,
 } from "../../../lib/activitySentence";
 import { useActivity } from "../../../lib/useActivity";
@@ -16,8 +17,12 @@ import { ACTIVITY_ASSET_ORDER } from "./activityPresentation";
 
 const ROUTES = ["everyday", "synthesis"] as const;
 const ASSET_ICONS = { memories: Brain, entities: Shapes, pages: PageIcon };
-const displayState = (state: string) =>
-  state === "idle" || state === "running" || state === "blocked" ? state : "unknown";
+const displayState = (state: string, onDemand: boolean) =>
+  // On demand runs nothing in the background: pending work waits for the
+  // user's AI tool, so it is neither running nor blocked.
+  onDemand && (state === "running" || state === "blocked")
+    ? "waiting"
+    : state === "idle" || state === "running" || state === "blocked" ? state : "unknown";
 
 export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenIntelligence?: () => void }) {
   const { t } = useTranslation();
@@ -112,6 +117,9 @@ export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenInt
           } as const)[summary])}
         </p>
 
+        {summary === "off" && onDemandPagesWaiting(activity) > 0 && (
+          <p data-testid="activity-now-on-demand">{t("activityStatus.onDemandFinish")}</p>
+        )}
         {additionalCauses.map((cause, index) => (
           <p key={`${cause.key}-${index}`}>{t(cause.key, cause.params)}</p>
         ))}
@@ -131,7 +139,7 @@ export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenInt
           <div className="mem-activity-asset-list">
             {assets.map((asset) => {
               const sentence = assetSentence(activity, asset);
-              const assetState = displayState(asset.state);
+              const assetState = displayState(asset.state, summary === "off");
               const AssetIcon = ASSET_ICONS[asset.kind];
               return (
                 <section key={asset.kind} className="mem-activity-asset-row" aria-label={t(`activityStatus.asset.${asset.kind}`)}>
@@ -144,7 +152,7 @@ export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenInt
                   <div className="mem-activity-step-list">
                     {asset.steps.map((step) => {
                       const count = { key: `activityStatus.compactStepCount.${STEP_UNIT[step.name]}` as const, params: { count: step.total, done: step.done } };
-                      const state = displayState(step.state);
+                      const state = displayState(step.state, summary === "off");
 
                       const measurable = Number.isFinite(step.total) && step.total > 0 && Number.isFinite(step.done) && step.done >= 0;
                       const completed = measurable && step.done >= step.total;

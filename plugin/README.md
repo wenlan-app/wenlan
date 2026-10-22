@@ -61,6 +61,7 @@ By default setup configures local memory: no model download beyond the embedder,
 | Pick `memory_type` | daemon classifier | `/capture` picks one of 6 types from content |
 | Extract entities and relations | daemon `extract.rs` | `/capture` posts to `/api/memory/entities` and `/api/memory/relations` |
 | Synthesize a page | daemon distill cycles | `/wenlan distill` reads the cluster, writes the page, posts to `/api/pages` |
+| Steep out of date pages | automatic steep | `/wenlan steep` claims each stale page, rewrites it from its sources, and commits through `/api/steep/commit` |
 | Expand a query or rerank hits | daemon expansion and rerank | `/recall` rewrites the query before search and reorders hits after |
 
 The daemon stays the single writer and storage owner. Claude does the thinking.
@@ -78,6 +79,7 @@ The daemon stays the single writer and storage owner. Claude does the thinking.
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
 - `/wenlan distill [t]` - synthesize or refresh source-backed pages for the active Space
+- `/wenlan steep [space:<name>]` - bring out of date pages up to date with this AI tool (steep on demand)
 - `/wenlan map [space:<name>]` - read this repository and write a small set of orientation notes, each tied to the code lines it relies on
 - `/wenlan pages [q]` - browse and open distilled pages
 - `/wenlan curate <surface>` - deep audit of captures, revisions or refinements

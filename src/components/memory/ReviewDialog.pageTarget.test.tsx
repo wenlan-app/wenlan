@@ -244,10 +244,10 @@ describe("ReviewDialog page-target revision card", () => {
 
   it.each([
     ["locked", "en", "Reason: this page is set to review every change"],
-    ["background", "en", "Reason: Wenlan background upkeep"],
+    ["background", "en", "Reason: Wenlan steeped this automatically"],
     ["owned", "en", "Reason: the page has your edits"],
     ["locked", "zh-Hant", "原因：這篇筆記設為改動要審核"],
-    ["background", "zh-Hans", "原因：文澜背景整理"],
+    ["background", "zh-Hans", "原因：文澜自动沉淀"],
     ["owned", "zh-Hant", "原因：筆記有你的修改"],
   ])("says why a %s card needs review (%s)", async (reviewReason, language, text) => {
     await i18n.changeLanguage(language);

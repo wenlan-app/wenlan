@@ -850,6 +850,7 @@ async fn distill_one_cluster_with_tuning(
                     page_match_threshold: tuning.page_match_threshold,
                     citations_json: Some(citations_json),
                     basis_marks: Vec::new(),
+                    basis_space_guard: None,
                 },
             )
             .await?;
@@ -1375,7 +1376,7 @@ pub(crate) enum CandidateOutcome {
 }
 
 /// Cap on source text length embedded in one numbered source entry.
-const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
+pub(crate) const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
 
 /// Cap on one basis note's text embedded in the "notes this note relies on"
 /// block of an update-from-sources prompt.

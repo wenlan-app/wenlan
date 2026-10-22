@@ -12,6 +12,7 @@ import { StrictMode, Suspense, lazy, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Main from "../src/components/memory/Main";
+import { AppToaster } from "../src/components/AppToaster";
 import PageDetail from "../src/components/memory/PageDetail";
 import QuickCapture from "../src/components/QuickCapture";
 import EntityDetail from "../src/components/memory/EntityDetail";
@@ -393,6 +394,7 @@ void initializeI18n(
     <StrictMode>
       <QueryClientProvider client={client}>
         <Harness />
+        <AppToaster />
       </QueryClientProvider>
     </StrictMode>,
   );

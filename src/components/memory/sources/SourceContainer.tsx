@@ -11,6 +11,8 @@ import {
   openFile,
   readSourceDir,
   readSourceText,
+  setSourceFollowChanges,
+  sourceFollowsChanges,
   syncRegisteredSource,
   type IndexedFileInfo,
   type RegisteredSource,
@@ -20,11 +22,12 @@ import type { AssetLens } from "../../../lib/assetLens";
 import { DetailInfoContent } from "../DetailLayout";
 import { CollectionFrame } from "../CollectionLayout";
 import { InfoToggle } from "../page/InfoToggle";
+import { Toggle } from "../settings/primitives";
 import PageInfoDrawer from "../page/PageInfoDrawer";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import { SourceDocumentLayout } from "./SourceDocumentReader";
 import SourceDocumentContent from "./SourceDocumentContent";
-import { getSourceAppFromUrl, getSourcePresentation } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation, isNoteApp } from "./sourcePresentation";
 import { SourceCollection, SourceCollectionBreadcrumbs, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import type { SourceLibraryFilter } from "./SourceLibrary";
@@ -70,11 +73,21 @@ function formattedDate(ts: number | null, language: string, missing: string) {
 
 function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { source: RegisteredSource; refreshing: boolean; onRefresh: () => void; heading?: string }) {
   const { t, i18n } = useTranslation();
+  const queryClient = useQueryClient();
+  const following = sourceFollowsChanges(source);
+  const followMutation = useMutation({
+    mutationFn: (followChanges: boolean) => setSourceFollowChanges(source.id, followChanges),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["registeredSources"] }),
+    onError: (error) => {
+      console.warn("[sources] follow toggle failed", error);
+      toast(t("sourceContainer.followFailed"));
+    },
+  });
   return <>
     <section>
       <h3 className="note-info-section-heading">{heading ?? t("sourceAccess.details")}</h3>
       <dl className="source-info-metadata">
-        <div><dt>{t("sourceContainer.sourceType")}</dt><dd>{source.source_type === "obsidian" ? t("sourceContainer.obsidianVault") : t("sourceLibrary.folder")}</dd></div>
+        <div><dt>{t("sourceContainer.sourceType")}</dt><dd>{source.source_type === "obsidian" ? t("sourceContainer.obsidianVault") : source.source_type === "logseq" ? t("sourceContainer.logseqGraph") : t("sourceLibrary.folder")}</dd></div>
         <div><dt>{t("sourceContainer.originalPath")}</dt><dd className="source-container-path">{source.path}</dd></div>
         <div><dt>{t("sourceAccess.status")}</dt><dd>{statusLabel(source, t)}</dd></div>
         <div><dt>{t("sourceContainer.lastChecked")}</dt><dd>{formattedDate(source.last_sync, i18n.language, t("sourceContainer.notChecked"))}</dd></div>
@@ -83,7 +96,13 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
         {(source.last_sync_errors ?? 0) > 0 && <div><dt>{t("sourceContainer.syncErrors")}</dt><dd>{source.last_sync_errors!.toLocaleString()}</dd></div>}
       </dl>
     </section>
-    <p>{t("sourceContainer.folderChecks")}</p>
+    <div className="source-follow-row">
+      <span>{t("sourceContainer.followChanges")}</span>
+      <Toggle enabled={following} onToggle={() => followMutation.mutate(!following)}
+        valueUnknown={followMutation.isPending} unknownState="saving"
+        aria-label={t("sourceContainer.followChanges")} />
+    </div>
+    <p>{t(following ? "sourceContainer.folderChecks" : "sourceContainer.importedOnce")}</p>
     <p>{t("sourceContainer.oneWay")}</p>
     <button className="collection-control source-container-refresh" type="button" disabled={refreshing} onClick={onRefresh}>
       <ArrowClockwise size={16} aria-hidden="true" />{refreshing ? t("sourceContainer.refreshing") : t("sourceContainer.refresh")}
@@ -114,13 +133,16 @@ export default function SourceContainer({ location, search, filter, lens, onSear
         queryClient.invalidateQueries({ queryKey: ["sourceDir"] }),
       ]);
     },
-    onError: (error) => toast(t("sourceContainer.refreshFailed"), { description: String(error) }),
+    onError: (error) => {
+      console.warn("[sources] refresh failed", error);
+      toast(t("sourceContainer.refreshFailed"));
+    },
   });
 
   const indexedByPath = useMemo(() => {
     const result = new Map<string, IndexedFileInfo>();
     for (const file of filesQuery.data ?? []) {
-      const id = (file.source === "obsidian" || file.source_agent === "obsidian")
+      const id = (file.source === "obsidian" || isNoteApp(file.source_agent))
         ? file.source_id.replace(/::\d+$/, "") : file.source_id;
       const prior = result.get(id);
       result.set(id, { ...file, source_id: id,
@@ -160,7 +182,10 @@ export default function SourceContainer({ location, search, filter, lens, onSear
         } else if (indexed) {
           onOpenDocument(indexed);
         } else {
-          void openFile(path).catch((error) => toast(t("sourceAccess.openFileFailed"), { description: String(error) }));
+          void openFile(path).catch((error) => {
+            console.warn("[sources] open file failed", error);
+            toast(t("sourceAccess.openFileFailed"));
+          });
         }
       },
     };
@@ -211,7 +236,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
       <CollectionFrame className="source-container-collection">
         <SourceCollectionBreadcrumbs>
           <button type="button" onClick={() => onNavigate(null)}>{t("sourceContainer.root")}</button><CaretRight size={14} aria-hidden="true" />
-          {source.source_type === "obsidian" && <SourceTypeIcon kind="obsidian" size={16} />}
+          {isNoteApp(source.source_type) && <SourceTypeIcon kind={source.source_type} size={16} />}
           <button type="button" onClick={() => onNavigate({ sourceId: source.id, path: source.path })} aria-current={location.path === source.path ? "page" : undefined}>{rootName}</button>
           {crumbs.map((part, index) => <span className="source-container-crumb" key={`${index}:${part}`}>
             <CaretRight size={14} aria-hidden="true" />

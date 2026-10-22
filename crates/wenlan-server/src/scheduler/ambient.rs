@@ -92,14 +92,15 @@ pub(super) struct AmbientAvailability {
 }
 
 /// The model recheck of changed code basis rows spends inference on the
-/// person's behalf, so it needs all three: a pinned and healthy provider,
-/// background AI on, and its own switch on.
+/// person's behalf, so it rides the one switch every automatic lane rides:
+/// a pinned and healthy provider with background AI on. There is no second
+/// switch; with background AI off the same judging happens on demand
+/// (`/api/pages/code-basis/judge`), so a changed note is never left unlooked at.
 pub(super) const fn code_basis_recheck_allowed(
     provider_available: bool,
     background_ai_enabled: bool,
-    recheck_flag: bool,
 ) -> bool {
-    provider_available && background_ai_enabled && recheck_flag
+    provider_available && background_ai_enabled
 }
 
 impl AmbientAvailability {
@@ -132,7 +133,6 @@ impl AmbientAvailability {
             code_basis_recheck: code_basis_recheck_allowed(
                 provider_available,
                 config.background_ai_enabled(),
-                config.code_basis_model_recheck,
             ),
         }
     }
@@ -652,18 +652,6 @@ pub(super) async fn run_ambient_job(
                     elapsed: started.elapsed(),
                 };
             };
-            // Re-read the switch here too: a forced sweep reaches this arm
-            // without passing through the availability check of a tick.
-            if !wenlan_core::config::load_config().code_basis_model_recheck {
-                return AmbientTurnReport {
-                    job,
-                    selected: false,
-                    page_growth_terminal_no_match_committed: false,
-                    llm_calls: 0,
-                    panicked: false,
-                    elapsed: started.elapsed(),
-                };
-            }
             match wenlan_core::code_basis_recheck::run_code_basis_recheck_slice(
                 db,
                 provider,

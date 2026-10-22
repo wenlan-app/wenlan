@@ -64,7 +64,6 @@ pub enum BasisUnavailableReason {
     Deleted,
     IncarnationChanged,
     Archived,
-    OtherSpace,
     HistoryGone,
 }
 
@@ -74,7 +73,6 @@ impl std::fmt::Display for BasisUnavailableReason {
             Self::Deleted => "the basis note was deleted",
             Self::IncarnationChanged => "the basis note was deleted and its id reused",
             Self::Archived => "the basis note is archived",
-            Self::OtherSpace => "the two notes are in different Spaces",
             Self::HistoryGone => "the version this note relied on is no longer stored",
         })
     }
@@ -104,8 +102,6 @@ pub enum BasisError {
     BasisIsDraft,
     #[error("an entity page cannot be a basis")]
     BasisIsEntityPage,
-    #[error("the basis note is in a different Space")]
-    DifferentSpace,
     #[error("version {requested} is not a version of the basis note (current version {current})")]
     InvalidVersion { requested: i64, current: i64 },
     #[error("the basis note moved on: it is now at version {current}")]
@@ -383,8 +379,9 @@ async fn evaluate_row(
         return Ok(unchanged(BASIS_STATE_DELETED));
     }
     // The stored title is what the citer shows once the basis is deleted, so
-    // it only follows the basis' name while the citer could read the basis. A
-    // note renamed in another Space must not reveal its new name later.
+    // it only follows the basis' name while both notes share a Space: an agent
+    // held to the citer's Space cannot read a basis elsewhere, and a note
+    // renamed in another Space must not reveal its new name to it later.
     let title = if citer_space.is_none_or(|space| space == basis.space) {
         basis.title.clone()
     } else {
@@ -394,12 +391,6 @@ async fn evaluate_row(
         return Ok(Evaluated {
             title,
             ..unchanged(BASIS_STATE_ARCHIVED)
-        });
-    }
-    if citer_space.is_some_and(|space| space != basis.space) {
-        return Ok(Evaluated {
-            title,
-            ..unchanged(BASIS_STATE_UNAVAILABLE)
         });
     }
     if basis_text_digest(&basis.content) == row.confirmed_digest {
@@ -660,13 +651,10 @@ async fn known_deleted_basis(
 }
 
 /// R6: the rules about the BASIS side of a mark (the citer's own rules are
-/// checked separately): an ordinary active note, in the citer's Space, at a
-/// version it really has.
-fn check_basis_facts(
-    basis: &PageFacts,
-    citer_space: &str,
-    read_version: i64,
-) -> Result<(), BasisError> {
+/// checked separately): an ordinary active note, in any Space, at a version it
+/// really has. Whether the caller may see the basis at all is the route's
+/// visibility check.
+fn check_basis_facts(basis: &PageFacts, read_version: i64) -> Result<(), BasisError> {
     if basis.kind == "entity" {
         return Err(BasisError::BasisIsEntityPage);
     }
@@ -674,9 +662,6 @@ fn check_basis_facts(
         "active" => {}
         "draft" => return Err(BasisError::BasisIsDraft),
         _ => return Err(BasisError::BasisArchived),
-    }
-    if basis.space != citer_space {
-        return Err(BasisError::DifferentSpace);
     }
     if read_version < 1 || read_version > basis.version {
         return Err(BasisError::InvalidVersion {
@@ -708,6 +693,7 @@ async fn apply_card_mark(
     page_id: &str,
     mark: &StagedBasisMark,
     added_by: &str,
+    space_guard: Option<&crate::read_scope::ReadScope>,
 ) -> Result<PageBasisEntry, BasisError> {
     if let Some(now) = load_facts(conn, &mark.basis_page_id, false).await? {
         if now.incarnation != mark.incarnation {
@@ -716,19 +702,36 @@ async fn apply_card_mark(
             ));
         }
     }
-    mark_page_basis_on_conn(conn, page_id, &mark.basis_page_id, mark.version, added_by).await
+    mark_page_basis_on_conn(
+        conn,
+        page_id,
+        &mark.basis_page_id,
+        mark.version,
+        added_by,
+        space_guard,
+    )
+    .await
 }
 
 /// R5-R7: mark `basis_page_id` as a basis of `page_id`, on the caller's open
 /// transaction. Confirmed (`ok`) only when the basis is still at
 /// `read_version`; otherwise `pending`, with an empty digest so that no later
 /// refresh can promote it (a v1 read must never confirm v2).
+///
+/// `space_guard` is a Space-locked caller's Space. Both notes must still be
+/// in it here, inside the transaction: moving a note to another Space does
+/// not bump its version, so the route's earlier visibility check alone would
+/// let a mark land on a note that left the Space in between. A citer that
+/// left reads as [`BasisError::CiterNotFound`], a basis as
+/// [`BasisError::BasisNotFound`]. `None` (a Global caller) marks across
+/// Spaces.
 pub(super) async fn mark_page_basis_on_conn(
     conn: &libsql::Connection,
     page_id: &str,
     basis_page_id: &str,
     read_version: i64,
     added_by: &str,
+    space_guard: Option<&crate::read_scope::ReadScope>,
 ) -> Result<PageBasisEntry, BasisError> {
     if page_id == basis_page_id {
         return Err(BasisError::SelfReference);
@@ -736,6 +739,9 @@ pub(super) async fn mark_page_basis_on_conn(
     let citer = load_facts(conn, page_id, false)
         .await?
         .ok_or(BasisError::CiterNotFound)?;
+    if space_guard.is_some_and(|scope| !scope.matches(Some(citer.space.as_str()))) {
+        return Err(BasisError::CiterNotFound);
+    }
     check_citer_facts(&citer)?;
     let Some(basis) = load_facts(conn, basis_page_id, true).await? else {
         return Err(if known_deleted_basis(conn, basis_page_id).await? {
@@ -744,7 +750,10 @@ pub(super) async fn mark_page_basis_on_conn(
             BasisError::BasisNotFound
         });
     };
-    check_basis_facts(&basis, &citer.space, read_version)?;
+    if space_guard.is_some_and(|scope| !scope.matches(Some(basis.space.as_str()))) {
+        return Err(BasisError::BasisNotFound);
+    }
+    check_basis_facts(&basis, read_version)?;
 
     let now_ts = chrono::Utc::now().timestamp();
     let current = read_version == basis.version;
@@ -814,7 +823,7 @@ pub(super) async fn confirm_page_basis_on_conn(
     let row = load_row(conn, page_id, basis_page_id)
         .await?
         .ok_or(BasisError::NotABasis)?;
-    let citer = load_facts(conn, page_id, false)
+    load_facts(conn, page_id, false)
         .await?
         .ok_or(BasisError::CiterNotFound)?;
     let basis =
@@ -836,11 +845,6 @@ pub(super) async fn confirm_page_basis_on_conn(
     if basis.status != "active" {
         return Err(BasisError::BasisUnavailable(
             BasisUnavailableReason::Archived,
-        ));
-    }
-    if basis.space != citer.space {
-        return Err(BasisError::BasisUnavailable(
-            BasisUnavailableReason::OtherSpace,
         ));
     }
     if basis.version != version {
@@ -957,18 +961,32 @@ pub(super) async fn apply_basis_write_on_conn(
     basis: &BasisWrite,
 ) -> Result<BasisWriteOutcome, BasisError> {
     for (basis_page_id, version) in &basis.marks {
-        mark_page_basis_on_conn(conn, page_id, basis_page_id, *version, &basis.actor).await?;
+        mark_page_basis_on_conn(
+            conn,
+            page_id,
+            basis_page_id,
+            *version,
+            &basis.actor,
+            basis.space_guard.as_ref(),
+        )
+        .await?;
     }
     for mark in &basis.card_marks {
-        apply_card_mark(conn, page_id, mark, &basis.actor)
-            .await
-            .map_err(|reason| match reason {
-                BasisError::Db(inner) => BasisError::Db(inner),
-                reason => BasisError::CardMarkRefused {
-                    basis_page_id: mark.basis_page_id.clone(),
-                    reason: Box::new(reason),
-                },
-            })?;
+        apply_card_mark(
+            conn,
+            page_id,
+            mark,
+            &basis.actor,
+            basis.space_guard.as_ref(),
+        )
+        .await
+        .map_err(|reason| match reason {
+            BasisError::Db(inner) => BasisError::Db(inner),
+            reason => BasisError::CardMarkRefused {
+                basis_page_id: mark.basis_page_id.clone(),
+                reason: Box::new(reason),
+            },
+        })?;
     }
     let mut outcome = BasisWriteOutcome::default();
     if let Some((basis_page_id, version)) = &basis.confirm {
@@ -1083,12 +1101,33 @@ impl MemoryDB {
         read_version: i64,
         added_by: &str,
     ) -> Result<PageBasisEntry, BasisError> {
+        self.mark_page_basis_in(page_id, basis_page_id, read_version, added_by, None)
+            .await
+    }
+
+    /// [`Self::mark_page_basis`] for a Space-locked caller: both notes must
+    /// still be in `space_guard` inside the mark's transaction.
+    pub async fn mark_page_basis_in(
+        &self,
+        page_id: &str,
+        basis_page_id: &str,
+        read_version: i64,
+        added_by: &str,
+        space_guard: Option<&crate::read_scope::ReadScope>,
+    ) -> Result<PageBasisEntry, BasisError> {
         let conn = self.conn.lock().await;
         let tx = conn
             .transaction_with_behavior(libsql::TransactionBehavior::Immediate)
             .await?;
-        let entry =
-            mark_page_basis_on_conn(&tx, page_id, basis_page_id, read_version, added_by).await?;
+        let entry = mark_page_basis_on_conn(
+            &tx,
+            page_id,
+            basis_page_id,
+            read_version,
+            added_by,
+            space_guard,
+        )
+        .await?;
         tx.commit().await?;
         Ok(entry)
     }
@@ -1172,7 +1211,7 @@ impl MemoryDB {
     }
 
     /// R9: the bases a note may read when it is updated from its sources: state
-    /// `ok` or `pending`, active, in the note's own Space, and still the same
+    /// `ok` or `pending`, active (in any Space), and still the same
     /// incarnation that was marked. Each carries the text and the snapshot a
     /// revision card records. One consistent read per basis (text, version and
     /// incarnation come from the same row). Oldest first.
@@ -1185,13 +1224,11 @@ impl MemoryDB {
             .query(
                 "SELECT p.id, p.title, p.content, p.version, COALESCE(p.incarnation, '') \
                  FROM page_basis b \
-                 JOIN pages c ON c.id = b.page_id \
                  JOIN pages p ON p.id = b.basis_page_id AND p.incarnation = b.basis_incarnation \
                  WHERE b.page_id = ?1 AND b.state IN ('ok', 'pending') \
                    AND p.status = 'active' \
-                   AND COALESCE(p.space, ?2) = COALESCE(c.space, ?2) \
                  ORDER BY b.added_at, b.basis_page_id",
-                libsql::params![page_id, UNFILED_SPACE_ID],
+                libsql::params![page_id],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("list_basis_context: {e}")))?;
@@ -1398,12 +1435,6 @@ impl MemoryDB {
         if basis.status != "active" {
             return unavailable(BasisUnavailableReason::Archived);
         }
-        let citer = load_facts(&conn, page_id, false)
-            .await?
-            .ok_or(BasisError::CiterNotFound)?;
-        if citer.space != basis.space {
-            return unavailable(BasisUnavailableReason::OtherSpace);
-        }
         let mut rows = conn
             .query(
                 "SELECT content FROM page_history WHERE page_id = ?1 AND version = ?2",
@@ -1501,7 +1532,7 @@ impl MemoryDB {
                     BasisError::BasisNotFound
                 });
             };
-            check_basis_facts(&basis, &citer.space, *version)?;
+            check_basis_facts(&basis, *version)?;
             staged.push(StagedBasisMark {
                 basis_page_id: basis_page_id.clone(),
                 version: *version,
@@ -1553,7 +1584,8 @@ impl MemoryDB {
             return Err(BasisError::CiterMovedOn { current });
         }
         for (basis_page_id, version) in marks {
-            mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by).await?;
+            mark_page_basis_on_conn(&tx, page_id, basis_page_id, *version, added_by, space_guard)
+                .await?;
         }
         super::code_basis::upsert_code_basis_on_conn(
             &tx,
@@ -1569,16 +1601,11 @@ impl MemoryDB {
     }
 
     /// R7, before a NEW note exists: would every `(basis_page_id, version)`
-    /// be an acceptable basis for a note in `space`? Same rules as a mark,
-    /// checked up front so a create is refused whole rather than created
-    /// without the basis the agent said it relied on.
-    pub async fn check_basis_candidates(
-        &self,
-        space: Option<&str>,
-        marks: &[(String, i64)],
-    ) -> Result<(), BasisError> {
+    /// be an acceptable basis? Same rules as a mark, checked up front so a
+    /// create is refused whole rather than created without the basis the
+    /// agent said it relied on.
+    pub async fn check_basis_candidates(&self, marks: &[(String, i64)]) -> Result<(), BasisError> {
         let conn = self.conn.lock().await;
-        let space = space.unwrap_or(UNFILED_SPACE_ID);
         for (basis_page_id, version) in marks {
             let Some(basis) = load_facts(&conn, basis_page_id, false).await? else {
                 return Err(if known_deleted_basis(&conn, basis_page_id).await? {
@@ -1587,7 +1614,7 @@ impl MemoryDB {
                     BasisError::BasisNotFound
                 });
             };
-            check_basis_facts(&basis, space, *version)?;
+            check_basis_facts(&basis, *version)?;
         }
         Ok(())
     }

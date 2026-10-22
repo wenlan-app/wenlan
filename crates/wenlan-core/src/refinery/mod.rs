@@ -1480,6 +1480,14 @@ pub(crate) async fn re_distill_stale_pages(
             );
             continue;
         }
+        // An on-demand steep holds this note; its own commit settles it.
+        let Some(_hold) = crate::steep::hold_for_automatic(db, &page.id) else {
+            log::debug!(
+                "[re-distill-stale] '{}' is being steeped on demand; skipping",
+                page.title
+            );
+            continue;
+        };
         // Synthesis, citation verification, the fail-closed guard, and the
         // atomic content+citations+changelog write all live in the ONE
         // re-distill op (`refresh_page`); this loop just owns the staleness
@@ -1643,6 +1651,19 @@ pub async fn run_redistill_page_slice(
             );
             return Ok(over_cap_redistill_report());
         }
+        // An on-demand steep holds this note; its own commit settles it.
+        let Some(_hold) = crate::steep::hold_for_automatic(db, &page.id) else {
+            return Ok(RedistillSliceReport {
+                selected: true,
+                progressed: true,
+                more: true,
+                retryable: true,
+                ..RedistillSliceReport::default()
+            });
+        };
+        // The write clears the staleness it settled, fenced on the source
+        // revision read before generation, so a mark that lands meanwhile is
+        // kept for the next turn.
         let outcome = refresh_page(
             db,
             provider,
@@ -1653,16 +1674,13 @@ pub async fn run_redistill_page_slice(
         )
         .await;
         return match outcome {
-            Ok(outcome) if outcome.wrote || outcome.gated => {
-                db.clear_page_staleness(&page.id).await?;
-                Ok(RedistillSliceReport {
-                    selected: true,
-                    progressed: true,
-                    items_processed: 1,
-                    more: true,
-                    ..RedistillSliceReport::default()
-                })
-            }
+            Ok(outcome) if outcome.wrote || outcome.gated => Ok(RedistillSliceReport {
+                selected: true,
+                progressed: true,
+                items_processed: 1,
+                more: true,
+                ..RedistillSliceReport::default()
+            }),
             Ok(_) => Ok(RedistillSliceReport {
                 selected: true,
                 more: true,
@@ -1711,6 +1729,16 @@ pub async fn run_redistill_page_slice(
         });
     }
 
+    // An on-demand steep holds this note; its own commit settles it.
+    let Some(_hold) = crate::steep::hold_for_automatic(db, &page.id) else {
+        persist_background_cursor(db, REDISTILL_SCAN_CURSOR_KEY, cursor.wrapping_add(1)).await?;
+        return Ok(RedistillSliceReport {
+            selected: true,
+            progressed: true,
+            more: true,
+            ..RedistillSliceReport::default()
+        });
+    };
     // The canonical SourceChanged write uses a stale-state CAS. Marking the
     // selected Page first both makes that CAS valid and prevents the historical
     // spend-inference-then-drop loop for timestamp-only changes.
@@ -1726,16 +1754,13 @@ pub async fn run_redistill_page_slice(
     .await;
     persist_background_cursor(db, REDISTILL_SCAN_CURSOR_KEY, cursor.wrapping_add(1)).await?;
     match outcome {
-        Ok(outcome) if outcome.wrote || outcome.gated => {
-            db.clear_page_staleness(&page.id).await?;
-            Ok(RedistillSliceReport {
-                selected: true,
-                progressed: true,
-                items_processed: 1,
-                more: true,
-                ..RedistillSliceReport::default()
-            })
-        }
+        Ok(outcome) if outcome.wrote || outcome.gated => Ok(RedistillSliceReport {
+            selected: true,
+            progressed: true,
+            items_processed: 1,
+            more: true,
+            ..RedistillSliceReport::default()
+        }),
         Ok(_) => Ok(RedistillSliceReport {
             selected: true,
             retryable: true,

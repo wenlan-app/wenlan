@@ -169,6 +169,46 @@ pub const PAGE_CANDIDATE_POOL: usize = 9;
 /// carry full unrelated pages. A starting value, to be calibrated on data.
 pub const PAGE_RELEVANCE_FLOOR: f32 = 0.3;
 
+/// Fuse the two page search channels into one normalized 0..=1 relevance
+/// per page id: distance-weighted reciprocal rank fusion, the keyword channel
+/// weighted 0.2 against the vector channel. `vector` is in rank order with
+/// cosine distances; `fts` is the keyword channel in rank order.
+///
+/// A keyword-only hit can reach at most 0.2 / 1.2, about 0.17, so on its own
+/// it could never clear [`PAGE_RELEVANCE_FLOOR`]: recall dropped pages that
+/// contain every word of the query whenever the vector channel missed them.
+/// When `fts_matched_all_terms` says the keyword query required every word,
+/// those pages are lifted to the floor, so they are kept but still rank below
+/// pages both channels found.
+pub fn fuse_page_channel_scores(
+    vector: &[(String, f64)],
+    fts: &[String],
+    fts_matched_all_terms: bool,
+) -> std::collections::HashMap<String, f32> {
+    let rrf_k = 60.0f32;
+    let fts_weight = 0.2f32;
+    let mut scores: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
+    for (rank, (id, distance)) in vector.iter().enumerate() {
+        let similarity = (1.0 - *distance as f32).max(0.01);
+        *scores.entry(id.clone()).or_default() += similarity / (rrf_k + rank as f32);
+    }
+    for (rank, id) in fts.iter().enumerate() {
+        *scores.entry(id.clone()).or_default() += fts_weight / (rrf_k + rank as f32);
+    }
+    let theoretical_max = (1.0 + fts_weight) / rrf_k;
+    for score in scores.values_mut() {
+        *score = (*score / theoretical_max).min(1.0);
+    }
+    if fts_matched_all_terms {
+        for id in fts {
+            if let Some(score) = scores.get_mut(id) {
+                *score = score.max(PAGE_RELEVANCE_FLOOR);
+            }
+        }
+    }
+    scores
+}
+
 /// How much a trusted page's relevance counts against an untrusted one.
 /// Trust raises a page's rank; it is not a visibility gate. Pages are born
 /// unconfirmed and a manual edit returns a page to unconfirmed, so a gate
@@ -503,6 +543,40 @@ mod tests {
 
         let ids: Vec<&str> = selected.iter().map(|page| page.id.as_str()).collect();
         assert_eq!(ids, ["edited", "authored", "machine"]);
+    }
+
+    #[test]
+    fn keyword_hit_on_every_word_clears_the_floor_but_ranks_below_both_channels() {
+        let vector = vec![("both".to_string(), 0.4)];
+        let fts = vec!["both".to_string(), "keyword_only".to_string()];
+
+        let lifted = fuse_page_channel_scores(&vector, &fts, true);
+        assert_eq!(lifted["keyword_only"], PAGE_RELEVANCE_FLOOR);
+        assert!(lifted["both"] > lifted["keyword_only"]);
+
+        let pages = vec![
+            make_page_with(
+                "keyword_only",
+                &["m1"],
+                lifted["keyword_only"],
+                "unconfirmed",
+            ),
+            make_page_with("both", &["m2"], lifted["both"], "unconfirmed"),
+        ];
+        let search_ids: HashSet<String> = HashSet::new();
+        let ids: Vec<String> = select_pages_for_context(&pages, &search_ids, 3)
+            .into_iter()
+            .map(|page| page.id)
+            .collect();
+        assert_eq!(ids, ["both", "keyword_only"]);
+    }
+
+    #[test]
+    fn keyword_hit_on_any_word_stays_under_the_floor() {
+        let fts = vec!["loose".to_string()];
+        let scores = fuse_page_channel_scores(&[], &fts, false);
+        assert!(scores["loose"] < PAGE_RELEVANCE_FLOOR, "{scores:?}");
+        assert!((scores["loose"] - 0.2 / 1.2).abs() < 1e-6);
     }
 
     #[test]

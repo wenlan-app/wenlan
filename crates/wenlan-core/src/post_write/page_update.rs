@@ -354,11 +354,14 @@ async fn stage_page_revision_card_inner(
             .collect::<String>()
     );
     // Why this write needed review, so the card can say so: the review lock
-    // first, then Wenlan's own background lanes, else the page became
-    // user-owned while the write was in flight.
+    // first, then Wenlan's own background lanes, else the page has the
+    // person's edits. A pipeline write an AI tool made on demand (steep)
+    // names that tool, so it is not called background.
     let review_reason = if page.review_required {
         "locked"
-    } else if matches!(Writer::classify(edited_by), Writer::Pipeline(_)) {
+    } else if matches!(Writer::classify(edited_by), Writer::Pipeline(_))
+        && proposer.as_deref() == Some("wenlan")
+    {
         "background"
     } else {
         "owned"
@@ -826,11 +829,18 @@ async fn update_page_db_impl(
     let carries_basis = basis.minor
         || !basis.marks.is_empty()
         || basis.confirm.is_some()
-        || !basis.code_basis.is_empty()
-        || basis.space_guard.is_some();
+        || !basis.code_basis.is_empty();
     if carries_basis && (page_growth.is_some() || user_forced || require_stale) {
         return Err(WenlanError::Validation(
             "a basis or minor flag rides only an agent refresh or a human save".into(),
+        ));
+    }
+    // A Space guard only narrows where a write may land. Besides an agent
+    // refresh, it rides an on-demand steep rewrite, which is a stale rebuild
+    // an agent asked for.
+    if basis.space_guard.is_some() && (page_growth.is_some() || user_forced) {
+        return Err(WenlanError::Validation(
+            "a Space guard rides only an agent's write or a human save".into(),
         ));
     }
     // Preserve mode derives provenance from the Page generation inside the

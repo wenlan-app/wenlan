@@ -4,12 +4,13 @@ description: >
   The one front door to Wenlan. Takes plain words after `$wenlan` and runs the
   right Wenlan workflow; bare `$wenlan` shows status or starts setup. Use for:
   setting up or fixing Wenlan ("set up wenlan", "is wenlan working", "裝好了嗎"),
-  turning memories into notes ("distill", "整理成筆記"), getting to know a code
+  turning memories into notes ("distill", "整理成筆記"), bringing out of date
+  notes up to date ("steep", "沉澱"), getting to know a code
   repository ("map this repo", "認識這個倉庫"), opening or listing notes
   ("open my note on X", "打開筆記"), checking memory quality or cleaning
   up ("lint", "檢查重複", "清一清"), reviewing pending items ("review what's
   waiting", "看待確認的"), and deleting one memory ("forget <id>", "刪掉這筆").
-  Old command words such as distill, map, lint, pages, curate, forget and setup
+  Old command words such as distill, steep, map, lint, pages, curate, forget and setup
   still work after `$wenlan`. Invoked as `$wenlan [what you want]`.
 argument-hint: "[what you want]"
 allowed-tools: ["Bash", "mcp__wenlan__brief", "mcp__wenlan__list_pending_revisions", "mcp__wenlan__list_pending_imports"]
@@ -67,6 +68,7 @@ Match the request to one row. Old command words count as their row.
 |---|---|---|
 | Set up, repair, upgrade, check it works | setup | `$wenlan setup`, `$wenlan 好像壞了` |
 | Turn memories into notes, refresh notes, rebuild one note | distill | `$wenlan distill`, `$wenlan 整理成筆記` |
+| Bring out of date pages up to date now, with this AI tool | steep | `$wenlan steep`, `$wenlan 沉澱`, `$wenlan 把過期的筆記更新` |
 | Get to know this repository; write or refresh its orientation notes | map | `$wenlan map`, `$wenlan 認識這個倉庫`, `$wenlan 畫個地圖` |
 | List, find, open or print a note | pages | `$wenlan pages release`, `$wenlan 打開那篇筆記` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `$wenlan lint`, `$wenlan lint repair`, `$wenlan 檢查重複` |
@@ -91,7 +93,7 @@ Rules:
 
 ## 3. Run the chosen workflow
 
-For setup, distill, pages, lint, curate, forget and map, read
+For setup, distill, steep, pages, lint, curate, forget and map, read
 `references/<workflow>.md` beside this SKILL.md and follow it to the end,
 treating the arguments below as what the user typed after that workflow word.
 For brief, capture, recall and handoff, use that Wenlan skill. Arguments:
@@ -115,9 +117,11 @@ Answer these from here, without a tool call, and only the part asked:
 - Read notes in a terminal: `wenlan pages` lists recent notes;
   `wenlan pages "<query>" --print` prints one with its sources. The folder
   also opens in Finder, an editor, or as an Obsidian vault.
-- Background upkeep with a model is off by default. `wenlan steep status`
-  shows it, `wenlan steep configure --everyday <source> --synthesis <source>`
-  turns it on after the CLI shows what goes where and asks once, and
+- Steep has two modes. On demand, this AI tool does it: `$wenlan steep`.
+  Automatic, Wenlan's own model does it in the background; that is off by
+  default. `wenlan steep status` shows it,
+  `wenlan steep configure --everyday <source> --synthesis <source>` turns it
+  on after the CLI shows what goes where and asks once, and
   `wenlan steep disable` turns it off.
 - The menu shows `$wenlan`, `/brief`, `/recall`, `/capture` and `/handoff`.
   Everything else is reached by saying it after `$wenlan`.

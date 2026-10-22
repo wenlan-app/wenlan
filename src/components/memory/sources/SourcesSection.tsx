@@ -136,7 +136,7 @@ export default function SourcesSection() {
                     >
                       {isSyncing
                         ? "Syncing…"
-                        : `${source.source_type === "obsidian" ? "Obsidian vault" : "Folder"} · ${source.file_count.toLocaleString()} files · ${source.memory_count.toLocaleString()} memories · ${relativeTime(source.last_sync)}`}
+                        : `${source.source_type === "obsidian" ? "Obsidian vault" : source.source_type === "logseq" ? "Logseq graph" : "Folder"} · ${source.file_count.toLocaleString()} files · ${source.memory_count.toLocaleString()} memories · ${relativeTime(source.last_sync)}`}
                     </p>
                   </div>
 

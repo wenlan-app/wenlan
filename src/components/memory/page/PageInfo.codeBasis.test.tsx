@@ -63,7 +63,7 @@ afterEach(() => {
 describe("PageInfo code section", () => {
   it("has no code section for a note that relies on no code", () => {
     setup();
-    expect(screen.queryByRole("region", { name: "Code this note relies on" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Code this page relies on" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Code" })).toBeNull();
   });
 
@@ -77,7 +77,7 @@ describe("PageInfo code section", () => {
       ],
     });
 
-    const section = screen.getByRole("region", { name: "Code this note relies on" });
+    const section = screen.getByRole("region", { name: "Code this page relies on" });
     expect(within(section).getByRole("heading", { name: "Code" })).toBeInTheDocument();
     const rows = within(section).getAllByRole("listitem");
     expect(rows.map((item) => item.textContent?.replace(/\s+/g, " ").trim())).toEqual([
@@ -108,7 +108,7 @@ describe("PageInfo code section", () => {
       ],
     });
 
-    const section = screen.getByRole("region", { name: "Code this note relies on" });
+    const section = screen.getByRole("region", { name: "Code this page relies on" });
     const notes = await within(section).findAllByText(/AI looked:|the next steep looks at it/);
     expect(notes.map((note) => note.textContent)).toEqual([
       "AI looked: The constant is now 48, not 32, next steep fixes it",

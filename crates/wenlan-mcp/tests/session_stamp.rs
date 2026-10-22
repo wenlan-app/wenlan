@@ -4,7 +4,8 @@
 use rmcp::model::CallToolResult;
 use wenlan_mcp::client::WenlanClient;
 use wenlan_mcp::tools::{
-    CaptureParams, TransportMode, UpdateBriefParams, WenlanMcpServer, WritePageParams,
+    CaptureParams, SteepAction, SteepParams, TransportMode, UpdateBriefParams, WenlanMcpServer,
+    WritePageParams,
 };
 use wenlan_types::responses::StoreMemoryResponse;
 use wiremock::matchers::{method, path};
@@ -66,6 +67,8 @@ fn capture(session: Option<&str>) -> CaptureParams {
         memory_type: None,
         space: None,
         entity: None,
+        entity_type: None,
+        entity_id: None,
         confidence: None,
         supersedes: None,
         structured_fields: None,
@@ -79,6 +82,17 @@ fn session_header(request: &wiremock::Request) -> Option<String> {
         .headers
         .get("x-wenlan-session")
         .map(|value| value.to_str().unwrap().to_string())
+}
+
+/// The requests the tool sent, leaving out the best-effort steep count each
+/// reply reads on the side; it is not what these tests stamp or announce.
+async fn sent(mock: &MockServer) -> Vec<wiremock::Request> {
+    mock.received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() != "/api/steep/worklist")
+        .collect()
 }
 
 fn is_ok(result: &CallToolResult) -> bool {
@@ -101,7 +115,7 @@ async fn capture_announces_the_session_once_then_stamps_each_write() {
         assert!(is_ok(&result));
     }
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let paths: Vec<_> = requests.iter().map(|r| r.url.path().to_string()).collect();
     assert_eq!(
         paths,
@@ -133,7 +147,7 @@ async fn no_session_means_no_header_and_no_announcement() {
         .await
         .unwrap();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     assert_eq!(requests.len(), 1);
     assert_eq!(session_header(&requests[0]), None);
 }
@@ -159,7 +173,7 @@ async fn argument_beats_environment_and_invalid_values_are_ignored() {
     assert!(is_ok(&result), "a bad session never fails the write");
     clear_env();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let stamped: Vec<_> = requests
         .iter()
         .filter(|r| r.url.path() == "/api/memory/store")
@@ -188,7 +202,7 @@ async fn codex_thread_id_is_the_last_resort() {
         .unwrap();
     clear_env();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let store = requests
         .iter()
         .find(|r| r.url.path() == "/api/memory/store")
@@ -212,7 +226,7 @@ async fn a_remote_facing_server_ignores_its_own_environment() {
         .unwrap();
     clear_env();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     let stores: Vec<_> = requests
         .iter()
         .filter(|r| r.url.path() == "/api/memory/store")
@@ -286,7 +300,7 @@ async fn write_page_and_update_brief_carry_the_session() {
         .await
         .unwrap();
 
-    let requests = mock.received_requests().await.unwrap();
+    let requests = sent(&mock).await;
     for wanted in ["/api/pages", "/api/brief"] {
         let request = requests.iter().find(|r| r.url.path() == wanted).unwrap();
         assert_eq!(
@@ -300,4 +314,45 @@ async fn write_page_and_update_brief_carry_the_session() {
         .filter(|r| r.url.path() == "/api/sessions")
         .count();
     assert_eq!(announcements, 1, "one announcement per session per process");
+}
+
+#[tokio::test]
+async fn a_steep_rewrite_carries_the_session() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    let mock = MockServer::start().await;
+    mount_daemon(&mock).await;
+    Mock::given(method("POST"))
+        .and(path("/api/steep/commit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "page_id": "page_1", "outcome": "written", "replayed": false
+        })))
+        .mount(&mock)
+        .await;
+    let server = server(&mock, TransportMode::Stdio);
+
+    let result = server
+        .steep_impl(SteepParams {
+            action: SteepAction::Commit,
+            page_id: None,
+            token: Some("stp_x".into()),
+            content: Some("body [1]".into()),
+            limit: None,
+            cursor: None,
+            space: None,
+            session: Some("claude-code:abc-123".into()),
+        })
+        .await
+        .unwrap();
+    assert!(is_ok(&result), "{result:?}");
+
+    let requests = sent(&mock).await;
+    let commit = requests
+        .iter()
+        .find(|r| r.url.path() == "/api/steep/commit")
+        .unwrap();
+    assert_eq!(
+        session_header(commit).as_deref(),
+        Some("claude-code:abc-123")
+    );
 }

@@ -338,9 +338,10 @@ async fn a_collection_grant_reduces_rather_than_drops_and_carries_both_axes() {
         p3.truth.unwrap(),
         wenlan_types::pages::PageTruth {
             supported: false,
+            support: wenlan_types::pages::PageSupport::Unsupported,
             human_reviewed: false,
         },
-        "a page with no truth row reads as unsupported and unreviewed, not unknown"
+        "a provisional, checked page reads as unsupported and unreviewed, not unknown"
     );
 }
 
@@ -393,6 +394,7 @@ async fn a_named_grant_carries_both_axes_for_exactly_the_named_pages() {
         p1.truth.expect("a named page must carry both axes"),
         wenlan_types::pages::PageTruth {
             supported: true,
+            support: wenlan_types::pages::PageSupport::Supported,
             human_reviewed: true,
         },
     );
@@ -406,6 +408,7 @@ async fn a_named_grant_carries_both_axes_for_exactly_the_named_pages() {
         p2.truth.expect("a named page must carry both axes"),
         wenlan_types::pages::PageTruth {
             supported: false,
+            support: wenlan_types::pages::PageSupport::Unsupported,
             human_reviewed: false,
         },
         "and says so, rather than opening silently"
@@ -499,6 +502,7 @@ async fn the_by_id_reader_carries_both_axes_for_the_page_it_named() {
             .expect("the page a call named must arrive with both axes"),
         wenlan_types::pages::PageTruth {
             supported: false,
+            support: wenlan_types::pages::PageSupport::Unsupported,
             human_reviewed: false,
         },
     );

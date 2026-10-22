@@ -73,4 +73,4 @@ DAEMON_PID="$(cat "$DATA_DIR/daemon.pid" 2>/dev/null || true)"
 info archive-daemon "$DAEMON_LINE"
 WENLAN_BIN="${WENLAN_PATH:-wenlan}" WENLAN_HOST="http://127.0.0.1:$PORT" bash "$HELPERS/cli-roundtrip.sh"
 MCP_BIN="$(command -v wenlan-mcp || echo wenlan-mcp)" MCP_ARGS="[\"--origin-url\",\"http://127.0.0.1:$PORT\"]" \
-    EXPECT_TOOL_COUNT=33 MCP_TOOLS=capture,recall,brief python3 "$HELPERS/mcp-roundtrip.py"
+    EXPECT_TOOL_COUNT=34 MCP_TOOLS=capture,recall,brief python3 "$HELPERS/mcp-roundtrip.py"

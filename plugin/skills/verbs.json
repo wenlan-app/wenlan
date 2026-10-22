@@ -7,6 +7,7 @@
   { "verb": "/wenlan setup", "skill": "setup", "menu": false, "line": "set up or repair Wenlan (installs the local runtime)" },
   { "verb": "/wenlan lint", "args": "[deep|repair] [scope]", "skill": "lint", "menu": false, "line": "diagnose, or resolve all findings safely" },
   { "verb": "/wenlan distill", "args": "[t]", "skill": "distill", "menu": false, "line": "synthesize or refresh source-backed pages for the active Space" },
+  { "verb": "/wenlan steep", "args": "[space:<name>]", "skill": "steep", "menu": false, "line": "bring out of date pages up to date with this AI tool (steep on demand)" },
   { "verb": "/wenlan map", "args": "[space:<name>]", "skill": "map", "menu": false, "line": "read this repository and write a small set of orientation notes, each tied to the code lines it relies on" },
   { "verb": "/wenlan pages", "args": "[q]", "skill": "pages", "menu": false, "line": "browse and open distilled pages" },
   { "verb": "/wenlan curate", "args": "<surface>", "skill": "curate", "menu": false, "line": "deep audit of captures, revisions or refinements" },

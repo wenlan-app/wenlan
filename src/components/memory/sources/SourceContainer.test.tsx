@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { listIndexedFiles, listRegisteredSources, readSourceDir, readSourceText, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
+import { listIndexedFiles, listRegisteredSources, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
 import SourceLibrary, { type SourceLibraryState } from "./SourceLibrary";
 import { useState } from "react";
 
@@ -13,6 +13,8 @@ vi.mock("../../../lib/tauri", () => ({
   readSourceDir: vi.fn(),
   readSourceText: vi.fn(),
   syncRegisteredSource: vi.fn(),
+  setSourceFollowChanges: vi.fn(),
+  sourceFollowsChanges: (s: { status: unknown }) => s.status !== "Paused",
   openFile: vi.fn(),
 }));
 
@@ -50,6 +52,29 @@ afterEach(() => {
 });
 
 describe("Sources containers", () => {
+  it("switches a synced source to import-once from its Info panel", async () => {
+    vi.mocked(setSourceFollowChanges).mockResolvedValue({ ...source, status: "Paused" });
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
+    const toggle = await screen.findByRole("button", { name: "Keep in sync" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/Checked for changes about every 30 seconds/)).toBeInTheDocument();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setSourceFollowChanges).toHaveBeenCalledWith("vault-1", false));
+  });
+
+  it("shows an import-once source as imported once with Refresh still available", async () => {
+    vi.mocked(listRegisteredSources).mockResolvedValue([{ ...source, status: "Paused" }]);
+    renderLibrary();
+    fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
+    expect(await screen.findByRole("button", { name: "Keep in sync" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText("Imported once")).toBeInTheDocument();
+    expect(screen.getByText(/Later changes wait until you Refresh/)).toBeInTheDocument();
+    expect(screen.queryByText(/about every 30 seconds/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Refresh$/ }));
+    await waitFor(() => expect(syncRegisteredSource).toHaveBeenCalledWith("vault-1"));
+  });
+
   it("opens a Vault, enters a nested folder, and returns through its breadcrumb", async () => {
     vi.mocked(readSourceDir).mockImplementation(async (path) => path === source.path
       ? [{ name: "Projects", isDirectory: true }, { name: "root.md", isDirectory: false }]
