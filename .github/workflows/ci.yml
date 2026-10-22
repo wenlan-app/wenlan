@@ -516,6 +516,8 @@ jobs:
               - 'crates/wenlan-core/src/repair.rs'
               - 'crates/wenlan-core/src/repair/**'
               - 'crates/wenlan-core/src/repair_plan/**'
+              # `gh.exe` is looked up by name on Windows.
+              - 'crates/wenlan-core/src/repo_wiki.rs'
               # The repair cases that drive a real repair are gated
               # `cfg_attr(not(unix), ignore)` to match the entry point's own
               # refusal, so they now carry a platform route and must schedule
