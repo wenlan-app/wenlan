@@ -127,6 +127,13 @@ export function recentTool(agents: readonly AgentConnection[]): { family: string
 
 const KIND_ORDER = ["note", "chat", "file", "capture"] as const;
 
+/** "12 notes, 6 chats, and 4 files". Chinese lists take 、 between every
+ *  item; ListFormat's 和 there loses the space before a number. */
+export function listParts(parts: readonly string[], language: string): string {
+  if (language.toLowerCase().startsWith("zh")) return parts.join("、");
+  return new Intl.ListFormat(language, { style: "long", type: "conjunction" }).format(parts);
+}
+
 function readJson<T>(key: string): T | null {
   try {
     const raw = localStorage.getItem(key);
@@ -192,15 +199,16 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
     setLastChangeAt(Date.now());
   }, [signature]);
 
-  // A page the tool wrote takes its material out of the list. The Wiki's own
-  // page list does not poll, so read it again then, and the page shows up.
+  // A page the tool wrote takes its material out of the list, whether or not
+  // the run started from this card. The Wiki's own page list does not poll,
+  // so read it again then, and the page shows up.
   useEffect(() => {
     const total = list.data?.total;
-    if (run && total !== undefined && lastTotal.current !== undefined && total < lastTotal.current) {
+    if (total !== undefined && lastTotal.current !== undefined && total < lastTotal.current) {
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
     }
     lastTotal.current = total;
-  }, [list.data?.total, run, queryClient]);
+  }, [list.data?.total, queryClient]);
 
   useEffect(() => {
     if (!run) return;
@@ -308,12 +316,15 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
       parts.length = 0;
       parts.push(t("askAi.writePages.kinds.item", { count: view.list.total }));
     }
-    const listed = new Intl.ListFormat(i18n.language, { style: "long", type: "conjunction" }).format(parts);
+    const listed = listParts(parts, i18n.language);
+    // Once pages exist, "your material is in" no longer fits: only this part
+    // of it is waiting.
+    const hasPages = pages.some((page) => page.creation_kind === "distilled");
     return (
       <section className="write-pages-card" data-testid="write-pages-card" data-state="ready" aria-live="polite">
         <div className="write-pages-head">
           <Sparkle aria-hidden="true" weight="regular" className="write-pages-icon" />
-          <p className="write-pages-lead">{t("askAi.writePages.lead", { list: listed })}</p>
+          <p className="write-pages-lead">{t(hasPages ? "askAi.writePages.leadMore" : "askAi.writePages.lead", { list: listed })}</p>
           {closeButton}
         </div>
         {tool ? (

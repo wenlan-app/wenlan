@@ -14,7 +14,7 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { pageCreatedMs, WritePagesCard, writePagesView } from "./WritePagesCard";
+import { listParts, pageCreatedMs, WritePagesCard, writePagesView } from "./WritePagesCard";
 
 vi.mock("../../../lib/tauri", () => ({
   PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
@@ -69,6 +69,13 @@ describe("pageCreatedMs", () => {
     expect(pageCreatedMs({ created_at: "2026-10-22T12:00:00+02:00" })).toBe(START);
     expect(pageCreatedMs({ created_at: String(START / 1000) })).toBe(START);
     expect(pageCreatedMs({ created_at: "x" })).toBeNull();
+  });
+});
+
+describe("listParts", () => {
+  it("joins Chinese with 、 and English with a conjunction", () => {
+    expect(listParts(["4 份檔案", "3 條記憶"], "zh-Hant")).toBe("4 份檔案、3 條記憶");
+    expect(listParts(["4 files", "3 saved memories"], "en")).toBe("4 files and 3 saved memories");
   });
 });
 
@@ -137,6 +144,14 @@ describe("WritePagesCard", () => {
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-card")).toHaveAttribute("data-state", "working"));
     expect(screen.getByTestId("write-pages-card")).toHaveTextContent("Claude Code is writing pages");
+  });
+
+  it("names only what is left once pages exist", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(10, { kinds: { note: 2, chat: 4, file: 4 } }));
+    wrap(<WritePagesCard pages={[page("a", "2026-10-22T10:01:00Z")]} onSelectPage={vi.fn()} />);
+    const card = await screen.findByTestId("write-pages-card");
+    expect(card).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
   });
 
   it("copies the command when the tool cannot be opened", async () => {

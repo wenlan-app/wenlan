@@ -2327,6 +2327,7 @@ const en = {
     },
     writePages: {
       lead: "Your material is in: {{list}}. None of it is in a page yet.",
+      leadMore: "{{list}} aren't in any page yet.",
       kinds: {
         note_one: "{{count}} note",
         note_other: "{{count}} notes",
@@ -5117,6 +5118,7 @@ const zhHans = {
     },
     writePages: {
       lead: "资料已进来：{{list}}，还没整理成笔记。",
+      leadMore: "还有 {{list}} 没整理成笔记。",
       kinds: {
         note_one: "{{count}} 篇笔记",
         note_other: "{{count}} 篇笔记",
@@ -7898,6 +7900,7 @@ const zhHant = {
     },
     writePages: {
       lead: "資料已進來：{{list}}，還沒整理成筆記。",
+      leadMore: "還有 {{list}} 沒整理成筆記。",
       kinds: {
         note_one: "{{count}} 篇筆記",
         note_other: "{{count}} 篇筆記",
