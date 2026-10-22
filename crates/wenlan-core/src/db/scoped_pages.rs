@@ -64,6 +64,25 @@ fn unresolved_for_scope(scope: &ReadScope, parameter: usize) -> String {
     format!("(pl.target_page_id IS NULL OR t.id IS NULL OR NOT COALESCE((1 = 1{target_sql}), 0))")
 }
 
+/// The wikilinks a scoped orphan read looks at, shaped like `page_links`.
+/// `page_links` keeps only unresolved links; a resolved one lives only as a
+/// `links` edge. A scoped reader must also see the resolved ones, so that a
+/// link into another Space can read as unresolved (see
+/// [`unresolved_for_scope`]); Global only ever needs the unresolved rows.
+fn link_rows_for_scope(scope: &ReadScope) -> &'static str {
+    if matches!(scope, ReadScope::Global) {
+        return "page_links";
+    }
+    "(SELECT label_key, label, source_page_id, target_page_id FROM page_links \
+      UNION ALL \
+      SELECT lower(trim(json_extract(payload, '$.label'))), json_extract(payload, '$.label'), \
+             src_id, dst_id \
+      FROM edges \
+      WHERE edge_type = 'links' AND src_kind = 'page' AND dst_kind = 'page' \
+        AND valid_until IS NULL AND json_valid(payload) \
+        AND json_extract(payload, '$.label') IS NOT NULL)"
+}
+
 fn page_not_found() -> WenlanError {
     WenlanError::NotFound("page not found".to_string())
 }
@@ -618,9 +637,10 @@ impl MemoryDB {
     ) -> Result<Vec<OrphanLinkRow>, WenlanError> {
         let (scope_sql, scope_value) = page_scope_clause(scope, "p.workspace", 1);
         let unresolved = unresolved_for_scope(scope, 1);
+        let links = link_rows_for_scope(scope);
         let sql = format!(
             "SELECT pl.label_key, pl.label, pl.source_page_id \
-             FROM page_links pl INNER JOIN pages p ON p.id = pl.source_page_id \
+             FROM {links} pl INNER JOIN pages p ON p.id = pl.source_page_id \
              LEFT JOIN pages t ON t.id = pl.target_page_id \
              WHERE {unresolved} AND p.status = 'active'{scope_sql} \
              LIMIT 20000"
@@ -694,10 +714,11 @@ impl MemoryDB {
         }
         let (scope_sql, scope_value) = page_scope_clause(scope, "p.workspace", 2);
         let unresolved = unresolved_for_scope(scope, 2);
+        let links = link_rows_for_scope(scope);
         let sql = format!(
             "SELECT MIN(pl.label) AS display_label, \
                     COUNT(DISTINCT pl.source_page_id) AS n \
-             FROM page_links pl INNER JOIN pages p ON p.id = pl.source_page_id \
+             FROM {links} pl INNER JOIN pages p ON p.id = pl.source_page_id \
              LEFT JOIN pages t ON t.id = pl.target_page_id \
              WHERE {unresolved} AND p.status = 'active'{scope_sql} \
              GROUP BY pl.label_key HAVING n >= ?1 \

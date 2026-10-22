@@ -337,6 +337,7 @@ async fn a_steep_rewrite_carries_the_session() {
             page_id: None,
             token: Some("stp_x".into()),
             content: Some("body [1]".into()),
+            answers: None,
             limit: None,
             cursor: None,
             space: None,

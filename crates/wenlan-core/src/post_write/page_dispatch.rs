@@ -482,6 +482,14 @@ pub async fn update_page_at_source_revision(
 /// agent was locked to when it claimed the page: the rewrite, or its card,
 /// lands only while the page is still there, checked in the write's own
 /// transaction.
+///
+/// `code_rewrite` is `None` for a rewrite from the page's sources. It is
+/// `Some(owned)` for a rewrite made because the code the page relies on
+/// changed: such a page is not stale by its sources, and it goes to the user
+/// as a revision card only when `owned` (a person edited it, or it is locked
+/// for review). A note an agent wrote from code is Wenlan's own even though
+/// it has no sources, so it is written directly; `expected_version` keeps
+/// that from landing over an edit made after the claim.
 #[allow(clippy::too_many_arguments)]
 pub async fn steep_update_page(
     db: &MemoryDB,
@@ -490,15 +498,20 @@ pub async fn steep_update_page(
     agent: Option<&str>,
     space_guard: Option<crate::read_scope::ReadScope>,
     expected_source_revision: i64,
+    code_rewrite: Option<bool>,
     knowledge_path: Option<&Path>,
     citations: Option<(String, String)>,
 ) -> Result<WriteResult, WenlanError> {
+    let edited_by = match code_rewrite {
+        Some(false) => "agent_refresh",
+        _ => "re_distill",
+    };
     update_page_impl(
         db,
         page_id,
         req,
-        "re_distill",
-        true,
+        edited_by,
+        code_rewrite.is_none(),
         Some(expected_source_revision),
         knowledge_path,
         citations,

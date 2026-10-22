@@ -707,9 +707,10 @@ impl MemoryDB {
     /// each row carrying the model's sentence (`explanation`) and verdict
     /// (`ai_verdict`).
     ///
-    /// This is the handoff to the on-demand steep: it rewrites these notes with
-    /// the main model through a revision card and confirms the row with the
-    /// existing confirm route. The recheck job never writes a page.
+    /// The steep pass picks these notes up as `code_changed` work
+    /// ([`crate::steep`]): the main model rewrites them from the code (a note
+    /// the user wrote gets a revision card) and a rewrite that lands settles
+    /// the row. The recheck job never writes a page.
     pub async fn list_code_basis_stale(
         &self,
         space: Option<&str>,

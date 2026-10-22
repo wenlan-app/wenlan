@@ -304,7 +304,7 @@ async fn link_capture_entity(
             let _space_write_guard = db.lock_space_writes().await;
             let request = wenlan_types::requests::CreateEntityRequest {
                 name: name.clone(),
-                entity_type,
+                entity_type: entity_type.clone(),
                 space: match space {
                     Some(space) => WriteSpaceTarget::Named(space.to_string()),
                     None => WriteSpaceTarget::Uncategorized,
@@ -314,7 +314,10 @@ async fn link_capture_entity(
             };
             match wenlan_core::post_write::create_entity(db, request, agent).await {
                 // Creating resolves the name across every Space, so it can
-                // return an entity the Space-locked caller may not link.
+                // return an entity the Space-locked caller may not link. The
+                // caller then gets a new entity in its own Space, exactly as
+                // for a name no Space holds, so the reply cannot tell it the
+                // name exists elsewhere.
                 Ok(result)
                     if *scope != wenlan_core::read_scope::ReadScope::Global
                         && !db
@@ -322,11 +325,25 @@ async fn link_capture_entity(
                             .await
                             .unwrap_or(false) =>
                 {
-                    warnings.push(format!(
-                        "entity \"{name}\" could not be created in this space, so this memory \
-                         is not linked to it."
-                    ));
-                    return None;
+                    match db
+                        .store_entity(
+                            &name,
+                            &entity_type,
+                            space,
+                            (agent != "unknown").then_some(agent),
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(id) => id,
+                        Err(e) => {
+                            warnings.push(format!(
+                                "entity \"{name}\" could not be created, so this memory is not \
+                                 linked: {e}"
+                            ));
+                            return None;
+                        }
+                    }
                 }
                 Ok(result) => result.id,
                 Err(e) => {
@@ -2993,12 +3010,22 @@ mod store_scheduler_handoff_tests {
         );
 
         // Entity creation resolves names across Spaces, so the typed name
-        // finds the other Space's entity; the capture stores the memory
-        // unlinked rather than linking it.
+        // finds the other Space's entity; the capture gets its own entity in
+        // Work instead, the same reply as for a name no Space holds.
         let named = store(content, Some("Erin Park"), None).await.unwrap().0;
-        assert_eq!(
-            named.entity_id, None,
-            "the other Space's entity is not linked"
+        let linked = named
+            .entity_id
+            .clone()
+            .expect("a typed name is created in this Space");
+        assert_ne!(linked, erin, "the other Space's entity is not linked");
+        assert!(
+            db.entity_visible_in_scope(
+                &linked,
+                &wenlan_core::read_scope::ReadScope::Space("work".to_string())
+            )
+            .await
+            .unwrap(),
+            "the new entity is in Work"
         );
         assert!(
             named.warnings.iter().all(|w| !w.contains(&erin)),

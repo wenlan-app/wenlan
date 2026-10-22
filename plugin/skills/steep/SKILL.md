@@ -3,7 +3,8 @@ name: steep
 description: >
   Steep on demand: bring every page that went out of date up to date, using
   this AI tool instead of Wenlan's background model. A page goes out of date
-  when a source it was written from changes or is removed. Use for "steep",
+  when a source it was written from changes or is removed, or when code it
+  relies on changes. Use for "steep",
   "update my out of date pages", "沉澱", "把過期的筆記更新". Invoked as
   `/wenlan steep [space:<name>]`.
 argument-hint: "[space:<name>]"
@@ -47,6 +48,16 @@ For each page:
    and a `note` that says what to do. A refusal (another run took it, or it
    moved) means skip it and go on.
 2. `plan: "needs_you"`: nothing to claim. Keep its `note` for the report.
+   `plan: "judge"`: the code this page relies on changed and nobody has
+   judged whether that matters. Give each entry of `code_checks` to a helper
+   on a small model (in Claude Code, an `Agent` with `model: "haiku"`):
+   `judge_instructions` first, then the check's `prompt`, and ask it to reply
+   with only the JSON object those instructions describe. Never judge with
+   your main model: when you cannot start a helper on a small model,
+   `release` the token and leave the page for Wenlan's automatic mode. Call `steep` with `action: "judge"`, the token, and
+   `answers` as `[{n, answer}]`, each reply passed back unchanged. If the
+   answer says something was `stale`, claim the page again: it now waits for
+   a rewrite. Do not rewrite a page on a judge claim.
 3. Decide whether it needs a rewrite. Only when `stale_reason` is
    `source_updated`: compare the page with its sources. This is a small
    judgment, so give it to a helper on a small model: in Claude Code, start an
@@ -56,10 +67,16 @@ For each page:
    `action: "still_accurate"` and the token. When it says no, or you cannot
    start a helper on a small model, rewrite. A page whose `stale_reason` is
    `source_removed` is always rewritten.
+   When `stale_reason` is `code_changed`, the claim's `code` shows the lines
+   as they read now and `what_changed` says what the page should now say.
+   If, having read the code, the page still agrees with it, call
+   `still_accurate`; otherwise rewrite.
 4. Rewrite it yourself, with your main model. Never let the small model write
    the page. Use only the numbered sources, cite every claim with its
    number like `[2]`, keep the title, headings and language, and drop
-   anything only a removed source said. Then call `steep` with
+   anything only a removed source said. For `code_changed`, change only what
+   the code contradicts; the code is not a numbered source, so a sentence
+   only the code supports carries no `[n]`. Then call `steep` with
    `action: "commit"`, the token, and the new body as `content`.
 5. Read the commit answer:
    - `written`: done.
@@ -76,6 +93,7 @@ Never release a token you did not get from your own claim.
 ## 3. Report
 
 A few short lines, no ids: how many pages were updated, how many wait for the
-user as revision cards, how many still hold, and for each `needs_you` page its
+user as revision cards, how many still hold, how many code changes were
+checked and found harmless, and for each `needs_you` page its
 title and the reason from its `note`. If more than 10 were waiting, say how
 many are left and that `/wenlan steep` again continues.

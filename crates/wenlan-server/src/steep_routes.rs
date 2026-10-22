@@ -54,6 +54,25 @@ fn steep_error(error: SteepError) -> ServerError {
     }
 }
 
+/// Whether a background model judges changed code (the recheck lane's own
+/// gate: background AI on and an everyday model there). When none does, steep
+/// hands that judging to the caller's small model.
+fn background_judges_code(state: &ServerState) -> bool {
+    let config = wenlan_core::config::load_config();
+    if !config.background_ai_enabled() {
+        return false;
+    }
+    let pin = wenlan_core::refinery::EverydaySource::parse(config.everyday_source.as_deref());
+    wenlan_core::refinery::resolve_everyday(
+        pin,
+        state.api_llm.as_ref(),
+        state.external_llm.as_ref(),
+        state.llm.as_ref(),
+    )
+    .llm
+    .is_some()
+}
+
 async fn open_db(state: &Arc<RwLock<ServerState>>) -> Result<Arc<MemoryDB>, ServerError> {
     state
         .read()
@@ -84,6 +103,7 @@ pub async fn handle_steep_worklist(
     Query(query): Query<SteepWorklistQuery>,
 ) -> Result<Json<SteepWorklistResponse>, ServerError> {
     let db = open_db(&state).await?;
+    let judge_code = !background_judges_code(&*state.read().await);
     let scope = crate::read_scope::effective_read_scope(
         &db,
         query.space.as_deref(),
@@ -98,6 +118,7 @@ pub async fn handle_steep_worklist(
         |id| visible.contains(id),
         query.limit.unwrap_or(20),
         query.cursor.as_deref(),
+        judge_code,
     )
     .await?;
     Ok(Json(SteepWorklistResponse {
@@ -118,7 +139,13 @@ pub async fn handle_steep_claim(
     view: crate::truth_guard::TruthView,
     Json(req): Json<SteepClaimRequest>,
 ) -> Result<Json<SteepClaimResponse>, ServerError> {
-    let db = open_db(&state).await?;
+    let (db, judge_instructions) = {
+        let s = state.read().await;
+        (
+            s.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            (!background_judges_code(&s)).then(|| s.prompts.code_basis_recheck.clone()),
+        )
+    };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // The claim hands out the note and its sources in full: a note the caller
     // may not read in full is not there for it.
@@ -126,7 +153,7 @@ pub async fn handle_steep_claim(
     if !visible.contains(&req.page_id) {
         return Err(ServerError::NotFound("page not found".into()));
     }
-    let claim = wenlan_core::steep::claim(&db, &req.page_id, &scope)
+    let claim = wenlan_core::steep::claim(&db, &req.page_id, &scope, judge_instructions.as_deref())
         .await
         .map_err(steep_error)?;
     Ok(Json(SteepClaimResponse {
@@ -139,6 +166,9 @@ pub async fn handle_steep_claim(
         stale_reason: claim.stale_reason,
         current_content: claim.current_content,
         sources: claim.sources,
+        code: claim.code,
+        judge_instructions: claim.judge_instructions,
+        code_checks: claim.code_checks,
         note: claim.note,
     }))
 }
@@ -176,6 +206,7 @@ pub async fn handle_steep_commit(
         &req.token,
         &req.action,
         req.content.as_deref(),
+        &req.answers,
         page_root.as_deref(),
         agent.as_deref(),
     )
@@ -205,6 +236,7 @@ pub async fn handle_steep_commit(
         outcome: done.outcome.to_string(),
         revision_card_id: done.revision_card_id,
         citations: done.citations,
+        judged: done.judged,
         replayed: done.replayed,
     }))
 }
