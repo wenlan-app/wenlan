@@ -251,7 +251,7 @@ fn disable_clears_local_pins_and_explicitly_opts_out_when_daemon_is_unreachable(
 }
 
 #[test]
-fn status_reports_off_with_preserved_ready_pins() {
+fn status_reports_on_demand_with_preserved_ready_pins() {
     let (base, requests) = spawn_stub(vec![response(
         r#"{"background_ai_enabled":false,"everyday_source":"anthropic","synthesis_source":"on_device"}"#,
     )]);
@@ -259,13 +259,13 @@ fn status_reports_off_with_preserved_ready_pins() {
         .args(["enrichment", "status"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Steep: off"))
+        .stdout(predicate::str::contains("Steep: On demand"))
         .stdout(predicate::str::contains("ready").not());
     assert!(requests.recv().unwrap().starts_with("GET /api/config "));
 }
 
 #[test]
-fn status_does_not_claim_off_or_ready_when_consent_is_unknown() {
+fn status_does_not_claim_on_demand_or_ready_when_consent_is_unknown() {
     for reply in [
         response("{}"),
         response_with_status("500 Internal Server Error", "{}"),
@@ -276,7 +276,7 @@ fn status_does_not_claim_off_or_ready_when_consent_is_unknown() {
             .assert()
             .success()
             .stdout(predicate::str::contains("Steep: status unavailable"))
-            .stdout(predicate::str::contains("Steep: off").not())
+            .stdout(predicate::str::contains("Steep: On demand").not())
             .stdout(predicate::str::contains("ready").not());
         assert!(requests.recv().unwrap().starts_with("GET /api/config "));
     }

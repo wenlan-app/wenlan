@@ -709,8 +709,10 @@ fn require_configured_source(
 pub async fn print_enrichment_status() {
     match get_json("/api/config").await {
         Ok(cfg) if cfg["background_ai_enabled"].as_bool() == Some(false) => {
-            println!("Steep: off");
-            println!("  Model-backed background work is disabled; saved source choices are kept.");
+            println!("Steep: On demand");
+            println!(
+                "  Nothing steeps in the background; run /wenlan steep in your AI tool. Saved model choices are kept."
+            );
         }
         Ok(cfg) if supports_background_consent(&cfg) => {
             match get_json("/api/config/routing").await {
