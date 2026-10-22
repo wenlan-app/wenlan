@@ -17,6 +17,7 @@ import {
   type Page,
   type RegisteredSource,
 } from "../../../lib/tauri";
+import type { WritePagesState } from "../../memory/askAi/WritePages";
 import { GettingStarted } from "../GettingStarted";
 import {
   ESTABLISHED_LIBRARY_PAGES,
@@ -83,7 +84,11 @@ function mockLibrary(pages: Page[]) {
     pages.filter((p) => (status === "draft") === (p.status === "draft")));
 }
 
-function renderCard(pages: Page[] = [], handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onImportChats" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {}) {
+function renderCard(
+  pages: Page[] = [],
+  handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onImportChats" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {},
+  writePages: WritePagesState | null = null,
+) {
   const props = {
     onWriteNote: vi.fn(),
     onConnectTool: vi.fn(),
@@ -91,6 +96,7 @@ function renderCard(pages: Page[] = [], handlers: Partial<Record<"onWriteNote" |
     onImportChats: vi.fn(),
     onSeeExample: vi.fn(),
     ...handlers,
+    writePages,
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mockLibrary(pages);
@@ -247,6 +253,31 @@ describe("GettingStarted", () => {
     await screen.findByRole("heading", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
     expect(screen.getByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeInTheDocument();
+  });
+
+  it("keeps the pages step open, and the question back, while the tool is still writing", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    const working = {
+      view: { kind: "working", written: [written], writing: true, stuck: false },
+      stepView: { kind: "working", written: [written], writing: true, stuck: false },
+      onDemand: true,
+      loaded: true,
+      run: null,
+      tool: { family: "claude-code", name: "Claude Code" },
+      toolName: "Claude Code",
+      opensTool: true,
+      command: "/wenlan steep",
+      copied: false,
+      waiting: null,
+      start: vi.fn(),
+      copyCommand: vi.fn(),
+      close: vi.fn(),
+    } as unknown as WritePagesState;
+    renderCard([written], {}, working);
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
+    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeNull();
   });
 
   it("can skip the pages step when there is nothing to bring in", async () => {

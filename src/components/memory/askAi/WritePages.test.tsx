@@ -144,7 +144,7 @@ describe("WritePagesLine", () => {
     vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
     wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
     const line = await screen.findByTestId("write-pages-line");
-    expect(line).toHaveTextContent("Your material is in: 12 notes, 6 chats, and 4 files. None of it is in a page yet.");
+    expect(line).toHaveTextContent("New material: 12 notes, 6 chats, and 4 files. No page yet.");
     const ask = screen.getByRole("button", { name: "Have Claude Code write pages" });
     expect(ask).toHaveAttribute("title", expect.stringContaining("Opens Claude Code with the command typed in."));
     fireEvent.click(ask);

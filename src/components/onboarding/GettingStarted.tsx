@@ -75,8 +75,8 @@ export function GettingStarted({
   const [handedOver, setHandedOver] = useState<"opened" | "copied" | null>(null);
   const {
     visible,
-    progress,
-    doneCount,
+    progress: savedProgress,
+    doneCount: savedDoneCount,
     dismissed,
     setDismissed,
     pagesSkipped,
@@ -97,7 +97,13 @@ export function GettingStarted({
     return () => clearTimeout(timer);
   }, [copied]);
 
-  if (!visible || !progress) return null;
+  if (!visible || !savedProgress) return null;
+
+  // While the AI tool is still writing, the step isn't done yet even though
+  // its first page is in, and asking about that page would interrupt the run.
+  const writing = writePages?.loaded === true && writePages.stepView.kind === "working";
+  const progress = writing && savedProgress.pages ? { ...savedProgress, pages: false } : savedProgress;
+  const doneCount = progress === savedProgress ? savedDoneCount : savedDoneCount - 1;
 
   const stepsById: Record<GettingStartedStepId, { icon: React.ReactNode; onAction: () => void }> = {
     note: { icon: <NotePencil weight="regular" />, onAction: onWriteNote },
@@ -129,7 +135,7 @@ export function GettingStarted({
   const families = connectedToolFamilies(agents);
   const promptFamily = families.find((family) => PROMPT_LINK_FAMILIES.includes(family)) ?? families[0];
   const opensTool = promptFamily != null && PROMPT_LINK_FAMILIES.includes(promptFamily);
-  const promptTool = askable != null && progress.tool && !progress.recall && promptFamily != null
+  const promptTool = askable != null && !writing && progress.tool && !progress.recall && promptFamily != null
     ? resolveAgentDisplayName(promptFamily, agents)
     : null;
   const promptText = promptTool && askable

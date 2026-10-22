@@ -172,7 +172,8 @@ export function FirstUseSample({
   const [dialog, setDialog] = useState<SampleDialogState | null>(null);
   const dialogTrigger = useRef<HTMLElement | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
-  const [client, setClient] = useState<SampleClient>("chatgpt");
+  // The sample chat is in Codex, so its commands open first.
+  const [client, setClient] = useState<SampleClient>("codex");
   const [copiedKey, setCopiedKey] = useState<CopyKey | null>(null);
   const [copyFailedKey, setCopyFailedKey] = useState<CopyKey | null>(null);
 
@@ -471,13 +472,41 @@ export function FirstUseSample({
             </div>
             <ul className="fus-secondary-commands">
               <li>
+                <div>
+                  <span>
+                    <strong>{t("firstUse.sample.briefLabel")}</strong> {t("firstUse.sample.briefHint")}
+                  </span>
+                  <code>{commands.brief}</code>
+                </div>
+                <button
+                  type="button"
+                  className="fus-icon-button"
+                  onClick={() => copyCommand("brief", commands.brief)}
+                  aria-label={`${t("firstUse.sample.copyCommand")}: ${t("firstUse.sample.briefLabel")}`}
+                >
+                  {copiedKey === "brief" ? (
+                    <Check aria-hidden="true" weight="bold" data-testid="copy-ok" />
+                  ) : (
+                    <Copy aria-hidden="true" weight="regular" />
+                  )}
+                </button>
+                <span role="status" className="sr-only">
+                  {copiedKey === "brief" ? `${t("firstUse.sample.briefLabel")}: ${t("firstUse.sample.copied")}` : ""}
+                </span>
+                {copyFailedKey === "brief" ? (
+                  <p role="alert" className="fus-copy-error">
+                    {t("firstUse.sample.copyFailed")}
+                  </p>
+                ) : null}
+              </li>
+              <li>
                 {handoffCommand != null ? (
                   <>
                     <div>
-                      <code>{handoffCommand}</code>
                       <span>
                         <strong>{t("firstUse.sample.handoffLabel")}</strong> {t("firstUse.sample.handoffHint")}
                       </span>
+                      <code>{handoffCommand}</code>
                     </div>
                     <button
                       type="button"
@@ -507,34 +536,6 @@ export function FirstUseSample({
                     </span>
                   </div>
                 )}
-              </li>
-              <li>
-                <div>
-                  <code>{commands.brief}</code>
-                  <span>
-                    <strong>{t("firstUse.sample.briefLabel")}</strong> {t("firstUse.sample.briefHint")}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="fus-icon-button"
-                  onClick={() => copyCommand("brief", commands.brief)}
-                  aria-label={`${t("firstUse.sample.copyCommand")}: ${t("firstUse.sample.briefLabel")}`}
-                >
-                  {copiedKey === "brief" ? (
-                    <Check aria-hidden="true" weight="bold" data-testid="copy-ok" />
-                  ) : (
-                    <Copy aria-hidden="true" weight="regular" />
-                  )}
-                </button>
-                <span role="status" className="sr-only">
-                  {copiedKey === "brief" ? `${t("firstUse.sample.briefLabel")}: ${t("firstUse.sample.copied")}` : ""}
-                </span>
-                {copyFailedKey === "brief" ? (
-                  <p role="alert" className="fus-copy-error">
-                    {t("firstUse.sample.copyFailed")}
-                  </p>
-                ) : null}
               </li>
             </ul>
             <p className="fus-note">{t("firstUse.sample.notInLibrary")}</p>

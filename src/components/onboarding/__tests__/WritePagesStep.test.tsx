@@ -48,7 +48,7 @@ describe("WritePagesStep", () => {
   it("names what is waiting and hands it to the tool in one press", () => {
     const ready = state({ kind: "ready", list: { items: [], total: 16 } });
     renderStep({ state: ready });
-    expect(screen.getByTestId("row")).toHaveTextContent("Your material is in: 12 notes and 4 files.");
+    expect(screen.getByTestId("row")).toHaveTextContent("New material: 12 notes and 4 files.");
     fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
     expect(ready.start).toHaveBeenCalled();
   });

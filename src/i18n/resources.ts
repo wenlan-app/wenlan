@@ -2326,7 +2326,7 @@ const en = {
       seeAll: "See all",
     },
     writePages: {
-      lead: "Your material is in: {{list}}. None of it is in a page yet.",
+      lead: "New material: {{list}}. No page yet.",
       leadMore: "{{list}} aren't in any page yet.",
       kinds: {
         note_one: "{{count}} note",
