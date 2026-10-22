@@ -195,7 +195,8 @@ async fn dismiss_revision_succeeds_and_returns_typed_response() {
     assert_eq!(response.status(), StatusCode::OK);
     let parsed: RevisionDismissResponse = body_as_json(response).await;
     assert_eq!(parsed.target_source_id, "mem_dr1_target");
-    assert!(parsed.wrote);
+    assert!(parsed.dismissed);
+    assert!(!parsed.wrote, "rejecting a card writes nothing");
     let revision = db
         .get_memory_detail("mem_dr1_rev")
         .await

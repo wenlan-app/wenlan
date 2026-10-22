@@ -253,7 +253,10 @@ pub enum NoteType {
 /// Detect the type of an Obsidian note based on path and content.
 ///
 /// - **Daily**: path contains `daily/` or `journal/`, or filename matches `YYYY-MM-DD`
-/// - **MOC** (Map of Content): >50% of non-empty lines contain `[[wikilinks]]`
+/// - **MOC** (Map of Content): at least three link lines, and more than half
+///   of the non-empty, non-heading lines are link lines: a `[[wikilink]]`
+///   with almost nothing else (see `is_link_line`). A short note whose
+///   sentences mention other notes is written content, not an index.
 /// - **Standard**: everything else
 pub fn detect_note_type(path: &Path, content: &str) -> NoteType {
     // Check path components for daily/journal directories
@@ -275,21 +278,75 @@ pub fn detect_note_type(path: &Path, content: &str) -> NoteType {
     // Ignore path_str lint — it was used for the component check above
     let _ = path_str;
 
-    // Check for MOC: >50% of non-empty lines contain wikilinks
-    let non_empty_lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-    if !non_empty_lines.is_empty() {
-        let link_lines = non_empty_lines
-            .iter()
-            .filter(|l| WIKILINK_DETECT_RE.is_match(l))
-            .count();
-        let ratio = link_lines as f64 / non_empty_lines.len() as f64;
-        if ratio > 0.5 {
-            return NoteType::Moc;
-        }
+    // Check for MOC: mostly bare links, enough of them to be an index
+    let body_lines: Vec<&str> = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    let link_lines = body_lines.iter().filter(|l| is_link_line(l)).count();
+    if link_lines >= MOC_MIN_LINK_LINES && link_lines * 2 > body_lines.len() {
+        return NoteType::Moc;
     }
 
     NoteType::Standard
 }
+
+/// Fewer link lines than this never make a note an index.
+const MOC_MIN_LINK_LINES: usize = 3;
+
+/// A line that is a `[[wikilink]]` with at most a couple of words around it,
+/// like `- [[Note A]]` or `* [[Note B]] (draft)`. A sentence that mentions a
+/// note, `Plan the beds with [[Maren]] next spring.`, is not one.
+fn is_link_line(line: &str) -> bool {
+    if !WIKILINK_DETECT_RE.is_match(line) {
+        return false;
+    }
+    let rest = WIKILINK_RE.replace_all(line, " ");
+    let mut words = 0usize;
+    let mut cjk = 0usize;
+    for token in rest.split_whitespace() {
+        let mut latin = false;
+        for c in token.chars() {
+            if is_cjk(c) {
+                cjk += 1;
+            } else if c.is_alphanumeric() {
+                latin = true;
+            }
+        }
+        if latin {
+            words += 1;
+        }
+    }
+    // Two CJK characters read about as much as one word.
+    words + cjk / 2 < 3
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
+}
+
+/// Why a note produced nothing to store, for the sync reply and the log.
+/// Meaningful only for a note `note_to_documents` turned into nothing.
+pub fn empty_note_reason(path: &Path, content: &str) -> &'static str {
+    if detect_note_type(path, content) == NoteType::Moc {
+        return SKIP_REASON_LINK_INDEX;
+    }
+    let (frontmatter, _) = extract_frontmatter(content);
+    if frontmatter.has(PROJECTED_PAGE_FRONTMATTER_KEY) || has_projection_marker_line(content) {
+        return SKIP_REASON_WENLAN_PAGE;
+    }
+    SKIP_REASON_EMPTY
+}
+
+/// A note that is a list of links to other notes (an index, or map of
+/// content): the notes it links to are read instead.
+pub const SKIP_REASON_LINK_INDEX: &str = "link_index";
+/// One of Wenlan's own pages, written back into the folder.
+pub const SKIP_REASON_WENLAN_PAGE: &str = "wenlan_page";
+/// Nothing but frontmatter or whitespace.
+pub const SKIP_REASON_EMPTY: &str = "empty";
 
 /// Directories to skip when scanning a vault.
 const SKIP_DIRS: &[&str] = &[".obsidian", ".trash", ".git", "templates"];
@@ -715,6 +772,45 @@ mod tests {
         assert_eq!(
             detect_note_type(Path::new("index.md"), content),
             NoteType::Moc
+        );
+    }
+
+    #[test]
+    fn short_note_whose_sentences_link_is_not_an_index() {
+        // The note from the 2026-10-22 fresh-install test: three lines, two
+        // with links. It used to be dropped as a map of content.
+        let content = "Soil plan for the spring beds.\nMix compost from [[Compost Log]] into the north bed.\nAsk [[Maren]] which cover crop she wants.";
+        assert_eq!(
+            detect_note_type(Path::new("Soil Plan.md"), content),
+            NoteType::Standard
+        );
+        assert!(!note_to_documents("v", Path::new("/v/Soil Plan.md"), content, 0).is_empty());
+        let chinese = "春天的土壤計畫。\n把[[堆肥紀錄]]裡的堆肥拌進北邊的菜圃。\n問[[瑪倫]]她想種哪一種覆蓋作物。";
+        assert_eq!(
+            detect_note_type(Path::new("土壤.md"), chinese),
+            NoteType::Standard
+        );
+    }
+
+    #[test]
+    fn two_bare_links_are_not_enough_for_an_index() {
+        let content = "- [[Note A]]\n- [[Note B]]";
+        assert_eq!(
+            detect_note_type(Path::new("pair.md"), content),
+            NoteType::Standard
+        );
+    }
+
+    #[test]
+    fn empty_note_reason_names_the_rule() {
+        let index = "# Index\n- [[A]]\n- [[B]]\n- [[C]]";
+        assert_eq!(
+            empty_note_reason(Path::new("i.md"), index),
+            SKIP_REASON_LINK_INDEX
+        );
+        assert_eq!(
+            empty_note_reason(Path::new("e.md"), "---\ntags: [x]\n---\n"),
+            SKIP_REASON_EMPTY
         );
     }
 

@@ -163,7 +163,8 @@ async fn dismiss_revision_aligns_with_real_router() {
     let body = text_of(&result);
     let parsed: RevisionDismissResponse = serde_json::from_str(&body).unwrap();
     assert_eq!(parsed.target_source_id, "mem_real_dis");
-    assert!(parsed.wrote);
+    assert!(parsed.dismissed);
+    assert!(!parsed.wrote);
 
     assert_eq!(
         activity_count(&db, "revision_dismiss", "test-agent").await,

@@ -58,6 +58,10 @@ pub enum PageWrite<'a> {
         /// The notes this write relied on (R7) and the `minor` flag. Applied
         /// in the write's own transaction, only if the write lands.
         basis: BasisWrite,
+        /// `Some((citations_json, stats_summary))` when the agent cited its
+        /// sources and the daemon checked them; `None` clears the page's
+        /// citations, as for every write that carries none.
+        citations: Option<(String, String)>,
     },
     /// Explicit user-forced rebuild of a Page body (Re-distill). Like `Update`
     /// under a source-revision fence with no stale requirement, except a
@@ -189,6 +193,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             expected_source_revision,
             knowledge_path,
             basis,
+            citations,
         } => {
             update_page_impl(
                 db,
@@ -198,7 +203,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                 false,
                 Some(expected_source_revision),
                 knowledge_path,
-                None,
+                citations,
                 None,
                 false,
                 false,

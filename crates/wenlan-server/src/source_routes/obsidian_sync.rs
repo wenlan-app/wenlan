@@ -35,7 +35,7 @@ use wenlan_core::sources::{RawDocument, Source, SourceType};
 
 use super::{
     content_hash, directory_root_is_live, finalize_sync, is_google_drive_path,
-    mark_source_unavailable, SyncStatsResponse,
+    mark_source_unavailable, SkippedFile, SyncStatsResponse, SKIPPED_FILES_LIMIT,
 };
 use crate::error::ServerError;
 
@@ -225,6 +225,7 @@ async fn sync_obsidian_source_locked(
             paused: None,
             queued_files: None,
             waiting_files: None,
+            skipped_files: Vec::new(),
         });
     };
 
@@ -237,6 +238,19 @@ async fn sync_obsidian_source_locked(
     let mut file_errors: usize = 0;
     let mut gdrive_errors: usize = 0;
     let mut stored_notes: usize = 0;
+    let mut skipped_files: Vec<SkippedFile> = Vec::new();
+    let mut note_skipped = |path: &Path, reason: &str| {
+        tracing::info!(
+            "[sync] {id}: stored nothing from {} ({reason})",
+            path.display()
+        );
+        if skipped_files.len() < SKIPPED_FILES_LIMIT {
+            skipped_files.push(SkippedFile {
+                path: path.to_string_lossy().to_string(),
+                reason: reason.to_string(),
+            });
+        }
+    };
 
     // Notes that left the vault: a deletion, or the old half of a rename.
     let scanned: HashSet<String> = md_files
@@ -337,6 +351,13 @@ async fn sync_obsidian_source_locked(
             errors += delete_note_chunks_except(&db, &id, &file_key, &HashSet::new()).await;
             let _ = db.upsert_sync_state(&id, &file_key, mtime_ns, &hash).await;
             set_gate_rejected(&id, &file_key, None);
+            note_skipped(
+                file_path,
+                match source.source_type {
+                    SourceType::Logseq => obsidian::SKIP_REASON_EMPTY,
+                    _ => obsidian::empty_note_reason(file_path, &content),
+                },
+            );
             skipped += 1;
             continue;
         }
@@ -356,6 +377,7 @@ async fn sync_obsidian_source_locked(
                 let _ = db.delete_sync_state(&id, &file_key).await;
             }
             set_gate_rejected(&id, &file_key, Some(mtime_ns));
+            note_skipped(file_path, "too_short");
             skipped += 1;
             continue;
         }
@@ -395,7 +417,10 @@ async fn sync_obsidian_source_locked(
     )
     .await?;
     record_stored_count(&db, &id).await;
-    Ok(stats)
+    Ok(SyncStatsResponse {
+        skipped_files,
+        ..stats
+    })
 }
 
 /// `finalize_sync` adds this sync's upserts to `memory_count`, which for a
@@ -412,11 +437,12 @@ async fn record_stored_count(db: &MemoryDB, source_id: &str) {
             return;
         }
     };
-    let mut config = wenlan_core::config::load_config();
-    if let Some(src) = config.sources.iter_mut().find(|s| s.id == source_id) {
-        src.memory_count = stored;
-    }
-    let _ = wenlan_core::config::save_config(&config);
+    let _ = wenlan_core::config::update_config(|config| {
+        if let Some(src) = config.sources.iter_mut().find(|s| s.id == source_id) {
+            src.memory_count = stored;
+        }
+        Ok(())
+    });
 }
 
 #[cfg(test)]

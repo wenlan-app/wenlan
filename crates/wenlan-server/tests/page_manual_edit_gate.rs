@@ -180,6 +180,67 @@ async fn manual_edit_with_stale_expected_version_is_refused() {
     );
 }
 
+/// A person's own writing on a page with sources is not held to those
+/// sources, and an edit made on an old version is a version conflict, not a
+/// "diverges from cited sources" refusal (fresh-install test, 2026-10-22).
+#[tokio::test]
+async fn manual_edit_of_sourced_page_is_not_held_to_its_sources() {
+    let (app, _tmp, db) = common::test_app().await;
+    common::insert_memory(
+        &db,
+        "mem_kestrel",
+        "The Kestrel garden north bed uses drip irrigation from a rain barrel.",
+        "memory",
+        Some("test"),
+        None,
+        false,
+        1,
+    )
+    .await;
+    let page_id = common::create_page_fixture(
+        &db,
+        "Kestrel garden overview",
+        "The Kestrel garden north bed uses drip irrigation from a rain barrel.",
+        None,
+        &["mem_kestrel"],
+        "distilled",
+    )
+    .await;
+    let original = db.get_page(&page_id).await.unwrap().unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(post_page(
+            &page_id,
+            serde_json::json!({
+                "content": "Shopping list: milk, eggs, bread.",
+                "expected_version": original.version,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(saved.content, "Shopping list: milk, eggs, bread.");
+
+    let response = app
+        .oneshot(post_page(
+            &page_id,
+            serde_json::json!({
+                "content": "Something else entirely.",
+                "expected_version": original.version,
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body = response_json(response).await.to_string();
+    assert!(
+        body.contains(&format!("v{}", saved.version)) && !body.contains("diverges"),
+        "a stale edit names the version it lost to: {body}"
+    );
+}
+
 /// Saving a page without having changed anything is a no-op, not a conflict.
 ///
 /// The route sends the page's own sources back, so an unedited save reaches the

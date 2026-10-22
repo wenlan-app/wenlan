@@ -278,10 +278,228 @@ pub fn scope_filter_pages(
         .collect()
 }
 
+/// The lines a person added to a page, by hand in the app or in the vault,
+/// that the page still holds, in page order. `history` is the page's
+/// `page_history`, newest first as `list_page_history` returns it; a line
+/// counts when a human version added it to the version before and it is not
+/// a touch-up of a line already there (a typo fix leaves the sentence to
+/// whoever rewrites it from the sources). Lines are compared without
+/// citation markers and with whitespace collapsed.
+pub(crate) fn user_written_lines(
+    history: &[crate::db::PageHistoryEntry],
+    current: &str,
+) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut added: HashSet<String> = HashSet::new();
+    let mut previous: HashSet<String> = HashSet::new();
+    for entry in history.iter().rev() {
+        let lines: HashSet<String> = entry.content.lines().filter_map(comparable_line).collect();
+        if matches!(
+            crate::post_write::Writer::classify(&entry.edited_by),
+            crate::post_write::Writer::Human(_)
+        ) {
+            let before: Vec<HashSet<String>> = previous.iter().map(|l| line_words(l)).collect();
+            for line in lines.difference(&previous) {
+                let words = line_words(line);
+                let touch_up = before.iter().any(|old| {
+                    let shared = words.intersection(old).count();
+                    let all = words.union(old).count();
+                    all > 0 && shared * 10 >= all * 6
+                });
+                if !touch_up {
+                    added.insert(line.clone());
+                }
+            }
+        }
+        previous = lines;
+    }
+    let mut seen = HashSet::new();
+    current
+        .lines()
+        .filter_map(comparable_line)
+        .filter(|line| added.contains(line) && seen.insert(line.clone()))
+        .collect()
+}
+
+/// Put back into `rewrite` every line of `user_lines` it dropped, each as its
+/// own paragraph: before the paragraph of the nearest line that followed it
+/// on `current` and survives in the rewrite, else after the nearest one
+/// that preceded it, else at the end. A rewrite from sources
+/// cannot know what a person wrote that no source says; accepting the card
+/// must never delete it. Returns the body and how many lines were restored.
+pub(crate) fn keep_user_lines(
+    rewrite: &str,
+    current: &str,
+    user_lines: &[String],
+) -> (String, usize) {
+    let flat = |text: &str| {
+        text.lines()
+            .filter_map(comparable_line)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let rewritten = flat(rewrite);
+    let missing: Vec<&String> = user_lines
+        .iter()
+        .filter(|line| !rewritten.contains(line.as_str()))
+        .collect();
+    if missing.is_empty() {
+        return (rewrite.to_string(), 0);
+    }
+    let current_lines: Vec<&str> = current.lines().collect();
+    let mut out: Vec<String> = rewrite.lines().map(str::to_string).collect();
+    for line in &missing {
+        let Some(at) = current_lines
+            .iter()
+            .position(|raw| comparable_line(raw).as_ref() == Some(*line))
+        else {
+            continue;
+        };
+        let text = crate::citations::strip_markers(current_lines[at]);
+        let surviving = |raw: &&str| {
+            let raw = comparable_line(raw)?;
+            out.iter()
+                .position(|kept| comparable_line(kept).as_ref() == Some(&raw))
+        };
+        let after = current_lines[at + 1..].iter().find_map(surviving);
+        let before = current_lines[..at].iter().rev().find_map(surviving);
+        let insert = match (after, before) {
+            // Before the next surviving line's paragraph, not inside it.
+            (Some(index), _) => out[..index]
+                .iter()
+                .rposition(|kept| kept.trim().is_empty())
+                .map_or(0, |blank| blank + 1),
+            // After the last surviving line's paragraph.
+            (None, Some(index)) => out[index..]
+                .iter()
+                .position(|kept| kept.trim().is_empty())
+                .map_or(out.len(), |blank| index + blank),
+            (None, None) => out.len(),
+        };
+        out.splice(insert..insert, [String::new(), text, String::new()]);
+    }
+    let mut body = String::new();
+    let mut blank_run = 0;
+    for line in out {
+        if line.trim().is_empty() {
+            blank_run += 1;
+            if blank_run > 1 {
+                continue;
+            }
+        } else {
+            blank_run = 0;
+        }
+        body.push_str(&line);
+        body.push('\n');
+    }
+    (body.trim().to_string(), missing.len())
+}
+
+/// Lowercased words of a line, each CJK character counting as one.
+fn line_words(line: &str) -> std::collections::HashSet<String> {
+    let mut words = std::collections::HashSet::new();
+    let mut word = String::new();
+    for c in line.chars() {
+        if c.is_alphanumeric() && !is_cjk_char(c) {
+            word.extend(c.to_lowercase());
+            continue;
+        }
+        if !word.is_empty() {
+            words.insert(std::mem::take(&mut word));
+        }
+        if is_cjk_char(c) {
+            words.insert(c.to_string());
+        }
+    }
+    if !word.is_empty() {
+        words.insert(word);
+    }
+    words
+}
+
+fn is_cjk_char(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF)
+}
+
+/// A line as `user_written_lines` compares it: markers out, whitespace
+/// collapsed, `None` for a line with no words.
+fn comparable_line(line: &str) -> Option<String> {
+    let bare = crate::citations::strip_markers(line);
+    let collapsed = bare.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed
+        .chars()
+        .any(char::is_alphanumeric)
+        .then_some(collapsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    fn history(versions: &[(&str, &str)]) -> Vec<crate::db::PageHistoryEntry> {
+        versions
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(i, (edited_by, content))| crate::db::PageHistoryEntry {
+                version: i as i64 + 1,
+                title: None,
+                content: content.to_string(),
+                source_memory_ids: Vec::new(),
+                edited_by: edited_by.to_string(),
+                created_at: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn user_lines_are_the_ones_a_human_version_added() {
+        let v1 = "# Kestrel garden\n\nThe north bed gets drip irrigation [1].";
+        let v2 = "# Kestrel garden\n\nThe north bed gets drip irrigation [1].\n\nMy own note: Maren wants to add a herb spiral next spring.";
+        let v3 = "# Kestrel garden\n\nThe north bed gets drip irrigation and mulch [1].\n\nMy own note: Maren wants to add a herb spiral next spring.";
+        let h = history(&[("create", v1), ("manual_edit", v2), ("agent_refresh", v3)]);
+        assert_eq!(
+            user_written_lines(&h, v3),
+            vec!["My own note: Maren wants to add a herb spiral next spring.".to_string()]
+        );
+        // A line the agent rewrote is not the user's, even though the user's
+        // version also held it.
+        assert!(!user_written_lines(&h, v3)
+            .iter()
+            .any(|l| l.contains("drip")));
+        // A typo fix of the machine's sentence leaves it to the rewrite.
+        let v4 = "# Kestrel garden\n\nThe north bed gets drip irigation and mulch [1].";
+        let v5 = "# Kestrel garden\n\nThe north bed gets drip irrigation and mulch [1].";
+        let h = history(&[("create", v4), ("manual_edit", v5)]);
+        assert!(user_written_lines(&h, v5).is_empty());
+    }
+
+    #[test]
+    fn rewrite_that_drops_a_user_line_gets_it_back_in_place() {
+        let current = "# Kestrel garden\n\nThe north bed gets drip irrigation [1].\n\nMy own note: Maren wants to add a herb spiral next spring.\n\nCompost goes on in March [2].";
+        let user = vec!["My own note: Maren wants to add a herb spiral next spring.".to_string()];
+        let rewrite = "# Kestrel garden\n\nThe north bed now gets drip irrigation and straw mulch [1].\n\nCompost goes on in March [2].";
+        let (body, restored) = keep_user_lines(rewrite, current, &user);
+        assert_eq!(restored, 1);
+        assert_eq!(
+            body,
+            "# Kestrel garden\n\nThe north bed now gets drip irrigation and straw mulch [1].\n\nMy own note: Maren wants to add a herb spiral next spring.\n\nCompost goes on in March [2]."
+        );
+        // Kept already (even inside a paragraph, with a marker added): untouched.
+        let kept = "# Kestrel garden\n\nDrip irrigation [1]. My own note: Maren wants to add a herb spiral next spring. [2]";
+        assert_eq!(keep_user_lines(kept, current, &user), (kept.to_string(), 0));
+    }
+
+    #[test]
+    fn user_line_with_no_surviving_anchor_goes_to_the_end() {
+        let current = "Old opening line.\nShopping list: milk, eggs, bread.";
+        let user = vec!["Shopping list: milk, eggs, bread.".to_string()];
+        let (body, restored) = keep_user_lines("A new body [1].", current, &user);
+        assert_eq!(restored, 1);
+        assert_eq!(body, "A new body [1].\n\nShopping list: milk, eggs, bread.");
+    }
 
     fn make_page(id: &str, source_ids: &[&str]) -> Page {
         make_page_with(id, source_ids, 0.5, "confirmed")

@@ -445,6 +445,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "steep_token_gone"
             | "steep_invalid"
             | "steep_citations"
+            | "citations_unsupported"
     );
     if !safe {
         return None;
@@ -454,8 +455,9 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     // can tell which entry was bad. Every other reason stays a bare code.
     // A steep refusal is a fixed sentence from the daemon (counts at most),
     // and the agent acts on it: claim again, fix a citation, pick another
-    // page.
-    if code == "code_basis_invalid" || code.starts_with("steep_") {
+    // page. A write's citations refusal carries only counts.
+    if code == "code_basis_invalid" || code.starts_with("steep_") || code == "citations_unsupported"
+    {
         if let Some((_, detail)) = reason.split_once(':') {
             let detail: String = detail
                 .trim()
@@ -471,7 +473,8 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     Some(code.to_string())
 }
 
-/// Longest `code_basis_invalid` or steep explanation kept for the agent.
+/// Longest `code_basis_invalid`, steep or `citations_unsupported`
+/// explanation kept for the agent.
 const DETAIL_MAX_CHARS: usize = 500;
 
 #[cfg(test)]
@@ -549,6 +552,14 @@ mod tests {
         assert_eq!(
             parse_api_error_reason(br#"{"error":"code_basis_invalid"}"#).as_deref(),
             Some("code_basis_invalid")
+        );
+        assert_eq!(
+            parse_api_error_reason(
+                br#"{"error":"citations_unsupported: 0 verified, 2 unverified, 0 stripped"}"#
+            )
+            .as_deref(),
+            Some("citations_unsupported: 0 verified, 2 unverified, 0 stripped"),
+            "a citations refusal keeps its counts"
         );
         assert_eq!(
             parse_api_error_reason(br#"{"error":"private_project_codename"}"#),

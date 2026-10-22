@@ -443,6 +443,10 @@ pub struct CreatePageResponse {
     /// Every code basis of the new note after the write.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub code_basis: Vec<crate::code_basis::CodeBasisRef>,
+    /// How the new note's `[n]` citations checked against their sources, as
+    /// "N verified, N unverified, N stripped". Absent when it cited nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citations: Option<String>,
 }
 
 /// Result of an explicit page-title change. Does not expose page prose.
@@ -761,6 +765,10 @@ pub struct PageWriteResponse {
     /// differently than asked (for example code bases that were not recorded).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// How the write's `[n]` citations checked against their sources, as
+    /// "N verified, N unverified, N stripped". Absent when it cited nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub citations: Option<String>,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.
@@ -1502,11 +1510,15 @@ pub struct RevisionAcceptResponse {
 }
 
 /// Response returned by `POST /api/memory/revision/{id}/dismiss`.
-/// `wrote: true` always (404 on missing).
+/// `dismissed: true` on success (404 on missing). `wrote` is `false`:
+/// rejecting a card writes nothing to the page or memory it was for, the
+/// same meaning `wrote` has on accept.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RevisionDismissResponse {
     pub target_source_id: String,
     pub wrote: bool,
+    #[serde(default)]
+    pub dismissed: bool,
 }
 
 /// Response returned by `POST /api/memory/contradiction/{source_id}/dismiss`.
@@ -1540,11 +1552,12 @@ mod mutation_response_tests {
     fn revision_dismiss_response_serializes_byte_identical() {
         let r = RevisionDismissResponse {
             target_source_id: "mem_target".into(),
-            wrote: true,
+            wrote: false,
+            dismissed: true,
         };
         assert_eq!(
             serde_json::to_string(&r).unwrap(),
-            r#"{"target_source_id":"mem_target","wrote":true}"#
+            r#"{"target_source_id":"mem_target","wrote":false,"dismissed":true}"#
         );
     }
 
