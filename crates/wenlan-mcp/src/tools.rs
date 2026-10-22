@@ -1724,20 +1724,20 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
 /// so the AI tool at work hears of them without being asked. A remote
 /// connection cannot steep, so it is only told who will.
 fn steep_waiting_text(total: u32, transport: &TransportMode) -> Option<String> {
-    let (count, it) = match total {
+    let (count, it, them) = match total {
         0 => return None,
-        1 => ("1 page is".to_string(), "it was"),
-        n => (format!("{n} pages are"), "they were"),
+        1 => ("1 page is".to_string(), "it was", "it"),
+        n => (format!("{n} pages are"), "they were", "them"),
     };
     Some(match transport {
         TransportMode::Stdio => format!(
             "Steep: {count} waiting because a source {it} written from changed. \
-             Bring them up to date with the `steep` tool (list, claim, commit), or tell \
+             Bring {them} up to date with the `steep` tool (list, claim, commit), or tell \
              the user that /wenlan steep (Codex: $wenlan steep) does it."
         ),
         TransportMode::Http => format!(
             "Steep: {count} waiting because a source {it} written from changed. \
-             A local AI tool or automatic steep brings them up to date."
+             A local AI tool or automatic steep brings {them} up to date."
         ),
     })
 }
@@ -9287,6 +9287,7 @@ mod tests {
         let one = steep_waiting_text(1, &TransportMode::Stdio).unwrap();
         assert!(one.starts_with("Steep: 1 page is waiting"), "{one}");
         assert!(one.contains("a source it was written from"), "{one}");
+        assert!(one.contains("Bring it up to date"), "{one}");
         assert!(one.contains("`steep` tool"), "{one}");
         let remote = steep_waiting_text(3, &TransportMode::Http).unwrap();
         assert!(remote.starts_with("Steep: 3 pages are waiting"), "{remote}");
