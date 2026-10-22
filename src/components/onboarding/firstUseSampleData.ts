@@ -198,7 +198,7 @@ const enData: SampleDataset = {
   },
   ai: {
     question: "When does v2 launch, and what does it cost?",
-    answer: "From your page “v2 launch plan”: v2 launches October 31 at $10 a month, and the yearly plan is 20% off (v2-meeting-notes.md). Both changed since earlier: the date moved from October 24 after the payment review (Claude Code), and the price rose from $8 (ChatGPT).",
+    answer: "From your page “v2 launch plan”: October 31, at $10 a month with 20% off yearly (v2-meeting-notes.md). The date moved from October 24 for the payment review (Claude Code), and the price was $8 before (ChatGPT).",
   },
   commands: {
     chatgpt: {

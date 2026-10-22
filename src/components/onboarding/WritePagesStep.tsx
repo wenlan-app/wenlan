@@ -75,8 +75,8 @@ export function WritePagesStep({
             {view.written.length > 0
               ? t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length })
               : t("askAi.writePages.working", { tool: state.toolName })}
-            {hint ? <>{" "}{hint}</> : null}
           </p>
+          {hint ? <p className="getting-started-step-body">{hint}</p> : null}
           {list(view.written, view.writing)}
         </div>
         {state.run?.handedOver === "copied" ? (

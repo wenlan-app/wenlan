@@ -714,11 +714,14 @@ export function FirstUseSample({
                     {index + 1}
                   </span>
                 ) : null}
-                {dialogCitation ? (
-                  <HighlightedLine line={line} quote={dialogCitation.quote} />
-                ) : (
-                  line
-                )}
+                {/* One flex item, so a quote inside the line stays in the sentence. */}
+                <span>
+                  {dialogCitation ? (
+                    <HighlightedLine line={line} quote={dialogCitation.quote} />
+                  ) : (
+                    line
+                  )}
+                </span>
               </p>
             ))}
           </div>

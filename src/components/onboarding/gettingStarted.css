@@ -298,4 +298,7 @@
 .getting-started-choice-copy span {
   color: var(--mem-text-tertiary);
   font: 12px/1.4 var(--mem-font-body);
+  /* Chinese breaks at 、 and spaces, not inside a word. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
