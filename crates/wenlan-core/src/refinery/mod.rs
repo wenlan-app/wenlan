@@ -1609,9 +1609,11 @@ fn over_cap_redistill_report() -> RedistillSliceReport {
 /// Refresh at most one stale/changed Page, then return to the scheduler.
 ///
 /// Explicit stale work has priority. A persisted cursor rotates failures so a
-/// citation-gated or otherwise retryable Page cannot pin every later Page. When
-/// no stale Page exists, exactly one active Page is inspected for legacy
-/// timestamp-based change detection; the scan cursor survives daemon restarts.
+/// citation-gated or otherwise retryable Page cannot pin every later Page.
+/// Next comes one note whose code changed and was judged `stale`
+/// ([`crate::steep::rewrite_one_code_page`]). When neither is waiting, exactly
+/// one active Page is inspected for legacy timestamp-based change detection;
+/// the scan cursor survives daemon restarts.
 pub async fn run_redistill_page_slice(
     db: &MemoryDB,
     llm: Option<&Arc<dyn LlmProvider>>,
@@ -1701,6 +1703,35 @@ pub async fn run_redistill_page_slice(
                 })
             }
         };
+    }
+
+    // Then a note whose code changed, once a model judged it `stale`: the
+    // same claim and commit an on-demand caller uses, with this model.
+    if let Some(outcome) =
+        crate::steep::rewrite_one_code_page(db, provider, prompts, knowledge_path).await?
+    {
+        use crate::steep::CodeRewriteOutcome;
+        return Ok(match outcome {
+            CodeRewriteOutcome::Written | CodeRewriteOutcome::Card => RedistillSliceReport {
+                selected: true,
+                progressed: true,
+                items_processed: 1,
+                more: true,
+                ..RedistillSliceReport::default()
+            },
+            CodeRewriteOutcome::StillAccurate => RedistillSliceReport {
+                selected: true,
+                progressed: true,
+                more: true,
+                ..RedistillSliceReport::default()
+            },
+            CodeRewriteOutcome::Failed | CodeRewriteOutcome::Moved => RedistillSliceReport {
+                selected: true,
+                more: true,
+                retryable: true,
+                ..RedistillSliceReport::default()
+            },
+        });
     }
 
     let cursor = load_background_cursor(db, REDISTILL_SCAN_CURSOR_KEY).await;
