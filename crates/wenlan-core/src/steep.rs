@@ -34,12 +34,14 @@
 //! the note `code_changed`: the claim hands over the code as it reads now, the
 //! rewrite goes through the same write as above, and a rewrite that lands
 //! settles those code bases.
+//! In Automatic mode the daemon's own model takes `code_changed` notes through
+//! this same claim and commit ([`rewrite_one_code_page`]).
 //!
 //! Holds live in memory ([`SteepLeases`]). Both runs live in this daemon
 //! process, so a restart ends every hold together with the work behind it; a
 //! caller whose token is gone claims again.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -158,6 +160,10 @@ struct Lease {
 #[derive(Debug, Default)]
 pub struct SteepLeases {
     by_page: Mutex<HashMap<String, Lease>>,
+    /// Automatic code rewrites that did not land, by what they were made
+    /// from (see `automatic`). The same note and code would fail the same
+    /// way, so the automatic run waits for either to change.
+    failed: Mutex<HashSet<String>>,
 }
 
 impl SteepLeases {
@@ -212,6 +218,10 @@ impl SteepLeases {
             .values()
             .find(|lease| lease.token == token)
             .cloned()
+    }
+
+    fn failed(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
+        self.failed.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Give the note back. Only the token's own lease is removed, never one
@@ -635,6 +645,24 @@ pub async fn claim(
     scope: &ReadScope,
     judge_instructions: Option<&str>,
 ) -> Result<SteepClaim, SteepError> {
+    claim_as(
+        db,
+        page_id,
+        scope,
+        judge_instructions,
+        SteepHolder::OnDemand,
+    )
+    .await
+}
+
+/// [`claim`] for `holder`: the automatic run claims through the same path.
+async fn claim_as(
+    db: &MemoryDB,
+    page_id: &str,
+    scope: &ReadScope,
+    judge_instructions: Option<&str>,
+    holder: SteepHolder,
+) -> Result<SteepClaim, SteepError> {
     // The fence is read before the fields it protects, the same order the
     // automatic refresh uses: a change landing after this read moves the
     // fence, and one landing before it is in the reads below.
@@ -653,7 +681,7 @@ pub async fn claim(
     }
     let stale_reason = match page.stale_reason.clone() {
         Some(reason) if reason == "source_updated" || reason == "source_removed" => reason,
-        _ => return claim_code(db, page, fence, scope, judge_instructions).await,
+        _ => return claim_code(db, page, fence, scope, judge_instructions, holder).await,
     };
 
     let sources = match rewrite_sources(db, &page, &fence, scope, false).await? {
@@ -671,7 +699,7 @@ pub async fn claim(
         page_stale_reason: Some(stale_reason.clone()),
         code: Vec::new(),
     };
-    let (token, held_until) = hold(db, page_id, snapshot)?;
+    let (token, held_until) = hold(db, page_id, holder, snapshot)?;
 
     let removed = stale_reason == "source_removed";
     let mut note = String::from(
@@ -720,18 +748,22 @@ fn not_waiting() -> SteepError {
     SteepError::NotWaiting("this page is not waiting for steep".into())
 }
 
-fn hold(db: &MemoryDB, page_id: &str, snapshot: Snapshot) -> Result<(String, i64), SteepError> {
+fn hold(
+    db: &MemoryDB,
+    page_id: &str,
+    holder: SteepHolder,
+    snapshot: Snapshot,
+) -> Result<(String, i64), SteepError> {
+    let duration = match holder {
+        SteepHolder::OnDemand => ON_DEMAND_HOLD,
+        SteepHolder::Automatic => AUTOMATIC_HOLD,
+    };
     let token = db
         .steep_leases()
-        .take(
-            page_id,
-            SteepHolder::OnDemand,
-            ON_DEMAND_HOLD,
-            Some(snapshot),
-        )
+        .take(page_id, holder, duration, Some(snapshot))
         .map_err(SteepError::Held)?;
-    let held_until = chrono::Utc::now().timestamp()
-        + i64::try_from(ON_DEMAND_HOLD.as_secs()).unwrap_or(i64::MAX);
+    let held_until =
+        chrono::Utc::now().timestamp() + i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
     Ok((token, held_until))
 }
 
@@ -744,6 +776,7 @@ async fn claim_code(
     fence: PageFence,
     scope: &ReadScope,
     judge_instructions: Option<&str>,
+    holder: SteepHolder,
 ) -> Result<SteepClaim, SteepError> {
     let mut stale = Vec::new();
     let mut unjudged = Vec::new();
@@ -815,6 +848,7 @@ async fn claim_code(
         let (token, held_until) = hold(
             db,
             &page.id,
+            holder,
             Snapshot {
                 fence,
                 version: page.version,
@@ -892,6 +926,7 @@ async fn claim_code(
     let (token, held_until) = hold(
         db,
         &page.id,
+        holder,
         Snapshot {
             fence,
             version: page.version,
@@ -1363,6 +1398,10 @@ pub async fn commit(
         replayed: false,
     })
 }
+
+#[path = "steep_automatic.rs"]
+mod automatic;
+pub use automatic::{rewrite_one_code_page, CodeRewriteOutcome};
 
 #[cfg(test)]
 #[path = "steep_test.rs"]

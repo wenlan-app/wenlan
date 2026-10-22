@@ -34,6 +34,9 @@ pub struct PromptRegistry {
     /// System prompt of the background recheck of a note whose cited code
     /// changed (`code_basis_recheck`).
     pub code_basis_recheck: String,
+    /// System prompt of the automatic steep rewrite of a note whose code
+    /// changed (`steep_code_rewrite`).
+    pub steep_code_rewrite: String,
 }
 
 impl Default for PromptRegistry {
@@ -62,6 +65,7 @@ impl Default for PromptRegistry {
             refine_clusters: defaults::REFINE_CLUSTERS.to_string(),
             compress_context: defaults::COMPRESS_CONTEXT.to_string(),
             code_basis_recheck: defaults::CODE_BASIS_RECHECK.to_string(),
+            steep_code_rewrite: defaults::STEEP_CODE_REWRITE.to_string(),
         }
     }
 }
@@ -102,6 +106,7 @@ impl PromptRegistry {
             ("refine_clusters", &mut reg.refine_clusters),
             ("compress_context", &mut reg.compress_context),
             ("code_basis_recheck", &mut reg.code_basis_recheck),
+            ("steep_code_rewrite", &mut reg.steep_code_rewrite),
         ];
         // Legacy filename fallbacks for the Phase 0 (Page) taxonomy refactor.
         // Existing user prompt overrides are likely still under the old names;
