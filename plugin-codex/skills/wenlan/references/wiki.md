@@ -112,7 +112,8 @@ handles it first), and say so in the report.
 
 ## 4. Writing a page
 
-Read the repository with Read, Glob, Grep and `git ls-files`. Never read a file
+Read the repository with Read, Glob, Grep and `git ls-files`; for a file too
+large to read whole, read the part you need. Never read a file
 `git check-ignore` reports, a `.env` or other secrets, or anything outside
 `repo_root`. Do not run build, test or install commands, and write nothing into
 the repository.
@@ -121,8 +122,10 @@ Compose the page in the user's language: about a screen, up to two for a large
 part. Link other pages in the plan as `[[<title>]]` where a reader would want
 to go next. Every sentence that states something read from code gets one
 `code_basis` entry `{repo_root, path, line_start, line_end}` with the exact
-lines it rests on. Keep 3 to 12 entries per page, and never more than 100, the
-most one write accepts.
+lines it rests on. Keep 3 to 12 entries per page (up to 20 for a page about a
+large part), and never more than 100, the most one write accepts. A refusal
+naming a span outside the file means the line numbers are off: read those lines
+again and retry once with the right span.
 
 ```
 write_page(space="<space>", title="<page title>", content="<page>",
@@ -161,5 +164,7 @@ and `$wenlan steep` brings them up to date.
 
 - Reads and writes of pages just happen; no approval is needed.
 - Wiki never deletes a page and never edits the repository.
-- Wiki runs no commands in the repository beyond `git rev-parse`,
-  `git ls-files`, `git check-ignore` and `git log`.
+- Wiki only reads the repository. Shell commands are read-only ones such as
+  `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
+  `ls`, `wc`, `grep` and `sed -n`; nothing that builds, installs, or changes a
+  file.
