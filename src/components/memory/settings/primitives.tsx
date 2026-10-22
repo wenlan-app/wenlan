@@ -42,6 +42,7 @@ export function Toggle({
   }
   const toggle = (
     <button
+      type="button"
       onClick={() => { if (!saving) onToggle(); }}
       aria-pressed={enabled}
       aria-disabled={saving || undefined}

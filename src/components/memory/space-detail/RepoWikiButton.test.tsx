@@ -79,6 +79,10 @@ describe("RepoWikiButton", () => {
     expect(screen.getByLabelText("Repository folder on this computer")).toHaveValue(ROOT);
     expect(screen.getByText("Found github.com/7xuanlu/wenlan-site")).toBeInTheDocument();
     expect(screen.getByLabelText("Pages go in")).toHaveValue("wiki");
+    fireEvent.click(screen.getByRole("button", { name: "Update every day" }));
+    expect(screen.getByText(/Claude Code updates the pages in the background/)).toBeInTheDocument();
+    expect(bindRepoWiki).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Update every day" }));
     vi.mocked(getRepoWiki).mockResolvedValue(bound);
     fireEvent.click(screen.getByRole("button", { name: "Connect and open PR" }));
 
