@@ -11,6 +11,7 @@ import { CITATION_ANCHOR_PREFIX } from "../../lib/pageCitations";
 import { ReferenceLink } from "./links/ReferenceLink";
 import { referenceTargetFromHref } from "./links/referenceTypes";
 import { displayUrl, isBareUrlLink } from "../../lib/displayUrl";
+import MermaidDiagram from "./MermaidDiagram";
 
 interface ContentRendererProps {
   content: string;
@@ -24,7 +25,28 @@ interface ContentRendererProps {
   allowImages?: boolean;
 }
 
+interface HastNode {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  properties?: { className?: unknown };
+  children?: HastNode[];
+}
+
+/** The source of a fenced ```mermaid block, or null for any other <pre>. */
+function mermaidSource(node: HastNode | undefined): string | null {
+  const code = node?.children?.find((child) => child.type === "element");
+  const classes = code?.tagName === "code" ? code.properties?.className : undefined;
+  if (!Array.isArray(classes) || !classes.includes("language-mermaid")) return null;
+  const text = (code?.children ?? []).map((child) => child.value ?? "").join("");
+  return text.trim() ? text : null;
+}
+
 const markdownComponents = {
+  pre: ({ node, children }: { node?: HastNode; children?: React.ReactNode }) => {
+    const source = mermaidSource(node);
+    return source !== null ? <MermaidDiagram source={source} /> : <pre>{children}</pre>;
+  },
   p: ({ children }: { children?: React.ReactNode }) => (
     <p
       style={{

@@ -3814,6 +3814,31 @@ p.entity-error {
   text-decoration: none;
 }
 
+/* A ```mermaid block drawn as a diagram: centered at its own size, never
+   wider than the text column (a wide one shrinks to fit), with a quiet frame
+   so it reads as one figure. */
+.content-renderer .page-diagram {
+  margin: 0 0 var(--content-para-gap, 0.75em);
+  padding: 16px;
+  border: 1px solid var(--mem-border);
+  border-radius: 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+.content-renderer .page-diagram[aria-busy="true"] {
+  min-height: 120px;
+}
+.content-renderer .page-diagram svg {
+  display: inline-block;
+  height: auto;
+  max-width: 100%;
+}
+.content-renderer .page-diagram-source {
+  font-family: var(--mem-font-mono);
+  font-size: var(--content-code-size, 12px);
+  white-space: pre-wrap;
+}
+
 /* Sidebar Activity button carries the global background state. The pulse fades gently only while
    steeping work can run, so the one moving thing on the page always means
    "work is in flight"; steeping held until the computer is quiet stays still.

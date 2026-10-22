@@ -39,6 +39,8 @@ const VARIANTS = [
   { id: "page-cleared", label: "Edit-cleared" },
   { id: "page-mismatch", label: "Mismatch" },
   { id: "page-plain", label: "No citations" },
+  { id: "page-diagram", label: "Diagrams" },
+  { id: "page-diagram-zh", label: "Diagrams (zh)" },
 ];
 
 // Imported, not copied. This WAS a hand-kept literal on the theory that drift
