@@ -111,7 +111,7 @@ describe("PageInfo code section", () => {
     const section = screen.getByRole("region", { name: "Code this note relies on" });
     const notes = await within(section).findAllByText(/AI looked:|the next steep looks at it/);
     expect(notes.map((note) => note.textContent)).toEqual([
-      "AI looked: The constant is now 48, not 32, the next steep fixes it",
+      "AI looked: The constant is now 48, not 32, next steep fixes it",
       "AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.",
       "Changed, the next steep looks at it",
     ]);

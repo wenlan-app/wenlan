@@ -119,7 +119,7 @@ describe("NoteReviewNotice with a code basis", () => {
 
     expect(await screen.findByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.")).toBeInTheDocument();
     // The stale row is the next steep's, not the person's: no line, no buttons for it.
-    expect(screen.queryByText(/the next steep fixes it/)).toBeNull();
+    expect(screen.queryByText(/next steep fixes it/)).toBeNull();
     expect(screen.queryByText(/b\.rs/)).toBeNull();
     expect(screen.getAllByText(/^AI looked:/)).toHaveLength(1);
     // Without a model nobody will look at c.rs, so it is still shown: one set of buttons per shown row.

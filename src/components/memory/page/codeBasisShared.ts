@@ -43,7 +43,7 @@ export function codeBasisLineText(t: TFunction, row: CodeBasisRef): string {
 
 /**
  * What the background check concluded about a changed row, for the second line
- * of the notice: its sentence as sent, plus "the next steep fixes it" when it
+ * of the notice: its sentence as sent, plus "next steep fixes it" when it
  * judged the note stale. Null when there is nothing to say.
  */
 export function codeBasisAiLineText(t: TFunction, row: CodeBasisRef): string | null {

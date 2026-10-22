@@ -83,10 +83,10 @@ describe("BasisUpdatesSummary with code", () => {
     const list = await screen.findByRole("list", { name: "Code changed" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent("The code 2 notes rely on changed");
+    expect(rows[0]).toHaveTextContent("Code behind 2 notes changed");
     expect(listCodeBasisPending).toHaveBeenCalledWith(null);
     const action = within(list).getByRole("button", { name: "Review" });
-    expect(action).toHaveAccessibleDescription("The code 2 notes rely on changed");
+    expect(action).toHaveAccessibleDescription("Code behind 2 notes changed");
     fireEvent.click(action);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -100,7 +100,7 @@ describe("BasisUpdatesSummary with code", () => {
     await waitFor(() => expect(within(list).getAllByRole("listitem")).toHaveLength(2));
     const rows = within(list).getAllByRole("listitem");
     expect(rows[0]).toHaveTextContent("“Pricing” changed. 1 page to confirm");
-    expect(rows[1]).toHaveTextContent("The code 1 note relies on changed");
+    expect(rows[1]).toHaveTextContent("Code behind 1 note changed");
     expect(container.querySelectorAll(".note-review-notice")).toHaveLength(1);
   });
 
@@ -115,7 +115,7 @@ describe("BasisUpdatesSummary with code", () => {
 
     const list = await screen.findByRole("list", { name: "Code changed" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
-    expect(within(list).getByRole("listitem")).toHaveTextContent("The code 1 note relies on changed");
+    expect(within(list).getByRole("listitem")).toHaveTextContent("Code behind 1 note changed");
   });
 
   it("renders nothing when neither kind is waiting, or when the code read fails", async () => {
