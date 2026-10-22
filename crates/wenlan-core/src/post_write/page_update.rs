@@ -89,11 +89,13 @@ impl<'a> Writer<'a> {
     /// historically accepted agent-provided refreshes without this guard, so
     /// routing it through PageWrite preserves that behavior.
     ///
-    /// This is `is_llm_rewrite` plus `Agent` — the two used to be parallel
-    /// `matches!` lists whose only difference was the `agent_refresh` arm, with
-    /// a comment warning not to merge them. Here the difference is structural.
+    /// A person is never held to it: the guard asks whether a machine stayed
+    /// close to its sources, and a person writing their own thoughts on their
+    /// own page (in the app or in the vault) is not a machine drifting. It
+    /// used to refuse a hand edit with "diverges from cited sources", even a
+    /// stale-version edit that deserved a version conflict instead.
     pub(super) fn skips_hallucination_guard(&self) -> bool {
-        matches!(self, Writer::Agent(_)) || self.is_llm_rewrite()
+        matches!(self, Writer::Human(_) | Writer::Agent(_)) || self.is_llm_rewrite()
     }
 
     /// A recognized LLM-rewrite stage, checked by the shrink-guard. `Unknown` is
@@ -111,6 +113,9 @@ impl<'a> Writer<'a> {
         )
     }
 }
+
+/// How many recent versions are read to find the lines a person wrote.
+const USER_LINE_HISTORY: i64 = 200;
 
 pub fn page_is_human_owned(page: &crate::pages::Page) -> bool {
     page.user_edited || page.creation_kind == "authored"
@@ -1080,11 +1085,30 @@ async fn update_page_db_impl(
                 // is accepted. They are checked now, so a refused mark refuses
                 // the write here exactly as it would a direct one.
                 let staged_marks = db.prepare_staged_basis_marks(page_id, &basis.marks).await?;
+                // A rewrite from sources (steep, on demand or automatic)
+                // cannot know what the person wrote that no source says, so
+                // the card keeps those lines: accepting it must not delete
+                // their writing. An agent's own edit is left as written; the
+                // person may have asked it to remove a line.
+                let (card_content, restored) =
+                    if matches!(writer, Writer::Pipeline(PipelineStage::ReDistill)) {
+                        let history = db.list_page_history(page_id, USER_LINE_HISTORY).await?;
+                        let user_lines =
+                            crate::pages::user_written_lines(&history, &current.content);
+                        crate::pages::keep_user_lines(&req.content, &current.content, &user_lines)
+                    } else {
+                        (req.content.clone(), 0)
+                    };
+                if restored > 0 {
+                    log::info!(
+                        "[update_page] {page_id}: kept {restored} line(s) the user wrote in the revision card"
+                    );
+                }
                 let result = match page_fence {
                     Some(fence) => match stage_page_revision_card_at_fence(
                         db,
                         &current,
-                        &req.content,
+                        &card_content,
                         effective_sources,
                         fence,
                         edited_by,
@@ -1110,7 +1134,7 @@ async fn update_page_db_impl(
                         stage_page_revision_card_proposed_by(
                             db,
                             &current,
-                            &req.content,
+                            &card_content,
                             effective_sources,
                             staged_source_revision,
                             edited_by,

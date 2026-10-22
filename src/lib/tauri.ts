@@ -1089,7 +1089,9 @@ export interface RevisionAcceptResponse {
 
 export interface RevisionDismissResponse {
   target_source_id: string;
+  /** False: rejecting a card writes nothing to the page or memory. */
   wrote: boolean;
+  dismissed?: boolean;
 }
 
 export interface ContradictionDismissResponse {

@@ -78,7 +78,25 @@ pub struct SyncStatsResponse {
     /// is still being prepared or this sync's batch was full.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_files: Option<u64>,
+    /// Vault and Logseq syncs: files read this time that stored nothing,
+    /// each with why, so "1 skipped" is never left unexplained. Files skipped
+    /// because they did not change are not listed. Capped at
+    /// `SKIPPED_FILES_LIMIT`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_files: Vec<SkippedFile>,
 }
+
+/// A file a sync read but stored nothing from.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkippedFile {
+    pub path: String,
+    /// `link_index` (a list of links to other notes; those notes are read
+    /// instead), `wenlan_page` (one of Wenlan's own pages), `empty`, or
+    /// `too_short` (the text left is too short or only boilerplate).
+    pub reason: String,
+}
+
+pub(crate) const SKIPPED_FILES_LIMIT: usize = 50;
 
 /// Detect Google Drive File Provider paths on macOS. Files at these paths are
 /// often "online-only" placeholders — `std::fs::read_to_string()` blocks and
@@ -113,7 +131,9 @@ pub async fn handle_add_source(
         )));
     }
 
-    let mut config = wenlan_core::config::load_config();
+    // A snapshot for the checks below; the add itself re-reads the file under
+    // the config lock, so a sync finishing meanwhile cannot drop it.
+    let config = wenlan_core::config::load_config();
     let st = match body.source_type.as_str() {
         "obsidian" => {
             if !path.is_dir() {
@@ -206,28 +226,14 @@ pub async fn handle_add_source(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "dir".to_string());
     let slug = wenlan_core::export::obsidian::slugify(&dirname);
-    let mut id = format!("{}-{}", st.as_str(), slug);
+    let base_id = format!("{}-{}", st.as_str(), slug);
 
-    if config.sources.iter().any(|s| s.path == path) {
-        return Err(ServerError::ValidationError(format!(
-            "Source already registered for path: {}",
-            path.display()
-        )));
-    }
-    if let Some(message) = okf_overlap_error(&path, &st, &config) {
+    if let Some(message) = add_source_conflict(&path, &st, &config) {
         return Err(ServerError::ValidationError(message));
     }
 
     let mut space = None;
     if st == SourceType::Okf {
-        // Concept rows are keyed by source id, so two bundles with the same
-        // folder name must not share one.
-        let base = id.clone();
-        let mut suffix = 2;
-        while config.sources.iter().any(|s| s.id == id) {
-            id = format!("{base}-{suffix}");
-            suffix += 1;
-        }
         let db = {
             let s = state.read().await;
             s.db.clone().ok_or(ServerError::DbNotInitialized)?
@@ -241,8 +247,8 @@ pub async fn handle_add_source(
         space = resolved.space_name;
     }
 
-    let source = Source {
-        id,
+    let mut source = Source {
+        id: base_id.clone(),
         source_type: st.clone(),
         path: path.clone(),
         status: if body.follow_changes == Some(false) {
@@ -260,10 +266,39 @@ pub async fn handle_add_source(
         waiting_files: 0,
     };
 
-    config.sources.push(source.clone());
-    wenlan_core::config::save_config(&config)?;
+    // Checked again against the file as it is now: another add may have
+    // landed while the OKF Space was resolved.
+    let source = wenlan_core::config::update_config(|config| {
+        if let Some(message) = add_source_conflict(&path, &st, config) {
+            return Err(wenlan_core::error::WenlanError::Validation(message));
+        }
+        // Rows are keyed by source id, so two folders with the same name
+        // must not share one.
+        let mut suffix = 2;
+        while config.sources.iter().any(|s| s.id == source.id) {
+            source.id = format!("{base_id}-{suffix}");
+            suffix += 1;
+        }
+        config.sources.push(source.clone());
+        Ok(source)
+    })?;
 
     Ok(Json(source))
+}
+
+/// Why `path` cannot be added next to the sources already registered.
+fn add_source_conflict(
+    path: &std::path::Path,
+    source_type: &SourceType,
+    config: &wenlan_core::config::Config,
+) -> Option<String> {
+    if config.sources.iter().any(|s| s.path == path) {
+        return Some(format!(
+            "Source already registered for path: {}",
+            path.display()
+        ));
+    }
+    okf_overlap_error(path, source_type, config)
 }
 
 /// Refuse an `okf` bundle that shares files with the pages folder or with
@@ -313,17 +348,18 @@ pub async fn handle_update_source(
     Path(id): Path<String>,
     Json(body): Json<UpdateSourceRequest>,
 ) -> Result<Json<Source>, ServerError> {
-    let mut config = wenlan_core::config::load_config();
-    let Some(src) = config.sources.iter_mut().find(|s| s.id == id) else {
-        return Err(ServerError::NotFound(format!("Source not found: {}", id)));
-    };
-    src.status = if body.follow_changes {
-        SyncStatus::Active
-    } else {
-        SyncStatus::Paused
-    };
-    let updated = src.clone();
-    wenlan_core::config::save_config(&config)?;
+    let updated = wenlan_core::config::update_config(|config| {
+        let Some(src) = config.sources.iter_mut().find(|s| s.id == id) else {
+            return Ok(None);
+        };
+        src.status = if body.follow_changes {
+            SyncStatus::Active
+        } else {
+            SyncStatus::Paused
+        };
+        Ok(Some(src.clone()))
+    })?
+    .ok_or_else(|| ServerError::NotFound(format!("Source not found: {}", id)))?;
     Ok(Json(updated))
 }
 
@@ -332,13 +368,12 @@ pub async fn handle_remove_source(
     State(state): State<Arc<RwLock<ServerState>>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ServerError> {
-    let mut config = wenlan_core::config::load_config();
-    let Some(removed) = config.sources.iter().find(|s| s.id == id).cloned() else {
-        return Err(ServerError::NotFound(format!("Source not found: {}", id)));
-    };
-
-    config.sources.retain(|s| s.id != id);
-    wenlan_core::config::save_config(&config)?;
+    let removed = wenlan_core::config::update_config(|config| {
+        let removed = config.sources.iter().find(|s| s.id == id).cloned();
+        config.sources.retain(|s| s.id != id);
+        Ok(removed)
+    })?
+    .ok_or_else(|| ServerError::NotFound(format!("Source not found: {}", id)))?;
 
     // Snapshot the DB Arc before the await so the read guard is not held across
     // it (AGENTS.md: never hold a tokio RwLock guard across .await).
@@ -386,14 +421,15 @@ fn directory_root_is_live(path: &std::path::Path) -> bool {
 /// source stays `Paused`, so a manual refresh of a moved folder never turns
 /// background polling back on.
 fn mark_source_unavailable(id: &str, reason: &str) {
-    let mut config = wenlan_core::config::load_config();
-    if let Some(src) = config.sources.iter_mut().find(|s| s.id == id) {
-        if !matches!(src.status, SyncStatus::Paused) {
-            src.status = SyncStatus::Unavailable(reason.to_string());
+    let _ = wenlan_core::config::update_config(|config| {
+        if let Some(src) = config.sources.iter_mut().find(|s| s.id == id) {
+            if !matches!(src.status, SyncStatus::Paused) {
+                src.status = SyncStatus::Unavailable(reason.to_string());
+            }
+            src.last_sync = Some(chrono::Utc::now().timestamp());
         }
-        src.last_sync = Some(chrono::Utc::now().timestamp());
-    }
-    let _ = wenlan_core::config::save_config(&config);
+        Ok(())
+    });
 }
 
 fn content_hash_bytes(content: &[u8]) -> String {
@@ -450,25 +486,26 @@ async fn finalize_sync(
     // Update source metadata in config. This is the canonical write path —
     // the Tauri-side `sync_registered_source` command used to also write here
     // which double-counted `memory_count`; it now skips the write.
-    let mut config = wenlan_core::config::load_config();
-    if let Some(src) = config.sources.iter_mut().find(|s| s.id == config_id) {
-        src.last_sync = Some(chrono::Utc::now().timestamp());
-        src.file_count = files_found as u64;
-        src.memory_count = src.memory_count.saturating_add(ingested as u64);
-        src.last_sync_errors = errors as u64;
-        src.last_sync_error_detail = error_detail.clone();
-        // Recovery: a source that had gone Unavailable (missing/unreadable root)
-        // flips back to Active once a sync completes against a live root. Only
-        // touch Unavailable — never clobber a user's explicit Paused state.
-        if matches!(src.status, SyncStatus::Unavailable(_)) {
-            src.status = SyncStatus::Active;
+    let _ = wenlan_core::config::update_config(|config| {
+        if let Some(src) = config.sources.iter_mut().find(|s| s.id == config_id) {
+            src.last_sync = Some(chrono::Utc::now().timestamp());
+            src.file_count = files_found as u64;
+            src.memory_count = src.memory_count.saturating_add(ingested as u64);
+            src.last_sync_errors = errors as u64;
+            src.last_sync_error_detail = error_detail.clone();
+            // Recovery: a source that had gone Unavailable (missing/unreadable root)
+            // flips back to Active once a sync completes against a live root. Only
+            // touch Unavailable — never clobber a user's explicit Paused state.
+            if matches!(src.status, SyncStatus::Unavailable(_)) {
+                src.status = SyncStatus::Active;
+            }
+            if let Some(counts) = batch_counts {
+                src.queued_files = counts.queued_files;
+                src.waiting_files = counts.waiting_files;
+            }
         }
-        if let Some(counts) = batch_counts {
-            src.queued_files = counts.queued_files;
-            src.waiting_files = counts.waiting_files;
-        }
-    }
-    let _ = wenlan_core::config::save_config(&config);
+        Ok(())
+    });
 
     // Surface any paused background document-enrichment so a sync caller sees
     // the queue is stalled on an LLM failure (waiting for a backoff retry).
@@ -487,6 +524,7 @@ async fn finalize_sync(
         paused,
         queued_files: batch_counts.map(|counts| counts.queued_files),
         waiting_files: batch_counts.map(|counts| counts.waiting_files),
+        skipped_files: Vec::new(),
     })
 }
 
@@ -562,6 +600,7 @@ pub(crate) async fn sync_directory_source(
                 paused: None,
                 queued_files: None,
                 waiting_files: None,
+                skipped_files: Vec::new(),
             },
             newly_queued: 0,
         });
@@ -927,6 +966,7 @@ mod tests {
             paused: Some("analysis LLM failed".to_string()),
             queued_files: None,
             waiting_files: None,
+            skipped_files: Vec::new(),
         };
         let s = serde_json::to_string(&with).unwrap();
         assert!(

@@ -2039,8 +2039,11 @@ async fn update_page_cas_writes_when_stale() {
     );
 }
 
+/// A person's edit is theirs to make: text that has nothing to do with the
+/// page's sources still saves (the fresh-install test of 2026-10-22 was
+/// refused with "diverges from cited sources" for a shopping list line).
 #[tokio::test]
-async fn update_page_hallucination_guard_manual_edit_rejects() {
+async fn update_page_manual_edit_is_not_held_to_the_sources() {
     let (db, _dir) = test_db().await;
     let mem_id = "mem-guard-reject";
     let rust_content = "Rust is a systems programming language with memory safety";
@@ -2055,11 +2058,13 @@ async fn update_page_hallucination_guard_manual_edit_rejects() {
         caller_id: None,
         operation_id: None,
     };
-    let result = update_page(&db, &page_id, req, "manual_edit", false, None, None).await;
-    assert!(
-        matches!(result, Err(WenlanError::Validation(_))),
-        "hallucination guard should reject manual_edit with unrelated body"
-    );
+    update_page(&db, &page_id, req, "manual_edit", false, None, None)
+        .await
+        .unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.version, 2);
+    assert!(page.content.starts_with("Pasta carbonara"));
+    assert!(page.user_edited);
 }
 
 #[tokio::test]
@@ -6279,14 +6284,18 @@ async fn accepting_the_latest_of_two_staged_corrections_leaves_the_older_pending
 // ── dismiss_pending_revision ─────────────────────────────────────────────
 
 #[tokio::test]
-async fn dismiss_pending_revision_writes_and_logs_on_first_call() {
+async fn dismiss_pending_revision_dismisses_and_writes_nothing() {
     let (db, _tmp) = crate::db::tests::test_db().await;
     seed_pending_revision(&db, "mem_dpr_target", "mem_dpr_rev").await;
     let result = dismiss_pending_revision(&db, "mem_dpr_target", "test-agent")
         .await
         .unwrap();
     assert_eq!(result.target_source_id, "mem_dpr_target");
-    assert!(result.wrote);
+    assert!(result.dismissed);
+    assert!(
+        !result.wrote,
+        "rejecting a card writes nothing to its target"
+    );
 }
 
 #[tokio::test]
@@ -6809,8 +6818,8 @@ fn is_llm_rewrite_user_false() {
 /// wins an ownership decision inside the CAS.
 const WRITER_TABLE: &[(&str, bool, bool, bool)] = &[
     // edited_by            machine  skips_guard  llm_rewrite
-    ("manual_edit", false, false, false),
-    ("fs_edit", false, false, false),
+    ("manual_edit", false, true, false),
+    ("fs_edit", false, true, false),
     ("distill", true, true, true),
     ("re_distill", true, true, true),
     ("page_growth", true, true, true),
