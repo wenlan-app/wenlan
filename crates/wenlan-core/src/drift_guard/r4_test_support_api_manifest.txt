@@ -1175,6 +1175,8 @@ crates/wenlan-core/src/repair_plan/relation_tests.rs|crate::repair_plan::relatio
 crates/wenlan-core/src/repair_plan/relation_tests.rs|crate::repair_plan::relation::tests::registered_add_still_requires_both_endpoints_in_scope|test_primary_session|1
 crates/wenlan-core/src/repair_plan/relation_tests.rs|crate::repair_plan::relation::tests::set_entity_space|TestDbSession::execute|1
 crates/wenlan-core/src/repair_plan/relation_tests.rs|crate::repair_plan::relation::tests::set_entity_space|test_primary_session|1
+crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::a_note_the_user_edited_gets_a_code_card_and_leaves_the_list_until_they_decide|TestDbSession::execute|1
+crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::a_note_the_user_edited_gets_a_code_card_and_leaves_the_list_until_they_decide|test_primary_session|1
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::a_source_edited_after_the_claim_refuses_the_commit|TestDbSession::execute|1
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::a_source_edited_after_the_claim_refuses_the_commit|test_primary_session|1
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::memory|TestDbSession::execute|1

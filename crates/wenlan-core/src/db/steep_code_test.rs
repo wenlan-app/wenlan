@@ -76,8 +76,19 @@ pub(crate) fn file(n: u32, changed: &[u32]) -> String {
 
 /// A note relying on lines 10-14 of a 30-line file whose line 12 then changed
 /// and was checked: its row is `pending` and no model has judged it.
-/// `creation_kind` `distilled` is Wenlan's own note, `authored` the user's.
+/// `creation_kind` `distilled` is Wenlan's own note from sources, `authored`
+/// one written with none (what `/wenlan map` writes).
 pub(crate) async fn changed_note(db: &MemoryDB, repo: &Repo, id: &str, creation_kind: &str) {
+    changed_note_on(db, repo, id, creation_kind, &[]).await;
+}
+
+async fn changed_note_on(
+    db: &MemoryDB,
+    repo: &Repo,
+    id: &str,
+    creation_kind: &str,
+    sources: &[&str],
+) {
     db.insert_page_with_kind(
         id,
         &format!("Note {id}"),
@@ -85,7 +96,7 @@ pub(crate) async fn changed_note(db: &MemoryDB, repo: &Repo, id: &str, creation_
         BODY,
         None,
         Some(SPACE),
-        &[],
+        sources,
         T0,
         creation_kind,
         "confirmed",
@@ -303,6 +314,100 @@ async fn code_that_changed_again_after_the_claim_refuses_the_rewrite() {
         "{refused:?}"
     );
     assert_eq!(body_of(&db, "page_c").await, BODY);
+
+    // The verdict was about other lines: they are judged again, not
+    // rewritten from what the old verdict said.
+    let again = claim(&db, "page_c", &ReadScope::Global, JUDGE)
+        .await
+        .unwrap();
+    assert_eq!(again.plan, STEEP_PLAN_JUDGE);
+    assert!(again.code_checks[0].prompt.contains("line 13 changed"));
+}
+
+#[tokio::test]
+async fn a_note_an_agent_wrote_from_code_alone_is_rewritten_in_place() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::new();
+    changed_note(&db, &repo, "page_m", "authored").await;
+    judge_with(
+        &db,
+        "page_m",
+        &verdict("stale", "The note should say 48 bits."),
+    )
+    .await;
+
+    let claimed = claim(&db, "page_m", &ReadScope::Global, None)
+        .await
+        .unwrap();
+    assert_eq!(claimed.plan, STEEP_PLAN_REWRITE);
+    let done = commit(
+        &db,
+        claimed.token.as_deref().unwrap(),
+        STEEP_ACTION_REWRITE,
+        Some(FIXED),
+        &[],
+        None,
+        Some("claude-code"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(done.outcome, "written");
+    assert_eq!(body_of(&db, "page_m").await, FIXED);
+    assert_eq!(only(&db, "page_m").await.state, CODE_BASIS_STATE_OK);
+}
+
+#[tokio::test]
+async fn a_rewrite_for_code_on_a_note_with_sources_need_not_cite() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::new();
+    let now = chrono::Utc::now().timestamp();
+    {
+        let conn = db.test_primary_session().await;
+        for id in ["mem_a", "mem_b", "mem_c"] {
+            conn.execute(
+                "INSERT INTO memories (id, source_id, title, content, chunk_index, chunk_type, \
+                 memory_type, space, source_agent, created_at, last_modified, confirmed, \
+                 stability, source) VALUES (?1, ?1, ?1, 'Keys are cut in truncate().', 0, \
+                 'text', 'fact', ?2, 'claude-code', ?3, ?3, 1, 'confirmed', 'memory')",
+                libsql::params![id, SPACE, now],
+            )
+            .await
+            .unwrap();
+        }
+    }
+    changed_note_on(
+        &db,
+        &repo,
+        "page_s",
+        "distilled",
+        &["mem_a", "mem_b", "mem_c"],
+    )
+    .await;
+    judge_with(
+        &db,
+        "page_s",
+        &verdict("stale", "The note should say 48 bits."),
+    )
+    .await;
+
+    let claimed = claim(&db, "page_s", &ReadScope::Global, None)
+        .await
+        .unwrap();
+    assert_eq!(claimed.plan, STEEP_PLAN_REWRITE);
+    assert_eq!(claimed.sources.len(), 3);
+    let done = commit(
+        &db,
+        claimed.token.as_deref().unwrap(),
+        STEEP_ACTION_REWRITE,
+        Some(FIXED),
+        &[],
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(done.outcome, "written");
+    assert_eq!(body_of(&db, "page_s").await, FIXED);
 }
 
 #[tokio::test]

@@ -625,7 +625,7 @@ async fn the_steep_write_rechecks_the_space_inside_its_transaction() {
         Some("claude-code"),
         Some(ReadScope::Space("test".into())),
         fence.source_revision,
-        true,
+        None,
         None,
         None,
     )
@@ -636,7 +636,7 @@ async fn the_steep_write_rechecks_the_space_inside_its_transaction() {
 }
 
 #[tokio::test]
-async fn a_note_the_user_wrote_gets_a_code_card_and_leaves_the_list_until_they_decide() {
+async fn a_note_the_user_edited_gets_a_code_card_and_leaves_the_list_until_they_decide() {
     use crate::code_basis::CODE_BASIS_STATE_PENDING;
     use crate::db::steep_code_test::{
         changed_note, judge_with, only, reasons, verdict, Repo, BODY, FIXED,
@@ -645,6 +645,11 @@ async fn a_note_the_user_wrote_gets_a_code_card_and_leaves_the_list_until_they_d
     let (db, _dir) = crate::db::tests::test_db().await;
     let repo = Repo::new();
     changed_note(&db, &repo, "page_u", "authored").await;
+    db.test_primary_session()
+        .await
+        .execute("UPDATE pages SET user_edited = 1 WHERE id = 'page_u'", ())
+        .await
+        .unwrap();
     judge_with(
         &db,
         "page_u",

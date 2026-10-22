@@ -130,6 +130,20 @@ fn is_code_work(reason: &str) -> bool {
     reason == STEEP_REASON_CODE_CHANGED || reason == STEEP_REASON_CODE_CHECK
 }
 
+/// Whether steep's rewrite of `page` goes to the user as a revision card.
+/// For work from sources that is every human-owned page. For code work it is
+/// a page a person edited, or one locked for review: a note an agent wrote
+/// from code has no sources and so lands as `authored`, but it is Wenlan's
+/// own and is kept up to date like one.
+fn owned(page: &crate::pages::Page, code_work: bool) -> bool {
+    page.review_required
+        || if code_work {
+            page.user_edited
+        } else {
+            crate::post_write::page_is_human_owned(page)
+        }
+}
+
 #[derive(Debug, Clone)]
 struct Lease {
     page_id: String,
@@ -395,35 +409,34 @@ pub async fn waiting_page_ids(db: &MemoryDB) -> Result<Vec<String>, WenlanError>
     Ok(ids)
 }
 
-/// Every note steep can act on, with its reason and how many sources (or code
-/// bases, for code work) it rests on: the notes waiting for steep first by
-/// their own staleness, then notes whose code changed. A `code_changed` note
+/// Every note steep can act on, with its reason: the notes waiting for steep
+/// first by their own staleness, then notes whose code changed. A `code_changed` note
 /// with a revision card already waiting for the user is left out, and
 /// `code_check` notes only count when `judge_code` (no background model judges
 /// changed code).
 async fn steep_work(
     db: &MemoryDB,
     judge_code: bool,
-) -> Result<Vec<(crate::pages::Page, String, Option<u32>)>, WenlanError> {
-    let mut work: Vec<(crate::pages::Page, String, Option<u32>)> = db
+) -> Result<Vec<(crate::pages::Page, String)>, WenlanError> {
+    let mut work: Vec<(crate::pages::Page, String)> = db
         .list_steep_pages()
         .await?
         .into_iter()
         .map(|page| {
             let reason = page.stale_reason.clone().unwrap_or_default();
-            (page, reason, None)
+            (page, reason)
         })
         .collect();
     for (page, stale, unjudged) in db.list_steep_code_pages().await? {
         if stale > 0 {
             if db.get_pending_revision_for(&page.id).await?.is_none() {
-                work.push((page, STEEP_REASON_CODE_CHANGED.to_string(), Some(stale)));
+                work.push((page, STEEP_REASON_CODE_CHANGED.to_string()));
             }
         } else if judge_code && unjudged > 0 {
-            work.push((page, STEEP_REASON_CODE_CHECK.to_string(), Some(unjudged)));
+            work.push((page, STEEP_REASON_CODE_CHECK.to_string()));
         }
     }
-    work.sort_by(|(a, _, _), (b, _, _)| {
+    work.sort_by(|(a, _), (b, _)| {
         b.last_modified
             .cmp(&a.last_modified)
             .then_with(|| a.id.cmp(&b.id))
@@ -452,9 +465,9 @@ pub async fn list_work(
     let work: Vec<_> = steep_work(db, judge_code)
         .await?
         .into_iter()
-        .filter(|(page, _, _)| scope.matches(page.space.as_deref()) && visible(&page.id))
+        .filter(|(page, _)| scope.matches(page.space.as_deref()) && visible(&page.id))
         .collect();
-    let pages: Vec<&crate::pages::Page> = work.iter().map(|(page, _, _)| page).collect();
+    let pages: Vec<&crate::pages::Page> = work.iter().map(|(page, _)| page).collect();
     let total = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     // Keyset: newest change first, ties by id, the same order the query uses.
     let start = match cursor.and_then(|c| c.split_once('|')) {
@@ -470,24 +483,21 @@ pub async fn list_work(
     let limit = limit.clamp(1, 100);
     let window = &work[start..work.len().min(start + limit)];
     let next_cursor = (start + window.len() < work.len())
-        .then(|| window.last().map(|(page, _, _)| cursor_for(page)))
+        .then(|| window.last().map(|(page, _)| cursor_for(page)))
         .flatten();
     let mut items = Vec::with_capacity(window.len());
-    for (page, reason, code_count) in window {
+    for (page, reason) in window {
         let has_basis = db.page_has_basis(&page.id).await?;
-        let (source_count, nothing_left) = match code_count {
-            Some(count) => (*count, false),
-            None => {
-                let ids = current_source_ids(db, page).await?;
-                let count: u32 = db
-                    .get_memory_contents_by_ids(&ids)
-                    .await?
-                    .len()
-                    .try_into()
-                    .unwrap_or(u32::MAX);
-                (count, count == 0)
-            }
-        };
+        let code_work = is_code_work(reason);
+        let ids = current_source_ids(db, page).await?;
+        let source_count: u32 = db
+            .get_memory_contents_by_ids(&ids)
+            .await?
+            .len()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        // A note written from code alone has no sources to lose.
+        let nothing_left = !code_work && source_count == 0;
         // Judging changed code never touches the note, so a note that rests
         // on other notes is only the user's once it would be rewritten.
         let needs_you = nothing_left || (has_basis && reason != STEEP_REASON_CODE_CHECK);
@@ -496,7 +506,7 @@ pub async fn list_work(
             title: page.title.clone(),
             space: page.space.clone(),
             stale_reason: reason.clone(),
-            human_owned: crate::post_write::page_is_human_owned(page) || page.review_required,
+            human_owned: owned(page, code_work),
             needs_you,
             blocked_reason: page.refresh_blocked_reason.clone(),
             leased_by: db
@@ -651,7 +661,7 @@ pub async fn claim(
         Err(user) => return Ok(user),
     };
 
-    let human_owned = crate::post_write::page_is_human_owned(&page) || page.review_required;
+    let human_owned = owned(&page, false);
     let snapshot = Snapshot {
         fence,
         version: page.version,
@@ -746,7 +756,23 @@ async fn claim_code(
             continue;
         };
         match reference.ai_verdict.as_deref() {
-            Some(crate::code_basis_recheck::STORED_STALE) => stale.push(row),
+            Some(crate::code_basis_recheck::STORED_STALE) => {
+                // Lines that changed again since the verdict are judged
+                // afresh, the way the background recheck would.
+                match crate::code_basis_recheck::current_code_excerpt(&row).await {
+                    Some((code_digest, span, excerpt))
+                        if row.recheck.digest.as_deref()
+                            == Some(
+                                crate::code_basis_recheck::recheck_key(&code_digest, page.version)
+                                    .as_str(),
+                            ) =>
+                    {
+                        stale.push((row, code_digest, span, excerpt));
+                    }
+                    Some(_) => unjudged.push(row),
+                    None => {}
+                }
+            }
             None => unjudged.push(row),
             Some(_) => {}
         }
@@ -764,13 +790,7 @@ async fn claim_code(
         };
         let mut code = Vec::new();
         let mut snaps = Vec::new();
-        for row in stale {
-            // Lines that changed again since the verdict are judged afresh.
-            let Some((code_digest, span, excerpt)) =
-                crate::code_basis_recheck::current_code_excerpt(&row).await
-            else {
-                continue;
-            };
+        for (row, code_digest, span, excerpt) in stale {
             let Some(key) = row.recheck.digest.clone() else {
                 continue;
             };
@@ -791,7 +811,7 @@ async fn claim_code(
         if snaps.is_empty() {
             return Err(not_waiting());
         }
-        let human_owned = crate::post_write::page_is_human_owned(&page) || page.review_required;
+        let human_owned = owned(&page, true);
         let (token, held_until) = hold(
             db,
             &page.id,
@@ -814,8 +834,8 @@ async fn claim_code(
         );
         if human_owned {
             note.push_str(
-                " The user wrote or edited this page, so the rewrite goes to them as a revision \
-                 card; the page itself does not change until they accept it.",
+                " The user edited this page, so the rewrite goes to them as a revision card; the \
+                 page itself does not change until they accept it.",
             );
         }
         return Ok(SteepClaim {
@@ -1266,10 +1286,15 @@ pub async fn commit(
             numbered.len()
         )));
     }
-    // A note written from code alone has no numbered source to check against;
-    // the citation check then only refuses markers that point nowhere.
-    let checked = !snapshot.sources.is_empty() || code_rows.is_empty();
-    if checked && (stats.verified == 0 || stats.unverified > stats.verified) {
+    // A sentence corrected for the code carries no [n], so a rewrite for code
+    // need not cite at all: only the markers it does carry must match their
+    // source. A rewrite from sources must cite.
+    let too_few = if code_rows.is_empty() {
+        stats.verified == 0 || stats.unverified > stats.verified
+    } else {
+        stats.unverified > stats.verified
+    };
+    if too_few {
         return Err(SteepError::CitationGate(format!(
             "the rewrite was not saved: too few cited sentences match their source \
              ({}). Cite each claim with the number of the source that says it, like [1], \
@@ -1294,8 +1319,9 @@ pub async fn commit(
         agent,
         space_guard,
         snapshot.fence.source_revision,
-        // A note rewritten for its code is not stale by its sources.
-        code_rows.is_empty(),
+        // A note rewritten for its code is not stale by its sources, and is
+        // a card only when a person edited it.
+        (!code_rows.is_empty()).then(|| page.as_ref().is_some_and(|page| owned(page, true))),
         knowledge_path,
         Some((citations_json, stats.summary())),
     )
