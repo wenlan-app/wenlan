@@ -421,6 +421,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // A steep commit returns a receipt only (outcome, card id, citation
     // counts); the list and the claim are in the sensitive catalog instead.
     "/api/steep/commit",
+    // A new-note commit returns a receipt only (outcome, note id and title,
+    // citation counts); the list and the claim are in the sensitive catalog.
+    "/api/steep/new/commit",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

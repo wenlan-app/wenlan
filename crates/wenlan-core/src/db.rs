@@ -90,6 +90,7 @@ mod source_sync;
 mod space_context;
 mod space_rename;
 mod steep;
+mod steep_new;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};

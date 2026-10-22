@@ -37,7 +37,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 /// the caller fixes the text and commits again), 400 for a malformed ask.
 /// Steep's own refusals lead with their code (`steep_changed: ...`) so the
 /// MCP client can hand the reason to the agent, which acts on it.
-fn steep_error(error: SteepError) -> ServerError {
+pub(crate) fn steep_error(error: SteepError) -> ServerError {
     let message = match error.code() {
         Some(code) => format!("{code}: {error}"),
         None => error.to_string(),
