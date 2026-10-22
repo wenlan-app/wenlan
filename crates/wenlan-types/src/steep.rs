@@ -75,6 +75,15 @@ pub struct SteepWorklistResponse {
     /// Pass back as `cursor` for the next page; `None` on the last page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Items of material in the caller's scope that no note uses yet
+    /// (`GET /api/steep/new`). Steep writes notes from them before it brings
+    /// the notes above up to date.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub new_total: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// One numbered source in a claim. The rewrite cites it as `[n]`.

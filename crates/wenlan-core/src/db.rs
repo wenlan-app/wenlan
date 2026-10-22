@@ -3618,6 +3618,9 @@ pub struct DistillationCluster {
     pub entity_name: Option<String>,
     pub space: Option<String>,
     pub estimated_tokens: usize,
+    /// Daemon-side matching only. Never sent to a caller: a few hundred floats
+    /// per cluster made the distill reply too big for an AI tool to read.
+    #[serde(skip_serializing)]
     pub centroid_embedding: Option<Vec<f32>>,
 }
 

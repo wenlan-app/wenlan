@@ -78,8 +78,8 @@ The daemon stays the single writer and storage owner. Claude does the thinking.
 - `/handoff` - end-of-session debrief: captures, session log, Brief update
 - `/wenlan setup` - set up or repair Wenlan (installs the local runtime)
 - `/wenlan lint [deep|repair] [scope]` - diagnose, or resolve all findings safely
-- `/wenlan distill [t]` - synthesize or refresh source-backed pages for the active Space
-- `/wenlan steep [space:<name>]` - bring out of date pages up to date with this AI tool (steep on demand)
+- `/wenlan distill [t]` - advanced: cluster memories into pages by hand, or rebuild one page
+- `/wenlan steep [space:<name>]` - write pages from new material and bring out of date ones up to date with this AI tool (steep on demand)
 - `/wenlan wiki [space:<name>]` - read this repository and write a small wiki about it, a few orientation notes each tied to the code lines they rely on
 - `/wenlan pages [q]` - browse and open distilled pages
 - `/wenlan curate <surface>` - deep audit of captures, revisions or refinements

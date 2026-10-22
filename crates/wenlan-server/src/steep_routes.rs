@@ -121,10 +121,16 @@ pub async fn handle_steep_worklist(
         judge_code,
     )
     .await?;
+    // Best effort: a failed count leaves the list as it was.
+    let new_total = wenlan_core::steep_new::new_material_count(&db, &scope)
+        .await
+        .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+        .unwrap_or(0);
     Ok(Json(SteepWorklistResponse {
         items: list.items,
         total: list.total,
         next_cursor: list.next_cursor,
+        new_total,
     }))
 }
 
