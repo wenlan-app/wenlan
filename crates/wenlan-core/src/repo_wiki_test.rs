@@ -36,6 +36,33 @@ fn page(id: &str, title: &str, content: &str) -> Page {
     }
 }
 
+/// Anchors for `code_bases`, taken from `texts` (path to the file's text as
+/// the page's writer read it).
+fn anchors_for(
+    code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
+    texts: &[(&str, &str)],
+) -> CodeAnchors {
+    let mut out = CodeAnchors::new();
+    for (page_id, locators) in code_bases {
+        for locator in locators {
+            let text = texts
+                .iter()
+                .find(|(path, _)| *path == locator.path)
+                .unwrap()
+                .1;
+            let span = crate::code_anchor::LineSpan {
+                start: locator.line_start,
+                end: locator.line_end,
+            };
+            out.insert(
+                anchor_key(page_id, locator),
+                crate::code_anchor::anchor(text, span).unwrap(),
+            );
+        }
+    }
+    out
+}
+
 fn locator(root: &str, path: &str, start: u32, end: u32) -> CodeBasisLocator {
     CodeBasisLocator {
         repo_root: root.to_string(),
@@ -251,6 +278,14 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
         &code_bases,
         &root,
     );
+    // The page about main.rs was written against the uncommitted version.
+    let anchors = anchors_for(
+        &code_bases,
+        &[
+            ("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n"),
+            ("src/main.rs", "fn main() { run() }\n"),
+        ],
+    );
     let concept_paths = ConceptPathMap::new();
     let worktree = dir.path().join("data/repo-wiki/site");
     let publish_once = |pages: Vec<Page>| {
@@ -259,6 +294,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
             pages,
             left_out,
             code_bases: &code_bases,
+            anchors: &anchors,
             concept_paths: &concept_paths,
             worktree: worktree.clone(),
             gh: None,
@@ -313,6 +349,18 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     // Nothing new: the open branch already holds this tree.
     let second = publish_once(pages.clone());
     assert_eq!(second.status, RepoWikiPublishStatus::NoChanges);
+
+    // A local edit that shifts the cited lines does not pull a published page
+    // back: its lines are still found on the default branch.
+    std::fs::write(
+        clone.join("src/lib.rs"),
+        "// local note\nfn a() {}\nfn b() {}\nfn c() {}\n",
+    )
+    .unwrap();
+    let shifted = publish_once(pages.clone());
+    assert_eq!(shifted.status, RepoWikiPublishStatus::NoChanges);
+    assert_eq!((shifted.pages, shifted.waiting), (1, 1));
+    sh(&clone, &["checkout", "--quiet", "--", "src/lib.rs"]);
 
     // Merged: the default branch holds it, so there is nothing to offer.
     sh(&clone, &["fetch", "--quiet", "origin"]);
@@ -370,6 +418,10 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
         pages: vec![page("p1", "Module map", "x")],
         left_out: 0,
         code_bases: &code_bases,
+        anchors: &anchors_for(
+            &code_bases,
+            &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+        ),
         concept_paths: &ConceptPathMap::new(),
         worktree: dir.path().join("data/repo-wiki/site"),
         gh: None,
@@ -399,6 +451,7 @@ fn publish_with_no_selected_pages_does_nothing() {
         pages: vec![],
         left_out: 4,
         code_bases: &HashMap::new(),
+        anchors: &CodeAnchors::new(),
         concept_paths: &ConceptPathMap::new(),
         worktree: dir.path().join("wt"),
         gh: None,

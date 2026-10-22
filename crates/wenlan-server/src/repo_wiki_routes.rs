@@ -190,6 +190,16 @@ pub(crate) async fn publish_space(
             .await
             .map_err(|e| ServerError::Internal(e.to_string()))?,
     );
+    let anchors: repo_wiki::CodeAnchors = db
+        .list_code_basis_rows(Some(space))
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .into_iter()
+        .map(|row| {
+            let locator = wenlan_types::code_basis::CodeBasisLocator::from(&row.reference);
+            (repo_wiki::anchor_key(&row.page_id, &locator), row.anchor)
+        })
+        .collect();
     let (pages, left_out) = repo_wiki::select_pages(pages, &code_bases, &binding.repo_root);
     let now = chrono::Utc::now().timestamp();
     let space = space.to_owned();
@@ -199,6 +209,7 @@ pub(crate) async fn publish_space(
             pages,
             left_out,
             code_bases: &code_bases,
+            anchors: &anchors,
             concept_paths: &concept_paths,
             worktree: repo_wiki::worktree_for(&space),
             gh: repo_wiki::find_gh(),

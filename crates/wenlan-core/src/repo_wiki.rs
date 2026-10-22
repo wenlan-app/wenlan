@@ -13,6 +13,7 @@
 //! with memory sources or `[n]` citations, or with no code basis in this
 //! repository, stays in Wenlan, because a repository is often public.
 
+use crate::code_anchor::{self, CodeAnchor, LineSpan, Relocation};
 use crate::error::WenlanError;
 use crate::export::okf::{export_okf_for_repository, ConceptPathMap};
 use crate::pages::Page;
@@ -409,12 +410,28 @@ pub fn find_gh() -> Option<PathBuf> {
 }
 
 /// What a publish needs besides the binding.
+/// Code basis anchors by [`anchor_key`].
+pub type CodeAnchors = HashMap<(String, String, u32, u32), CodeAnchor>;
+
+/// The key of one code basis of `page_id` in [`CodeAnchors`].
+pub fn anchor_key(page_id: &str, locator: &CodeBasisLocator) -> (String, String, u32, u32) {
+    (
+        page_id.to_owned(),
+        locator.path.clone(),
+        locator.line_start,
+        locator.line_end,
+    )
+}
+
 pub struct PublishInput<'a> {
     pub binding: &'a RepoWikiBinding,
     /// Selected pages ([`select_pages`]).
     pub pages: Vec<Page>,
     pub left_out: usize,
     pub code_bases: &'a HashMap<String, Vec<CodeBasisLocator>>,
+    /// The anchor of each code basis ([`anchor_key`]), to find its lines in
+    /// the remote's default branch.
+    pub anchors: &'a CodeAnchors,
     pub concept_paths: &'a ConceptPathMap,
     /// Folder for this Space's worktree (under [`worktrees_root`]).
     pub worktree: PathBuf,
@@ -494,22 +511,15 @@ fn prepare_worktree(repo: &Path, worktree: &Path, base: &str) -> Result<(), Wenl
     Ok(())
 }
 
-/// Whether `path` in the working copy of `repo` has the same content as on
-/// `origin/<base>`.
-fn file_matches_base(repo: &Path, base: &str, path: &str) -> bool {
-    let mut remote = git(repo);
-    remote.args([
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        &format!("origin/{base}:{path}"),
-    ]);
-    let mut local = git(repo);
-    local.args(["hash-object", "--", path]);
-    match (run(remote, "git rev-parse"), run(local, "git hash-object")) {
-        (Ok(remote), Ok(local)) => remote.trim() == local.trim(),
-        _ => false,
+/// The text of `path` on `origin/<base>` in `repo`, if it is there.
+fn base_file(repo: &Path, base: &str, path: &str) -> Option<String> {
+    let mut command = git(repo);
+    command.args(["show", &format!("origin/{base}:{path}")]);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
     }
+    String::from_utf8(output.stdout).ok()
 }
 
 /// Remove this Space's worktree from `repo_root`'s worktree list and from
@@ -598,26 +608,62 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
     let base = remote_default_branch(&repo);
     prepare_worktree(&repo, &input.worktree, &base)?;
 
-    // A page's line numbers were read from the working copy; the pull request
-    // is built on the remote's default branch. A page citing a file that
-    // differs between the two waits until that code is pushed.
-    let mut matches_base: HashMap<String, bool> = HashMap::new();
-    let (pages, held): (Vec<Page>, Vec<Page>) = input.pages.into_iter().partition(|page| {
-        input
+    // A page's lines were read from the working copy; the pull request is
+    // built on the remote's default branch. Each code basis is looked up there
+    // by its anchor: found, the published page cites the lines it has there;
+    // not found (code not pushed yet, or changed since), the page waits.
+    let mut base_files: HashMap<String, Option<String>> = HashMap::new();
+    let mut published_bases: HashMap<String, Vec<CodeBasisLocator>> = HashMap::new();
+    let mut ready = Vec::new();
+    let mut held = 0;
+    for page in input.pages {
+        let mut spans = Vec::new();
+        let mut found = true;
+        for locator in input
             .code_bases
             .get(&page.id)
             .map(Vec::as_slice)
             .unwrap_or_default()
-            .iter()
-            .filter(|locator| same_root(&locator.repo_root, &binding.repo_root))
-            .all(|locator| {
-                *matches_base
-                    .entry(locator.path.clone())
-                    .or_insert_with(|| file_matches_base(&repo, &base, &locator.path))
-            })
-    });
-    waiting.set(held.len());
-    if pages.is_empty() {
+        {
+            if !same_root(&locator.repo_root, &binding.repo_root) {
+                continue;
+            }
+            let text = base_files
+                .entry(locator.path.clone())
+                .or_insert_with(|| base_file(&repo, &base, &locator.path));
+            match (
+                text.as_deref(),
+                input.anchors.get(&anchor_key(&page.id, locator)),
+            ) {
+                (Some(text), Some(anchor)) => match code_anchor::relocate(
+                    text,
+                    Some(LineSpan {
+                        start: locator.line_start,
+                        end: locator.line_end,
+                    }),
+                    anchor,
+                ) {
+                    Relocation::Unchanged { span } | Relocation::Moved { span } => {
+                        spans.push(CodeBasisLocator {
+                            line_start: span.start,
+                            line_end: span.end,
+                            ..locator.clone()
+                        });
+                    }
+                    Relocation::Changed { .. } | Relocation::Unresolved => found = false,
+                },
+                _ => found = false,
+            }
+        }
+        if found {
+            published_bases.insert(page.id.clone(), spans);
+            ready.push(page);
+        } else {
+            held += 1;
+        }
+    }
+    waiting.set(held);
+    if ready.is_empty() {
         return Ok(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
@@ -627,11 +673,10 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         ));
     }
 
-    let pages: Vec<Page> = pages
+    let pages: Vec<Page> = ready
         .into_iter()
         .map(|mut page| {
-            let locators = input
-                .code_bases
+            let locators = published_bases
                 .get(&page.id)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
@@ -641,7 +686,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         .collect();
     let target = input.worktree.join(&folder);
     let target_existed = target.exists();
-    let stats = export_okf_for_repository(&pages, &target, input.concept_paths, input.code_bases)
+    let stats = export_okf_for_repository(&pages, &target, input.concept_paths, &published_bases)
         .map_err(|error| match error {
         WenlanError::Conflict(message) if target_existed => WenlanError::Conflict(format!(
             "{message}. `{folder}/` in the repository holds files Wenlan did not write; \
