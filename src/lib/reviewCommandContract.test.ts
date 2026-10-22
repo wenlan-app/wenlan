@@ -41,6 +41,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "add_watch_path",
   "archive_page",
   "approve_remote_pairing",
+  "bind_repo_wiki",
   "cancel_guarded_quit_request",
   "connect_source",
   "configure_remote_access",
@@ -109,6 +110,9 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "open_search_result",
   "open_tool_with_prompt",
   "position_quick_capture",
+  // Binding a Space to a git repository, and pushing to it, need a real
+  // daemon with git and gh; the fixture answers only that none is bound.
+  "publish_repo_wiki",
   "quick_capture",
   "quit_wenlan_full",
   "read_source_dir",
@@ -153,6 +157,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "test_external_llm",
   "test_remote_mcp_connection",
   "toggle_remote_access",
+  "unbind_repo_wiki",
   "update_agent",
   "update_chunk",
   "update_profile",
