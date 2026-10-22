@@ -44,9 +44,15 @@ export function askAiCommand(
   words: { readonly example: string; readonly sentence: string },
 ): string {
   if (tool === "other") return words.sentence;
-  if (task.command === null) return words.example;
-  if (task.command.startsWith("/")) return task.command;
-  return `${FRONT_DOOR[tool]} ${task.command}`;
+  const text = task.command === null ? words.example : task.command;
+  if (text.startsWith("/")) return skillCall(text, tool);
+  return `${FRONT_DOOR[tool]} ${text}`;
+}
+
+/** Codex calls a plugin skill with `$`; a leading `/` there is Codex's own
+ *  built-in command and would do nothing. */
+function skillCall(text: string, tool: Exclude<AskAiTool, "other">): string {
+  return tool === "codex" ? `$${text.slice(1)}` : text;
 }
 
 export function askAiTasksFor(tool: AskAiTool): AskAiTask[] {

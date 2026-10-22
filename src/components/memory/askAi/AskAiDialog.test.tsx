@@ -66,7 +66,8 @@ describe("AskAiDialog", () => {
     await waitFor(() => expect(screen.getByTestId("ask-ai-tab-codex")).toHaveAttribute("aria-selected", "true"));
     expect(command("steep")).toBe("$wenlan steep");
     expect(command("wiki")).toBe("$wenlan wiki");
-    expect(command("brief")).toBe("/brief");
+    expect(command("brief")).toBe("$brief");
+    expect(command("recall")).toBe("$recall how we chose the database");
 
     fireEvent.click(screen.getByTestId("ask-ai-tab-claude"));
     expect(command("steep")).toBe("/wenlan steep");
