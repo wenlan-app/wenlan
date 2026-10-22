@@ -9,7 +9,7 @@ export type AskAiTool = "claude" | "codex" | "other";
 
 export const ASK_AI_TOOLS: readonly AskAiTool[] = ["claude", "codex", "other"];
 
-export type AskAiTaskId = "capture" | "recall" | "brief" | "steep" | "distill" | "wiki";
+export type AskAiTaskId = "capture" | "recall" | "brief" | "steep" | "wiki";
 
 export interface AskAiTask {
   readonly id: AskAiTaskId;
@@ -26,7 +26,6 @@ export const ASK_AI_TASKS: readonly AskAiTask[] = [
   { id: "recall", group: "daily", command: null },
   { id: "brief", group: "daily", command: "/brief" },
   { id: "steep", group: "sometimes", command: "steep" },
-  { id: "distill", group: "sometimes", command: "distill" },
   { id: "wiki", group: "sometimes", command: "wiki", skillOnly: true },
 ];
 

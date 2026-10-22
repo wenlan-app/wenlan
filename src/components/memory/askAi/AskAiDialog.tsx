@@ -4,7 +4,6 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import {
   ArrowsClockwise,
-  BookOpen,
   Check,
   Code,
   Copy,
@@ -32,7 +31,6 @@ const ICONS: Record<AskAiTaskId, React.ReactNode> = {
   recall: <MagnifyingGlass weight="regular" />,
   brief: <Play weight="regular" />,
   steep: <ArrowsClockwise weight="regular" />,
-  distill: <BookOpen weight="regular" />,
   wiki: <Code weight="regular" />,
 };
 

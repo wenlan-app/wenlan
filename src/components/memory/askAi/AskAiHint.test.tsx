@@ -14,7 +14,7 @@ import {
 } from "../../../lib/tauri";
 import { AskAiHint } from "./AskAiHint";
 import { ConnectedHint } from "./ConnectedHint";
-import { DistillHint, distillHintSource } from "./DistillHint";
+import { ImportHint, importHintSource } from "./ImportHint";
 
 vi.mock("../../../lib/tauri", () => ({
   clipboardWrite: vi.fn(),
@@ -60,13 +60,13 @@ function wrap(children: ReactNode) {
   return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
-describe("distillHintSource", () => {
-  it("offers distilling only On demand, for a source with memories, before any page is written from memories", () => {
-    expect(distillHintSource([source()], [authored], true)?.id).toBe("src-1");
-    expect(distillHintSource([source()], [authored], false)).toBeNull();
-    expect(distillHintSource([source()], [authored], undefined)).toBeNull();
-    expect(distillHintSource([source()], [distilled], true)).toBeNull();
-    expect(distillHintSource([source({ memory_count: 0 })], [], true)).toBeNull();
+describe("importHintSource", () => {
+  it("offers steeping only On demand, for a source with memories, before any page is written from memories", () => {
+    expect(importHintSource([source()], [authored], true)?.id).toBe("src-1");
+    expect(importHintSource([source()], [authored], false)).toBeNull();
+    expect(importHintSource([source()], [authored], undefined)).toBeNull();
+    expect(importHintSource([source()], [distilled], true)).toBeNull();
+    expect(importHintSource([source({ memory_count: 0 })], [], true)).toBeNull();
   });
 });
 
@@ -90,24 +90,24 @@ describe("ask-AI hints", () => {
       <AskAiHint task="steep" lead="Waiting." testId="steep-hint" />
       <AskAiHint task="wiki" lead="No pages." testId="wiki-hint" />
     </>);
-    await waitFor(() => expect(screen.getByTestId("steep-hint")).toHaveTextContent("Use Wenlan to update stale pages"));
+    await waitFor(() => expect(screen.getByTestId("steep-hint")).toHaveTextContent("Use Wenlan to write new pages and update stale ones"));
     expect(screen.queryByTestId("wiki-hint")).toBeNull();
   });
 
-  it("stays closed after the user closes the distill hint", async () => {
+  it("names steep after an import and stays closed once the user closes it", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listRegisteredSources).mockResolvedValue([source()]);
     vi.mocked(getBackgroundAiEnabled).mockResolvedValue(false);
-    const { unmount } = wrap(<DistillHint pages={[]} />);
-    const hint = await screen.findByTestId("ask-ai-hint-distill");
-    expect(hint).toHaveTextContent("Vault is in. To turn it into pages, type /wenlan distill");
+    const { unmount } = wrap(<ImportHint pages={[]} />);
+    const hint = await screen.findByTestId("ask-ai-hint-import");
+    expect(hint).toHaveTextContent("Vault is in. To turn it into pages, type /wenlan steep");
     fireEvent.click(screen.getByRole("button", { name: "Hide" }));
-    expect(screen.queryByTestId("ask-ai-hint-distill")).toBeNull();
+    expect(screen.queryByTestId("ask-ai-hint-import")).toBeNull();
     unmount();
 
-    wrap(<DistillHint pages={[]} />);
+    wrap(<ImportHint pages={[]} />);
     await waitFor(() => expect(listRegisteredSources).toHaveBeenCalledTimes(2));
-    expect(screen.queryByTestId("ask-ai-hint-distill")).toBeNull();
+    expect(screen.queryByTestId("ask-ai-hint-import")).toBeNull();
   });
 
   it("opens the full list from the connected hint", async () => {

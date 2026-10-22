@@ -9,7 +9,7 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
-import { DistillHint } from "../askAi/DistillHint";
+import { ImportHint } from "../askAi/ImportHint";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -68,7 +68,7 @@ export function PagesOverview({
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
       {gettingStarted}
-      <DistillHint pages={pages} />
+      <ImportHint pages={pages} />
       {adding ? <AddSourceMenu onClose={() => setAdding(false)} /> : null}
     </section>
   );

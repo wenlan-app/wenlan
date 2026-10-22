@@ -69,7 +69,7 @@ describe("AskAiDialog", () => {
     expect(command("brief")).toBe("/brief");
 
     fireEvent.click(screen.getByTestId("ask-ai-tab-claude"));
-    expect(command("distill")).toBe("/wenlan distill");
+    expect(command("steep")).toBe("/wenlan steep");
     expect(command("capture")).toBe("/capture we switched to SQLite");
   });
 
@@ -78,7 +78,7 @@ describe("AskAiDialog", () => {
     renderDialog();
 
     await waitFor(() => expect(screen.getByTestId("ask-ai-tab-other")).toHaveAttribute("aria-selected", "true"));
-    expect(command("steep")).toBe("Use Wenlan to update stale pages");
+    expect(command("steep")).toBe("Use Wenlan to write new pages and update stale ones");
     expect(screen.queryByTestId("ask-ai-task-wiki")).toBeNull();
   });
 

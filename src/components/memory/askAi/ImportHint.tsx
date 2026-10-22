@@ -10,10 +10,10 @@ function sourceName(source: RegisteredSource): string {
   return parts[parts.length - 1] ?? source.path;
 }
 
-/** The source to offer distilling for: one that brought memories in while no
+/** The source to offer steeping for: one that brought memories in while no
  *  page has been written from memories yet. On demand only, since Automatic
  *  mode writes those pages itself. */
-export function distillHintSource(
+export function importHintSource(
   sources: readonly RegisteredSource[],
   pages: readonly Page[],
   onDemand: boolean | undefined,
@@ -24,8 +24,9 @@ export function distillHintSource(
 }
 
 /** After a folder, Obsidian vault or Logseq graph comes in, say how to have
- *  the AI tool turn it into pages. */
-export function DistillHint({ pages }: { readonly pages: readonly Page[] }) {
+ *  the AI tool turn it into pages. Steep writes new pages before it updates
+ *  stale ones, so it is the one command to name here. */
+export function ImportHint({ pages }: { readonly pages: readonly Page[] }) {
   const { t } = useTranslation();
   const onDemand = useSteepOnDemand();
   const sources = useQuery({
@@ -33,14 +34,14 @@ export function DistillHint({ pages }: { readonly pages: readonly Page[] }) {
     queryFn: listRegisteredSources,
     refetchOnWindowFocus: true,
   });
-  const source = distillHintSource(sources.data ?? [], pages, onDemand);
-  const [dismissed, dismiss] = useHintDismissed(`distill:${source?.id ?? ""}`);
+  const source = importHintSource(sources.data ?? [], pages, onDemand);
+  const [dismissed, dismiss] = useHintDismissed(`import:${source?.id ?? ""}`);
   if (!source || dismissed) return null;
   return (
     <AskAiHint
-      task="distill"
-      testId="ask-ai-hint-distill"
-      lead={t("askAi.hints.distill", { name: sourceName(source) })}
+      task="steep"
+      testId="ask-ai-hint-import"
+      lead={t("askAi.hints.imported", { name: sourceName(source) })}
       onDismiss={dismiss}
     />
   );
