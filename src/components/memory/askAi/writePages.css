@@ -39,6 +39,9 @@
   margin: 0;
   color: var(--mem-text-secondary);
   font: 13.5px/1.5 var(--mem-font-body);
+  /* Chinese breaks at the list's 、 and spaces, not inside a word. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .write-pages-hint {

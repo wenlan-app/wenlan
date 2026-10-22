@@ -204,18 +204,16 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   });
 
   const written = run ? pagesWrittenSince(pages, run.startedAt) : [];
-  const signature = `${list.data?.total ?? ""}:${list.data?.held ?? 0}:${written.length}`;
-  const [lastChangeAt, setLastChangeAt] = useState(() => {
-    const newest = written.map((page) => pageCreatedMs(page) ?? 0);
-    return Math.max(run?.startedAt ?? 0, ...newest, 0);
-  });
-  const lastSignature = useRef(signature);
-  const lastTotal = useRef(list.data?.total);
+  // When the tool last did something: the newest page it wrote, by that
+  // page's own birth time (so reopening the home later does not restart the
+  // quiet clock), or the last time it was seen holding material.
+  const held = list.data?.held ?? 0;
+  const [heldSeenAt, setHeldSeenAt] = useState(0);
   useEffect(() => {
-    if (signature === lastSignature.current) return;
-    lastSignature.current = signature;
-    setLastChangeAt(Date.now());
-  }, [signature]);
+    if (held > 0) setHeldSeenAt(Date.now());
+  }, [held, list.dataUpdatedAt]);
+  const lastChangeAt = Math.max(run?.startedAt ?? 0, heldSeenAt, ...written.map((page) => pageCreatedMs(page) ?? 0));
+  const lastTotal = useRef(list.data?.total);
 
   // A page the tool wrote takes its material out of the list, whether or not
   // the run started here. The Wiki's own page list does not poll, so read it
@@ -277,7 +275,6 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     if (command === null) return;
     const startedAt = Date.now();
     setNow(startedAt);
-    setLastChangeAt(startedAt);
     const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null };
     setRun(begun);
     if (opensTool && tool) {
@@ -415,16 +412,21 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
                   disabled={state.command === null}
                   onClick={() => void state.start()}
                 >
-                  {t("askAi.writePages.ask")}
+                  {/* Worded like the checklist step, so both places say the same. */}
+                  {state.opensTool
+                    ? t("askAi.writePages.askIn", { tool: state.tool.name })
+                    : t("askAi.writePages.copyCommand")}
                 </button>
-                <button
-                  type="button"
-                  className="write-pages-link"
-                  disabled={state.command === null}
-                  onClick={() => void state.copyCommand()}
-                >
-                  {state.copied ? t("askAi.copied") : t("askAi.writePages.copyCommand")}
-                </button>
+                {state.opensTool ? (
+                  <button
+                    type="button"
+                    className="write-pages-link"
+                    disabled={state.command === null}
+                    onClick={() => void state.copyCommand()}
+                  >
+                    {state.copied ? t("askAi.copied") : t("askAi.writePages.copyCommand")}
+                  </button>
+                ) : null}
               </>
             ) : (
               <>

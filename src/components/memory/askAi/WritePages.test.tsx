@@ -145,7 +145,7 @@ describe("WritePagesLine", () => {
     wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("Your material is in: 12 notes, 6 chats, and 4 files. None of it is in a page yet.");
-    const ask = screen.getByRole("button", { name: "Ask AI to write pages" });
+    const ask = screen.getByRole("button", { name: "Write with Claude Code" });
     expect(ask).toHaveAttribute("title", expect.stringContaining("Opens Claude Code with the command typed in."));
     fireEvent.click(ask);
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
@@ -166,7 +166,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
     wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Ask AI to write pages" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Write with Codex" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is copied. Paste it into Codex"));
     expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
@@ -182,7 +182,7 @@ describe("WritePagesLine", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use local model" }));
     expect(onConnectTool).toHaveBeenCalled();
     expect(onUseLocalModel).toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: "Ask AI to write pages" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Write with/ })).toBeNull();
   });
 
   it("stays closed once the user closes it", async () => {
