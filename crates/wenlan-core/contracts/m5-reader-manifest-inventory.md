@@ -1094,7 +1094,7 @@ carrying the authority of agreement.
 | `core/db.rs::find_growable_page_scoped` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::find_matching_page_scoped` | `pub` | no | no | — | `core/db.rs::find_matching_page_with_policy` |
 | `core/db.rs::folded_title_owners_scoped` | `pub(crate)` | no | no | — | `core/db.rs::folded_title_owners_scoped_on_conn` |
-| `core/db.rs::get_page` | `pub` | no | **yes** | `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error` | `core/db.rs::get_page_inner` |
+| `core/db.rs::get_page` | `pub` | no | **yes** | `server/page_map_routes.rs::ensure_page_is_active`, `server/page_map_routes.rs::visible_page`, `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_update_page`, `server/page_routes.rs::space_locked_write_error`, `server/steep_routes.rs::handle_steep_commit` | `core/db.rs::get_page_inner` |
 | `core/db.rs::get_page_browse` | `pub` | no | no | — | `core/db.rs::get_page_inner` |
 | `core/db.rs::graph_stream_touches` | `pub` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/db.rs::insert_document_source_page_at_hash` | `pub(crate)` | no | no | — | `core/db.rs::insert_page_with_kind_inner` |
@@ -1355,6 +1355,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_recent_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` |
 | `server/routes.rs::handle_search_inner` | `private` | no | no | `server/routes.rs::handle_search` | `core/db.rs::search_memory` |
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
+| `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::list_work`, `core/steep.rs::waiting_page_ids` |
 
 ### Depth 3 — outer consumers — route handlers and orchestration

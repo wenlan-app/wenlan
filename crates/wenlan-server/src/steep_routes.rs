@@ -145,6 +145,7 @@ pub async fn handle_steep_claim(
 /// claim. The same token twice returns the first result.
 pub async fn handle_steep_commit(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<SteepCommitRequest>,
 ) -> Result<Json<SteepCommitResponse>, ServerError> {
     let (db, page_root) = {
@@ -154,15 +155,45 @@ pub async fn handle_steep_commit(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    // The tool committing is named on the page's history and on a revision
+    // card, as for write_page. Only the header counts.
+    let agent = headers
+        .get("x-agent-name")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let session = crate::session_routes::extract_session_ref(&headers);
+    let write_started_at = chrono::Utc::now().timestamp();
     let done = wenlan_core::steep::commit(
         &db,
         &req.token,
         &req.action,
         req.content.as_deref(),
         page_root.as_deref(),
+        agent.as_deref(),
     )
     .await
     .map_err(steep_error)?;
+    // The conversation behind the rewrite, recorded on the version it wrote.
+    // Best effort, as for write_page: the page is already written.
+    if let (Some(session), "written", false) = (&session, done.outcome, done.replayed) {
+        let space = db
+            .get_page(&done.page_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|p| p.space);
+        if let Err(error) = db
+            .stamp_page_history_session(&done.page_id, write_started_at, session, space.as_deref())
+            .await
+        {
+            tracing::warn!(
+                "[session] failed to stamp page {} with {session}: {error}",
+                done.page_id
+            );
+        }
+    }
     Ok(Json(SteepCommitResponse {
         page_id: done.page_id,
         outcome: done.outcome.to_string(),

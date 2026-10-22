@@ -4,7 +4,8 @@
 use rmcp::model::CallToolResult;
 use wenlan_mcp::client::WenlanClient;
 use wenlan_mcp::tools::{
-    CaptureParams, TransportMode, UpdateBriefParams, WenlanMcpServer, WritePageParams,
+    CaptureParams, SteepAction, SteepParams, TransportMode, UpdateBriefParams, WenlanMcpServer,
+    WritePageParams,
 };
 use wenlan_types::responses::StoreMemoryResponse;
 use wiremock::matchers::{method, path};
@@ -313,4 +314,45 @@ async fn write_page_and_update_brief_carry_the_session() {
         .filter(|r| r.url.path() == "/api/sessions")
         .count();
     assert_eq!(announcements, 1, "one announcement per session per process");
+}
+
+#[tokio::test]
+async fn a_steep_rewrite_carries_the_session() {
+    let _guard = ENV_LOCK.lock().await;
+    clear_env();
+    let mock = MockServer::start().await;
+    mount_daemon(&mock).await;
+    Mock::given(method("POST"))
+        .and(path("/api/steep/commit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "page_id": "page_1", "outcome": "written", "replayed": false
+        })))
+        .mount(&mock)
+        .await;
+    let server = server(&mock, TransportMode::Stdio);
+
+    let result = server
+        .steep_impl(SteepParams {
+            action: SteepAction::Commit,
+            page_id: None,
+            token: Some("stp_x".into()),
+            content: Some("body [1]".into()),
+            limit: None,
+            cursor: None,
+            space: None,
+            session: Some("claude-code:abc-123".into()),
+        })
+        .await
+        .unwrap();
+    assert!(is_ok(&result), "{result:?}");
+
+    let requests = sent(&mock).await;
+    let commit = requests
+        .iter()
+        .find(|r| r.url.path() == "/api/steep/commit")
+        .unwrap();
+    assert_eq!(
+        session_header(commit).as_deref(),
+        Some("claude-code:abc-123")
+    );
 }

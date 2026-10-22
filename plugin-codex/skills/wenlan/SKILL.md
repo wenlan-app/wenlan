@@ -68,7 +68,7 @@ Match the request to one row. Old command words count as their row.
 |---|---|---|
 | Set up, repair, upgrade, check it works | setup | `$wenlan setup`, `$wenlan 好像壞了` |
 | Turn memories into notes, refresh notes, rebuild one note | distill | `$wenlan distill`, `$wenlan 整理成筆記` |
-| Bring out of date notes up to date now, with this AI tool | steep | `$wenlan steep`, `$wenlan 沉澱`, `$wenlan 把過期的筆記更新` |
+| Bring out of date pages up to date now, with this AI tool | steep | `$wenlan steep`, `$wenlan 沉澱`, `$wenlan 把過期的筆記更新` |
 | Get to know this repository; write or refresh its orientation notes | map | `$wenlan map`, `$wenlan 認識這個倉庫`, `$wenlan 畫個地圖` |
 | List, find, open or print a note | pages | `$wenlan pages release`, `$wenlan 打開那篇筆記` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `$wenlan lint`, `$wenlan lint repair`, `$wenlan 檢查重複` |

@@ -826,11 +826,18 @@ async fn update_page_db_impl(
     let carries_basis = basis.minor
         || !basis.marks.is_empty()
         || basis.confirm.is_some()
-        || !basis.code_basis.is_empty()
-        || basis.space_guard.is_some();
+        || !basis.code_basis.is_empty();
     if carries_basis && (page_growth.is_some() || user_forced || require_stale) {
         return Err(WenlanError::Validation(
             "a basis or minor flag rides only an agent refresh or a human save".into(),
+        ));
+    }
+    // A Space guard only narrows where a write may land. Besides an agent
+    // refresh, it rides an on-demand steep rewrite, which is a stale rebuild
+    // an agent asked for.
+    if basis.space_guard.is_some() && (page_growth.is_some() || user_forced) {
+        return Err(WenlanError::Validation(
+            "a Space guard rides only an agent's write or a human save".into(),
         ));
     }
     // Preserve mode derives provenance from the Page generation inside the

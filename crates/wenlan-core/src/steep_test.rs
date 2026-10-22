@@ -63,7 +63,7 @@ async fn claim_then_rewrite_lands_body_citations_and_clears_staleness() {
     assert_eq!(claim.sources[0].memory_id, "mem_a");
     let token = claim.token.unwrap();
 
-    let done = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let done = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap();
     assert_eq!(done.outcome, "written");
@@ -76,7 +76,7 @@ async fn claim_then_rewrite_lands_body_citations_and_clears_staleness() {
     assert_eq!(db.steep_leases().holder_of("page_t"), None);
 
     // The same token again replays the first result instead of writing twice.
-    let again = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let again = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap();
     assert!(again.replayed);
@@ -96,7 +96,7 @@ async fn a_source_removed_after_the_claim_refuses_the_commit() {
 
     db.delete_by_source_id("memory", "mem_b").await.unwrap();
 
-    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap_err();
     assert!(matches!(error, SteepError::Changed(_)), "{error:?}");
@@ -127,7 +127,7 @@ async fn a_source_edited_after_the_claim_refuses_the_commit() {
         .unwrap();
     }
 
-    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap_err();
     assert!(matches!(error, SteepError::Changed(_)), "{error:?}");
@@ -146,7 +146,7 @@ async fn a_new_stale_mark_after_the_claim_is_not_erased() {
 
     db.set_page_stale("page_t", "source_updated").await.unwrap();
 
-    let error = commit(&db, &token, STEEP_ACTION_STILL_ACCURATE, None, None)
+    let error = commit(&db, &token, STEEP_ACTION_STILL_ACCURATE, None, None, None)
         .await
         .unwrap_err();
     assert!(matches!(error, SteepError::Changed(_)), "{error:?}");
@@ -170,7 +170,7 @@ async fn a_human_edit_after_the_claim_refuses_the_commit() {
         .await
         .unwrap();
 
-    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap_err();
     assert!(matches!(error, SteepError::Changed(_)), "{error:?}");
@@ -208,6 +208,7 @@ async fn a_note_the_user_wrote_becomes_a_revision_card() {
         STEEP_ACTION_REWRITE,
         Some(BODY_A),
         None,
+        Some("claude-code"),
     )
     .await
     .unwrap();
@@ -253,12 +254,12 @@ async fn a_removed_source_is_rewritten_out_and_never_waved_through() {
     assert_eq!(claim.sources.len(), 1, "only the survivor is numbered");
     let token = claim.token.unwrap();
 
-    let error = commit(&db, &token, STEEP_ACTION_STILL_ACCURATE, None, None)
+    let error = commit(&db, &token, STEEP_ACTION_STILL_ACCURATE, None, None, None)
         .await
         .unwrap_err();
     assert!(matches!(error, SteepError::Invalid(_)), "{error:?}");
 
-    let done = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_A), None)
+    let done = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_A), None, None)
         .await
         .unwrap();
     assert_eq!(done.outcome, "written");
@@ -278,7 +279,7 @@ async fn still_accurate_settles_without_touching_the_prose() {
         .token
         .unwrap();
 
-    let done = commit(&db, &token, STEEP_ACTION_STILL_ACCURATE, None, None)
+    let done = commit(&db, &token, STEEP_ACTION_STILL_ACCURATE, None, None, None)
         .await
         .unwrap();
     assert_eq!(done.outcome, "still_accurate");
@@ -301,7 +302,7 @@ async fn an_uncited_rewrite_is_refused_and_the_hold_kept() {
     // A claim no source makes, cited anyway.
     let invented = "Tally syncs receipts to Dropbox every hour over a private VPN [1].";
     for bad in ["A rewrite that cites nothing.", invented] {
-        let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(bad), None)
+        let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(bad), None, None)
             .await
             .unwrap_err();
         assert!(matches!(error, SteepError::CitationGate(_)), "{error:?}");
@@ -312,7 +313,7 @@ async fn an_uncited_rewrite_is_refused_and_the_hold_kept() {
     );
     assert_eq!(page(&db, "page_t").await.content, "old body");
 
-    let done = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let done = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap();
     assert_eq!(done.outcome, "written");
@@ -345,7 +346,7 @@ async fn automatic_and_on_demand_never_hold_the_same_note() {
         "{error:?}"
     );
 
-    commit(&db, &token, STEEP_ACTION_RELEASE, None, None)
+    commit(&db, &token, STEEP_ACTION_RELEASE, None, None, None)
         .await
         .unwrap();
     assert!(hold_for_automatic(&db, "page_t").is_some());
@@ -373,11 +374,11 @@ async fn a_token_taken_over_after_expiry_is_refused() {
         .unwrap();
     assert_ne!(old, new);
 
-    let error = commit(&db, &old, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let error = commit(&db, &old, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap_err();
     assert!(matches!(error, SteepError::TokenGone), "{error:?}");
-    let done = commit(&db, &new, STEEP_ACTION_REWRITE, Some(BODY_AB), None)
+    let done = commit(&db, &new, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
         .await
         .unwrap();
     assert_eq!(done.outcome, "written");
@@ -429,4 +430,64 @@ async fn the_work_list_counts_both_reasons_and_pages_with_a_cursor() {
         .await
         .unwrap();
     assert_eq!(hidden.total, 2);
+}
+
+async fn set_page_space(db: &MemoryDB, id: &str, space: &str) {
+    db.test_primary_session()
+        .await
+        .execute(
+            "UPDATE pages SET space = ?2 WHERE id = ?1",
+            libsql::params![id, space],
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_page_moved_out_of_the_claimers_space_is_not_written() {
+    let (db, _dir) = test_db().await;
+    two_source_page(&db).await;
+    set_page_space(&db, "page_t", "test").await;
+    let scope = ReadScope::Space("test".into());
+    let token = claim(&db, "page_t", &scope).await.unwrap().token.unwrap();
+    // The user moves the page to another Space while the AI tool rewrites it.
+    set_page_space(&db, "page_t", "other").await;
+
+    let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(BODY_AB), None, None)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, SteepError::NotFound), "{error:?}");
+    let after = page(&db, "page_t").await;
+    assert_eq!(after.content, "old body");
+    assert_eq!(after.stale_reason.as_deref(), Some("source_updated"));
+}
+
+#[tokio::test]
+async fn the_steep_write_rechecks_the_space_inside_its_transaction() {
+    let (db, _dir) = test_db().await;
+    two_source_page(&db).await;
+    set_page_space(&db, "page_t", "other").await;
+    let fence = db.try_get_page_fence("page_t").await.unwrap().unwrap();
+    let version = page(&db, "page_t").await.version;
+
+    let error = crate::post_write::steep_update_page(
+        &db,
+        "page_t",
+        UpdatePageRequest {
+            content: BODY_A.to_string(),
+            source_memory_ids: vec!["mem_a".into(), "mem_b".into()],
+            expected_version: Some(version),
+            caller_id: None,
+            operation_id: None,
+        },
+        Some("claude-code"),
+        Some(ReadScope::Space("test".into())),
+        fence.source_revision,
+        None,
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, WenlanError::NotFound(_)), "{error:?}");
+    assert_eq!(page(&db, "page_t").await.content, "old body");
 }

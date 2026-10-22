@@ -998,7 +998,7 @@ pub struct CreateRelationParams {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct WritePageParams {
     #[schemars(
-        description = "Omit to create a new page. Pass an existing page id (e.g. 'page_abc', from the `stale_pages` block in distill output) to refresh that page in place."
+        description = "Omit to create a new page. Pass an existing page id (e.g. 'page_abc') to refresh that page in place. A page waiting for steep is brought up to date with the steep tool, not here."
     )]
     pub page_id: Option<String>,
     #[schemars(
@@ -1127,6 +1127,11 @@ pub struct SteepParams {
     #[schemars(description = "list: only this Space's pages.")]
     #[serde(default)]
     pub space: Option<String>,
+    #[schemars(
+        description = "Your AI session as tool:id, e.g. claude-code:<session id>; links a rewrite back to this conversation."
+    )]
+    #[serde(default)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3313,7 +3318,7 @@ impl WenlanMcpServer {
         // on the machine running Wenlan.
         if action != SteepAction::List && self.transport == TransportMode::Http {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "Steeping notes is not available over remote connections. \
+                "Steeping pages is not available over remote connections. \
                  Use local MCP on the machine running Wenlan."
                     .to_string(),
             )]));
@@ -3379,7 +3384,10 @@ impl WenlanMcpServer {
                 {
                     return missing("content");
                 }
-                self.client
+                // The conversation behind a rewrite is recorded on the page
+                // version it writes, as for write_page.
+                self.session_client(params.session.as_deref())
+                    .await
                     .post::<_, wenlan_types::SteepCommitResponse>(
                         "/api/steep/commit",
                         &wenlan_types::SteepCommitRequest {
@@ -4369,7 +4377,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required); with enough cited sources it lands as a distilled page, otherwise as an authored page. The daemon writes the DB row and the on-disk <pages dir>/<slug>.md projection atomically (default ~/.wenlan/pages/, slug made unique on collision). Pass page_id (from the `stale_pages` block in distill output) to refresh that page in place — replaces content + source_memory_ids + optional summary, clears stale_reason, preserves page_id and created_at, bumps version monotonically so external [[wikilinks]] keep working. Never delete_page + recreate to refresh: that churns ids and loses version history. To change an existing page's title at the user's explicit request, use rename_page; refresh keeps the existing title. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user. `basis` [{page_id, version}] lists notes relied on (versions from read_page); a changed one lands pending (see page_basis). `minor: true` = small edit. `code_basis` [{repo_root, path, line_start, line_end}]: code lines relied on (see page_code_basis). Refresh is not available over remote HTTP MCP transport (local stdio only).",
+        description = "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required); with enough cited sources it lands as a distilled page, otherwise as an authored page. The daemon writes the DB row and the on-disk <pages dir>/<slug>.md projection atomically (default ~/.wenlan/pages/, slug made unique on collision). Pass page_id to refresh that page in place — replaces content + source_memory_ids + optional summary, clears stale_reason, preserves page_id and created_at, bumps version monotonically so external [[wikilinks]] keep working. A page waiting for steep (its sources changed or were removed) is brought up to date with the steep tool, not write_page. Never delete_page + recreate to refresh: that churns ids and loses version history. To change an existing page's title at the user's explicit request, use rename_page; refresh keeps the existing title. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user. `basis` [{page_id, version}] lists notes relied on (versions from read_page); a changed one lands pending (see page_basis). `minor: true` = small edit. `code_basis` [{repo_root, path, line_start, line_end}]: code lines relied on (see page_code_basis). Refresh is not available over remote HTTP MCP transport (local stdio only).",
         annotations(
             title = "Write page",
             read_only_hint = false,
@@ -4471,7 +4479,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Fetch the source memories of a page — the memory ids the page was distilled from, each enriched with the memory's title, content, type, and space. The /distill skill uses this on the stale-page refresh path after obtaining the page id from the `stale_pages` block in distill output.",
+        description = "Fetch the source memories of a page — the memory ids the page was distilled from, each enriched with the memory's title, content, type, and space. The /distill workflow uses this to check what a page rests on before changing it.",
         annotations(
             title = "Get page sources",
             read_only_hint = true,
@@ -4954,7 +4962,7 @@ impl ServerHandler for WenlanMcpServer {
              Brief reads never create or mutate state; only update_brief writes.\n\n\
              You set each capture's type and entity yourself, in every mode. When Steep runs automatically, \
              the backend also scores quality, adds tags, and deduplicates in the background; when it runs on \
-             demand, distill hands you clusters to write as pages. Either way, focus on what only you know: the \
+             demand, distill hands you clusters and steep hands you out of date pages. Either way, focus on what only you know: the \
              conversational context, why something matters, and what the user actually cares about."
         )
     }
@@ -9375,6 +9383,7 @@ mod tests {
                     limit: None,
                     cursor: None,
                     space: None,
+                    session: None,
                 })
                 .await
                 .unwrap();

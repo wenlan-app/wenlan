@@ -470,6 +470,46 @@ pub async fn update_page_at_source_revision(
     .await
 }
 
+/// An on-demand steep rewrite: the stale rebuild of
+/// [`update_page_at_source_revision`], asked for by an agent. `agent` is named
+/// on the changelog and on a revision card, and `space_guard` is the Space the
+/// agent was locked to when it claimed the page: the rewrite, or its card,
+/// lands only while the page is still there, checked in the write's own
+/// transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn steep_update_page(
+    db: &MemoryDB,
+    page_id: &str,
+    req: UpdatePageRequest,
+    agent: Option<&str>,
+    space_guard: Option<crate::read_scope::ReadScope>,
+    expected_source_revision: i64,
+    knowledge_path: Option<&Path>,
+    citations: Option<(String, String)>,
+) -> Result<WriteResult, WenlanError> {
+    update_page_impl(
+        db,
+        page_id,
+        req,
+        "re_distill",
+        true,
+        Some(expected_source_revision),
+        knowledge_path,
+        citations,
+        None,
+        false,
+        false,
+        None,
+        agent,
+        &BasisWrite {
+            actor: agent.unwrap_or("unknown").to_string(),
+            space_guard,
+            ..BasisWrite::default()
+        },
+    )
+    .await
+}
+
 /// Page-growth-only update path. Unlike the generic update helper, the CAS
 /// token comes from the pre-inference match and is not refreshed after the
 /// model returns. The memory receipt shares the DB transaction with the Page

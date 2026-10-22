@@ -6,6 +6,9 @@ the same write, so a page steeped here ends up exactly as if Wenlan had done
 it. Reply in the user's language. Say "steep" in English and 沉澱 in Chinese;
 never call it upkeep or say steeping is off.
 
+When the session start printed a `Wenlan session:` line, pass its value as
+`session` on every `steep` commit.
+
 ## 1. List the work
 
 Resolve the Space the same way the other workflows do:

@@ -7,10 +7,11 @@
 //! the background (`refinery::run_redistill_page_slice`, the maintenance
 //! stale-page stage). On demand, the user's AI tool does the model work and
 //! the daemon does everything else: it lists the work, hands out a snapshot,
-//! checks the result, and commits it. Both modes end in
-//! `post_write::update_page_at_source_revision` with `re_distill` provenance,
-//! so the ownership gate (a note the user wrote becomes a revision card), the
-//! citation gate and the staleness fence are the same code.
+//! checks the result, and commits it. Both modes end in the same stale
+//! rebuild with `re_distill` provenance (`post_write::steep_update_page` adds
+//! the agent's name and its Space lock), so the ownership gate (a page the
+//! user wrote becomes a revision card), the citation gate and the staleness
+//! fence are the same code.
 //!
 //! The protocol:
 //!
@@ -89,6 +90,10 @@ struct Snapshot {
     stale_reason: String,
     /// `(memory id, text)` in citation order: `[n]` is `sources[n - 1]`.
     sources: Vec<(String, String)>,
+    /// The Space the claimer was locked to. The commit lands only while the
+    /// page is still in it: moving a page to another Space bumps none of the
+    /// fields above.
+    scope: ReadScope,
 }
 
 #[derive(Debug, Clone)]
@@ -504,6 +509,7 @@ pub async fn claim(
         version: page.version,
         stale_reason: stale_reason.clone(),
         sources: sources.clone(),
+        scope: scope.clone(),
     };
     let token = db
         .steep_leases()
@@ -590,13 +596,15 @@ const CHANGED: &str = "the page or its sources changed since you claimed it, so 
                        written; claim it again and work from the new snapshot";
 
 /// Settle a claimed note: write the rewrite, stage it as a revision card,
-/// record that the note still holds, or give it back.
+/// record that the note still holds, or give it back. `agent` is the tool
+/// committing, named on the page's history and on a revision card.
 pub async fn commit(
     db: &MemoryDB,
     token: &str,
     action: &str,
     content: Option<&str>,
     knowledge_path: Option<&std::path::Path>,
+    agent: Option<&str>,
 ) -> Result<SteepCommit, SteepError> {
     if let Some(stored) = db
         .get_operation_receipt(STEEP_RECEIPT_CALLER, token)
@@ -646,6 +654,15 @@ pub async fn commit(
     if !unmoved {
         release();
         return Err(SteepError::Changed(CHANGED.into()));
+    }
+    // Moved out of the claimer's Space: the same not found as a page that
+    // was never there. A rewrite re-checks this inside its own write.
+    if !page
+        .as_ref()
+        .is_some_and(|page| snapshot.scope.matches(page.space.as_deref()))
+    {
+        release();
+        return Err(SteepError::NotFound);
     }
     let ids: Vec<String> = snapshot.sources.iter().map(|(id, _)| id.clone()).collect();
     if surviving_sources(db, &ids).await? != snapshot.sources {
@@ -737,7 +754,8 @@ pub async fn commit(
     let citations_json = serde_json::to_string(&cites).map_err(WenlanError::from)?;
     let summary = crate::synthesis::distill::extract_page_summary(&body);
 
-    let result = crate::post_write::update_page_at_source_revision(
+    let space_guard = (snapshot.scope != ReadScope::Global).then(|| snapshot.scope.clone());
+    let result = crate::post_write::steep_update_page(
         db,
         &page_id,
         UpdatePageRequest {
@@ -747,15 +765,21 @@ pub async fn commit(
             caller_id: Some(STEEP_RECEIPT_CALLER.to_string()),
             operation_id: Some(token.to_string()),
         },
-        "re_distill",
-        true,
+        agent,
+        space_guard,
         snapshot.fence.source_revision,
         knowledge_path,
         Some((citations_json, stats.summary())),
     )
     .await;
     release();
-    let result = result?;
+    let result = match result {
+        Ok(result) => result,
+        // The page left the claimer's Space between the check above and the
+        // write, which refused it in its own transaction.
+        Err(WenlanError::NotFound(_)) => return Err(SteepError::NotFound),
+        Err(error) => return Err(error.into()),
+    };
     let outcome = if result.gated {
         "review_card"
     } else if result.wrote {
