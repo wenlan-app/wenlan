@@ -46,7 +46,7 @@ pub struct StoreMemoryResponse {
     /// Enrichment state for the memory. `"pending"` when the quiet/cooldown-
     /// gated ambient scheduler has authorized derived work remaining;
     /// `"paused"` when no source is pinned or the pinned source is unavailable;
-    /// `"off"` when the user disabled background AI organization.
+    /// `"off"` when steeping is On demand (`background_ai_enabled` false).
     /// `"not_needed"` remains accepted as a legacy wire value from older
     /// daemons. Machine-readable — Tauri app uses this to drive
     /// polling / live-update UI, MCP callers can choose to relay state.
