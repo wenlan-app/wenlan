@@ -2,6 +2,7 @@
 export const enSourceContainer = {
   "root": "Sources",
   "obsidianVault": "Obsidian Vault",
+  "logseqGraph": "Logseq graph",
   "refresh": "Refresh",
   "refreshing": "Refreshing…",
   "refreshFailed": "Could not refresh this source.",
@@ -39,6 +40,7 @@ type SourceContainerMessages = Record<keyof typeof enSourceContainer, string>;
 export const hantSourceContainer: SourceContainerMessages = {
   "root": "來源",
   "obsidianVault": "Obsidian Vault",
+  "logseqGraph": "Logseq 圖譜",
   "refresh": "重新整理",
   "refreshing": "正在重新整理…",
   "refreshFailed": "無法重新整理此來源。",
@@ -74,6 +76,7 @@ export const hantSourceContainer: SourceContainerMessages = {
 export const hansSourceContainer: SourceContainerMessages = {
   "root": "来源",
   "obsidianVault": "Obsidian Vault",
+  "logseqGraph": "Logseq 图谱",
   "refresh": "刷新",
   "refreshing": "正在刷新…",
   "refreshFailed": "无法刷新此来源。",

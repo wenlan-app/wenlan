@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Obsidian vault sync: the one routine the HTTP handler and the background
-//! scheduler share, so a vault follows edits made in Obsidian the same way a
-//! plain folder does.
+//! Obsidian vault and Logseq graph sync: the one routine the HTTP handler and
+//! the background scheduler share, so a vault follows edits made in Obsidian
+//! (or a graph edits made in Logseq) the same way a plain folder does. Below,
+//! "vault" covers both and "note" a vault note or a Logseq page.
 //!
 //! - A note is stored as chunk documents `<source>::<path>::<n>` that pass the
 //!   quality gate, embedded at once (no document queue, no LLM).
@@ -29,8 +30,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use wenlan_core::db::MemoryDB;
 use wenlan_core::quality_gate::QualityGate;
-use wenlan_core::sources::obsidian::{note_to_documents, scan_vault};
-use wenlan_core::sources::Source;
+use wenlan_core::sources::{logseq, obsidian};
+use wenlan_core::sources::{RawDocument, Source, SourceType};
 
 use super::{
     content_hash, directory_root_is_live, finalize_sync, is_google_drive_path,
@@ -88,9 +89,8 @@ fn set_gate_rejected(source_id: &str, path: &str, mtime_ns: Option<i64>) {
     }
 }
 
-/// Sync an Obsidian source, waiting for a sync of the same source that is
-/// already running. The caller guarantees `source.source_type` is
-/// `SourceType::Obsidian`.
+/// Sync an Obsidian or Logseq source, waiting for a sync of the same source
+/// that is already running.
 pub(crate) async fn sync_obsidian_source(
     db: Arc<MemoryDB>,
     quality_gate: &QualityGate,
@@ -101,7 +101,7 @@ pub(crate) async fn sync_obsidian_source(
     sync_obsidian_source_locked(db, quality_gate, source, None).await
 }
 
-/// Sync an Obsidian source unless a sync of it is already running, in which
+/// Sync an Obsidian or Logseq source unless a sync of it is already running, in which
 /// case return `None` at once. Used by the background poll, so it stores at
 /// most `note_limit` changed notes.
 pub(crate) async fn try_sync_obsidian_source(
@@ -167,6 +167,27 @@ fn vault_root_is_live(path: &Path) -> bool {
     path.is_dir() && directory_root_is_live(path)
 }
 
+/// The note files of a vault or graph.
+fn scan_notes(source_type: &SourceType, root: &Path) -> Vec<std::path::PathBuf> {
+    match source_type {
+        SourceType::Logseq => logseq::scan_graph(root),
+        _ => obsidian::scan_vault(root),
+    }
+}
+
+fn note_documents(
+    source_type: &SourceType,
+    source_id: &str,
+    path: &Path,
+    content: &str,
+    mtime: i64,
+) -> Vec<RawDocument> {
+    match source_type {
+        SourceType::Logseq => logseq::page_to_documents(source_id, path, content, mtime),
+        _ => obsidian::note_to_documents(source_id, path, content, mtime),
+    }
+}
+
 async fn sync_obsidian_source_locked(
     db: Arc<MemoryDB>,
     quality_gate: &QualityGate,
@@ -180,8 +201,9 @@ async fn sync_obsidian_source_locked(
     // cannot stall a tokio worker.
     let vault_root = source.path.clone();
     let vault_display = vault_root.display().to_string();
+    let source_type = source.source_type.clone();
     let md_files = tokio::task::spawn_blocking(move || {
-        vault_root_is_live(&vault_root).then(|| scan_vault(&vault_root))
+        vault_root_is_live(&vault_root).then(|| scan_notes(&source_type, &vault_root))
     })
     .await
     .map_err(|error| {
@@ -306,9 +328,10 @@ async fn sync_obsidian_source_locked(
         }
 
         let mtime_secs = mtime_ns / 1_000_000_000;
-        let docs = note_to_documents(&id, file_path, &content, mtime_secs);
+        let docs = note_documents(&source.source_type, &id, file_path, &content, mtime_secs);
         if docs.is_empty() {
-            // MOC or one of Wenlan's own projected pages: nothing to store,
+            // MOC, empty Logseq page or one of Wenlan's own projected pages:
+            // nothing to store,
             // so drop what an earlier version of the note left and record
             // the state.
             errors += delete_note_chunks_except(&db, &id, &file_key, &HashSet::new()).await;

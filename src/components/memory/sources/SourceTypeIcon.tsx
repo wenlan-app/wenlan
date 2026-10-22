@@ -2,8 +2,9 @@
 import {
   EnvelopeSimple, File, FilePdf, FileText, Folder, GithubLogo, Globe, GoogleDriveLogo, Image as ImageIcon, NotionLogo, SlackLogo,
 } from "@phosphor-icons/react";
+import logseqLogo from "../../../assets/logseq-logo.svg";
 import obsidianLogo from "../../../assets/obsidian-logo-gradient.svg";
-import type { SourceApp, SourceKind } from "./sourcePresentation";
+import type { NoteApp, SourceApp, SourceKind } from "./sourcePresentation";
 
 const ICONS = {
   pdf: FilePdf,
@@ -25,13 +26,13 @@ export function SourceTypeIcon({
   size = 20,
   className,
 }: {
-  kind: SourceKind | SourceApp | "folder" | "obsidian";
+  kind: SourceKind | SourceApp | "folder" | NoteApp;
   size?: number;
   className?: string;
 }) {
-  if (kind === "obsidian") {
+  if (kind === "obsidian" || kind === "logseq") {
     return <img alt="" aria-hidden="true" className={className} data-resource-icon={kind}
-      src={obsidianLogo} width={size} height={size} style={{ flexShrink: 0, objectFit: "contain" }} />;
+      src={kind === "obsidian" ? obsidianLogo : logseqLogo} width={size} height={size} style={{ flexShrink: 0, objectFit: "contain" }} />;
   }
   const Icon = ICONS[kind];
   return <Icon aria-hidden="true" className={className} data-resource-icon={kind} focusable="false" size={size} weight="regular" />;

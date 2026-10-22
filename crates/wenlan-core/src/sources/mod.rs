@@ -9,6 +9,7 @@
 //! computation, decay rates).
 pub mod directory;
 pub mod docx;
+pub mod logseq;
 pub mod obsidian;
 pub mod okf;
 pub mod page_watcher;

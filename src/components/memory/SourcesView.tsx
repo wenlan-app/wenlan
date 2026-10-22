@@ -918,7 +918,7 @@ function FolderDetail({ node }: { node: Extract<SourcesNode, { kind: "folder" }>
               Reveal
             </button>
             {isSourceRoot &&
-              (source.source_type === "obsidian" ? (
+              (source.source_type === "obsidian" || source.source_type === "logseq" ? (
                 <button
                   onClick={() => syncMutation.mutate()}
                   disabled={syncMutation.isPending}

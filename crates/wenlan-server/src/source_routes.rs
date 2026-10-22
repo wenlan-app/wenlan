@@ -134,6 +134,26 @@ pub async fn handle_add_source(
             }
             SourceType::Obsidian
         }
+        "logseq" => {
+            if !path.is_dir() {
+                return Err(ServerError::ValidationError(
+                    "Path is not a directory".to_string(),
+                ));
+            }
+            let probe = path.clone();
+            let has_page = tokio::task::spawn_blocking(move || {
+                wenlan_core::sources::logseq::has_any_page(&probe)
+            })
+            .await
+            .map_err(|e| ServerError::Internal(format!("Logseq graph check failed: {e}")))?;
+            if !has_page {
+                return Err(ServerError::ValidationError(format!(
+                    "No Logseq pages found in: {} (expected markdown files under pages/ or journals/)",
+                    path.display()
+                )));
+            }
+            SourceType::Logseq
+        }
         "directory" => {
             if !path.is_dir() && !path.is_file() {
                 return Err(ServerError::ValidationError(
@@ -795,7 +815,7 @@ pub(crate) async fn sync_directory_source(
 /// POST /api/sources/{id}/sync — Trigger a sync for a source.
 ///
 /// Directory and OKF sources queue changed files for document enrichment;
-/// an Obsidian vault upserts changed notes through the quality gate
+/// an Obsidian vault or Logseq graph upserts changed notes through the quality gate
 /// (`obsidian_sync`). The background scheduler runs the same routines.
 pub async fn handle_sync_source(
     State(state): State<Arc<RwLock<ServerState>>>,
@@ -1029,6 +1049,44 @@ mod tests {
         )
         .await;
         assert!(matches!(missing, Err(ServerError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn handle_add_source_accepts_a_logseq_graph_with_pages_only() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let graph = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(graph.path().join("logseq/bak")).unwrap();
+        std::fs::create_dir_all(graph.path().join("pages")).unwrap();
+        std::fs::write(graph.path().join("logseq/bak/old.md"), "- old").unwrap();
+        let state = Arc::new(RwLock::new(ServerState::default()));
+        let add = || {
+            handle_add_source(
+                State(state.clone()),
+                crate::space_header::SpaceHeader(None),
+                Json(AddSourceRequest {
+                    source_type: "logseq".to_string(),
+                    path: graph.path().to_string_lossy().to_string(),
+                    follow_changes: None,
+                }),
+            )
+        };
+
+        // A backup copy is not a page.
+        match add().await {
+            Err(ServerError::ValidationError(msg)) => {
+                assert!(msg.contains("No Logseq pages"), "{msg}")
+            }
+            other => panic!("expected a validation error, got {other:?}"),
+        }
+
+        std::fs::write(graph.path().join("pages/atlas.md"), "- Atlas").unwrap();
+        let Json(source) = add().await.expect("a graph with a page registers");
+        assert_eq!(source.source_type, SourceType::Logseq);
+        assert!(source.id.starts_with("logseq-"), "{}", source.id);
     }
 
     #[tokio::test]

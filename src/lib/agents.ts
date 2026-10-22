@@ -25,6 +25,7 @@ export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
   "continue": "Continue",
   "cursor": "Cursor",
   "gemini-cli": "Gemini CLI",
+  "logseq": "Logseq",
   "muse-code": "Muse Code",
   "obsidian": "Obsidian",
   "openai-mcp": "ChatGPT",

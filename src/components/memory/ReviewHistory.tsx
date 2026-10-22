@@ -104,7 +104,8 @@ function RecentRevisionRow({
   change: PageChange;
   onClick: (pageId: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
   const tone = CHANGE_TONE[change.change_kind];
   return (
     <button
@@ -162,7 +163,7 @@ function RecentRevisionRow({
           whiteSpace: "nowrap",
         }}
       >
-        {relativeMs(change.changed_at_ms)}
+        {relativeMs(change.changed_at_ms, relativeLocale)}
       </span>
     </button>
   );
@@ -226,7 +227,8 @@ function MemoryRevisionRow({
   entry: MemoryRevisionEntry;
   onClick: (sourceId: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
   // Only the most recent prior version (depth 1) carries a preview line —
   // deeper entries stay single-line so the chain doesn't overwhelm the diff.
   const preview =
@@ -284,7 +286,7 @@ function MemoryRevisionRow({
             whiteSpace: "nowrap",
           }}
         >
-          {relativeMs(entry.last_modified * 1000)}
+          {relativeMs(entry.last_modified * 1000, relativeLocale)}
         </span>
       </span>
       {preview && (

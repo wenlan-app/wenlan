@@ -20,7 +20,7 @@ import SourceDialog from "./SourceDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { useTranslation } from "react-i18next";
 
-type ConnectKind = "obsidian" | "folder";
+type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
 
 export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
@@ -30,16 +30,12 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
   const [showChats, setShowChats] = useState(false);
   // A picked folder waits here while the user chooses sync or import-once.
   const [picked, setPicked] = useState<PickedFolder | null>(null);
+  // A failure to add a source is shown here in the dialog, next to the choice
+  // that failed, rather than as a toast that disappears.
+  const [failure, setFailure] = useState<string | null>(null);
+  const fail = (error: unknown) => setFailure(error instanceof Error ? error.message : String(error));
   const { data: version } = useQuery({ queryKey: ["daemonVersion"], queryFn: getDaemonVersion });
   const ready = version === undefined ? true : daemonMeetsFloor(version);
-
-  // Our own checks throw an Error with a readable message (not a vault, can't
-  // read the folder); backend failures arrive as raw strings, which only the
-  // console gets.
-  function addFailed(error: unknown) {
-    console.warn("[sources] add failed", error);
-    toast(t("sourceAccess.addFailed"), error instanceof Error ? { description: error.message } : undefined);
-  }
 
   function refreshSources() {
     void qc.invalidateQueries({ queryKey: ["registeredSources"] });
@@ -48,6 +44,7 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
   }
 
   const upload = useMutation({
+    onMutate: () => setFailure(null),
     mutationFn: async () => {
       const picked = await openDialog({
         title: t("sourceAccess.files"), directory: false, multiple: false,
@@ -63,28 +60,32 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       toast(t("sourceAccess.added"), { description: t("sourceAccess.addedBody", { name }) });
       onClose();
     },
-    onError: addFailed,
+    onError: fail,
   });
 
   // Step one, for any kind: pick and validate the folder. Step two
   // (`register`) asks whether to keep it in sync or import it once.
   const connect = useMutation({
+    onMutate: () => setFailure(null),
     mutationFn: async (kind: ConnectKind) => {
       const path = await openDialog({
-        title: t(kind === "obsidian" ? "sourceAccess.obsidian" : "sourceAccess.folder"),
+        title: t(kind === "folder" ? "sourceAccess.folder" : `sourceAccess.${kind}`),
         directory: true, multiple: false,
       });
       if (!path || typeof path !== "string") return null;
       const detection = await detectVault(path);
-      if (kind === "obsidian" && detection.unreadable) throw new Error(t("sourceAccess.folderPickFailed"));
+      if (kind !== "folder" && detection.unreadable) throw new Error(t("sourceAccess.folderPickFailed"));
       if (kind === "obsidian" && !detection.isVault) throw new Error(t("sourceAccess.notVault"));
-      return { kind, sourceType: detection.sourceType, path };
+      if (kind === "logseq" && !detection.isLogseqGraph) throw new Error(t("sourceAccess.notLogseqGraph"));
+      const sourceType: SourceTypeStr = kind === "logseq" ? "logseq" : detection.sourceType;
+      return { kind, sourceType, path };
     },
     onSuccess: (folder) => { if (folder) setPicked(folder); },
-    onError: addFailed,
+    onError: fail,
   });
 
   const register = useMutation({
+    onMutate: () => setFailure(null),
     mutationFn: ({ folder, followChanges }: { folder: PickedFolder; followChanges: boolean }) =>
       addSource(folder.sourceType, folder.path, followChanges),
     onSuccess: (source) => {
@@ -101,7 +102,7 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       });
       onClose();
     },
-    onError: addFailed,
+    onError: fail,
   });
 
   const busy = upload.isPending || connect.isPending || register.isPending;
@@ -114,6 +115,7 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       <DownloadSimple aria-hidden="true" size={20} weight="regular" data-resource-icon="import-once" /><span className="source-add-option-copy"><strong>{t("sourceAccess.followOnce")}</strong><span>{t("sourceAccess.followOnceHint")}</span></span>
     </button>
     {register.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
+    {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
   </SourceDialog>;
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   // Past AI chats use the same import as Settings, so a new user can bring
@@ -131,6 +133,9 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
     <button type="button" className="source-add-option source-add-option--vault" disabled={busy} onClick={() => connect.mutate("obsidian")}>
       <SourceTypeIcon kind="obsidian" /><span className="source-add-option-copy"><strong>{t("sourceAccess.obsidian")}</strong><span>{t("sourceAccess.obsidianHint")}</span></span>
     </button>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
+      <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
+    </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
       <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
     </button>
@@ -144,5 +149,6 @@ export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
       <SourceTypeIcon kind="folder" /><span className="source-add-option-copy"><strong>{t("sourceAccess.folder")}</strong><span>{t("sourceAccess.folderHint")}</span></span>
     </button>
     {connect.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
+    {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}
   </SourceDialog>;
 }
