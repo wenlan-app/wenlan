@@ -659,6 +659,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/pages/drafts/{id}` | main | yes | automatic | `none` | `handle_update_page_draft` | PageDraftResponse.page — filter_page on the echoed page |
 | `POST` | `/api/pages/drafts/{id}/publish` | main | yes | automatic | `none` | `handle_publish_page_draft` | PageDraftResponse.page — filter_page on the echoed page |
 | `POST` | `/api/pages/export` | main | yes | automatic | `none` | `handle_export_pages` | EFFECT: writes page prose to the requested vault |
+| `POST` | `/api/pages/lock-edited` | main | no | not_applicable | `none` | — | count receipt only: number of pages locked — no prose |
 | `GET` | `/api/pages/orphan-links` | main | yes | automatic | `none` | `handle_list_orphan_links` | OrphanLink.label, OrphanLinksResponse.orphan_labels |
 | `GET` | `/api/pages/recent` | main | yes | automatic | `none` | `handle_recent_pages` | RecentActivityItem.snippet, RecentActivityItem.title; NOT Collection — carries prose and no axes |
 | `GET` | `/api/pages/recent-changes` | main | yes | automatic | `none` | `handle_recent_page_changes` | PageChange.title; NOT Collection — carries no axes |
