@@ -412,18 +412,45 @@ pub fn save_config_with_background_ai(
     save_config_inner(&config_path(), config, Some(enabled))
 }
 
-fn save_config_inner(
-    path: &std::path::Path,
-    config: &Config,
-    consent: Option<bool>,
-) -> Result<Config, WenlanError> {
-    use std::io::Write;
+/// Read, change and save config.json as one step under the writer lock.
+///
+/// `load_config` followed by `save_config` is not safe when two writers run
+/// at once: each loads the file, changes its own field, and the later save
+/// puts back the earlier writer's stale copy. A source added while a
+/// scheduled sync was finishing vanished from the list that way. `change`
+/// sees the file as it is now, after every earlier writer; an error from it
+/// leaves the file untouched. AI consent changes only if `change` sets it.
+///
+/// A config.json that does not parse is never overwritten: the call fails.
+pub fn update_config<R>(
+    change: impl FnOnce(&mut Config) -> Result<R, WenlanError>,
+) -> Result<R, WenlanError> {
+    update_config_at(&config_path(), change)
+}
 
+fn update_config_at<R>(
+    path: &std::path::Path,
+    change: impl FnOnce(&mut Config) -> Result<R, WenlanError>,
+) -> Result<R, WenlanError> {
+    let _lock = lock_config(path)?;
+    let current = read_config_file(path)?;
+    let mut config = current.clone().unwrap_or_else(new_install_config);
+    config.migrate();
+    let out = change(&mut config)?;
+    // `config` started from the file read under this lock, so its consent is
+    // the one on disk unless `change` made a decision.
+    let consent = config.background_ai_enabled;
+    write_config_locked(path, &config, consent)?;
+    Ok(out)
+}
+
+/// Take the writer lock. A separate, stable inode serializes daemon and CLI
+/// writers even though config.json itself is replaced atomically. Dropping
+/// the file releases it.
+fn lock_config(path: &std::path::Path) -> Result<std::fs::File, WenlanError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // A separate, stable inode serializes daemon and CLI writers even though
-    // config.json itself is replaced atomically below. Closing releases it.
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -431,18 +458,44 @@ fn save_config_inner(
         .write(true)
         .open(path.with_extension("lock"))?;
     fs2::FileExt::lock_exclusive(&lock)?;
-    let current = match std::fs::read_to_string(path) {
-        Ok(contents) => Some(serde_json::from_str::<Config>(&contents)?),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-    let mut saved = config.clone();
-    saved.background_ai_enabled = match consent {
+    Ok(lock)
+}
+
+fn read_config_file(path: &std::path::Path) -> Result<Option<Config>, WenlanError> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(serde_json::from_str::<Config>(&contents)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn save_config_inner(
+    path: &std::path::Path,
+    config: &Config,
+    consent: Option<bool>,
+) -> Result<Config, WenlanError> {
+    let _lock = lock_config(path)?;
+    let current = read_config_file(path)?;
+    let consent = match consent {
         Some(enabled) => Some(enabled),
         None => current
             .map(|cfg| cfg.background_ai_enabled)
             .unwrap_or(config.background_ai_enabled.or(Some(false))),
     };
+    write_config_locked(path, config, consent)
+}
+
+/// Write `config` with the AI consent `background_ai_enabled` while the
+/// caller holds the writer lock.
+fn write_config_locked(
+    path: &std::path::Path,
+    config: &Config,
+    background_ai_enabled: Option<bool>,
+) -> Result<Config, WenlanError> {
+    use std::io::Write;
+
+    let mut saved = config.clone();
+    saved.background_ai_enabled = background_ai_enabled;
     let mut temporary = tempfile::NamedTempFile::new_in(
         path.parent().unwrap_or_else(|| std::path::Path::new(".")),
     )?;
@@ -504,6 +557,68 @@ mod tests {
         let saved = save_config_inner(&path, &Config::default(), None).unwrap();
         assert_eq!(saved.background_ai_enabled, None);
         assert!(saved.background_ai_enabled());
+    }
+
+    #[test]
+    fn concurrent_updates_keep_every_writers_change() {
+        // Each writer adds its own source. With load-then-save outside the
+        // lock, a writer that loaded before another saved would put back a
+        // list without the other's source.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        save_config_inner(&path, &Config::default(), None).unwrap();
+        let threads: Vec<_> = (0..8)
+            .map(|n| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    update_config_at(&path, |config| {
+                        let source = Source {
+                            id: format!("directory-{n}"),
+                            source_type: SourceType::Directory,
+                            path: PathBuf::from(format!("/tmp/src-{n}")),
+                            status: SyncStatus::Active,
+                            last_sync: None,
+                            file_count: 0,
+                            memory_count: 0,
+                            last_sync_errors: 0,
+                            last_sync_error_detail: None,
+                            space: None,
+                            queued_files: 0,
+                            waiting_files: 0,
+                        };
+                        // Widen the window a racing writer would need.
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        config.sources.push(source);
+                        Ok(())
+                    })
+                    .unwrap();
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        let disk: Config = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(disk.sources.len(), 8);
+    }
+
+    #[test]
+    fn failed_update_leaves_the_file_alone() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let mut config = Config::default();
+        config.clipboard_enabled = true;
+        save_config_inner(&path, &config, Some(true)).unwrap();
+        let before = std::fs::read_to_string(&path).unwrap();
+        let result: Result<(), _> = update_config_at(&path, |config| {
+            config.clipboard_enabled = false;
+            Err(WenlanError::Validation("no".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        std::fs::write(&path, "{broken").unwrap();
+        assert!(update_config_at(&path, |_| Ok(())).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::state::SharedState;
 use axum::extract::State;
 use axum::response::Json;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use wenlan_core::config;
 use wenlan_core::on_device_models::{self, OnDeviceModel};
 use wenlan_types::requests::{OnDeviceModelRequest, UpdateConfigRequest};
@@ -57,26 +57,6 @@ fn config_to_response(cfg: &config::Config) -> ConfigResponse {
     }
 }
 
-/// Serializes the load-apply-save section of `handle_update_config`.
-///
-/// `only_if_unset` re-checks the stored pin under the write, but load and save
-/// are two separate file operations. Without this lock two concurrent PUTs can
-/// both load the same unpinned config, both decide to write, and the later save
-/// wins with a config that never saw the earlier one. The lock makes that
-/// section one critical section, which is what the flag's promise rests on.
-///
-/// It is a `std::sync::Mutex`, not a tokio one, and the guard is scoped to that
-/// block so it is always dropped before the handler awaits. Nothing inside the
-/// section awaits, so the guard never spans an await point.
-///
-/// Scope: this serializes PUT /api/config against itself, which is the race the
-/// pin fill is exposed to, because the user's own pin write is the same route.
-/// The other handlers in this file that load-modify-save config (the Anthropic
-/// key routes and the on-device download) do not take it. Core config saves
-/// independently preserve current AI consent under a cross-process file lock.
-static CONFIG_WRITE_LOCK: LazyLock<std::sync::Mutex<()>> =
-    LazyLock::new(|| std::sync::Mutex::new(()));
-
 /// GET /api/config — return current config.
 pub async fn handle_get_config() -> Result<Json<ConfigResponse>, ServerError> {
     let cfg = config::load_config();
@@ -91,14 +71,21 @@ pub async fn handle_update_config(
     let external_touched = req.external_llm_endpoint.is_some()
         || req.external_llm_model.is_some()
         || req.external_llm_api_key.is_some();
-    // Everything from the load to the save runs under CONFIG_WRITE_LOCK, so a
-    // concurrent PUT cannot land between them. The guard dies with this block,
-    // before the handler touches shared state behind an await.
-    let cfg = {
-        let _guard = CONFIG_WRITE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut cfg = config::load_config();
+    // Validated before anything is read, so a bad value 4xxes without saving.
+    let everyday_pin = req
+        .everyday_source
+        .as_deref()
+        .map(validate_everyday_source)
+        .transpose()?;
+    let synthesis_pin = req
+        .synthesis_source
+        .as_deref()
+        .map(validate_synthesis_source)
+        .transpose()?;
+    // Everything from the read to the save runs under the config file lock, so
+    // a concurrent PUT, source add or sync cannot land between them and be
+    // undone by this save. Nothing inside awaits.
+    let cfg = config::update_config(|cfg| {
         if let Some(v) = req.skip_apps {
             cfg.skip_apps = v;
         }
@@ -154,14 +141,12 @@ pub async fn handle_update_config(
         // requests survives instead of being overwritten. Validation still runs on
         // a skipped value, so a bad request is a 4xx either way.
         let only_if_unset = req.only_if_unset.unwrap_or(false);
-        if let Some(v) = req.everyday_source {
-            let pin = validate_everyday_source(&v)?;
+        if let Some(pin) = everyday_pin {
             if !(only_if_unset && (cfg.everyday_source.is_some() || !cfg.background_ai_enabled())) {
                 cfg.everyday_source = pin;
             }
         }
-        if let Some(v) = req.synthesis_source {
-            let pin = validate_synthesis_source(&v)?;
+        if let Some(pin) = synthesis_pin {
             if !(only_if_unset && (cfg.synthesis_source.is_some() || !cfg.background_ai_enabled()))
             {
                 cfg.synthesis_source = pin;
@@ -171,14 +156,11 @@ pub async fn handle_update_config(
             cfg.page_map_auto_suggest = v;
         }
         if let Some(enabled) = req.background_ai_enabled {
-            cfg = config::save_config_with_background_ai(&cfg, enabled)
-                .map_err(|e| ServerError::Internal(e.to_string()))?;
-        } else {
-            config::save_config(&cfg).map_err(|e| ServerError::Internal(e.to_string()))?;
-            cfg = config::load_config();
+            cfg.background_ai_enabled = Some(enabled);
         }
-        cfg
-    };
+        Ok(cfg.clone())
+    })
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     if external_touched {
         let mut s = state.write().await;
         apply_external_provider(&mut s, &cfg);
@@ -521,10 +503,12 @@ pub async fn handle_set_anthropic_key(
             "api_key cannot be empty".into(),
         ));
     }
-    let mut cfg = config::load_config();
-    cfg.setup_completed = true;
-    cfg.anthropic_api_key = Some(key);
-    config::save_config(&cfg).map_err(|e| ServerError::Internal(e.to_string()))?;
+    let cfg = config::update_config(|cfg| {
+        cfg.setup_completed = true;
+        cfg.anthropic_api_key = Some(key);
+        Ok(cfg.clone())
+    })
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     {
         let mut s = state.write().await;
         apply_anthropic_provider(&mut s, &cfg);
@@ -536,9 +520,11 @@ pub async fn handle_set_anthropic_key(
 pub async fn handle_clear_anthropic_key(
     State(state): State<SharedState>,
 ) -> Result<Json<SuccessResponse>, ServerError> {
-    let mut cfg = config::load_config();
-    cfg.anthropic_api_key = None;
-    config::save_config(&cfg).map_err(|e| ServerError::Internal(e.to_string()))?;
+    let cfg = config::update_config(|cfg| {
+        cfg.anthropic_api_key = None;
+        Ok(cfg.clone())
+    })
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
     {
         let mut s = state.write().await;
         apply_anthropic_provider(&mut s, &cfg);
@@ -659,9 +645,11 @@ pub async fn handle_download_on_device_model(
         .map_err(|e| ServerError::Internal(format!("download failed: {}", e)))?;
 
     // Persist the selection.
-    let mut cfg = config::load_config();
-    apply_on_device_selection(&mut cfg, &req.model_id);
-    config::save_config(&cfg).map_err(|e| ServerError::Internal(e.to_string()))?;
+    config::update_config(|cfg| {
+        apply_on_device_selection(cfg, &req.model_id);
+        Ok(())
+    })
+    .map_err(|e| ServerError::Internal(e.to_string()))?;
 
     // Hot-swap the provider in ServerState. The old provider (if any) is
     // dropped here; its worker thread exits when the channel closes.

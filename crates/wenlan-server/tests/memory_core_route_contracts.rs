@@ -365,7 +365,8 @@ async fn memory_core_routes_preserve_typed_contracts() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(dismissed.target_source_id, "dismiss-target");
-    assert!(dismissed.wrote);
+    assert!(dismissed.dismissed);
+    assert!(!dismissed.wrote);
 
     let (status, contradiction): (StatusCode, ContradictionDismissResponse) = request_typed(
         &router,

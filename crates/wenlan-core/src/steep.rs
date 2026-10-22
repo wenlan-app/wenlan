@@ -690,6 +690,12 @@ async fn claim_as(
     };
 
     let human_owned = owned(&page, false);
+    // Read before the hold, so a failed read leaves no hold behind.
+    let keep_note = if human_owned {
+        user_lines_note(db, &page).await?
+    } else {
+        String::new()
+    };
     let snapshot = Snapshot {
         fence,
         version: page.version,
@@ -721,6 +727,7 @@ async fn claim_as(
             " The user wrote or edited this page, so the rewrite goes to them as a revision \
              card; the page itself does not change until they accept it.",
         );
+        note.push_str(&keep_note);
     }
 
     Ok(SteepClaim {
@@ -742,6 +749,26 @@ async fn claim_as(
         code_checks: Vec::new(),
         note,
     })
+}
+
+/// The claim's line asking to keep what the user wrote on a page they
+/// edited, word for word. A rewrite that drops one still gets it back on the
+/// card (see the write gate), but placed by guess.
+async fn user_lines_note(db: &MemoryDB, page: &crate::pages::Page) -> Result<String, SteepError> {
+    let history = db.list_page_history(&page.id, 200).await?;
+    let lines = crate::pages::user_written_lines(&history, &page.content);
+    if lines.is_empty() {
+        return Ok(String::new());
+    }
+    let mut note = String::from(
+        " Keep these lines the user wrote, word for word and where they are; they need no \
+         citation:",
+    );
+    for line in lines {
+        note.push_str("\n- ");
+        note.push_str(&line);
+    }
+    Ok(note)
 }
 
 fn not_waiting() -> SteepError {
@@ -845,6 +872,11 @@ async fn claim_code(
             return Err(not_waiting());
         }
         let human_owned = owned(&page, true);
+        let keep_note = if human_owned {
+            user_lines_note(db, &page).await?
+        } else {
+            String::new()
+        };
         let (token, held_until) = hold(
             db,
             &page.id,
@@ -871,6 +903,7 @@ async fn claim_code(
                 " The user edited this page, so the rewrite goes to them as a revision card; the \
                  page itself does not change until they accept it.",
             );
+            note.push_str(&keep_note);
         }
         return Ok(SteepClaim {
             page_id: page.id.clone(),

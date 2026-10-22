@@ -378,7 +378,8 @@ pub async fn dismiss_pending_revision(
         log_activity_best_effort(db, agent, "revision_dismiss", &card.page_id).await;
         return Ok(wenlan_types::RevisionDismissResponse {
             target_source_id: card.page_id,
-            wrote: true,
+            wrote: false,
+            dismissed: true,
         });
     }
 
@@ -386,7 +387,8 @@ pub async fn dismiss_pending_revision(
     log_activity_best_effort(db, agent, "revision_dismiss", &target_source_id).await;
     Ok(wenlan_types::RevisionDismissResponse {
         target_source_id,
-        wrote: true,
+        wrote: false,
+        dismissed: true,
     })
 }
 

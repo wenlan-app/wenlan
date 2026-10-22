@@ -1510,11 +1510,15 @@ pub struct RevisionAcceptResponse {
 }
 
 /// Response returned by `POST /api/memory/revision/{id}/dismiss`.
-/// `wrote: true` always (404 on missing).
+/// `dismissed: true` on success (404 on missing). `wrote` is `false`:
+/// rejecting a card writes nothing to the page or memory it was for, the
+/// same meaning `wrote` has on accept.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RevisionDismissResponse {
     pub target_source_id: String,
     pub wrote: bool,
+    #[serde(default)]
+    pub dismissed: bool,
 }
 
 /// Response returned by `POST /api/memory/contradiction/{source_id}/dismiss`.
@@ -1548,11 +1552,12 @@ mod mutation_response_tests {
     fn revision_dismiss_response_serializes_byte_identical() {
         let r = RevisionDismissResponse {
             target_source_id: "mem_target".into(),
-            wrote: true,
+            wrote: false,
+            dismissed: true,
         };
         assert_eq!(
             serde_json::to_string(&r).unwrap(),
-            r#"{"target_source_id":"mem_target","wrote":true}"#
+            r#"{"target_source_id":"mem_target","wrote":false,"dismissed":true}"#
         );
     }
 

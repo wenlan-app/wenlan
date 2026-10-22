@@ -76,7 +76,9 @@ For each page:
    number like `[2]`, keep the title, headings and language, and drop
    anything only a removed source said. For `code_changed`, change only what
    the code contradicts; the code is not a numbered source, so a sentence
-   only the code supports carries no `[n]`. Then call `steep` with
+   only the code supports carries no `[n]`. When the plan is `review_card`,
+   keep every line the claim's `note` lists as the user's own, word for word
+   and in place; they need no `[n]`. Then call `steep` with
    `action: "commit"`, the token, and the new body as `content`.
 5. Read the commit answer:
    - `written`: done.

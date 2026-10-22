@@ -1585,9 +1585,13 @@ pub async fn handle_update_page(
                 projection_error,
             }))
         }
-        WriteOutcome::Refused => Err(ServerError::Conflict(format!(
-            "page {id} changed while this edit was open; reload and reapply"
-        ))),
+        // The gate's warning says which version the page moved to.
+        WriteOutcome::Refused => Err(ServerError::Conflict(match result.warnings.first() {
+            Some(moved) => {
+                format!("page {id} changed while this edit was open ({moved}); reload and reapply")
+            }
+            None => format!("page {id} changed while this edit was open; reload and reapply"),
+        })),
         WriteOutcome::Contended => Err(ServerError::Conflict(format!(
             "page {id} is being written too fast to edit safely; try again"
         ))),

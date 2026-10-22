@@ -433,6 +433,7 @@ fn blocked_outcome() -> DirectorySyncOutcome {
             paused: None,
             queued_files: None,
             waiting_files: None,
+            skipped_files: Vec::new(),
         },
         newly_queued: 0,
     }
