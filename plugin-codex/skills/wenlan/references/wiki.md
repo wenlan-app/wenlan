@@ -25,6 +25,9 @@ space="$(printf '%s\n' "$resolved" | cut -f1)"
 repo_root="$(git -C "$PWD" rev-parse --show-toplevel)"
 ```
 
+If the resolver cannot run (a background run may allow only read-only
+commands), take the Space from the `space:<name>` token instead.
+
 If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
 `$wenlan wiki space:<name>` names one, then stop. Do not ask a question.
@@ -160,11 +163,40 @@ run, say how many and that `$wenlan wiki` again writes them. Then one line on
 what happens later: `/brief` names how many pages rely on code that changed,
 and `$wenlan steep` brings them up to date.
 
+## 7. Put the wiki in the repository
+
+Wenlan can write the pages that rest on this repository's code into a folder of
+the repository and offer them as a pull request. Skip this step when
+`WENLAN_AGENT_NAME` is `wenlan-daily`: that is Wenlan's daily run, and Wenlan
+publishes after it. Otherwise check whether the Space is bound:
+
+```bash
+W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
+"$W" wiki status --space "$space" --format json
+```
+
+- It prints a binding: run `"$W" wiki publish --space "$space"` and add its
+  line to the report (pull request opened or updated, already up to date, or
+  a link to open the pull request by hand).
+- It prints `null`: ask once whether to put the pages in this repository's
+  `wiki/` folder and open a pull request. On yes, run
+  `"$W" wiki bind --space "$space" --repo "$repo_root"`, then `wiki publish`
+  as above, and mention that `wiki bind --daily <hour>` keeps the wiki up to
+  date every day with the user's own AI tool. On no, leave it.
+- The command is missing or has no `wiki` subcommand: skip this step without
+  saying so.
+
+Pages that cite the user's notes or chats never go into the repository; the
+publish line says how many stayed out.
+
 ## Safety
 
 - Reads and writes of pages just happen; no approval is needed.
-- Wiki never deletes a page and never edits the repository.
+- Wiki never deletes a page and never edits the repository's files itself.
+  Step 7 asks Wenlan to write the wiki folder on its own `wenlan/wiki` branch,
+  apart from the working copy, and open a pull request; only with the user's
+  yes or an existing binding.
 - Wiki only reads the repository. Shell commands are read-only ones such as
   `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
-  `ls`, `wc`, `grep` and `sed -n`; nothing that builds, installs, or changes a
-  file.
+  `ls`, `wc`, `grep` and `sed -n`, plus the `wenlan wiki` commands of step 7;
+  nothing that builds, installs, or changes a file.

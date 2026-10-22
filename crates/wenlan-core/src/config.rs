@@ -606,8 +606,10 @@ mod tests {
     fn failed_update_leaves_the_file_alone() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
-        let mut config = Config::default();
-        config.clipboard_enabled = true;
+        let config = Config {
+            clipboard_enabled: true,
+            ..Default::default()
+        };
         save_config_inner(&path, &config, Some(true)).unwrap();
         let before = std::fs::read_to_string(&path).unwrap();
         let result: Result<(), _> = update_config_at(&path, |config| {
