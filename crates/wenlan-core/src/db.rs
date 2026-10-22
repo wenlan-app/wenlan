@@ -2027,6 +2027,7 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("continue", "Continue"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
+    ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
     ("obsidian", "Obsidian"),
     ("openai-mcp", "ChatGPT"),
@@ -56266,7 +56267,10 @@ impl MemoryDB {
             // Flag OFF: exact legacy path (byte-identical)
             vec![query.to_string(), Self::fts_or_query(query)]
         };
-        for fts_q in &fts_queries {
+        // Only the first query requires every word; the legacy OR fallback
+        // matches any one of them.
+        let mut fts_matched_all_terms = false;
+        for (fts_index, fts_q) in fts_queries.iter().enumerate() {
             let fts_result = if let Some(pt) = page_type {
                 conn.query(
                     &fts_sql,
@@ -56312,6 +56316,7 @@ impl MemoryDB {
                 }
             }
             if !fts_results.is_empty() {
+                fts_matched_all_terms = fts_index == 0;
                 break; // AND matched, skip OR fallback
             }
         }
@@ -56319,31 +56324,23 @@ impl MemoryDB {
         drop(conn);
 
         // --- RRF fusion (distance-weighted, same as search_memory) ---
-        let rrf_k = 60.0f32;
-        let fts_weight = 0.2f32;
-        let mut score_map: std::collections::HashMap<String, f32> =
-            std::collections::HashMap::new();
+        let vector_ranked: Vec<(String, f64)> = vector_results
+            .iter()
+            .map(|(id, distance, _)| (id.clone(), *distance))
+            .collect();
+        let fts_ranked: Vec<String> = fts_results.iter().map(|(id, _)| id.clone()).collect();
+        let score_map = crate::pages::fuse_page_channel_scores(
+            &vector_ranked,
+            &fts_ranked,
+            fts_matched_all_terms,
+        );
         let mut concept_map: std::collections::HashMap<String, Page> =
             std::collections::HashMap::new();
-
-        for (rank, (id, distance, page)) in vector_results.into_iter().enumerate() {
-            let similarity = (1.0 - distance as f32).max(0.01);
-            let rrf_score = similarity / (rrf_k + rank as f32);
-            *score_map.entry(id.clone()).or_default() += rrf_score;
+        for (id, _, page) in vector_results {
             concept_map.entry(id).or_insert(page);
         }
-
-        for (rank, (id, page)) in fts_results.into_iter().enumerate() {
-            let rrf_score = fts_weight / (rrf_k + rank as f32);
-            *score_map.entry(id.clone()).or_default() += rrf_score;
+        for (id, page) in fts_results {
             concept_map.entry(id).or_insert(page);
-        }
-
-        // Normalize scores to 0.0-1.0 (RRF-only, no multipliers — pages
-        // don't have the recency/confidence/domain boosts that search_memory applies)
-        let theoretical_max_rrf = (1.0 + fts_weight) / rrf_k;
-        for score in score_map.values_mut() {
-            *score = (*score / theoretical_max_rrf).min(1.0);
         }
 
         // Sort by combined RRF score, attach to pages, return top limit. The

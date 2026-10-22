@@ -482,6 +482,49 @@ pub fn note_to_documents(
         .and_then(|s| s.to_str())
         .unwrap_or("untitled")
         .to_string();
+
+    note_chunks_to_documents(NoteChunks {
+        source_id,
+        path,
+        title: stem,
+        body,
+        metadata,
+        space,
+        memory_type,
+        mtime,
+        source_agent: "obsidian",
+    })
+}
+
+/// A note ready to chunk: what [`note_to_documents`] and the Logseq reader
+/// (`sources::logseq`) have parsed out of one file.
+pub(crate) struct NoteChunks<'a> {
+    pub source_id: &'a str,
+    pub path: &'a Path,
+    pub title: String,
+    pub body: &'a str,
+    pub metadata: HashMap<String, String>,
+    pub space: Option<String>,
+    pub memory_type: Option<String>,
+    pub mtime: i64,
+    /// Must be listed in `origin::DOCUMENT_INGEST_SOURCE_AGENTS`.
+    pub source_agent: &'static str,
+}
+
+/// Chunk a note's body and build one `RawDocument` per chunk, with ids
+/// `<source_id>::<path>::<n>`.
+pub(crate) fn note_chunks_to_documents(note: NoteChunks<'_>) -> Vec<RawDocument> {
+    let NoteChunks {
+        source_id,
+        path,
+        title: stem,
+        body,
+        metadata,
+        space,
+        memory_type,
+        mtime,
+        source_agent,
+    } = note;
     let path_str = path.to_string_lossy();
 
     // Chunk the body using the engine
@@ -500,13 +543,13 @@ pub fn note_to_documents(
             metadata,
             space,
             memory_type,
-            source_agent: Some("obsidian".to_string()),
+            source_agent: Some(source_agent.to_string()),
             ..Default::default()
         }];
     }
 
     // Build a RawDocument per chunk. Note: noise/quality filtering happens in
-    // `sync::sync_obsidian_vault` via the shared `QualityGate` — this function
+    // the server's vault sync via the shared `QualityGate`; this function
     // stays pure and just maps chunks to documents.
     chunks
         .iter()
@@ -530,7 +573,7 @@ pub fn note_to_documents(
                 metadata: metadata.clone(),
                 space: space.clone(),
                 memory_type: memory_type.clone(),
-                source_agent: Some("obsidian".to_string()),
+                source_agent: Some(source_agent.to_string()),
                 ..Default::default()
             }
         })

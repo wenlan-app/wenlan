@@ -567,7 +567,7 @@ export default function PageDetail({
   // memories retain their existing detail navigation and editing behavior.
   const openSourceMemory = (sourceId: string) => {
     const memory = pageSources?.find((row) => row.source.memory_source_id === sourceId)?.memory;
-    if (memory && ["folder", "obsidian"].includes(memory.source_agent ?? "")) {
+    if (memory && ["folder", "obsidian", "logseq"].includes(memory.source_agent ?? "")) {
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
       setSourcePreview({

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Funnel, CaretRight, Plus } from "@phosphor-icons/react";
 import { SourceTypeIcon } from "./SourceTypeIcon";
-import type { SourceApp, SourceKind } from "./sourcePresentation";
+import type { NoteApp, SourceApp, SourceKind } from "./sourcePresentation";
 import type { AssetLens } from "../../../lib/assetLens";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import type { SourceLibraryFilter } from "./SourceLibrary";
@@ -14,7 +14,7 @@ export interface SourceCollectionItem {
   id: string;
   title: string;
   metadata: string;
-  kind: SourceKind | SourceApp | "folder" | "obsidian";
+  kind: SourceKind | SourceApp | "folder" | NoteApp;
   onSelect: () => void;
 }
 
@@ -32,7 +32,7 @@ export function SourceCollection({ items, lens, label }: { items: SourceCollecti
           <span className="source-library-row-title">{item.title}</span>
           <span className="source-library-row-meta">{item.metadata}</span>
         </span>
-        {(item.kind === "folder" || item.kind === "obsidian") && <CaretRight className="source-collection-chevron" size={16} aria-hidden="true" />}
+        {(item.kind === "folder" || item.kind === "obsidian" || item.kind === "logseq") && <CaretRight className="source-collection-chevron" size={16} aria-hidden="true" />}
       </button>
     </li>)}
   </ul>;

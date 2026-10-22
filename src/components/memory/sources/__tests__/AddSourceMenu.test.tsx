@@ -108,11 +108,13 @@ describe("AddSourceMenu", () => {
   });
 
   it("does not label a normal folder as an Obsidian vault", async () => {
-    const { toast } = await import("sonner");
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     fireEvent.click(await screen.findByText("Connect Obsidian vault"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Could not add the source", { description: "Error: Choose the root folder of an Obsidian vault." }));
+    // Shown in the dialog: the main window has no toaster.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not add the source");
+    expect(alert).toHaveTextContent("Choose the root folder of an Obsidian vault.");
     expect(mocks.addSource).not.toHaveBeenCalled();
   });
 
@@ -146,6 +148,29 @@ describe("AddSourceMenu", () => {
     await screen.findByRole("dialog", { name: "Sync or import once?" });
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(close).toHaveBeenCalledTimes(1);
+    expect(mocks.addSource).not.toHaveBeenCalled();
+  });
+
+  it("connects a Logseq graph with its own source type, even one Obsidian also opens", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/graph");
+    mocks.detectVault.mockResolvedValue({ isVault: true, isLogseqGraph: true, sourceType: "obsidian", unreadable: false });
+    mocks.addSource.mockResolvedValue({ id: "logseq-graph", path: "/Users/me/graph", source_type: "logseq" });
+    render(wrap(<AddSourceMenu onClose={() => {}} />));
+    fireEvent.click(await screen.findByText("Connect Logseq graph"));
+    fireEvent.click(await screen.findByText("Keep in sync"));
+    await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("logseq", "/Users/me/graph", true));
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect Logseq graph", directory: true, multiple: false });
+    await waitFor(() => expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("logseq-graph"));
+  });
+
+  it("does not label a normal folder as a Logseq graph", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/research");
+    render(wrap(<AddSourceMenu onClose={() => {}} />));
+    fireEvent.click(await screen.findByText("Connect Logseq graph"));
+    // Shown in the dialog: the main window has no toaster.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not add the source");
+    expect(alert).toHaveTextContent("Choose the root folder of a Logseq graph.");
     expect(mocks.addSource).not.toHaveBeenCalled();
   });
 

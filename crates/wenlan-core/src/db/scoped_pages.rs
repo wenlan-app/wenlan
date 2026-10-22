@@ -224,7 +224,10 @@ impl MemoryDB {
         );
         let mut fts_results = Vec::new();
         let mut fts_succeeded = false;
-        for fts_query in fts_queries {
+        // Only the first query requires every word; the legacy OR fallback
+        // matches any one of them.
+        let mut fts_matched_all_terms = false;
+        for (fts_index, fts_query) in fts_queries.into_iter().enumerate() {
             let mut params = vec![
                 libsql::Value::Text(fts_query),
                 libsql::Value::Integer(fetch_limit),
@@ -250,6 +253,7 @@ impl MemoryDB {
                 }
             }
             if !fts_results.is_empty() {
+                fts_matched_all_terms = fts_index == 0;
                 break;
             }
         }
@@ -261,24 +265,24 @@ impl MemoryDB {
         }
         drop(conn);
 
-        let rrf_k = 60.0f32;
-        let fts_weight = 0.2f32;
-        let mut scores: HashMap<String, f32> = HashMap::new();
+        let vector_ranked: Vec<(String, f64)> = vector_results
+            .iter()
+            .map(|(id, distance, _)| (id.clone(), *distance))
+            .collect();
+        let fts_ranked: Vec<String> = fts_results.iter().map(|(id, _)| id.clone()).collect();
+        let scores = crate::pages::fuse_page_channel_scores(
+            &vector_ranked,
+            &fts_ranked,
+            fts_matched_all_terms,
+        );
         let mut pages: HashMap<String, Page> = HashMap::new();
-        for (rank, (id, distance, page)) in vector_results.into_iter().enumerate() {
-            let similarity = (1.0 - distance as f32).max(0.01);
-            *scores.entry(id.clone()).or_insert(0.0) += similarity / (rrf_k + rank as f32);
+        for (id, _, page) in vector_results {
             pages.entry(id).or_insert(page);
         }
-        for (rank, (id, page)) in fts_results.into_iter().enumerate() {
-            *scores.entry(id.clone()).or_insert(0.0) += fts_weight / (rrf_k + rank as f32);
+        for (id, page) in fts_results {
             pages.entry(id).or_insert(page);
         }
 
-        let theoretical_max = (1.0 + fts_weight) / rrf_k;
-        for score in scores.values_mut() {
-            *score = (*score / theoretical_max).min(1.0);
-        }
         // The entity fence is a SQL condition on both channels above (see
         // `conditions`), so nothing is filtered out here.
         let mut results: Vec<Page> = pages.into_values().collect();

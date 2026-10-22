@@ -69,9 +69,13 @@ fn next_tick() -> u64 {
 }
 
 fn register_vault(root: &Path) -> Source {
+    register_source(root, SourceType::Obsidian)
+}
+
+fn register_source(root: &Path, source_type: SourceType) -> Source {
     let source = Source {
         id: SOURCE_ID.to_string(),
-        source_type: SourceType::Obsidian,
+        source_type,
         path: root.to_path_buf(),
         status: SyncStatus::Active,
         last_sync: None,
@@ -269,6 +273,62 @@ async fn missing_vault_root_is_unavailable_and_deletes_nothing() {
         SyncStatus::Active
     ));
     assert_eq!(stored_ids(&db).await, before);
+}
+
+#[tokio::test]
+async fn logseq_graph_sync_reads_pages_as_prose_and_follows_changes() {
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let (db, _db_dir) = new_test_db().await;
+    let graph = tempfile::tempdir().unwrap();
+    write(graph.path(), "logseq/config.edn", "{}");
+    // Logseq's own backup copy must not be stored a second time.
+    write(
+        graph.path(),
+        "logseq/bak/pages/atlas/2026-10-01.md",
+        &outline("Atlas backup"),
+    );
+    let atlas = write(graph.path(), "pages/projects___atlas.md", &outline("Atlas"));
+    let journal = write(graph.path(), "journals/2026_10_21.md", &outline("Today"));
+    write(graph.path(), "journals/2026_10_22.md", "-\n");
+    register_source(graph.path(), SourceType::Logseq);
+
+    let first = sync(&db).await;
+    assert_eq!(first.files_found, 3);
+    assert_eq!(
+        stored_ids(&db).await,
+        vec![chunk_id(&journal, 0), chunk_id(&atlas, 0)]
+    );
+    assert_eq!(
+        db.get_memory_source_agent(&chunk_id(&atlas, 0))
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("logseq")
+    );
+    let text = note_text(&db, &atlas).await;
+    assert!(text.contains("Atlas is a page kept"), "{text}");
+    assert!(!text.contains("collapsed::"), "{text}");
+    assert!(!text.contains("- Atlas is"), "{text}");
+
+    // Edit, then delete: the graph follows both.
+    write(graph.path(), "pages/projects___atlas.md", &outline("Aleph"));
+    sync(&db).await;
+    let text = note_text(&db, &atlas).await;
+    assert!(text.contains("Aleph") && !text.contains("Atlas"), "{text}");
+    std::fs::remove_file(&journal).unwrap();
+    sync(&db).await;
+    assert_eq!(stored_ids(&db).await, vec![chunk_id(&atlas, 0)]);
+}
+
+/// A Logseq page with enough prose to pass the quality gate.
+fn outline(topic: &str) -> String {
+    format!(
+        "tags:: notes\n\n- {topic} is a page kept in the test graph. It explains one idea in \
+         plain sentences so the sync keeps it.\n  collapsed:: true\n\t- A second sentence adds \
+         detail about how {topic} changes over time and why it matters to the person who \
+         wrote it.\n"
+    )
 }
 
 #[tokio::test]

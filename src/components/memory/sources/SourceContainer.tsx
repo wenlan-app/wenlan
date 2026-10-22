@@ -27,7 +27,7 @@ import PageInfoDrawer from "../page/PageInfoDrawer";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import { SourceDocumentLayout } from "./SourceDocumentReader";
 import SourceDocumentContent from "./SourceDocumentContent";
-import { getSourceAppFromUrl, getSourcePresentation } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation, isNoteApp } from "./sourcePresentation";
 import { SourceCollection, SourceCollectionBreadcrumbs, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import type { SourceLibraryFilter } from "./SourceLibrary";
@@ -84,7 +84,7 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
     <section>
       <h3 className="note-info-section-heading">{heading ?? t("sourceAccess.details")}</h3>
       <dl className="source-info-metadata">
-        <div><dt>{t("sourceContainer.sourceType")}</dt><dd>{source.source_type === "obsidian" ? t("sourceContainer.obsidianVault") : t("sourceLibrary.folder")}</dd></div>
+        <div><dt>{t("sourceContainer.sourceType")}</dt><dd>{source.source_type === "obsidian" ? t("sourceContainer.obsidianVault") : source.source_type === "logseq" ? t("sourceContainer.logseqGraph") : t("sourceLibrary.folder")}</dd></div>
         <div><dt>{t("sourceContainer.originalPath")}</dt><dd className="source-container-path">{source.path}</dd></div>
         <div><dt>{t("sourceAccess.status")}</dt><dd>{statusLabel(source, t)}</dd></div>
         <div><dt>{t("sourceContainer.lastChecked")}</dt><dd>{formattedDate(source.last_sync, i18n.language, t("sourceContainer.notChecked"))}</dd></div>
@@ -136,7 +136,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
   const indexedByPath = useMemo(() => {
     const result = new Map<string, IndexedFileInfo>();
     for (const file of filesQuery.data ?? []) {
-      const id = (file.source === "obsidian" || file.source_agent === "obsidian")
+      const id = (file.source === "obsidian" || isNoteApp(file.source_agent))
         ? file.source_id.replace(/::\d+$/, "") : file.source_id;
       const prior = result.get(id);
       result.set(id, { ...file, source_id: id,
@@ -227,7 +227,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
       <CollectionFrame className="source-container-collection">
         <SourceCollectionBreadcrumbs>
           <button type="button" onClick={() => onNavigate(null)}>{t("sourceContainer.root")}</button><CaretRight size={14} aria-hidden="true" />
-          {source.source_type === "obsidian" && <SourceTypeIcon kind="obsidian" size={16} />}
+          {isNoteApp(source.source_type) && <SourceTypeIcon kind={source.source_type} size={16} />}
           <button type="button" onClick={() => onNavigate({ sourceId: source.id, path: source.path })} aria-current={location.path === source.path ? "page" : undefined}>{rootName}</button>
           {crumbs.map((part, index) => <span className="source-container-crumb" key={`${index}:${part}`}>
             <CaretRight size={14} aria-hidden="true" />

@@ -297,6 +297,38 @@ fn maintenance_round_stays_pending_until_every_stage_attempted() {
 }
 
 #[test]
+fn on_demand_round_runs_only_the_stages_that_need_no_model() {
+    use wenlan_core::maintenance::MaintenanceStage;
+    let mut round = AutomaticMaintenanceRound::model_free();
+    assert_eq!(
+        round.remaining_stages(),
+        [
+            MaintenanceStage::RetroReview,
+            MaintenanceStage::NearDuplicate,
+            MaintenanceStage::OrphanInventory,
+            MaintenanceStage::CrossSpaceDiscovery,
+        ]
+    );
+
+    // A stage with more bounded work goes behind the rest, as in Automatic.
+    let more = AutomaticMaintenanceOutcome {
+        selected: true,
+        progressed: true,
+        more: true,
+        ..AutomaticMaintenanceOutcome::default()
+    };
+    round.complete_stage(MaintenanceStage::RetroReview, more);
+    assert_eq!(
+        round.remaining_stages().last(),
+        Some(&MaintenanceStage::RetroReview)
+    );
+    assert!(round
+        .remaining_stages()
+        .iter()
+        .all(|stage| !stage.needs_model()));
+}
+
+#[test]
 fn maintenance_round_cursor_rotates_a_paused_stage_behind_the_rest() {
     let mut round = AutomaticMaintenanceRound::new(Some(
         wenlan_core::maintenance::MaintenanceStage::RetroReview,
@@ -2083,7 +2115,12 @@ fn directory_sync_tick_polls_recoverable_sources_but_not_paused() {
     source.status = wenlan_types::sources::SyncStatus::Paused;
     assert!(!should_poll_obsidian_source(&source));
 
+    // Logseq graphs share the vault path.
     source.status = wenlan_types::sources::SyncStatus::Active;
+    source.source_type = wenlan_types::sources::SourceType::Logseq;
+    assert!(!should_poll_directory_source(&source));
+    assert!(should_poll_obsidian_source(&source));
+
     source.source_type = wenlan_types::sources::SourceType::Directory;
     assert!(!should_poll_obsidian_source(&source));
 }

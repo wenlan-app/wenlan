@@ -82,7 +82,7 @@ impl OriginClass {
 /// that decide grounding are the values a request may not select. `reconcile`
 /// is deliberately absent — a doc-reconcile revision is LLM-rewritten prose
 /// about a document, not the document, so it is `Generated` and unpromotable.
-pub const DOCUMENT_INGEST_SOURCE_AGENTS: &[&str] = &["folder", "obsidian"];
+pub const DOCUMENT_INGEST_SOURCE_AGENTS: &[&str] = &["folder", "obsidian", "logseq"];
 
 /// Whether `source_agent` names a document-ingest path. Case- and
 /// whitespace-insensitive so the guard and the classifier can never disagree

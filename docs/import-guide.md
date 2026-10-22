@@ -6,11 +6,22 @@ Open **Settings → Sources** and choose the route that matches your material.
 
 ## Connect an Obsidian vault — read-only
 
-1. Under **Connected sources**, choose **Add source…** (or **Add your first source**).
-2. Browse to your vault folder. Wenlan detects the vault; choose **Connect** to start indexing.
-3. Keep editing in Obsidian. While Wenlan runs, it checks the vault for changes about every 30 seconds: edited, new, renamed, and deleted notes. To pick up a change right away, use **Sync** beside the source.
+1. Under **Connected sources**, choose **Add source…** (or **Add your first source**), then **Connect Obsidian vault**.
+2. Browse to your vault folder.
+3. Choose **Keep in sync** or **Import once**:
+   - **Keep in sync** (the default): keep editing in Obsidian. While Wenlan runs, it checks the vault for changes about every 30 seconds: edited, new, renamed, and deleted notes.
+   - **Import once**: Wenlan reads the vault now. Later changes wait until you choose **Refresh** in the source's info.
+
+   You can switch later with **Keep in sync** in the source's info. To pick up a change right away, choose **Refresh** there.
 
 Wenlan reads the vault’s Markdown notes without changing the original files. **Changes flow one way, into Wenlan; nothing is written back to Obsidian.**
+
+## Connect a Logseq graph — read-only
+
+1. Choose **Add source…**, then **Connect Logseq graph**, and pick the graph folder (the one that holds `pages/`, `journals/`, and `logseq/`).
+2. Choose **Keep in sync** or **Import once**, as for an Obsidian vault. Kept in sync, Wenlan follows edits, new pages, renames, and deletions about every 30 seconds while you keep writing in Logseq.
+
+Wenlan reads the Markdown pages in `pages/` and `journals/`. Outlines become plain paragraphs and lists, a journal is titled with its date, and block properties such as `id::` are left out. Logseq's backups in `logseq/bak/` are not read, and nothing is written back to Logseq. Graphs made with the newer Logseq database version keep their pages in a database, not in files: export them to Markdown first.
 
 ## Import a ChatGPT or Claude conversation ZIP
 

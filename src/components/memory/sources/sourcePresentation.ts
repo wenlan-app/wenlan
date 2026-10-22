@@ -12,6 +12,13 @@ export const SOURCE_APP_NAMES: Readonly<Record<SourceApp, string>> = {
   slack: "Slack",
   github: "GitHub",
 };
+/** Note apps whose connected vault or graph Wenlan follows. */
+export type NoteApp = "obsidian" | "logseq";
+/** Whether a source type or `source_agent` names a note app. Their notes are
+ *  stored in sections, `<source>::<path>::<n>`. */
+export function isNoteApp(value: string | null | undefined): value is NoteApp {
+  return value === "obsidian" || value === "logseq";
+}
 export function isSourceApp(value: string): value is SourceApp {
   return Object.prototype.hasOwnProperty.call(SOURCE_APP_NAMES, value);
 }
@@ -74,9 +81,9 @@ function sourceUrl(file: SourcePresentationInput): URL | null {
 function sourcePath(file: SourcePresentationInput, url: URL | null): { value: string | null; known: boolean } {
   const separator = file.source_id.indexOf("::");
   const rawId = separator >= 0 ? file.source_id.slice(separator + 2) : file.source_id;
-  // Obsidian imported IDs append a section ordinal after the real file path.
+  // Obsidian and Logseq IDs append a section ordinal after the real file path.
   // Keep that storage identifier intact; only strip it for visual classification.
-  const raw = separator >= 0 && (file.source === "obsidian" || file.source_agent === "obsidian")
+  const raw = separator >= 0 && (file.source === "obsidian" || isNoteApp(file.source_agent))
     ? rawId.replace(/::\d+$/, "") : rawId;
   if (!raw || httpUrl(raw)) return { value: null, known: separator >= 0 };
 

@@ -31,6 +31,9 @@ export const enSourceAccess = {
   "chatHistoryHint": "Import a ChatGPT or Claude export, so earlier decisions come along.",
   "chatHistoryBody": "Export your chats from ChatGPT or Claude, then drop the ZIP here. Chats you already imported are skipped.",
   "notVault": "Choose the root folder of an Obsidian vault.",
+  "logseq": "Connect Logseq graph",
+  "logseqHint": "Choose your graph, then sync it or import it once.",
+  "notLogseqGraph": "Choose the root folder of a Logseq graph.",
   "connecting": "Connecting…",
   "followTitle": "Sync or import once?",
   "followSync": "Keep in sync",
@@ -117,6 +120,7 @@ export const enSourceAccess = {
   "chooseFolder": "Choose a folder…",
   "scanning": "Checking folder…",
   "vaultDetected": "Obsidian vault detected",
+  "logseqDetected": "Logseq graph detected",
   "connect": "Connect folder",
   "folderPickFailed": "Could not read the selected folder."
 };
@@ -153,6 +157,9 @@ export const hantSourceAccess = {
   "chatHistoryHint": "匯入 ChatGPT 或 Claude 的匯出檔，之前聊定的事也一起帶進來。",
   "chatHistoryBody": "先在 ChatGPT 或 Claude 匯出聊天記錄，再把 ZIP 放到這裡。匯入過的對話會自動略過。",
   "notVault": "請選擇 Obsidian 庫的根資料夾。",
+  "logseq": "連接 Logseq 圖譜",
+  "logseqHint": "選擇 Logseq 圖譜，可持續同步或只匯入一次。",
+  "notLogseqGraph": "請選擇 Logseq 圖譜的根資料夾。",
   "connecting": "正在連接…",
   "followTitle": "持續同步，還是只匯入一次？",
   "followSync": "持續同步",
@@ -239,6 +246,7 @@ export const hantSourceAccess = {
   "chooseFolder": "選擇資料夾…",
   "scanning": "正在檢查資料夾…",
   "vaultDetected": "已偵測到 Obsidian 庫",
+  "logseqDetected": "已偵測到 Logseq 圖譜",
   "connect": "連接資料夾",
   "folderPickFailed": "無法讀取所選資料夾。"
 };
@@ -275,6 +283,9 @@ export const hansSourceAccess = {
   "chatHistoryHint": "导入 ChatGPT 或 Claude 的导出文件，之前聊定的事也一起带进来。",
   "chatHistoryBody": "先在 ChatGPT 或 Claude 导出聊天记录，再把 ZIP 放到这里。导入过的对话会自动跳过。",
   "notVault": "请选择 Obsidian 库的根文件夹。",
+  "logseq": "连接 Logseq 图谱",
+  "logseqHint": "选择 Logseq 图谱，可持续同步或只导入一次。",
+  "notLogseqGraph": "请选择 Logseq 图谱的根文件夹。",
   "connecting": "正在连接…",
   "followTitle": "持续同步，还是只导入一次？",
   "followSync": "持续同步",
@@ -361,6 +372,7 @@ export const hansSourceAccess = {
   "chooseFolder": "选择文件夹…",
   "scanning": "正在检查文件夹…",
   "vaultDetected": "已检测到 Obsidian 库",
+  "logseqDetected": "已检测到 Logseq 图谱",
   "connect": "连接文件夹",
   "folderPickFailed": "无法读取所选文件夹。"
 };

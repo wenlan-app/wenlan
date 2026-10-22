@@ -2535,7 +2535,7 @@ mod store_scheduler_handoff_tests {
         }));
         wenlan_core::config::save_config(&wenlan_core::config::Config::default()).unwrap();
 
-        for claimed in ["folder", "obsidian", "  FOLDER "] {
+        for claimed in ["folder", "obsidian", "logseq", "  FOLDER "] {
             let content = format!(
                 "An agent claiming to be '{claimed}' asserts that Alice works on ProjectX."
             );
