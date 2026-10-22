@@ -45,6 +45,8 @@ pub mod repair_prepare_operation_routes;
 pub mod repair_read_routes;
 pub mod repair_routes;
 pub mod repair_runtime_routes;
+pub mod repo_wiki_daily;
+pub mod repo_wiki_routes;
 mod route_registry;
 pub mod router;
 pub mod routes;

@@ -763,6 +763,74 @@ impl WenlanClient {
             .context("parsing /api/memory/entities/{id}/aliases response")
     }
 
+    /// `/api/spaces/{space}/wiki/{tail}`, with the Space name encoded as one
+    /// path segment.
+    fn space_wiki_url(&self, space: &str, tail: &str) -> Result<String> {
+        let mut url = reqwest::Url::parse(&self.base_url).context("parsing the daemon URL")?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("the daemon URL cannot take a path"))?
+            .pop_if_empty()
+            .extend(["api", "spaces", space, "wiki", tail]);
+        Ok(url.into())
+    }
+
+    /// `GET /api/spaces/{space}/wiki/repo`: the repository `space` is bound
+    /// to, if any.
+    pub async fn repo_wiki_binding(
+        &self,
+        space: &str,
+    ) -> Result<Option<wenlan_types::repo_wiki::RepoWikiBinding>> {
+        let url = self.space_wiki_url(space, "repo")?;
+        let resp = self
+            .send(self.http.get(&url), &format!("GET {url} failed"))
+            .await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        resp.json().await.context("parsing wiki repo response")
+    }
+
+    /// `PUT /api/spaces/{space}/wiki/repo`: bind `space` to a repository, or
+    /// change its folder and daily run.
+    pub async fn bind_repo_wiki(
+        &self,
+        space: &str,
+        req: &wenlan_types::repo_wiki::BindRepoWikiRequest,
+    ) -> Result<wenlan_types::repo_wiki::RepoWikiBinding> {
+        let url = self.space_wiki_url(space, "repo")?;
+        let resp = self
+            .send(self.http.put(&url).json(req), &format!("PUT {url} failed"))
+            .await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        resp.json().await.context("parsing wiki repo response")
+    }
+
+    /// `DELETE /api/spaces/{space}/wiki/repo`. True when a binding was removed.
+    pub async fn unbind_repo_wiki(&self, space: &str) -> Result<bool> {
+        let url = self.space_wiki_url(space, "repo")?;
+        let resp = self
+            .send(self.http.delete(&url), &format!("DELETE {url} failed"))
+            .await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        let body: serde_json::Value = resp.json().await.context("parsing unbind response")?;
+        Ok(body
+            .get("removed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false))
+    }
+
+    /// `POST /api/spaces/{space}/wiki/publish`: write the Space's code pages
+    /// into its repository and open or update the pull request.
+    pub async fn publish_repo_wiki(
+        &self,
+        space: &str,
+    ) -> Result<wenlan_types::repo_wiki::RepoWikiPublishResult> {
+        let url = self.space_wiki_url(space, "publish")?;
+        let resp = self
+            .send(self.http.post(&url), &format!("POST {url} failed"))
+            .await?;
+        let resp = ensure_daemon_success(resp, &url).await?;
+        resp.json().await.context("parsing wiki publish response")
+    }
+
     /// POST /api/pages/export with `format: "okf"` — write a pure OKF v0.2
     /// bundle of every exportable page into `dir`. Used by
     /// `wenlan export okf`. The daemon owns the safety checks (absolute
