@@ -755,6 +755,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/spaces/{name}/wiki/publish` | main | no | not_applicable | `none` | — | receipt only: status, page counts, branch and links; page files go to the bound repository, not the response |
 | `DELETE` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
 | `GET` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | binding only: repository path, folder, daily setting and last publish receipt, no prose |
+| `GET` | `/api/spaces/{name}/wiki/suggest` | main | no | not_applicable | `none` | — | candidates only: repository paths, page counts and remote URLs, no prose |
 | `PUT` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | binding only: repository path, folder, daily setting and last publish receipt, no prose |
 | `POST` | `/api/spaces/{name}/wiki/run` | main | no | not_applicable | `none` | — | receipt only: started flag, no prose |
 | `GET` | `/api/status` | main | no | not_applicable | `none` | — | no prose fields |

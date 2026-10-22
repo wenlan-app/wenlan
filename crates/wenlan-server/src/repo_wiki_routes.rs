@@ -5,6 +5,8 @@
 //! - `GET /api/spaces/{name}/wiki/repo`: the binding, or `null`.
 //! - `PUT /api/spaces/{name}/wiki/repo`: bind, or change folder and daily run.
 //! - `DELETE /api/spaces/{name}/wiki/repo`: unbind.
+//! - `GET /api/spaces/{name}/wiki/suggest`: repositories the Space's code
+//!   pages could go into, for the app to offer binding.
 //! - `POST /api/spaces/{name}/wiki/publish`: write the pages and open or
 //!   update the pull request.
 //! - `POST /api/spaces/{name}/wiki/run`: start the daily run now, in the
@@ -24,7 +26,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::repo_wiki;
-use wenlan_types::repo_wiki::{BindRepoWikiRequest, RepoWikiBinding, RepoWikiPublishResult};
+use wenlan_types::repo_wiki::{
+    BindRepoWikiRequest, RepoWikiBinding, RepoWikiPublishResult, RepoWikiSuggestion,
+};
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
     router
@@ -34,6 +38,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
                 .put(handle_bind)
                 .delete(handle_unbind),
         )
+        .route("/api/spaces/{name}/wiki/suggest", get(handle_suggest))
         .route("/api/spaces/{name}/wiki/publish", post(handle_publish))
         .route("/api/spaces/{name}/wiki/run", post(handle_run_now))
 }
@@ -117,6 +122,22 @@ async fn handle_unbind(
     })
     .await?;
     Ok(Json(serde_json::json!({ "removed": removed })))
+}
+
+/// GET /api/spaces/{name}/wiki/suggest
+async fn handle_suggest(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(space): Path<String>,
+) -> Result<Json<RepoWikiSuggestion>, ServerError> {
+    let db = db_of(&state).await?;
+    let space = registered_space(&db, &space).await?;
+    let pages = exportable_pages(&db, &space).await?;
+    let code_bases = db
+        .code_basis_locators_by_page()
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?;
+    let candidates = blocking(move || Ok(repo_wiki::candidates(&pages, &code_bases))).await?;
+    Ok(Json(RepoWikiSuggestion { candidates }))
 }
 
 /// POST /api/spaces/{name}/wiki/publish

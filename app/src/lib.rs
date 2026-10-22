@@ -37,6 +37,7 @@ pub mod remote_access;
 mod remote_access_platform;
 pub mod remote_relay;
 mod repair;
+mod repo_wiki;
 mod search;
 pub mod sources;
 pub mod state;
@@ -1607,6 +1608,11 @@ pub fn run() {
             search::get_space,
             search::create_space,
             search::update_space,
+            repo_wiki::get_repo_wiki,
+            repo_wiki::suggest_repo_wiki,
+            repo_wiki::bind_repo_wiki,
+            repo_wiki::unbind_repo_wiki,
+            repo_wiki::publish_repo_wiki,
             search::delete_space,
             search::move_space,
             search::confirm_space,

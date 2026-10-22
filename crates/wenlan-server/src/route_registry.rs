@@ -422,8 +422,10 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // counts); the list and the claim are in the sensitive catalog instead.
     "/api/steep/commit",
     // A repository-bound Space names its Space in the path; the binding,
-    // publish and run routes return paths, counts and links, no page text.
-    "/api/spaces/{name}/wiki/repo", "/api/spaces/{name}/wiki/publish", "/api/spaces/{name}/wiki/run",
+    // suggest, publish and run routes return paths, counts and links, no
+    // page text.
+    "/api/spaces/{name}/wiki/repo", "/api/spaces/{name}/wiki/suggest",
+    "/api/spaces/{name}/wiki/publish", "/api/spaces/{name}/wiki/run",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

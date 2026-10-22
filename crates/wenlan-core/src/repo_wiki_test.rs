@@ -220,6 +220,46 @@ fn only_pages_resting_on_this_repositorys_code_are_selected() {
 }
 
 #[test]
+fn candidates_name_repositories_with_code_pages_most_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, clone) = repo_with_origin(dir.path());
+    let root = clone.to_string_lossy().into_owned();
+    let gone = dir.path().join("gone").to_string_lossy().into_owned();
+    let mut with_memory = page("p3", "Lessons", "c");
+    with_memory.source_memory_ids = vec!["mem_1".into()];
+    let pages = vec![
+        page("p1", "Module map", "a"),
+        page("p2", "Startup", "b"),
+        with_memory,
+        page("p4", "Old checkout", "d"),
+    ];
+    let code_bases = HashMap::from([
+        ("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
+        (
+            "p2".to_string(),
+            vec![locator(&format!("{root}/"), "src/main.rs", 1, 1)],
+        ),
+        ("p3".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
+        ("p4".to_string(), vec![locator(&gone, "x.rs", 1, 2)]),
+    ]);
+
+    let found = candidates(&pages, &code_bases);
+
+    assert_eq!(
+        found.len(),
+        1,
+        "a missing checkout is not offered: {found:?}"
+    );
+    assert_eq!(found[0].repo_root, root);
+    assert_eq!(found[0].pages, 2, "a page citing memories does not count");
+    assert!(found[0]
+        .remote_url
+        .as_deref()
+        .is_some_and(|url| url.ends_with("origin.git")));
+    assert!(candidates(&pages[2..3], &code_bases).is_empty());
+}
+
+#[test]
 fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
     let dir = tempfile::tempdir().unwrap();
     let (_, clone) = repo_with_origin(dir.path());

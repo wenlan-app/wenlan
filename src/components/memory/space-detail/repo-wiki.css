@@ -1,0 +1,221 @@
+/* The Space header's GitHub button and the panel it opens below itself.
+   The panel is positioned against `.space-dossier-actions`, like the
+   overflow menu beside it. */
+
+.repo-wiki-trigger,
+.repo-wiki-secondary,
+.repo-wiki-primary,
+.repo-wiki-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--mem-control-height);
+  padding: 0 12px;
+  border: 1px solid var(--mem-control-border);
+  border-radius: var(--mem-control-radius);
+  background: transparent;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  font: 500 var(--mem-control-font-size)/1 var(--mem-font-body);
+  white-space: nowrap;
+  transition: background-color 150ms, border-color 150ms, color 150ms;
+}
+
+.repo-wiki-trigger:hover,
+.repo-wiki-trigger[aria-expanded="true"],
+.repo-wiki-secondary:hover {
+  background: var(--mem-hover);
+  color: var(--mem-text);
+}
+
+.repo-wiki-trigger[data-state="bound"] {
+  color: var(--mem-text);
+}
+
+.repo-wiki-trigger:focus-visible,
+.repo-wiki-secondary:focus-visible,
+.repo-wiki-primary:focus-visible,
+.repo-wiki-danger:focus-visible,
+.repo-wiki-link:focus-visible {
+  outline: 2px solid var(--mem-accent-page);
+  outline-offset: 2px;
+}
+
+.repo-wiki-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--mem-radius-full);
+  background: var(--mem-status-success-text);
+}
+
+.repo-wiki-primary {
+  border-color: transparent;
+  background: var(--mem-indigo-bg);
+  color: var(--mem-accent-indigo);
+}
+
+.repo-wiki-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--mem-accent-indigo) 22%, transparent);
+  color: var(--mem-text);
+}
+
+.repo-wiki-primary:disabled,
+.repo-wiki-danger:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.repo-wiki-danger {
+  border-color: transparent;
+  padding-inline: 0;
+  color: var(--mem-status-warning-text);
+}
+
+.repo-wiki-panel {
+  position: absolute;
+  z-index: 20;
+  top: 44px;
+  right: 0;
+  box-sizing: border-box;
+  width: 380px;
+  max-width: calc(100vw - 24px);
+  padding: 16px;
+  border: 1px solid var(--mem-popover-border);
+  border-radius: var(--mem-popover-radius);
+  background: var(--mem-popover);
+  box-shadow: var(--mem-popover-shadow);
+  color: var(--mem-text);
+  font-size: var(--mem-text-sm);
+  text-align: left;
+}
+
+.repo-wiki-form {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.repo-wiki-title {
+  margin: 0 0 2px;
+  font: 600 var(--mem-text-base)/1.3 var(--mem-font-body);
+}
+
+.repo-wiki-label {
+  margin-bottom: -4px;
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-xs);
+}
+
+.repo-wiki-folder,
+.repo-wiki-row,
+.repo-wiki-buttons,
+.repo-wiki-repo,
+.repo-wiki-daily-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.repo-wiki-folder > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-wiki-found {
+  margin: -4px 0 0;
+  color: var(--mem-status-success-text);
+  font-size: var(--mem-text-xs);
+}
+
+.repo-wiki-daily {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.repo-wiki-row {
+  justify-content: space-between;
+}
+
+.repo-wiki-daily-fields > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.repo-wiki-note,
+.repo-wiki-status {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-xs);
+  line-height: 1.55;
+}
+
+.repo-wiki-status {
+  color: var(--mem-text);
+  font-size: var(--mem-text-sm);
+}
+
+.repo-wiki-error {
+  margin: 0;
+  color: var(--mem-status-warning-text);
+  font-size: var(--mem-text-xs);
+  line-height: 1.5;
+}
+
+.repo-wiki-buttons {
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.repo-wiki-buttons-start {
+  justify-content: flex-start;
+}
+
+.repo-wiki-repo {
+  font-weight: 600;
+}
+
+.repo-wiki-repo span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-wiki-repo code {
+  margin-left: auto;
+  color: var(--mem-text-secondary);
+  font: 400 var(--mem-text-xs)/1 var(--mem-font-mono);
+}
+
+.repo-wiki-link {
+  justify-self: start;
+  color: var(--mem-link);
+  font-size: var(--mem-text-sm);
+  text-decoration: none;
+}
+
+.repo-wiki-link:hover {
+  color: var(--mem-link-hover);
+  text-decoration: underline;
+}
+
+.repo-wiki-footer {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mem-border);
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-xs);
+}
+
+.repo-wiki-footer > .repo-wiki-danger {
+  justify-self: start;
+  min-height: 0;
+}
+
+@media (max-width: 639px) {
+  .repo-wiki-panel { max-width: calc(100vw - 48px); }
+}

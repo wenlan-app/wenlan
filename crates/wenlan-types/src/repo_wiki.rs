@@ -67,6 +67,25 @@ pub struct BindRepoWikiRequest {
     pub daily: Option<RepoWikiDaily>,
 }
 
+/// A repository the pages of a Space could go into.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoWikiCandidate {
+    /// Absolute path of the working copy the pages cite code from.
+    pub repo_root: String,
+    /// Pages that rest on this repository's code alone.
+    pub pages: usize,
+    /// `origin`'s URL, for display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_url: Option<String>,
+}
+
+/// Result of `GET /api/spaces/{space}/wiki/suggest`: most pages first, empty
+/// when no page of the Space rests on a repository's code alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoWikiSuggestion {
+    pub candidates: Vec<RepoWikiCandidate>,
+}
+
 /// What a publish did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

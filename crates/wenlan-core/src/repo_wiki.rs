@@ -21,8 +21,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use wenlan_types::repo_wiki::{
-    RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus,
-    DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
+    RepoWikiAgent, RepoWikiBinding, RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult,
+    RepoWikiPublishStatus, DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
 };
 use wenlan_types::CodeBasisLocator;
 
@@ -273,18 +273,63 @@ pub fn select_pages(
     let total = pages.len();
     let selected: Vec<Page> = pages
         .into_iter()
-        .filter(|page| {
-            page.source_memory_ids.is_empty()
-                && page.citations.is_empty()
-                && code_bases.get(&page.id).is_some_and(|locators| {
-                    locators
-                        .iter()
-                        .any(|locator| same_root(&locator.repo_root, repo_root))
-                })
-        })
+        .filter(|page| goes_into(page, code_bases, repo_root))
         .collect();
     let left_out = total - selected.len();
     (selected, left_out)
+}
+
+fn goes_into(
+    page: &Page,
+    code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
+    repo_root: &str,
+) -> bool {
+    page.source_memory_ids.is_empty()
+        && page.citations.is_empty()
+        && code_bases.get(&page.id).is_some_and(|locators| {
+            locators
+                .iter()
+                .any(|locator| same_root(&locator.repo_root, repo_root))
+        })
+}
+
+/// Repositories the pages of a Space could go into: every working copy a
+/// page cites code from, with how many pages would go in, most first. A root
+/// that is no longer a git working copy is left out. Runs git.
+pub fn candidates(
+    pages: &[Page],
+    code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
+) -> Vec<RepoWikiCandidate> {
+    let roots: BTreeSet<&str> = pages
+        .iter()
+        .filter_map(|page| code_bases.get(&page.id))
+        .flatten()
+        .map(|locator| locator.repo_root.trim_end_matches('/'))
+        .collect();
+    let mut found: Vec<RepoWikiCandidate> = roots
+        .into_iter()
+        .filter_map(|root| {
+            let count = pages
+                .iter()
+                .filter(|page| goes_into(page, code_bases, root))
+                .count();
+            if count == 0 {
+                return None;
+            }
+            let top = repository_top_level(Path::new(root)).ok()?;
+            Some(RepoWikiCandidate {
+                repo_root: root.to_owned(),
+                pages: count,
+                remote_url: origin_url(&top),
+            })
+        })
+        .collect();
+    found.sort_by(|a, b| {
+        b.pages
+            .cmp(&a.pages)
+            .then_with(|| a.repo_root.cmp(&b.repo_root))
+    });
+    found
 }
 
 fn same_root(a: &str, b: &str) -> bool {

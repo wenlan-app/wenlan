@@ -72,6 +72,7 @@ main|get|/api/sources|wenlan_server::source_routes::handle_list_sources
 main|get|/api/spaces|wenlan_server::spaces_routes::handle_list_spaces
 main|get|/api/spaces/default|wenlan_server::spaces_routes::handle_get_default_space
 main|get|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_get_binding
+main|get|/api/spaces/{name}/wiki/suggest|wenlan_server::repo_wiki_routes::handle_suggest
 main|get|/api/status|wenlan_server::routes::handle_status
 main|get|/api/telemetry|wenlan_server::telemetry_routes::handle_get_telemetry
 main|put|/api/telemetry|wenlan_server::telemetry_routes::handle_update_telemetry

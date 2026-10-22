@@ -893,6 +893,91 @@ export async function deleteSpace(name: string): Promise<void> {
   return invoke("delete_space", { name });
 }
 
+// ── A Space bound to a git repository ──────────────────────────────────
+// Mirrors `wenlan_types::repo_wiki`. The daemon writes the Space's code
+// pages into a folder of the repository and opens a pull request.
+
+export type RepoWikiAgent = "claude" | "codex";
+
+export interface RepoWikiDaily {
+  enabled: boolean;
+  /** Local hour, 0 to 23, after which the day's update starts. */
+  hour: number;
+  agent: RepoWikiAgent;
+}
+
+export type RepoWikiPublishStatus =
+  | "no_changes"
+  | "pr_opened"
+  | "pr_updated"
+  | "pushed"
+  | "nothing_to_publish";
+
+export interface RepoWikiPublishResult {
+  status: RepoWikiPublishStatus;
+  pages: number;
+  left_out: number;
+  waiting: number;
+  branch?: string | null;
+  pr_url?: string | null;
+  compare_url?: string | null;
+  /** Unix seconds. */
+  at: number;
+}
+
+export interface RepoWikiBinding {
+  space: string;
+  repo_root: string;
+  folder: string;
+  remote_url?: string | null;
+  daily?: RepoWikiDaily | null;
+  last_publish?: RepoWikiPublishResult | null;
+  last_daily_run?: string | null;
+}
+
+export interface RepoWikiCandidate {
+  repo_root: string;
+  pages: number;
+  remote_url?: string | null;
+}
+
+export interface RepoWikiSuggestion {
+  candidates: RepoWikiCandidate[];
+}
+
+export async function getRepoWiki(space: string): Promise<RepoWikiBinding | null> {
+  return invoke("get_repo_wiki", { space });
+}
+
+export async function suggestRepoWiki(space: string): Promise<RepoWikiSuggestion> {
+  return invoke("suggest_repo_wiki", { space });
+}
+
+/** Bind `space` to the repository holding `repoRoot`, or change its folder or
+ *  daily update. Leaving `daily` out keeps the current daily setting. */
+export async function bindRepoWiki(
+  space: string,
+  repoRoot: string,
+  folder?: string,
+  daily?: RepoWikiDaily,
+): Promise<RepoWikiBinding> {
+  return invoke("bind_repo_wiki", {
+    space,
+    repoRoot,
+    folder: folder ?? null,
+    daily: daily ?? null,
+  });
+}
+
+export async function unbindRepoWiki(space: string): Promise<void> {
+  return invoke("unbind_repo_wiki", { space });
+}
+
+/** Put the current pages into the repository; no AI rewrites anything. */
+export async function publishRepoWiki(space: string): Promise<RepoWikiPublishResult> {
+  return invoke("publish_repo_wiki", { space });
+}
+
 export interface MoveSpaceResponse {
   affected: number;
 }

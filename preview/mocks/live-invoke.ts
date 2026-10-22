@@ -967,6 +967,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_profile: () => get("/api/profile"),
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),
+  // A Space bound to a git repository. The daemon runs git and gh itself, so
+  // the preview passes these straight through.
+  get_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`),
+  suggest_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/suggest`),
+  bind_repo_wiki: (a) => put(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`, {
+    repo_root: a?.repoRoot,
+    ...(a?.folder == null ? {} : { folder: a.folder }),
+    ...(a?.daily == null ? {} : { daily: a.daily }),
+  }),
+  unbind_repo_wiki: (a) => del(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`).then(() => null),
+  publish_repo_wiki: (a) => post(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/publish`),
   update_space: async (a) => {
     const name = normalizedSpace(a?.name);
     const newName = normalizedSpace(a?.newName);
