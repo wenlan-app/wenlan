@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowCounterClockwise,
@@ -172,7 +172,8 @@ export function FirstUseSample({
   const [dialog, setDialog] = useState<SampleDialogState | null>(null);
   const dialogTrigger = useRef<HTMLElement | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
-  const [client, setClient] = useState<SampleClient>("chatgpt");
+  // The sample chat is in Codex, so its commands open first.
+  const [client, setClient] = useState<SampleClient>("codex");
   const [copiedKey, setCopiedKey] = useState<CopyKey | null>(null);
   const [copyFailedKey, setCopyFailedKey] = useState<CopyKey | null>(null);
 
@@ -265,7 +266,8 @@ export function FirstUseSample({
     sources.find((source) => source.id === id);
 
   const quotesFor = (source: SampleSource): string[] =>
-    citations.filter((entry) => entry.sourceId === source.id).map((entry) => entry.quote);
+    // Two citations can quote the same line of one source; the rack shows it once.
+    [...new Set(citations.filter((entry) => entry.sourceId === source.id).map((entry) => entry.quote))];
 
   const paragraphSources = (paragraph: SamplePageParagraph): SampleSource[] => {
     const seen = new Set<string>();
@@ -470,13 +472,41 @@ export function FirstUseSample({
             </div>
             <ul className="fus-secondary-commands">
               <li>
+                <div>
+                  <span>
+                    <strong>{t("firstUse.sample.briefLabel")}</strong> {t("firstUse.sample.briefHint")}
+                  </span>
+                  <code>{commands.brief}</code>
+                </div>
+                <button
+                  type="button"
+                  className="fus-icon-button"
+                  onClick={() => copyCommand("brief", commands.brief)}
+                  aria-label={`${t("firstUse.sample.copyCommand")}: ${t("firstUse.sample.briefLabel")}`}
+                >
+                  {copiedKey === "brief" ? (
+                    <Check aria-hidden="true" weight="bold" data-testid="copy-ok" />
+                  ) : (
+                    <Copy aria-hidden="true" weight="regular" />
+                  )}
+                </button>
+                <span role="status" className="sr-only">
+                  {copiedKey === "brief" ? `${t("firstUse.sample.briefLabel")}: ${t("firstUse.sample.copied")}` : ""}
+                </span>
+                {copyFailedKey === "brief" ? (
+                  <p role="alert" className="fus-copy-error">
+                    {t("firstUse.sample.copyFailed")}
+                  </p>
+                ) : null}
+              </li>
+              <li>
                 {handoffCommand != null ? (
                   <>
                     <div>
-                      <code>{handoffCommand}</code>
                       <span>
                         <strong>{t("firstUse.sample.handoffLabel")}</strong> {t("firstUse.sample.handoffHint")}
                       </span>
+                      <code>{handoffCommand}</code>
                     </div>
                     <button
                       type="button"
@@ -507,34 +537,6 @@ export function FirstUseSample({
                   </div>
                 )}
               </li>
-              <li>
-                <div>
-                  <code>{commands.brief}</code>
-                  <span>
-                    <strong>{t("firstUse.sample.briefLabel")}</strong> {t("firstUse.sample.briefHint")}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="fus-icon-button"
-                  onClick={() => copyCommand("brief", commands.brief)}
-                  aria-label={`${t("firstUse.sample.copyCommand")}: ${t("firstUse.sample.briefLabel")}`}
-                >
-                  {copiedKey === "brief" ? (
-                    <Check aria-hidden="true" weight="bold" data-testid="copy-ok" />
-                  ) : (
-                    <Copy aria-hidden="true" weight="regular" />
-                  )}
-                </button>
-                <span role="status" className="sr-only">
-                  {copiedKey === "brief" ? `${t("firstUse.sample.briefLabel")}: ${t("firstUse.sample.copied")}` : ""}
-                </span>
-                {copyFailedKey === "brief" ? (
-                  <p role="alert" className="fus-copy-error">
-                    {t("firstUse.sample.copyFailed")}
-                  </p>
-                ) : null}
-              </li>
             </ul>
             <p className="fus-note">{t("firstUse.sample.notInLibrary")}</p>
             <div className="fus-cta-row">
@@ -558,34 +560,38 @@ export function FirstUseSample({
                 const lit = focusType != null &&
                   paragraphSources(paragraph).some((source) => source.type === focusType);
                 return (
-                  <p
-                    key={paragraph.text}
-                    className="fus-result-paragraph"
-                    data-lit={lit}
-                    data-dimmed={focusType != null && !lit}
-                  >
-                    {lit ? <mark>{paragraph.text}</mark> : paragraph.text}{" "}
-                    {paragraph.citationIds.map((id) => {
-                      const entry = citationById(id);
-                      const source = entry ? sourceById(entry.sourceId) : undefined;
-                      if (!entry || !source) return null;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          data-testid={`sample-citation-${id}`}
-                          data-source-type={source.type}
-                          className="fus-citation"
-                          aria-haspopup="dialog"
-                          aria-label={source.title}
-                          onClick={() => openSource(source.id, id)}
-                        >
-                          <SourceGlyph type={source.type} />
-                          {source.kind}
-                        </button>
-                      );
-                    })}
-                  </p>
+                  <Fragment key={paragraph.text}>
+                    {paragraph.heading ? (
+                      <h3 className="fus-result-heading">{paragraph.heading}</h3>
+                    ) : null}
+                    <p
+                      className="fus-result-paragraph"
+                      data-lit={lit}
+                      data-dimmed={focusType != null && !lit}
+                    >
+                      {lit ? <mark>{paragraph.text}</mark> : paragraph.text}{" "}
+                      {paragraph.citationIds.map((id) => {
+                        const entry = citationById(id);
+                        const source = entry ? sourceById(entry.sourceId) : undefined;
+                        if (!entry || !source) return null;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            data-testid={`sample-citation-${id}`}
+                            data-source-type={source.type}
+                            className="fus-citation"
+                            aria-haspopup="dialog"
+                            aria-label={source.title}
+                            onClick={() => openSource(source.id, id)}
+                          >
+                            <SourceGlyph type={source.type} />
+                            {source.kind}
+                          </button>
+                        );
+                      })}
+                    </p>
+                  </Fragment>
                 );
               })}
             </article>
@@ -617,7 +623,7 @@ export function FirstUseSample({
                           <SourceGlyph type={source.type} />
                         </span>
                         <span className="fus-rack-copy">
-                          <span className="fus-source-kind">{source.kind}</span>
+                          <span className="fus-source-kind">{`${source.kind} · ${source.when}`}</span>
                           <span className="fus-rack-title">{source.title}</span>
                           {quotesFor(source).map((quote) => (
                             <span key={quote} className="fus-rack-point">
@@ -710,11 +716,14 @@ export function FirstUseSample({
                     {index + 1}
                   </span>
                 ) : null}
-                {dialogCitation ? (
-                  <HighlightedLine line={line} quote={dialogCitation.quote} />
-                ) : (
-                  line
-                )}
+                {/* One flex item, so a quote inside the line stays in the sentence. */}
+                <span>
+                  {dialogCitation ? (
+                    <HighlightedLine line={line} quote={dialogCitation.quote} />
+                  ) : (
+                    line
+                  )}
+                </span>
               </p>
             ))}
           </div>

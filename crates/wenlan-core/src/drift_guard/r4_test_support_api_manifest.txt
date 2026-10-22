@@ -1183,3 +1183,7 @@ crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::memory|TestDbSess
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::memory|test_primary_session|1
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::set_page_space|TestDbSession::execute|1
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::set_page_space|test_primary_session|1
+crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::a_source_edited_after_the_claim_refuses_the_commit|TestDbSession::execute|1
+crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::a_source_edited_after_the_claim_refuses_the_commit|test_primary_session|1
+crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::row|TestDbSession::execute|1
+crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::row|test_primary_session|1

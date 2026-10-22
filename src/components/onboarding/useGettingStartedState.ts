@@ -3,11 +3,9 @@ import { useCallback, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   listOnboardingMilestones,
-  listRegisteredSources,
   type AgentConnection,
   type MilestoneRecord,
   type Page,
-  type RegisteredSource,
 } from "../../lib/tauri";
 import { OWN_IDENTITY, toolFamilyOf } from "../../lib/agents";
 import { useLiveAgents } from "../connect/connectionState";
@@ -15,18 +13,25 @@ import { useLibraryInventory } from "../memory/pages/useLibraryInventory";
 
 /** Per-viewer convenience only: losing it just shows the card again. */
 const DISMISSED_KEY = "onboarding:gettingStartedDismissed";
+/** "Skip for now" on the pages step, for someone with nothing to bring in.
+ *  Cleared once material arrives, so the step comes back with its button. */
+const PAGES_SKIPPED_KEY = "onboarding:pagesStepSkipped";
 /** A library with this many pages is past first use; existing users upgrading
  *  into this card would read it as noise. */
 export const ESTABLISHED_LIBRARY_PAGES = 10;
 
-export type GettingStartedStepId = "note" | "tool" | "sources" | "recall";
+export type GettingStartedStepId = "note" | "tool" | "pages" | "recall";
 
-export const GETTING_STARTED_ORDER: readonly GettingStartedStepId[] = ["note", "tool", "sources", "recall"];
+/** The path most people take: bring material in and have it turned into
+ *  pages (one step, so someone with nothing to bring is not left with an
+ *  empty one), then ask about them. Writing a page by hand is last. */
+export const GETTING_STARTED_ORDER: readonly GettingStartedStepId[] = ["tool", "pages", "recall", "note"];
 
 export interface GettingStartedProgress {
   readonly note: boolean;
   readonly tool: boolean;
-  readonly sources: boolean;
+  /** A page written from material, or the user chose to skip the step. */
+  readonly pages: boolean;
   readonly recall: boolean;
 }
 
@@ -34,6 +39,26 @@ export interface GettingStartedProgress {
  *  see it, so it does not count as a saved note. */
 export function publishedPages(pages: readonly Page[]): Page[] {
   return pages.filter((page) => page.status !== "draft");
+}
+
+/** Copies of files the user brought in, and pages Wenlan made, are not the
+ *  user writing a page. */
+const NOT_WRITTEN_BY_USER = new Set(["source", "imported", "distilled", "entity"]);
+
+/** Pages the user wrote themselves. */
+export function writtenPages(pages: readonly Page[]): Page[] {
+  return publishedPages(pages).filter((page) => !NOT_WRITTEN_BY_USER.has(page.creation_kind ?? ""));
+}
+
+/** Pages worth asking an AI tool about: ones written from material first, then
+ *  the user's own. A copy of a brought-in file is not one; its title is the
+ *  file's (e.g. "ISP Outage Runbook (section_h1)"). */
+export function askablePages(pages: readonly Page[]): Page[] {
+  const published = publishedPages(pages);
+  return [
+    ...published.filter((page) => page.creation_kind === "distilled"),
+    ...writtenPages(published),
+  ];
 }
 
 /** The AI tools the daemon knows, Wenlan's own identities excluded.
@@ -55,59 +80,61 @@ export function connectedToolFamilies(agents: readonly AgentConnection[]): strin
 export function gettingStartedProgress({
   pages,
   agents,
-  sources,
   milestones,
+  pagesSkipped = false,
 }: {
   pages: readonly Page[];
   agents: readonly AgentConnection[];
-  sources: readonly RegisteredSource[];
   milestones: readonly MilestoneRecord[];
+  pagesSkipped?: boolean;
 }): GettingStartedProgress {
   return {
-    note: publishedPages(pages).length > 0,
+    note: writtenPages(pages).length > 0,
     tool: connectedToolFamilies(agents).length > 0,
-    sources: sources.length > 0
-      || pages.some((page) => page.creation_kind === "source" || page.creation_kind === "imported"),
-    recall: milestones.some((milestone) => milestone.id === "first-recall")
-      || pages.some((page) => page.creation_kind === "distilled"),
+    pages: pagesSkipped || pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft"),
+    recall: milestones.some((milestone) => milestone.id === "first-recall"),
   };
 }
 
 // The dismissed flag is read by the card and by Main (which keeps the
-// directory hidden while the card is open), so it lives in one store both
-// subscribe to instead of per-component state.
-const dismissedListeners = new Set<() => void>();
-/** Set only when storage rejected the last write, so the choice still holds
- *  for this session. */
-let dismissedInMemory: boolean | null = null;
-
-function readDismissed(): boolean {
-  try {
-    const stored = localStorage.getItem(DISMISSED_KEY) === "1";
-    return dismissedInMemory ?? stored;
-  } catch {
-    return dismissedInMemory ?? false;
-  }
-}
-
-function writeDismissed(value: boolean) {
-  try {
-    if (value) localStorage.setItem(DISMISSED_KEY, "1");
-    else localStorage.removeItem(DISMISSED_KEY);
-    dismissedInMemory = null;
-  } catch {
-    // Storage can be unavailable; the card still hides for this session.
-    dismissedInMemory = value;
-  }
-  dismissedListeners.forEach((listener) => listener());
-}
-
-function subscribeDismissed(listener: () => void) {
-  dismissedListeners.add(listener);
-  return () => {
-    dismissedListeners.delete(listener);
+// directory hidden while the card is open), so each flag lives in one store
+// every consumer subscribes to instead of per-component state.
+function flagStore(key: string) {
+  const listeners = new Set<() => void>();
+  /** Set only when storage rejected the last write, so the choice still
+   *  holds for this session. */
+  let inMemory: boolean | null = null;
+  return {
+    read(): boolean {
+      try {
+        const stored = localStorage.getItem(key) === "1";
+        return inMemory ?? stored;
+      } catch {
+        return inMemory ?? false;
+      }
+    },
+    write(value: boolean) {
+      try {
+        if (value) localStorage.setItem(key, "1");
+        else localStorage.removeItem(key);
+        inMemory = null;
+      } catch {
+        // Storage can be unavailable; the choice still holds for this session.
+        inMemory = value;
+      }
+      listeners.forEach((listener) => listener());
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
   };
 }
+
+const dismissedFlag = flagStore(DISMISSED_KEY);
+const pagesSkippedFlag = flagStore(PAGES_SKIPPED_KEY);
 
 /**
  * Whether the getting-started checklist is on the Wiki home, and how far along
@@ -126,6 +153,8 @@ export interface GettingStartedState {
   readonly doneCount: number;
   readonly dismissed: boolean;
   readonly setDismissed: (value: boolean) => void;
+  readonly pagesSkipped: boolean;
+  readonly setPagesSkipped: (value: boolean) => void;
   readonly pages: readonly Page[];
   readonly agents: AgentConnection[];
 }
@@ -135,12 +164,6 @@ export function useGettingStartedState(): GettingStartedState {
   const established = pages.length >= ESTABLISHED_LIBRARY_PAGES;
   const checking = !established;
   const agentsQuery = useLiveAgents(undefined, checking);
-  const sourcesQuery = useQuery({
-    queryKey: ["registeredSources"],
-    queryFn: listRegisteredSources,
-    refetchOnWindowFocus: true,
-    enabled: checking,
-  });
   // Same key as useMilestones, read without its event listener: the card only
   // needs whether a recall has happened, and the shared cache keeps it fresh.
   const milestonesQuery = useQuery({
@@ -149,20 +172,23 @@ export function useGettingStartedState(): GettingStartedState {
     staleTime: 30_000,
     enabled: checking,
   });
-  const dismissed = useSyncExternalStore(subscribeDismissed, readDismissed, () => false);
-  const setDismissed = useCallback((value: boolean) => writeDismissed(value), []);
+  const dismissed = useSyncExternalStore(dismissedFlag.subscribe, dismissedFlag.read, () => false);
+  const setDismissed = useCallback((value: boolean) => dismissedFlag.write(value), []);
+  const pagesSkipped = useSyncExternalStore(pagesSkippedFlag.subscribe, pagesSkippedFlag.read, () => false);
+  const setPagesSkipped = useCallback((value: boolean) => pagesSkippedFlag.write(value), []);
+  const flags = { dismissed, setDismissed, pagesSkipped, setPagesSkipped };
 
-  const loaded = ready && agentsQuery.isSuccess && sourcesQuery.isSuccess && milestonesQuery.isSuccess;
+  const loaded = ready && agentsQuery.isSuccess && milestonesQuery.isSuccess;
   if (!loaded || established) {
-    return { visible: false, progress: null, doneCount: 0, dismissed, setDismissed, pages, agents: [] };
+    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [] };
   }
   const progress = gettingStartedProgress({
     pages,
     agents: agentsQuery.data,
-    sources: sourcesQuery.data,
     milestones: milestonesQuery.data,
+    pagesSkipped,
   });
   const doneCount = GETTING_STARTED_ORDER.filter((id) => progress[id]).length;
   const visible = doneCount < GETTING_STARTED_ORDER.length;
-  return { visible, progress: visible ? progress : null, doneCount, dismissed, setDismissed, pages, agents: agentsQuery.data };
+  return { visible, progress: visible ? progress : null, doneCount, ...flags, pages, agents: agentsQuery.data };
 }

@@ -137,7 +137,7 @@ describe("FirstUseGuide navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
     expect(onBack).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Skip to result" }));
-    fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
     expect(screen.queryByRole("button", { name: "Connect my AI" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Bring my data" })).not.toBeInTheDocument();
     const [, finish] = screen.getAllByRole("button", { name: "Back to home" });
@@ -334,13 +334,13 @@ describe("FirstUseGuide live view", () => {
         title: "Shadow entity page",
         creation_kind: "entity",
       }),
-      makePage({ id: "page-real-7", title: "Weekend in Tainan" }),
+      makePage({ id: "page-real-7", title: "v2 launch plan" }),
     ]);
     renderGuide({ onOpenPage, initialView: "live" });
     expect(await screen.findByText("Your pages")).toBeInTheDocument();
     expect(screen.queryByText("Shadow entity page")).not.toBeInTheDocument();
     const live = screen.getByTestId("first-use-live");
-    fireEvent.click(within(live).getByText("Weekend in Tainan"));
+    fireEvent.click(within(live).getByText("v2 launch plan"));
     expect(onOpenPage).toHaveBeenCalledTimes(1);
     expect(onOpenPage).toHaveBeenCalledWith("page-real-7");
   });

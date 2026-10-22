@@ -1099,8 +1099,14 @@ pub enum SteepAction {
     StillAccurate,
     /// The answers to a claim whose plan is judge.
     Judge,
-    /// Give a claimed note back.
+    /// Give a claimed note, or a claim_new's items, back.
     Release,
+    /// Material no page uses yet: imported notes, chats, files, captures.
+    New,
+    /// Take one topic's items from `new`: their text numbered and a token.
+    ClaimNew,
+    /// Save the new page a claim_new was for.
+    Write,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1114,9 +1120,15 @@ pub struct SteepAnswer {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SteepParams {
     #[schemars(
-        description = "list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
+        description = "new | claim_new (item_ids) | write (token, title, content) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
     )]
     pub action: SteepAction,
+    #[schemars(description = "claim_new: the item_ids of one topic, from new.")]
+    #[serde(default)]
+    pub item_ids: Option<Vec<String>>,
+    #[schemars(description = "write: the new page's title.")]
+    #[serde(default)]
+    pub title: Option<String>,
     #[schemars(description = "claim: the page to take, from list.")]
     #[serde(default)]
     pub page_id: Option<String>,
@@ -1124,20 +1136,22 @@ pub struct SteepParams {
     #[serde(default)]
     pub token: Option<String>,
     #[schemars(
-        description = "commit: the new body, citing the claim's sources as [n]. Same title and language."
+        description = "commit: the new body, citing the claim's sources as [n]. Same title and language. write: the new page's body, citing claim_new's sources as [n]."
     )]
     #[serde(default)]
     pub content: Option<String>,
     #[schemars(description = "judge: one answer per code check of the claim.")]
     #[serde(default)]
     pub answers: Option<Vec<SteepAnswer>>,
-    #[schemars(description = "list: how many pages (default 20).")]
+    #[schemars(
+        description = "list: how many pages (default 20). new: how many items (default 100)."
+    )]
     #[serde(default)]
     pub limit: Option<u32>,
-    #[schemars(description = "list: next_cursor from the previous list.")]
+    #[schemars(description = "list, new: next_cursor from the previous call.")]
     #[serde(default)]
     pub cursor: Option<String>,
-    #[schemars(description = "list: only this Space's pages.")]
+    #[schemars(description = "list, new: only this Space.")]
     #[serde(default)]
     pub space: Option<String>,
     #[schemars(
@@ -1716,7 +1730,10 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
             status: 400 | 404 | 409 | 422,
             reason: Some(reason),
         } => {
-            let text = if action == SteepAction::List || action == SteepAction::Claim {
+            let text = if matches!(
+                action,
+                SteepAction::List | SteepAction::Claim | SteepAction::New | SteepAction::ClaimNew
+            ) {
                 format!("steep refused: {reason}")
             } else {
                 format!("steep refused, nothing written: {reason}")
@@ -1751,6 +1768,30 @@ fn steep_waiting_text(total: u32, transport: &TransportMode) -> Option<String> {
         TransportMode::Http => format!(
             "Steep: {count} waiting because what {it} written from changed. \
              A local AI tool or automatic steep brings {them} up to date."
+        ),
+    })
+}
+
+/// Fewest items of new material that earn a line on ordinary replies: one or
+/// two loose items are not worth a reminder on every capture.
+const STEEP_NEW_LINE_MIN: u32 = 3;
+
+/// The line an ordinary tool reply carries when material no page uses yet is
+/// waiting, so a new user's imports become pages without them knowing a
+/// command.
+fn steep_new_text(new_total: u32, transport: &TransportMode) -> Option<String> {
+    if new_total < STEEP_NEW_LINE_MIN {
+        return None;
+    }
+    Some(match transport {
+        TransportMode::Stdio => format!(
+            "Steep: {new_total} items (imported notes, chats, files, saved memories) are in \
+             no page yet. Write pages from them with the `steep` tool (new, claim_new, write), \
+             or tell the user that /wenlan steep (Codex: $wenlan steep) does it."
+        ),
+        TransportMode::Http => format!(
+            "Steep: {new_total} items are in no page yet. A local AI tool or automatic \
+             steep writes pages from them."
         ),
     })
 }
@@ -2151,7 +2192,14 @@ impl WenlanMcpServer {
             .get::<wenlan_types::SteepWorklistResponse>(&path)
             .await
             .ok()?;
-        steep_waiting_text(list.total, &self.transport)
+        let lines: Vec<String> = [
+            steep_new_text(list.new_total, &self.transport),
+            steep_waiting_text(list.total, &self.transport),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
     /// `output` with the steep line appended when pages are waiting.
@@ -3368,7 +3416,9 @@ impl WenlanMcpServer {
         let action = params.action;
         // Claiming hands out source text and commit writes notes: both stay
         // on the machine running Wenlan.
-        if action != SteepAction::List && self.transport == TransportMode::Http {
+        if !matches!(action, SteepAction::List | SteepAction::New)
+            && self.transport == TransportMode::Http
+        {
             return Ok(CallToolResult::error(vec![ContentBlock::text(
                 "Steeping pages is not available over remote connections. \
                  Use local MCP on the machine running Wenlan."
@@ -3387,6 +3437,29 @@ impl WenlanMcpServer {
                     .unwrap_or_default()
             ))]))
         };
+        // A token from claim_new gives its items back on the new-page route;
+        // any other token goes on to the rewrite route below.
+        if action == SteepAction::Release {
+            if let Some(token) = params.token.as_deref() {
+                let released = self
+                    .client
+                    .post::<_, wenlan_types::SteepNewCommitResponse>(
+                        "/api/steep/new/commit",
+                        &wenlan_types::SteepNewCommitRequest {
+                            token: token.to_string(),
+                            action: wenlan_types::steep_new::STEEP_NEW_ACTION_RELEASE.to_string(),
+                            title: None,
+                            content: None,
+                        },
+                    )
+                    .await;
+                if let Ok(done) = released {
+                    return Ok(CallToolResult::structured(
+                        serde_json::to_value(&done).map_err(encode)?,
+                    ));
+                }
+            }
+        }
         let result = match action {
             SteepAction::List => {
                 let mut path = format!("/api/steep/worklist?limit={}", params.limit.unwrap_or(20));
@@ -3418,6 +3491,60 @@ impl WenlanMcpServer {
                     )
                     .await
                     .map(|claim| serde_json::to_value(&claim).map_err(encode))
+            }
+            SteepAction::New => {
+                let mut path = format!("/api/steep/new?limit={}", params.limit.unwrap_or(100));
+                if let Some(cursor) = params.cursor.as_deref().filter(|c| !c.is_empty()) {
+                    path.push_str(&format!("&cursor={}", url_encode_simple(cursor)));
+                }
+                if let Some(space) = params.space.as_deref().filter(|s| !s.is_empty()) {
+                    path.push_str(&format!("&space={}", url_encode_simple(space)));
+                }
+                self.client
+                    .get::<wenlan_types::SteepNewListResponse>(&path)
+                    .await
+                    .map(|list| serde_json::to_value(&list).map_err(encode))
+            }
+            SteepAction::ClaimNew => {
+                let item_ids = params.item_ids.unwrap_or_default();
+                if item_ids.iter().all(|id| id.trim().is_empty()) {
+                    return missing("item_ids");
+                }
+                self.client
+                    .post::<_, wenlan_types::SteepNewClaimResponse>(
+                        "/api/steep/new/claim",
+                        &wenlan_types::SteepNewClaimRequest { item_ids },
+                    )
+                    .await
+                    .map(|claim| serde_json::to_value(&claim).map_err(encode))
+            }
+            SteepAction::Write => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                if params.title.as_deref().is_none_or(|t| t.trim().is_empty()) {
+                    return missing("title");
+                }
+                if params
+                    .content
+                    .as_deref()
+                    .is_none_or(|c| c.trim().is_empty())
+                {
+                    return missing("content");
+                }
+                self.session_client(params.session.as_deref())
+                    .await
+                    .post::<_, wenlan_types::SteepNewCommitResponse>(
+                        "/api/steep/new/commit",
+                        &wenlan_types::SteepNewCommitRequest {
+                            token,
+                            action: wenlan_types::steep_new::STEEP_NEW_ACTION_WRITE.to_string(),
+                            title: params.title,
+                            content: params.content,
+                        },
+                    )
+                    .await
+                    .map(|done| serde_json::to_value(&done).map_err(encode))
             }
             SteepAction::Commit
             | SteepAction::StillAccurate
@@ -4508,7 +4635,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: bring pages up to date after their sources, or the code they rely on, changed. `list`: pages waiting. `claim` (page_id): the page, surviving sources numbered [1]..[n] (plus the code as it reads now when code changed), a token, and a plan: rewrite; review_card (the user wrote it; your rewrite becomes a card); judge (put each code check to a small model, pass replies back with `judge`); needs_you (tell the user why). `commit` (token, content): the rewrite, claims cited [n]; refused with nothing written if anything changed since the claim (claim again). `still_accurate` (token): still right. `judge` (token, answers). `release` (token). Write with your main model; a small model only judges. Claim and commit: local stdio only.",
+        description = "Steep on demand: write pages from unpaged material, then update pages whose sources or code changed. `new`: the items; a small model groups them by topic. `claim_new` (item_ids): their text as [1]..[n], a token. `write` (token, title, content): the page, cited [n]. `list`: pages waiting, and new_total. `claim` (page_id): page, sources [1]..[n] (and current code), token, plan: rewrite; review_card (user-written; your rewrite becomes a card); judge (give each code check to a small model, pass replies to `judge`); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]; refused if anything changed since. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
         annotations(
             title = "Steep",
             read_only_hint = false,
@@ -9358,6 +9485,20 @@ mod tests {
     // ===== Steep =====
 
     #[test]
+    fn new_material_line_waits_for_a_few_items_and_names_the_steep_command() {
+        assert_eq!(steep_new_text(0, &TransportMode::Stdio), None);
+        assert_eq!(steep_new_text(2, &TransportMode::Stdio), None);
+        let local = steep_new_text(45, &TransportMode::Stdio).unwrap();
+        assert!(local.starts_with("Steep: 45 items"), "{local}");
+        assert!(local.contains("in no page yet"), "{local}");
+        assert!(local.contains("/wenlan steep"), "{local}");
+        assert!(local.contains("claim_new"), "{local}");
+        let remote = steep_new_text(45, &TransportMode::Http).unwrap();
+        assert!(!remote.contains("claim_new"), "{remote}");
+        assert!(remote.contains("automatic steep"), "{remote}");
+    }
+
+    #[test]
     fn steep_line_counts_waiting_notes_and_names_who_updates_them() {
         assert_eq!(steep_waiting_text(0, &TransportMode::Stdio), None);
         let one = steep_waiting_text(1, &TransportMode::Stdio).unwrap();
@@ -9489,12 +9630,16 @@ mod tests {
             SteepAction::Commit,
             SteepAction::Judge,
             SteepAction::Release,
+            SteepAction::ClaimNew,
+            SteepAction::Write,
         ] {
             let result = server
                 .steep_impl(SteepParams {
                     action,
                     page_id: Some("page_1".into()),
+                    item_ids: Some(vec!["memory_1".into()]),
                     token: Some("stp_x".into()),
+                    title: Some("Title".into()),
                     content: Some("body [1]".into()),
                     answers: None,
                     limit: None,

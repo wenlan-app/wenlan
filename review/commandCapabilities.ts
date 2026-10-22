@@ -120,6 +120,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
   ],
   refinement: [
     "distill_review",
+    "list_new_material",
     "list_refinements",
     "accept_refinement",
     "reject_refinement",

@@ -1,0 +1,188 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Handing new material to the user's AI tool: one line at the top of the
+   Wiki home (no box, like a heading's rule under it), and the page list the
+   checklist step shares. Color and type come from --mem-* tokens. */
+
+.write-pages-line {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 auto 12px;
+  max-width: min(100%, 640px);
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--mem-border);
+}
+
+.write-pages-line-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.write-pages-icon {
+  flex-shrink: 0;
+  color: var(--mem-accent-indigo);
+  font-size: 16px;
+}
+
+.write-pages-icon--done,
+.write-pages-row-icon--done {
+  color: var(--mem-status-success-text);
+}
+
+.write-pages-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 13.5px/1.5 var(--mem-font-body);
+  /* Chinese breaks at the list's 、 and spaces, not inside a word. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.write-pages-hint {
+  display: block;
+  color: var(--mem-text-tertiary);
+  font-size: 12.5px;
+}
+
+.write-pages-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.write-pages-go {
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: 600 13.5px/1.3 var(--mem-font-body);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.write-pages-go:hover {
+  color: var(--mem-accent-indigo);
+}
+
+.write-pages-link {
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  font: 13px/1.3 var(--mem-font-body);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.write-pages-link:hover {
+  color: var(--mem-text);
+}
+
+.write-pages-go:disabled,
+.write-pages-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.write-pages-close {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--mem-radius-md);
+  background: none;
+  color: var(--mem-text-tertiary);
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.write-pages-close:hover {
+  background-color: var(--mem-hover);
+  color: var(--mem-text);
+}
+
+.write-pages-go:focus-visible,
+.write-pages-link:focus-visible,
+.write-pages-close:focus-visible,
+.write-pages-row-title:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.write-pages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 0 26px;
+  padding: 0;
+  list-style: none;
+}
+
+.write-pages-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  min-width: 0;
+  color: var(--mem-text-secondary);
+  font: 13px/1.4 var(--mem-font-body);
+}
+
+.write-pages-row-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.write-pages-row-title {
+  min-width: 0;
+  overflow: hidden;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: 500 13px/1.4 var(--mem-font-body);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.write-pages-row-title:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.write-pages-row-meta {
+  flex-shrink: 0;
+  color: var(--mem-text-tertiary);
+}
+
+.write-pages-spin {
+  animation: write-pages-spin 1.1s linear infinite;
+}
+
+@keyframes write-pages-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .write-pages-spin {
+    animation: none;
+  }
+}

@@ -421,6 +421,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // A steep commit returns a receipt only (outcome, card id, citation
     // counts); the list and the claim are in the sensitive catalog instead.
     "/api/steep/commit",
+    // A new-note commit returns a receipt only (outcome, note id and title,
+    // citation counts); the list and the claim are in the sensitive catalog.
+    "/api/steep/new/commit",
     // A repository-bound Space names its Space in the path; the binding,
     // suggest, publish and run routes return paths, counts and links, no
     // page text.

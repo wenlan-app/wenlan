@@ -25,7 +25,7 @@ it("reports a successful copy in the app's StrictMode lifecycle", async () => {
   const user = userEvent.setup();
   renderInApp();
   await user.click(screen.getByRole("button", { name: "Skip to result" }));
-  await user.click(screen.getByRole("button", { name: "Use with AI" }));
+  await user.click(screen.getByRole("button", { name: "Commands for later" }));
   await user.click(screen.getAllByRole("button", { name: "Copy command" })[0]);
   expect(clipboardWrite).toHaveBeenCalledOnce();
   expect(await screen.findByText("Copied")).toBeVisible();

@@ -381,8 +381,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // The source-annotation GET and POST routes add two PageWorkspace-scoped readers,
     // the basis-pending list and basis diff add two more, the code basis
     // recheck and cited-blob reads two, the session detail and page
-    // sessions reads two, and the steep worklist and claim two.
-    assert_eq!(rows.len(), 82);
+    // sessions reads two, the steep worklist and claim two, and steep's new
+    // material list and claim two.
+    assert_eq!(rows.len(), 84);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -393,7 +394,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        62
+        64
     );
     assert_eq!(
         rows.iter()

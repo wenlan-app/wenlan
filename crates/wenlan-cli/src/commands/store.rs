@@ -91,6 +91,11 @@ pub async fn run(
                 "Stored memory {} in {} ({} chunk(s))",
                 resp.source_id, destination, resp.chunks_created
             );
+            // On demand, nothing turns this into pages until someone steeps:
+            // say so here too, not only in the JSON reply.
+            if resp.enrichment == "off" && !resp.hint.trim().is_empty() {
+                println!("{}", resp.hint.trim());
+            }
         }
     }
     Ok(())

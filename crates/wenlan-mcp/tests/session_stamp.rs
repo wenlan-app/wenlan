@@ -335,7 +335,9 @@ async fn a_steep_rewrite_carries_the_session() {
         .steep_impl(SteepParams {
             action: SteepAction::Commit,
             page_id: None,
+            item_ids: None,
             token: Some("stp_x".into()),
+            title: None,
             content: Some("body [1]".into()),
             answers: None,
             limit: None,

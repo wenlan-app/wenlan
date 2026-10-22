@@ -1948,6 +1948,18 @@ pub async fn distill_review(
     client.distill_review().await
 }
 
+/// The Wiki home's "Ask AI to write pages" card: material no page uses yet.
+#[tauri::command]
+pub async fn list_new_material(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::SteepNewListResponse, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    client.steep_new_list().await
+}
+
 #[tauri::command]
 pub async fn redistill_page(
     state: tauri::State<'_, State>,

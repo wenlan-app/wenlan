@@ -12,8 +12,8 @@ describe("sample dataset integrity", () => {
   it.each(LOCALES)("keeps every %s citation quote inside its source body", (locale) => {
     const data = getSampleData(locale);
     const bodies = new Map(data.sources.map((source) => [source.id, source.body]));
-    // One captured chat decision and one file: the page is the result, never a source.
-    expect(data.sources.map((source) => source.type)).toEqual(["memory", "file"]);
+    // Two captured AI sessions and one file: the page is the result, never a source.
+    expect(data.sources.map((source) => source.type)).toEqual(["memory", "memory", "file"]);
     for (const citation of data.citations) {
       const body = bodies.get(citation.sourceId);
       expect(body, citation.id).toBeDefined();
@@ -36,6 +36,27 @@ describe("sample dataset integrity", () => {
     }
     expect(data.ai.question).toBeTruthy();
     expect(data.ai.answer).toContain(data.page.title);
+  });
+
+  it.each(LOCALES)("gives %s a current-state part and a what-changed part, each line cited", (locale) => {
+    const data = getSampleData(locale);
+    const headed = data.page.paragraphs.filter((paragraph) => paragraph.heading);
+    expect(headed).toHaveLength(2);
+    expect(data.page.paragraphs[0]?.heading).toBeTruthy();
+    // Citation ids are unique per paragraph so each chip is individually addressable.
+    const used = data.page.paragraphs.flatMap((paragraph) => paragraph.citationIds);
+    expect(new Set(used).size).toBe(used.length);
+    // The what-changed part draws on an AI session, not only the latest file.
+    const sourceIdByCitation = new Map(data.citations.map((citation) => [citation.id, citation.sourceId]));
+    const changed = data.page.paragraphs.slice(data.page.paragraphs.indexOf(headed[1]!));
+    expect(changed.length).toBeGreaterThan(0);
+    for (const paragraph of changed) {
+      const types = paragraph.citationIds.map((id) => {
+        const sourceId = sourceIdByCitation.get(id);
+        return data.sources.find((source) => source.id === sourceId)?.type;
+      });
+      expect(types).toContain("memory");
+    }
   });
 
   it.each(LOCALES)("gives %s distinct own-data commands per client", (locale) => {
