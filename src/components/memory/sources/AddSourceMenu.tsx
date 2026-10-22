@@ -23,11 +23,15 @@ import { useTranslation } from "react-i18next";
 type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
 
-export default function AddSourceMenu({ onClose }: { onClose: () => void }) {
+export default function AddSourceMenu({ onClose, start = "menu" }: {
+  onClose: () => void;
+  /** "chats" opens straight at importing past AI chats. */
+  start?: "menu" | "chats";
+}) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [showWeb, setShowWeb] = useState(false);
-  const [showChats, setShowChats] = useState(false);
+  const [showChats, setShowChats] = useState(start === "chats");
   // A picked folder waits here while the user chooses sync or import-once.
   const [picked, setPicked] = useState<PickedFolder | null>(null);
   // A failure to add a source is shown here in the dialog, next to the choice

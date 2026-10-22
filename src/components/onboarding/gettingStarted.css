@@ -45,6 +45,17 @@
   color: var(--mem-text);
 }
 
+.getting-started-lead {
+  margin: 4px 0 6px;
+  max-width: 60ch;
+  color: var(--mem-text-secondary);
+  font: 13.5px/1.5 var(--mem-font-body);
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-lead {
+  font-size: 14.5px;
+}
+
 .getting-started-progress {
   margin: 2px 0 2px;
   color: var(--mem-text-tertiary);
@@ -57,7 +68,7 @@
   list-style: none;
 }
 
-.getting-started-steps li {
+.getting-started-steps > li {
   display: flex;
   align-items: flex-start;
   gap: 12px;
@@ -77,7 +88,7 @@
   font-size: 16px;
 }
 
-.getting-started-steps li[data-done="true"] .getting-started-icon {
+.getting-started-steps > li[data-done="true"] .getting-started-icon {
   background: none;
   color: var(--mem-accent-sage-text);
   font-size: 20px;
@@ -94,7 +105,7 @@
   font: 500 14px/1.4 var(--mem-font-body);
 }
 
-.getting-started-steps li[data-done="true"] .getting-started-step-title {
+.getting-started-steps > li[data-done="true"] .getting-started-step-title {
   color: var(--mem-text-tertiary);
 }
 
@@ -149,7 +160,7 @@
     padding: 16px 14px 6px;
   }
 
-  .getting-started-steps li {
+  .getting-started-steps > li {
     flex-wrap: wrap;
   }
 
@@ -197,7 +208,7 @@
    upper third, where the eye lands first. */
 .wiki-reading-start[data-onboarding="true"] .getting-started {
   max-width: min(100%, 640px);
-  margin-top: clamp(32px, 14vh, 128px);
+  margin-top: clamp(16px, 8vh, 112px);
   padding: 24px 28px 10px;
 }
 
@@ -210,7 +221,7 @@
   font-size: 14px;
 }
 
-.wiki-reading-start[data-onboarding="true"] .getting-started-steps li {
+.wiki-reading-start[data-onboarding="true"] .getting-started-steps > li {
   gap: 14px;
   padding: 12px 0;
 }
@@ -235,4 +246,70 @@
 
 .wiki-reading-start[data-onboarding="true"] .getting-started-extra {
   font-size: 13px;
+}
+
+/* The pages a run writes, listed in the "turn your material into pages" row. */
+.getting-started-copy .write-pages-list {
+  margin: 6px 0 0;
+}
+
+.getting-started-choices + .getting-started-step-body {
+  margin-top: 10px;
+}
+
+/* Where the user's material is: three equal choices in the pages row. */
+.getting-started-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.getting-started-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-md);
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.getting-started-choice:hover {
+  background-color: var(--mem-hover);
+}
+
+.getting-started-choice:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.getting-started-choice-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--mem-accent-indigo);
+  font-size: 16px;
+}
+
+.getting-started-choice-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.getting-started-choice-copy strong {
+  font: 500 13px/1.4 var(--mem-font-body);
+}
+
+.getting-started-choice-copy span {
+  color: var(--mem-text-tertiary);
+  font: 12px/1.4 var(--mem-font-body);
+  /* Chinese breaks at 、 and spaces, not inside a word. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }

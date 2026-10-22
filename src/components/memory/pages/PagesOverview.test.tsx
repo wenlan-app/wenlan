@@ -167,9 +167,15 @@ describe("PagesOverview reading workspace", () => {
 
     it("opens the add-source dialog in place instead of leaving the Wiki", async () => {
       renderOverview({ checklist: true });
-      fireEvent.click(await screen.findByRole("button", { name: "Add a source" }));
+      fireEvent.click(await screen.findByRole("button", { name: /Folder or files/ }));
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
       expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
+    });
+
+    it("opens straight at importing AI chats", async () => {
+      renderOverview({ checklist: true });
+      fireEvent.click(await screen.findByRole("button", { name: /Past AI chats/ }));
+      expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });
   });
 });

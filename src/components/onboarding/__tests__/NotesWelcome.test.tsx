@@ -238,8 +238,8 @@ describe("NotesWelcome", () => {
 
     expect(onComplete).toHaveBeenCalledExactlyOnceWith();
     expect(screen.getByTestId("first-use-sample").parentElement).toHaveAttribute("inert");
-    fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
-    expect(screen.getByRole("tab", { name: "ChatGPT" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "ChatGPT" }));
+    expect(screen.getByRole("tab", { name: "Codex" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByTestId("first-use-sample")).toBeInTheDocument();
     await act(async () => completion.resolve());
     expect(screen.getByTestId("first-use-sample").parentElement).not.toHaveAttribute("inert");

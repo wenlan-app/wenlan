@@ -1,10 +1,11 @@
 ---
 name: wiki
 description: >
-  Read this repository and keep a small wiki about it in its Space: a few
-  orientation notes, each key sentence tied to the code lines it was read from,
-  so Wenlan can tell when the code moved on. Writes the notes that are
-  missing and leaves the rest alone; a note whose code changed is brought up
+  Read this repository and keep a wiki about it in its Space, sized to the
+  repository: an overview that lists every page, then one page per part or
+  flow a newcomer needs, each key sentence tied to the code lines it was read
+  from, so Wenlan can tell when the code moved on. Writes the pages that are
+  missing and leaves the rest alone; a page whose code changed is brought up
   to date by steep, not here. Use for "build a
   wiki for this repo", "get to know this repository", "幫這個倉庫建 wiki",
   "認識這個倉庫". Invoked as `/wenlan wiki [space:<name>]`.
@@ -15,13 +16,14 @@ user-invocable: false
 
 # /wenlan wiki
 
-Read this repository and keep a small wiki about it in its Space: a few
-orientation notes.
+Read this repository and keep a wiki about it in its Space. How many pages it
+has depends on the repository: a small tool may need five, a large monorepo
+twenty or more. The overview page lists them all.
 Each key sentence is tied to the code lines it was read from (a code basis), so
-Wenlan can tell when the code moved on. The notes are written by the AI. A
-rerun writes only the notes that are missing. A note whose cited code changed
+Wenlan can tell when the code moved on. The pages are written by the AI. A
+rerun writes only the pages that are missing. A page whose cited code changed
 is brought up to date by steep (`/wenlan steep`, or Wenlan's automatic mode),
-not here: wiki writes new notes, steep keeps them current. Reply in the user's
+not here: wiki writes new pages, steep keeps them current. Reply in the user's
 language.
 
 ## 1. Resolve repository and Space
@@ -40,27 +42,59 @@ If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
 `/wenlan wiki space:<name>` names one, then stop. Do not ask a question.
 
-## 2. The six notes
+## 2. Plan the pages
 
-Title each note in the user's language, taken from how they typed the request.
+Call `list_pages` with `space="<space>"` once.
 
-| # | Topic | What it answers | English title | 繁體中文 title |
-|---|---|---|---|---|
-| 1 | What this is | One paragraph and where the entry points are | `What Wenlan is` | `文瀾是什麼` |
-| 2 | How to run it | Install, build, start | `How to run it` | `怎麼跑起來` |
-| 3 | Main flow | The one or two most important paths, from entry to effect | `Main flow` | `主流程` |
-| 4 | Module map | Directories and what each one owns | `Module map` | `模組地圖` |
-| 5 | How tests run | The layers, and which are slow | `How tests run` | `測試怎麼跑` |
-| 6 | Known pitfalls | From git log, comments and existing docs | `Known pitfalls` | `已知的坑` |
+Find the overview page by exact title (below). If it exists, call `read_page`
+on it: its `## Pages` section (`## 頁面` in Chinese) is the plan. Then look
+over the repository once more for an important part or flow the list misses,
+such as a new package or a new entry point, and add it to the plan.
 
-Title 1 names the project: the table shows the Wenlan repository, so use the
-repository's own name for another one (`What <project> is`, `<project>是什麼`).
+If there is no overview, plan from the repository. Look before you plan:
+`git ls-files` (count and top-level layout), the README and docs folder, the
+build manifests (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod` and
+the like), the entry points, CI config, and `git log --oneline -50`.
 
-## 3. Decide per note: write or leave
+Plan the smallest set of pages that lets a newcomer work in this repository.
+Organise by parts and flows, not by copying the directory tree.
 
-Call `list_pages` with `space="<space>"` once. For each of the six topics, find its note
-by title in the user's language: an exact title match against the list, never
-fuzzy.
+Always:
+
+| Page | What it answers | English title | 繁體中文 title |
+|---|---|---|---|
+| Overview | What the project is, where the entry points are, and the list of pages | `What <project> is` | `<project>是什麼` |
+| How to run it | Install, build, start | `How to run it` | `怎麼跑起來` |
+| Known pitfalls | From git log, comments and existing docs | `Known pitfalls` | `已知的坑` |
+
+As the repository needs (each only when there is real code behind it):
+
+- **Architecture or module map**: how the parts fit and what each one owns
+  (`Module map`, `模組地圖`).
+- **One page per major part**: a package, crate, service or directory that
+  owns real behaviour, titled by what it does.
+- **One page per important flow**: from entry to effect, such as
+  `How a request is handled`; for a single main path, `Main flow` / `主流程`.
+- **Data and storage**, **configuration**, **release and deploy**,
+  **integrations with outside services**.
+- **How tests run** (`測試怎麼跑`) when the repository has tests: the layers,
+  and which are slow.
+
+Let the repository decide the count. As a rough guide, a small repository
+(under about 50 tracked source files) needs 4 to 6 pages, a medium one 8 to
+15, a large monorepo 15 to 30. Never plan more than 30. Do not make a page for
+a folder that only holds glue, and do not split a topic that fits on one
+screen.
+
+Titles are short noun phrases in the user's language, taken from how they typed
+the request. When a page already in the Space covers a planned topic (for
+example an earlier wiki's `Module map`), use that page's exact title in the
+plan rather than a new one.
+
+## 3. Decide per page: write or leave
+
+For each page in the plan, find it in the `list_pages` result by exact title,
+never fuzzy.
 
 - Missing: write it (step 4).
 - Present, and listed with a `code_basis` entry in state `pending` whose
@@ -71,24 +105,43 @@ fuzzy.
   Re-point it (step 5).
 - Present with nothing outstanding: leave it, and say so in the report.
   `list_pages` rechecks the cited files first and lists only code bases that
-  are not `ok`, so a note with none listed is current.
+  are not `ok`, so a page with none listed is current.
 
-Do not call `read_page` on a note you are leaving as is.
+Do not call `read_page` on a page you are leaving as is.
 
-## 4. Writing a note
+Write at most 12 new pages in one run, so a first run on a large repository
+stays affordable. Write the overview first, then the rest in plan order, most
+important first. The pages left over are written by the next run.
 
-Read the repository with Read, Glob, Grep and `git ls-files`. Never read a file
+**The overview's page list.** A new overview ends with a `## Pages` section
+(`## 頁面` in Chinese) listing every planned page, written or not, as
+`- [[<title>]]: <what it answers, one line>`. When the plan gained pages and
+the overview already exists, update only that section: take `version` from
+your `read_page`, then call `write_page` with `page_id`, `expected_version`,
+`minor: true`, and `content` that is the page you read with only the list
+changed. Pass no `code_basis`; the page keeps the bases it has. Skip this when
+the overview has a `pending` or `unavailable` code basis (steep or step 5
+handles it first), and say so in the report.
+
+## 4. Writing a page
+
+Read the repository with Read, Glob, Grep and `git ls-files`; for a file too
+large to read whole, read the part you need. Never read a file
 `git check-ignore` reports, a `.env` or other secrets, or anything outside
 `repo_root`. Do not run build, test or install commands, and write nothing into
 the repository.
 
-Compose a short note (a screen or less) in the user's language. Every sentence
-that states something read from code gets one `code_basis` entry
-`{repo_root, path, line_start, line_end}` with the exact lines it rests on. Keep
-3 to 8 entries per note, and never more than 100, the most one write accepts.
+Compose the page in the user's language: about a screen, up to two for a large
+part. Link other pages in the plan as `[[<title>]]` where a reader would want
+to go next. Every sentence that states something read from code gets one
+`code_basis` entry `{repo_root, path, line_start, line_end}` with the exact
+lines it rests on. Keep 3 to 12 entries per page (up to 20 for a page about a
+large part), and never more than 100, the most one write accepts. A refusal
+naming a span outside the file means the line numbers are off: read those lines
+again and retry once with the right span.
 
 ```
-write_page(space="<space>", title="<note title>", content="<note>",
+write_page(space="<space>", title="<page title>", content="<page>",
            code_basis=[{repo_root, path, line_start, line_end}, ...])
 ```
 
@@ -98,30 +151,33 @@ Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say wiki needs local Wenlan and stop. A `warnings`
 entry saying a code basis was not recorded is reported, not hidden.
 
-## 5. Re-pointing a note whose code is gone
+## 5. Re-pointing a page whose code is gone
 
-Only for a note with an `unavailable` entry. Call `read_page` for its
+Only for a page with an `unavailable` entry. Call `read_page` for its
 `version` and full `code_basis`. For each `unavailable` entry, find where that
 fact now lives in the repository, or drop the sentence if it is no longer
 true. Then call `write_page` with `page_id`, `expected_version` set to the
 `version` you read, the edited `content`, and a `code_basis` list naming the
 new lines; call `page_code_basis` with `action: "remove"` for each old entry.
-Leave `pending` entries on that note alone: steep handles them.
+Leave `pending` entries on that page alone: steep handles them.
 
-A `gated` result means the user edited that note: report it as staged for
+A `gated` result means the user edited that page: report it as staged for
 review. A refusal saying the page moved means someone edited it after your
 read: read it again and redo the edit once.
 
 ## 6. Report
 
-One line per topic with the note title: written, left as is, waiting for
-steep, re-pointed, or staged for review. Then one line on what happens later:
-`/brief` names how many notes rely on code that changed, and `/wenlan steep`
-brings them up to date.
+One line per planned page with its title: written, left as is, waiting for
+steep, re-pointed, or staged for review. When pages are left over for the next
+run, say how many and that `/wenlan wiki` again writes them. Then one line on
+what happens later: `/brief` names how many pages rely on code that changed,
+and `/wenlan steep` brings them up to date.
 
 ## Safety
 
-- Reads and writes of notes just happen; no approval is needed.
-- Wiki never deletes a note and never edits the repository.
-- Wiki runs no commands in the repository beyond `git rev-parse`,
-  `git ls-files`, `git check-ignore` and `git log`.
+- Reads and writes of pages just happen; no approval is needed.
+- Wiki never deletes a page and never edits the repository.
+- Wiki only reads the repository. Shell commands are read-only ones such as
+  `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
+  `ls`, `wc`, `grep` and `sed -n`; nothing that builds, installs, or changes a
+  file.

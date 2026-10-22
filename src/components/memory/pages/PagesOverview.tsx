@@ -9,7 +9,7 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
-import { ImportHint } from "../askAi/ImportHint";
+import { useWritePages, WritePagesLine } from "../askAi/WritePages";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -40,14 +40,18 @@ export function PagesOverview({
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   const checklist = useGettingStartedState();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"menu" | "chats" | null>(null);
+  const writePages = useWritePages(pages);
   const gettingStarted = onConnectTool && onSeeExample ? (
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
       onConnectTool={onConnectTool}
-      onAddSources={() => setAdding(true)}
+      onAddSources={() => setAdding("menu")}
+      onImportChats={() => setAdding("chats")}
       onSeeExample={onSeeExample}
       onTurnOnSteeping={onOpenIntelligence}
+      writePages={writePages}
+      onSelectPage={onSelectPage}
     />
   ) : null;
   // While the open checklist is the screen's content the panel above it shrinks
@@ -61,6 +65,16 @@ export function PagesOverview({
       data-onboarding={onboarding ? "true" : undefined}
     >
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
+      {/* The open checklist carries the same offer as a step; one place at a time. */}
+      {onboarding ? null : (
+        <WritePagesLine
+          state={writePages}
+          pages={pages}
+          onSelectPage={onSelectPage}
+          onConnectTool={onConnectTool}
+          onUseLocalModel={onOpenIntelligence}
+        />
+      )}
       <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />
       <div className="wiki-reading-start-panel">
         <PageIcon className="wiki-reading-start-icon" size={32} />
@@ -68,8 +82,7 @@ export function PagesOverview({
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
       {gettingStarted}
-      <ImportHint pages={pages} />
-      {adding ? <AddSourceMenu onClose={() => setAdding(false)} /> : null}
+      {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
     </section>
   );
 }

@@ -2076,6 +2076,35 @@ export async function redistillPage(pageId: string): Promise<PageRedistillRespon
   return invoke("redistill_page", { pageId });
 }
 
+/** One piece of material no page uses yet: an imported note, chat or file,
+ *  or something an AI tool saved. Mirrors `wenlan_types::SteepNewItem`. */
+export interface NewMaterialItem {
+  item_id: string;
+  kind: "capture" | "note" | "chat" | "file" | string;
+  title: string;
+  snippet: string;
+  space?: string | null;
+  chars: number;
+  last_modified: number;
+  /** An AI tool claimed it and is writing a page from it now. */
+  held?: boolean;
+}
+
+export interface NewMaterialList {
+  items: NewMaterialItem[];
+  total: number;
+  next_cursor?: string | null;
+  /** How many of `total` are of each kind. Missing on older daemons. */
+  kinds?: Record<string, number>;
+  /** How many of `total` an AI tool is writing from now. */
+  held?: number;
+}
+
+/** What `/wenlan steep` would write pages from (`GET /api/steep/new`). */
+export async function listNewMaterial(): Promise<NewMaterialList> {
+  return invoke("list_new_material");
+}
+
 // ── Profiles & Agent Connections ─────────────────────────────────────
 
 export interface Profile {

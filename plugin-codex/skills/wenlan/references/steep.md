@@ -7,7 +7,7 @@ it. Reply in the user's language. Say "steep" in English and 沉澱 in Chinese;
 never call it upkeep or say steeping is off.
 
 When the session start printed a `Wenlan session:` line, pass its value as
-`session` on every `steep` commit.
+`session` on every `steep` commit and write.
 
 ## 1. List the work
 
@@ -22,13 +22,52 @@ resolved="$("${resolver:-plugin-codex/bin/resolve-space.sh}" --cwd "$PWD" --args
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 ```
 
-Call `steep` with `action: "list"`, and `space` when it is non-empty. If `total` is 0, say nothing is waiting and stop.
+Call `steep` with `action: "list"`, and `space` when it is non-empty. The
+answer has the pages waiting (`total`) and `new_total`: material no page uses
+yet. If both are 0, say there is nothing to write or update and stop.
+
+New pages come first (section 2), then the pages waiting (section 3).
+
+## 2. New pages from new material
+
+Skip this section when `new_total` is 0.
+
+1. Call `steep` with `action: "new"` (and `space`). Each item is one imported
+   note, chat, file or saved memory, with `item_id`, `kind`, `title` and
+   `snippet`. Leave out items whose `held` is true: another run has them.
+2. Group the items by topic. This is a small judgment, so give it to a helper
+   on a small model when you can start one (a subagent on a smaller model):
+   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it
+   to reply with only JSON: `[{"topic": "...", "item_ids": ["..."]}]`. Each
+   group is one subject a person would look up as one page; an item belongs
+   to at most one group; items that fit no group are left out. A group may be
+   a single item only when that item is long on its own (a whole note, a long
+   chat). Never group with your main model: when you cannot start a helper on
+   a small model, write no new pages this run and say that Automatic mode
+   will do it.
+3. Biggest groups first, at most 8 pages this run. For each group:
+   1. Call `steep` with `action: "claim_new"` and its `item_ids`. The answer
+      has the items' text numbered `[1]` to `[n]`, a `token` and a `note`. A
+      refusal (too little text, already taken) means skip the group.
+   2. Write the page yourself, with your main model. Never let the small
+      model write it. Title: short, names the topic, in the sources'
+      language. Open with one plain sentence that says what the page is
+      about, then short paragraphs or lists. Use only what the sources say
+      and cite every claim with its number, like `[2]`.
+   3. Call `steep` with `action: "write"`, the token, `title` and the body as
+      `content`. A citation refusal: fix the sentences it points at and write
+      again with the same token, once; still refused, `release` the token. If
+      the sources turn out not to belong together, `release` the token.
+   4. `created`: a new page. `merged`: a page on that topic already existed
+      and took the sources.
+
+## 3. Pages that went out of date
+
+Skip this section when `total` is 0.
 
 Work through at most 10 pages this run, newest first. Skip a page whose
 `leased_by` is set: another run has it. Page the ones with `needs_you`; they
 are reported at the end, not claimed.
-
-## 2. One page at a time
 
 For each page:
 
@@ -78,13 +117,14 @@ For each page:
    - "changed since you claimed it": claim the page again once and redo it.
      Otherwise move on.
 
-Never call `write_page` on a claimed page; the commit is the only write.
-Never release a token you did not get from your own claim.
+Never call `write_page` on a claimed page or for a claim_new's items; the
+commit and the write are the only writes. Never release a token you did not
+get from your own claim.
 
-## 3. Report
+## 4. Report
 
-A few short lines, no ids: how many pages were updated, how many wait for the
+A few short lines, no ids: the titles of the new pages written, how many pages were updated, how many wait for the
 user as revision cards, how many still hold, how many code changes were
 checked and found harmless, and for each `needs_you` page its
-title and the reason from its `note`. If more than 10 were waiting, say how
-many are left and that `$wenlan steep` again continues.
+title and the reason from its `note`. If more new material or more than 10
+pages were left, say so and that `$wenlan steep` again continues.

@@ -223,12 +223,12 @@ fn manifest_counts_match_the_spec() {
     // `/api/sessions/{id}`, and GET `/api/pages/{id}/sessions`. Then 215
     // after both those and the three code basis routes landed together.
     // Then 217 after PATCH `/api/sources/{id}` (sync or import-once switch).
-    // Then 220 after the three steep-on-demand routes.
-    // Then 221 after POST `/api/pages/lock-edited` (lock my pages backfill;
-    // a count receipt, not page-bearing).
+    // Then 220 after the three steep-on-demand routes, and 223 after the
+    // three steep new-page routes. Then 224 after POST `/api/pages/lock-edited`
+    // (lock my pages backfill; a count receipt, not page-bearing).
     assert_eq!(
         HTTP_READERS.len(),
-        221,
+        224,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 34, "#[tool( declarations");
@@ -239,7 +239,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        233,
+        236,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -247,7 +247,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        216,
+        219,
         "main builder entries"
     );
     assert_eq!(
@@ -423,7 +423,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        214 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +1: lock-edited)
+        217 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +1: lock-edited)
     );
 }
 

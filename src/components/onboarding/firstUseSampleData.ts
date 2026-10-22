@@ -17,6 +17,8 @@ export interface SampleSource {
   type: SampleSourceType;
   /** Short kind tag shown beside the title (part of the tutorial data). */
   kind: string;
+  /** When the source was captured, shown beside the kind tag. */
+  when: string;
   title: string;
   location: string;
   excerpt: string;
@@ -34,6 +36,8 @@ export interface SampleCitation {
 }
 
 export interface SamplePageParagraph {
+  /** Optional section label rendered above this paragraph. */
+  heading?: string;
   text: string;
   citationIds: string[];
 }
@@ -90,29 +94,45 @@ const enData: SampleDataset = {
     {
       id: "sample-memory",
       type: "memory",
-      kind: "Memory",
-      title: "Weekend trip decision",
-      location: "Conversation excerpts · weekend trip planning",
-      excerpt: "Take the train to Tainan, leaving Saturday morning.",
+      kind: "ChatGPT",
+      when: "last week",
+      title: "Launch date and price",
+      location: "ChatGPT chat · v2 launch planning",
+      excerpt: "We decided to launch v2 on October 24.",
       body: [
-        "We want a slow weekend trip with no packed schedule.",
-        "We decided to take the train to Tainan, leaving Saturday morning.",
-        "Keep the afternoon open for wandering. No hour-by-hour plan.",
+        "We want v2 out before the end of October.",
+        "We decided to launch v2 on October 24. We'll price it at $8 a month.",
+        "Once the date is final, I'll draft the announcement.",
+      ],
+    },
+    {
+      id: "sample-session",
+      type: "memory",
+      kind: "Claude Code",
+      when: "2 days ago",
+      title: "Release check",
+      location: "Claude Code session · v2 release check",
+      excerpt: "The payment review hasn't passed yet, so the launch moves to October 31.",
+      body: [
+        "Release check: the payment provider is still reviewing our account.",
+        "The payment review hasn't passed yet, so the launch moves to October 31.",
+        "Everything else is ready to ship.",
       ],
     },
     {
       id: "sample-file",
       type: "file",
       kind: "File",
-      title: "packing-list.md",
-      location: "trip folder / packing-list.md",
-      excerpt: "Book a stay near the Tainan station and pack light.",
+      when: "yesterday",
+      title: "v2-meeting-notes.md",
+      location: "product folder / v2-meeting-notes.md",
+      excerpt: "Price goes up to $10 a month.",
       body: [
-        "No driving this time. Keep getting around simple.",
-        "Book a stay near the Tainan station and pack light.",
-        "Rooms and tickets aren't booked yet; confirm before we leave.",
+        "Review of the v2 launch plan.",
+        "Price goes up to $10 a month. Yearly plan gets 20% off. Launch stays on October 31.",
+        "Next: update the pricing page and tell beta users.",
       ],
-      path: "trip folder / packing-list.md",
+      path: "product folder / v2-meeting-notes.md",
       quoteLine: 2,
     },
   ],
@@ -120,49 +140,70 @@ const enData: SampleDataset = {
     {
       id: "sample-cite-1",
       sourceId: "sample-memory",
-      quote: "We decided to take the train to Tainan, leaving Saturday morning.",
+      quote: "We decided to launch v2 on October 24.",
     },
     {
       id: "sample-cite-2",
       sourceId: "sample-file",
-      quote: "Book a stay near the Tainan station and pack light.",
+      quote: "Launch stays on October 31.",
+    },
+    {
+      id: "sample-cite-3",
+      sourceId: "sample-file",
+      quote: "Price goes up to $10 a month.",
     },
     {
       id: "sample-cite-4",
-      sourceId: "sample-memory",
-      quote: "Keep the afternoon open for wandering. No hour-by-hour plan.",
+      sourceId: "sample-file",
+      quote: "Yearly plan gets 20% off.",
     },
     {
       id: "sample-cite-5",
+      sourceId: "sample-session",
+      quote: "The payment review hasn't passed yet, so the launch moves to October 31.",
+    },
+    {
+      id: "sample-cite-6",
+      sourceId: "sample-memory",
+      quote: "We'll price it at $8 a month.",
+    },
+    {
+      id: "sample-cite-7",
       sourceId: "sample-file",
-      quote: "Rooms and tickets aren't booked yet; confirm before we leave.",
+      quote: "Price goes up to $10 a month.",
     },
   ],
   page: {
-    title: "An unhurried Tainan weekend",
-    subtitle: "From a chat decision and a packing list to one page.",
+    title: "v2 launch plan",
+    subtitle: "From two AI sessions and meeting notes to one page.",
     paragraphs: [
       {
-        text: "Take the train to Tainan, leaving Saturday morning.",
-        citationIds: ["sample-cite-1"],
-      },
-      {
-        text: "Keep the afternoons open for wandering, with no packed schedule.",
-        citationIds: ["sample-cite-4"],
-      },
-      {
-        text: "Stay near the station and pack light.",
+        heading: "Current plan",
+        text: "Launch on October 31.",
         citationIds: ["sample-cite-2"],
       },
       {
-        text: "Still to do: book the room and the train tickets.",
-        citationIds: ["sample-cite-5"],
+        text: "Priced at $10 a month.",
+        citationIds: ["sample-cite-3"],
+      },
+      {
+        text: "The yearly plan gets 20% off.",
+        citationIds: ["sample-cite-4"],
+      },
+      {
+        heading: "What changed",
+        text: "Launch moved from Oct 24 to Oct 31 for the payment review.",
+        citationIds: ["sample-cite-1", "sample-cite-5"],
+      },
+      {
+        text: "Price went from $8 to $10 a month.",
+        citationIds: ["sample-cite-6", "sample-cite-7"],
       },
     ],
   },
   ai: {
-    question: "What's left before the Tainan weekend?",
-    answer: "From your page “An unhurried Tainan weekend”: book a room near the station, then confirm the Saturday morning train.",
+    question: "When does v2 launch, and what does it cost?",
+    answer: "From your page “v2 launch plan”: October 31, at $10 a month with 20% off yearly (v2-meeting-notes.md). The date moved from October 24 for the payment review (Claude Code), and the price was $8 before (ChatGPT).",
   },
   commands: {
     chatgpt: {
@@ -188,29 +229,45 @@ const hansData: SampleDataset = {
     {
       id: "sample-memory",
       type: "memory",
-      kind: "记忆",
-      title: "周末旅行的决定",
-      location: "对话摘录 · 周末旅行的讨论",
-      excerpt: "搭火车去台南，周六早上出发。",
+      kind: "ChatGPT",
+      when: "上周",
+      title: "上线日期和价格",
+      location: "ChatGPT 对话 · v2 上线讨论",
+      excerpt: "我们决定 10 月 24 日上线 v2。",
       body: [
-        "这周末想安排一趟不用赶行程的小旅行。",
-        "我们决定搭火车去台南，周六早上出发。",
-        "下午留给散步，不要把每个时间都排满。",
+        "我们想在 10 月底前发布 v2。",
+        "我们决定 10 月 24 日上线 v2。定价每月 8 美元。",
+        "日期确定后，我再来写发布公告。",
+      ],
+    },
+    {
+      id: "sample-session",
+      type: "memory",
+      kind: "Claude Code",
+      when: "前天",
+      title: "发布前检查",
+      location: "Claude Code 会话 · v2 发布前检查",
+      excerpt: "支付审核还没通过，所以上线改到 10 月 31 日。",
+      body: [
+        "发布前检查：支付服务商还在审核我们的账号。",
+        "支付审核还没通过，所以上线改到 10 月 31 日。",
+        "其余部分都已就绪。",
       ],
     },
     {
       id: "sample-file",
       type: "file",
       kind: "文件",
-      title: "出发清单.md",
-      location: "旅行文件夹 / 出发清单.md",
-      excerpt: "先找车站附近的住宿，带轻便行李。",
+      when: "昨天",
+      title: "v2 会议记录.md",
+      location: "产品文件夹 / v2 会议记录.md",
+      excerpt: "价格涨到每月 10 美元。",
       body: [
-        "这次不开车，希望移动简单一点。",
-        "先找台南车站附近的住宿，带轻便行李。",
-        "还没订房，也还没订车票；出发前要确认。",
+        "v2 上线计划的评审。",
+        "价格涨到每月 10 美元。年付优惠 20%。上线维持 10 月 31 日。",
+        "接下来：更新价格页，并通知内测用户。",
       ],
-      path: "旅行文件夹 / 出发清单.md",
+      path: "产品文件夹 / v2 会议记录.md",
       quoteLine: 2,
     },
   ],
@@ -218,49 +275,70 @@ const hansData: SampleDataset = {
     {
       id: "sample-cite-1",
       sourceId: "sample-memory",
-      quote: "我们决定搭火车去台南，周六早上出发。",
+      quote: "我们决定 10 月 24 日上线 v2。",
     },
     {
       id: "sample-cite-2",
       sourceId: "sample-file",
-      quote: "先找台南车站附近的住宿，带轻便行李。",
+      quote: "上线维持 10 月 31 日。",
+    },
+    {
+      id: "sample-cite-3",
+      sourceId: "sample-file",
+      quote: "价格涨到每月 10 美元。",
     },
     {
       id: "sample-cite-4",
-      sourceId: "sample-memory",
-      quote: "下午留给散步，不要把每个时间都排满。",
+      sourceId: "sample-file",
+      quote: "年付优惠 20%。",
     },
     {
       id: "sample-cite-5",
+      sourceId: "sample-session",
+      quote: "支付审核还没通过，所以上线改到 10 月 31 日。",
+    },
+    {
+      id: "sample-cite-6",
+      sourceId: "sample-memory",
+      quote: "定价每月 8 美元。",
+    },
+    {
+      id: "sample-cite-7",
       sourceId: "sample-file",
-      quote: "还没订房，也还没订车票；出发前要确认。",
+      quote: "价格涨到每月 10 美元。",
     },
   ],
   page: {
-    title: "一个不赶路的台南周末",
-    subtitle: "从一段对话里的决定和一份清单，整理成一篇笔记。",
+    title: "v2 上线计划",
+    subtitle: "从两段 AI 对话和一份会议记录，整理成一篇笔记。",
     paragraphs: [
       {
-        text: "搭火车去台南，周六早上出发。",
-        citationIds: ["sample-cite-1"],
-      },
-      {
-        text: "下午留给散步，行程不排满。",
-        citationIds: ["sample-cite-4"],
-      },
-      {
-        text: "住车站附近，行李带轻便。",
+        heading: "当前方案",
+        text: "10 月 31 日上线。",
         citationIds: ["sample-cite-2"],
       },
       {
-        text: "还没做：订房和订车票。",
-        citationIds: ["sample-cite-5"],
+        text: "定价每月 10 美元。",
+        citationIds: ["sample-cite-3"],
+      },
+      {
+        text: "年付优惠 20%。",
+        citationIds: ["sample-cite-4"],
+      },
+      {
+        heading: "改了什么",
+        text: "上线从 10 月 24 日改到 10 月 31 日，因为支付审核。",
+        citationIds: ["sample-cite-1", "sample-cite-5"],
+      },
+      {
+        text: "价格从每月 8 美元涨到 10 美元。",
+        citationIds: ["sample-cite-6", "sample-cite-7"],
       },
     ],
   },
   ai: {
-    question: "这周末去台南，出发前还要做什么？",
-    answer: "根据你的笔记《一个不赶路的台南周末》：先订车站附近的住宿，再确认周六早上的车票。",
+    question: "v2 什么时候上线，要多少钱？",
+    answer: "根据你的笔记《v2 上线计划》：v2 于 10 月 31 日上线，每月 10 美元，年付优惠 20%（v2 会议记录.md）。两项都有变动：上线日期因支付审核，从 10 月 24 日改期（Claude Code）；价格从每月 8 美元涨上来（ChatGPT）。",
   },
   commands: {
     chatgpt: {
@@ -286,29 +364,45 @@ const hantData: SampleDataset = {
     {
       id: "sample-memory",
       type: "memory",
-      kind: "記憶",
-      title: "週末旅行的決定",
-      location: "對話擷取 · 週末旅行的討論",
-      excerpt: "搭火車去台南，週六早上出發。",
+      kind: "ChatGPT",
+      when: "上週",
+      title: "上線日期和價格",
+      location: "ChatGPT 對話 · v2 上線討論",
+      excerpt: "我們決定 10 月 24 日上線 v2。",
       body: [
-        "這週末想安排一趟不用趕行程的小旅行。",
-        "我們決定搭火車去台南，週六早上出發。",
-        "下午留給散步，不要把每個時間都排滿。",
+        "我們想在 10 月底前推出 v2。",
+        "我們決定 10 月 24 日上線 v2。定價每月 8 美元。",
+        "日期確定後，我再來寫發布公告。",
+      ],
+    },
+    {
+      id: "sample-session",
+      type: "memory",
+      kind: "Claude Code",
+      when: "前天",
+      title: "發布前檢查",
+      location: "Claude Code 工作階段 · v2 發布前檢查",
+      excerpt: "支付審核還沒通過，所以上線改到 10 月 31 日。",
+      body: [
+        "發布前檢查：支付服務商還在審核我們的帳號。",
+        "支付審核還沒通過，所以上線改到 10 月 31 日。",
+        "其餘部分都已就緒。",
       ],
     },
     {
       id: "sample-file",
       type: "file",
       kind: "檔案",
-      title: "出發清單.md",
-      location: "旅行資料夾 / 出發清單.md",
-      excerpt: "先找車站附近的住宿，帶輕便行李。",
+      when: "昨天",
+      title: "v2 會議記錄.md",
+      location: "產品資料夾 / v2 會議記錄.md",
+      excerpt: "價格漲到每月 10 美元。",
       body: [
-        "這次不開車，希望移動簡單一點。",
-        "先找台南車站附近的住宿，帶輕便行李。",
-        "還沒訂房，也還沒訂車票；出發前要確認。",
+        "v2 上線計畫的評審。",
+        "價格漲到每月 10 美元。年繳優惠 20%。上線維持 10 月 31 日。",
+        "接下來：更新價格頁，並通知內測使用者。",
       ],
-      path: "旅行資料夾 / 出發清單.md",
+      path: "產品資料夾 / v2 會議記錄.md",
       quoteLine: 2,
     },
   ],
@@ -316,49 +410,70 @@ const hantData: SampleDataset = {
     {
       id: "sample-cite-1",
       sourceId: "sample-memory",
-      quote: "我們決定搭火車去台南，週六早上出發。",
+      quote: "我們決定 10 月 24 日上線 v2。",
     },
     {
       id: "sample-cite-2",
       sourceId: "sample-file",
-      quote: "先找台南車站附近的住宿，帶輕便行李。",
+      quote: "上線維持 10 月 31 日。",
+    },
+    {
+      id: "sample-cite-3",
+      sourceId: "sample-file",
+      quote: "價格漲到每月 10 美元。",
     },
     {
       id: "sample-cite-4",
-      sourceId: "sample-memory",
-      quote: "下午留給散步，不要把每個時間都排滿。",
+      sourceId: "sample-file",
+      quote: "年繳優惠 20%。",
     },
     {
       id: "sample-cite-5",
+      sourceId: "sample-session",
+      quote: "支付審核還沒通過，所以上線改到 10 月 31 日。",
+    },
+    {
+      id: "sample-cite-6",
+      sourceId: "sample-memory",
+      quote: "定價每月 8 美元。",
+    },
+    {
+      id: "sample-cite-7",
       sourceId: "sample-file",
-      quote: "還沒訂房，也還沒訂車票；出發前要確認。",
+      quote: "價格漲到每月 10 美元。",
     },
   ],
   page: {
-    title: "一個不趕路的台南週末",
-    subtitle: "從一段對話裡的決定和一份清單，整理成一篇筆記。",
+    title: "v2 上線計畫",
+    subtitle: "從兩段 AI 對話和一份會議記錄，整理成一篇筆記。",
     paragraphs: [
       {
-        text: "搭火車去台南，週六早上出發。",
-        citationIds: ["sample-cite-1"],
-      },
-      {
-        text: "下午留給散步，行程不排滿。",
-        citationIds: ["sample-cite-4"],
-      },
-      {
-        text: "住車站附近，行李帶輕便。",
+        heading: "目前方案",
+        text: "10 月 31 日上線。",
         citationIds: ["sample-cite-2"],
       },
       {
-        text: "還沒做：訂房和訂車票。",
-        citationIds: ["sample-cite-5"],
+        text: "定價每月 10 美元。",
+        citationIds: ["sample-cite-3"],
+      },
+      {
+        text: "年繳優惠 20%。",
+        citationIds: ["sample-cite-4"],
+      },
+      {
+        heading: "改了什麼",
+        text: "上線從 10 月 24 日改到 10 月 31 日，因為支付審核。",
+        citationIds: ["sample-cite-1", "sample-cite-5"],
+      },
+      {
+        text: "價格從每月 8 美元漲到 10 美元。",
+        citationIds: ["sample-cite-6", "sample-cite-7"],
       },
     ],
   },
   ai: {
-    question: "這週末去台南，出發前還要做什麼？",
-    answer: "根據你的筆記《一個不趕路的台南週末》：先訂車站附近的住宿，再確認週六早上的車票。",
+    question: "v2 什麼時候上線，要多少錢？",
+    answer: "根據你的筆記《v2 上線計畫》：v2 於 10 月 31 日上線，每月 10 美元，年繳優惠 20%（v2 會議記錄.md）。兩項都有變動：上線日期因支付審核，從 10 月 24 日改期（Claude Code）；價格從每月 8 美元漲上來（ChatGPT）。",
   },
   commands: {
     chatgpt: {
