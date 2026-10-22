@@ -7390,19 +7390,24 @@ async fn set_page_review_required_round_trips_without_bumping_version() {
 /// "Lock pages I've written": a human save through the editor seam that asks
 /// for it locks the page on its first human edit only.
 async fn human_save(db: &MemoryDB, page_id: &str, content: &str, lock: bool) -> WriteResult {
-    update_page_preserving_sources_with_lock(
+    page_write(
         db,
-        page_id,
-        UpdatePageRequest {
-            content: content.to_string(),
-            source_memory_ids: vec![],
-            expected_version: None,
-            caller_id: None,
-            operation_id: None,
+        PageWrite::UpdatePreservingSources {
+            page_id,
+            req: UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: vec![],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "manual_edit",
+            knowledge_path: None,
+            basis: crate::db::BasisWrite {
+                lock_on_first_human_edit: lock,
+                ..crate::db::BasisWrite::default()
+            },
         },
-        "manual_edit",
-        None,
-        lock,
     )
     .await
     .unwrap()

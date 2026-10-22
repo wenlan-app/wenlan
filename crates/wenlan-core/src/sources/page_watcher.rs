@@ -234,13 +234,18 @@ async fn sync_one_file(
     // trailing the DB and skip as SkippedDaemonAhead.
     // knowledge_path=Some: page_watcher IS the fs writer; update_page
     //   re-projects rather than skipping the write.
-    crate::post_write::update_page_preserving_sources_with_lock(
+    crate::post_write::page_write(
         db,
-        &page_id,
-        req,
-        "fs_edit",
-        Some(knowledge_path),
-        lock_my_pages,
+        crate::post_write::PageWrite::UpdatePreservingSources {
+            page_id: &page_id,
+            req,
+            edited_by: "fs_edit",
+            knowledge_path: Some(knowledge_path),
+            basis: crate::db::BasisWrite {
+                lock_on_first_human_edit: lock_my_pages,
+                ..crate::db::BasisWrite::default()
+            },
+        },
     )
     .await?;
 
