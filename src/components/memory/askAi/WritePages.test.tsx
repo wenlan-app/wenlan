@@ -14,7 +14,7 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { listParts, pageCreatedMs, WritePagesCard, writePagesView } from "./WritePagesCard";
+import { listParts, pageCreatedMs, useWritePages, WritePagesLine, writePagesView } from "./WritePages";
 
 vi.mock("../../../lib/tauri", () => ({
   PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
@@ -55,6 +55,12 @@ function page(id: string, createdAt: string, kind = "distilled", sources = 3): P
     created_at: createdAt,
     source_memory_ids: Array.from({ length: sources }, (_, i) => `m${i}`),
   } as Page;
+}
+
+/** The home line over its own state, as the Wiki home wires it. */
+function Line({ pages, ...props }: { pages: Page[]; onSelectPage: (id: string) => void; onConnectTool?: () => void; onUseLocalModel?: () => void }) {
+  const state = useWritePages(pages);
+  return <WritePagesLine state={state} pages={pages} {...props} />;
 }
 
 function wrap(children: ReactNode) {
@@ -105,7 +111,7 @@ describe("writePagesView", () => {
     ];
     const writing = writePagesView({ ...base, run, pages, list: material(9, { held: 2 }), now: START + 200_000, lastChangeAt: START });
     expect(writing).toMatchObject({ kind: "working", writing: true, stuck: false });
-    expect(writing.kind === "working" && writing.written.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(writing.kind === "working" && writing.written.map((p: Page) => p.id)).toEqual(["a", "b"]);
 
     const between = writePagesView({ ...base, run, pages, list: material(9), now: START + 240_000, lastChangeAt: START + 200_000 });
     expect(between.kind).toBe("working");
@@ -121,7 +127,7 @@ describe("writePagesView", () => {
   });
 });
 
-describe("WritePagesCard", () => {
+describe("WritePagesLine", () => {
   beforeEach(async () => {
     localStorage.clear();
     vi.mocked(listAgents).mockReset();
@@ -136,32 +142,33 @@ describe("WritePagesCard", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(22, { kinds: { note: 12, chat: 6, file: 4 } }));
     vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
-    wrap(<WritePagesCard pages={[]} onSelectPage={vi.fn()} />);
-    const card = await screen.findByTestId("write-pages-card");
-    expect(card).toHaveTextContent("Your material is in: 12 notes, 6 chats, and 4 files. None of it is in a page yet.");
-    expect(card).toHaveTextContent("Opens Claude Code with the command typed in.");
-    fireEvent.click(screen.getByRole("button", { name: "Ask AI to write pages" }));
+    wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveTextContent("Your material is in: 12 notes, 6 chats, and 4 files. None of it is in a page yet.");
+    const ask = screen.getByRole("button", { name: "Ask AI to write pages" });
+    expect(ask).toHaveAttribute("title", expect.stringContaining("Opens Claude Code with the command typed in."));
+    fireEvent.click(ask);
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
-    await waitFor(() => expect(screen.getByTestId("write-pages-card")).toHaveAttribute("data-state", "working"));
-    expect(screen.getByTestId("write-pages-card")).toHaveTextContent("Claude Code is writing pages");
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Claude Code is writing pages");
   });
 
   it("names only what is left once pages exist", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(10, { kinds: { note: 2, chat: 4, file: 4 } }));
-    wrap(<WritePagesCard pages={[page("a", "2026-10-22T10:01:00Z")]} onSelectPage={vi.fn()} />);
-    const card = await screen.findByTestId("write-pages-card");
-    expect(card).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
+    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} onSelectPage={vi.fn()} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
   });
 
   it("copies the command when the tool cannot be opened", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
-    wrap(<WritePagesCard pages={[]} onSelectPage={vi.fn()} />);
+    wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Ask AI to write pages" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
-    await waitFor(() => expect(screen.getByTestId("write-pages-card")).toHaveTextContent("The command is copied. Paste it into Codex"));
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is copied. Paste it into Codex"));
     expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
   });
 
@@ -170,7 +177,7 @@ describe("WritePagesCard", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     const onConnectTool = vi.fn();
     const onUseLocalModel = vi.fn();
-    wrap(<WritePagesCard pages={[]} onSelectPage={vi.fn()} onConnectTool={onConnectTool} onUseLocalModel={onUseLocalModel} />);
+    wrap(<Line pages={[]} onSelectPage={vi.fn()} onConnectTool={onConnectTool} onUseLocalModel={onUseLocalModel} />);
     fireEvent.click(await screen.findByRole("button", { name: "Connect an AI tool" }));
     fireEvent.click(screen.getByRole("button", { name: "Use local model" }));
     expect(onConnectTool).toHaveBeenCalled();
@@ -181,14 +188,31 @@ describe("WritePagesCard", () => {
   it("stays closed once the user closes it", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
-    const { unmount } = wrap(<WritePagesCard pages={[]} onSelectPage={vi.fn()} />);
+    const { unmount } = wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Hide" }));
-    expect(screen.queryByTestId("write-pages-card")).toBeNull();
+    expect(screen.queryByTestId("write-pages-line")).toBeNull();
     unmount();
 
-    wrap(<WritePagesCard pages={[]} onSelectPage={vi.fn()} />);
+    wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
     await waitFor(() => expect(listNewMaterial).toHaveBeenCalledTimes(2));
-    expect(screen.queryByTestId("write-pages-card")).toBeNull();
+    expect(screen.queryByTestId("write-pages-line")).toBeNull();
+  });
+
+  it("goes once a new page is opened from the finished run", async () => {
+    // Started long enough ago that the run reads as finished.
+    localStorage.setItem("askAi:writePages:run", JSON.stringify({ startedAt: Date.now() - 600_000, tool: "Claude Code" }));
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(1));
+    const onSelectPage = vi.fn();
+    const born = new Date(Date.now() - 300_000).toISOString();
+    wrap(<Line pages={[page("a", born)]} onSelectPage={onSelectPage} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveAttribute("data-state", "done");
+    fireEvent.click(screen.getByRole("button", { name: "See new pages" }));
+    fireEvent.click(screen.getByRole("button", { name: "Page a" }));
+    expect(onSelectPage).toHaveBeenCalledWith("a");
+    expect(screen.queryByTestId("write-pages-line")).toBeNull();
+    expect(localStorage.getItem("askAi:writePages:run")).toBeNull();
   });
 
   it("lists the pages written and opens one", async () => {
@@ -196,11 +220,13 @@ describe("WritePagesCard", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(9, { held: 3 }));
     const onSelectPage = vi.fn();
-    wrap(<WritePagesCard pages={[page("a", "2026-10-22T10:01:00Z", "distilled", 8)]} onSelectPage={onSelectPage} />);
-    const card = await screen.findByTestId("write-pages-card");
-    expect(card).toHaveTextContent("Claude Code is writing pages: 1 ready");
-    expect(card).toHaveTextContent("8 sources");
-    expect(card).toHaveTextContent("Writing the next page…");
+    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z", "distilled", 8)]} onSelectPage={onSelectPage} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveTextContent("Claude Code is writing pages: 1 ready");
+    expect(line).not.toHaveTextContent("8 sources");
+    fireEvent.click(screen.getByRole("button", { name: "See new pages" }));
+    expect(line).toHaveTextContent("8 sources");
+    expect(line).toHaveTextContent("Writing the next page…");
     fireEvent.click(screen.getByRole("button", { name: "Page a" }));
     expect(onSelectPage).toHaveBeenCalledWith("a");
   });

@@ -86,6 +86,11 @@ export const enFirstUse = {
         body: "Add a Markdown folder or an Obsidian vault.",
         action: "Add a source",
       },
+      pages: {
+        title: "Turn your material into pages",
+        body: "Once your material is in, your AI tool writes pages from it, with the source of each part.",
+        automatic: "Wenlan writes pages from your material in the background.",
+      },
       recall: {
         title: "Ask your AI about your pages",
         body: "Once a tool is connected, ask it about your pages. It answers from them and shows where each part came from.",
@@ -215,6 +220,11 @@ export const hansFirstUse = {
         body: "加一个 Markdown 文件夹或 Obsidian 库。",
         action: "添加来源",
       },
+      pages: {
+        title: "把资料整理成笔记",
+        body: "资料进来后，AI 工具会把它整理成笔记，每段都附出处。",
+        automatic: "文澜会在后台把你的资料整理成笔记。",
+      },
       recall: {
         title: "在 AI 里问问你的笔记",
         body: "连上 AI 工具后，在里面问一句，它会从你的笔记回答，并告诉你出处。",
@@ -340,6 +350,11 @@ export const hantFirstUse = {
         title: "帶入既有資料",
         body: "加一個 Markdown 資料夾或 Obsidian 庫。",
         action: "新增來源",
+      },
+      pages: {
+        title: "把資料整理成筆記",
+        body: "資料進來後，AI 工具會把它整理成筆記，每段都附出處。",
+        automatic: "文瀾會在背景把你的資料整理成筆記。",
       },
       recall: {
         title: "在 AI 裡問問你的筆記",

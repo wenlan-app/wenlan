@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { CheckCircle, CircleNotch, Sparkle, X } from "@phosphor-icons/react";
 import {
@@ -16,13 +17,13 @@ import { useSteepOnDemand } from "../../../lib/steepMode";
 import { useLiveAgents } from "../../connect/connectionState";
 import { writeClipboard } from "../page/codeBasisShared";
 import { useAskAiCommand } from "./AskAiHint";
-import "./writePagesCard.css";
+import "./writePages.css";
 
-/** The card shows from this much material, the same floor at which the AI
+/** The offer shows from this much material, the same floor at which the AI
  *  tool's replies start naming `/wenlan steep`. */
 export const WRITE_PAGES_MIN_ITEMS = 3;
-/** After the user closes the card it comes back only once this much more
- *  material has arrived. */
+/** After the user closes the home line it comes back only once this much
+ *  more material has arrived. */
 const SHOW_AGAIN_AFTER = 10;
 /** No claim held and nothing new for this long: the run is over. */
 const QUIET_DONE_MS = 90_000;
@@ -78,7 +79,7 @@ export function pagesWrittenSince(pages: readonly Page[], startedAt: number): Pa
     .map((entry) => entry.page);
 }
 
-/** What the card shows. On demand only: in Automatic mode Wenlan writes the
+/** What the offer shows. On demand only: in Automatic mode Wenlan writes the
  *  pages itself. */
 export function writePagesView({
   onDemand,
@@ -156,20 +157,34 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
-interface WritePagesCardProps {
-  readonly pages: readonly Page[];
-  readonly onSelectPage: (pageId: string) => void;
-  readonly onConnectTool?: () => void;
-  /** Opens the steep settings, where the local model is chosen. */
-  readonly onUseLocalModel?: () => void;
+/** One shared state for both places the offer can show: a step in the
+ *  getting-started checklist while that is open, and one line at the top of
+ *  the Wiki home after. The home reads it once and hands it to whichever is
+ *  on screen, so a press in one is the run the other follows. */
+export interface WritePagesState {
+  /** For the home line: stays away once the user closed it. */
+  readonly view: WritePagesView;
+  /** For the checklist step, which has no close of its own. */
+  readonly stepView: WritePagesView;
+  readonly onDemand: boolean | undefined;
+  /** False until the connected tools are known; nothing shows before. */
+  readonly loaded: boolean;
+  readonly run: WritePagesRun | null;
+  /** The tool the button opens or copies the command for. */
+  readonly tool: { family: string; name: string } | null;
+  readonly toolName: string;
+  readonly opensTool: boolean;
+  readonly command: string | null;
+  readonly copied: boolean;
+  /** "12 notes, 6 chats, and 4 files" waiting, already worded. */
+  readonly waiting: string;
+  readonly start: () => Promise<void>;
+  readonly copyCommand: () => Promise<boolean>;
+  /** Hides the home line until much more material arrives, and ends the run. */
+  readonly close: () => void;
 }
 
-/**
- * After material comes in, the Wiki home offers to have the user's AI tool
- * turn it into pages: one button opens the tool with `/wenlan steep` typed
- * in, then the card follows the pages as they land.
- */
-export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalModel }: WritePagesCardProps) {
+export function useWritePages(pages: readonly Page[]): WritePagesState {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const onDemand = useSteepOnDemand();
@@ -203,8 +218,8 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
   }, [signature]);
 
   // A page the tool wrote takes its material out of the list, whether or not
-  // the run started from this card. The Wiki's own page list does not poll,
-  // so read it again then, and the page shows up.
+  // the run started here. The Wiki's own page list does not poll, so read it
+  // again then, and the page shows up.
   useEffect(() => {
     const total = list.data?.total;
     if (total !== undefined && lastTotal.current !== undefined && total < lastTotal.current) {
@@ -219,27 +234,35 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
     return () => clearInterval(timer);
   }, [run]);
 
-  const view = writePagesView({
-    onDemand,
-    list: list.data,
-    pages,
-    run,
-    dismissedTotal,
-    now,
-    lastChangeAt,
-  });
-  if (view.kind === "hidden" || !agents.isSuccess) return null;
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2_000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
-  const tool = recentTool(agents.data);
+  const inputs = { onDemand, list: list.data, pages, run, now, lastChangeAt };
+  const view = writePagesView({ ...inputs, dismissedTotal });
+  const stepView = writePagesView({ ...inputs, dismissedTotal: null });
+
+  const tool = agents.isSuccess ? recentTool(agents.data) : null;
   const toolName = run?.tool ?? tool?.name ?? t("askAi.writePages.yourTool");
   const opensTool = tool !== null && PROMPT_LINK_FAMILIES.includes(tool.family);
+
+  const kinds = list.data?.kinds ?? {};
+  const total = list.data?.total ?? 0;
+  const parts = KIND_ORDER
+    .filter((kind) => (kinds[kind] ?? 0) > 0)
+    .map((kind) => t(`askAi.writePages.kinds.${kind}`, { count: kinds[kind] }));
+  const known = KIND_ORDER.reduce((sum, kind) => sum + (kinds[kind] ?? 0), 0);
+  const waiting = parts.length === 0 || known < total
+    ? t("askAi.writePages.kinds.item", { count: total })
+    : listParts(parts, i18n.language);
 
   const setRun = (next: WritePagesRun | null) => {
     writeJson(RUN_KEY, next);
     setRunState(next);
   };
   const close = () => {
-    const total = list.data?.total ?? 0;
     writeJson(DISMISSED_KEY, total);
     setDismissedTotal(total);
     setRun(null);
@@ -270,19 +293,44 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
     setRun({ ...begun, handedOver: "copied" });
   };
 
-  const closeButton = (
-    <button
-      type="button"
-      className="write-pages-close"
-      aria-label={t("askAi.hide")}
-      title={t("askAi.hide")}
-      onClick={close}
-    >
-      <X aria-hidden="true" weight="regular" />
-    </button>
-  );
+  return {
+    view,
+    stepView,
+    onDemand,
+    loaded: agents.isSuccess,
+    run,
+    tool,
+    toolName,
+    opensTool,
+    command,
+    copied,
+    waiting,
+    start,
+    copyCommand,
+    close,
+  };
+}
 
-  const writtenList = (rows: Page[], writing: boolean) => (rows.length > 0 || writing ? (
+/** What is waiting, worded for where the user is: before any page exists all
+ *  of it, after that only what is left. */
+export function waitingLine(state: WritePagesState, pages: readonly Page[], t: TFunction): string {
+  const hasPages = pages.some((page) => page.creation_kind === "distilled");
+  return t(hasPages ? "askAi.writePages.leadMore" : "askAi.writePages.lead", { list: state.waiting });
+}
+
+/** The pages a run wrote, each one a link. */
+export function WrittenPages({
+  rows,
+  writing,
+  onSelectPage,
+}: {
+  readonly rows: readonly Page[];
+  readonly writing: boolean;
+  readonly onSelectPage: (pageId: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (rows.length === 0 && !writing) return null;
+  return (
     <ul className="write-pages-list">
       {rows.slice(0, MAX_LISTED).map((page) => (
         <li key={page.id}>
@@ -307,114 +355,147 @@ export function WritePagesCard({ pages, onSelectPage, onConnectTool, onUseLocalM
         </li>
       ) : null}
     </ul>
-  ) : null);
+  );
+}
+
+interface WritePagesLineProps {
+  readonly state: WritePagesState;
+  readonly pages: readonly Page[];
+  readonly onSelectPage: (pageId: string) => void;
+  readonly onConnectTool?: () => void;
+  /** Opens the steep settings, where the local model is chosen. */
+  readonly onUseLocalModel?: () => void;
+}
+
+/**
+ * One line at the top of the Wiki home, in place of a card: what is waiting
+ * and one link that hands it to the user's AI tool, then the same line
+ * follows the run. The new pages land in the Wiki below it; "See new pages"
+ * lists them here too. Shown only once the getting-started checklist, which
+ * carries the same offer as a step, is out of the way.
+ */
+export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUseLocalModel }: WritePagesLineProps) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const { view } = state;
+  if (view.kind === "hidden" || !state.loaded) return null;
+
+  const closeButton = (
+    <button
+      type="button"
+      className="write-pages-close"
+      aria-label={t("askAi.hide")}
+      title={t("askAi.hide")}
+      onClick={state.close}
+    >
+      <X aria-hidden="true" weight="regular" />
+    </button>
+  );
+  const toggle = view.kind !== "ready" && view.written.length > 0 ? (
+    <button type="button" className="write-pages-link" aria-expanded={open} onClick={() => setOpen(!open)}>
+      {open ? t("askAi.writePages.hidePages") : t("askAi.writePages.showPages")}
+    </button>
+  ) : null;
 
   if (view.kind === "ready") {
-    const kinds = view.list.kinds ?? {};
-    const parts = KIND_ORDER
-      .filter((kind) => (kinds[kind] ?? 0) > 0)
-      .map((kind) => t(`askAi.writePages.kinds.${kind}`, { count: kinds[kind] }));
-    const known = KIND_ORDER.reduce((sum, kind) => sum + (kinds[kind] ?? 0), 0);
-    if (parts.length === 0 || known < view.list.total) {
-      parts.length = 0;
-      parts.push(t("askAi.writePages.kinds.item", { count: view.list.total }));
-    }
-    const listed = listParts(parts, i18n.language);
-    // Once pages exist, "your material is in" no longer fits: only this part
-    // of it is waiting.
-    const hasPages = pages.some((page) => page.creation_kind === "distilled");
     return (
-      <section className="write-pages-card" data-testid="write-pages-card" data-state="ready" aria-live="polite">
-        <div className="write-pages-head">
+      <div className="write-pages-line" data-testid="write-pages-line" data-state="ready" aria-live="polite">
+        <div className="write-pages-line-row">
           <Sparkle aria-hidden="true" weight="regular" className="write-pages-icon" />
-          <p className="write-pages-lead">{t(hasPages ? "askAi.writePages.leadMore" : "askAi.writePages.lead", { list: listed })}</p>
+          <p className="write-pages-text">{waitingLine(state, pages, t)}</p>
+          <div className="write-pages-actions">
+            {state.tool ? (
+              <>
+                <button
+                  type="button"
+                  className="write-pages-go"
+                  title={state.opensTool
+                    ? t("askAi.writePages.opensTool", { tool: state.tool.name })
+                    : t("askAi.writePages.copiesCommand", { tool: state.tool.name })}
+                  disabled={state.command === null}
+                  onClick={() => void state.start()}
+                >
+                  {t("askAi.writePages.ask")}
+                </button>
+                <button
+                  type="button"
+                  className="write-pages-link"
+                  disabled={state.command === null}
+                  onClick={() => void state.copyCommand()}
+                >
+                  {state.copied ? t("askAi.copied") : t("askAi.writePages.copyCommand")}
+                </button>
+              </>
+            ) : (
+              <>
+                {onConnectTool ? (
+                  <button type="button" className="write-pages-go" onClick={onConnectTool}>
+                    {t("askAi.writePages.connect")}
+                  </button>
+                ) : null}
+                {onUseLocalModel ? (
+                  <button type="button" className="write-pages-link" onClick={onUseLocalModel}>
+                    {t("askAi.writePages.useLocalModel")}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
           {closeButton}
         </div>
-        {tool ? (
-          <>
-            <div className="write-pages-actions">
-              <button
-                type="button"
-                className="write-pages-primary"
-                disabled={command === null}
-                onClick={() => void start()}
-              >
-                {t("askAi.writePages.ask")}
-              </button>
-              <button type="button" className="write-pages-link" disabled={command === null} onClick={() => void copyCommand()}>
-                {copied ? t("askAi.copied") : t("askAi.writePages.copyCommand")}
-              </button>
-            </div>
-            <p className="write-pages-sub">
-              {opensTool
-                ? t("askAi.writePages.opensTool", { tool: tool.name })
-                : t("askAi.writePages.copiesCommand", { tool: tool.name })}
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="write-pages-sub">{t("askAi.writePages.noTool")}</p>
-            <div className="write-pages-actions">
-              {onConnectTool ? (
-                <button type="button" className="write-pages-primary" onClick={onConnectTool}>
-                  {t("askAi.writePages.connect")}
-                </button>
-              ) : null}
-              {onUseLocalModel ? (
-                <button type="button" className="write-pages-secondary" onClick={onUseLocalModel}>
-                  {t("askAi.writePages.useLocalModel")}
-                </button>
-              ) : null}
-            </div>
-          </>
-        )}
-      </section>
+      </div>
     );
   }
 
   if (view.kind === "working") {
+    const hint = view.stuck
+      ? t("askAi.writePages.stuck", { tool: state.toolName })
+      : view.written.length === 0 && !view.writing
+        ? state.run?.handedOver !== "opened"
+          ? t("askAi.writePages.pasteIt", { tool: state.toolName })
+          : t("askAi.writePages.pressEnter", { tool: state.toolName })
+        : null;
     return (
-      <section className="write-pages-card" data-testid="write-pages-card" data-state="working" aria-live="polite">
-        <div className="write-pages-head">
+      <div className="write-pages-line" data-testid="write-pages-line" data-state="working" aria-live="polite">
+        <div className="write-pages-line-row">
           <CircleNotch aria-hidden="true" weight="bold" className="write-pages-icon write-pages-spin" />
-          <p className="write-pages-lead">
+          <p className="write-pages-text">
             {view.written.length > 0
-              ? t("askAi.writePages.workingCount", { tool: toolName, count: view.written.length })
-              : t("askAi.writePages.working", { tool: toolName })}
+              ? t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length })
+              : t("askAi.writePages.working", { tool: state.toolName })}
+            {hint ? <span className="write-pages-hint">{hint}</span> : null}
           </p>
+          <div className="write-pages-actions">{toggle}</div>
           {closeButton}
         </div>
-        {view.written.length === 0 && !view.writing ? (
-          <p className="write-pages-sub">
-            {run?.handedOver !== "opened"
-              ? t("askAi.writePages.pasteIt", { tool: toolName })
-              : t("askAi.writePages.pressEnter", { tool: toolName })}
-          </p>
-        ) : null}
-        {writtenList(view.written, view.writing)}
-        {view.stuck ? <p className="write-pages-sub">{t("askAi.writePages.stuck", { tool: toolName })}</p> : null}
-      </section>
+        {open ? <WrittenPages rows={view.written} writing={view.writing} onSelectPage={onSelectPage} /> : null}
+      </div>
     );
   }
 
+  // Done: opening one of the new pages is the end of it, so the line goes.
+  const openPage = (pageId: string) => {
+    state.close();
+    onSelectPage(pageId);
+  };
   return (
-    <section className="write-pages-card" data-testid="write-pages-card" data-state="done" aria-live="polite">
-      <div className="write-pages-head">
+    <div className="write-pages-line" data-testid="write-pages-line" data-state="done" aria-live="polite">
+      <div className="write-pages-line-row">
         <CheckCircle aria-hidden="true" weight="fill" className="write-pages-icon write-pages-icon--done" />
-        <p className="write-pages-lead">
+        <p className="write-pages-text">
           {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
         </p>
+        <div className="write-pages-actions">
+          {toggle}
+          {view.left >= WRITE_PAGES_MIN_ITEMS && state.tool ? (
+            <button type="button" className="write-pages-link" disabled={state.command === null} onClick={() => void state.start()}>
+              {t("askAi.writePages.again")}
+            </button>
+          ) : null}
+        </div>
         {closeButton}
       </div>
-      {writtenList(view.written, false)}
-      {view.left > 0 ? <p className="write-pages-sub">{t("askAi.writePages.left", { count: view.left })}</p> : null}
-      {view.left >= WRITE_PAGES_MIN_ITEMS && tool ? (
-        <div className="write-pages-actions">
-          <button type="button" className="write-pages-secondary" disabled={command === null} onClick={() => void start()}>
-            {t("askAi.writePages.again")}
-          </button>
-        </div>
-      ) : null}
-    </section>
+      {open ? <WrittenPages rows={view.written} writing={false} onSelectPage={openPage} /> : null}
+    </div>
   );
 }

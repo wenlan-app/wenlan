@@ -236,3 +236,8 @@
 .wiki-reading-start[data-onboarding="true"] .getting-started-extra {
   font-size: 13px;
 }
+
+/* The pages a run writes, listed in the "turn your material into pages" row. */
+.getting-started-copy .write-pages-list {
+  margin: 6px 0 0;
+}

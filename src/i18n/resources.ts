@@ -2364,6 +2364,9 @@ const en = {
       left_one: "{{count}} item isn't in a page yet.",
       left_other: "{{count}} items aren't in a page yet.",
       again: "Write more pages",
+      askIn: "Write with {{tool}}",
+      showPages: "See new pages",
+      hidePages: "Hide pages",
     },
     tasks: {
       capture: { title: "Remember something", example: "/capture we switched to SQLite", sentence: "Wenlan, remember: we use SQLite" },
@@ -5155,6 +5158,9 @@ const zhHans = {
       left_one: "还有 {{count}} 条资料没进笔记。",
       left_other: "还有 {{count}} 条资料没进笔记。",
       again: "继续整理",
+      askIn: "请 {{tool}} 整理",
+      showPages: "看新页面",
+      hidePages: "收起",
     },
     tasks: {
       capture: { title: "记住一件事", example: "/capture 我们改用 SQLite", sentence: "用文澜记住：我们改用 SQLite" },
@@ -7937,6 +7943,9 @@ const zhHant = {
       left_one: "還有 {{count}} 條資料沒進筆記。",
       left_other: "還有 {{count}} 條資料沒進筆記。",
       again: "繼續整理",
+      askIn: "請 {{tool}} 整理",
+      showPages: "看新頁面",
+      hidePages: "收起",
     },
     tasks: {
       capture: { title: "記住一件事", example: "/capture 我們改用 SQLite", sentence: "用文瀾記住：我們改用 SQLite" },

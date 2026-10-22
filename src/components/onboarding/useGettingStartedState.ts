@@ -19,14 +19,17 @@ const DISMISSED_KEY = "onboarding:gettingStartedDismissed";
  *  into this card would read it as noise. */
 export const ESTABLISHED_LIBRARY_PAGES = 10;
 
-export type GettingStartedStepId = "note" | "tool" | "sources" | "recall";
+export type GettingStartedStepId = "note" | "tool" | "sources" | "pages" | "recall";
 
-export const GETTING_STARTED_ORDER: readonly GettingStartedStepId[] = ["note", "tool", "sources", "recall"];
+/** The path most people take: bring material in, have it turned into pages,
+ *  ask about them. Writing a page by hand is last, for those who start empty. */
+export const GETTING_STARTED_ORDER: readonly GettingStartedStepId[] = ["tool", "sources", "pages", "recall", "note"];
 
 export interface GettingStartedProgress {
   readonly note: boolean;
   readonly tool: boolean;
   readonly sources: boolean;
+  readonly pages: boolean;
   readonly recall: boolean;
 }
 
@@ -34,6 +37,26 @@ export interface GettingStartedProgress {
  *  see it, so it does not count as a saved note. */
 export function publishedPages(pages: readonly Page[]): Page[] {
   return pages.filter((page) => page.status !== "draft");
+}
+
+/** Copies of files the user brought in, and pages Wenlan made, are not the
+ *  user writing a page. */
+const NOT_WRITTEN_BY_USER = new Set(["source", "imported", "distilled", "entity"]);
+
+/** Pages the user wrote themselves. */
+export function writtenPages(pages: readonly Page[]): Page[] {
+  return publishedPages(pages).filter((page) => !NOT_WRITTEN_BY_USER.has(page.creation_kind ?? ""));
+}
+
+/** Pages worth asking an AI tool about: ones written from material first, then
+ *  the user's own. A copy of a brought-in file is not one; its title is the
+ *  file's (e.g. "ISP Outage Runbook (section_h1)"). */
+export function askablePages(pages: readonly Page[]): Page[] {
+  const published = publishedPages(pages);
+  return [
+    ...published.filter((page) => page.creation_kind === "distilled"),
+    ...writtenPages(published),
+  ];
 }
 
 /** The AI tools the daemon knows, Wenlan's own identities excluded.
@@ -64,12 +87,12 @@ export function gettingStartedProgress({
   milestones: readonly MilestoneRecord[];
 }): GettingStartedProgress {
   return {
-    note: publishedPages(pages).length > 0,
+    note: writtenPages(pages).length > 0,
     tool: connectedToolFamilies(agents).length > 0,
     sources: sources.length > 0
       || pages.some((page) => page.creation_kind === "source" || page.creation_kind === "imported"),
-    recall: milestones.some((milestone) => milestone.id === "first-recall")
-      || pages.some((page) => page.creation_kind === "distilled"),
+    pages: pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft"),
+    recall: milestones.some((milestone) => milestone.id === "first-recall"),
   };
 }
 
