@@ -70,7 +70,7 @@ pub async fn handle_steep_new_list(
         header_space.as_deref(),
     )
     .await?;
-    let (items, total, next_cursor) = wenlan_core::steep_new::list_new(
+    let list = wenlan_core::steep_new::list_new(
         &db,
         &scope,
         query.limit.unwrap_or(100),
@@ -78,9 +78,11 @@ pub async fn handle_steep_new_list(
     )
     .await?;
     Ok(Json(SteepNewListResponse {
-        items,
-        total: u32::try_from(total).unwrap_or(u32::MAX),
-        next_cursor,
+        items: list.items,
+        total: u32::try_from(list.total).unwrap_or(u32::MAX),
+        next_cursor: list.next_cursor,
+        kinds: list.kinds,
+        held: u32::try_from(list.held).unwrap_or(u32::MAX),
     }))
 }
 

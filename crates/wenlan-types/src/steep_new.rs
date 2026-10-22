@@ -49,6 +49,16 @@ pub struct SteepNewListResponse {
     /// Pass back as `cursor` for the next page; `None` on the last page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// How many of `total` are of each `kind`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub kinds: std::collections::BTreeMap<String, u32>,
+    /// How many of `total` a claim holds right now.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub held: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// `POST /api/steep/new/claim`: one topic's items, for one page.

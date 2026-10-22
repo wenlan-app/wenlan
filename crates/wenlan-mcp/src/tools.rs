@@ -4589,7 +4589,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: write pages from material no page uses yet, then bring pages up to date after their sources, or the code they rely on, changed. New pages first: `new`: items (imported notes, chats, files, captures) with title and snippet; group them by topic with a small model; `claim_new` (item_ids of one topic): their text numbered [1]..[n] and a token; `write` (token, title, content): the page, claims cited [n]. `list`: pages waiting (and new_total). `claim` (page_id): the page, surviving sources numbered [1]..[n] (plus the code as it reads now when code changed), a token, and a plan: rewrite; review_card (the user wrote it; your rewrite becomes a card); judge (put each code check to a small model, pass replies back with `judge`); needs_you (tell the user why). `commit` (token, content): the rewrite, claims cited [n]; refused with nothing written if anything changed since the claim (claim again). `still_accurate` (token): still right. `judge` (token, answers). `release` (token): give a claim or claim_new back. Write with your main model; a small model only groups and judges. Claim, claim_new, write and commit: local stdio only.",
+        description = "Steep on demand: write pages from unpaged material, then update pages whose sources or code changed. `new`: the items; a small model groups them by topic. `claim_new` (item_ids): their text as [1]..[n], a token. `write` (token, title, content): the page, cited [n]. `list`: pages waiting, and new_total. `claim` (page_id): page, sources [1]..[n] (and current code), token, plan: rewrite; review_card (user-written; your rewrite becomes a card); judge (give each code check to a small model, pass replies to `judge`); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]; refused if anything changed since. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
         annotations(
             title = "Steep",
             read_only_hint = false,
@@ -9582,12 +9582,16 @@ mod tests {
             SteepAction::Commit,
             SteepAction::Judge,
             SteepAction::Release,
+            SteepAction::ClaimNew,
+            SteepAction::Write,
         ] {
             let result = server
                 .steep_impl(SteepParams {
                     action,
                     page_id: Some("page_1".into()),
+                    item_ids: Some(vec!["memory_1".into()]),
                     token: Some("stp_x".into()),
+                    title: Some("Title".into()),
                     content: Some("body [1]".into()),
                     answers: None,
                     limit: None,

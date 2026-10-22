@@ -399,6 +399,8 @@ export class TauriMockRuntime {
       case "publish_page_draft": return this.publishPageDraft(args);
       case "discard_page_draft": return this.discardPageDraft(args);
       case "distill_review": return structuredClone(this.distillReview);
+      // The fixture library has no material waiting for pages.
+      case "list_new_material": return { items: [], total: 0 };
       case "list_pending_revisions": return structuredClone(this.fixture.pendingRevisions ?? []);
       case "list_refinements": return { proposals: structuredClone(this.refinements) };
       case "accept_refinement": return this.resolveRefinement(args, true);

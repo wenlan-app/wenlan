@@ -22,7 +22,7 @@
 //! Holds live in memory, like steep's: a restart ends them, and a caller whose
 //! token is gone claims again.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -129,10 +129,10 @@ pub(crate) fn item_key(source_id: &str) -> &str {
 fn item_kind(source_id: &str, source_agent: Option<&str>, has_file_hash: bool) -> &'static str {
     if source_id.starts_with("import_chatgpt_") || source_id.starts_with("import_claude_") {
         STEEP_NEW_KIND_CHAT
-    } else if has_file_hash || matches!(source_agent, Some("folder" | "reconcile")) {
-        STEEP_NEW_KIND_FILE
     } else if matches!(source_agent, Some("obsidian" | "logseq")) {
         STEEP_NEW_KIND_NOTE
+    } else if has_file_hash || matches!(source_agent, Some("folder" | "reconcile")) {
+        STEEP_NEW_KIND_FILE
     } else {
         STEEP_NEW_KIND_CAPTURE
     }
@@ -274,7 +274,7 @@ pub async fn list_new(
     scope: &ReadScope,
     limit: usize,
     cursor: Option<&str>,
-) -> Result<(Vec<SteepNewItem>, usize, Option<String>), WenlanError> {
+) -> Result<NewList, WenlanError> {
     let all = new_material(db, scope).await?;
     let total = all.len();
     let start = cursor
@@ -283,9 +283,29 @@ pub async fn list_new(
         .min(total);
     let limit = limit.clamp(1, 200);
     let end = (start + limit).min(total);
-    let items = all[start..end].iter().map(|m| m.item.clone()).collect();
-    let next = (end < total).then(|| end.to_string());
-    Ok((items, total, next))
+    let mut kinds: BTreeMap<String, u32> = BTreeMap::new();
+    for m in &all {
+        *kinds.entry(m.item.kind.clone()).or_default() += 1;
+    }
+    Ok(NewList {
+        items: all[start..end].iter().map(|m| m.item.clone()).collect(),
+        total,
+        next_cursor: (end < total).then(|| end.to_string()),
+        kinds,
+        held: all.iter().filter(|m| m.item.held).count(),
+    })
+}
+
+/// One page of the new material, with counts over all of it.
+#[derive(Debug, Clone)]
+pub struct NewList {
+    pub items: Vec<SteepNewItem>,
+    pub total: usize,
+    pub next_cursor: Option<String>,
+    /// How many items of each kind, over all of it.
+    pub kinds: BTreeMap<String, u32>,
+    /// How many items a claim holds now.
+    pub held: usize,
 }
 
 /// What a claim hands out.

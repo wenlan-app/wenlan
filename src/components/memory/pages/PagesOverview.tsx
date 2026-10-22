@@ -9,7 +9,7 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
-import { ImportHint } from "../askAi/ImportHint";
+import { WritePagesCard } from "../askAi/WritePagesCard";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -68,7 +68,12 @@ export function PagesOverview({
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
       {gettingStarted}
-      <ImportHint pages={pages} />
+      <WritePagesCard
+        pages={pages}
+        onSelectPage={onSelectPage}
+        onConnectTool={onConnectTool}
+        onUseLocalModel={onOpenIntelligence}
+      />
       {adding ? <AddSourceMenu onClose={() => setAdding(false)} /> : null}
     </section>
   );

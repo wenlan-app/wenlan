@@ -1009,6 +1009,12 @@ impl WenlanClient {
             .await
     }
 
+    /// Material no page uses yet (`GET /api/steep/new`): what the user's AI
+    /// tool would write pages from with `/wenlan steep`, held items marked.
+    pub async fn steep_new_list(&self) -> Result<wenlan_types::SteepNewListResponse, String> {
+        self.get_json("/api/steep/new?limit=200").await
+    }
+
     pub async fn redistill_page(&self, page_id: &str) -> Result<PageRedistillResponse, String> {
         let path = format!("/api/distill/{}", percent_encode_path_segment(page_id));
         self.post_json(&path, &PageRedistillRequest {}).await

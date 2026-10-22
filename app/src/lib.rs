@@ -1584,6 +1584,7 @@ pub fn run() {
             search::ingest_webpage,
             search::distill_review,
             search::redistill_page,
+            search::list_new_material,
             search::get_api_key,
             search::set_api_key,
             search::get_chunks,
