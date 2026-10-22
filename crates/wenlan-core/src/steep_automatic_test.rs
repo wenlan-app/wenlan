@@ -142,6 +142,19 @@ async fn an_answer_that_does_not_land_is_not_asked_for_again() {
 }
 
 #[tokio::test]
+async fn a_rewrite_that_drops_most_of_the_note_is_not_saved() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::new();
+    stale_note(&db, &repo, "page_a").await;
+    // Corrects the first sentence but loses the second, which still holds.
+    let model = Scripted::new("Keys are cut to 48 bits.");
+
+    assert_eq!(run(&db, &model).await, Some(CodeRewriteOutcome::Failed));
+    assert_eq!(body_of(&db, "page_a").await, BODY);
+    assert_eq!(only(&db, "page_a").await.state, CODE_BASIS_STATE_PENDING);
+}
+
+#[tokio::test]
 async fn a_note_an_on_demand_caller_holds_is_left_to_it() {
     let (db, _dir) = test_db().await;
     let repo = Repo::new();

@@ -33,6 +33,11 @@ const MODEL_TIMEOUT: Duration = Duration::from_secs(180);
 /// The model's whole answer when the note still agrees with the code.
 const STILL_ACCURATE_REPLY: &str = "STILL_ACCURATE";
 
+/// A correction for changed code rarely removes most of a note; a rewrite
+/// shorter than this share of it more likely dropped sentences that still
+/// hold, so it is not saved.
+const MIN_KEPT_SHARE: f64 = 0.5;
+
 /// What one automatic code rewrite did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodeRewriteOutcome {
@@ -197,6 +202,15 @@ async fn land(
     let (action, content) = if reply == STILL_ACCURATE_REPLY {
         (STEEP_ACTION_STILL_ACCURATE, None)
     } else {
+        let kept = reply.chars().count() as f64;
+        let before = claimed.current_content.trim().chars().count() as f64;
+        if kept < before * MIN_KEPT_SHARE {
+            log::info!(
+                "[steep-code] '{}' rewrite not saved: it drops most of the note",
+                claimed.title
+            );
+            return Ok(CodeRewriteOutcome::Failed);
+        }
         (STEEP_ACTION_REWRITE, Some(reply))
     };
     match commit(db, token, action, content, &[], knowledge_path, None).await {
