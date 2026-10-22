@@ -299,9 +299,15 @@ async fn an_uncited_rewrite_is_refused_and_the_hold_kept() {
         .token
         .unwrap();
 
-    // A claim no source makes, cited anyway.
+    // A claim no source makes, cited anyway; and a sentence that names a
+    // source number the claim never handed out, beside well cited ones.
     let invented = "Tally syncs receipts to Dropbox every hour over a private VPN [1].";
-    for bad in ["A rewrite that cites nothing.", invented] {
+    let out_of_range = format!("{BODY_AB}\n\nTally also tours Norway each summer [9].");
+    for bad in [
+        "A rewrite that cites nothing.",
+        invented,
+        out_of_range.as_str(),
+    ] {
         let error = commit(&db, &token, STEEP_ACTION_REWRITE, Some(bad), None, None)
             .await
             .unwrap_err();

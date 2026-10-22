@@ -1710,6 +1710,12 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
             };
             CallToolResult::error(vec![ContentBlock::text(text)])
         }
+        // Deleted, or moved out of the Space this connection is locked to.
+        WenlanError::Api { status: 404, .. } => CallToolResult::error(vec![ContentBlock::text(
+            "steep refused, nothing written: the page is gone, or it moved out of this \
+             connection's Space; skip it"
+                .to_string(),
+        )]),
         _ => tool_error(error, "steep"),
     }
 }
@@ -1718,19 +1724,19 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
 /// so the AI tool at work hears of them without being asked. A remote
 /// connection cannot steep, so it is only told who will.
 fn steep_waiting_text(total: u32, transport: &TransportMode) -> Option<String> {
-    let count = match total {
+    let (count, it) = match total {
         0 => return None,
-        1 => "1 page is".to_string(),
-        n => format!("{n} pages are"),
+        1 => ("1 page is".to_string(), "it was"),
+        n => (format!("{n} pages are"), "they were"),
     };
     Some(match transport {
         TransportMode::Stdio => format!(
-            "Steep: {count} waiting because a source they were written from changed. \
+            "Steep: {count} waiting because a source {it} written from changed. \
              Bring them up to date with the `steep` tool (list, claim, commit), or tell \
              the user that /wenlan steep (Codex: $wenlan steep) does it."
         ),
         TransportMode::Http => format!(
-            "Steep: {count} waiting because a source they were written from changed. \
+            "Steep: {count} waiting because a source {it} written from changed. \
              A local AI tool or automatic steep brings them up to date."
         ),
     })
@@ -9280,14 +9286,43 @@ mod tests {
         assert_eq!(steep_waiting_text(0, &TransportMode::Stdio), None);
         let one = steep_waiting_text(1, &TransportMode::Stdio).unwrap();
         assert!(one.starts_with("Steep: 1 page is waiting"), "{one}");
+        assert!(one.contains("a source it was written from"), "{one}");
         assert!(one.contains("`steep` tool"), "{one}");
         let remote = steep_waiting_text(3, &TransportMode::Http).unwrap();
         assert!(remote.starts_with("Steep: 3 pages are waiting"), "{remote}");
+        assert!(
+            remote.contains("a source they were written from"),
+            "{remote}"
+        );
         assert!(
             !remote.contains("`steep` tool"),
             "a remote connection cannot steep: {remote}"
         );
         assert!(!remote.contains("upkeep") && !one.contains("upkeep"));
+    }
+
+    #[test]
+    fn a_steep_refusal_tells_the_agent_why_and_a_lost_page_is_skipped() {
+        let refused = steep_error_result(
+            WenlanError::Api {
+                status: 409,
+                reason: Some("steep_changed: changed since you claimed it".to_string()),
+            },
+            SteepAction::Commit,
+        );
+        let text = format!("{:?}", refused.content);
+        assert!(text.contains("nothing written"), "{text}");
+        assert!(text.contains("changed since you claimed it"), "{text}");
+
+        let gone = steep_error_result(
+            WenlanError::Api {
+                status: 404,
+                reason: None,
+            },
+            SteepAction::Commit,
+        );
+        let text = format!("{:?}", gone.content);
+        assert!(text.contains("skip it"), "{text}");
     }
 
     #[test]

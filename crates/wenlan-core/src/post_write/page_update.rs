@@ -354,11 +354,14 @@ async fn stage_page_revision_card_inner(
             .collect::<String>()
     );
     // Why this write needed review, so the card can say so: the review lock
-    // first, then Wenlan's own background lanes, else the page became
-    // user-owned while the write was in flight.
+    // first, then Wenlan's own background lanes, else the page has the
+    // person's edits. A pipeline write an AI tool made on demand (steep)
+    // names that tool, so it is not called background.
     let review_reason = if page.review_required {
         "locked"
-    } else if matches!(Writer::classify(edited_by), Writer::Pipeline(_)) {
+    } else if matches!(Writer::classify(edited_by), Writer::Pipeline(_))
+        && proposer.as_deref() == Some("wenlan")
+    {
         "background"
     } else {
         "owned"

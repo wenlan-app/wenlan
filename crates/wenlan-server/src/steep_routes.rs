@@ -35,15 +35,21 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
 /// 404 for a note the caller cannot have, 409 for one it cannot have right
 /// now, 422 for a rewrite the citation check refused (the hold is kept, so
 /// the caller fixes the text and commits again), 400 for a malformed ask.
+/// Steep's own refusals lead with their code (`steep_changed: ...`) so the
+/// MCP client can hand the reason to the agent, which acts on it.
 fn steep_error(error: SteepError) -> ServerError {
+    let message = match error.code() {
+        Some(code) => format!("{code}: {error}"),
+        None => error.to_string(),
+    };
     match error {
         SteepError::NotFound => ServerError::NotFound("page not found".into()),
         SteepError::NotWaiting(_)
         | SteepError::Held(_)
         | SteepError::Changed(_)
-        | SteepError::TokenGone => ServerError::Conflict(error.to_string()),
-        SteepError::CitationGate(message) => ServerError::ValidationError(message),
-        SteepError::Invalid(message) => ServerError::BadRequest(message),
+        | SteepError::TokenGone => ServerError::Conflict(message),
+        SteepError::CitationGate(_) => ServerError::ValidationError(message),
+        SteepError::Invalid(_) => ServerError::BadRequest(message),
         SteepError::Db(inner) => ServerError::from(inner),
     }
 }

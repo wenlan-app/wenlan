@@ -237,6 +237,23 @@ pub enum SteepError {
     Db(#[from] WenlanError),
 }
 
+impl SteepError {
+    /// The machine code the daemon puts before the message, so an MCP client
+    /// can pass the reason on to the agent (`None` for errors that are not
+    /// steep's own refusals).
+    pub fn code(&self) -> Option<&'static str> {
+        Some(match self {
+            SteepError::NotFound | SteepError::Db(_) => return None,
+            SteepError::NotWaiting(_) => "steep_not_waiting",
+            SteepError::Held(_) => "steep_held",
+            SteepError::Changed(_) => "steep_changed",
+            SteepError::TokenGone => "steep_token_gone",
+            SteepError::Invalid(_) => "steep_invalid",
+            SteepError::CitationGate(_) => "steep_citations",
+        })
+    }
+}
+
 fn held_message(holder: SteepHolder) -> String {
     match holder {
         SteepHolder::Automatic => {
@@ -743,6 +760,18 @@ pub async fn commit(
         })
         .collect();
     let (body, cites, stats) = crate::citations::process_citation_output(content, &numbered);
+    // A marker that names no source would leave its sentence on the page with
+    // nothing behind it, so the caller fixes it instead.
+    if stats.stripped > 0 {
+        return Err(SteepError::CitationGate(format!(
+            "the rewrite was not saved: {} citation(s) name a source number that is not \
+             in this claim ({}). Use only the numbers [1] to [{}] from the claim, or drop \
+             the sentence; then commit again with the same token",
+            stats.stripped,
+            stats.summary(),
+            numbered.len()
+        )));
+    }
     if stats.verified == 0 || stats.unverified > stats.verified {
         return Err(SteepError::CitationGate(format!(
             "the rewrite was not saved: too few cited sentences match their source \

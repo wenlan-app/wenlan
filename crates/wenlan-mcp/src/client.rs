@@ -439,6 +439,12 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "duplicate"
             | "unknown"
             | "code_basis_invalid"
+            | "steep_not_waiting"
+            | "steep_held"
+            | "steep_changed"
+            | "steep_token_gone"
+            | "steep_invalid"
+            | "steep_citations"
     );
     if !safe {
         return None;
@@ -446,13 +452,16 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     // A refused `code_basis` entry is explained in words built only from the
     // caller's own entry (its path) and a fixed problem phrase, so the agent
     // can tell which entry was bad. Every other reason stays a bare code.
-    if code == "code_basis_invalid" {
+    // A steep refusal is a fixed sentence from the daemon (counts at most),
+    // and the agent acts on it: claim again, fix a citation, pick another
+    // page.
+    if code == "code_basis_invalid" || code.starts_with("steep_") {
         if let Some((_, detail)) = reason.split_once(':') {
             let detail: String = detail
                 .trim()
                 .chars()
                 .filter(|c| !c.is_control())
-                .take(CODE_BASIS_DETAIL_MAX_CHARS)
+                .take(DETAIL_MAX_CHARS)
                 .collect();
             if !detail.is_empty() {
                 return Some(format!("{code}: {detail}"));
@@ -462,8 +471,8 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     Some(code.to_string())
 }
 
-/// Longest `code_basis_invalid` explanation kept for the agent.
-const CODE_BASIS_DETAIL_MAX_CHARS: usize = 300;
+/// Longest `code_basis_invalid` or steep explanation kept for the agent.
+const DETAIL_MAX_CHARS: usize = 500;
 
 #[cfg(test)]
 mod tests {
@@ -479,6 +488,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_steep_refusal_reaches_the_agent_with_its_reason() {
+        let changed = br#"{"error":"steep_changed: the page or its sources changed since you claimed it, so nothing was written; claim it again"}"#;
+        let reason = parse_api_error_reason(changed).expect("steep reason survives");
+        assert!(reason.starts_with("steep_changed: "), "{reason}");
+        assert!(reason.contains("claim it again"), "{reason}");
+
+        let citations = br#"{"error":"steep_citations: the rewrite was not saved: 1 citation(s) name a source number that is not in this claim (3 verified, 0 unverified, 1 stripped)"}"#;
+        let reason = parse_api_error_reason(citations).expect("steep reason survives");
+        assert!(reason.contains("1 stripped"), "{reason}");
+
+        // A steep code is no licence for an unprefixed message.
+        assert_eq!(
+            parse_api_error_reason(br#"{"error":"another steep thing: PRIVATE_SENTINEL"}"#),
+            None
+        );
+    }
 
     #[test]
     fn api_error_reason_keeps_machine_code_without_private_detail() {
