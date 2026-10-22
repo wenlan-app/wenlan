@@ -2319,6 +2319,13 @@ const en = {
     copy: "Copy",
     copied: "Copied",
     copyFailed: "Could not copy. Select the text and copy it yourself.",
+    hide: "Hide",
+    hints: {
+      distill: "{{name}} is in. To turn it into pages, type",
+      steep: "To update them all now, type",
+      connected: "Start a new chat with",
+      seeAll: "See all",
+    },
     tasks: {
       capture: { title: "Remember something", example: "/capture we switched to SQLite", sentence: "Wenlan, remember: we use SQLite" },
       recall: { title: "Find what you decided before", example: "/recall how we chose the database", sentence: "Ask Wenlan how we chose the database" },
@@ -5065,6 +5072,13 @@ const zhHans = {
     copy: "复制",
     copied: "已复制",
     copyFailed: "复制失败，请手动选取文字复制。",
+    hide: "隐藏",
+    hints: {
+      distill: "已加入「{{name}}」。要整理成笔记，输入",
+      steep: "想一次全部更新，输入",
+      connected: "新对话开头输入",
+      seeAll: "看全部",
+    },
     tasks: {
       capture: { title: "记住一件事", example: "/capture 我们改用 SQLite", sentence: "用文澜记住：我们改用 SQLite" },
       recall: { title: "找回之前的决定", example: "/recall 数据库怎么决定的", sentence: "查文澜：数据库怎么决定的" },
@@ -7802,6 +7816,13 @@ const zhHant = {
     copy: "複製",
     copied: "已複製",
     copyFailed: "複製失敗，請手動選取文字複製。",
+    hide: "隱藏",
+    hints: {
+      distill: "已加入「{{name}}」。要整理成筆記，輸入",
+      steep: "想一次全部更新，輸入",
+      connected: "新對話開頭輸入",
+      seeAll: "看全部",
+    },
     tasks: {
       capture: { title: "記住一件事", example: "/capture 我們改用 SQLite", sentence: "用文瀾記住：我們改用 SQLite" },
       recall: { title: "找回之前的決定", example: "/recall 資料庫怎麼決定的", sentence: "查文瀾：資料庫怎麼決定的" },

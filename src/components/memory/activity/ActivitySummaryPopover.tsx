@@ -8,6 +8,7 @@ import { relativeTime } from "../../../lib/relativeTime";
 import { assetCount, assetProgress, assetSentence, knownAssets, onDemandPagesWaiting, type KnownActivityAsset, type KnownActivityAssetKind } from "../../../lib/activitySentence";
 
 import { ACTIVITY_ASSET_ORDER } from "./activityPresentation";
+import { AskAiCopyButton, useAskAiCommand } from "../askAi/AskAiHint";
 const ASSET_COLOR: Record<KnownActivityAssetKind, string> = {
   memories: "var(--mem-accent-indigo)",
   entities: "var(--mem-accent-sage)",
@@ -72,7 +73,7 @@ export default function ActivitySummaryPopover({ id, activity, isError, firstAct
           {activity.state === "off" && (
             <p className="mem-activity-summary-mode" data-testid="activity-summary-on-demand">
               <span className="mem-activity-summary-mode-name">{t("activityStatus.state.off")}</span>
-              {onDemandPagesWaiting(activity) > 0 && <span>{t("activityStatus.onDemandFinish")}</span>}
+              {onDemandPagesWaiting(activity) > 0 && <SteepFinishLine />}
             </p>
           )}
           <div className="mem-activity-summary-list">
@@ -94,5 +95,23 @@ export default function ActivitySummaryPopover({ id, activity, isError, firstAct
         </button>
       </footer>
     </div>
+  );
+}
+
+/** On demand, the user's AI tool steeps waiting pages; this names the command
+ *  to finish them all at once, in the user's own tool, with a copy button. */
+function SteepFinishLine() {
+  const { t } = useTranslation();
+  const command = useAskAiCommand("steep");
+  return (
+    <span className="mem-activity-summary-finish" data-testid="activity-summary-steep">
+      {t("activityStatus.onDemandFinish")}{" "}
+      {command !== null && (
+        <>
+          <code>{command}</code>
+          <AskAiCopyButton text={command} />
+        </>
+      )}
+    </span>
   );
 }

@@ -75,7 +75,7 @@ export const enActivityStatus = {
     pages_one: "{{count}} page still needs steeping",
     pages_other: "{{count}} pages still need steeping",
   },
-  onDemandFinish: "Your AI tool handles these as it uses them. To finish all now, run /wenlan steep.",
+  onDemandFinish: "Your AI tool handles these as it uses them. To finish all now, type",
   assetDone: {
     memories_one: "{{count}} stored, summarized and linked",
     memories_other: "{{count}} stored, all summarized and linked",
@@ -318,7 +318,7 @@ export const hansActivityStatus = {
     pages_one: "{{count}} 篇笔记还没整理",
     pages_other: "{{count}} 篇笔记还没整理",
   },
-  onDemandFinish: "你的 AI 工具用到时会顺手做；想一次做完，输入 /wenlan steep。",
+  onDemandFinish: "你的 AI 工具用到时会顺手做；想一次做完，输入",
   assetDone: {
     memories_one: "已存 {{count}} 条，全部已生成摘要并建立关联",
     memories_other: "已存 {{count}} 条，全部已生成摘要并建立关联",
@@ -527,7 +527,7 @@ export const hantActivityStatus = {
     pages_one: "{{count}} 篇筆記還沒整理",
     pages_other: "{{count}} 篇筆記還沒整理",
   },
-  onDemandFinish: "你的 AI 工具用到時會順手做；想一次做完，輸入 /wenlan steep。",
+  onDemandFinish: "你的 AI 工具用到時會順手做；想一次做完，輸入",
   assetDone: {
     memories_one: "已存 {{count}} 則，全部已產生摘要並建立關聯",
     memories_other: "已存 {{count}} 則，全部已產生摘要並建立關聯",

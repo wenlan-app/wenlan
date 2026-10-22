@@ -53,6 +53,7 @@ import AnyProviderCard from "./intelligence/AnyProviderCard";
 import { Button, Tag, SectionHeader } from "./memory/settings/primitives";
 import { OWN_IDENTITY, resolveAgentDisplayName } from "../lib/agents";
 import { PlugsConnected } from "@phosphor-icons/react";
+import { ConnectedHint } from "./memory/askAi/ConnectedHint";
 
 // Module-level so each is a stable reference across renders — AnyProviderCard
 // memoizes its preset list on these, and a fresh array literal per render
@@ -2463,6 +2464,8 @@ export function DoneStep({
         {routingSummary && <p style={routingSummaryStyle}>{routingSummary}</p>}
         {assurance && <p style={routingSummaryStyle}>{assurance}</p>}
       </div>
+
+      <ConnectedHint />
 
       {/* Import stats card — surfaces the essential value Wenlan extracted:
           memories in, topics (entities) pulled out, and a forward line about
