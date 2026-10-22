@@ -77,7 +77,7 @@ pub(crate) fn file(n: u32, changed: &[u32]) -> String {
 /// A note relying on lines 10-14 of a 30-line file whose line 12 then changed
 /// and was checked: its row is `pending` and no model has judged it.
 /// `creation_kind` `distilled` is Wenlan's own note from sources, `authored`
-/// one written with none (what `/wenlan map` writes).
+/// one written with none (what `/wenlan wiki` writes).
 pub(crate) async fn changed_note(db: &MemoryDB, repo: &Repo, id: &str, creation_kind: &str) {
     changed_note_on(db, repo, id, creation_kind, &[]).await;
 }

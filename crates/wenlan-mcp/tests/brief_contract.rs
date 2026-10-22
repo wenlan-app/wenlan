@@ -133,11 +133,11 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
     for (pending, expected) in [
         (
             Some(3_u32),
-            Some("3 notes rely on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)"),
+            Some("3 notes rely on code that changed; /wenlan steep brings them up to date (Codex: $wenlan steep)"),
         ),
         (
             Some(1),
-            Some("1 note relies on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)"),
+            Some("1 note relies on code that changed; /wenlan steep brings them up to date (Codex: $wenlan steep)"),
         ),
         (Some(0), None),
         (None, None),
@@ -163,7 +163,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
             Some(line) => assert!(text.contains(line), "{text}"),
             None => {
                 assert!(!text.contains("rely on code that changed"), "{text}");
-                assert!(!text.contains("/wenlan wiki"), "{text}");
+                assert!(!text.contains("/wenlan steep brings"), "{text}");
             }
         }
     }
@@ -173,7 +173,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
         (
             Some(2_u32),
             Some(
-                "2 notes rely on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)",
+                "2 notes rely on code that changed; /wenlan steep brings them up to date (Codex: $wenlan steep)",
             ),
         ),
         (Some(0), None),
@@ -235,7 +235,7 @@ async fn brief_says_when_the_model_has_already_looked_at_every_changed_note() {
         let text = text_of(&result);
         assert!(text.contains("2 notes rely on code that changed"), "{text}");
         assert_eq!(
-            text.contains("AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person."),
+            text.contains("AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person (Codex: $wenlan steep)."),
             expect_suffix,
             "{text}"
         );

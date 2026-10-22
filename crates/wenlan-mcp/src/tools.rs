@@ -1937,20 +1937,18 @@ fn recall_hits(results: &[wenlan_types::SearchResult]) -> Vec<RecallHit<'_>> {
 /// The Brief's line about notes that rely on code that changed, or `None` when
 /// there are none. The recheck already ran inside the Brief read; nothing for
 /// the agent to run first. `explained` is true when the everyday model already
-/// judged every one of them.
+/// judged every one of them. Steep brings these notes up to date (#942); wiki
+/// only writes notes that are missing.
 fn code_basis_drift_line(count: Option<u32>, explained: bool) -> Option<String> {
     let line = match count? {
         0 => return None,
-        1 => "1 note relies on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)"
-            .to_string(),
-        count => format!(
-            "{count} notes rely on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)"
-        ),
+        1 => "1 note relies on code that changed".to_string(),
+        count => format!("{count} notes rely on code that changed"),
     };
     Some(if explained {
-        format!("{line}. AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person.")
+        format!("{line}. AI has looked at them; /wenlan steep fixes the obvious ones and the rest need a person (Codex: $wenlan steep).")
     } else {
-        line
+        format!("{line}; /wenlan steep brings them up to date (Codex: $wenlan steep)")
     })
 }
 

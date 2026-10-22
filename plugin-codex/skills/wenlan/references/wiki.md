@@ -4,7 +4,9 @@ Read this repository and keep a small wiki about it in its Space: a few
 orientation notes.
 Each key sentence is tied to the code lines it was read from (a code basis), so
 Wenlan can tell when the code moved on. The notes are written by the AI. A
-rerun refreshes only the notes whose cited code changed. Reply in the user's
+rerun writes only the notes that are missing. A note whose cited code changed
+is brought up to date by steep (`$wenlan steep`, or Wenlan's automatic mode),
+not here: wiki writes new notes, steep keeps them current. Reply in the user's
 language.
 
 ## 1. Resolve repository and Space
@@ -42,15 +44,19 @@ Title each note in the user's language, taken from how they typed the request.
 Title 1 names the project: the table shows the Wenlan repository, so use the
 repository's own name for another one (`What <project> is`, `<project>是什麼`).
 
-## 3. Decide per note: write, refresh, or leave
+## 3. Decide per note: write or leave
 
 Call `list_pages` with `space="<space>"` once. For each of the six topics, find its note
 by title in the user's language: an exact title match against the list, never
 fuzzy.
 
 - Missing: write it (step 4).
-- Present, and listed with a `code_basis` entry in state `pending` or
-  `unavailable` whose `repo_root` is this repository: refresh it (step 5).
+- Present, and listed with a `code_basis` entry in state `pending` whose
+  `repo_root` is this repository: leave it. It is already on steep's list;
+  say in the report that it waits for steep.
+- Present, and listed with a `code_basis` entry in state `unavailable` whose
+  `repo_root` is this repository: the file or repository it cited is gone.
+  Re-point it (step 5).
 - Present with nothing outstanding: leave it, and say so in the report.
   `list_pages` rechecks the cited files first and lists only code bases that
   are not `ok`, so a note with none listed is current.
@@ -80,33 +86,26 @@ Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say wiki needs local Wenlan and stop. A `warnings`
 entry saying a code basis was not recorded is reported, not hidden.
 
-## 5. Refreshing a note
+## 5. Re-pointing a note whose code is gone
 
-Call `read_page` for the note's `version` and full `code_basis` (only for notes you are refreshing). For each entry
-in state `pending`, read those lines of the file now (the entry gives the path
-and lines) and decide whether what the note says still holds.
-
-- All entries still hold: call `page_code_basis` with `action: "confirm"` for
-  each entry. No rewrite.
-- Something changed: rewrite only the sentences that changed. Then call
-  `write_page` with `page_id`, `expected_version` set to the `version` you
-  read, the edited `content`, and a `code_basis` list that names every entry
-  the rewrite relies on at its current lines. Naming a span again re-anchors
-  it as `ok`; a span that moved replaces the stale entry it overlaps on the
-  same file, so nothing is left `pending`.
-- `unavailable` entry (the file or repository is gone): drop the sentence or
-  re-point it, and call `page_code_basis` with `action: "remove"` for the old
-  entry.
+Only for a note with an `unavailable` entry. Call `read_page` for its
+`version` and full `code_basis`. For each `unavailable` entry, find where that
+fact now lives in the repository, or drop the sentence if it is no longer
+true. Then call `write_page` with `page_id`, `expected_version` set to the
+`version` you read, the edited `content`, and a `code_basis` list naming the
+new lines; call `page_code_basis` with `action: "remove"` for each old entry.
+Leave `pending` entries on that note alone: steep handles them.
 
 A `gated` result means the user edited that note: report it as staged for
-review, not refreshed. A refusal saying the page moved means someone edited it
-after your read: read it again and redo the edit once.
+review. A refusal saying the page moved means someone edited it after your
+read: read it again and redo the edit once.
 
 ## 6. Report
 
-One line per topic with the note title: written, refreshed, confirmed, staged
-for review, or left as is. Then one line on seeing drift later: `/brief` names
-how many notes rely on code that changed, and `$wenlan wiki` rechecks them.
+One line per topic with the note title: written, left as is, waiting for
+steep, re-pointed, or staged for review. Then one line on what happens later:
+`/brief` names how many notes rely on code that changed, and `$wenlan steep`
+brings them up to date.
 
 ## Safety
 
