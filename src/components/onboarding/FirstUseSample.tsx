@@ -265,7 +265,8 @@ export function FirstUseSample({
     sources.find((source) => source.id === id);
 
   const quotesFor = (source: SampleSource): string[] =>
-    citations.filter((entry) => entry.sourceId === source.id).map((entry) => entry.quote);
+    // Two citations can quote the same line of one source; the rack shows it once.
+    [...new Set(citations.filter((entry) => entry.sourceId === source.id).map((entry) => entry.quote))];
 
   const paragraphSources = (paragraph: SamplePageParagraph): SampleSource[] => {
     const seen = new Set<string>();

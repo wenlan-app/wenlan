@@ -167,6 +167,11 @@ const enData: SampleDataset = {
       sourceId: "sample-memory",
       quote: "We'll price it at $8 a month.",
     },
+    {
+      id: "sample-cite-7",
+      sourceId: "sample-file",
+      quote: "Price goes up to $10 a month.",
+    },
   ],
   page: {
     title: "v2 launch plan",
@@ -192,7 +197,7 @@ const enData: SampleDataset = {
       },
       {
         text: "Price went from $8 to $10 a month.",
-        citationIds: ["sample-cite-6"],
+        citationIds: ["sample-cite-6", "sample-cite-7"],
       },
     ],
   },
@@ -297,6 +302,11 @@ const hansData: SampleDataset = {
       sourceId: "sample-memory",
       quote: "定价每月 8 美元。",
     },
+    {
+      id: "sample-cite-7",
+      sourceId: "sample-file",
+      quote: "价格涨到每月 10 美元。",
+    },
   ],
   page: {
     title: "v2 上线计划",
@@ -322,7 +332,7 @@ const hansData: SampleDataset = {
       },
       {
         text: "价格从每月 8 美元涨到 10 美元。",
-        citationIds: ["sample-cite-6"],
+        citationIds: ["sample-cite-6", "sample-cite-7"],
       },
     ],
   },
@@ -427,6 +437,11 @@ const hantData: SampleDataset = {
       sourceId: "sample-memory",
       quote: "定價每月 8 美元。",
     },
+    {
+      id: "sample-cite-7",
+      sourceId: "sample-file",
+      quote: "價格漲到每月 10 美元。",
+    },
   ],
   page: {
     title: "v2 上線計畫",
@@ -452,7 +467,7 @@ const hantData: SampleDataset = {
       },
       {
         text: "價格從每月 8 美元漲到 10 美元。",
-        citationIds: ["sample-cite-6"],
+        citationIds: ["sample-cite-6", "sample-cite-7"],
       },
     ],
   },

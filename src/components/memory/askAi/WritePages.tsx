@@ -315,6 +315,23 @@ export function waitingLine(state: WritePagesState, pages: readonly Page[], t: T
   return t(hasPages ? "askAi.writePages.leadMore" : "askAi.writePages.lead", { list: state.waiting });
 }
 
+/** What a run is doing. Until the tool holds material or a page lands it
+ *  has not started: the command is waiting in the tool for Enter (or on the
+ *  clipboard), so saying it is writing would be wrong. */
+export function workingHeadline(
+  state: WritePagesState,
+  view: Extract<WritePagesView, { kind: "working" }>,
+  t: TFunction,
+): string {
+  if (view.written.length > 0) {
+    return t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
+  }
+  if (view.writing) return t("askAi.writePages.working", { tool: state.toolName });
+  return state.run?.handedOver === "opened"
+    ? t("askAi.writePages.pressEnter", { tool: state.toolName })
+    : t("askAi.writePages.pasteIt", { tool: state.toolName });
+}
+
 /** The pages a run wrote, each one a link. */
 export function WrittenPages({
   rows,
@@ -373,7 +390,8 @@ interface WritePagesLineProps {
  */
 export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUseLocalModel }: WritePagesLineProps) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  // The new pages are the point, so they show until the user folds them.
+  const [open, setOpen] = useState(true);
   const { view } = state;
   if (view.kind === "hidden" || !state.loaded) return null;
 
@@ -450,21 +468,13 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
   }
 
   if (view.kind === "working") {
-    const hint = view.stuck
-      ? t("askAi.writePages.stuck", { tool: state.toolName })
-      : view.written.length === 0 && !view.writing
-        ? state.run?.handedOver !== "opened"
-          ? t("askAi.writePages.pasteIt", { tool: state.toolName })
-          : t("askAi.writePages.pressEnter", { tool: state.toolName })
-        : null;
+    const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
     return (
       <div className="write-pages-line" data-testid="write-pages-line" data-state="working" aria-live="polite">
         <div className="write-pages-line-row">
           <CircleNotch aria-hidden="true" weight="bold" className="write-pages-icon write-pages-spin" />
           <p className="write-pages-text">
-            {view.written.length > 0
-              ? t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length })
-              : t("askAi.writePages.working", { tool: state.toolName })}
+            {workingHeadline(state, view, t)}
             {hint ? <span className="write-pages-hint">{hint}</span> : null}
           </p>
           <div className="write-pages-actions">{toggle}</div>

@@ -30,7 +30,7 @@ function skipToResult() {
 
 function openAiPanel() {
   skipToResult();
-  fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
+  fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
 }
 
 function stubMatchMedia(initial: boolean) {
@@ -83,8 +83,8 @@ describe("FirstUseSample demo isolation", () => {
     fireEvent.click(screen.getByTestId("sample-citation-sample-cite-2"));
     expect(screen.getByTestId("sample-citation-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
-    expect(screen.getByText("Let AI use your knowledge")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
+    expect(screen.getByText("Commands you'll use later")).toBeInTheDocument();
     // The only daemon-adjacent call allowed on the sample path is clipboard.
     expect(mockedInvoke).not.toHaveBeenCalled();
   });
@@ -189,19 +189,19 @@ describe("FirstUseSample source rack and page flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("reveals the AI step only through Use with AI, with a way back", () => {
+  it("reveals the AI step only through Commands for later, with a way back", () => {
     renderSample();
     skipToResult();
     expect(
-      screen.queryByText("Let AI use your knowledge"),
+      screen.queryByText("Commands you'll use later"),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
     expect(
-      screen.getByText("Let AI use your knowledge"),
+      screen.getByText("Commands you'll use later"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to the page" }));
     expect(
-      screen.queryByText("Let AI use your knowledge"),
+      screen.queryByText("Commands you'll use later"),
     ).not.toBeInTheDocument();
     expect(
       screen.getByText("v2 launch plan"),

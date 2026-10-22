@@ -174,7 +174,7 @@ describe("PagesOverview reading workspace", () => {
 
     it("opens straight at importing AI chats", async () => {
       renderOverview({ checklist: true });
-      fireEvent.click(await screen.findByRole("button", { name: /Import AI chats/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /Past AI chats/ }));
       expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });
   });

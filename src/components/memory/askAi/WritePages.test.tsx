@@ -145,12 +145,13 @@ describe("WritePagesLine", () => {
     wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("Your material is in: 12 notes, 6 chats, and 4 files. None of it is in a page yet.");
-    const ask = screen.getByRole("button", { name: "Write with Claude Code" });
+    const ask = screen.getByRole("button", { name: "Have Claude Code write pages" });
     expect(ask).toHaveAttribute("title", expect.stringContaining("Opens Claude Code with the command typed in."));
     fireEvent.click(ask);
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
-    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Claude Code is writing pages");
+    // Typed in, not yet sent: it does not claim the tool is writing.
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is typed in Claude Code. Press Enter there to start.");
   });
 
   it("names only what is left once pages exist", async () => {
@@ -166,7 +167,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
     wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Write with Codex" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is copied. Paste it into Codex"));
     expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
@@ -182,7 +183,7 @@ describe("WritePagesLine", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use local model" }));
     expect(onConnectTool).toHaveBeenCalled();
     expect(onUseLocalModel).toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /Write with/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /write pages$/ })).toBeNull();
   });
 
   it("stays closed once the user closes it", async () => {
@@ -208,7 +209,6 @@ describe("WritePagesLine", () => {
     wrap(<Line pages={[page("a", born)]} onSelectPage={onSelectPage} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveAttribute("data-state", "done");
-    fireEvent.click(screen.getByRole("button", { name: "See new pages" }));
     fireEvent.click(screen.getByRole("button", { name: "Page a" }));
     expect(onSelectPage).toHaveBeenCalledWith("a");
     expect(screen.queryByTestId("write-pages-line")).toBeNull();
@@ -223,9 +223,11 @@ describe("WritePagesLine", () => {
     wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z", "distilled", 8)]} onSelectPage={onSelectPage} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("Claude Code is writing pages: 1 ready");
+    // The new pages show until the user folds them.
+    expect(line).toHaveTextContent("8 sources");
+    fireEvent.click(screen.getByRole("button", { name: "Hide pages" }));
     expect(line).not.toHaveTextContent("8 sources");
     fireEvent.click(screen.getByRole("button", { name: "See new pages" }));
-    expect(line).toHaveTextContent("8 sources");
     expect(line).toHaveTextContent("Writing the next page…");
     fireEvent.click(screen.getByRole("button", { name: "Page a" }));
     expect(onSelectPage).toHaveBeenCalledWith("a");

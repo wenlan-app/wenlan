@@ -155,6 +155,8 @@ export function GettingStarted({
           <X aria-hidden="true" weight="regular" />
         </button>
       </header>
+      {/* Why any of this: the one sentence a new user needs first. */}
+      <p className="getting-started-lead">{t("firstUse.checklist.lead")}</p>
       <p className="getting-started-progress">
         {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
         {/* Once the ask row offers its own button, the sample moves up here. */}

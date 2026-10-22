@@ -45,6 +45,17 @@
   color: var(--mem-text);
 }
 
+.getting-started-lead {
+  margin: 4px 0 6px;
+  max-width: 60ch;
+  color: var(--mem-text-secondary);
+  font: 13.5px/1.5 var(--mem-font-body);
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-lead {
+  font-size: 14.5px;
+}
+
 .getting-started-progress {
   margin: 2px 0 2px;
   color: var(--mem-text-tertiary);
@@ -197,7 +208,7 @@
    upper third, where the eye lands first. */
 .wiki-reading-start[data-onboarding="true"] .getting-started {
   max-width: min(100%, 640px);
-  margin-top: clamp(32px, 14vh, 128px);
+  margin-top: clamp(16px, 8vh, 112px);
   padding: 24px 28px 10px;
 }
 

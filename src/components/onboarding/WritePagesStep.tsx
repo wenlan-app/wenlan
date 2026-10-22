@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatsCircle, Eye, FolderSimplePlus } from "@phosphor-icons/react";
 import type { Page } from "../../lib/tauri";
-import { waitingLine, WrittenPages, type WritePagesState } from "../memory/askAi/WritePages";
+import { waitingLine, workingHeadline, WrittenPages, type WritePagesState } from "../memory/askAi/WritePages";
 
 interface WritePagesStepProps {
   /** Null outside the Wiki home, where nothing can be handed over. */
@@ -60,22 +60,13 @@ export function WritePagesStep({
     onSelectPage ? <WrittenPages rows={rows} writing={writing} onSelectPage={onSelectPage} /> : null;
 
   if (state && view.kind === "working") {
-    const hint = view.stuck
-      ? t("askAi.writePages.stuck", { tool: state.toolName })
-      : view.written.length === 0 && !view.writing
-        ? state.run?.handedOver !== "opened"
-          ? t("askAi.writePages.pasteIt", { tool: state.toolName })
-          : t("askAi.writePages.pressEnter", { tool: state.toolName })
-        : null;
+    const headline = workingHeadline(state, view, t);
+    const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
     return (
       <>
         <div className="getting-started-copy">
           {title}
-          <p className="getting-started-step-body">
-            {view.written.length > 0
-              ? t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length })
-              : t("askAi.writePages.working", { tool: state.toolName })}
-          </p>
+          <p className="getting-started-step-body">{headline}</p>
           {hint ? <p className="getting-started-step-body">{hint}</p> : null}
           {list(view.written, view.writing)}
         </div>
