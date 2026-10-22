@@ -347,7 +347,7 @@ test("openai.yaml is rendered from the overlay and the real files match the slic
 
 test("real tree: generated skills carry the pins the validators and Rust tests read", () => {
   const codexPath = (name) =>
-    ["setup", "pages", "lint", "curate", "forget", "distill", "map", "steep"].includes(name)
+    ["setup", "pages", "lint", "curate", "forget", "distill", "wiki", "steep"].includes(name)
       ? `plugin-codex/skills/wenlan/references/${name}.md`
       : `plugin-codex/skills/${name}/SKILL.md`;
   const codex = (name) => readFileSync(join(repo, codexPath(name)), "utf8");

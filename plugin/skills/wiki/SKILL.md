@@ -1,6 +1,21 @@
-# $wenlan map
+---
+name: wiki
+description: >
+  Read this repository and keep a small wiki about it in its Space: a few
+  orientation notes, each key sentence tied to the code lines it was read from,
+  so Wenlan can tell when the code moved on. First run writes six notes; a
+  rerun refreshes only the notes whose cited code changed. Use for "build a
+  wiki for this repo", "get to know this repository", "幫這個倉庫建 wiki",
+  "認識這個倉庫". Invoked as `/wenlan wiki [space:<name>]`.
+argument-hint: "[space:<name>]"
+allowed-tools: ["Bash", "Read", "Glob", "Grep", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__page_code_basis", "mcp__plugin_wenlan_wenlan__recall"]
+user-invocable: false
+---
 
-Read this repository and keep a small set of orientation notes in its Space.
+# /wenlan wiki
+
+Read this repository and keep a small wiki about it in its Space: a few
+orientation notes.
 Each key sentence is tied to the code lines it was read from (a code basis), so
 Wenlan can tell when the code moved on. The notes are written by the AI. A
 rerun refreshes only the notes whose cited code changed. Reply in the user's
@@ -12,18 +27,15 @@ The skill accepts one optional inline token of the form `space:<name>`. The
 bundled resolver strips it and prints the resolved Space line itself:
 
 ```bash
-raw_args="<the full argument string passed to $wenlan map>"
-# The resolver ships inside the installed plugin; the relative path only
-# exists in a wenlan checkout.
-resolver="$(find "$HOME/.codex/plugins/cache" -path '*/wenlan/*/bin/resolve-space.sh' 2>/dev/null | head -1)"
-resolved="$("${resolver:-plugin-codex/bin/resolve-space.sh}" --cwd "$PWD" --args "$raw_args")"
+raw_args="<the full argument string passed to /wenlan wiki>"
+resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args "$raw_args")"
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 repo_root="$(git -C "$PWD" rev-parse --show-toplevel)"
 ```
 
 If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
-`$wenlan map space:<name>` names one, then stop. Do not ask a question.
+`/wenlan wiki space:<name>` names one, then stop. Do not ask a question.
 
 ## 2. The six notes
 
@@ -76,7 +88,7 @@ write_page(space="<space>", title="<note title>", content="<note>",
 Whenever a tool offers a `space` field, pass the resolved Space in it; a write without it goes to the connection's default Space, which may not be this repository's. When the connection is locked to one Space the field is absent, and nothing needs passing.
 
 Pass no `source_memory_ids`. If the reply says `code_basis is not available
-over remote connections`, say map needs local Wenlan and stop. A `warnings`
+over remote connections`, say wiki needs local Wenlan and stop. A `warnings`
 entry saying a code basis was not recorded is reported, not hidden.
 
 ## 5. Refreshing a note
@@ -105,11 +117,11 @@ after your read: read it again and redo the edit once.
 
 One line per topic with the note title: written, refreshed, confirmed, staged
 for review, or left as is. Then one line on seeing drift later: `/brief` names
-how many notes rely on code that changed, and `$wenlan map` rechecks them.
+how many notes rely on code that changed, and `/wenlan wiki` rechecks them.
 
 ## Safety
 
 - Reads and writes of notes just happen; no approval is needed.
-- Map never deletes a note and never edits the repository.
-- Map runs no commands in the repository beyond `git rev-parse`,
+- Wiki never deletes a note and never edits the repository.
+- Wiki runs no commands in the repository beyond `git rev-parse`,
   `git ls-files`, `git check-ignore` and `git log`.

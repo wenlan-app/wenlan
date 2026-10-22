@@ -28,7 +28,7 @@ CODEX_SKILLS_USING_RESOLVER = {
     "distill",
     "handoff",
     "lint",
-    "map",
+    "wiki",
     "recall",
     "steep",
 }

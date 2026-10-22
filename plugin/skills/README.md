@@ -24,7 +24,7 @@ Skills must write `${CLAUDE_PLUGIN_ROOT}` with braces and no `:-` default: Claud
 | `/wenlan lint [deep\|repair] [scope]` | diagnose, or resolve all findings safely |
 | `/wenlan distill [t]` | synthesize or refresh source-backed pages for the active Space |
 | `/wenlan steep [space:<name>]` | bring out of date pages up to date with this AI tool (steep on demand) |
-| `/wenlan map [space:<name>]` | read this repository and write a small set of orientation notes, each tied to the code lines it relies on |
+| `/wenlan wiki [space:<name>]` | read this repository and write a small wiki about it, a few orientation notes each tied to the code lines they rely on |
 | `/wenlan pages [q]` | browse and open distilled pages |
 | `/wenlan curate <surface>` | deep audit of captures, revisions or refinements |
 | `/wenlan forget <id>` | delete one memory by ID, after confirmation |

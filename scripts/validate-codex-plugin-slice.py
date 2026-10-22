@@ -38,9 +38,9 @@ REQUIRED_SKILL_INTERFACE = {
 }
 # Workflows hidden from the Claude menu are reference files under the wenlan
 # skill in Codex (plugin-contract.json `hidden_routed`), not separate skills.
-REQUIRED_REFERENCES = {"setup", "pages", "lint", "curate", "forget", "distill", "map", "steep"}
+REQUIRED_REFERENCES = {"setup", "pages", "lint", "curate", "forget", "distill", "wiki", "steep"}
 SKILLS_WITHOUT_MCP_REFERENCE = {"handoff", "pages"}
-SKILLS_USING_RESOLVER = {"brief", "capture", "distill", "handoff", "lint", "map", "recall", "steep"}
+SKILLS_USING_RESOLVER = {"brief", "capture", "distill", "handoff", "lint", "wiki", "recall", "steep"}
 # Installed plugins live under ~/.codex/plugins/cache/<marketplace>/wenlan/<version>/;
 # the checkout-relative `plugin-codex/bin/...` path only resolves inside this repo.
 RESOLVER_LOCATOR = (

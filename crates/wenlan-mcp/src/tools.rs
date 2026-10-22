@@ -1928,10 +1928,10 @@ fn recall_hits(results: &[wenlan_types::SearchResult]) -> Vec<RecallHit<'_>> {
 fn code_basis_drift_line(count: Option<u32>, explained: bool) -> Option<String> {
     let line = match count? {
         0 => return None,
-        1 => "1 note relies on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
+        1 => "1 note relies on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)"
             .to_string(),
         count => format!(
-            "{count} notes rely on code that changed; /wenlan map rechecks them (Codex: $wenlan map)"
+            "{count} notes rely on code that changed; /wenlan wiki rechecks them (Codex: $wenlan wiki)"
         ),
     };
     Some(if explained {

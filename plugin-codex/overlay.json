@@ -13,7 +13,7 @@
             "then follow that skill to the end. Its arguments:"
           ],
           "to": [
-            "For setup, distill, steep, pages, lint, curate, forget and map, read",
+            "For setup, distill, steep, pages, lint, curate, forget and wiki, read",
             "`references/<workflow>.md` beside this SKILL.md and follow it to the end,",
             "treating the arguments below as what the user typed after that workflow word.",
             "For brief, capture, recall and handoff, use that Wenlan skill. Arguments:"

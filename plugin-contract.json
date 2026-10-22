@@ -117,9 +117,9 @@
       "codex_reference": "wenlan/references/distill.md"
     },
     {
-      "name": "map",
+      "name": "wiki",
       "status": "hidden_routed",
-      "codex_reference": "wenlan/references/map.md"
+      "codex_reference": "wenlan/references/wiki.md"
     },
     {
       "name": "steep",
