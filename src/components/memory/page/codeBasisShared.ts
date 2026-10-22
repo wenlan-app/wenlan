@@ -69,7 +69,8 @@ export function codeBasisQuietNoteText(t: TFunction, row: CodeBasisRef, modelAva
   return modelAvailable && !row.ai_verdict ? t("codeBasis.aiWillLook") : null;
 }
 
-async function writeClipboard(text: string): Promise<boolean> {
+/** Copy through the app, falling back to the web API outside Tauri. */
+export async function writeClipboard(text: string): Promise<boolean> {
   try {
     await clipboardWrite(text);
     return true;

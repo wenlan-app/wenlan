@@ -7,6 +7,7 @@ import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
 import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import { SearchEntry } from "./SearchEntry";
 import ActivityStatus from "./activity/ActivityStatus";
+import { AskAiEntry } from "./askAi/AskAiEntry";
 import type { GlobalNavigation } from "./navigation/viewState";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
@@ -21,6 +22,8 @@ interface SidebarProps {
   readonly onNavigateLog?: () => void;
   readonly onNavigateActivity?: () => void;
   readonly activityCurrent?: boolean;
+  /** Opens the connect flow from "What your AI can do" when no tool is connected. */
+  readonly onConnectTool?: () => void;
   readonly onNavigatePages?: () => void;
   readonly onNavigateSettings?: () => void;
   readonly onNavigateSources?: () => void;
@@ -63,6 +66,7 @@ export default function Sidebar({
   onNavigateLog,
   onNavigateActivity,
   activityCurrent = false,
+  onConnectTool,
   onNavigatePages,
   onNavigateSettings,
   onNavigateSources,
@@ -169,6 +173,12 @@ export default function Sidebar({
           />
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>
+          {sidebarVisible && (
+            <AskAiEntry
+              compact={compact}
+              onConnectTool={closeAfterNavigation(onConnectTool, closeOverlay)}
+            />
+          )}
           {sidebarVisible && onNavigateActivity && (
             <ActivityStatus
               compact={compact}
