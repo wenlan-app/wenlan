@@ -73,7 +73,7 @@ export const enFirstUse = {
     steps: {
       note: {
         title: "Write a page yourself",
-        body: "Pages your AI writes don't count. Write anything and save it.",
+        body: "AI-written pages don't count. Write anything and save.",
         draftBody: "Your page is still a draft. Leave the editor and it is saved as a page your AI tools can find.",
         action: "Write a page",
       },
@@ -91,8 +91,8 @@ export const enFirstUse = {
         title: "Write pages from your material",
         body: "Bring in what you have. Your AI writes pages from it, with sources.",
         automatic: "Bring in what you have. Wenlan writes pages from it, with sources.",
-        folder: { title: "Add a folder or files", hint: "Notes, docs, code" },
-        chats: { title: "Past AI chats", hint: "From ChatGPT, Claude" },
+        folder: { title: "Folder or files", hint: "Notes, docs, code" },
+        chats: { title: "Past AI chats", hint: "ChatGPT, Claude" },
         sample: { title: "See an example", hint: "No material needed" },
         skip: "Skip for now",
       },

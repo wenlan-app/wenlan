@@ -167,7 +167,7 @@ describe("PagesOverview reading workspace", () => {
 
     it("opens the add-source dialog in place instead of leaving the Wiki", async () => {
       renderOverview({ checklist: true });
-      fireEvent.click(await screen.findByRole("button", { name: /Add a folder or files/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /Folder or files/ }));
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
       expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
     });
