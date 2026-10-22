@@ -106,7 +106,16 @@ async fn handle_unbind(
 ) -> Result<Json<serde_json::Value>, ServerError> {
     let db = db_of(&state).await?;
     let space = registered_space(&db, &space).await?;
-    let removed = blocking(move || repo_wiki::unbind_at(&repo_wiki::store_path(), &space)).await?;
+    let removed = blocking(move || {
+        let store = repo_wiki::store_path();
+        let binding = repo_wiki::binding_at(&store, &space)?;
+        let removed = repo_wiki::unbind_at(&store, &space)?;
+        if let Some(binding) = binding {
+            repo_wiki::remove_worktree(&binding.repo_root, &repo_wiki::worktree_for(&space));
+        }
+        Ok(removed)
+    })
+    .await?;
     Ok(Json(serde_json::json!({ "removed": removed })))
 }
 
@@ -136,6 +145,11 @@ async fn handle_run_now(
                 "Space {space:?} is not bound to a repository; bind it first"
             ))
         })?;
+    if crate::repo_wiki_daily::is_running(&binding.space) {
+        return Ok(Json(
+            serde_json::json!({ "started": false, "reason": "already running" }),
+        ));
+    }
     let shared = state.clone();
     tokio::spawn(async move {
         match crate::repo_wiki_daily::run_once(&shared, &binding).await {

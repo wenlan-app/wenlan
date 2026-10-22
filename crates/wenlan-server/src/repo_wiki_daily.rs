@@ -62,12 +62,48 @@ async fn run(shared: SharedState, mut shutdown: tokio::sync::watch::Receiver<boo
     }
 }
 
+/// Spaces whose run is under way, so a second start waits for the next one.
+static RUNNING: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// Marks a Space's run as under way until dropped.
+struct RunGuard(String);
+
+impl RunGuard {
+    fn claim(space: &str) -> Option<Self> {
+        let mut running = RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+        running
+            .insert(space.to_owned())
+            .then(|| Self(space.to_owned()))
+    }
+}
+
+impl Drop for RunGuard {
+    fn drop(&mut self) {
+        RUNNING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// Whether a run of `space` is under way.
+pub(crate) fn is_running(space: &str) -> bool {
+    RUNNING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(space)
+}
+
 /// One daily run of `binding`, now. Also used by `POST .../wiki/run`.
 pub(crate) async fn run_once(
     shared: &SharedState,
     binding: &RepoWikiBinding,
 ) -> Result<wenlan_types::repo_wiki::RepoWikiPublishResult, String> {
     let space = binding.space.clone();
+    let Some(_guard) = RunGuard::claim(&space) else {
+        return Err(format!("a run of {space} is already under way"));
+    };
     let date = chrono::Local::now().format("%Y-%m-%d").to_string();
     {
         let space = space.clone();

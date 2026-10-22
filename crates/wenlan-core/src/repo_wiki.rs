@@ -14,7 +14,7 @@
 //! repository, stays in Wenlan, because a repository is often public.
 
 use crate::error::WenlanError;
-use crate::export::okf::{export_okf_with_concept_paths, ConceptPathMap};
+use crate::export::okf::{export_okf_for_repository, ConceptPathMap};
 use crate::pages::Page;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
@@ -494,7 +494,46 @@ fn prepare_worktree(repo: &Path, worktree: &Path, base: &str) -> Result<(), Wenl
     Ok(())
 }
 
-fn pr_body(binding: &RepoWikiBinding, pages: usize, left_out: usize) -> String {
+/// Whether `path` in the working copy of `repo` has the same content as on
+/// `origin/<base>`.
+fn file_matches_base(repo: &Path, base: &str, path: &str) -> bool {
+    let mut remote = git(repo);
+    remote.args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("origin/{base}:{path}"),
+    ]);
+    let mut local = git(repo);
+    local.args(["hash-object", "--", path]);
+    match (run(remote, "git rev-parse"), run(local, "git hash-object")) {
+        (Ok(remote), Ok(local)) => remote.trim() == local.trim(),
+        _ => false,
+    }
+}
+
+/// Remove this Space's worktree from `repo_root`'s worktree list and from
+/// disk. Best effort: an unbind should not fail over a worktree already gone.
+pub fn remove_worktree(repo_root: &str, worktree: &Path) {
+    let repo = Path::new(repo_root);
+    if repo.exists() {
+        let mut command = git(repo);
+        command
+            .args(["worktree", "remove", "--force"])
+            .arg(worktree);
+        let _ = run(command, "git worktree remove");
+    }
+    if worktree.exists() {
+        let _ = std::fs::remove_dir_all(worktree);
+    }
+    if repo.exists() {
+        let mut command = git(repo);
+        command.args(["worktree", "prune"]);
+        let _ = run(command, "git worktree prune");
+    }
+}
+
+fn pr_body(binding: &RepoWikiBinding, pages: usize, left_out: usize, waiting: usize) -> String {
     let mut body = format!(
         "Written by [Wenlan](https://wenlan.app) from the `{}` Space: {pages} page{} in `{}/`, \
          each ending with the code lines it relies on. `AGENTS.md` points coding agents at it.",
@@ -509,6 +548,13 @@ fn pr_body(binding: &RepoWikiBinding, pages: usize, left_out: usize) -> String {
             if left_out == 1 { "" } else { "s" }
         ));
     }
+    if waiting > 0 {
+        body.push_str(&format!(
+            "\n\n{waiting} more page{} cite code that is not on the default branch yet and \
+             join once it is pushed.",
+            if waiting == 1 { "" } else { "s" }
+        ));
+    }
     body
 }
 
@@ -517,10 +563,12 @@ fn pr_body(binding: &RepoWikiBinding, pages: usize, left_out: usize) -> String {
 /// remote and objects); everything is written in `input.worktree`.
 pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanError> {
     let binding = input.binding;
+    let waiting = std::cell::Cell::new(0);
     let result = |status, pages, branch: Option<&str>, pr_url, compare_url| RepoWikiPublishResult {
         status,
         pages,
         left_out: input.left_out,
+        waiting: waiting.get(),
         branch: branch.map(str::to_owned),
         pr_url,
         compare_url,
@@ -550,8 +598,36 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
     let base = remote_default_branch(&repo);
     prepare_worktree(&repo, &input.worktree, &base)?;
 
-    let pages: Vec<Page> = input
-        .pages
+    // A page's line numbers were read from the working copy; the pull request
+    // is built on the remote's default branch. A page citing a file that
+    // differs between the two waits until that code is pushed.
+    let mut matches_base: HashMap<String, bool> = HashMap::new();
+    let (pages, held): (Vec<Page>, Vec<Page>) = input.pages.into_iter().partition(|page| {
+        input
+            .code_bases
+            .get(&page.id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .filter(|locator| same_root(&locator.repo_root, &binding.repo_root))
+            .all(|locator| {
+                *matches_base
+                    .entry(locator.path.clone())
+                    .or_insert_with(|| file_matches_base(&repo, &base, &locator.path))
+            })
+    });
+    waiting.set(held.len());
+    if pages.is_empty() {
+        return Ok(result(
+            RepoWikiPublishStatus::NothingToPublish,
+            0,
+            None,
+            None,
+            None,
+        ));
+    }
+
+    let pages: Vec<Page> = pages
         .into_iter()
         .map(|mut page| {
             let locators = input
@@ -565,15 +641,14 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         .collect();
     let target = input.worktree.join(&folder);
     let target_existed = target.exists();
-    let stats =
-        export_okf_with_concept_paths(&pages, &target, input.concept_paths, input.code_bases)
-            .map_err(|error| match error {
-                WenlanError::Conflict(message) if target_existed => WenlanError::Conflict(format!(
-                    "{message}. `{folder}/` in the repository holds files Wenlan did not write; \
+    let stats = export_okf_for_repository(&pages, &target, input.concept_paths, input.code_bases)
+        .map_err(|error| match error {
+        WenlanError::Conflict(message) if target_existed => WenlanError::Conflict(format!(
+            "{message}. `{folder}/` in the repository holds files Wenlan did not write; \
                  choose another folder"
-                )),
-                other => other,
-            })?;
+        )),
+        other => other,
+    })?;
     if stats.failed > 0 {
         return Err(WenlanError::Generic(format!(
             "{} page file(s) could not be written into {folder}/",
@@ -600,9 +675,8 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
             None,
         ));
     }
-    let mut command = git(&input.worktree);
-    command.args(["checkout", "--quiet", "-B", REPO_WIKI_BRANCH]);
-    run(command, "git checkout -B")?;
+    // The commit stays on a detached HEAD: no local branch is added to the
+    // user's repository, only the remote branch the push below names.
     let mut command = git(&input.worktree);
     command.args([
         "commit",
@@ -640,9 +714,9 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
     command.args([
         "push",
         "--quiet",
-        "--force-with-lease",
+        &format!("--force-with-lease=refs/heads/{REPO_WIKI_BRANCH}"),
         "origin",
-        &format!("{REPO_WIKI_BRANCH}:{REPO_WIKI_BRANCH}"),
+        &format!("HEAD:refs/heads/{REPO_WIKI_BRANCH}"),
     ]);
     run(command, "git push")?;
 
@@ -706,7 +780,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         "--title",
         "docs(wiki): update the wiki from Wenlan",
         "--body",
-        &pr_body(binding, pages.len(), input.left_out),
+        &pr_body(binding, pages.len(), input.left_out, waiting.get()),
     ]);
     match run(command, "gh pr create") {
         Ok(out) => {
@@ -762,6 +836,7 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
 /// Read-only tools a daily Claude Code run may use without asking: reading
 /// the repository, read-only shell commands, and Wenlan's own tools.
 const CLAUDE_DAILY_TOOLS: &[&str] = &[
+    "Skill",
     "Read",
     "Glob",
     "Grep",

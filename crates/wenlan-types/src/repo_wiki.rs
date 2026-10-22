@@ -93,6 +93,11 @@ pub struct RepoWikiPublishResult {
     pub pages: usize,
     /// Pages of the Space left out because they cite memories, not code.
     pub left_out: usize,
+    /// Pages left out for now because a file they cite differs between the
+    /// working copy and the default branch on the remote (their line numbers
+    /// may not match it). They go in once that code is pushed.
+    #[serde(default)]
+    pub waiting: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

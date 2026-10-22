@@ -77,6 +77,7 @@ fn repo_with_origin(root: &Path) -> (PathBuf, PathBuf) {
     sh(&seed, &["config", "commit.gpgsign", "false"]);
     std::fs::create_dir_all(seed.join("src")).unwrap();
     std::fs::write(seed.join("src/lib.rs"), "fn a() {}\nfn b() {}\nfn c() {}\n").unwrap();
+    std::fs::write(seed.join("src/main.rs"), "fn main() {}\n").unwrap();
     std::fs::write(seed.join("CLAUDE.md"), "# Notes\n\nKeep it small.\n").unwrap();
     sh(&seed, &["add", "."]);
     sh(&seed, &["commit", "--quiet", "-m", "seed"]);
@@ -232,18 +233,21 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
 fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     let dir = tempfile::tempdir().unwrap();
     let (origin, clone) = repo_with_origin(dir.path());
-    // Uncommitted work in the user's copy must survive untouched.
-    std::fs::write(
-        clone.join("src/lib.rs"),
-        "fn a() {}\nfn b() { todo!() }\nfn c() {}\n",
-    )
-    .unwrap();
+    // Uncommitted work in the user's copy must survive untouched. A page
+    // citing it waits: its lines may not match the remote's default branch.
+    std::fs::write(clone.join("src/main.rs"), "fn main() { run() }\n").unwrap();
     let store = dir.path().join("data/repo-wiki.json");
     let binding = bind_at(&store, "site", &clone, None, None).unwrap();
     let root = binding.repo_root.clone();
-    let code_bases = HashMap::from([("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)])]);
+    let code_bases = HashMap::from([
+        ("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
+        ("p2".to_string(), vec![locator(&root, "src/main.rs", 1, 1)]),
+    ]);
     let (pages, left_out) = select_pages(
-        vec![page("p1", "Module map", "What each part owns.")],
+        vec![
+            page("p1", "Module map", "What each part owns."),
+            page("p2", "Entry point", "Where it starts."),
+        ],
         &code_bases,
         &root,
     );
@@ -266,6 +270,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     let first = publish_once(pages.clone());
     assert_eq!(first.status, RepoWikiPublishStatus::Pushed);
     assert_eq!(first.pages, 1);
+    assert_eq!(first.waiting, 1);
     assert_eq!(first.branch.as_deref(), Some(REPO_WIKI_BRANCH));
     assert_eq!(first.compare_url, None, "a local remote is not on GitHub");
 
@@ -288,13 +293,22 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
         body.contains("[`src/lib.rs` lines 1-2](../../src/lib.rs#L1-L2)"),
         "{body}"
     );
+    // Links inside the bundle resolve from the repository host's view.
+    let index = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:wiki/index.md")],
+    );
+    assert!(index.contains("](pages/"), "{index}");
+    assert!(!index.contains("](/pages/"), "{index}");
+    assert!(!files.contains("entry-point"), "{files}");
     let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
     assert!(claude.starts_with("# Notes\n\nKeep it small.\n\n<!-- WENLAN:START -->"));
 
     // The user's copy: same branch, same uncommitted edit, no wiki folder.
     assert_eq!(sh(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
-    assert_eq!(sh(&clone, &["status", "--porcelain"]), "M src/lib.rs");
+    assert_eq!(sh(&clone, &["status", "--porcelain"]), "M src/main.rs");
     assert!(!clone.join("wiki").exists());
+    assert_eq!(sh(&clone, &["branch", "--list", REPO_WIKI_BRANCH]), "");
 
     // Nothing new: the open branch already holds this tree.
     let second = publish_once(pages.clone());
@@ -328,6 +342,12 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
         &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")],
     );
     assert!(body.contains("and why."), "{body}");
+
+    // Unbinding removes the worktree from the user's repository.
+    assert_eq!(sh(&clone, &["worktree", "list"]).lines().count(), 2);
+    remove_worktree(&root, &worktree);
+    assert!(!worktree.exists());
+    assert_eq!(sh(&clone, &["worktree", "list"]).lines().count(), 1);
 }
 
 #[test]

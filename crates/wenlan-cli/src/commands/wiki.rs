@@ -194,7 +194,7 @@ fn print_binding(format: ResolvedFormat, quiet: bool, binding: &RepoWikiBinding)
 }
 
 fn describe_publish(result: &RepoWikiPublishResult) -> String {
-    let left_out = if result.left_out > 0 {
+    let mut left_out = if result.left_out > 0 {
         format!(
             "; {} page(s) that rest on personal notes stay out",
             result.left_out
@@ -202,6 +202,12 @@ fn describe_publish(result: &RepoWikiPublishResult) -> String {
     } else {
         String::new()
     };
+    if result.waiting > 0 {
+        left_out.push_str(&format!(
+            "; {} page(s) cite code not pushed to the default branch yet and wait for it",
+            result.waiting
+        ));
+    }
     match result.status {
         RepoWikiPublishStatus::NothingToPublish => {
             format!("no page of this Space rests on this repository's code yet{left_out}")
