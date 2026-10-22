@@ -1258,17 +1258,22 @@ async fn a_link_resolved_into_another_space_reads_as_an_orphan_to_a_scoped_reade
         .await
         .unwrap();
     }
-    let conn = db.conn.lock().await;
-    conn.execute(
-        "INSERT INTO page_links (source_page_id, target_page_id, label, label_key)
-         VALUES ('work-a', 'personal-plan', 'Personal/Plan', 'personal/plan'),
-                ('work-a', NULL, 'Personal/Nothing', 'personal/nothing'),
-                ('work-a', 'work-b', 'work-b', 'work-b')",
-        (),
+    // Through the real writer: a resolved link is stored only as a `links`
+    // edge, an unresolved one only as a `page_links` row.
+    let link = |target: Option<&str>, label: &str| crate::synthesis::wikilinks::Wikilink {
+        target_page_id: target.map(str::to_string),
+        label: label.to_string(),
+    };
+    db.replace_page_links(
+        "work-a",
+        &[
+            link(Some("personal-plan"), "Personal/Plan"),
+            link(None, "Personal/Nothing"),
+            link(Some("work-b"), "work-b"),
+        ],
     )
     .await
     .unwrap();
-    drop(conn);
 
     let keys = |rows: Vec<OrphanLinkRow>| {
         let mut keys: Vec<String> = rows.into_iter().map(|row| row.label_key).collect();
