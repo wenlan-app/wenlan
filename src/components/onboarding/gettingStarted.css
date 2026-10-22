@@ -241,3 +241,57 @@
 .getting-started-copy .write-pages-list {
   margin: 6px 0 0;
 }
+
+/* Where the user's material is: three equal choices in the pages row. */
+.getting-started-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.getting-started-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-md);
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.getting-started-choice:hover {
+  background-color: var(--mem-hover);
+}
+
+.getting-started-choice:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.getting-started-choice-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--mem-accent-indigo);
+  font-size: 16px;
+}
+
+.getting-started-choice-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.getting-started-choice-copy strong {
+  font: 500 13px/1.4 var(--mem-font-body);
+}
+
+.getting-started-choice-copy span {
+  color: var(--mem-text-tertiary);
+  font: 12px/1.4 var(--mem-font-body);
+}

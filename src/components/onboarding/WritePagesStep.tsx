@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { ChatsCircle, Eye, FolderSimplePlus } from "@phosphor-icons/react";
 import type { Page } from "../../lib/tauri";
 import { waitingLine, WrittenPages, type WritePagesState } from "../memory/askAi/WritePages";
 
@@ -8,20 +10,46 @@ interface WritePagesStepProps {
   readonly state: WritePagesState | null;
   readonly pages: readonly Page[];
   readonly done: boolean;
+  /** Done only because the user skipped it, with nothing to bring in. */
+  readonly skipped?: boolean;
+  readonly onSkip?: (value: boolean) => void;
+  readonly onAddSources?: () => void;
+  readonly onImportChats?: () => void;
+  readonly onSeeExample?: () => void;
   readonly onSelectPage?: (pageId: string) => void;
   /** Opens the steep settings, where the local model is chosen. */
   readonly onUseLocalModel?: () => void;
 }
 
 /**
- * The checklist's "turn your material into pages" row: the copy and the one
- * action, laid out by the checklist like its other rows. The same run the
- * home line follows shows here while the checklist is open, so the pages the
- * tool writes appear in this row as they land.
+ * The checklist's "turn your material into pages" row, laid out by the
+ * checklist like its other rows. With nothing in yet it asks where the
+ * user's material is (a folder of any kind, past AI chats, or the sample for
+ * someone with none); once material is in, from an import or from what AI
+ * tools saved, it hands it to the AI tool; then the same run the home line
+ * follows shows here, so the pages appear in this row as they land.
  */
-export function WritePagesStep({ state, pages, done, onSelectPage, onUseLocalModel }: WritePagesStepProps) {
+export function WritePagesStep({
+  state,
+  pages,
+  done,
+  skipped = false,
+  onSkip,
+  onAddSources,
+  onImportChats,
+  onSeeExample,
+  onSelectPage,
+  onUseLocalModel,
+}: WritePagesStepProps) {
   const { t } = useTranslation();
   const view = state?.loaded ? state.stepView : { kind: "hidden" as const };
+  const hasPages = pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft");
+  // Skipping was for having nothing to bring in. Once there is, the step
+  // comes back with its button.
+  const comeBack = skipped && !hasPages && view.kind === "ready";
+  useEffect(() => {
+    if (comeBack) onSkip?.(false);
+  }, [comeBack, onSkip]);
   const title = (
     <p className="getting-started-step-title">
       {t("firstUse.checklist.steps.pages.title")}
@@ -77,7 +105,7 @@ export function WritePagesStep({ state, pages, done, onSelectPage, onUseLocalMod
     );
   }
 
-  if (done) return <div className="getting-started-copy">{title}</div>;
+  if (done && !comeBack) return <div className="getting-started-copy">{title}</div>;
 
   if (state && view.kind === "ready") {
     const { tool } = state;
@@ -112,7 +140,13 @@ export function WritePagesStep({ state, pages, done, onSelectPage, onUseLocalMod
     );
   }
 
-  // Nothing to hand over yet, or Wenlan writes the pages itself.
+  // Nothing to hand over yet (or Wenlan writes the pages itself): where is
+  // the user's material?
+  const choices = [
+    { key: "folder", icon: <FolderSimplePlus weight="regular" />, onClick: onAddSources },
+    { key: "chats", icon: <ChatsCircle weight="regular" />, onClick: onImportChats },
+    { key: "sample", icon: <Eye weight="regular" />, onClick: onSeeExample },
+  ] as const;
   return (
     <div className="getting-started-copy">
       {title}
@@ -121,6 +155,30 @@ export function WritePagesStep({ state, pages, done, onSelectPage, onUseLocalMod
           ? t("firstUse.checklist.steps.pages.automatic")
           : t("firstUse.checklist.steps.pages.body")}
       </p>
+      <div className="getting-started-choices">
+        {choices.map((choice) => choice.onClick ? (
+          <button
+            key={choice.key}
+            type="button"
+            className="getting-started-choice"
+            data-testid={`getting-started-pages-${choice.key}`}
+            onClick={choice.onClick}
+          >
+            <span className="getting-started-choice-icon" aria-hidden="true">{choice.icon}</span>
+            <span className="getting-started-choice-copy">
+              <strong>{t(`firstUse.checklist.steps.pages.${choice.key}.title`)}</strong>
+              <span>{t(`firstUse.checklist.steps.pages.${choice.key}.hint`)}</span>
+            </span>
+          </button>
+        ) : null)}
+      </div>
+      {onSkip ? (
+        <p className="getting-started-step-body">
+          <button type="button" className="getting-started-link" onClick={() => onSkip(true)}>
+            {t("firstUse.checklist.steps.pages.skip")}
+          </button>
+        </p>
+      ) : null}
     </div>
   );
 }

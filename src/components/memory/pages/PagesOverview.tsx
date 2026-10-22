@@ -40,13 +40,14 @@ export function PagesOverview({
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   const checklist = useGettingStartedState();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"menu" | "chats" | null>(null);
   const writePages = useWritePages(pages);
   const gettingStarted = onConnectTool && onSeeExample ? (
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
       onConnectTool={onConnectTool}
-      onAddSources={() => setAdding(true)}
+      onAddSources={() => setAdding("menu")}
+      onImportChats={() => setAdding("chats")}
       onSeeExample={onSeeExample}
       onTurnOnSteeping={onOpenIntelligence}
       writePages={writePages}
@@ -81,7 +82,7 @@ export function PagesOverview({
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
       {gettingStarted}
-      {adding ? <AddSourceMenu onClose={() => setAdding(false)} /> : null}
+      {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
     </section>
   );
 }

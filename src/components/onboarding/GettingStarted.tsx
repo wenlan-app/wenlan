@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   CheckCircle,
-  FolderSimplePlus,
   MagicWand,
   NotePencil,
   PlugsConnected,
@@ -45,6 +44,9 @@ export interface GettingStartedProps {
   readonly onWriteNote: () => void;
   readonly onConnectTool: () => void;
   readonly onAddSources: () => void;
+  /** Opens the add-source dialog straight at importing past AI chats. Falls
+   *  back to the full dialog. */
+  readonly onImportChats?: () => void;
   readonly onSeeExample: () => void;
   /** Opens the setting that turns background steeping on. Without it the
    *  optional steeping line is not offered. */
@@ -60,6 +62,7 @@ export function GettingStarted({
   onWriteNote,
   onConnectTool,
   onAddSources,
+  onImportChats,
   onSeeExample,
   onTurnOnSteeping,
   writePages = null,
@@ -70,7 +73,17 @@ export function GettingStarted({
   // "opened": the tool has the question typed in. "copied": it could not be
   // opened, so the question is on the clipboard to paste there instead.
   const [handedOver, setHandedOver] = useState<"opened" | "copied" | null>(null);
-  const { visible, progress, doneCount, dismissed, setDismissed, pages, agents } = useGettingStartedState();
+  const {
+    visible,
+    progress,
+    doneCount,
+    dismissed,
+    setDismissed,
+    pagesSkipped,
+    setPagesSkipped,
+    pages,
+    agents,
+  } = useGettingStartedState();
   // Same key as the Intelligence settings, so turning it on there hides the line here.
   const backgroundAi = useQuery({
     queryKey: ["backgroundAiEnabled"],
@@ -89,7 +102,6 @@ export function GettingStarted({
   const stepsById: Record<GettingStartedStepId, { icon: React.ReactNode; onAction: () => void }> = {
     note: { icon: <NotePencil weight="regular" />, onAction: onWriteNote },
     tool: { icon: <PlugsConnected weight="regular" />, onAction: onConnectTool },
-    sources: { icon: <FolderSimplePlus weight="regular" />, onAction: onAddSources },
     // Its row draws its own copy and action.
     pages: { icon: <MagicWand weight="regular" />, onAction: () => undefined },
     recall: { icon: <Sparkle weight="regular" />, onAction: onSeeExample },
@@ -172,6 +184,11 @@ export function GettingStarted({
                   state={writePages}
                   pages={pages}
                   done={done}
+                  skipped={pagesSkipped}
+                  onSkip={setPagesSkipped}
+                  onAddSources={onAddSources}
+                  onImportChats={onImportChats ?? onAddSources}
+                  onSeeExample={onSeeExample}
                   onSelectPage={onSelectPage}
                   onUseLocalModel={onTurnOnSteeping}
                 />

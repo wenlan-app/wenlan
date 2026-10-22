@@ -88,8 +88,12 @@ export const enFirstUse = {
       },
       pages: {
         title: "Turn your material into pages",
-        body: "Once your material is in, your AI tool writes pages from it, with the source of each part.",
-        automatic: "Wenlan writes pages from your material in the background.",
+        body: "Bring in what you already have. Your AI tool writes it into pages, each part with its source.",
+        automatic: "Bring in what you already have. Wenlan writes it into pages in the background, each part with its source.",
+        folder: { title: "Add a folder or files", hint: "Notes, Obsidian, docs, code" },
+        chats: { title: "Import AI chats", hint: "ChatGPT or Claude exports" },
+        sample: { title: "See an example", hint: "No material needed" },
+        skip: "Skip for now",
       },
       recall: {
         title: "Ask your AI about your pages",
@@ -221,9 +225,13 @@ export const hansFirstUse = {
         action: "添加来源",
       },
       pages: {
-        title: "把资料整理成笔记",
-        body: "资料进来后，AI 工具会把它整理成笔记，每段都附出处。",
-        automatic: "文澜会在后台把你的资料整理成笔记。",
+        title: "把你的资料变成笔记",
+        body: "带入你已经有的东西，AI 工具会整理成笔记，每段都附出处。",
+        automatic: "带入你已经有的东西，文澜会在后台整理成笔记，每段都附出处。",
+        folder: { title: "加文件夹或文件", hint: "笔记、Obsidian、文档、代码" },
+        chats: { title: "导入 AI 对话", hint: "ChatGPT、Claude 的导出文件" },
+        sample: { title: "先看示例", hint: "不用带任何资料" },
+        skip: "先跳过",
       },
       recall: {
         title: "在 AI 里问问你的笔记",
@@ -352,9 +360,13 @@ export const hantFirstUse = {
         action: "新增來源",
       },
       pages: {
-        title: "把資料整理成筆記",
-        body: "資料進來後，AI 工具會把它整理成筆記，每段都附出處。",
-        automatic: "文瀾會在背景把你的資料整理成筆記。",
+        title: "把你的資料變成筆記",
+        body: "帶入你已經有的東西，AI 工具會整理成筆記，每段都附出處。",
+        automatic: "帶入你已經有的東西，文瀾會在背景整理成筆記，每段都附出處。",
+        folder: { title: "加資料夾或檔案", hint: "筆記、Obsidian、文件、程式碼" },
+        chats: { title: "匯入 AI 對話", hint: "ChatGPT、Claude 的匯出檔" },
+        sample: { title: "先看範例", hint: "不用帶任何資料" },
+        skip: "先跳過",
       },
       recall: {
         title: "在 AI 裡問問你的筆記",
