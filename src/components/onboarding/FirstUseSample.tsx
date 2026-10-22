@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowCounterClockwise,
@@ -558,34 +558,38 @@ export function FirstUseSample({
                 const lit = focusType != null &&
                   paragraphSources(paragraph).some((source) => source.type === focusType);
                 return (
-                  <p
-                    key={paragraph.text}
-                    className="fus-result-paragraph"
-                    data-lit={lit}
-                    data-dimmed={focusType != null && !lit}
-                  >
-                    {lit ? <mark>{paragraph.text}</mark> : paragraph.text}{" "}
-                    {paragraph.citationIds.map((id) => {
-                      const entry = citationById(id);
-                      const source = entry ? sourceById(entry.sourceId) : undefined;
-                      if (!entry || !source) return null;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          data-testid={`sample-citation-${id}`}
-                          data-source-type={source.type}
-                          className="fus-citation"
-                          aria-haspopup="dialog"
-                          aria-label={source.title}
-                          onClick={() => openSource(source.id, id)}
-                        >
-                          <SourceGlyph type={source.type} />
-                          {source.kind}
-                        </button>
-                      );
-                    })}
-                  </p>
+                  <Fragment key={paragraph.text}>
+                    {paragraph.heading ? (
+                      <h3 className="fus-result-heading">{paragraph.heading}</h3>
+                    ) : null}
+                    <p
+                      className="fus-result-paragraph"
+                      data-lit={lit}
+                      data-dimmed={focusType != null && !lit}
+                    >
+                      {lit ? <mark>{paragraph.text}</mark> : paragraph.text}{" "}
+                      {paragraph.citationIds.map((id) => {
+                        const entry = citationById(id);
+                        const source = entry ? sourceById(entry.sourceId) : undefined;
+                        if (!entry || !source) return null;
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            data-testid={`sample-citation-${id}`}
+                            data-source-type={source.type}
+                            className="fus-citation"
+                            aria-haspopup="dialog"
+                            aria-label={source.title}
+                            onClick={() => openSource(source.id, id)}
+                          >
+                            <SourceGlyph type={source.type} />
+                            {source.kind}
+                          </button>
+                        );
+                      })}
+                    </p>
+                  </Fragment>
                 );
               })}
             </article>
@@ -617,7 +621,7 @@ export function FirstUseSample({
                           <SourceGlyph type={source.type} />
                         </span>
                         <span className="fus-rack-copy">
-                          <span className="fus-source-kind">{source.kind}</span>
+                          <span className="fus-source-kind">{`${source.kind} · ${source.when}`}</span>
                           <span className="fus-rack-title">{source.title}</span>
                           {quotesFor(source).map((quote) => (
                             <span key={quote} className="fus-rack-point">

@@ -21,17 +21,21 @@ pub(crate) struct UnpagedRow {
 }
 
 /// The filter every new-material read shares: live, reviewed memory rows that
-/// no note cites. Same exclusions as the distillation staging pool, except
+/// no note cites. A note's citation of a file's chunk is stored as an
+/// `external` edge (the source resolves as an external file) with the chunk's
+/// source id as its destination, so both kinds count. Same exclusions as the distillation staging pool, except
 /// that every chunk counts and no embedding is needed: the caller's AI reads
 /// the text itself.
+/// Only a note organizes material. A document's own source page (an imported
+/// file shown as itself) and an entity page do not.
+const ORGANIZING: &str = "p.status = 'active' AND COALESCE(p.kind, 'concept') <> 'entity' \
+                          AND COALESCE(p.creation_kind, 'distilled') <> 'source'";
+
 fn unpaged_where() -> String {
     let live = super::not_self_archived("m");
     let not_superseded = super::distillation_not_superseded("m");
     let reviewed = super::distillation_row_is_reviewed("m");
-    // Only a note organizes material. A document's own source page (an
-    // imported file shown as itself) and an entity page do not.
-    let organizing = "p.status = 'active' AND COALESCE(p.kind, 'concept') <> 'entity' \
-                      AND COALESCE(p.creation_kind, 'distilled') <> 'source'";
+    let organizing = ORGANIZING;
     format!(
         "m.source = 'memory' \
            AND (m.pinned = 0 OR m.pinned IS NULL) \
@@ -47,13 +51,42 @@ fn unpaged_where() -> String {
            ) \
            AND NOT EXISTS ( \
                SELECT 1 FROM edges e JOIN pages p ON p.id = e.src_id \
-               WHERE e.edge_type = 'cites' AND e.dst_kind = 'memory' \
+               WHERE e.edge_type = 'cites' AND e.dst_kind IN ('memory', 'external') \
                  AND e.dst_id = m.source_id AND e.valid_until IS NULL AND {organizing} \
            )"
     )
 }
 
 impl MemoryDB {
+    /// The memory source ids some note cites. A note citing part of a file or
+    /// a chat has taken that item in, even where it skipped a chunk.
+    pub(crate) async fn list_paged_memory_sources(&self) -> Result<Vec<String>, WenlanError> {
+        let sql = format!(
+            "SELECT pe.locator FROM page_evidence pe JOIN pages p ON p.id = pe.page_id \
+             WHERE pe.locator IS NOT NULL AND {ORGANIZING} \
+             UNION \
+             SELECT e.dst_id FROM edges e JOIN pages p ON p.id = e.src_id \
+             WHERE e.edge_type = 'cites' AND e.dst_kind IN ('memory', 'external') \
+               AND e.valid_until IS NULL AND {ORGANIZING}"
+        );
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_paged_memory_sources: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("list_paged_memory_sources row: {e}")))?
+        {
+            if let Ok(id) = row.get::<String>(0) {
+                out.push(id);
+            }
+        }
+        Ok(out)
+    }
+
     /// Every memory row no page cites yet, newest first. Only the first
     /// `head_chars` characters of each row's text are read.
     pub(crate) async fn list_unpaged_memory_rows(

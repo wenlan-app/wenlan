@@ -189,6 +189,15 @@ pub async fn new_material(
     scope: &ReadScope,
 ) -> Result<Vec<NewMaterial>, WenlanError> {
     let rows = db.list_unpaged_memory_rows(SNIPPET_CHARS + 40).await?;
+    // An item a note already drew on is done, even if the note left out a
+    // chunk (a heading-only chunk of a file, a greeting in a chat): offering
+    // the rest again would ask for the same page twice.
+    let taken: HashSet<String> = db
+        .list_paged_memory_sources()
+        .await?
+        .iter()
+        .map(|source_id| item_key(source_id).to_string())
+        .collect();
     let mut order: Vec<String> = Vec::new();
     let mut by_key: HashMap<String, NewMaterial> = HashMap::new();
     let mut seen_sources: HashSet<String> = HashSet::new();
@@ -199,6 +208,9 @@ pub async fn new_material(
             continue;
         }
         let key = item_key(&row.source_id).to_string();
+        if taken.contains(&key) {
+            continue;
+        }
         let entry = by_key.entry(key.clone()).or_insert_with(|| {
             order.push(key.clone());
             NewMaterial {

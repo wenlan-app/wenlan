@@ -208,7 +208,10 @@ export function GettingStarted({
                 ? t("firstUse.checklist.steps.recall.question", { title: askable?.title })
                 : asking
                   ? t("firstUse.checklist.steps.recall.askLine", { tool: promptTool, title: askable?.title })
-              : t(`firstUse.checklist.steps.${id}.body`);
+                  : id === "recall" && progress.tool
+                    // Connected, with no page to ask about yet.
+                    ? t("firstUse.checklist.steps.recall.bodyConnected")
+                    : t(`firstUse.checklist.steps.${id}.body`);
           return (
             <li
               key={id}
@@ -254,7 +257,8 @@ export function GettingStarted({
                       ? t("firstUse.checklist.steps.recall.askIn", { tool: promptTool })
                       : t("firstUse.checklist.steps.recall.copy")}
                 </button>
-              ) : (
+              ) : id === "recall" ? null : (
+                // The example sits in the pages step; asking needs a page first.
                 <button
                   type="button"
                   className="getting-started-action"

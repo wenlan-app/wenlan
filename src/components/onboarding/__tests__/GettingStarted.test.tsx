@@ -188,11 +188,13 @@ describe("GettingStarted", () => {
     fireEvent.click(screen.getByTestId("getting-started-pages-folder"));
     fireEvent.click(screen.getByTestId("getting-started-pages-chats"));
     fireEvent.click(screen.getByTestId("getting-started-pages-sample"));
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") }));
     expect(props.onWriteNote).toHaveBeenCalledOnce();
     expect(props.onAddSources).toHaveBeenCalledOnce();
     expect(props.onImportChats).toHaveBeenCalledOnce();
-    expect(props.onSeeExample).toHaveBeenCalledTimes(2);
+    expect(props.onSeeExample).toHaveBeenCalledOnce();
+    // The example is offered once, in the pages step; asking waits for a page.
+    expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.bodyConnected"));
+    expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") })).toBeNull();
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
 

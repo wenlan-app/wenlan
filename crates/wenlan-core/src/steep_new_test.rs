@@ -148,6 +148,30 @@ async fn the_list_folds_notes_and_chats_and_leaves_out_cited_material() {
 }
 
 #[tokio::test]
+async fn an_item_a_note_drew_on_leaves_the_list_even_with_a_chunk_uncited() {
+    let (db, _dir) = test_db().await;
+    row(&db, "p1", "pf::notes.md::0", 0, "Notes", BREAD_1, "folder", "test").await;
+    row(&db, "p2", "pf::notes.md::1", 1, "Notes", "## Links", "folder", "test").await;
+    row(&db, "p3", "pf::other.md::0", 0, "Other", BREAD_2, "folder", "test").await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        "p_page",
+        "Starter",
+        None,
+        "The sourdough starter peaks four to six hours after feeding [1].",
+        None,
+        None,
+        &["pf::notes.md::0"],
+        &now,
+    )
+    .await
+    .unwrap();
+
+    let left = new_material(&db, &ReadScope::Global).await.unwrap();
+    assert_eq!(ids(&left), vec!["pf::other.md"]);
+}
+
+#[tokio::test]
 async fn claim_then_write_creates_a_cited_note_and_the_items_leave_the_list() {
     let (db, _dir) = test_db().await;
     capture(&db, "w_a", BREAD_1).await;

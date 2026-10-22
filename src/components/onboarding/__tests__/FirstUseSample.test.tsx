@@ -78,7 +78,7 @@ describe("FirstUseSample demo isolation", () => {
     renderSample();
     skipToResult();
     expect(
-      screen.getByText("An unhurried Tainan weekend"),
+      screen.getByText("v2 launch plan"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("sample-citation-sample-cite-2"));
     expect(screen.getByTestId("sample-citation-dialog")).toBeInTheDocument();
@@ -140,7 +140,7 @@ describe("FirstUseSample demo isolation", () => {
 describe("FirstUseSample source rack and page flow", () => {
   it("leads with the page, shows where it came from, then an AI answering from it", () => {
     renderSample();
-    expect(screen.getByText("An unhurried Tainan weekend")).toBeInTheDocument();
+    expect(screen.getByText("v2 launch plan")).toBeInTheDocument();
     expect(screen.getByTestId("sample-source-sample-memory")).toBeInTheDocument();
     expect(screen.getByTestId("sample-source-sample-file")).toBeInTheDocument();
     expect(screen.queryByTestId("sample-source-sample-page")).not.toBeInTheDocument();
@@ -154,9 +154,9 @@ describe("FirstUseSample source rack and page flow", () => {
     expect(screen.getByTestId("sample-source-sample-memory")).toHaveAttribute("data-dimmed", "true");
 
     skipToResult();
-    expect(screen.getByText("An unhurried Tainan weekend")).toBeInTheDocument();
+    expect(screen.getByText("v2 launch plan")).toBeInTheDocument();
     expect(screen.queryByTestId("sample-source-sample-memory")).not.toBeInTheDocument();
-    expect(screen.getByText("What's left before the Tainan weekend?")).toBeInTheDocument();
+    expect(screen.getByText("When does v2 launch, and what does it cost?")).toBeInTheDocument();
   });
 
   it("opens the file original with path and line context", () => {
@@ -166,12 +166,12 @@ describe("FirstUseSample source rack and page flow", () => {
     const dialog = screen.getByTestId("sample-citation-dialog");
     expect(dialog).toHaveAttribute("data-source-type", "file");
     expect(
-      within(dialog).getByText("File trip folder / packing-list.md · line 2"),
+      within(dialog).getByText("File product folder / v2-meeting-notes.md · line 2"),
     ).toBeInTheDocument();
     // The quote appears twice: once as the cited excerpt, once highlighted
     // in the file original.
     expect(
-      within(dialog).getAllByText("Book a stay near the Tainan station and pack light."),
+      within(dialog).getAllByText("Launch stays on October 31."),
     ).toHaveLength(2);
   });
 
@@ -204,7 +204,7 @@ describe("FirstUseSample source rack and page flow", () => {
       screen.queryByText("Let AI use your knowledge"),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText("An unhurried Tainan weekend"),
+      screen.getByText("v2 launch plan"),
     ).toBeInTheDocument();
   });
 });
