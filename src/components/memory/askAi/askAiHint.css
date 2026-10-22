@@ -1,0 +1,92 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* A one-line hint naming the command to type now. Quiet by design: a thin
+   bordered row, no accent fill, so it never reads as an alert. */
+
+.ask-ai-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px auto 0;
+  max-width: min(100%, 640px);
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-lg);
+  background-color: var(--mem-surface);
+}
+
+.ask-ai-hint-icon {
+  flex-shrink: 0;
+  color: var(--mem-accent-indigo);
+  font-size: 17px;
+}
+
+.ask-ai-hint-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.ask-ai-hint-command {
+  color: var(--mem-text);
+  font: 12.5px/1.4 var(--mem-font-mono);
+  white-space: nowrap;
+  user-select: all;
+}
+
+.ask-ai-hint-copy,
+.ask-ai-hint-dismiss {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--mem-radius-md);
+  background: none;
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.ask-ai-hint-copy {
+  border: 1px solid var(--mem-border);
+  color: var(--mem-text-secondary);
+}
+
+.ask-ai-hint-dismiss {
+  border: none;
+  color: var(--mem-text-tertiary);
+}
+
+.ask-ai-hint-copy:hover,
+.ask-ai-hint-dismiss:hover {
+  background-color: var(--mem-hover);
+  color: var(--mem-text);
+}
+
+.ask-ai-hint-copy:focus-visible,
+.ask-ai-hint-dismiss:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 1px;
+}
+
+.ask-ai-hint-more {
+  flex-shrink: 0;
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: 500 13px/1.3 var(--mem-font-body);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.ask-ai-hint-more:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 1px;
+}

@@ -1309,6 +1309,7 @@ export default function Main({
             onNavigateLog={() => navigateTo({ kind: "stream" })}
             onNavigateActivity={() => navigateTo({ kind: "activity" })}
             activityCurrent={view.kind === "activity"}
+            onConnectTool={() => navigateTo({ kind: "connect-agent" })}
             onNavigatePages={navigateNotes}
             onNavigateEntities={() => navigateTo({ kind: "entities" })}
             onNavigateGraph={() => navigateTo({ kind: "graph" })}

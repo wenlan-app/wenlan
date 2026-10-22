@@ -24,3 +24,5 @@
 .mem-activity-summary-link svg { flex: none; }
 .mem-activity-summary-mode { display: grid; gap: 4px; margin: 0; color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .mem-activity-summary-mode-name { justify-self: start; padding: 1px 8px; border: 1px solid var(--mem-border); border-radius: 999px; color: var(--mem-text-secondary); font-size: 11px; line-height: 1.5; }
+.mem-activity-summary-finish code { color: var(--mem-text); font-family: var(--mem-font-mono); white-space: nowrap; }
+.mem-activity-summary-finish .ask-ai-hint-copy { width: 22px; height: 22px; margin-left: 4px; font-size: 12px; vertical-align: middle; }
