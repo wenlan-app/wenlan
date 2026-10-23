@@ -10,6 +10,8 @@ import {
 
 /** Docs shown before the rest fold into one line. */
 const SHOWN_DOCS = 3;
+/** Fixes shown in an opened doc before the rest fold into one line. */
+const SHOWN_FIXES = 3;
 /** The doc coding agents read first; it gets its own card. */
 const AGENTS_FILE = "AGENTS.md";
 
@@ -44,6 +46,7 @@ export function RepoDocsSection({
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [allFixes, setAllFixes] = useState<ReadonlySet<string>>(new Set());
   const fixes = (binding.doc_fixes ?? []).filter((fix) => fix.state !== "dismissed");
   const agentsFixes = fixes.filter((fix) => fix.path === AGENTS_FILE);
   const docs = byFile(fixes.filter((fix) => fix.path !== AGENTS_FILE));
@@ -58,28 +61,43 @@ export function RepoDocsSection({
     onSuccess: onChanged,
   });
 
-  const fixList = (list: readonly RepoDocFix[]) => (
-    <ul className="repo-docs-fixes">
-      {list.map((fix) => (
-        <li className="repo-docs-fix" key={fix.id}>
-          <del>{fix.old_text}</del>
-          <ins>{fix.new_text}</ins>
-          <span className="repo-docs-why">{fix.reason}</span>
-          <span className="repo-docs-fix-foot">
-            <code>{(fix.code ?? []).map(codeLabel).join(", ")}</code>
-            <button
-              className="repo-docs-drop"
-              disabled={dismiss.isPending}
-              onClick={() => dismiss.mutate(fix.id)}
-              type="button"
-            >
-              {t("repoWiki.docs.dontFix")}
-            </button>
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
+  const fixList = (path: string, list: readonly RepoDocFix[]) => {
+    const shownFixes = allFixes.has(path) ? list : list.slice(0, SHOWN_FIXES);
+    const hiddenFixes = list.length - shownFixes.length;
+    return (
+      <>
+        <ul className="repo-docs-fixes">
+          {shownFixes.map((fix) => (
+            <li className="repo-docs-fix" key={fix.id}>
+              <del>{fix.old_text}</del>
+              <ins>{fix.new_text}</ins>
+              <span className="repo-docs-why">{fix.reason}</span>
+              <span className="repo-docs-fix-foot">
+                <code>{(fix.code ?? []).map(codeLabel).join(", ")}</code>
+                <button
+                  className="repo-docs-drop"
+                  disabled={dismiss.isPending}
+                  onClick={() => dismiss.mutate(fix.id)}
+                  type="button"
+                >
+                  {t("repoWiki.docs.dontFix")}
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+        {hiddenFixes > 0 && (
+          <button
+            className="repo-docs-more"
+            onClick={() => setAllFixes(new Set([...allFixes, path]))}
+            type="button"
+          >
+            {t("repoWiki.docs.moreFixes", { count: hiddenFixes })}
+          </button>
+        )}
+      </>
+    );
+  };
 
   const state = (list: readonly RepoDocFix[]) =>
     list.every((fix) => fix.state === "in_pr") ? t("repoWiki.docs.inPr") : t("repoWiki.docs.next");
@@ -89,17 +107,25 @@ export function RepoDocsSection({
       <section className="repo-docs" aria-labelledby={`${binding.space}-for-ai`}>
         <h3 className="repo-docs-title" id={`${binding.space}-for-ai`}>{t("repoWiki.docs.forAi")}</h3>
         <div className="repo-docs-agents">
-          <div className="repo-docs-row">
-            <code>{t("repoWiki.docs.agentsFile")}</code>
-            {agentsFixes.length > 0 ? (
+          {agentsFixes.length > 0 ? (
+            <button
+              aria-expanded={open === AGENTS_FILE}
+              className="repo-docs-row repo-docs-toggle"
+              onClick={() => setOpen(open === AGENTS_FILE ? null : AGENTS_FILE)}
+              type="button"
+            >
+              <code>{t("repoWiki.docs.agentsFile")}</code>
               <span className="repo-docs-chip">{t("repoWiki.docs.fixes", { count: agentsFixes.length })}</span>
-            ) : check ? (
-              <span className="repo-docs-chip">{t("repoWiki.docs.upToDate")}</span>
-            ) : null}
-          </div>
+            </button>
+          ) : (
+            <div className="repo-docs-row">
+              <code>{t("repoWiki.docs.agentsFile")}</code>
+              {check && <span className="repo-docs-chip">{t("repoWiki.docs.upToDate")}</span>}
+            </div>
+          )}
           <p className="repo-wiki-note">{t("repoWiki.docs.agentsWho")}</p>
           <p className="repo-wiki-note">{t("repoWiki.docs.agentsOurs")}</p>
-          {agentsFixes.length > 0 && fixList(agentsFixes)}
+          {open === AGENTS_FILE && fixList(AGENTS_FILE, agentsFixes)}
         </div>
       </section>
 
@@ -121,7 +147,7 @@ export function RepoDocsSection({
                 </span>
                 <span className="repo-docs-chip">{state(list)}</span>
               </button>
-              {expanded && fixList(list)}
+              {expanded && fixList(path, list)}
             </div>
           );
         })}

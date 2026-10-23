@@ -82,6 +82,19 @@ describe("RepoDocsSection", () => {
     expect(screen.getByText("Requires Node 22")).toBeInTheDocument();
   });
 
+  it("opens AGENTS.md to its fixes and folds a long list of fixes", () => {
+    renderSection({
+      ...base,
+      doc_fixes: [1, 2, 3, 4, 5].map((n) => fix("AGENTS.md", n)),
+    });
+    expect(screen.queryByText("Requires Node 21")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /AGENTS\.md/ }));
+    expect(screen.getByText("Requires Node 23")).toBeInTheDocument();
+    expect(screen.queryByText("Requires Node 24")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show 2 more fixes" }));
+    expect(screen.getByText("Requires Node 25")).toBeInTheDocument();
+  });
+
   it("drops a fix the user does not want", async () => {
     vi.mocked(dismissRepoDocFix).mockResolvedValue({ open: 0 });
     const onChanged = renderSection({ ...base, doc_fixes: [fix("README.md", 1)] });

@@ -188,7 +188,8 @@ prints `null`, or the command is missing, skip this step.
    from the file (the sentence, or the part of it that is wrong; it must occur
    in the file once), `new_text` that changes only what is wrong, in the same
    language, tone and formatting, `reason` (one sentence: what the code says
-   instead) and `code` (the lines that show it).
+   instead) and `code` (the lines that show it, as a list:
+   `[{"path": "src/server.ts", "line_start": 4, "line_end": 6}]`).
 4. Never fix opinions, plans, history, style, wording or typos, anything you
    cannot check in the code, Wenlan's own block between `<!-- WENLAN:START -->`
    and `<!-- WENLAN:END -->`, or anything in the wiki folder. When unsure,

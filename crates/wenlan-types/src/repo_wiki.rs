@@ -60,6 +60,10 @@ pub struct RepoWikiBinding {
     /// The last time an AI tool read the repository's docs against the code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub doc_check: Option<RepoDocCheck>,
+    /// Wiki page files people edited that the repository keeps as they
+    /// wrote them, by path and digest, so each is reported once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_edits: Vec<String>,
 }
 
 /// Where a doc fix stands.

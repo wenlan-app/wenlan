@@ -224,6 +224,7 @@ pub fn bind_at(
                     current.last_daily_run = None;
                     current.doc_fixes.clear();
                     current.doc_check = None;
+                    current.kept_edits.clear();
                 }
                 current.repo_root = repo_root.clone();
                 current.folder = folder;
@@ -244,6 +245,7 @@ pub fn bind_at(
                     last_daily_run: None,
                     doc_fixes: Vec::new(),
                     doc_check: None,
+                    kept_edits: Vec::new(),
                 };
                 bindings.push(binding.clone());
                 binding
@@ -266,11 +268,14 @@ pub fn unbind_at(path: &Path, space: &str) -> Result<bool, WenlanError> {
 pub fn record_publish_at(
     path: &Path,
     space: &str,
-    result: &RepoWikiPublishResult,
+    published: &Published,
 ) -> Result<(), WenlanError> {
     update_store_at(path, |bindings| {
         if let Some(binding) = bindings.iter_mut().find(|binding| binding.space == space) {
-            binding.last_publish = Some(result.clone());
+            binding.last_publish = Some(published.result.clone());
+            if let Some(kept) = &published.kept_edits {
+                binding.kept_edits = kept.clone();
+            }
         }
         Ok(())
     })
@@ -385,14 +390,14 @@ pub fn suggest_doc_fix_at(
     let old_text = request.old_text;
     let new_text = request.new_text;
     let reason = request.reason.trim().to_owned();
-    if old_text.trim().is_empty() || old_text.chars().count() > 4000 {
+    if old_text.trim().is_empty() || old_text.chars().count() > 1000 {
         return Err(WenlanError::Validation(
-            "old_text must be the exact text to replace, at most 4000 characters".into(),
+            "old_text must be the exact text to replace, at most 1000 characters".into(),
         ));
     }
-    if new_text == old_text || new_text.chars().count() > 4000 {
+    if new_text == old_text || new_text.chars().count() > 1000 {
         return Err(WenlanError::Validation(
-            "new_text must differ from old_text, at most 4000 characters".into(),
+            "new_text must differ from old_text, at most 1000 characters".into(),
         ));
     }
     if reason.is_empty() || reason.chars().count() > 500 {
@@ -812,6 +817,10 @@ pub struct Published {
     /// Doc fixes whose old text is no longer on the default branch: merged,
     /// or the sentence changed since.
     pub gone: Vec<String>,
+    /// The edits the repository keeps as people wrote them
+    /// ([`RepoWikiBinding::kept_edits`]); `None` when the publish stopped
+    /// before looking.
+    pub kept_edits: Option<Vec<String>>,
 }
 
 fn remote_default_branch(repo: &Path) -> String {
@@ -1274,6 +1283,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         result,
         applied: Vec::new(),
         gone: Vec::new(),
+        kept_edits: None,
     };
     let open_fix = binding
         .doc_fixes
@@ -1402,14 +1412,21 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         }
     }
     // A page file someone edited: taken back into Wenlan, the export above
-    // wrote it from the page again. Otherwise it goes back as they wrote it.
+    // wrote it from the page again. Otherwise it goes back as they wrote it,
+    // and is counted the first time only: it stays an edit on every publish
+    // until someone changes the file or the page catches up.
+    let mut kept_edits = Vec::new();
     for edit in &prepared.edits {
         let written = export
             && input.taken_back.contains(&edit.path)
             && input.worktree.join(&edit.path).is_file();
         if !written {
             restore(&input.worktree, &edit.tree, &edit.path)?;
-            kept.set(kept.get() + 1);
+            let key = format!("{}#{}", edit.path, sha256_hex(&edit.body));
+            if !binding.kept_edits.contains(&key) {
+                kept.set(kept.get() + 1);
+            }
+            kept_edits.push(key);
         }
     }
     if export {
@@ -1464,6 +1481,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         result,
         applied: applied.clone(),
         gone: gone.clone(),
+        kept_edits: Some(kept_edits.clone()),
     };
     let mut command = git(&input.worktree);
     command.args(["diff", "--cached", "--quiet"]);

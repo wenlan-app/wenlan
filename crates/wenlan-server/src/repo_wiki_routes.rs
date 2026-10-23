@@ -449,7 +449,7 @@ pub(crate) async fn publish_space(
             took_back,
         })?;
         repo_wiki::settle_doc_fixes_at(&store, &space, &published.applied, &published.gone)?;
-        repo_wiki::record_publish_at(&store, &space, &published.result)?;
+        repo_wiki::record_publish_at(&store, &space, &published)?;
         Ok(published.result)
     })
     .await?;

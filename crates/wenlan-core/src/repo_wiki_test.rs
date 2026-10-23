@@ -494,6 +494,7 @@ fn publish_with_no_selected_pages_does_nothing() {
         last_daily_run: None,
         doc_fixes: Vec::new(),
         doc_check: None,
+        kept_edits: Vec::new(),
     };
     let result = publish(PublishInput {
         binding: &binding,
@@ -533,6 +534,7 @@ fn daily_is_due_once_a_day_after_its_hour() {
         last_daily_run: None,
         doc_fixes: Vec::new(),
         doc_check: None,
+        kept_edits: Vec::new(),
     };
     let before = chrono::Local
         .with_ymd_and_hms(2026, 10, 24, 8, 59, 0)
@@ -882,6 +884,25 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     .unwrap();
     assert_eq!(kept.result.status, RepoWikiPublishStatus::NoChanges);
     assert_eq!(kept.result.kept, 1);
+
+    // Reported once: the next publish finds the same edit but says nothing.
+    let mut seen = binding.clone();
+    seen.kept_edits = kept.kept_edits.clone().unwrap();
+    let again = publish(PublishInput {
+        prepared: Some(prepare(&seen, &worktree).unwrap()),
+        ..publish_input(
+            &seen,
+            pages.clone(),
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
+    })
+    .unwrap();
+    assert_eq!(again.result.status, RepoWikiPublishStatus::NoChanges);
+    assert_eq!(again.result.kept, 0);
+    assert_eq!(again.kept_edits, kept.kept_edits);
 
     // Taken back: the page now says it, and its file is written from it.
     let prepared = prepare(&binding, &worktree).unwrap();

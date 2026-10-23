@@ -1199,7 +1199,9 @@ pub struct DocFixParams {
     #[schemars(description = "suggest: one sentence on what the code says instead.")]
     #[serde(default)]
     pub reason: Option<String>,
-    #[schemars(description = "suggest: the code lines that show it.")]
+    #[schemars(
+        description = "suggest: the code lines that show it, a list of {path, line_start, line_end}."
+    )]
     #[serde(default)]
     pub code: Option<Vec<DocFixCodeParam>>,
     #[schemars(description = "checked: how many docs you read.")]

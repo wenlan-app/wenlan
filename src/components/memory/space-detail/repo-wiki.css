@@ -208,7 +208,6 @@
   gap: 8px;
   margin-top: 4px;
   padding-top: 10px;
-  border-top: 1px solid var(--mem-border);
   color: var(--mem-text-secondary);
   font-size: var(--mem-text-xs);
 }
@@ -356,18 +355,18 @@
 
 .repo-docs-fix-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
   min-width: 0;
 }
 
 .repo-docs-fix-foot code {
-  overflow: hidden;
+  min-width: 0;
   color: var(--mem-link);
   font: 400 var(--mem-text-xs)/1.4 var(--mem-font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .repo-docs-drop,

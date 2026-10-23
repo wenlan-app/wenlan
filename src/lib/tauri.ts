@@ -979,6 +979,8 @@ export interface RepoWikiBinding {
   last_daily_run?: string | null;
   doc_fixes?: RepoDocFix[];
   doc_check?: RepoDocCheck | null;
+  /** Wiki page files the repository keeps as people wrote them, reported once. */
+  kept_edits?: string[];
 }
 
 export interface RepoDocsReply {
