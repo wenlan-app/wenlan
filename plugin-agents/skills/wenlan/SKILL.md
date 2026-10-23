@@ -102,7 +102,8 @@ Arguments:
 
 Answer these from here, without a tool call, and only the part asked:
 
-- Data lives under `~/.wenlan/`: `pages/` holds notes as Markdown,
+- Data lives under `~/.wenlan/` (under `$WENLAN_DATA_DIR` when that is set,
+  as it is for a test daemon): `pages/` holds notes as Markdown,
   `sessions/` holds session logs by date, and `sessions/_status/` holds the
   receipts written from each project's Brief. Memories and links live in a
   local database; `docs/setup-and-data.md` says where.
