@@ -228,10 +228,11 @@ fn manifest_counts_match_the_spec() {
     // (lock my pages backfill; a count receipt, not page-bearing). Then 229
     // after the five routes of a Space bound to a repository, and 230 after
     // the route suggesting which repository to bind, and 231 after the route
-    // taking fixes to the repository's own docs.
+    // taking fixes to the repository's own docs, and 233 after the two
+    // routes setting up a daily update on GitHub.
     assert_eq!(
         HTTP_READERS.len(),
-        231,
+        233,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 35, "#[tool( declarations");
@@ -242,7 +243,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        243,
+        245,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -250,7 +251,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        226,
+        228,
         "main builder entries"
     );
     assert_eq!(
@@ -426,7 +427,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        224 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +1: lock-edited, +7: repo wiki)
+        226 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +1: lock-edited, +9: repo wiki)
     );
 }
 

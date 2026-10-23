@@ -40,7 +40,8 @@ function resolvedRouting(): unknown {
 
 export function baseResponse(command: string, args: unknown, context: BaseResponseContext): unknown {
   switch (command) {
-    case "should_show_wizard": case "get_clipboard_enabled": return false;
+    // The early-open path stays off here so specs keep the daemon-backed gate.
+    case "should_show_wizard": case "local_setup_completed": case "get_clipboard_enabled": return false;
     case "get_remote_access_profile": return null;
     case "get_remote_access_status": return { status: "off" };
     case "set_traffic_lights_visible": case "set_setup_completed": return null;
@@ -69,6 +70,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // No fixture Space is bound to a repository or has code pages to offer.
     case "get_repo_wiki": return null;
     case "suggest_repo_wiki": return { candidates: [] };
+    case "get_repo_wiki_github": return { gh_ready: false, workflow: "missing" };
     // The main shell asks on every launch whether a wenlan://pair link is waiting.
     case "take_remote_pairing_link": return null;
     // Web access stopped on its own: the fixture never stops, so no notice waits.

@@ -16,13 +16,15 @@ import {
   type RepoWikiBinding,
   type RepoWikiDaily,
   type RepoWikiPublishResult,
+  type RepoWikiRunner,
 } from "../../../lib/tauri";
-import { Input, Select, Toggle } from "../settings/primitives";
+import { Input, SegmentedControl, Select, Toggle } from "../settings/primitives";
 import { RepoDocsSection } from "./RepoDocsSection";
+import { RepoWikiGithub } from "./RepoWikiGithub";
 import "./repo-wiki.css";
 
 const AGENT_NAMES: Record<RepoWikiAgent, string> = { claude: "Claude Code", codex: "Codex" };
-const DEFAULT_DAILY: RepoWikiDaily = { enabled: false, hour: 9, agent: "claude" };
+const DEFAULT_DAILY: RepoWikiDaily = { enabled: false, hour: 9, agent: "claude", runs_on: "computer" };
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 /** Keep the panel inside the window: it scrolls instead of running past the bottom. */
@@ -213,6 +215,18 @@ function DailyFields({
       </div>
       {daily.enabled && (
         <>
+          <div className="repo-wiki-row">
+            <span className="repo-wiki-note">{t("repoWiki.github.runsOn")}</span>
+            <SegmentedControl<RepoWikiRunner>
+              aria-label={t("repoWiki.github.runsOn")}
+              onChange={(runsOn) => { if (!disabled) onChange({ ...daily, runs_on: runsOn }); }}
+              options={[
+                { value: "computer", label: t("repoWiki.github.computer") },
+                { value: "github", label: t("repoWiki.github.github") },
+              ]}
+              value={daily.runs_on ?? "computer"}
+            />
+          </div>
           <div className="repo-wiki-daily-fields">
             <Select
               aria-label={t("repoWiki.hour")}
@@ -235,7 +249,11 @@ function DailyFields({
               ))}
             </Select>
           </div>
-          <p className="repo-wiki-note">{t("repoWiki.quota", { tool: AGENT_NAMES[daily.agent] })}</p>
+          <p className="repo-wiki-note">
+            {daily.runs_on === "github"
+              ? t("repoWiki.github.quota")
+              : t("repoWiki.quota", { tool: AGENT_NAMES[daily.agent] })}
+          </p>
         </>
       )}
     </div>
@@ -429,6 +447,14 @@ function BoundPanel({
       </div>
       <RepoDocsSection binding={binding} onChanged={onPublished} />
       <DailyFields daily={daily} disabled={save.isPending} onChange={(next) => save.mutate(next)} />
+      {daily.enabled && daily.runs_on === "github" && (
+        <RepoWikiGithub
+          agent={daily.agent}
+          formatTime={(date) => timeFormat.format(date)}
+          onOpen={follow}
+          space={binding.space}
+        />
+      )}
       {(update.isError || (publishFailed && update.isIdle)) && (
         <p className="repo-wiki-error" role="alert" title={String(update.error)}>{t("repoWiki.updateFailed")}</p>
       )}

@@ -3920,6 +3920,38 @@ p.entity-error {
   .mem-activity-pulse-running { animation: none; }
 }
 
+/* While a workspace that opened early waits for the daemon: one muted line
+   above the sidebar's footer entries, its dot centred on their icons, gone
+   once the daemon answers. */
+.mem-daemon-startup-status {
+  align-items: center;
+  color: var(--mem-text-tertiary);
+  display: flex;
+  flex: 0 0 32px;
+  font-family: var(--mem-font-body);
+  font-size: var(--mem-text-xs);
+  gap: 11px;
+  min-height: 32px;
+  padding: 0 12px 0 20px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.mem-daemon-startup-status--compact { justify-content: center; padding: 0; width: 44px; }
+.mem-daemon-startup-dot {
+  animation: mem-activity-pulse 2.4s ease-in-out infinite;
+  background: var(--mem-accent-amber);
+  border-radius: 50%;
+  flex: none;
+  height: 6px;
+  width: 6px;
+}
+.mem-daemon-startup-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-daemon-startup-body { margin: 0; color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; }
+.mem-daemon-startup-failure { margin: 0; color: var(--mem-status-danger-text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  .mem-daemon-startup-dot { animation: none; }
+}
+
 /* The summary opens upward from the sidebar footer and stays within the
    viewport on narrow windows. */
 .mem-activity-status-anchor { position: relative; z-index: 4; }

@@ -23,6 +23,18 @@ pub enum RepoWikiAgent {
     Codex,
 }
 
+/// Where a daily update runs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoWikiRunner {
+    /// On this computer, by the daemon, while it is on.
+    #[default]
+    Computer,
+    /// On GitHub Actions, by a workflow the wiki pull request adds to the
+    /// repository: runs with the computer off.
+    Github,
+}
+
 /// When a bound Space's wiki is brought up to date by itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoWikiDaily {
@@ -30,6 +42,74 @@ pub struct RepoWikiDaily {
     /// Local hour (0-23) after which the day's run starts.
     pub hour: u8,
     pub agent: RepoWikiAgent,
+    #[serde(default)]
+    pub runs_on: RepoWikiRunner,
+}
+
+/// Where the daily workflow file stands in the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoWikiWorkflowState {
+    /// On the default branch: GitHub runs it every day.
+    InRepo,
+    /// In the open wiki pull request: runs once that is merged.
+    InPr,
+    /// Not written yet: the next update puts it in the pull request.
+    Missing,
+}
+
+/// The last run of the daily workflow on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoWikiGithubRun {
+    /// When it started, RFC 3339.
+    pub at: String,
+    pub url: String,
+    /// `queued`, `in_progress` or `completed`.
+    pub status: String,
+    /// For a completed run: `success`, `failure` and so on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conclusion: Option<String>,
+    /// The pull request the refresh last opened or updated, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+}
+
+/// What a daily update on GitHub still needs, and how it last went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoWikiGithubStatus {
+    /// `owner/name` on GitHub; `None` when `origin` is not on GitHub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// The GitHub CLI is installed and signed in.
+    pub gh_ready: bool,
+    pub workflow: RepoWikiWorkflowState,
+    /// The repository has the secret the chosen AI tool needs; `None` when
+    /// it could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<bool>,
+    /// GitHub Actions may open pull requests in the repository; `None`
+    /// when it could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_open_prs: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run: Option<RepoWikiGithubRun>,
+    /// The repository's Actions page for the workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions_url: Option<String>,
+}
+
+/// A setup step for a daily update on GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum RepoWikiGithubRequest {
+    /// Sign in to Claude in the browser (`claude setup-token`) and store the
+    /// token as the repository secret `CLAUDE_CODE_OAUTH_TOKEN`. The token
+    /// is never kept or returned.
+    ClaudeToken,
+    /// Store `key` as the repository secret `OPENAI_API_KEY`, for Codex.
+    OpenaiKey { key: String },
+    /// Let GitHub Actions open pull requests in the repository.
+    AllowPullRequests,
 }
 
 /// A Space bound to a git repository.
@@ -218,12 +298,14 @@ pub struct RepoWikiPublishResult {
     /// Doc fixes in this publish's pull request.
     #[serde(default)]
     pub doc_fixes: usize,
-    /// Wiki pages someone edited in the repository, taken back into Wenlan
-    /// before the publish so the edit is kept.
+    /// Wiki pages changed in the repository (by a person, or by a merged
+    /// `wenlan wiki refresh`), taken back into Wenlan before the publish so
+    /// the change is kept.
     #[serde(default)]
     pub taken_back: usize,
-    /// Wiki pages someone edited in the repository while Wenlan changed them
-    /// too: the repository keeps the person's text and Wenlan keeps its own.
+    /// Wiki pages changed in the repository while Wenlan changed them too:
+    /// the repository keeps its text, and its version waits in Wenlan as a
+    /// revision card.
     #[serde(default)]
     pub kept: usize,
     /// Unix seconds.

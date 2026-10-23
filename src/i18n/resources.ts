@@ -247,20 +247,22 @@ const en = {
   },
   common: {
     close: "Close",
-    startingRuntime: "Starting the local runtime…",
+    startingRuntime: "Starting Wenlan…",
   },
   boot: {
     stillWaiting: "Still waiting for Wenlan's background service to answer.",
     connectionTitle: "Could not reach the background service",
     connectionProblem:
       "Wenlan could not reach its background service while starting up.",
-    fallbackBanner:
-      "Wenlan is running without its background service. Memories will not sync until it starts.",
-    startService: "Start the service",
+    fallbackLabel: "Service not running",
+    fallbackBody: "Wenlan works, but nothing syncs until the service starts.",
+    startService: "Start service",
     starting: "Starting…",
     startFailed: "Wenlan could not start its background service.",
     startNotReachable: "The service still is not answering.",
-    dismiss: "Dismiss",
+    startingInBackground: "Starting up…",
+    notAnsweringLabel: "Service not answering",
+    notAnsweringBody: "Pages can’t load until it answers. Restarting the service usually fixes this.",
   },
   setup: {
     welcomeTitle: "Welcome to Wenlan",
@@ -1215,12 +1217,11 @@ const en = {
     install: "Install",
   },
   daemonService: {
-    title: "Wenlan's background service is out of date",
+    label: "Service out of date",
     body: "The service is running {{daemon}} while the app is {{app}}. Restart it so pages and topics load correctly.",
     outsideBundle:
       "The service is started from {{program}}. Update that install (Homebrew or npm), or turn Run in background off and on again to switch to the app's copy.",
     restart: "Restart service",
-    dismiss: "Dismiss",
     errors: {
       notOwned:
         "This service was not started by this app, so it cannot be restarted from here. Quit the other copy of Wenlan or stop that service, then reopen Wenlan.",
@@ -3150,19 +3151,21 @@ const zhHans = {
   },
   common: {
     close: "关闭",
-    startingRuntime: "正在启动本地运行时…",
+    startingRuntime: "正在启动文澜…",
   },
   boot: {
     stillWaiting: "仍在等待文澜的后台服务响应。",
     connectionTitle: "无法连接到后台服务",
     connectionProblem: "启动时文澜无法连接到后台服务。",
-    fallbackBanner:
-      "文澜正在没有后台服务的情况下运行。在服务启动之前，记忆不会同步。",
+    fallbackLabel: "后台服务没有在运行",
+    fallbackBody: "文澜可以用，但在服务启动之前不会同步。",
     startService: "启动服务",
     starting: "正在启动…",
     startFailed: "文澜无法启动后台服务。",
     startNotReachable: "服务仍然没有响应。",
-    dismiss: "关闭",
+    startingInBackground: "正在后台启动…",
+    notAnsweringLabel: "后台服务没有响应",
+    notAnsweringBody: "笔记暂时无法加载。重启服务通常就能恢复。",
   },
   setup: {
     welcomeTitle: "欢迎使用文澜",
@@ -3492,7 +3495,7 @@ const zhHans = {
       reviewStatusUnconfirmed: "待审核",
       unconfirmed: "待审核",
       draft: "草稿",
-      untitledDraft: "未命名筆記",
+      untitledDraft: "未命名笔记",
       cleanupSuggested: "建议清理",
       previewCandidate: "预览候选笔记：{{title}}",
       columns: {
@@ -4090,12 +4093,11 @@ const zhHans = {
     install: "安装",
   },
   daemonService: {
-    title: "文澜的后台服务版本过旧",
+    label: "后台服务版本过旧",
     body: "服务运行的是 {{daemon}} 版本，而应用是 {{app}} 版本。请重启服务，笔记与主题才能正确加载。",
     outsideBundle:
       "服务是从 {{program}} 启动的。请更新该安装（Homebrew 或 npm），或将“登录时在后台运行”关闭再打开，以切换为应用自带的版本。",
     restart: "重启服务",
-    dismiss: "关闭",
     errors: {
       notOwned:
         "该服务不是由本应用启动的，无法在此重启。请退出另一个文澜副本或停止该服务，然后重新打开文澜。",
@@ -5991,19 +5993,21 @@ const zhHant = {
   },
   common: {
     close: "關閉",
-    startingRuntime: "正在啟動本機執行時…",
+    startingRuntime: "正在啟動文瀾…",
   },
   boot: {
     stillWaiting: "仍在等待文瀾的背景服務回應。",
     connectionTitle: "無法連線到背景服務",
     connectionProblem: "啟動時文瀾無法連線到背景服務。",
-    fallbackBanner:
-      "文瀾正在沒有背景服務的情況下執行。在服務啟動之前，記憶不會同步。",
+    fallbackLabel: "背景服務沒有在執行",
+    fallbackBody: "文瀾可以用，但在服務啟動之前不會同步。",
     startService: "啟動服務",
     starting: "正在啟動…",
     startFailed: "文瀾無法啟動背景服務。",
     startNotReachable: "服務仍然沒有回應。",
-    dismiss: "關閉",
+    startingInBackground: "正在背景啟動…",
+    notAnsweringLabel: "背景服務沒有回應",
+    notAnsweringBody: "筆記暫時無法載入。重新啟動服務通常就能恢復。",
   },
   setup: {
     welcomeTitle: "歡迎使用文瀾",
@@ -6931,12 +6935,11 @@ const zhHant = {
     install: "安裝",
   },
   daemonService: {
-    title: "文瀾的背景服務版本過舊",
+    label: "背景服務版本過舊",
     body: "服務執行的是 {{daemon}} 版本，而應用程式是 {{app}} 版本。請重新啟動服務，筆記與主題才能正確載入。",
     outsideBundle:
       "服務是從 {{program}} 啟動的。請更新該安裝（Homebrew 或 npm），或將「登入時在背景執行」關閉再開啟，以切換為應用程式內附的版本。",
     restart: "重新啟動服務",
-    dismiss: "關閉",
     errors: {
       notOwned:
         "此服務並非由本應用程式啟動，無法在此重新啟動。請結束另一個文瀾副本或停止該服務，然後重新開啟文瀾。",

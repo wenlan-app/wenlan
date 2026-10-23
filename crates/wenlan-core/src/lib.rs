@@ -70,6 +70,8 @@ pub mod refinery;
 pub mod repair;
 pub mod repair_plan;
 pub mod repo_wiki;
+pub mod repo_wiki_ci;
+pub mod repo_wiki_github;
 pub mod reranker;
 pub(crate) mod retrieval;
 pub mod router;

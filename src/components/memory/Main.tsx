@@ -30,6 +30,7 @@ import MemoryStream from "./MemoryStream";
 import type { SortMode } from "./MemoryStream";
 import { FirstUseGuide } from "../onboarding/FirstUseGuide";
 import { useGettingStartedState } from "../onboarding/useGettingStartedState";
+import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
 import { SearchResults } from "./SearchResults";
 import MemoryDetail from "./MemoryDetail";
@@ -957,8 +958,16 @@ export default function Main({
   // down to its one-line form the pages are the home again, directory included.
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
-  const directoryHidden = libraryEmpty
+  const liveDirectoryHidden = libraryEmpty
     || (gettingStarted.visible && !gettingStarted.dismissed && !gettingStarted.compact);
+  // Until both reads answer (they wait on the daemon at launch), keep the
+  // layout of last time so the Wiki does not collapse under the user.
+  const layoutKnown = gettingStarted.loaded || libraryEmpty;
+  const [rememberedDirectoryHidden] = useState(readRememberedDirectoryHidden);
+  const directoryHidden = layoutKnown ? liveDirectoryHidden : rememberedDirectoryHidden;
+  useEffect(() => {
+    if (layoutKnown) rememberDirectoryHidden(liveDirectoryHidden);
+  }, [layoutKnown, liveDirectoryHidden]);
 
   useEffect(() => {
     if (!mobileSearchOpen) return;

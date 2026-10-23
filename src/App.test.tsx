@@ -43,6 +43,7 @@ vi.mock("./lib/tauri", () => ({
   cancelGuardedQuitRequest: cancelGuardedQuitRequestMock,
   quitWenlanFull: quitWenlanFullMock,
   shouldShowWizard: vi.fn(),
+  localSetupCompleted: vi.fn(),
   setSetupCompleted: vi.fn().mockResolvedValue(undefined),
   setTrafficLightsVisible: vi.fn().mockResolvedValue(undefined),
   startDaemonSidecar: startDaemonSidecarMock,
@@ -77,6 +78,7 @@ vi.mock("./lib/bootRetryPolicy", async (importOriginal) => {
     // Shrunk with the rest of the ladder: the production 15s would outlast the
     // two-attempt policy above, so the notice could never render here.
     BOOT_SLOW_NOTICE_MS: 20,
+    FAILED_GATE_RECHECK_MS: 10,
     bootQueryRetryDelay: () => 10,
     bootQueryBudgetMs: () => 10_010,
   };
@@ -142,10 +144,11 @@ vi.mock("./components/UpdaterDialog", () => ({
   default: () => null,
 }));
 
-import { setSetupCompleted, shouldShowWizard } from "./lib/tauri";
+import { localSetupCompleted, setSetupCompleted, shouldShowWizard } from "./lib/tauri";
+import { getDaemonStartupPhase, setDaemonStartupPhase } from "./lib/daemonStartup";
 import { bootQueryBudgetMs } from "./lib/bootRetryPolicy";
 import { resources } from "./i18n/resources";
-import { dragStripHeight } from "./lib/windowChrome";
+import { getServiceNotices, setServiceFallback } from "./lib/serviceNotices";
 
 const STARTING_RUNTIME = resources.en.translation.common.startingRuntime;
 const BOOT = resources.en.translation.boot;
@@ -159,6 +162,18 @@ function renderApp() {
       <App />
     </QueryClientProvider>,
   );
+}
+
+function renderAppWithClient() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+  return { queryClient };
 }
 
 function dispatchQuit(requestId = 1, deliveryId = 1) {
@@ -179,6 +194,8 @@ describe("App - first-run wizard gate", () => {
     quitWenlanFullMock.mockReset().mockResolvedValue(undefined);
     showWindowMock.mockReset().mockResolvedValue(undefined);
     vi.mocked(shouldShowWizard).mockReset();
+    vi.mocked(localSetupCompleted).mockReset().mockResolvedValue(false);
+    setDaemonStartupPhase("ready");
     startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
   });
 
@@ -301,6 +318,10 @@ describe("App - first-run wizard gate", () => {
     try {
       vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
       renderApp();
+      // The local setup read answers first; until it does the window is blank.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
 
       expect(screen.getByRole("status")).toBeInTheDocument();
       expect(screen.queryByTestId("boot-slow-notice")).not.toBeInTheDocument();
@@ -650,15 +671,14 @@ describe("App - first-run wizard gate", () => {
   });
 });
 
-describe("App - origin-fallback-mode banner", () => {
+describe("App - origin-fallback-mode", () => {
   beforeEach(() => {
     eventListeners.clear();
     emitMock.mockReset().mockResolvedValue(undefined);
     vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
-    startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
-    getWireStateMock
-      .mockReset()
-      .mockResolvedValue({ daemon: { reachable: true, error: null } });
+    vi.mocked(localSetupCompleted).mockReset().mockResolvedValue(false);
+    setDaemonStartupPhase("ready");
+    setServiceFallback(false);
   });
 
   function fireFallback() {
@@ -670,112 +690,114 @@ describe("App - origin-fallback-mode banner", () => {
   it("stays silent until Rust says it is running degraded", async () => {
     renderApp();
     expect(await screen.findByTestId("home-main")).toBeInTheDocument();
-    expect(screen.queryByTestId("fallback-service-banner")).not.toBeInTheDocument();
+    expect(getServiceNotices().fallback).toBe(false);
   });
 
   it.each([
     ["Home", false, "home-main"],
     ["the wizard", true, "setup-wizard"],
-  ])("renders over %s when the event fires", async (_label, showWizard, testid) => {
+  ])("keeps the report for the sidebar and lays nothing over %s", async (_label, showWizard, testid) => {
     vi.mocked(shouldShowWizard).mockResolvedValue(showWizard);
     renderApp();
     await screen.findByTestId(testid);
 
     fireFallback();
 
-    const banner = screen.getByTestId("fallback-service-banner");
-    expect(banner).toHaveTextContent(BOOT.fallbackBanner);
-    // Both surfaces paint a full-viewport box of their own, so the banner is
-    // fixed rather than stacked, or one of them would push it off screen.
-    expect(banner).toHaveStyle({ position: "fixed" });
-    // Under the macOS overlay title bar the traffic lights own the top strip;
-    // the banner starts below it or its first words are hidden behind them.
-    expect(banner).toHaveStyle({ top: `${dragStripHeight()}px` });
+    // The sidebar's service row says it (src/components/memory/ServiceStatus.tsx);
+    // the wizard's own service row covers first run.
+    expect(getServiceNotices().fallback).toBe(true);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId(testid)).toBeInTheDocument();
   });
+});
 
-  it("starts the service, proves it answers, and only then clears itself", async () => {
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByTestId("fallback-start-service"));
-
-    await waitFor(() => expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1));
-    // A spawn is not a service. The banner is the user's only warning that
-    // nothing is syncing, so only a probe that came back may retire it.
-    await waitFor(() => expect(getWireStateMock).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(screen.queryByTestId("fallback-service-banner")).not.toBeInTheDocument(),
-    );
+// A configured user's workspace opens before the daemon answers; the daemon
+// gate keeps running behind it and has the final say.
+describe("App - opening before the daemon answers", () => {
+  beforeEach(() => {
+    eventListeners.clear();
+    emitMock.mockReset().mockResolvedValue(undefined);
+    vi.mocked(shouldShowWizard).mockReset();
+    vi.mocked(localSetupCompleted).mockReset().mockResolvedValue(true);
+    setDaemonStartupPhase("ready");
+    startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
   });
 
-  it("keeps the banner when the spawn succeeds but the service still does not answer", async () => {
-    getWireStateMock.mockResolvedValue({
-      daemon: { reachable: false, error: "tcp connect error: connection refused" },
+  it("opens Home at once and holds daemon calls until the gate answers", async () => {
+    let resolveWizard!: (showWizard: boolean) => void;
+    vi.mocked(shouldShowWizard).mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveWizard = resolve;
+      }),
+    );
+    renderApp();
+
+    expect(await screen.findByTestId("home-main")).toBeInTheDocument();
+    expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
+    expect(screen.getByTestId("runtime-overlays")).toHaveAttribute("data-variant", "main");
+    expect(getDaemonStartupPhase()).toBe("starting");
+
+    await act(async () => {
+      resolveWizard(false);
     });
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByTestId("fallback-start-service"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("fallback-service-banner")).toHaveTextContent(
-        "tcp connect error: connection refused",
-      ),
-    );
-    expect(screen.getByTestId("fallback-service-banner")).toBeInTheDocument();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
   });
 
-  it("refuses a second start while the first is still in flight", async () => {
-    let release: (() => void) | null = null;
-    startDaemonSidecarMock.mockReturnValue(
-      new Promise((resolve) => { release = () => resolve({ status: "started" }); }),
-    );
+  it("still shows the wizard when the daemon says setup is not done", async () => {
+    vi.mocked(shouldShowWizard).mockResolvedValue(true);
     renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
 
-    const button = screen.getByTestId("fallback-start-service");
-    fireEvent.click(button);
-    fireEvent.click(button);
-    fireEvent.click(button);
-
-    expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1);
-    await act(async () => { release!(); });
+    expect(await screen.findByTestId("setup-wizard")).toBeInTheDocument();
+    expect(getDaemonStartupPhase()).toBe("ready");
   });
 
-  it("keeps the banner and shows the raw reason when the start fails", async () => {
-    startDaemonSidecarMock.mockResolvedValue({
-      status: "failed",
-      message: "launchctl bootstrap: Operation not permitted",
+  it("keeps Home when the daemon never answers and leaves the telling to the sidebar", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    renderApp();
+
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+    // No banner over the workspace: the sidebar row turns into the warning.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("clears the warning by itself when the daemon comes up later", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    renderApp();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+
+    // Started by launchd or the CLI: nobody presses Restart.
+    vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
+
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
+  });
+
+  it("keeps trying quietly while the daemon stays down", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    renderApp();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+    const callsAtFailure = vi.mocked(shouldShowWizard).mock.calls.length;
+
+    await waitFor(() => expect(vi.mocked(shouldShowWizard).mock.calls.length).toBeGreaterThan(callsAtFailure + 1));
+    // Each try leaves the warning in place instead of flashing "Starting up…".
+    expect(getDaemonStartupPhase()).toBe("failed");
+  });
+
+  it("asks every query again once the daemon answers after a failure", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    const { queryClient } = renderAppWithClient();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["shouldShowWizard"] });
     });
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
 
-    fireEvent.click(screen.getByTestId("fallback-start-service"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("fallback-service-banner")).toHaveTextContent(
-        "launchctl bootstrap: Operation not permitted",
-      ),
-    );
-    expect(screen.getByTestId("fallback-service-banner")).toHaveTextContent(
-      BOOT.startFailed,
-    );
-  });
-
-  it("dismisses on request and comes back if Rust says it again", async () => {
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByRole("button", { name: BOOT.dismiss }));
-    expect(screen.queryByTestId("fallback-service-banner")).not.toBeInTheDocument();
-
-    fireFallback();
-    expect(screen.getByTestId("fallback-service-banner")).toBeInTheDocument();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ predicate: expect.any(Function) }));
   });
 });

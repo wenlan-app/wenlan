@@ -75,6 +75,14 @@ export function bootQueryBudgetMs(retry: number = BOOT_QUERY_RETRY): number {
 export const BOOT_SLOW_NOTICE_MS = 15_000;
 
 /**
+ * After the gate gives up on a user who opened early, the app keeps asking
+ * the daemon this often, one bounded attempt at a time. A daemon that comes up
+ * later on its own (launchd, a CLI restart, a slow cold boot) then clears the
+ * sidebar warning without the user pressing anything.
+ */
+export const FAILED_GATE_RECHECK_MS = 5_000;
+
+/**
  * Bounds one gate attempt: a hung IPC call must cost one attempt, not the
  * whole gate. React Query only retries after the promise settles, so without
  * this a `should_show_wizard` that never answers holds the boot gate pending

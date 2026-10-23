@@ -7,6 +7,7 @@ import { PrimaryNavigation } from "./navigation/PrimaryNavigation";
 import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import { SearchEntry } from "./SearchEntry";
 import ActivityStatus from "./activity/ActivityStatus";
+import ServiceStatus from "./ServiceStatus";
 import { AskAiEntry } from "./askAi/AskAiEntry";
 import type { GlobalNavigation } from "./navigation/viewState";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
@@ -173,6 +174,8 @@ export default function Sidebar({
           />
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>
+          {/* First in the group, so the AI and Activity entries keep their places. */}
+          {sidebarVisible && <ServiceStatus compact={compact} />}
           {sidebarVisible && (
             <AskAiEntry
               compact={compact}

@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { daemonStartupWait } from "./daemonStartup";
 import type {
   ApplyRepairRequest, PrepareRepairRequest, PrepareCurrentRepairRequest, RepairApplyReceipt, RepairLintQuery,
   RepairLintReport, RepairManifest, RepairOperationStatus, RepairPrepareOperationRequest, RepairPrepareOperationStatus, RepairPlanEntriesPage, RepairPlanEntriesRequest, RepairRecovery,
   RepairPlanRequest, RepairPlanSummary, RepairRuntimeResumeApproval, RepairVerificationReceipt, VerifyRepairRequest,
 } from "./repairTypes";
 export { daemonMeetsFloor } from "./daemonVersion";
+
+// Every command below goes through here. While a window that opened before the
+// daemon answered is waiting for it, daemon calls wait instead of failing
+// (./daemonStartup). Otherwise the call is sent synchronously, as before.
+// The arguments pass through exactly as given, so a call reads the same to
+// Tauri (and to tests that mock it) as it did before this wrapper existed.
+function invoke<T>(...call: Parameters<typeof tauriInvoke>): Promise<T> {
+  const wait = daemonStartupWait(call[0]);
+  if (wait) return wait.then(() => tauriInvoke<T>(...call));
+  return tauriInvoke<T>(...call);
+}
 
 export async function repairLint(query: RepairLintQuery): Promise<RepairLintReport> {
   return invoke("repair_lint", { query });
@@ -910,11 +922,15 @@ export async function deleteSpace(name: string): Promise<void> {
 
 export type RepoWikiAgent = "claude" | "codex";
 
+/** Where the daily update runs: this computer, or GitHub Actions. */
+export type RepoWikiRunner = "computer" | "github";
+
 export interface RepoWikiDaily {
   enabled: boolean;
   /** Local hour, 0 to 23, after which the day's update starts. */
   hour: number;
   agent: RepoWikiAgent;
+  runs_on?: RepoWikiRunner;
 }
 
 export type RepoWikiPublishStatus =
@@ -936,7 +952,7 @@ export interface RepoWikiPublishResult {
   doc_fixes?: number;
   /** Wiki pages edited in the repository and taken back into Wenlan. */
   taken_back?: number;
-  /** Wiki pages edited in the repository while Wenlan changed them too. */
+  /** Wiki pages changed in the repository while Wenlan changed them too: they wait as a revision card. */
   kept?: number;
   /** Unix seconds. */
   at: number;
@@ -1034,6 +1050,46 @@ export async function publishRepoWiki(space: string): Promise<RepoWikiPublishRes
 /** Decline a doc fix: it leaves the pull request on the next update. */
 export async function dismissRepoDocFix(space: string, id: string): Promise<RepoDocsReply> {
   return invoke("dismiss_repo_doc_fix", { space, id });
+}
+
+/** Where the daily workflow file stands in the repository. */
+export type RepoWikiWorkflowState = "in_repo" | "in_pr" | "missing";
+
+export interface RepoWikiGithubRun {
+  /** RFC 3339. */
+  at: string;
+  url: string;
+  status: string;
+  conclusion?: string | null;
+  pr_url?: string | null;
+}
+
+/** What a daily update on GitHub still needs, and how it last went. */
+export interface RepoWikiGithubStatus {
+  /** `owner/name`; absent when `origin` is not on GitHub. */
+  repo?: string | null;
+  gh_ready: boolean;
+  workflow: RepoWikiWorkflowState;
+  secret?: boolean | null;
+  can_open_prs?: boolean | null;
+  last_run?: RepoWikiGithubRun | null;
+  actions_url?: string | null;
+}
+
+export type RepoWikiGithubRequest =
+  | { action: "claude_token" }
+  | { action: "openai_key"; key: string }
+  | { action: "allow_pull_requests" };
+
+export async function getRepoWikiGithub(space: string): Promise<RepoWikiGithubStatus> {
+  return invoke("get_repo_wiki_github", { space });
+}
+
+export async function setupRepoWikiGithub(
+  space: string,
+  request: RepoWikiGithubRequest,
+): Promise<RepoWikiGithubStatus> {
+  return invoke("setup_repo_wiki_github", { space, request });
 }
 
 export interface MoveSpaceResponse {
@@ -3486,6 +3542,11 @@ export interface McpClient {
 
 export async function shouldShowWizard(): Promise<boolean> {
   return invoke("should_show_wizard");
+}
+
+/** This machine's config file says setup finished. Answers without the daemon. */
+export async function localSetupCompleted(): Promise<boolean> {
+  return invoke("local_setup_completed");
 }
 
 export async function getSetupCompleted(): Promise<boolean> {

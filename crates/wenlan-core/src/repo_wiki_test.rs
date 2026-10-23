@@ -268,6 +268,7 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
         enabled: true,
         hour: 9,
         agent: RepoWikiAgent::Claude,
+        runs_on: Default::default(),
     };
     let bound = bind_at(
         &store,
@@ -289,6 +290,7 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
         enabled: true,
         hour: 24,
         agent: RepoWikiAgent::Codex,
+        runs_on: Default::default(),
     };
     assert!(bind_at(&store, "site", &clone, None, Some(late)).is_err());
     assert!(unbind_at(&store, "site").unwrap());
@@ -383,6 +385,41 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     assert!(!files.contains("entry-point"), "{files}");
     let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
     assert!(claude.starts_with("# Notes\n\nKeep it small.\n\n<!-- WENLAN:START -->"));
+    // Beside the pages: the code each relies on, anchored in the default
+    // branch, for `wenlan wiki refresh` to check from a plain checkout.
+    let manifest: crate::repo_wiki_ci::CodeManifest = serde_json::from_str(&sh(
+        &origin,
+        &[
+            "show",
+            &format!("{REPO_WIKI_BRANCH}:wiki/.wenlan-code.json"),
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        manifest.base.as_deref(),
+        Some(sh(&origin, &["rev-parse", "main"]).as_str())
+    );
+    let entry = &manifest.pages[page_file.strip_prefix("wiki/").unwrap()];
+    assert_eq!(entry.id, "p1");
+    assert_eq!(
+        entry
+            .code
+            .iter()
+            .map(|span| (span.path.as_str(), span.start, span.end))
+            .collect::<Vec<_>>(),
+        [("src/lib.rs", 1, 2)]
+    );
+    // A refresh rewrites a page byte for byte as the export does.
+    assert_eq!(
+        crate::repo_wiki_ci::rewrite_page_code(
+            &body,
+            &crate::repo_wiki_ci::frontmatter_spans(&body),
+            "wiki"
+        ),
+        std::fs::read_to_string(worktree.join(page_file)).unwrap()
+    );
+    let checked = crate::repo_wiki_ci::check(&worktree, "wiki").unwrap();
+    assert_eq!((checked.unchanged, checked.pages.len()), (1, 0));
 
     // The user's copy: same branch, same uncommitted edit, no wiki folder.
     assert_eq!(sh(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
@@ -529,6 +566,7 @@ fn daily_is_due_once_a_day_after_its_hour() {
             enabled: true,
             hour: 9,
             agent: RepoWikiAgent::Claude,
+            runs_on: Default::default(),
         }),
         last_publish: None,
         last_daily_run: None,
@@ -548,6 +586,10 @@ fn daily_is_due_once_a_day_after_its_hour() {
     assert!(!daily_due(&binding, after));
     binding.last_daily_run = Some("2026-10-23".into());
     assert!(daily_due(&binding, after));
+    // Run on GitHub: this computer leaves it to the workflow.
+    binding.daily.as_mut().unwrap().runs_on = RepoWikiRunner::Github;
+    assert!(!daily_due(&binding, after));
+    binding.daily.as_mut().unwrap().runs_on = RepoWikiRunner::Computer;
     binding.daily.as_mut().unwrap().enabled = false;
     assert!(!daily_due(&binding, after));
     binding.daily = None;
@@ -885,7 +927,8 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     assert_eq!(kept.result.status, RepoWikiPublishStatus::NoChanges);
     assert_eq!(kept.result.kept, 1);
 
-    // Reported once: the next publish finds the same edit but says nothing.
+    // Still waiting: the next publish finds the same edit and counts it again,
+    // so the panel keeps saying a page waits for review.
     let mut seen = binding.clone();
     seen.kept_edits = kept.kept_edits.clone().unwrap();
     let again = publish(PublishInput {
@@ -901,7 +944,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     })
     .unwrap();
     assert_eq!(again.result.status, RepoWikiPublishStatus::NoChanges);
-    assert_eq!(again.result.kept, 0);
+    assert_eq!(again.result.kept, 1);
     assert_eq!(again.kept_edits, kept.kept_edits);
 
     // Taken back: the page now says it, and its file is written from it.
@@ -923,17 +966,106 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
         )
     })
     .unwrap();
-    assert_eq!(back.result.status, RepoWikiPublishStatus::Pushed);
+    // The default branch already reads the same: only the page's version
+    // stamp would change, which is no reason for a pull request.
+    assert_eq!(back.result.status, RepoWikiPublishStatus::NoChanges);
     assert_eq!((back.result.taken_back, back.result.kept), (1, 0));
-    let body = sh(
-        &origin,
-        &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")],
-    );
+    let body = std::fs::read_to_string(worktree.join(&page_file)).unwrap();
     assert!(body.contains("origin_version: 2"), "{body}");
     assert!(body.contains("by hand."), "{body}");
     assert!(!files.contains(".wenlan-archive"));
     let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
     assert!(!files.contains(".wenlan-archive"), "{files}");
+}
+
+#[test]
+fn a_merged_refresh_is_told_apart_from_a_persons_edit() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_origin, clone) = repo_with_origin(dir.path());
+    sh(&clone, &["config", "user.name", "Test"]);
+    sh(&clone, &["config", "user.email", "test@example.com"]);
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let root = binding.repo_root.clone();
+    let code_bases = HashMap::from([
+        ("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
+        ("p2".to_string(), vec![locator(&root, "src/lib.rs", 3, 3)]),
+    ]);
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let concept_paths = ConceptPathMap::new();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    let pages = vec![
+        page("p1", "Module map", "What each part owns."),
+        page("p2", "Third", "`c` does nothing."),
+    ];
+    let first = publish(publish_input(
+        &binding,
+        pages,
+        &code_bases,
+        &anchors,
+        &concept_paths,
+        &worktree,
+    ))
+    .unwrap();
+    assert_eq!(first.result.status, RepoWikiPublishStatus::Pushed);
+    sh(&clone, &["fetch", "--quiet", "origin"]);
+    sh(
+        &clone,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    let file_of = |id: &str| {
+        sh(&clone, &["ls-files", "wiki/pages"])
+            .lines()
+            .find(|file| {
+                std::fs::read_to_string(clone.join(file))
+                    .unwrap()
+                    .contains(&format!("origin_id: {id}\n"))
+            })
+            .unwrap()
+            .to_owned()
+    };
+    let (map, third) = (file_of("p1"), file_of("p2"));
+    let replace = |file: &str, from: &str, to: &str| {
+        let text = std::fs::read_to_string(clone.join(file)).unwrap();
+        assert!(text.contains(from), "{text}");
+        std::fs::write(clone.join(file), text.replace(from, to)).unwrap();
+    };
+
+    // `wenlan wiki refresh` rewrites p1 for changed code; someone edits p2.
+    replace(&map, "What each part owns.", "What each part owns now.");
+    crate::repo_wiki_ci::reanchor(
+        &clone,
+        "wiki",
+        &[map.strip_prefix("wiki/").unwrap().to_owned()],
+        None,
+    )
+    .unwrap();
+    replace(&third, "`c` does nothing.", "`c` still does nothing.");
+    sh(&clone, &["add", "-A"]);
+    sh(&clone, &["commit", "--quiet", "-m", "refresh and an edit"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+
+    let mut edits = prepare(&binding, &worktree).unwrap().edits;
+    edits.sort_by(|a, b| a.page_id.cmp(&b.page_id));
+    assert_eq!(edits.len(), 2, "{edits:?}");
+    assert_eq!(
+        (edits[0].page_id.as_str(), edits[0].by_refresh),
+        ("p1", true)
+    );
+    assert_eq!(edits[0].spans, vec![("src/lib.rs".to_owned(), 1, 2)]);
+    assert_eq!(
+        (edits[1].page_id.as_str(), edits[1].by_refresh),
+        ("p2", false)
+    );
+    assert_eq!(edits[1].body, "`c` still does nothing.");
 }
 
 #[test]
