@@ -77,10 +77,11 @@
   color: var(--mem-accent-amber);
 }
 
+/* Progress is something to read, not to press: quieter than the items. */
 .identity-menu-item:disabled,
 .identity-menu-item:disabled:hover {
   background: transparent;
-  color: var(--mem-text);
+  color: var(--mem-text-tertiary);
   cursor: default;
 }
 
