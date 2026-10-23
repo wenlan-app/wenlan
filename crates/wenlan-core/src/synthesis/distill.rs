@@ -1614,6 +1614,13 @@ async fn read_long_sources_in_parts(
             if !part_notes.is_empty() && part_notes != REFRESH_SOURCE_NOTHING_RELEVANT {
                 notes.push(part_notes);
             }
+            // A small model's notes keep an amendment's new value but can drop
+            // the words that make it one ("cancelled", the date), and then the
+            // writer keeps the decision it replaced. Carry those lines as written.
+            let amendments = amendment_lines(part);
+            if !amendments.is_empty() {
+                notes.push(amendments.join("\n"));
+            }
         }
         log::info!(
             "[refresh] read source [{}] in {} parts for '{topic}'",
@@ -1637,6 +1644,90 @@ async fn read_long_sources_in_parts(
             "source context exceeds model input budget even after reading long sources in parts (limit {input_budget} tokens)"
         )))
     }
+}
+
+/// Words that mark a statement as changing an earlier one.
+const AMENDMENT_CUES: &[&str] = &[
+    "amend",
+    "cancel",
+    "supersede",
+    "rescind",
+    "revoke",
+    "reverse",
+    "withdrawn",
+    "no longer",
+    "instead of",
+    "correction",
+    "corrected",
+    "overrid",
+    "changed to",
+    "修訂",
+    "修正",
+    "更正",
+    "取消",
+    "撤回",
+    "撤銷",
+    "撤销",
+    "改為",
+    "改为",
+    "改成",
+    "不再",
+    "作廢",
+    "作废",
+    "取代",
+];
+
+/// Most bytes of verbatim amendment text carried from one part.
+const AMENDMENT_LINES_BYTE_CAP: usize = 2_000;
+
+/// The sentences of `part` that amend, cancel or correct something, verbatim
+/// and in order. Lines are split into sentences so one long paragraph does not
+/// pull in everything around the amendment.
+fn amendment_lines(part: &str) -> Vec<&str> {
+    let mut kept = Vec::new();
+    let mut bytes = 0usize;
+    for line in part.lines() {
+        for sentence in sentences(line) {
+            let sentence = sentence.trim();
+            if sentence.is_empty() {
+                continue;
+            }
+            let lower = sentence.to_lowercase();
+            if !AMENDMENT_CUES.iter().any(|cue| lower.contains(cue)) {
+                continue;
+            }
+            if bytes + sentence.len() > AMENDMENT_LINES_BYTE_CAP {
+                return kept;
+            }
+            bytes += sentence.len();
+            kept.push(sentence);
+        }
+    }
+    kept
+}
+
+/// Split one line into sentences: after `.`, `!` or `?` followed by
+/// whitespace (so "$48.5" and "v0.20" stay whole), and after `。！？`.
+fn sentences(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut chars = line.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        let end = i + ch.len_utf8();
+        let ends = match ch {
+            '。' | '！' | '？' => true,
+            '.' | '!' | '?' => chars.peek().is_none_or(|(_, next)| next.is_whitespace()),
+            _ => false,
+        };
+        if ends {
+            out.push(&line[start..end]);
+            start = end;
+        }
+    }
+    if start < line.len() {
+        out.push(&line[start..]);
+    }
+    out
 }
 
 /// Split `text` into parts of at most `max_bytes`, at line ends where possible
@@ -3829,6 +3920,62 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             }),
             "the citation is still checked against the complete source"
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_page_carries_an_amendment_verbatim_when_notes_drop_its_wording() {
+        // Mac e2e with Qwen3-4B (2026-10-23): the notes for the last part kept
+        // "stays in Seattle" but dropped "cancelled" and the date, so the
+        // writer kept the earlier "Portland is decided".
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let decided = "The office move to Portland is decided.";
+        let amendment = "Amendment, October 22: the Portland move is cancelled; Cedar Atlas stays in Seattle, with a budget cap of $48,000.";
+        let background = "Background notes retain the project setup record.\n".repeat(240);
+        let source = format!("{decided}\n{background}{amendment}\n");
+        insert_long_folder_source_page(&db, "page_amend", "folder-docs::cedar-amend.md", source)
+            .await;
+
+        let provider = Arc::new(PartsReadingProvider::new(
+            "Cedar Atlas stays in Seattle",
+            "Cedar Atlas stays in Seattle. [1]",
+            1_500,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            "page_amend",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let page_calls = provider.calls_labelled("refresh_page");
+        assert_eq!(page_calls.len(), 1);
+        assert!(
+            page_calls[0].contains(amendment),
+            "the writer must see the amendment as written: {}",
+            page_calls[0]
+        );
+    }
+
+    #[test]
+    fn amendment_lines_keep_changing_sentences_verbatim() {
+        let part = "Setup is done. The budget is $48.5k for v0.20.\n\
+                    ## Amendment, October 22\n\
+                    The Portland move is cancelled. Weekly sync stays on Monday.\n\
+                    十月二十二日更正：搬遷取消。其他照舊。";
+        assert_eq!(
+            amendment_lines(part),
+            vec![
+                "## Amendment, October 22",
+                "The Portland move is cancelled.",
+                "十月二十二日更正：搬遷取消。",
+            ]
+        );
+        assert!(amendment_lines("Nothing changes here. Budget $48.5k.").is_empty());
     }
 
     #[tokio::test]

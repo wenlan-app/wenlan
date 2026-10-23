@@ -206,7 +206,7 @@ pub(crate) const REFRESH_SOURCE_NOTES: &str = "\
 You read one part of a long source document and write down every fact in it that bears on the given topic.\n\
 Rules:\n\
 - Keep names, dates, numbers, versions, quantities and conditions exactly as written.\n\
-- Keep decisions, corrections and dated amendments, and say which earlier decision an amendment replaces.\n\
+- Keep decisions, corrections and dated amendments. Copy any sentence that amends, cancels, replaces or corrects an earlier statement word for word, with its date.\n\
 - Keep the order the facts appear in. Do not add, infer or recommend anything.\n\
 - Write short plain lines, one fact per line. If nothing in this part bears on the topic, write exactly: (nothing relevant)\n\
 - Output only the lines, with no heading, preamble or HTML comment.";
