@@ -61,7 +61,8 @@ pub struct WorkflowArgs {
     /// The hour (0-23, UTC) it runs every day.
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=23))]
     pub utc_hour: u8,
-    /// Write it to .github/workflows/wenlan-wiki.yml instead of printing it.
+    /// Write it into the repository's GitHub workflows folder, as
+    /// wenlan-wiki.yml, instead of printing it.
     #[arg(long)]
     pub write: bool,
 }

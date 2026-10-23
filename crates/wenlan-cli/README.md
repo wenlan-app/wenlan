@@ -626,7 +626,7 @@ Options:
 - `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
 - `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`. Default: `claude`.
 - `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
-- `--write`: Write it to .github/workflows/wenlan-wiki.yml instead of printing it.
+- `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
 
 **Setup**
 
