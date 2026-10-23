@@ -665,6 +665,7 @@ async fn handle_create_page_inner(
             }
             None => (None, None),
         };
+    let diagram_content = req.content.clone();
     // The marks are recorded in the create transaction itself, so a mark
     // refused at write time (its note archived or moved since the check above)
     // creates nothing: no page row, no page file.
@@ -715,6 +716,7 @@ async fn handle_create_page_inner(
     let mut written_code_basis = Vec::new();
     let mut warnings = result.warnings;
     if !attached_existing {
+        warnings.extend(wenlan_core::diagrams::diagram_warnings(&diagram_content));
         written_basis = crate::page_basis_routes::written_basis(&db, &scope, &result.id).await?;
         if !prepared_code_basis.is_empty() {
             if let Err(error) = db
@@ -1801,6 +1803,7 @@ async fn handle_refresh_page_inner(
     }
     wenlan_core::export::provenance::validate_canonical_page_content(&req.content)
         .map_err(ServerError::from)?;
+    let diagram_content = req.content.clone();
 
     let (db, page_root) = {
         let s = state.read().await;
@@ -2056,7 +2059,10 @@ async fn handle_refresh_page_inner(
                 gated_code_basis_warning(&prepared_code_basis)
             } else {
                 Vec::new()
-            },
+            }
+            .into_iter()
+            .chain(wenlan_core::diagrams::diagram_warnings(&diagram_content))
+            .collect(),
             citations: citations_summary,
         },
     ))
@@ -2938,6 +2944,92 @@ mod create_page_endpoint_tests {
         let after = db.get_page(&page_id).await.unwrap().unwrap();
         assert_eq!(after.content, cited);
         assert_eq!(after.citations.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_agent_write_with_a_broken_diagram_lands_and_says_which_one() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (db, app, _tmp) = state_db_app().await;
+        let broken = format!("{REFRESH_BODY}\n\n```mermaid\nflowchart LR\n  a[\"CLI\"] -->\n```\n");
+        // Other checks (self-retrieval when search is up) may warn as well.
+        let diagram_warnings = |body: &serde_json::Value| -> Vec<String> {
+            body["warnings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|w| w.as_str())
+                .filter(|w| w.starts_with("diagram "))
+                .map(str::to_string)
+                .collect()
+        };
+
+        let (status, body) = send_json(
+            &app,
+            "POST",
+            "/api/pages".to_string(),
+            json!({
+                "title": "Rust Diagram Page",
+                "content": broken,
+                "source_memory_ids": ["mem-page-floor-a"]
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let id = body["id"]
+            .as_str()
+            .expect("create returns an id")
+            .to_string();
+        assert_eq!(
+            diagram_warnings(&body),
+            vec![
+                "diagram 1 line 2: an arrow is missing the box at one end. Fix it and write the \
+                 page again, or remove the diagram."
+                    .to_string()
+            ],
+            "{body}"
+        );
+
+        let page = db.get_page(&id).await.unwrap().unwrap();
+        let fixed = format!(
+            "{REFRESH_BODY}\n\n```mermaid\nflowchart LR\n  a[\"CLI\"] --> b[\"daemon\"]\n```\n"
+        );
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{id}"),
+            json!({
+                "content": fixed,
+                "source_memory_ids": ["mem-page-floor-a"],
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(diagram_warnings(&body).is_empty(), "{body}");
+
+        let page = db.get_page(&id).await.unwrap().unwrap();
+        let (status, body) = send_json(
+            &app,
+            "PUT",
+            format!("/api/pages/{id}"),
+            json!({
+                "content": broken,
+                "source_memory_ids": ["mem-page-floor-a"],
+                "expected_version": page.version,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            diagram_warnings(&body)
+                .first()
+                .is_some_and(|w| w.starts_with("diagram 1 line 2:")),
+            "{body}"
+        );
     }
 
     #[tokio::test]

@@ -242,6 +242,12 @@ pub async fn handle_steep_commit(
             );
         }
     }
+    let warnings = match (done.outcome, req.content.as_deref()) {
+        ("written" | "review_card", Some(content)) => {
+            wenlan_core::diagrams::diagram_warnings(content)
+        }
+        _ => Vec::new(),
+    };
     Ok(Json(SteepCommitResponse {
         page_id: done.page_id,
         outcome: done.outcome.to_string(),
@@ -249,5 +255,6 @@ pub async fn handle_steep_commit(
         citations: done.citations,
         judged: done.judged,
         replayed: done.replayed,
+        warnings,
     }))
 }

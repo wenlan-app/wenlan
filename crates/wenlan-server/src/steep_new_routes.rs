@@ -198,10 +198,16 @@ pub async fn handle_steep_new_commit(
             )))
         }
     };
+    let warnings = if done.page_id.is_some() {
+        wenlan_core::diagrams::diagram_warnings(req.content.as_deref().unwrap_or(""))
+    } else {
+        Vec::new()
+    };
     Ok(Json(SteepNewCommitResponse {
         outcome: done.outcome.to_string(),
         page_id: done.page_id,
         title: done.title,
         citations: done.citations,
+        warnings,
     }))
 }

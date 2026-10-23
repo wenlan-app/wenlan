@@ -169,7 +169,10 @@ flowchart LR
 
 Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say wiki needs local Wenlan and stop. A `warnings`
-entry saying a code basis was not recorded is reported, not hidden.
+entry saying a code basis was not recorded is reported, not hidden. A
+`warnings` entry starting `diagram N line M` means that diagram will not
+draw: fix that line and write the page again with its `page_id`, or remove
+the diagram.
 
 ## 5. Re-pointing a page whose code is gone
 
