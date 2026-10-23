@@ -212,6 +212,16 @@
   padding: 24px 28px 10px;
 }
 
+/* Below the home's new-pages list the checklist is no longer the first thing
+   on screen, so it drops the upper-third offset and the two share the window. */
+.wiki-reading-start[data-onboarding="true"] .wiki-new-pages {
+  margin-bottom: 12px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .wiki-new-pages + .getting-started {
+  margin-top: 0;
+}
+
 .wiki-reading-start[data-onboarding="true"] .getting-started-header h2 {
   font-size: 22px;
 }

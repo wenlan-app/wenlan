@@ -6,6 +6,9 @@ import { askablePages } from "../../onboarding/useGettingStartedState";
 
 /** How many of the newest pages the Wiki home lists. */
 export const NEW_PAGES_LISTED = 5;
+/** Fewer while the getting-started checklist shares the screen, so the home
+ *  still fits the default window. */
+export const NEW_PAGES_LISTED_BESIDE_CHECKLIST = 3;
 
 /** The newest pages worth opening: written from the user's material or by
  *  the user, newest first. Copies of brought-in files are not among them. */
@@ -26,13 +29,15 @@ export function NewPagesList({
   pages,
   onSelectPage,
   onBrowseAll,
+  limit = NEW_PAGES_LISTED,
 }: {
   readonly pages: readonly Page[];
   readonly onSelectPage: (pageId: string) => void;
   readonly onBrowseAll?: () => void;
+  readonly limit?: number;
 }) {
   const { t } = useTranslation();
-  const rows = newestPages(pages);
+  const rows = newestPages(pages, limit);
   if (rows.length === 0) return null;
   return (
     <section className="wiki-new-pages" data-testid="wiki-new-pages" aria-labelledby="wiki-new-pages-title">

@@ -10,7 +10,7 @@ import { useGettingStartedState } from "../../onboarding/useGettingStartedState"
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import { useWritePages, WritePagesLine } from "../askAi/WritePages";
-import { NewPagesList } from "./NewPagesList";
+import { NEW_PAGES_LISTED, NEW_PAGES_LISTED_BESIDE_CHECKLIST, NewPagesList } from "./NewPagesList";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -88,7 +88,12 @@ export function PagesOverview({
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
       {runListsPages ? null : (
-        <NewPagesList pages={pages} onSelectPage={onSelectPage} onBrowseAll={onBrowseAll} />
+        <NewPagesList
+          pages={pages}
+          onSelectPage={onSelectPage}
+          onBrowseAll={onBrowseAll}
+          limit={onboarding ? NEW_PAGES_LISTED_BESIDE_CHECKLIST : NEW_PAGES_LISTED}
+        />
       )}
       {gettingStarted}
       {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
