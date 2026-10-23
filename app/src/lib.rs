@@ -1614,6 +1614,7 @@ pub fn run() {
             repo_wiki::bind_repo_wiki,
             repo_wiki::unbind_repo_wiki,
             repo_wiki::publish_repo_wiki,
+            repo_wiki::dismiss_repo_doc_fix,
             search::delete_space,
             search::move_space,
             search::confirm_space,

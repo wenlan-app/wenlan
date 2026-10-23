@@ -136,7 +136,7 @@ pub(crate) async fn run_once(
     }
     .ok_or_else(|| "the database is not ready".to_string())?;
     let page_root = crate::repo_wiki_routes::page_root_of(shared).await;
-    crate::repo_wiki_routes::publish_space(&db, page_root.as_deref(), &space)
+    crate::repo_wiki_routes::publish_space(&db, &space, page_root.as_deref())
         .await
         .map_err(|e| format!("{e:?}"))
 }

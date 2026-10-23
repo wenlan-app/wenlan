@@ -60,6 +60,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "dismiss_contradiction",
   "dismiss_pending_revision",
   "dismiss_quick_capture",
+  "dismiss_repo_doc_fix",
   "download_on_device_model",
   "export_page_to_obsidian",
   "export_pages_to_obsidian",

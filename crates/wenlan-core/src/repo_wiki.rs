@@ -21,8 +21,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use wenlan_types::repo_wiki::{
-    RepoWikiAgent, RepoWikiBinding, RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult,
-    RepoWikiPublishStatus, DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
+    RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoWikiAgent, RepoWikiBinding,
+    RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus,
+    DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
 };
 use wenlan_types::CodeBasisLocator;
 
@@ -30,6 +31,15 @@ const STORE_FILE: &str = "repo-wiki.json";
 const WORKTREES_DIR: &str = "repo-wiki";
 const AGENTS_START: &str = "<!-- WENLAN:START -->";
 const AGENTS_END: &str = "<!-- WENLAN:END -->";
+/// Subject of every commit Wenlan makes on [`REPO_WIKI_BRANCH`]; a commit
+/// with another subject there is someone else's.
+const COMMIT_SUBJECT: &str = "docs(wiki): update the wiki from Wenlan";
+/// The export's record of what it wrote (see `export::okf`).
+const BUNDLE_MARKER: &str = ".wenlan-okf-export.json";
+/// Where the export moves a bundle file someone edited (see `export::okf`).
+const BUNDLE_ARCHIVE: &str = ".wenlan-archive";
+/// Most fixes waiting for or in the pull request at once.
+const MAX_OPEN_DOC_FIXES: usize = 50;
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Store {
@@ -40,37 +50,6 @@ struct Store {
 /// Where the bindings are kept.
 pub fn store_path() -> PathBuf {
     crate::config::data_root().join(STORE_FILE)
-}
-
-/// Changes made in the repository that were offered to the user as a
-/// revision card, by page file: the SHA-256 of the file offered. Kept beside
-/// the worktrees, one file per Space.
-pub fn offered_path(space: &str) -> PathBuf {
-    worktrees_root().join(format!("{}.offered.json", sanitize_space(space)))
-}
-
-pub fn load_offered(path: &Path) -> std::collections::BTreeMap<String, String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-pub fn save_offered(
-    path: &Path,
-    offered: &std::collections::BTreeMap<String, String>,
-) -> Result<(), WenlanError> {
-    if offered.is_empty() {
-        match std::fs::remove_file(path) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
-            _ => return Ok(()),
-        }
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, serde_json::to_string_pretty(offered)?)?;
-    Ok(())
 }
 
 /// Where publishes check out the repository, one folder per Space.
@@ -243,6 +222,9 @@ pub fn bind_at(
                 if current.repo_root != repo_root {
                     current.last_publish = None;
                     current.last_daily_run = None;
+                    current.doc_fixes.clear();
+                    current.doc_check = None;
+                    current.kept_edits.clear();
                 }
                 current.repo_root = repo_root.clone();
                 current.folder = folder;
@@ -261,6 +243,9 @@ pub fn bind_at(
                     daily: daily.clone(),
                     last_publish: None,
                     last_daily_run: None,
+                    doc_fixes: Vec::new(),
+                    doc_check: None,
+                    kept_edits: Vec::new(),
                 };
                 bindings.push(binding.clone());
                 binding
@@ -283,11 +268,280 @@ pub fn unbind_at(path: &Path, space: &str) -> Result<bool, WenlanError> {
 pub fn record_publish_at(
     path: &Path,
     space: &str,
-    result: &RepoWikiPublishResult,
+    published: &Published,
 ) -> Result<(), WenlanError> {
     update_store_at(path, |bindings| {
         if let Some(binding) = bindings.iter_mut().find(|binding| binding.space == space) {
-            binding.last_publish = Some(result.clone());
+            binding.last_publish = Some(published.result.clone());
+            if let Some(kept) = &published.kept_edits {
+                binding.kept_edits = kept.clone();
+            }
+        }
+        Ok(())
+    })
+}
+
+/// A file inside the repository: relative, `/` separated, no `..`, not
+/// inside `.git`.
+fn normalize_repo_path(path: &str) -> Result<String, WenlanError> {
+    let invalid = |why: &str| {
+        WenlanError::Validation(format!(
+            "path {path:?} {why}; name a file relative to the repository root, such as \
+             \"README.md\" or \"docs/setup.md\""
+        ))
+    };
+    let mut parts = Vec::new();
+    for component in Path::new(path.trim()).components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part.to_str().ok_or_else(|| invalid("is not valid UTF-8"))?;
+                if part == ".git" {
+                    return Err(invalid("is inside .git"));
+                }
+                parts.push(part.to_owned());
+            }
+            Component::CurDir => {}
+            _ => return Err(invalid("leaves the repository")),
+        }
+    }
+    if parts.is_empty() {
+        return Err(invalid("is empty"));
+    }
+    Ok(parts.join("/"))
+}
+
+/// Whether `path` (relative to the repository root) is one of the
+/// repository's own docs Wenlan may suggest a fix to: a Markdown file outside
+/// the wiki `folder`. A changelog is left to the release tooling that writes
+/// it.
+pub fn is_repo_doc(path: &str, folder: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let name = lower.rsplit('/').next().unwrap_or(&lower);
+    (lower.ends_with(".md") || lower.ends_with(".mdx"))
+        && !name.starts_with("changelog")
+        && path != folder
+        && !path.starts_with(&format!("{folder}/"))
+        && !path
+            .split('/')
+            .any(|part| part == "node_modules" || part == BUNDLE_ARCHIVE)
+}
+
+/// The id of a fix: the same file and old text give the same id.
+pub fn doc_fix_id(path: &str, old_text: &str) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(format!("{path}\0{old_text}").as_bytes());
+    format!("fix_{}", &format!("{digest:x}")[..12])
+}
+
+fn occurrences(text: &str, needle: &str) -> usize {
+    text.match_indices(needle).count()
+}
+
+/// Whether `needle` overlaps Wenlan's own block in `text`.
+fn inside_agents_block(text: &str, needle: &str) -> bool {
+    let (Some(start), Some(end)) = (text.find(AGENTS_START), text.find(AGENTS_END)) else {
+        return false;
+    };
+    let end = end + AGENTS_END.len();
+    text.match_indices(needle)
+        .any(|(at, found)| at < end && at + found.len() > start)
+}
+
+fn open_fixes(binding: &RepoWikiBinding) -> usize {
+    binding
+        .doc_fixes
+        .iter()
+        .filter(|fix| fix.state != RepoDocFixState::Dismissed)
+        .count()
+}
+
+/// What a doc fix says, as an AI tool hands it over.
+pub struct DocFixRequest {
+    pub path: String,
+    pub old_text: String,
+    pub new_text: String,
+    pub reason: String,
+    pub code: Vec<RepoDocCode>,
+}
+
+/// Record a fix to one of the repository's docs for the next publish of
+/// `space`. The old text must occur exactly once in the file as it is in the
+/// working copy, outside Wenlan's own block. A fix the user declined before is
+/// refused. Returns the fix and how many are open.
+pub fn suggest_doc_fix_at(
+    store: &Path,
+    space: &str,
+    request: DocFixRequest,
+    now: i64,
+) -> Result<(RepoDocFix, usize), WenlanError> {
+    let binding = binding_at(store, space)?.ok_or_else(|| {
+        WenlanError::NotFound(format!(
+            "Space {space:?} is not connected to a repository; connect it first"
+        ))
+    })?;
+    let path = normalize_repo_path(&request.path)?;
+    if !is_repo_doc(&path, &binding.folder) {
+        return Err(WenlanError::Validation(format!(
+            "{path} is not one of the repository's docs: fixes go to Markdown files outside \
+             `{}/` (the wiki is kept with write_page) and not to a changelog",
+            binding.folder
+        )));
+    }
+    let old_text = request.old_text;
+    let new_text = request.new_text;
+    let reason = request.reason.trim().to_owned();
+    if old_text.trim().is_empty() || old_text.chars().count() > 1000 {
+        return Err(WenlanError::Validation(
+            "old_text must be the exact text to replace, at most 1000 characters".into(),
+        ));
+    }
+    if new_text == old_text || new_text.chars().count() > 1000 {
+        return Err(WenlanError::Validation(
+            "new_text must differ from old_text, at most 1000 characters".into(),
+        ));
+    }
+    if reason.is_empty() || reason.chars().count() > 500 {
+        return Err(WenlanError::Validation(
+            "reason must say in one sentence what the code says instead".into(),
+        ));
+    }
+    if request.code.len() > 20 {
+        return Err(WenlanError::Validation(
+            "at most 20 code entries per fix".into(),
+        ));
+    }
+    let mut code = Vec::with_capacity(request.code.len());
+    for entry in request.code {
+        if entry.line_start == 0 || entry.line_end < entry.line_start {
+            return Err(WenlanError::Validation(format!(
+                "code {}: lines start at 1 and line_end is not before line_start",
+                entry.path
+            )));
+        }
+        code.push(RepoDocCode {
+            path: normalize_repo_path(&entry.path)?,
+            ..entry
+        });
+    }
+    let text =
+        std::fs::read_to_string(Path::new(&binding.repo_root).join(&path)).map_err(|_| {
+            WenlanError::Validation(format!("{path} cannot be read in {}", binding.repo_root))
+        })?;
+    match occurrences(&text, &old_text) {
+        1 => {}
+        0 => {
+            return Err(WenlanError::Validation(format!(
+                "old_text is not in {path}; copy it from the file exactly"
+            )))
+        }
+        n => {
+            return Err(WenlanError::Validation(format!(
+            "old_text occurs {n} times in {path}; include more of the sentence so it occurs once"
+        )))
+        }
+    }
+    if inside_agents_block(&text, &old_text) {
+        return Err(WenlanError::Validation(format!(
+            "old_text is inside Wenlan's own block of {path}, which Wenlan keeps itself"
+        )));
+    }
+    let id = doc_fix_id(&path, &old_text);
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        if let Some(existing) = binding.doc_fixes.iter().find(|fix| fix.id == id) {
+            if existing.state == RepoDocFixState::Dismissed {
+                return Err(WenlanError::Conflict(format!(
+                    "the user declined a fix to this text of {path}; leave it as it is"
+                )));
+            }
+        } else if open_fixes(binding) >= MAX_OPEN_DOC_FIXES {
+            return Err(WenlanError::Conflict(format!(
+                "{MAX_OPEN_DOC_FIXES} doc fixes are already waiting; publish or review them first"
+            )));
+        }
+        let fix = RepoDocFix {
+            id: id.clone(),
+            path: path.clone(),
+            old_text: old_text.clone(),
+            new_text: new_text.clone(),
+            reason: reason.clone(),
+            code: code.clone(),
+            state: RepoDocFixState::Pending,
+            found_at: now,
+        };
+        match binding
+            .doc_fixes
+            .iter_mut()
+            .find(|existing| existing.id == id)
+        {
+            Some(existing) => *existing = fix.clone(),
+            None => binding.doc_fixes.push(fix.clone()),
+        }
+        Ok((fix, open_fixes(binding)))
+    })
+}
+
+/// The user declines the fix `id` of `space`: it leaves the pull request on
+/// the next publish and is not suggested again while the old text is there.
+pub fn dismiss_doc_fix_at(
+    store: &Path,
+    space: &str,
+    id: &str,
+) -> Result<(RepoDocFix, usize), WenlanError> {
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        let fix = binding
+            .doc_fixes
+            .iter_mut()
+            .find(|fix| fix.id == id)
+            .ok_or_else(|| WenlanError::NotFound(format!("no doc fix {id}")))?;
+        fix.state = RepoDocFixState::Dismissed;
+        let fix = fix.clone();
+        Ok((fix, open_fixes(binding)))
+    })
+}
+
+/// Record that an AI tool read `docs` of the repository's docs against the
+/// code. Returns how many fixes are open.
+pub fn record_doc_check_at(
+    store: &Path,
+    space: &str,
+    docs: u32,
+    now: i64,
+) -> Result<usize, WenlanError> {
+    update_store_at(store, |bindings| {
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.space == space)
+            .ok_or_else(|| WenlanError::NotFound(format!("Space {space:?} is not connected")))?;
+        binding.doc_check = Some(RepoDocCheck { at: now, docs });
+        Ok(open_fixes(binding))
+    })
+}
+
+/// After a publish: fixes it put in the pull request are `in_pr`, fixes whose
+/// old text is gone from the default branch (merged, or the sentence changed)
+/// are dropped, declined ones included.
+pub fn settle_doc_fixes_at(
+    store: &Path,
+    space: &str,
+    applied: &[String],
+    gone: &[String],
+) -> Result<(), WenlanError> {
+    update_store_at(store, |bindings| {
+        if let Some(binding) = bindings.iter_mut().find(|binding| binding.space == space) {
+            binding.doc_fixes.retain(|fix| !gone.contains(&fix.id));
+            for fix in &mut binding.doc_fixes {
+                if applied.contains(&fix.id) && fix.state == RepoDocFixState::Pending {
+                    fix.state = RepoDocFixState::InPr;
+                }
+            }
         }
         Ok(())
     })
@@ -525,126 +779,68 @@ pub struct PublishInput<'a> {
     pub gh: Option<PathBuf>,
     /// Unix seconds, stamped on the result.
     pub now: i64,
-    /// Page files (relative to the wiki folder) changed in the repository
-    /// that the Space has taken in: replaced by the Space's version without
-    /// a copy being kept aside.
-    pub adopt: Vec<String>,
-    /// Page files changed in the repository that wait for the user's review
-    /// in Wenlan: left as the repository has them.
-    pub keep_remote: Vec<String>,
+    /// What [`prepare`] found, when the caller ran it first to take edits
+    /// back into Wenlan; `None` runs it here.
+    pub prepared: Option<Prepared>,
+    /// Paths of the edits in `prepared` that Wenlan holds, because they were
+    /// taken back now or already match the page: their files are written
+    /// from the page again. Every other edit stays in the repository as the
+    /// person wrote it.
+    pub taken_back: BTreeSet<String>,
+    /// How many of `taken_back` changed a page this time. An edit on the
+    /// default branch is found again on every publish until the wiki pull
+    /// request merges, and is counted only the first time.
+    pub took_back: usize,
 }
 
-/// A page someone changed in the repository since Wenlan last wrote it: by
-/// hand on GitHub, or a `wenlan wiki refresh` pull request that was merged.
+/// A wiki page file someone changed in the repository since Wenlan wrote it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoteEdit {
+pub struct WikiFileEdit {
     pub page_id: String,
-    /// The page file, relative to the wiki folder.
-    pub file: String,
-    /// The body as the Space keeps it: no frontmatter, no `## Code` list,
-    /// links to other pages by page id.
+    /// Path inside the repository.
+    pub path: String,
+    /// Where it was read: the remote's default branch or the wiki branch.
+    pub tree: String,
+    /// The page version the file was written from.
+    pub origin_version: i64,
+    /// The file's body without its frontmatter and closing `## Code` list.
     pub body: String,
     /// The code lines its frontmatter names.
     pub spans: Vec<(String, u32, u32)>,
-    /// SHA-256 of the file's bytes, to tell this change from a later one.
-    pub digest: String,
+    /// The file is as a merged `wenlan wiki refresh` wrote it: the AI tool
+    /// kept the page in step with the code, no person edited it.
+    pub by_refresh: bool,
 }
 
-static PAGE_FILE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\[([^\]]*)\]\(((?:\.\./)?(?:pages/)?([^/()\s]+\.md))\)")
-        .expect("valid regex")
-});
-
-/// A page file's text as the Space keeps its body. `id_of` names the page
-/// id of another page file by its file name.
-pub fn page_body_from_file(text: &str, id_of: &HashMap<String, String>) -> String {
-    let body = match text
-        .strip_prefix("---\n")
-        .and_then(|rest| rest.find("\n---\n").map(|end| &rest[end + 5..]))
-    {
-        Some(body) => body,
-        None => text,
-    };
-    let body = body.trim_start_matches('\n');
-    let body = match body.trim_end().rfind("\n## Code\n") {
-        Some(at)
-            if body.trim_end()[at + 9..]
-                .lines()
-                .all(|line| line.trim().is_empty() || line.starts_with("- [`")) =>
-        {
-            &body[..at]
-        }
-        _ => body,
-    };
-    PAGE_FILE_LINK_RE
-        .replace_all(body.trim_end(), |cap: &regex::Captures<'_>| {
-            match id_of.get(&cap[3]) {
-                Some(id) => format!("[{}]({id})", &cap[1]),
-                None => cap[0].to_owned(),
-            }
-        })
-        .into_owned()
+/// How [`RepoWikiBinding::kept_edits`] names an edit the repository keeps.
+pub fn kept_edit_key(edit: &WikiFileEdit) -> String {
+    format!("{}#{}", edit.path, sha256_hex(&edit.body))
 }
 
-/// Fetch, check the default branch out in this Space's worktree, and list
-/// the pages changed there since Wenlan last wrote them.
-pub fn remote_edits(
-    binding: &RepoWikiBinding,
-    worktree: &Path,
-) -> Result<Vec<RemoteEdit>, WenlanError> {
-    let repo = PathBuf::from(&binding.repo_root);
-    let folder = normalize_folder(&binding.folder)?;
-    if origin_url(&repo).is_none() {
-        return Ok(Vec::new());
-    }
-    let mut command = git(&repo);
-    command.args(["fetch", "--quiet", "origin"]);
-    run(command, "git fetch origin")?;
-    let base = remote_default_branch(&repo);
-    prepare_worktree(&repo, worktree, &base)?;
-    let target = worktree.join(&folder);
-    let edited = crate::export::okf::edited_page_files(&target)?;
-    if edited.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut id_of = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(target.join("pages")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let (Some(name), Ok(text)) = (
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .map(str::to_owned),
-                std::fs::read_to_string(&path),
-            ) else {
-                continue;
-            };
-            if let Some(id) = frontmatter_origin_id(&text) {
-                id_of.insert(name, id.to_owned());
-            }
-        }
-    }
-    let mut out = Vec::new();
-    for file in edited {
-        let Ok(text) = std::fs::read_to_string(target.join(&file)) else {
-            continue;
-        };
-        let Some(page_id) = frontmatter_origin_id(&text) else {
-            continue;
-        };
-        let digest = {
-            use sha2::Digest as _;
-            format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
-        };
-        out.push(RemoteEdit {
-            digest,
-            page_id: page_id.to_owned(),
-            body: page_body_from_file(&text, &id_of),
-            spans: crate::repo_wiki_ci::frontmatter_spans(&text),
-            file,
-        });
-    }
-    Ok(out)
+/// What a publish learns from the repository before it writes anything.
+#[derive(Debug, Clone)]
+pub struct Prepared {
+    base: String,
+    /// Wiki page files people changed.
+    pub edits: Vec<WikiFileEdit>,
+    /// Other files people changed on the wiki branch after Wenlan's last
+    /// commit there; the next commit keeps them as they are.
+    carried: Vec<String>,
+}
+
+/// A publish's result, and what became of the doc fixes.
+#[derive(Debug)]
+pub struct Published {
+    pub result: RepoWikiPublishResult,
+    /// Doc fixes in the pull request.
+    pub applied: Vec<String>,
+    /// Doc fixes whose old text is no longer on the default branch: merged,
+    /// or the sentence changed since.
+    pub gone: Vec<String>,
+    /// The edits the repository keeps as people wrote them
+    /// ([`RepoWikiBinding::kept_edits`]); `None` when the publish stopped
+    /// before looking.
+    pub kept_edits: Option<Vec<String>>,
 }
 
 fn remote_default_branch(repo: &Path) -> String {
@@ -719,13 +915,7 @@ fn prepare_worktree(repo: &Path, worktree: &Path, base: &str) -> Result<(), Wenl
 
 /// The text of `path` on `origin/<base>` in `repo`, if it is there.
 fn base_file(repo: &Path, base: &str, path: &str) -> Option<String> {
-    let mut command = git(repo);
-    command.args(["show", &format!("origin/{base}:{path}")]);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout).ok()
+    tree_file(repo, &format!("origin/{base}"), path)
 }
 
 /// Whether the file at `path` in the working copy at `repo_root` reads as
@@ -763,29 +953,348 @@ pub fn remove_worktree(repo_root: &str, worktree: &Path) {
     }
 }
 
-fn pr_body(binding: &RepoWikiBinding, pages: usize, left_out: usize, waiting: usize) -> String {
-    let mut body = format!(
-        "Written by [Wenlan](https://wenlan.app) from the `{}` Space: {pages} page{} in `{}/`, \
-         each ending with the code lines it relies on. `AGENTS.md` points coding agents at it.",
-        binding.space,
-        if pages == 1 { "" } else { "s" },
-        binding.folder
+/// The text of `path` in `tree` (`origin/<branch>` or a commit) of `repo`.
+fn tree_file(repo: &Path, tree: &str, path: &str) -> Option<String> {
+    let mut command = git(repo);
+    command.args(["show", &format!("{tree}:{path}")]);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
+/// The object id of `path` in `tree`, or `None` when it is not there.
+fn tree_blob(repo: &Path, tree: &str, path: &str) -> Option<String> {
+    let mut command = git(repo);
+    command.args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{tree}:{path}"),
+    ]);
+    run(command, "git rev-parse").ok()
+}
+
+fn tree_exists(repo: &Path, tree: &str) -> bool {
+    let mut command = git(repo);
+    command.args(["rev-parse", "--verify", "--quiet", tree]);
+    run(command, "git rev-parse").is_ok()
+}
+
+fn sha256_hex(text: &str) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+}
+
+/// Page id, page version and body of a page file the export wrote: the body
+/// without its frontmatter and the closing `## Code` list Wenlan adds.
+pub fn parse_wiki_page_file(text: &str) -> Option<(String, i64, String)> {
+    let rest = text.strip_prefix("---\n")?;
+    let end = rest.find("\n---\n")?;
+    let (front, body) = (&rest[..end], &rest[end + 5..]);
+    let field = |name: &str| {
+        front
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .map(|value| value.trim().trim_matches('"'))
+    };
+    let page_id = field("origin_id:")?.to_owned();
+    let version = field("origin_version:")?.parse().ok()?;
+    let mut body = body.trim_start_matches('\n').trim_end().to_owned();
+    const CODE: &str = "\n## Code\n";
+    if let Some(at) = body.rfind(CODE) {
+        let footer = &body[at + CODE.len()..];
+        if footer
+            .lines()
+            .all(|line| line.trim().is_empty() || line.starts_with("- [`"))
+        {
+            body.truncate(at);
+        }
+    }
+    Some((page_id, version, body.trim_end().to_owned()))
+}
+
+/// Page files in `folder` of `tree` whose bytes are no longer the ones the
+/// export recorded writing there: someone edited them.
+fn wiki_file_edits(repo: &Path, tree: &str, folder: &str) -> Vec<WikiFileEdit> {
+    let Some(marker) = tree_file(repo, tree, &format!("{folder}/{BUNDLE_MARKER}")) else {
+        return Vec::new();
+    };
+    let Ok(marker) = serde_json::from_str::<serde_json::Value>(&marker) else {
+        return Vec::new();
+    };
+    let digests = marker.get("digests").and_then(serde_json::Value::as_object);
+    let files = marker.get("files").and_then(serde_json::Value::as_array);
+    let (Some(digests), Some(files)) = (digests, files) else {
+        return Vec::new();
+    };
+    let manifest = tree_file(
+        repo,
+        tree,
+        &format!("{folder}/{}", crate::repo_wiki_ci::CODE_FILE),
     );
+    let mut edits = Vec::new();
+    for entry in files.iter().filter_map(serde_json::Value::as_str) {
+        if !entry.starts_with("pages/") || !entry.ends_with(".md") {
+            continue;
+        }
+        let Some(recorded) = digests.get(entry).and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let path = format!("{folder}/{entry}");
+        let Some(text) = tree_file(repo, tree, &path) else {
+            continue;
+        };
+        if sha256_hex(&text) == recorded {
+            continue;
+        }
+        if let Some((page_id, origin_version, body)) = parse_wiki_page_file(&text) {
+            let by_refresh = manifest.as_deref().is_some_and(|manifest| {
+                crate::repo_wiki_ci::written_by_refresh(manifest, entry, &text)
+            });
+            edits.push(WikiFileEdit {
+                page_id,
+                spans: crate::repo_wiki_ci::frontmatter_spans(&text),
+                by_refresh,
+                path,
+                tree: tree.to_owned(),
+                origin_version,
+                body,
+            });
+        }
+    }
+    edits
+}
+
+/// Files the export writes in `folder`, which it rewrites every time.
+fn written_by_export(path: &str, folder: &str) -> bool {
+    let Some(rest) = path.strip_prefix(&format!("{folder}/")) else {
+        return false;
+    };
+    rest == "index.md"
+        || rest == BUNDLE_MARKER
+        || rest == crate::repo_wiki_ci::CODE_FILE
+        || ["pages/", "sources/", ".wenlan-archive/"]
+            .iter()
+            .any(|dir| rest.starts_with(dir))
+}
+
+/// Files people changed in their own commits on the wiki branch (not in
+/// Wenlan's, and not in ones merged in from elsewhere) that the default
+/// branch has not changed since the wiki branch started from it.
+fn files_changed_by_others(repo: &Path, base_tree: &str, branch: &str, fork: &str) -> Vec<String> {
+    let mut command = git(repo);
+    command.args([
+        "log",
+        "--first-parent",
+        "--no-merges",
+        "--format=%H%x09%s",
+        &format!("{base_tree}..{branch}"),
+    ]);
+    let Ok(log) = run(command, "git log") else {
+        return Vec::new();
+    };
+    let mut paths = BTreeSet::new();
+    for line in log.lines() {
+        let Some((sha, subject)) = line.split_once('\t') else {
+            continue;
+        };
+        if subject == COMMIT_SUBJECT {
+            continue;
+        }
+        let mut command = git(repo);
+        command.args([
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            sha,
+        ]);
+        if let Ok(out) = run(command, "git diff-tree") {
+            paths.extend(
+                out.split('\0')
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_owned),
+            );
+        }
+    }
+    paths
+        .into_iter()
+        .filter(|path| tree_blob(repo, base_tree, path) == tree_blob(repo, fork, path))
+        .collect()
+}
+
+/// Fetch, check out the remote's default branch in `worktree`, and find what
+/// people changed in the repository since Wenlan last wrote there: wiki page
+/// files (on the default branch, or on the open wiki branch), and other files
+/// on the wiki branch. Blocking: runs git.
+pub fn prepare(binding: &RepoWikiBinding, worktree: &Path) -> Result<Prepared, WenlanError> {
+    let repo = PathBuf::from(&binding.repo_root);
+    let folder = normalize_folder(&binding.folder)?;
+    if origin_url(&repo).is_none() {
+        return Err(WenlanError::Validation(format!(
+            "{} has no `origin` remote to open a pull request on",
+            repo.display()
+        )));
+    }
+    let mut command = git(&repo);
+    command.args(["fetch", "--quiet", "origin"]);
+    run(command, "git fetch origin")?;
+    let base = remote_default_branch(&repo);
+    prepare_worktree(&repo, worktree, &base)?;
+
+    let base_tree = format!("origin/{base}");
+    let mut edits = wiki_file_edits(&repo, &base_tree, &folder);
+    let mut carried = Vec::new();
+    let branch = format!("origin/{REPO_WIKI_BRANCH}");
+    if tree_exists(&repo, &branch) {
+        let mut command = git(&repo);
+        command.args(["merge-base", &base_tree, &branch]);
+        if let Ok(fork) = run(command, "git merge-base") {
+            // Only what the default branch has not changed since: once the
+            // pull request is merged, the default branch is the newer copy.
+            let unchanged =
+                |path: &str| tree_blob(&repo, &base_tree, path) == tree_blob(&repo, &fork, path);
+            for edit in wiki_file_edits(&repo, &branch, &folder) {
+                if unchanged(&edit.path) {
+                    edits.retain(|earlier| earlier.page_id != edit.page_id);
+                    edits.push(edit);
+                }
+            }
+            carried = files_changed_by_others(&repo, &base_tree, &branch, &fork)
+                .into_iter()
+                .filter(|path| !written_by_export(path, &folder))
+                .collect();
+        }
+    }
+    Ok(Prepared {
+        base,
+        edits,
+        carried,
+    })
+}
+
+/// Put `path` in `worktree` back as it is in `tree`, or remove it when it is
+/// not there.
+fn restore(worktree: &Path, tree: &str, path: &str) -> Result<(), WenlanError> {
+    if tree_blob(worktree, tree, path).is_some() {
+        let mut command = git(worktree);
+        command.args(["checkout", tree, "--", path]);
+        run(command, "git checkout")?;
+    } else {
+        match std::fs::remove_file(worktree.join(path)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+struct PrBody<'a> {
+    binding: &'a RepoWikiBinding,
+    pages: usize,
+    left_out: usize,
+    waiting: usize,
+    kept: usize,
+    fixes: Vec<&'a RepoDocFix>,
+    /// `owner/name` on GitHub, for links to the code.
+    slug: Option<&'a str>,
+    base: &'a str,
+}
+
+fn pr_body(body: PrBody<'_>) -> String {
+    let PrBody {
+        binding,
+        pages,
+        left_out,
+        waiting,
+        kept,
+        fixes,
+        slug,
+        base,
+    } = body;
+    let mut out = format!(
+        "Written by [Wenlan](https://wenlan.app) from the `{}` Space.",
+        binding.space
+    );
+    if pages > 0 {
+        out.push_str(&format!(
+            " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on. \
+             `AGENTS.md` points coding agents at it.",
+            plural(pages),
+            binding.folder
+        ));
+    }
+    if !fixes.is_empty() {
+        out.push_str(&format!(
+            "\n\n{} sentence{} in the repository's docs no longer match{} the code:\n",
+            fixes.len(),
+            plural(fixes.len()),
+            if fixes.len() == 1 { "es" } else { "" }
+        ));
+        for fix in fixes {
+            out.push_str(&format!("\n- `{}`: {}", fix.path, fix.reason));
+            let links: Vec<String> = fix
+                .code
+                .iter()
+                .map(|code| {
+                    let lines = if code.line_start == code.line_end {
+                        format!("L{}", code.line_start)
+                    } else {
+                        format!("L{}-L{}", code.line_start, code.line_end)
+                    };
+                    match slug {
+                        Some(slug) => format!(
+                            "[`{}` {lines}](https://github.com/{slug}/blob/{base}/{}#{lines})",
+                            code.path, code.path
+                        ),
+                        None => format!("`{}` {lines}", code.path),
+                    }
+                })
+                .collect();
+            if !links.is_empty() {
+                out.push_str(&format!(" ({})", links.join(", ")));
+            }
+        }
+        out.push_str(
+            "\n\nOnly those sentences change. Edit any of them here and Wenlan keeps your version.",
+        );
+    }
+    if kept > 0 {
+        out.push_str(&format!(
+            "\n\n{kept} wiki page{} edited in this repository keep{} the edit; Wenlan changed {} \
+             too, so its version waits in Wenlan.",
+            plural(kept),
+            if kept == 1 { "s" } else { "" },
+            if kept == 1 { "it" } else { "them" }
+        ));
+    }
     if left_out > 0 {
-        body.push_str(&format!(
+        out.push_str(&format!(
             "\n\n{left_out} page{} of the Space rest on personal notes or chats rather than this \
              code and stay out of the repository.",
-            if left_out == 1 { "" } else { "s" }
+            plural(left_out)
         ));
     }
     if waiting > 0 {
-        body.push_str(&format!(
+        out.push_str(&format!(
             "\n\n{waiting} more page{} cite code that is not on the default branch yet and \
              join once it is pushed.",
-            if waiting == 1 { "" } else { "s" }
+            plural(waiting)
         ));
     }
-    body
+    out
 }
 
 /// Record beside the pages which code lines each one relies on, with their
@@ -898,32 +1407,51 @@ pub fn frontmatter_origin_id(text: &str) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Write the pages into the repository and offer them as a pull request.
-/// Blocking: runs git and gh. The user's working copy is only read (its
-/// remote and objects); everything is written in `input.worktree`.
-pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanError> {
+/// Write the pages and the doc fixes into the repository and offer them as a
+/// pull request. Blocking: runs git and gh. The user's working copy is only
+/// read (its remote and objects); everything is written in `input.worktree`.
+///
+/// Nothing a person wrote in the repository is overwritten: a wiki page file
+/// someone edited is written from the page again only when the edit was
+/// taken back into Wenlan first (`input.taken_back`), and files people
+/// changed on the open wiki branch are kept as they are.
+pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     let binding = input.binding;
     let waiting = std::cell::Cell::new(0);
+    let kept = std::cell::Cell::new(0);
+    let fix_count = std::cell::Cell::new(0);
+    let taken_back = input.took_back;
     let result = |status, pages, branch: Option<&str>, pr_url, compare_url| RepoWikiPublishResult {
         status,
         pages,
         left_out: input.left_out,
         waiting: waiting.get(),
-        brought_in: 0,
-        to_review: 0,
         branch: branch.map(str::to_owned),
         pr_url,
         compare_url,
+        doc_fixes: fix_count.get(),
+        taken_back,
+        kept: kept.get(),
         at: input.now,
     };
-    if input.pages.is_empty() {
-        return Ok(result(
+    let nothing = |result: RepoWikiPublishResult| Published {
+        result,
+        applied: Vec::new(),
+        gone: Vec::new(),
+        kept_edits: None,
+    };
+    let open_fix = binding
+        .doc_fixes
+        .iter()
+        .any(|fix| fix.state != RepoDocFixState::Dismissed);
+    if input.pages.is_empty() && !open_fix {
+        return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
             None,
             None,
             None,
-        ));
+        )));
     }
     let repo = PathBuf::from(&binding.repo_root);
     let folder = normalize_folder(&binding.folder)?;
@@ -933,12 +1461,12 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
             repo.display()
         ))
     })?;
-
-    let mut command = git(&repo);
-    command.args(["fetch", "--quiet", "origin"]);
-    run(command, "git fetch origin")?;
-    let base = remote_default_branch(&repo);
-    prepare_worktree(&repo, &input.worktree, &base)?;
+    let prepared = match input.prepared {
+        Some(prepared) => prepared,
+        None => prepare(binding, &input.worktree)?,
+    };
+    let base = prepared.base.clone();
+    let base_tree = format!("origin/{base}");
 
     // A page's lines were read from the working copy; the pull request is
     // built on the remote's default branch. Each code basis is looked up there
@@ -995,14 +1523,14 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         }
     }
     waiting.set(held);
-    if ready.is_empty() {
-        return Ok(result(
+    if ready.is_empty() && !open_fix {
+        return Ok(nothing(result(
             RepoWikiPublishStatus::NothingToPublish,
             0,
             None,
             None,
             None,
-        ));
+        )));
     }
 
     let pages: Vec<Page> = ready
@@ -1016,101 +1544,137 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
             page
         })
         .collect();
-    let target = input.worktree.join(&folder);
-    let target_existed = target.exists();
-    // Changed in the repository: taken into the Space, or waiting for the
-    // user's review there. Either way the export must not move them aside.
-    let changed_remotely: Vec<String> = input
-        .adopt
-        .iter()
-        .chain(&input.keep_remote)
-        .map(|file| file.to_owned())
-        .collect();
-    crate::export::okf::adopt_current_bytes(&target, &changed_remotely)?;
-    let stats = export_okf_for_repository(&pages, &target, input.concept_paths, &published_bases)
-        .map_err(|error| match error {
-        WenlanError::Conflict(message) if target_existed => WenlanError::Conflict(format!(
-            "{message}. `{folder}/` in the repository holds files Wenlan did not write; \
-                 choose another folder"
-        )),
-        other => other,
-    })?;
-    if stats.failed > 0 {
-        return Err(WenlanError::Generic(format!(
-            "{} page file(s) could not be written into {folder}/",
-            stats.failed
-        )));
-    }
-    // A change waiting for review stays as the repository has it, so the
-    // pull request does not undo it.
-    for file in &input.keep_remote {
-        let mut command = git(&input.worktree);
-        command.args(["checkout", "HEAD", "--", &format!("{folder}/{file}")]);
-        if let Err(error) = run(command, "git checkout") {
-            log::warn!("[repo_wiki] could not keep {file} as the repository has it: {error}");
+    let export = !pages.is_empty();
+    if export {
+        let target = input.worktree.join(&folder);
+        let target_existed = target.exists();
+        let stats =
+            export_okf_for_repository(&pages, &target, input.concept_paths, &published_bases)
+                .map_err(|error| match error {
+                    WenlanError::Conflict(message) if target_existed => {
+                        WenlanError::Conflict(format!(
+                            "{message}. `{folder}/` in the repository holds files Wenlan did \
+                             not write; choose another folder"
+                        ))
+                    }
+                    other => other,
+                })?;
+        if stats.failed > 0 {
+            return Err(WenlanError::Generic(format!(
+                "{} page file(s) could not be written into {folder}/",
+                stats.failed
+            )));
         }
     }
-    crate::export::okf::adopt_current_bytes(&target, &input.keep_remote)?;
-    write_code_manifest(
-        &repo,
-        &base,
-        &target,
-        &published_bases,
-        &base_files,
-        &input.keep_remote,
-    )?;
-    let touched = maintain_agent_files(&input.worktree, &folder)?;
+    // A page file someone edited: taken back into Wenlan, the export above
+    // wrote it from the page again. Otherwise it goes back as they wrote it,
+    // and is counted the first time only: it stays an edit on every publish
+    // until someone changes the file or the page catches up.
+    let mut kept_edits = Vec::new();
+    for edit in &prepared.edits {
+        let taken = input.taken_back.contains(&edit.path);
+        if !(export && taken && input.worktree.join(&edit.path).is_file()) {
+            restore(&input.worktree, &edit.tree, &edit.path)?;
+        }
+        // Taken back, even with nothing exported: the page says what the file says.
+        if taken {
+            continue;
+        }
+        let key = kept_edit_key(edit);
+        if !binding.kept_edits.contains(&key) {
+            kept.set(kept.get() + 1);
+        }
+        kept_edits.push(key);
+    }
+    if export {
+        // The export moves an edited file aside before writing. Every edit
+        // was settled above, so the moved copy stays out of the pull request.
+        let mut command = git(&input.worktree);
+        command.args(["clean", "-fdq", "--", &format!("{folder}/{BUNDLE_ARCHIVE}")]);
+        run(command, "git clean")?;
+        let kept_files: Vec<String> = prepared
+            .edits
+            .iter()
+            .filter(|edit| !input.taken_back.contains(&edit.path))
+            .filter_map(|edit| edit.path.strip_prefix(&format!("{folder}/")))
+            .map(str::to_owned)
+            .collect();
+        write_code_manifest(
+            &repo,
+            &base,
+            &input.worktree.join(&folder),
+            &published_bases,
+            &base_files,
+            &kept_files,
+        )?;
+    }
+
+    // Doc fixes, against the default branch. One whose old text is gone was
+    // merged or overtaken; one in a file people changed on the wiki branch
+    // stays as they left it.
+    let carried: BTreeSet<&str> = prepared.carried.iter().map(String::as_str).collect();
+    let mut applied = Vec::new();
+    let mut gone = Vec::new();
+    for fix in &binding.doc_fixes {
+        let on_base = tree_file(&repo, &base_tree, &fix.path);
+        if on_base
+            .as_deref()
+            .map(|text| occurrences(text, &fix.old_text))
+            != Some(1)
+        {
+            gone.push(fix.id.clone());
+            continue;
+        }
+        if fix.state == RepoDocFixState::Dismissed || carried.contains(fix.path.as_str()) {
+            continue;
+        }
+        let file = input.worktree.join(&fix.path);
+        let text = std::fs::read_to_string(&file)?;
+        if occurrences(&text, &fix.old_text) != 1 {
+            continue;
+        }
+        std::fs::write(&file, text.replacen(&fix.old_text, &fix.new_text, 1))?;
+        applied.push(fix.id.clone());
+    }
+    fix_count.set(applied.len());
+    let branch_tree = format!("origin/{REPO_WIKI_BRANCH}");
+    for path in &prepared.carried {
+        restore(&input.worktree, &branch_tree, path)?;
+    }
+    if export {
+        maintain_agent_files(&input.worktree, &folder)?;
+    }
 
     let mut command = git(&input.worktree);
-    // A page file changed in the repository that no longer has a page in
-    // the Space is moved to `.wenlan-archive/` by the export; that copy is
-    // for the user, not for the pull request.
-    command
-        .args(["add", "--all", "--", &folder])
-        .arg(format!(":(exclude){folder}/.wenlan-archive"))
-        .args(&touched);
+    command.args(["add", "--all"]);
     run(command, "git add")?;
-    // The export marker alone changes when the Space took in pages changed
-    // in the repository: the pages already read the same, so there is
-    // nothing to offer.
+    let page_count = pages.len();
+    let settled = |result| Published {
+        result,
+        applied: applied.clone(),
+        gone: gone.clone(),
+        kept_edits: Some(kept_edits.clone()),
+    };
     let mut command = git(&input.worktree);
-    command
-        .args(["diff", "--cached", "--quiet", "--", "."])
-        .arg(format!(
-            ":(exclude){folder}/{}",
-            crate::export::okf::MARKER_FILE
-        ));
+    command.args(["diff", "--cached", "--quiet"]);
     if command
         .status()
         .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
         .success()
+        || only_bookkeeping_changed(&input.worktree, &folder)
     {
-        return Ok(result(
+        return Ok(settled(result(
             RepoWikiPublishStatus::NoChanges,
-            pages.len(),
+            page_count,
             None,
             None,
             None,
-        ));
-    }
-    if only_bookkeeping_changed(&input.worktree, &folder) {
-        return Ok(result(
-            RepoWikiPublishStatus::NoChanges,
-            pages.len(),
-            None,
-            None,
-            None,
-        ));
+        )));
     }
     // The commit stays on a detached HEAD: no local branch is added to the
     // user's repository, only the remote branch the push below names.
     let mut command = git(&input.worktree);
-    command.args([
-        "commit",
-        "--quiet",
-        "-m",
-        "docs(wiki): update the wiki from Wenlan",
-    ]);
+    command.args(["commit", "--quiet", "-m", COMMIT_SUBJECT]);
     run(command, "git commit")?;
     // The branch is rebuilt on the latest default branch every time. The
     // lease refuses to overwrite commits someone else pushed to it since the
@@ -1118,24 +1682,20 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
     // The open pull request already holds exactly this tree: pushing a fresh
     // commit of it would only churn the pull request.
     let mut command = git(&input.worktree);
-    command.args([
-        "diff",
-        "--quiet",
-        &format!("origin/{REPO_WIKI_BRANCH}"),
-        "HEAD",
-    ]);
-    if command
-        .status()
-        .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
-        .success()
+    command.args(["diff", "--quiet", &branch_tree, "HEAD"]);
+    if tree_exists(&repo, &branch_tree)
+        && command
+            .status()
+            .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
+            .success()
     {
-        return Ok(result(
+        return Ok(settled(result(
             RepoWikiPublishStatus::NoChanges,
-            pages.len(),
+            page_count,
             Some(REPO_WIKI_BRANCH),
             None,
             None,
-        ));
+        )));
     }
     let mut command = git(&input.worktree);
     command.args([
@@ -1151,14 +1711,28 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
     let compare_url = slug.as_ref().map(|slug| {
         format!("https://github.com/{slug}/compare/{base}...{REPO_WIKI_BRANCH}?expand=1")
     });
+    let body = pr_body(PrBody {
+        binding,
+        pages: page_count,
+        left_out: input.left_out,
+        waiting: waiting.get(),
+        kept: kept.get(),
+        fixes: binding
+            .doc_fixes
+            .iter()
+            .filter(|fix| applied.contains(&fix.id))
+            .collect(),
+        slug: slug.as_deref(),
+        base: &base,
+    });
     let pushed = |compare_url| {
-        Ok(result(
+        Ok(settled(result(
             RepoWikiPublishStatus::Pushed,
-            pages.len(),
+            page_count,
             Some(REPO_WIKI_BRANCH),
             None,
             compare_url,
-        ))
+        )))
     };
     let (Some(gh), Some(slug)) = (input.gh.as_ref(), slug.as_ref()) else {
         return pushed(compare_url);
@@ -1186,13 +1760,21 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         }
     };
     if !open.is_empty() {
-        return Ok(result(
+        // The description says what is in the pull request now.
+        let mut command = Command::new(gh);
+        command
+            .current_dir(&input.worktree)
+            .args(["pr", "edit", &open, "--repo", slug, "--body", &body]);
+        if let Err(error) = run(command, "gh pr edit") {
+            log::warn!("[repo_wiki] {error}");
+        }
+        return Ok(settled(result(
             RepoWikiPublishStatus::PrUpdated,
-            pages.len(),
+            page_count,
             Some(REPO_WIKI_BRANCH),
             Some(open),
             None,
-        ));
+        )));
     }
     let mut command = Command::new(gh);
     command.current_dir(&input.worktree).args([
@@ -1205,9 +1787,9 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         "--base",
         &base,
         "--title",
-        "docs(wiki): update the wiki from Wenlan",
+        COMMIT_SUBJECT,
         "--body",
-        &pr_body(binding, pages.len(), input.left_out, waiting.get()),
+        &body,
     ]);
     match run(command, "gh pr create") {
         Ok(out) => {
@@ -1216,13 +1798,13 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
                 .rev()
                 .find(|line| line.starts_with("https://"))
                 .map(str::to_owned);
-            Ok(result(
+            Ok(settled(result(
                 RepoWikiPublishStatus::PrOpened,
-                pages.len(),
+                page_count,
                 Some(REPO_WIKI_BRANCH),
                 url,
                 None,
-            ))
+            )))
         }
         Err(error) => {
             log::warn!("[repo_wiki] {error}");
@@ -1336,12 +1918,7 @@ pub fn mark_daily_started_at(path: &Path, space: &str, date: &str) -> Result<(),
 
 /// A folder name for `space` that is safe on every platform.
 pub fn worktree_for(space: &str) -> PathBuf {
-    worktrees_root().join(sanitize_space(space))
-}
-
-/// `space` as a file name: letters, digits, `-` and `_`, the rest `_`.
-fn sanitize_space(space: &str) -> String {
-    space
+    let safe: String = space
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -1350,7 +1927,8 @@ fn sanitize_space(space: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+    worktrees_root().join(safe)
 }
 
 #[cfg(test)]

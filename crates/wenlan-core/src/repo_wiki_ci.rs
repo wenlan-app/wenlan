@@ -52,6 +52,25 @@ pub struct ManifestPage {
     /// The page's id in Wenlan.
     pub id: String,
     pub code: Vec<ManifestSpan>,
+    /// SHA-256 of the page file as `wenlan wiki refresh` last wrote it. A
+    /// file that still matches was changed by the refresh, not by a person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written: Option<String>,
+}
+
+/// SHA-256 of a page file's text, as [`ManifestPage::written`] records it.
+pub fn file_digest(text: &str) -> String {
+    use sha2::Digest as _;
+    format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+}
+
+/// Whether the page file `file` (relative to the wiki folder), reading
+/// `text`, is as `wenlan wiki refresh` wrote it, by the manifest `manifest`.
+pub fn written_by_refresh(manifest: &str, file: &str, text: &str) -> bool {
+    serde_json::from_str::<CodeManifest>(manifest)
+        .ok()
+        .and_then(|manifest| manifest.pages.get(file)?.written.clone())
+        .is_some_and(|written| written == file_digest(text))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -192,7 +211,14 @@ pub fn build_manifest<'a>(
                 })
             })
             .collect();
-        manifest.pages.insert(file, ManifestPage { id, code });
+        manifest.pages.insert(
+            file,
+            ManifestPage {
+                id,
+                code,
+                written: None,
+            },
+        );
     }
     manifest
 }
@@ -422,8 +448,9 @@ pub fn apply_moves(repo: &Path, folder: &str, found: &WikiCheck) -> Result<usize
         let text = std::fs::read_to_string(&path)?;
         let next = rewrite_page_code(&text, &spans, folder);
         if next != text {
-            std::fs::write(&path, next)?;
+            std::fs::write(&path, &next)?;
         }
+        entry.written = Some(file_digest(&next));
         changed += 1;
     }
     if changed > 0 {
@@ -503,9 +530,10 @@ pub fn reanchor(
         }
         let next = rewrite_page_code(&text, &spans, folder);
         if next != text {
-            std::fs::write(&path, next)?;
+            std::fs::write(&path, &next)?;
         }
         entry.code = code;
+        entry.written = Some(file_digest(&next));
         out.push(Reanchored::Updated { file: file.clone() });
     }
     manifest.base = base;

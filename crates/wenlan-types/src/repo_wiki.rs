@@ -52,6 +52,97 @@ pub struct RepoWikiBinding {
     /// Local date (`YYYY-MM-DD`) of the last daily run that started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_daily_run: Option<String>,
+    /// Fixes to the repository's own docs (README, docs, AGENTS.md and the
+    /// like) an AI tool found, waiting for or in the pull request, and the
+    /// ones the user declined.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub doc_fixes: Vec<RepoDocFix>,
+    /// The last time an AI tool read the repository's docs against the code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_check: Option<RepoDocCheck>,
+    /// Wiki page files people edited that the repository keeps as they
+    /// wrote them, by path and digest, so each is reported once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub kept_edits: Vec<String>,
+}
+
+/// Where a doc fix stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoDocFixState {
+    /// Found; goes into the pull request on the next publish.
+    Pending,
+    /// In the open pull request.
+    InPr,
+    /// The user declined it; the same fix is not suggested again.
+    Dismissed,
+}
+
+/// Code lines a doc fix rests on, relative to the repository root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepoDocCode {
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+}
+
+/// One sentence of a repository doc the code no longer agrees with, and what
+/// it should say.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoDocFix {
+    /// Stable for the same file and old text.
+    pub id: String,
+    /// File relative to the repository root, `/` separated.
+    pub path: String,
+    /// Text in the file now; occurs there exactly once.
+    pub old_text: String,
+    pub new_text: String,
+    /// One sentence on what the code says instead.
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub code: Vec<RepoDocCode>,
+    pub state: RepoDocFixState,
+    /// Unix seconds.
+    pub found_at: i64,
+}
+
+/// When the docs were last read against the code, and how many.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoDocCheck {
+    /// Unix seconds.
+    pub at: i64,
+    pub docs: u32,
+}
+
+/// Body of `POST /api/spaces/{space}/wiki/docs`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RepoDocsRequest {
+    /// Record a fix to a repository doc.
+    Suggest {
+        path: String,
+        old_text: String,
+        new_text: String,
+        reason: String,
+        #[serde(default)]
+        code: Vec<RepoDocCode>,
+    },
+    /// The user declines a fix; it leaves the pull request on the next
+    /// publish and is not suggested again.
+    Dismiss { id: String },
+    /// An AI tool finished reading `docs` docs against the code.
+    Checked { docs: u32 },
+}
+
+/// Reply of `POST /api/spaces/{space}/wiki/docs`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoDocsReply {
+    /// The fix suggested or dismissed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<RepoDocFix>,
+    /// Fixes waiting for or in the pull request.
+    pub open: usize,
 }
 
 /// Body of `PUT /api/spaces/{space}/wiki/repo`.
@@ -117,15 +208,6 @@ pub struct RepoWikiPublishResult {
     /// may not match it). They go in once that code is pushed.
     #[serde(default)]
     pub waiting: usize,
-    /// Pages changed in the repository (by hand on GitHub, or a merged
-    /// refresh pull request) that this publish brought into the Space.
-    #[serde(default)]
-    pub brought_in: usize,
-    /// Pages changed in the repository that the user edited in Wenlan too:
-    /// the repository's version waits as a revision card, and the repository
-    /// keeps it until the card is decided.
-    #[serde(default)]
-    pub to_review: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +215,19 @@ pub struct RepoWikiPublishResult {
     /// GitHub page that opens a pull request for the branch by hand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compare_url: Option<String>,
+    /// Doc fixes in this publish's pull request.
+    #[serde(default)]
+    pub doc_fixes: usize,
+    /// Wiki pages changed in the repository (by a person, or by a merged
+    /// `wenlan wiki refresh`), taken back into Wenlan before the publish so
+    /// the change is kept.
+    #[serde(default)]
+    pub taken_back: usize,
+    /// Wiki pages changed in the repository while Wenlan changed them too:
+    /// the repository keeps its text, and its version waits in Wenlan as a
+    /// revision card.
+    #[serde(default)]
+    pub kept: usize,
     /// Unix seconds.
     pub at: i64,
 }
