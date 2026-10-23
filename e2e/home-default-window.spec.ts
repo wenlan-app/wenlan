@@ -133,7 +133,7 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   expect(overflow.content).toBeLessThanOrEqual(0);
 
   // Adding a source opens its dialog without leaving the Wiki.
-  await checklist.getByRole("button", { name: "Add a source" }).click();
+  await checklist.getByRole("button", { name: /Folder or files/ }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);

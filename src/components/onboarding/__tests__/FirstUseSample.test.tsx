@@ -30,7 +30,7 @@ function skipToResult() {
 
 function openAiPanel() {
   skipToResult();
-  fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
+  fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
 }
 
 function stubMatchMedia(initial: boolean) {
@@ -78,13 +78,13 @@ describe("FirstUseSample demo isolation", () => {
     renderSample();
     skipToResult();
     expect(
-      screen.getByText("An unhurried Tainan weekend"),
+      screen.getByText("v2 launch plan"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("sample-citation-sample-cite-2"));
     expect(screen.getByTestId("sample-citation-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
-    expect(screen.getByText("Let AI use your knowledge")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
+    expect(screen.getByRole("heading", { name: "Commands for later" })).toBeInTheDocument();
     // The only daemon-adjacent call allowed on the sample path is clipboard.
     expect(mockedInvoke).not.toHaveBeenCalled();
   });
@@ -140,7 +140,7 @@ describe("FirstUseSample demo isolation", () => {
 describe("FirstUseSample source rack and page flow", () => {
   it("leads with the page, shows where it came from, then an AI answering from it", () => {
     renderSample();
-    expect(screen.getByText("An unhurried Tainan weekend")).toBeInTheDocument();
+    expect(screen.getByText("v2 launch plan")).toBeInTheDocument();
     expect(screen.getByTestId("sample-source-sample-memory")).toBeInTheDocument();
     expect(screen.getByTestId("sample-source-sample-file")).toBeInTheDocument();
     expect(screen.queryByTestId("sample-source-sample-page")).not.toBeInTheDocument();
@@ -154,9 +154,9 @@ describe("FirstUseSample source rack and page flow", () => {
     expect(screen.getByTestId("sample-source-sample-memory")).toHaveAttribute("data-dimmed", "true");
 
     skipToResult();
-    expect(screen.getByText("An unhurried Tainan weekend")).toBeInTheDocument();
+    expect(screen.getByText("v2 launch plan")).toBeInTheDocument();
     expect(screen.queryByTestId("sample-source-sample-memory")).not.toBeInTheDocument();
-    expect(screen.getByText("What's left before the Tainan weekend?")).toBeInTheDocument();
+    expect(screen.getByText("When does v2 launch, and what does it cost?")).toBeInTheDocument();
   });
 
   it("opens the file original with path and line context", () => {
@@ -166,12 +166,12 @@ describe("FirstUseSample source rack and page flow", () => {
     const dialog = screen.getByTestId("sample-citation-dialog");
     expect(dialog).toHaveAttribute("data-source-type", "file");
     expect(
-      within(dialog).getByText("File trip folder / packing-list.md · line 2"),
+      within(dialog).getByText("File product folder / v2-meeting-notes.md · line 2"),
     ).toBeInTheDocument();
     // The quote appears twice: once as the cited excerpt, once highlighted
     // in the file original.
     expect(
-      within(dialog).getAllByText("Book a stay near the Tainan station and pack light."),
+      within(dialog).getAllByText("Launch stays on October 31."),
     ).toHaveLength(2);
   });
 
@@ -189,22 +189,22 @@ describe("FirstUseSample source rack and page flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("reveals the AI step only through Use with AI, with a way back", () => {
+  it("reveals the AI step only through Commands for later, with a way back", () => {
     renderSample();
     skipToResult();
     expect(
-      screen.queryByText("Let AI use your knowledge"),
+      screen.queryByRole("heading", { name: "Commands for later" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Use with AI" }));
+    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
     expect(
-      screen.getByText("Let AI use your knowledge"),
+      screen.getByRole("heading", { name: "Commands for later" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to the page" }));
     expect(
-      screen.queryByText("Let AI use your knowledge"),
+      screen.queryByRole("heading", { name: "Commands for later" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText("An unhurried Tainan weekend"),
+      screen.getByText("v2 launch plan"),
     ).toBeInTheDocument();
   });
 });
@@ -248,6 +248,7 @@ describe("FirstUseSample AI-use panel", () => {
   it("suggests own-data recall: @wenlan for ChatGPT, slash commands otherwise", () => {
     renderSample();
     openAiPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "ChatGPT" }));
     expect(
       screen.getByText(/@wenlan recall the decisions/),
     ).toBeInTheDocument();
@@ -266,6 +267,7 @@ describe("FirstUseSample AI-use panel", () => {
   it("shows a read-only page instead of a handoff command for ChatGPT", () => {
     renderSample();
     openAiPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "ChatGPT" }));
     expect(
       screen.getByText(/ChatGPT can read but not write/),
     ).toBeInTheDocument();
@@ -307,8 +309,7 @@ describe("FirstUseSample AI-use panel", () => {
     renderSample();
     openAiPanel();
     // Handoff only exists on writing-capable local clients (ChatGPT offers
-    // none), so run this against Codex.
-    fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
+    // none); the panel opens on Codex.
     const panel = screen.getByRole("tabpanel");
     fireEvent.click(
       within(panel).getByRole("button", { name: "Copy command" }),
@@ -378,7 +379,8 @@ describe("FirstUseSample AI-use panel", () => {
   it("explains read-only ChatGPT without a handoff command but keeps writes for local clients", () => {
     renderSample();
     openAiPanel();
-    // Default client is ChatGPT: explain the limitation, never offer a save action.
+    fireEvent.click(screen.getByRole("tab", { name: "ChatGPT" }));
+    // ChatGPT: explain the limitation, never offer a save action.
     expect(
       screen.getByText(/ChatGPT can read but not write/),
     ).toBeInTheDocument();
@@ -397,6 +399,7 @@ describe("FirstUseSample AI-use panel", () => {
   it("shows the ChatGPT read-only page only for ChatGPT", () => {
     renderSample();
     openAiPanel();
+    fireEvent.click(screen.getByRole("tab", { name: "ChatGPT" }));
     expect(
       screen.getByText(/through the web relay/),
     ).toBeInTheDocument();
@@ -451,16 +454,18 @@ describe("FirstUseSample AI-use panel", () => {
     renderSample({ onFinish });
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.sample.skipToResult") }));
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.sample.useWithAi") }));
-    expect(screen.getByText(i18n.t("firstUse.sample.chatgptNote"))).toBeVisible();
+    // Opens on Codex, the tool the sample chat used.
+    expect(screen.getByRole("tab", { name: "Codex" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByText(i18n.t("firstUse.sample.chatgptNote"))).not.toBeInTheDocument();
+    expect(screen.getByText("/handoff")).toBeVisible();
     expect(screen.getByText(i18n.t("firstUse.sample.useBody"))).toBeVisible();
-    expect(screen.queryByText("/handoff")).not.toBeInTheDocument();
     // Header back and the final button share the label; the final one is last.
     const finishButtons = screen.getAllByRole("button", { name: i18n.t("firstUse.sample.finish") });
     fireEvent.click(finishButtons[finishButtons.length - 1]!);
     expect(onFinish).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
-    expect(screen.queryByText(i18n.t("firstUse.sample.chatgptNote"))).not.toBeInTheDocument();
-    expect(screen.getByText("/handoff")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: "ChatGPT" }));
+    expect(screen.getByText(i18n.t("firstUse.sample.chatgptNote"))).toBeVisible();
+    expect(screen.queryByText("/handoff")).not.toBeInTheDocument();
     expect(mockedInvoke).not.toHaveBeenCalled();
   });
 });

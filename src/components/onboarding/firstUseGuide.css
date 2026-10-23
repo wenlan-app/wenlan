@@ -275,14 +275,8 @@
 
 .fus-origin-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
   gap: 12px;
-}
-
-@media (max-width: 640px) {
-  .fus-origin-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .fus-chat-heading {
@@ -426,6 +420,14 @@
 .fus-result-rule {
   border-top: 1px solid var(--mem-border);
   margin: 0 0 12px;
+}
+
+.fus-result-heading {
+  font-family: var(--mem-font-body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mem-text-secondary);
+  margin: 4px 0 6px;
 }
 
 .fus-result-paragraph {

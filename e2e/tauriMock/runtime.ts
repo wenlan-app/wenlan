@@ -159,6 +159,7 @@ export class TauriMockRuntime {
   private firstWriteRemoteMutationPending: boolean;
   private pageSequence: number;
   private backgroundAiEnabled = false;
+  private lockMyPages = false;
   private projectionFailureIssued = false;
 
   constructor(
@@ -218,6 +219,19 @@ export class TauriMockRuntime {
     if (command === "set_background_ai_enabled") {
       this.backgroundAiEnabled = requiredBoolean(command, args, "enabled");
       return null;
+    }
+    if (command === "get_lock_my_pages") return this.lockMyPages;
+    if (command === "set_lock_my_pages") {
+      this.lockMyPages = requiredBoolean(command, args, "enabled");
+      if (!this.lockMyPages) return null;
+      // Like the daemon: lock every unlocked page a person wrote or edited.
+      let locked = 0;
+      this.pages = this.pages.map((page) => {
+        if (!page.user_edited || page.review_required || page.creation_kind === "entity") return page;
+        locked += 1;
+        return { ...page, review_required: true };
+      });
+      return locked;
     }
     if (command === "get_activity") {
       const activity = baseResponse(command, args, { activityRows: this.activityRows, memoryCount: this.memories.length }) as Record<string, unknown>;
@@ -399,6 +413,8 @@ export class TauriMockRuntime {
       case "publish_page_draft": return this.publishPageDraft(args);
       case "discard_page_draft": return this.discardPageDraft(args);
       case "distill_review": return structuredClone(this.distillReview);
+      // The fixture library has no material waiting for pages.
+      case "list_new_material": return { items: [], total: 0 };
       case "list_pending_revisions": return structuredClone(this.fixture.pendingRevisions ?? []);
       case "list_refinements": return { proposals: structuredClone(this.refinements) };
       case "accept_refinement": return this.resolveRefinement(args, true);

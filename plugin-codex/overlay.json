@@ -405,6 +405,16 @@
             "   judged whether that matters. Give each entry of `code_checks` to a helper",
             "   on a small model when you can start one (a subagent on a smaller model):"
           ]
+        },
+        {
+          "from": [
+            "   on a small model: in Claude Code, start an `Agent` with `model: \"haiku\"`,",
+            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+          ],
+          "to": [
+            "   on a small model when you can start one (a subagent on a smaller model):",
+            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+          ]
         }
       ]
     }

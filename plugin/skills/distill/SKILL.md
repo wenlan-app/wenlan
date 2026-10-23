@@ -12,6 +12,11 @@ user-invocable: false
 
 # /wenlan distill
 
+Advanced. For new users and everyday use, `/wenlan steep` writes pages from
+new material (its small model groups items by topic) and keeps them up to
+date; send a plain "organize my notes" request there. Use distill for a
+by-hand clustering pass or `rebuild <page-id>`.
+
 Force a distillation pass now. The daemon's background distill cycles run
 on its own clock; `/wenlan distill` is the explicit user-triggered pass.
 
@@ -236,32 +241,12 @@ A note's page id never goes in `source_memory_ids`. A basis that is `archived`,
 A `basis:` line in the `write_page` reply that shows an entry still `pending`
 means that note changed after you read it: diff it again before moving on.
 
-### 3.6 Resolve markdown paths for the report
+### 3.6 Name pages by title
 
-After every successful `write_page`, resolve the
-on-disk markdown file by page id. Never derive the slug client-side;
-the daemon owns filename collision handling and punctuation rules.
-
-Use `~/.wenlan/pages/.wenlan/state.json`:
-
-```
-Bash: python3 -c '
-import json, os, sys
-state_path = os.path.expanduser("~/.wenlan/pages/.wenlan/state.json")
-pid = sys.argv[1]
-filename = None
-try:
-    with open(state_path) as f:
-        filename = json.load(f).get("pages", {}).get(pid, {}).get("file")
-except FileNotFoundError:
-    pass
-print(f"~/.wenlan/pages/{filename}" if filename else "(no md projection on disk)")
-' "<page_id>"
-```
-
+Report each page by its title. Do not guess or print a file path: the pages
+folder can be anywhere the user chose, and the page opens in the Wenlan app.
 For new-page calls, parse `<page_id>` from either `Created page <id>` or
-`Attached to existing page <id>`. For refreshes, use the known
-`existing_page_id`.
+`Attached to existing page <id>` only to follow up on an `Attached` result.
 
 ### 3.7 Surface orphan-topic suggestions
 
@@ -303,9 +288,7 @@ Scope `<scope>` is up to date — no new memories to distill.
 ```
 Distilled N page(s) from <total> memories in scope `<scope>`:
   - <Title>  v1, synthesized from <K> sources
-    Open:     ~/.wenlan/pages/<slug>.md
   - <Title>  v3 → v4: +mem_xyz, +250 chars
-    Open:     ~/.wenlan/pages/<slug>.md
   ...
 ```
 
@@ -357,9 +340,7 @@ just too low quality.
 
 Rules:
 - **Titles, not page ids.** Ids visually truncate; titles read clean.
-- Every synthesized or refreshed page gets its own `Open:` line with
-  the daemon-resolved markdown path. No page body in chat — `/wenlan pages
-  "<title>"` to preview one.
+- No page body in chat — `/wenlan pages "<title>"` to preview one.
 - `<total>` = sum of `source_ids.len()` across the clusters that were
   actually synthesized.
 - If the pass produced fewer pages than expected, it's the clustering
@@ -369,8 +350,8 @@ Rules:
 ## When to use
 
 - User says "distill", "synthesize", "rebuild the page on X".
-- After a bulk import — daemon distill cycles handle this in the background;
-  user can force a pass for immediate visibility.
+- Not after a bulk import: `/wenlan steep` writes pages from imported
+  material (notes, chats, files), which distill's clustering often misses.
 - `/wenlan distill rebuild <page-id>` when you want to wipe a page you
   previously edited and have the daemon regenerate from current
   sources. Destructive: your prose goes away. Use after you are

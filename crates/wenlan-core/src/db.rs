@@ -91,6 +91,7 @@ mod source_sync;
 mod space_context;
 mod space_rename;
 mod steep;
+mod steep_new;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -3620,6 +3621,9 @@ pub struct DistillationCluster {
     pub entity_name: Option<String>,
     pub space: Option<String>,
     pub estimated_tokens: usize,
+    /// Daemon-side matching only. Never sent to a caller: a few hundred floats
+    /// per cluster made the distill reply too big for an AI tool to read.
+    #[serde(skip_serializing)]
     pub centroid_embedding: Option<Vec<f32>>,
 }
 
@@ -58241,6 +58245,34 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("set_page_review_required: {e}")))?;
         Ok(changed > 0)
+    }
+
+    /// Turn on the review lock for every page a person wrote or edited
+    /// (`user_edited = 1`, which also covers a page made in the app), for
+    /// "Lock pages I've written" being switched on. Unpublished drafts are
+    /// locked too, so they keep the lock once published. Entity shadow rows
+    /// and archived pages are skipped. Returns how many published pages this
+    /// call locked; pages already locked and drafts are not counted. Like a
+    /// single lock toggle, it does not bump any page's version.
+    pub async fn lock_user_edited_pages(&self) -> Result<u64, WenlanError> {
+        let conn = self.conn.lock().await;
+        let lock = |status: &'static str| {
+            format!(
+                "UPDATE pages SET review_required = 1 \
+                 WHERE COALESCE(user_edited, 0) = 1 \
+                   AND COALESCE(review_required, 0) = 0 \
+                   AND status = '{status}' \
+                   AND COALESCE(kind, 'concept') != 'entity'"
+            )
+        };
+        let locked = conn
+            .execute(&lock("active"), ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages: {e}")))?;
+        conn.execute(&lock("draft"), ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages drafts: {e}")))?;
+        Ok(locked)
     }
 
     /// [`Self::set_page_refresh_blocked_reason`] fenced to the compile input

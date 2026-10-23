@@ -17,6 +17,7 @@ import {
   type Page,
   type RegisteredSource,
 } from "../../../lib/tauri";
+import type { WritePagesState } from "../../memory/askAi/WritePages";
 import { GettingStarted } from "../GettingStarted";
 import {
   ESTABLISHED_LIBRARY_PAGES,
@@ -73,6 +74,7 @@ function agent(name: string, overrides: Partial<AgentConnection> = {}): AgentCon
 }
 
 const folder = { id: "src-1", source_type: "directory", path: "/notes" } as RegisteredSource;
+const written = page({ id: "page-w", title: "Bread proofing", creation_kind: "distilled", source_memory_ids: ["m1", "m2"] });
 const recall = { id: "first-recall", first_triggered_at: 1, acknowledged_at: null, payload: null } as MilestoneRecord;
 
 /** The library the card reads through the shared inventory: active pages and
@@ -82,13 +84,19 @@ function mockLibrary(pages: Page[]) {
     pages.filter((p) => (status === "draft") === (p.status === "draft")));
 }
 
-function renderCard(pages: Page[] = [], handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {}) {
+function renderCard(
+  pages: Page[] = [],
+  handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onImportChats" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {},
+  writePages: WritePagesState | null = null,
+) {
   const props = {
     onWriteNote: vi.fn(),
     onConnectTool: vi.fn(),
     onAddSources: vi.fn(),
+    onImportChats: vi.fn(),
     onSeeExample: vi.fn(),
     ...handlers,
+    writePages,
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mockLibrary(pages);
@@ -104,14 +112,14 @@ const title = () => i18n.t("firstUse.checklist.title");
 
 describe("gettingStartedProgress", () => {
   it("reads every step from the library as it stands", () => {
-    expect(gettingStartedProgress({ pages: [], agents: [], sources: [], milestones: [] }))
-      .toEqual({ note: false, tool: false, sources: false, recall: false });
+    expect(gettingStartedProgress({ pages: [], agents: [], milestones: [] }))
+      .toEqual({ note: false, tool: false, pages: false, recall: false });
     expect(gettingStartedProgress({
-      pages: [page()],
+      pages: [page(), written],
       agents: [agent("claude-code")],
-      sources: [folder],
+     
       milestones: [recall],
-    })).toEqual({ note: true, tool: true, sources: true, recall: true });
+    })).toEqual({ note: true, tool: true, pages: true, recall: true });
   });
 
   it("does not count Wenlan's own identities", () => {
@@ -123,7 +131,7 @@ describe("gettingStartedProgress", () => {
         agent("wenlan-cli"),
         agent("manual"),
       ],
-      sources: [],
+     
       milestones: [],
     });
     expect(progress.tool).toBe(false);
@@ -135,7 +143,7 @@ describe("gettingStartedProgress", () => {
     const progress = gettingStartedProgress({
       pages: [],
       agents: [agent("codex", { last_seen_at: null, memory_count: 0 })],
-      sources: [],
+     
       milestones: [],
     });
     expect(progress.tool).toBe(true);
@@ -143,17 +151,23 @@ describe("gettingStartedProgress", () => {
 
   it("does not count a draft as a saved note, because recall cannot see it yet", () => {
     expect(gettingStartedProgress({
-      pages: [page({ status: "draft" })], agents: [], sources: [], milestones: [],
+      pages: [page({ status: "draft" })], agents: [], milestones: [],
     }).note).toBe(false);
   });
 
-  it("counts imported source pages as brought-in material and distilled pages as AI use", () => {
+  it("does not count copies of brought-in files as a page the user wrote or one written from material", () => {
+    for (const kind of ["imported", "source"]) {
+      const progress = gettingStartedProgress({
+        pages: [page({ creation_kind: kind })], agents: [], milestones: [],
+      });
+      expect(progress).toMatchObject({ note: false, pages: false });
+    }
+  });
+
+  it("counts a page written from material as that step, not as writing or asking", () => {
     expect(gettingStartedProgress({
-      pages: [page({ creation_kind: "imported" })], agents: [], sources: [], milestones: [],
-    }).sources).toBe(true);
-    expect(gettingStartedProgress({
-      pages: [page({ creation_kind: "distilled" })], agents: [], sources: [], milestones: [],
-    }).recall).toBe(true);
+      pages: [written], agents: [], milestones: [],
+    })).toMatchObject({ pages: true, note: false, recall: false });
   });
 });
 
@@ -177,11 +191,16 @@ describe("GettingStarted", () => {
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.tool.action") })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.note.action") }));
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.sources.action") }));
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") }));
+    fireEvent.click(screen.getByTestId("getting-started-pages-folder"));
+    fireEvent.click(screen.getByTestId("getting-started-pages-chats"));
+    fireEvent.click(screen.getByTestId("getting-started-pages-sample"));
     expect(props.onWriteNote).toHaveBeenCalledOnce();
     expect(props.onAddSources).toHaveBeenCalledOnce();
+    expect(props.onImportChats).toHaveBeenCalledOnce();
     expect(props.onSeeExample).toHaveBeenCalledOnce();
+    // The example is offered once, in the pages step; asking waits for a page.
+    expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.bodyConnected"));
+    expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") })).toBeNull();
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
 
@@ -205,7 +224,7 @@ describe("GettingStarted", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listRegisteredSources).mockResolvedValue([folder]);
     vi.mocked(listOnboardingMilestones).mockResolvedValue([recall]);
-    renderCard([page()]);
+    renderCard([page(), written]);
     await vi.waitFor(() => expect(listOnboardingMilestones).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByTestId("getting-started")).toBeNull();
@@ -217,6 +236,62 @@ describe("GettingStarted", () => {
     expect(screen.getByTestId("getting-started-note")).toHaveAttribute("data-done", "false");
     expect(screen.getByText(i18n.t("firstUse.checklist.steps.note.draftBody"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.copy") })).toBeNull();
+  });
+
+  it("does not mistake copies of brought-in files for a draft or a page to ask about", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" })]);
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.getByTestId("getting-started-note")).toHaveAttribute("data-done", "false");
+    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.note.draftBody"))).toBeNull();
+    expect(screen.queryByText(/ISP Outage Runbook/)).toBeNull();
+  });
+
+  it("asks about a page written from material before anything else", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" }), written]);
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
+    expect(screen.getByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeInTheDocument();
+  });
+
+  it("keeps the pages step open, and the question back, while the tool is still writing", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    const working = {
+      view: { kind: "working", written: [written], writing: true, stuck: false },
+      stepView: { kind: "working", written: [written], writing: true, stuck: false },
+      onDemand: true,
+      loaded: true,
+      run: null,
+      tool: { family: "claude-code", name: "Claude Code" },
+      toolName: "Claude Code",
+      opensTool: true,
+      command: "/wenlan steep",
+      copied: false,
+      waiting: null,
+      start: vi.fn(),
+      copyCommand: vi.fn(),
+      close: vi.fn(),
+    } as unknown as WritePagesState;
+    renderCard([written], {}, working);
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
+    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeNull();
+  });
+
+  it("can skip the pages step when there is nothing to bring in", async () => {
+    renderCard();
+    await screen.findByRole("heading", { name: title() });
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.pages.skip") }));
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
+    expect(localStorage.getItem("onboarding:pagesStepSkipped")).toBe("1");
+  });
+
+  it("says what the pages step will do before there is anything to hand over", async () => {
+    renderCard();
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.getByTestId("getting-started-pages")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.body"));
   });
 
   type AskKey = "prompt" | "question" | "askLine" | "askIn" | "waiting" | "action" | "copy" | "copied";
@@ -339,7 +414,7 @@ describe("useGettingStartedState", () => {
     const { result } = renderState();
     await waitFor(() => expect(result.current.visible).toBe(true));
     expect(result.current.doneCount).toBe(2);
-    expect(result.current.progress).toMatchObject({ note: true, tool: true, sources: false, recall: false });
+    expect(result.current.progress).toMatchObject({ note: true, tool: true, pages: false, recall: false });
 
     act(() => result.current.setDismissed(true));
     expect(result.current.visible).toBe(true);
@@ -378,7 +453,7 @@ describe("useGettingStartedState", () => {
     expect(established.result.current.visible).toBe(false);
     established.unmount();
 
-    mockLibrary([page()]);
+    mockLibrary([page(), written]);
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listRegisteredSources).mockResolvedValue([folder]);
     vi.mocked(listOnboardingMilestones).mockResolvedValue([recall]);

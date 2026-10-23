@@ -266,6 +266,27 @@ pub async fn set_background_ai_enabled(
 }
 
 #[tauri::command]
+pub async fn get_lock_my_pages(state: tauri::State<'_, State>) -> Result<bool, String> {
+    let client = { state.read().await.client.clone() };
+    client.lock_my_pages().await
+}
+
+/// Turning it on also locks the pages the user already wrote or edited and
+/// returns that count; turning it off leaves existing locks alone.
+#[tauri::command]
+pub async fn set_lock_my_pages(
+    state: tauri::State<'_, State>,
+    enabled: bool,
+) -> Result<Option<u64>, String> {
+    let client = { state.read().await.client.clone() };
+    client.set_lock_my_pages(enabled).await?;
+    if !enabled {
+        return Ok(None);
+    }
+    Ok(Some(client.lock_edited_pages().await?.locked))
+}
+
+#[tauri::command]
 pub async fn set_setup_completed(
     state: tauri::State<'_, State>,
     completed: bool,
@@ -1946,6 +1967,18 @@ pub async fn distill_review(
         s.client.clone()
     };
     client.distill_review().await
+}
+
+/// The Wiki home's "Ask AI to write pages" card: material no page uses yet.
+#[tauri::command]
+pub async fn list_new_material(
+    state: tauri::State<'_, State>,
+) -> Result<wenlan_types::SteepNewListResponse, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    client.steep_new_list().await
 }
 
 #[tauri::command]

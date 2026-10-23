@@ -4,8 +4,8 @@ description: >
   The one front door to Wenlan. Takes plain words after `/wenlan` and runs the
   right Wenlan workflow; bare `/wenlan` shows status or starts setup. Use for:
   setting up or fixing Wenlan ("set up wenlan", "is wenlan working", "裝好了嗎"),
-  turning memories into notes ("distill", "整理成筆記"), bringing out of date
-  notes up to date ("steep", "沉澱"), getting to know a code
+  turning what was imported or saved into notes and bringing out of date
+  notes up to date ("steep", "沉澱", "整理成筆記"), getting to know a code
   repository ("build a wiki for this repo", "認識這個倉庫"), opening or listing notes
   ("open my note on X", "打開筆記"), checking memory quality or cleaning
   up ("lint", "檢查重複", "清一清"), reviewing pending items ("review what's
@@ -63,8 +63,8 @@ Match the request to one row. Old command words count as their row.
 | The user wants | Workflow | Example |
 |---|---|---|
 | Set up, repair, upgrade, check it works | setup | `/wenlan setup`, `/wenlan 好像壞了` |
-| Turn memories into notes, refresh notes, rebuild one note | distill | `/wenlan distill`, `/wenlan 整理成筆記` |
-| Bring out of date pages up to date now, with this AI tool | steep | `/wenlan steep`, `/wenlan 沉澱`, `/wenlan 把過期的筆記更新` |
+| Turn what was imported or saved into notes, and bring out of date notes up to date, with this AI tool | steep | `/wenlan steep`, `/wenlan 整理成筆記`, `/wenlan 沉澱`, `/wenlan 把過期的筆記更新` |
+| Rebuild one note from its sources, or a clustering pass by hand (advanced) | distill | `/wenlan distill rebuild <note>`, `/wenlan distill` |
 | Get to know this repository; write a small wiki about it and keep it current | wiki | `/wenlan wiki`, `/wenlan 認識這個倉庫`, `/wenlan 幫這個倉庫建 wiki` |
 | List, find, open or print a note | pages | `/wenlan pages release`, `/wenlan 打開那篇筆記` |
 | Check memory quality, duplicates, vocabulary; repair findings | lint | `/wenlan lint`, `/wenlan lint repair`, `/wenlan 檢查重複` |

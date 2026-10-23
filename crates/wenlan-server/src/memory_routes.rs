@@ -1132,7 +1132,7 @@ async fn handle_store_memory_inner(
     let (enrichment, hint) = if !runtime_config.background_ai_enabled() {
         (
             "off".to_string(),
-            "Stored. Recall is available now; steeping is On demand, so run /wenlan steep to organize.".to_string(),
+            "Stored. Recall is available now; steeping is On demand, so run /wenlan steep to write pages from it.".to_string(),
         )
     } else {
         let everyday_pin =

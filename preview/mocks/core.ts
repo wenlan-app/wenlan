@@ -57,6 +57,7 @@ import { invokeRemoteFixture } from "./remote-access";
 
 let graphObsSeq = 0;
 let fixtureBackgroundAiEnabled = false;
+let fixtureLockMyPages = false;
 type PreviewPageUpdateRequest = {
   readonly id: string;
   readonly content: string;
@@ -99,6 +100,12 @@ export async function invoke(
     if (typeof args?.enabled !== "boolean") throw new Error("Invalid background AI setting");
     fixtureBackgroundAiEnabled = args.enabled;
     return;
+  }
+  if (cmd === "get_lock_my_pages") return fixtureLockMyPages;
+  if (cmd === "set_lock_my_pages") {
+    if (typeof args?.enabled !== "boolean") throw new Error("Invalid lock setting");
+    fixtureLockMyPages = args.enabled;
+    return args.enabled ? 0 : null;
   }
   if (new URLSearchParams(window.location.search).get("mode") === "remote-access") {
     return invokeRemoteFixture(cmd, args);

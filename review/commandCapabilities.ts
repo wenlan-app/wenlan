@@ -60,6 +60,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
   backgroundAi: [
     // Fixture-only preference state; this never starts a background service.
     "set_background_ai_enabled",
+    // Fixture-only too: the switch locks fixture pages in memory.
+    "get_lock_my_pages",
+    "set_lock_my_pages",
   ],
   wikiAndPages: [
     // Isolated in-memory folders; these never touch a native knowledge root.
@@ -120,6 +123,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
   ],
   refinement: [
     "distill_review",
+    "list_new_material",
     "list_refinements",
     "accept_refinement",
     "reject_refinement",
@@ -156,6 +160,10 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "confirm_space",
     "toggle_space_starred",
     "reorder_space",
+    // The Space header asks whether the Space has a repository to offer. The
+    // fixture answers with none, so the GitHub button stays hidden.
+    "get_repo_wiki",
+    "suggest_repo_wiki",
   ],
   entityDetail: [
     "get_entity_detail_cmd",

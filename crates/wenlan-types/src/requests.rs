@@ -716,6 +716,10 @@ pub struct UpdateConfigRequest {
     /// preserve stored value; present = set. Never gates the explicit improve route.
     #[serde(default)]
     pub page_map_auto_suggest: Option<bool>,
+    /// "Lock pages I've written". Omitted = preserve; present = set. Turning
+    /// it off leaves existing locks in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_my_pages: Option<bool>,
     /// Scopes `everyday_source` and `synthesis_source` in this same request to
     /// jobs that are currently unpinned. No other field is affected. Omitted or
     /// `false` = overwrite, which is what every caller did before this field
