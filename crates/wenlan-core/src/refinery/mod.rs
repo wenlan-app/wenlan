@@ -5046,7 +5046,7 @@ mod tests {
             .first()
             .expect("stale re-distill must send one compile prompt");
         assert!(
-            user_prompt.starts_with("Existing pages you may reference with exact-match wikilinks:"),
+            user_prompt.starts_with("Page titles mentioned in this page's sources or linked basis (link labels only, not evidence):"),
             "PageWrite refresh prompt must start with existing-title hint, got:\n{user_prompt}"
         );
         assert!(

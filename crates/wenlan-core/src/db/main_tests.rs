@@ -7090,6 +7090,221 @@ async fn test_get_memory_contents_by_ids_id_branch_excludes_superseded_hide() {
 }
 
 #[tokio::test]
+async fn refresh_source_reader_returns_all_canonical_chunks_in_order() {
+    let (db, _dir) = test_db().await;
+    insert_doc_chunk(
+        &db,
+        "cedar_doc_chunk_0",
+        "cedar_doc",
+        0,
+        "Original launch date: December 10.",
+    )
+    .await;
+    insert_doc_chunk(
+        &db,
+        "cedar_doc_chunk_1",
+        "cedar_doc",
+        1,
+        "Amendment: current launch date is December 24.",
+    )
+    .await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET source_agent='folder', space='space-cedar', content_hash='cedar-hash' WHERE source_id='cedar_doc'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    let complete = db
+        .get_refresh_source_contents_by_ids(&["cedar_doc".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        complete,
+        vec![(
+            "cedar_doc".to_string(),
+            "Original launch date: December 10.\nAmendment: current launch date is December 24."
+                .to_string(),
+        )],
+        "the refresh reader must preserve all source chunks in chunk order under the canonical locator"
+    );
+
+    let exact_chunk = db
+        .get_refresh_source_contents_by_ids(&["cedar_doc_chunk_1".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        exact_chunk,
+        vec![(
+            "cedar_doc_chunk_1".to_string(),
+            "Amendment: current launch date is December 24.".to_string(),
+        )],
+        "an id-shaped locator must keep resolving only its exact physical chunk"
+    );
+
+    let legacy = db
+        .get_memory_contents_by_ids(&["cedar_doc".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        legacy,
+        vec![(
+            "cedar_doc".to_string(),
+            "Original launch date: December 10.".to_string(),
+        )],
+        "existing consumers retain the historical chunk-zero behavior"
+    );
+
+    insert_doc_chunk(
+        &db,
+        "ordinary_chunk_0",
+        "ordinary_source",
+        0,
+        "Ordinary head",
+    )
+    .await;
+    insert_doc_chunk(
+        &db,
+        "ordinary_chunk_1",
+        "ordinary_source",
+        1,
+        "Ordinary tail",
+    )
+    .await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET source_agent='claude' WHERE source_id='ordinary_source'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let ordinary = db
+        .get_refresh_source_contents_by_ids(&["ordinary_source".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        ordinary,
+        vec![("ordinary_source".to_string(), "Ordinary head".to_string())],
+        "only canonical folder documents expand past chunk zero"
+    );
+}
+
+#[tokio::test]
+async fn refresh_source_reader_rejects_mixed_folder_generations() {
+    let (db, _dir) = test_db().await;
+    insert_doc_chunk(&db, "mixed_doc_chunk_0", "mixed_doc", 0, "First chunk").await;
+    insert_doc_chunk(&db, "mixed_doc_chunk_1", "mixed_doc", 1, "Second chunk").await;
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET source_agent='folder', space='space-a', content_hash='hash-a', version=4 WHERE id='mixed_doc_chunk_0'",
+            (),
+        )
+        .await
+        .unwrap();
+        conn.execute(
+            "UPDATE memories SET source_agent='folder', space='space-b', content_hash='hash-a', version=4 WHERE id='mixed_doc_chunk_1'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+
+    let result = db
+        .get_refresh_source_contents_by_ids(&["mixed_doc".to_string()])
+        .await;
+    assert!(
+        result.is_err(),
+        "a single canonical source must not combine chunks across spaces"
+    );
+
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET space='space-a', chunk_index=2 WHERE id='mixed_doc_chunk_1'",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    let result = db
+        .get_refresh_source_contents_by_ids(&["mixed_doc".to_string()])
+        .await;
+    assert!(
+        result.is_err(),
+        "a skipped chunk index must fail closed rather than silently omitting the tail"
+    );
+}
+
+#[tokio::test]
+async fn refresh_source_reader_preserves_committed_and_pending_hide_filtering() {
+    let (db, _dir) = test_db().await;
+    insert_doc_chunk(
+        &db,
+        "committed_old_chunk",
+        "committed_old",
+        0,
+        "Committed old source",
+    )
+    .await;
+    insert_doc_chunk(
+        &db,
+        "pending_old_chunk",
+        "pending_old",
+        0,
+        "Pending old source",
+    )
+    .await;
+
+    for (new_id, old_id) in [
+        ("committed_new", "committed_old"),
+        ("pending_new", "pending_old"),
+    ] {
+        let mut superseder =
+            make_memory_doc(new_id, "A replacement source", "fact", "personal", "claude");
+        superseder.supersedes = Some(old_id.to_string());
+        db.upsert_documents(vec![superseder]).await.unwrap();
+    }
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "UPDATE memories SET pending_revision = 1 WHERE source_id = ?1",
+            libsql::params!["pending_new"],
+        )
+        .await
+        .unwrap();
+    }
+
+    let results = db
+        .get_refresh_source_contents_by_ids(&[
+            "committed_old".to_string(),
+            "committed_new".to_string(),
+            "pending_old".to_string(),
+        ])
+        .await
+        .unwrap();
+    let by_id: std::collections::HashMap<&str, &str> = results
+        .iter()
+        .map(|(id, content)| (id.as_str(), content.as_str()))
+        .collect();
+    assert!(
+        !by_id.contains_key("committed_old"),
+        "a committed hide-mode superseder must still hide the old source"
+    );
+    assert!(by_id.contains_key("committed_new"));
+    assert_eq!(
+        by_id.get("pending_old"),
+        Some(&"Pending old source"),
+        "a pending superseder must not hide the previously committed source"
+    );
+}
+
+#[tokio::test]
 async fn test_quality_multiplier_in_search() {
     let (db, _dir) = test_db().await;
 

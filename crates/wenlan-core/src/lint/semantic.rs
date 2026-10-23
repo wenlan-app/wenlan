@@ -679,7 +679,8 @@ async fn call_provider(
         Ok(raw) => Ok(raw),
         Err(error) => Err(match error {
             crate::llm_provider::LlmError::NotAvailable => ProviderCallFailure::NotAvailable,
-            crate::llm_provider::LlmError::InferenceFailed(_) => {
+            crate::llm_provider::LlmError::InferenceFailed(_)
+            | crate::llm_provider::LlmError::InputContextTooLarge { .. } => {
                 ProviderCallFailure::InferenceFailed
             }
             crate::llm_provider::LlmError::Timeout => ProviderCallFailure::Timeout,
