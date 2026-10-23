@@ -1244,3 +1244,33 @@ fn a_page_file_reads_back_as_page_content() {
         .ends_with("We like Rust."));
     assert!(parse_wiki_page_file("no frontmatter").is_none());
 }
+
+#[test]
+fn antigravity_gets_its_daily_permissions_beside_the_users_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = antigravity_settings_path(dir.path());
+    assert!(!antigravity_allows_daily(&path));
+    allow_antigravity_daily(&path).unwrap();
+    assert!(antigravity_allows_daily(&path));
+
+    std::fs::write(
+        &path,
+        r#"{"model": "x", "permissions": {"allow": ["command(git)"], "deny": ["command(rm)"]}}"#,
+    )
+    .unwrap();
+    allow_antigravity_daily(&path).unwrap();
+    allow_antigravity_daily(&path).unwrap();
+    let settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(settings["model"], "x");
+    assert_eq!(settings["permissions"]["deny"][0], "command(rm)");
+    let allow = settings["permissions"]["allow"].as_array().unwrap();
+    assert_eq!(allow[0], "command(git)");
+    assert_eq!(allow.len(), 1 + ANTIGRAVITY_ALLOW.len());
+    assert!(antigravity_allows_daily(&path));
+
+    // A file Wenlan cannot read as an object is left as it is.
+    std::fs::write(&path, "[1, 2]").unwrap();
+    assert!(allow_antigravity_daily(&path).is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1, 2]");
+}

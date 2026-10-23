@@ -196,6 +196,18 @@ pub fn install_skills(client_type: &str) -> Result<PathBuf, SkillsInstallError> 
         crate::agent_skills_bundle::FILES,
         crate::agent_skills_bundle::BUNDLE_VERSION,
     )?;
+    if client_type == "antigravity" {
+        // Headless Antigravity refuses every command that would ask, so the
+        // daily update would stop at its first `git`. Connecting it is the
+        // user's go-ahead for Wenlan's tools and read-only git, and no more.
+        let settings = wenlan_core::repo_wiki::antigravity_settings_path(&home);
+        wenlan_core::repo_wiki::allow_antigravity_daily(&settings).map_err(|error| {
+            SkillsInstallError::Io {
+                path: settings.clone(),
+                error: error.to_string(),
+            }
+        })?;
+    }
     Ok(dir)
 }
 
