@@ -99,10 +99,6 @@ export default function App() {
     }
   }, [daemonStartupPhase, queryClient]);
 
-  const retryDaemonGate = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["shouldShowWizard"] });
-  }, [queryClient]);
-
   // A rejection propagates to the wizard's Done step, which stays put with an
   // inline alert. Invalidate the gate only after the save lands: refetching a
   // gate that has no data (the fail-closed error branch below) puts the query
@@ -387,9 +383,6 @@ export default function App() {
       {fallbackMode && !fallbackDismissed && (
         <FallbackServiceBanner onDismiss={() => setFallbackDismissed(true)} />
       )}
-      {showsMain && daemonStartupPhase === "failed" && !(fallbackMode && !fallbackDismissed) && (
-        <DaemonNotAnsweringBanner onRetry={retryDaemonGate} />
-      )}
       {body}
       <AppToaster />
       <RuntimeOverlays
@@ -509,90 +502,6 @@ function FallbackServiceBanner({ onDismiss }: { onDismiss: () => void }) {
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
           <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
-      </button>
-    </div>
-  );
-}
-
-/** Shown only when a workspace that opened before the daemon answered has
- *  given up waiting for it: the first-run gate spent its whole budget. Until
- *  then the sidebar's quiet "starting" line is the only sign of the wait. */
-function DaemonNotAnsweringBanner({ onRetry }: { onRetry: () => void }) {
-  const { t } = useTranslation();
-  const [starting, setStarting] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  const startingRef = useRef(false);
-
-  async function handleRestart() {
-    if (startingRef.current) return;
-    startingRef.current = true;
-    setStarting(true);
-    setFailure(null);
-    try {
-      const result = await startDaemonSidecar();
-      if (result.status === "failed") {
-        setFailure(result.message);
-        return;
-      }
-      // Asking the gate again puts the workspace back to "starting"; the
-      // banner goes, and comes back only if this attempt runs out too.
-      onRetry();
-    } catch (err) {
-      setFailure(err instanceof Error ? err.message : String(err));
-    } finally {
-      startingRef.current = false;
-      setStarting(false);
-    }
-  }
-
-  return (
-    <div
-      role="alert"
-      data-testid="daemon-not-answering-banner"
-      style={{
-        position: "fixed",
-        top: dragStripHeight(),
-        left: 0,
-        right: 0,
-        zIndex: 70,
-        display: "flex",
-        alignItems: "center",
-        gap: "12px",
-        padding: "10px 16px",
-        fontFamily: "var(--mem-font-body)",
-        fontSize: "var(--mem-text-sm)",
-        lineHeight: "1.5",
-        color: "var(--mem-status-warning-text)",
-        backgroundColor: "var(--mem-status-warning-bg)",
-      }}
-    >
-      <span style={{ flex: 1, minWidth: 0 }}>
-        {t("boot.notAnswering")}
-        {failure && (
-          <span style={{ display: "block", color: "var(--mem-status-danger-text)" }}>
-            {t("boot.startFailed")} {failure}
-          </span>
-        )}
-      </span>
-      <button
-        type="button"
-        onClick={() => { void handleRestart(); }}
-        disabled={starting}
-        data-testid="daemon-not-answering-restart"
-        style={{
-          flexShrink: 0,
-          padding: "4px 10px",
-          borderRadius: "6px",
-          border: "1px solid var(--mem-status-warning-border)",
-          background: "transparent",
-          color: "inherit",
-          cursor: starting ? "default" : "pointer",
-          fontFamily: "inherit",
-          fontSize: "inherit",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {starting ? t("boot.starting") : t("boot.restart")}
       </button>
     </div>
   );

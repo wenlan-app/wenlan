@@ -10,6 +10,7 @@ import { useGettingStartedState } from "../../onboarding/useGettingStartedState"
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import { useWritePages, WritePagesLine } from "../askAi/WritePages";
+import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -42,6 +43,9 @@ export function PagesOverview({
   const checklist = useGettingStartedState();
   const [adding, setAdding] = useState<"menu" | "chats" | null>(null);
   const writePages = useWritePages(pages);
+  // "Use Search to find a page" is advice the workspace cannot honour until
+  // the daemon answers; the sidebar says it is starting, so this stays quiet.
+  const daemonReady = useDaemonStartupPhase() === "ready";
   const gettingStarted = onConnectTool && onSeeExample ? (
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
@@ -76,11 +80,13 @@ export function PagesOverview({
         />
       )}
       <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />
-      <div className="wiki-reading-start-panel">
-        <PageIcon className="wiki-reading-start-icon" size={32} />
-        <h1>{t("pages.overview.readingStartTitle")}</h1>
-        <p>{t("pages.overview.readingStartDescription")}</p>
-      </div>
+      {daemonReady && (
+        <div className="wiki-reading-start-panel">
+          <PageIcon className="wiki-reading-start-icon" size={32} />
+          <h1>{t("pages.overview.readingStartTitle")}</h1>
+          <p>{t("pages.overview.readingStartDescription")}</p>
+        </div>
+      )}
       {gettingStarted}
       {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
     </section>

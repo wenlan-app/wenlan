@@ -9,25 +9,10 @@ import {
   type DaemonVersionEvent,
   type DaemonVersionStatus,
 } from "../lib/tauri";
+import { restartErrorKey } from "../lib/daemonRestartErrors";
+import { useDaemonStartupPhase } from "../lib/daemonStartup";
 
 type VersionState = DaemonVersionStatus | DaemonVersionEvent;
-
-/**
- * Typed errors `restart_daemon` rejects with (app/src/daemon_start.rs
- * `RESTART_ERROR_*`), mapped to localized copy. Anything else is a CLI
- * failure and renders verbatim.
- */
-const RESTART_ERROR_KEYS = {
-  "daemon-restart:not-owned": "daemonService.errors.notOwned",
-  "daemon-restart:isolated": "daemonService.errors.isolated",
-  "daemon-restart:still-mismatched": "daemonService.errors.stillMismatched",
-} as const;
-
-function restartErrorKey(raw: string): (typeof RESTART_ERROR_KEYS)[keyof typeof RESTART_ERROR_KEYS] | null {
-  return Object.prototype.hasOwnProperty.call(RESTART_ERROR_KEYS, raw)
-    ? RESTART_ERROR_KEYS[raw as keyof typeof RESTART_ERROR_KEYS]
-    : null;
-}
 
 /**
  * Top-of-window banner for a stale background service. The app self-heals a
@@ -47,6 +32,7 @@ export default function DaemonVersionBanner() {
   const [dismissed, setDismissed] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const startupPhase = useDaemonStartupPhase();
 
   useEffect(() => {
     let cancelled = false;
@@ -87,6 +73,10 @@ export default function DaemonVersionBanner() {
     }
   };
 
+  // While the window waits for a daemon that has not answered, the sidebar's
+  // startup status is the one place that speaks about the service; a version
+  // report from a restart attempt made there must not open a second voice.
+  if (startupPhase !== "ready") return null;
   if (dismissed || status === null || status.matched) return null;
 
   const accent = "var(--mem-accent-amber, #b7791f)";

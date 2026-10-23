@@ -163,6 +163,18 @@ function renderApp() {
   );
 }
 
+function renderAppWithClient() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+  return { queryClient };
+}
+
 function dispatchQuit(requestId = 1, deliveryId = 1) {
   eventListeners.get("quit-requested")?.({
     payload: { requestId, deliveryId },
@@ -831,36 +843,29 @@ describe("App - opening before the daemon answers", () => {
     expect(getDaemonStartupPhase()).toBe("ready");
   });
 
-  it("keeps Home and says so in one banner when the daemon never answers, then retries on Restart", async () => {
+  it("keeps Home when the daemon never answers and leaves the telling to the sidebar", async () => {
     vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
     renderApp();
 
-    const banner = await screen.findByTestId("daemon-not-answering-banner");
-    expect(banner).toHaveTextContent(BOOT.notAnswering);
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
     expect(screen.getByTestId("home-main")).toBeInTheDocument();
     expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
-    expect(getDaemonStartupPhase()).toBe("failed");
-
-    vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
-    fireEvent.click(screen.getByTestId("daemon-not-answering-restart"));
-
-    await waitFor(() => {
-      expect(screen.queryByTestId("daemon-not-answering-banner")).not.toBeInTheDocument();
-    });
-    expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(shouldShowWizard)).toHaveBeenCalled();
-    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    // No banner over the workspace: the sidebar row turns into the warning.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("keeps the banner and shows the reason when Restart cannot start the service", async () => {
+  it("asks every query again once the daemon answers after a failure", async () => {
     vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
-    startDaemonSidecarMock.mockResolvedValue({ status: "failed", message: "launchctl said no" });
-    renderApp();
+    const { queryClient } = renderAppWithClient();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
 
-    fireEvent.click(await screen.findByTestId("daemon-not-answering-restart"));
+    vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["shouldShowWizard"] });
+    });
 
-    const banner = await screen.findByTestId("daemon-not-answering-banner");
-    await waitFor(() => expect(banner).toHaveTextContent("launchctl said no"));
-    expect(getDaemonStartupPhase()).toBe("failed");
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ predicate: expect.any(Function) }));
   });
 });

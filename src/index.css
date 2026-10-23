@@ -3892,6 +3892,8 @@ p.entity-error {
   width: 6px;
 }
 .mem-daemon-startup-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-daemon-startup-body { margin: 0; color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; }
+.mem-daemon-startup-failure { margin: 0; color: var(--mem-status-danger-text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   .mem-daemon-startup-dot { animation: none; }
 }

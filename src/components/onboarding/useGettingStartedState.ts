@@ -157,6 +157,9 @@ export interface GettingStartedState {
   readonly setPagesSkipped: (value: boolean) => void;
   readonly pages: readonly Page[];
   readonly agents: AgentConnection[];
+  /** Whether `visible` is an answer yet: false until the library, agents and
+   *  milestones have all loaded (an established library needs only pages). */
+  readonly loaded: boolean;
 }
 
 export function useGettingStartedState(): GettingStartedState {
@@ -180,7 +183,7 @@ export function useGettingStartedState(): GettingStartedState {
 
   const loaded = ready && agentsQuery.isSuccess && milestonesQuery.isSuccess;
   if (!loaded || established) {
-    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [] };
+    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [], loaded: loaded || (ready && established) };
   }
   const progress = gettingStartedProgress({
     pages,
@@ -190,5 +193,5 @@ export function useGettingStartedState(): GettingStartedState {
   });
   const doneCount = GETTING_STARTED_ORDER.filter((id) => progress[id]).length;
   const visible = doneCount < GETTING_STARTED_ORDER.length;
-  return { visible, progress: visible ? progress : null, doneCount, ...flags, pages, agents: agentsQuery.data };
+  return { visible, progress: visible ? progress : null, doneCount, ...flags, pages, agents: agentsQuery.data, loaded: true };
 }

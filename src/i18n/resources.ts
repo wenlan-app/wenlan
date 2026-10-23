@@ -249,8 +249,8 @@ const en = {
     startNotReachable: "The service still is not answering.",
     dismiss: "Dismiss",
     startingInBackground: "Starting up…",
-    notAnswering: "The background service isn’t answering, so pages can’t load yet.",
-    restart: "Restart",
+    notAnsweringLabel: "Service not answering",
+    notAnsweringBody: "Pages can’t load until it answers. Restarting the service usually fixes this.",
   },
   setup: {
     welcomeTitle: "Welcome to Wenlan",
@@ -3102,8 +3102,8 @@ const zhHans = {
     startNotReachable: "服务仍然没有响应。",
     dismiss: "关闭",
     startingInBackground: "正在后台启动…",
-    notAnswering: "后台服务没有响应，笔记暂时无法加载。",
-    restart: "重新启动",
+    notAnsweringLabel: "后台服务没有响应",
+    notAnsweringBody: "笔记暂时无法加载。重启服务通常就能恢复。",
   },
   setup: {
     welcomeTitle: "欢迎使用文澜",
@@ -5894,8 +5894,8 @@ const zhHant = {
     startNotReachable: "服務仍然沒有回應。",
     dismiss: "關閉",
     startingInBackground: "正在背景啟動…",
-    notAnswering: "背景服務沒有回應，筆記暫時無法載入。",
-    restart: "重新啟動",
+    notAnsweringLabel: "背景服務沒有回應",
+    notAnsweringBody: "筆記暫時無法載入。重新啟動服務通常就能恢復。",
   },
   setup: {
     welcomeTitle: "歡迎使用文瀾",
