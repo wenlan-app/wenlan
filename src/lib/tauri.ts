@@ -920,7 +920,7 @@ export async function deleteSpace(name: string): Promise<void> {
 // Mirrors `wenlan_types::repo_wiki`. The daemon writes the Space's code
 // pages into a folder of the repository and opens a pull request.
 
-export type RepoWikiAgent = "claude" | "codex";
+export type RepoWikiAgent = "claude" | "codex" | "cursor" | "copilot" | "gemini";
 
 /** Where the daily update runs: this computer, or GitHub Actions. */
 export type RepoWikiRunner = "computer" | "github";
@@ -1078,7 +1078,7 @@ export interface RepoWikiGithubStatus {
 
 export type RepoWikiGithubRequest =
   | { action: "claude_token" }
-  | { action: "openai_key"; key: string }
+  | { action: "api_key"; key: string }
   | { action: "allow_pull_requests" };
 
 export async function getRepoWikiGithub(space: string): Promise<RepoWikiGithubStatus> {

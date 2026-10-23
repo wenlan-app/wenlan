@@ -21,6 +21,9 @@ use crate::output::{print_json, ResolvedFormat};
 pub enum AgentArg {
     Claude,
     Codex,
+    Cursor,
+    Copilot,
+    Gemini,
 }
 
 impl From<AgentArg> for RepoWikiAgent {
@@ -28,6 +31,9 @@ impl From<AgentArg> for RepoWikiAgent {
         match agent {
             AgentArg::Claude => RepoWikiAgent::Claude,
             AgentArg::Codex => RepoWikiAgent::Codex,
+            AgentArg::Cursor => RepoWikiAgent::Cursor,
+            AgentArg::Copilot => RepoWikiAgent::Copilot,
+            AgentArg::Gemini => RepoWikiAgent::Gemini,
         }
     }
 }
@@ -214,10 +220,7 @@ fn print_binding(format: ResolvedFormat, quiet: bool, binding: &RepoWikiBinding)
         Some(daily) if daily.enabled => println!(
             "  daily: after {:02}:00, with {}, on {}",
             daily.hour,
-            match daily.agent {
-                RepoWikiAgent::Claude => "Claude Code",
-                RepoWikiAgent::Codex => "Codex",
-            },
+            daily.agent.display_name(),
             match daily.runs_on {
                 RepoWikiRunner::Computer => "this computer",
                 RepoWikiRunner::Github => "GitHub",

@@ -69,3 +69,18 @@ fn the_token_is_read_whole_through_terminal_codes() {
     assert_eq!(token_in("Your token: sk-ant-oat01-Abc"), None);
     assert_eq!(token_in("Opening the browser..."), None);
 }
+
+#[test]
+fn a_pasted_key_goes_to_the_secret_its_tool_reads() {
+    assert_eq!(key_secret(RepoWikiAgent::Claude), None);
+    for agent in RepoWikiAgent::ALL {
+        if let Some(secret) = key_secret(agent) {
+            assert!(secrets_for(agent).contains(&secret), "{agent:?}");
+            let workflow = crate::repo_wiki_ci::workflow("wiki", agent, 9);
+            assert!(
+                workflow.contains(&format!("${{{{ secrets.{secret} }}}}")),
+                "{agent:?}: {workflow}"
+            );
+        }
+    }
+}

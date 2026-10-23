@@ -21,6 +21,57 @@ pub const REPO_WIKI_BRANCH: &str = "wenlan/wiki";
 pub enum RepoWikiAgent {
     Claude,
     Codex,
+    /// Cursor's command line agent (`agent`).
+    Cursor,
+    /// GitHub Copilot CLI (`copilot`).
+    Copilot,
+    /// Gemini CLI (`gemini`), with a paid Gemini API key on GitHub.
+    Gemini,
+}
+
+impl RepoWikiAgent {
+    /// Every tool, in the order a picker lists them.
+    pub const ALL: [RepoWikiAgent; 5] = [
+        RepoWikiAgent::Claude,
+        RepoWikiAgent::Codex,
+        RepoWikiAgent::Cursor,
+        RepoWikiAgent::Copilot,
+        RepoWikiAgent::Gemini,
+    ];
+
+    /// The name on the wire and in `wenlan wiki ... --agent`.
+    pub fn slug(self) -> &'static str {
+        match self {
+            RepoWikiAgent::Claude => "claude",
+            RepoWikiAgent::Codex => "codex",
+            RepoWikiAgent::Cursor => "cursor",
+            RepoWikiAgent::Copilot => "copilot",
+            RepoWikiAgent::Gemini => "gemini",
+        }
+    }
+
+    /// The name people know the tool by.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            RepoWikiAgent::Claude => "Claude Code",
+            RepoWikiAgent::Codex => "Codex",
+            RepoWikiAgent::Cursor => "Cursor",
+            RepoWikiAgent::Copilot => "GitHub Copilot",
+            RepoWikiAgent::Gemini => "Gemini CLI",
+        }
+    }
+
+    /// The programs the tool installs as, in the order to look for them.
+    pub fn programs(self) -> &'static [&'static str] {
+        match self {
+            RepoWikiAgent::Claude => &["claude"],
+            RepoWikiAgent::Codex => &["codex"],
+            // `agent` is the newer name, but too common a word to look for first.
+            RepoWikiAgent::Cursor => &["cursor-agent", "agent"],
+            RepoWikiAgent::Copilot => &["copilot"],
+            RepoWikiAgent::Gemini => &["gemini"],
+        }
+    }
 }
 
 /// Where a daily update runs.
@@ -106,8 +157,11 @@ pub enum RepoWikiGithubRequest {
     /// token as the repository secret `CLAUDE_CODE_OAUTH_TOKEN`. The token
     /// is never kept or returned.
     ClaudeToken,
-    /// Store `key` as the repository secret `OPENAI_API_KEY`, for Codex.
-    OpenaiKey { key: String },
+    /// Store `key` as the repository secret the chosen tool reads: an
+    /// OpenAI, Cursor or Gemini API key, or a GitHub token for Copilot. The
+    /// key is never kept or returned.
+    #[serde(alias = "openai_key")]
+    ApiKey { key: String },
     /// Let GitHub Actions open pull requests in the repository.
     AllowPullRequests,
 }

@@ -183,6 +183,41 @@ describe("RepoWikiButton", () => {
     expect(screen.queryByText("Wenlan never keeps or shows the key.")).toBeNull();
   });
 
+  it("takes a pasted key for a tool other than Claude Code", async () => {
+    vi.mocked(getRepoWiki).mockResolvedValue({
+      ...bound,
+      daily: { enabled: true, hour: 9, agent: "copilot", runs_on: "github" },
+    });
+    vi.mocked(getRepoWikiGithub).mockResolvedValue({
+      repo: "7xuanlu/wenlan-site",
+      gh_ready: true,
+      workflow: "in_repo",
+      secret: false,
+      can_open_prs: true,
+    });
+    vi.mocked(setupRepoWikiGithub).mockImplementation(async () => ({
+      repo: "7xuanlu/wenlan-site",
+      gh_ready: true,
+      workflow: "in_repo",
+      secret: true,
+      can_open_prs: true,
+    }));
+    renderButton();
+    fireEvent.click(await screen.findByRole("button", { name: "GitHub repository settings" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Set up" }));
+    expect(screen.getByText("Paste a GitHub token with Copilot Requests.")).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Use your Copilot token"), { target: { value: " github_pat_x " } });
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(setupRepoWikiGithub).toHaveBeenCalledWith("site", { action: "api_key", key: " github_pat_x " }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("Let GitHub use your AI tool").closest("[data-done]")).not.toBeNull(),
+    );
+  });
+
   it("asks where the daily update runs", async () => {
     vi.mocked(getRepoWiki).mockResolvedValue({
       ...bound,

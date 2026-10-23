@@ -24,6 +24,18 @@ const WORKFLOW_MARK: &str = "# Written by Wenlan";
 pub const CLAUDE_SECRET: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 /// The secret a Codex run reads (passed to it as `CODEX_API_KEY`).
 pub const OPENAI_SECRET: &str = "OPENAI_API_KEY";
+
+/// The secret a key pasted for `agent` is stored as; `None` for Claude Code,
+/// which signs in through the browser instead.
+pub fn key_secret(agent: RepoWikiAgent) -> Option<&'static str> {
+    match agent {
+        RepoWikiAgent::Claude => None,
+        RepoWikiAgent::Codex => Some(OPENAI_SECRET),
+        RepoWikiAgent::Cursor => Some("CURSOR_API_KEY"),
+        RepoWikiAgent::Copilot => Some("COPILOT_GITHUB_TOKEN"),
+        RepoWikiAgent::Gemini => Some("GEMINI_API_KEY"),
+    }
+}
 /// Longest wait for the user to confirm the Claude sign-in in the browser.
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
@@ -114,6 +126,9 @@ fn secrets_for(agent: RepoWikiAgent) -> &'static [&'static str] {
     match agent {
         RepoWikiAgent::Claude => &[CLAUDE_SECRET, "ANTHROPIC_API_KEY"],
         RepoWikiAgent::Codex => &[OPENAI_SECRET],
+        RepoWikiAgent::Cursor => &["CURSOR_API_KEY"],
+        RepoWikiAgent::Copilot => &["COPILOT_GITHUB_TOKEN"],
+        RepoWikiAgent::Gemini => &["GEMINI_API_KEY"],
     }
 }
 
@@ -306,19 +321,23 @@ fn set_secret(
     Ok(())
 }
 
-/// Store an OpenAI API key for a Codex run.
-pub fn store_openai_key(
-    binding: &RepoWikiBinding,
-    gh: &Path,
-    key: &str,
-) -> Result<(), WenlanError> {
+/// Store a pasted key for the daily update's tool as the secret it reads.
+pub fn store_api_key(binding: &RepoWikiBinding, gh: &Path, key: &str) -> Result<(), WenlanError> {
+    let agent = binding
+        .daily
+        .as_ref()
+        .map_or(RepoWikiAgent::Claude, |daily| daily.agent);
+    let Some(secret) = key_secret(agent) else {
+        return Err(WenlanError::Validation(format!(
+            "{} signs in through the browser, not with a pasted key",
+            agent.display_name()
+        )));
+    };
     let key = key.trim();
     if key.is_empty() || key.chars().any(char::is_whitespace) {
-        return Err(WenlanError::Validation(
-            "paste the whole OpenAI API key".to_owned(),
-        ));
+        return Err(WenlanError::Validation("paste the whole key".to_owned()));
     }
-    set_secret(binding, gh, OPENAI_SECRET, key)
+    set_secret(binding, gh, secret, key)
 }
 
 static TOKEN_RE: std::sync::LazyLock<regex::Regex> =
