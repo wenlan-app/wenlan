@@ -237,6 +237,22 @@ async fn land(
         }
         other => other,
     };
+    // A diagram the model broke is dropped, not saved: the reader would show
+    // its source and a repository wiki on GitHub an error box.
+    let drawable;
+    let content = match content.map(crate::diagrams::drop_broken_diagrams) {
+        Some((body, dropped)) => {
+            if dropped > 0 {
+                log::info!(
+                    "[steep-code] '{}' rewrite: dropped {dropped} diagram(s) Mermaid could not draw",
+                    claimed.title
+                );
+            }
+            drawable = body;
+            Some(drawable.as_str())
+        }
+        None => None,
+    };
     match commit(db, token, action, content, &[], knowledge_path, None).await {
         Ok(done) => Ok(match done.outcome {
             "written" => CodeRewriteOutcome::Written,

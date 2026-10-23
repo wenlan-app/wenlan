@@ -190,11 +190,10 @@
   color: var(--mem-text);
 }
 
+/* Spacing and a quieter color set it apart from the steps; no rule line. */
 .getting-started-extra {
-  margin: 0 0 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--mem-border);
-  color: var(--mem-text-secondary);
+  margin: 4px 0 12px;
+  color: var(--mem-text-tertiary);
   font: 12px/1.5 var(--mem-font-body);
 }
 
@@ -250,7 +249,12 @@
 
 /* The pages a run writes, listed in the "turn your material into pages" row. */
 .getting-started-copy .write-pages-list {
-  margin: 6px 0 0;
+  margin: 6px 0 0 -2px;
+}
+
+.wiki-reading-start[data-onboarding="true"] .getting-started-copy .write-pages-list li,
+.wiki-reading-start[data-onboarding="true"] .getting-started-copy .write-pages-row-title {
+  font-size: 14px;
 }
 
 .getting-started-choices + .getting-started-step-body {
@@ -312,4 +316,49 @@
   /* Chinese breaks at 、 and spaces, not inside a word. */
   word-break: keep-all;
   overflow-wrap: anywhere;
+}
+
+/* How the command reaches a tool the app cannot open, under the step body. */
+.getting-started-step-hint {
+  margin: 2px 0 0;
+  color: var(--mem-text-tertiary);
+  font: 12.5px/1.5 var(--mem-font-body);
+  overflow-wrap: anywhere;
+}
+
+/* Material that came in after the finished "write pages" step: one line
+   under its pages, with the one button. */
+.getting-started-pages-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  color: var(--mem-text-secondary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+/* Only writing a page by hand is left: one line above the pages, at their width. */
+.getting-started--compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  max-width: min(100%, 640px);
+  margin: 24px auto 16px;
+  padding: 10px 12px 10px 20px;
+}
+
+.getting-started-compact-text {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 14px/1.5 var(--mem-font-body);
+}
+
+.getting-started-compact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

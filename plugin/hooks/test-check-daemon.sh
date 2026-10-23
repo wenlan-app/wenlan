@@ -69,7 +69,23 @@ import pathlib
 import sys
 
 os.chdir(sys.argv[1])
-server = http.server.HTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler)
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    # Records each POST body under posts/<path>, so a test can read what the
+    # hook sent.
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        target = pathlib.Path("posts" + self.path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b"{}")
+
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
 pathlib.Path(sys.argv[2]).write_text(str(server.server_address[1]))
 server.serve_forever()
 PY
@@ -103,6 +119,12 @@ out=$(drift_run '0.17.2' '0.17.0')
 check 'patch drift stays quiet' 'plugin expects' missing "$out"
 out=$(drift_run '0.16.0+gd1c92ea2' '0.17.0')
 check 'source build a minor behind warns' 'plugin expects v0.17.0' contains "$out"
+
+# A running daemon is told the plugin connected Claude Code.
+rm -rf "$www/posts"
+drift_run '0.17.0' '0.17.0' >/dev/null
+registered=$(cat "$www/posts/api/agents" 2>/dev/null)
+check 'registers claude-code with a running daemon' '"name":"claude-code"' contains "$registered"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

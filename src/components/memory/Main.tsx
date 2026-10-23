@@ -63,7 +63,7 @@ import PairingApprovalDialog from "./PairingApprovalDialog";
 import RemoteAccessNotifier from "./RemoteAccessNotifier";
 import { searchResultTarget } from "../../lib/searchResultTarget";
 import { readRecentPageHistory, recordRecentPageVisit } from "../../lib/recentPages";
-import { readWikiInventoryMode, type WikiInventoryMode } from "../../lib/wikiNotesPreferences";
+import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../lib/wikiNotesPreferences";
 import { deleteRecentSpace, readRecentSpaceHistory, recordRecentSpaceVisit, renameRecentSpace } from "../../lib/recentSpaces";
 import { createSpaceDetailCopy, createSpacesOverviewLabels } from "./navigation/copy";
 import { activeNavigationForView, type View } from "./navigation/viewState";
@@ -953,10 +953,12 @@ export default function Main({
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   // The directory has nothing to say to a brand-new library, and it reads as a
   // second sidebar next to the open getting-started checklist, so both give the
-  // Wiki a single column; see WikiWorkspace `directoryHidden`.
+  // Wiki a single column; see WikiWorkspace `directoryHidden`. Once the card is
+  // down to its one-line form the pages are the home again, directory included.
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
-  const directoryHidden = libraryEmpty || (gettingStarted.visible && !gettingStarted.dismissed);
+  const directoryHidden = libraryEmpty
+    || (gettingStarted.visible && !gettingStarted.dismissed && !gettingStarted.compact);
 
   useEffect(() => {
     if (!mobileSearchOpen) return;
@@ -1393,7 +1395,12 @@ export default function Main({
             >
               <PagesOverview
                 inventoryScope={view.kind === "pages" ? view.inventoryScope : undefined}
-                onBrowseAll={() => navigateTo({ kind: "pages" })}
+                onBrowseAll={() => {
+                  // The home lists only the newest pages; every page is in the
+                  // directory beside it, by folder.
+                  writeWikiInventoryMode("folders");
+                  setWikiInventoryMode("folders");
+                }}
                 onBrowseFolder={(inventoryScope) => navigateTo({ kind: "pages", inventoryScope })}
                 onCreatePage={(space, folderPath) => navigateTo({ kind: "page-draft", space, folderPath, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
                 onSelectDraft={openWikiDraft}

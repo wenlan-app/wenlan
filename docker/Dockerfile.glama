@@ -1,0 +1,16 @@
+# Paste this Dockerfile into Glama's Dockerfile admin page.
+# The published package installs the real release binary; no repository files
+# or private wiki data are copied into the image.
+FROM node:24-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea AS package
+RUN npm install --global --no-audit --no-fund wenlan-mcp@0.19.3
+
+FROM debian:13-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+COPY --from=package /usr/local/lib/node_modules/wenlan-mcp/bin/wenlan-mcp /usr/local/bin/wenlan-mcp
+ENV HOME=/tmp \
+    WENLAN_MCP_CACHE_DIR=/tmp/wenlan-mcp-cache \
+    WENLAN_NO_AUTOSTART=1
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/wenlan-mcp"]
+# Schema inspection needs no daemon. Supply a reachable daemon URL explicitly
+# when using tools that read or write wiki data.
+CMD ["--origin-url", "http://127.0.0.1:1"]

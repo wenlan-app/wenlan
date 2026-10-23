@@ -9,7 +9,8 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
-import { useWritePages, WritePagesLine } from "../askAi/WritePages";
+import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
+import { NewPagesList, newestPages } from "./NewPagesList";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -30,6 +31,7 @@ interface PagesOverviewProps {
 }
 
 export function PagesOverview({
+  onBrowseAll,
   onCreatePage,
   onSelectPage,
   onConnectTool,
@@ -54,15 +56,34 @@ export function PagesOverview({
       onSelectPage={onSelectPage}
     />
   ) : null;
+  const open = gettingStarted !== null && checklist.visible && !checklist.dismissed;
+  // While the AI tool is writing, the pages step is the place to follow it,
+  // so the card stays whole even if writing a page by hand is all that's left.
+  const writing = writePages.loaded && writePages.stepView.kind === "working";
+  const compact = open && checklist.compact && !writing;
   // While the open checklist is the screen's content the panel above it shrinks
-  // to its title, so the whole home fits the default window.
-  const onboarding = gettingStarted !== null && checklist.visible && !checklist.dismissed;
+  // to its title, and the new pages sit inside its "write pages" step, so the
+  // home is one card that fits the default window.
+  const onboarding = open && !compact;
+  const newPages = onboarding
+    ? null
+    : (
+      <NewPagesList
+        pages={pages}
+        onSelectPage={onSelectPage}
+        onBrowseAll={onBrowseAll}
+        justWritten={new Set(writePages.run ? pagesWrittenSince(pages, writePages.run.startedAt).map((page) => page.id) : [])}
+      />
+    );
+  // With pages to list, "open a page" has nothing to add.
+  const listsPages = newPages !== null && newestPages(pages).length > 0;
 
   return (
     <section
       className="wiki-overview wiki-reading-start mx-auto w-full max-w-[1130px] pb-16"
       data-library-empty={empty ? "true" : undefined}
       data-onboarding={onboarding ? "true" : undefined}
+      data-lists-pages={listsPages ? "true" : undefined}
     >
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
@@ -70,7 +91,6 @@ export function PagesOverview({
         <WritePagesLine
           state={writePages}
           pages={pages}
-          onSelectPage={onSelectPage}
           onConnectTool={onConnectTool}
           onUseLocalModel={onOpenIntelligence}
         />
@@ -81,7 +101,11 @@ export function PagesOverview({
         <h1>{t("pages.overview.readingStartTitle")}</h1>
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
-      {gettingStarted}
+      {/* The one-line card says what is left above the pages; otherwise the
+          pages come first and the card (or its "show" line) follows. */}
+      {compact ? gettingStarted : null}
+      {newPages}
+      {compact ? null : gettingStarted}
       {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
     </section>
   );

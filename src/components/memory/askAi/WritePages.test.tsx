@@ -58,7 +58,7 @@ function page(id: string, createdAt: string, kind = "distilled", sources = 3): P
 }
 
 /** The home line over its own state, as the Wiki home wires it. */
-function Line({ pages, ...props }: { pages: Page[]; onSelectPage: (id: string) => void; onConnectTool?: () => void; onUseLocalModel?: () => void }) {
+function Line({ pages, ...props }: { pages: Page[]; onConnectTool?: () => void; onUseLocalModel?: () => void }) {
   const state = useWritePages(pages);
   return <WritePagesLine state={state} pages={pages} {...props} />;
 }
@@ -142,22 +142,37 @@ describe("WritePagesLine", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(22, { kinds: { note: 12, chat: 6, file: 4 } }));
     vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
-    wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
+    wrap(<Line pages={[]} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("New material: 12 notes, 6 chats, and 4 files. No page yet.");
-    const ask = screen.getByRole("button", { name: "Have Claude Code write pages" });
-    expect(ask).toHaveAttribute("title", expect.stringContaining("Opens Claude Code with the command typed in."));
-    fireEvent.click(ask);
+    // One action: the copy fallback is not offered next to it.
+    expect(screen.queryByRole("button", { name: "Copy command" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
     // Typed in, not yet sent: it does not claim the tool is writing.
-    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is typed in Claude Code. Press Enter there to start.");
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Typed in Claude Code. Press Enter there to start.");
+    // Only now, in case the tool did not open, the command can be copied.
+    fireEvent.click(screen.getByRole("button", { name: "Didn't open? Copy the command" }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep"));
+    expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
+  });
+
+  it("says where to paste before copying for a tool it cannot open", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(5));
+    wrap(<Line pages={[]} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveTextContent(/Then paste it into .+ and press Enter\./);
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalled());
+    expect(openToolWithPrompt).not.toHaveBeenCalled();
   });
 
   it("names only what is left once pages exist", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(10, { kinds: { note: 2, chat: 4, file: 4 } }));
-    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} onSelectPage={vi.fn()} />);
+    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
   });
@@ -166,10 +181,12 @@ describe("WritePagesLine", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
-    wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
+    wrap(<Line pages={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
-    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is copied. Paste it into Codex"));
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Paste the command into Codex and press Enter."));
+    // Said once, on the button that copied it.
+    expect(screen.getByTestId("write-pages-line").textContent?.match(/Copied/g)).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
   });
 
@@ -178,7 +195,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     const onConnectTool = vi.fn();
     const onUseLocalModel = vi.fn();
-    wrap(<Line pages={[]} onSelectPage={vi.fn()} onConnectTool={onConnectTool} onUseLocalModel={onUseLocalModel} />);
+    wrap(<Line pages={[]} onConnectTool={onConnectTool} onUseLocalModel={onUseLocalModel} />);
     fireEvent.click(await screen.findByRole("button", { name: "Connect an AI tool" }));
     fireEvent.click(screen.getByRole("button", { name: "Use local model" }));
     expect(onConnectTool).toHaveBeenCalled();
@@ -189,47 +206,37 @@ describe("WritePagesLine", () => {
   it("stays closed once the user closes it", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
-    const { unmount } = wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
+    const { unmount } = wrap(<Line pages={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Hide" }));
     expect(screen.queryByTestId("write-pages-line")).toBeNull();
     unmount();
 
-    wrap(<Line pages={[]} onSelectPage={vi.fn()} />);
+    wrap(<Line pages={[]} />);
     await waitFor(() => expect(listNewMaterial).toHaveBeenCalledTimes(2));
     expect(screen.queryByTestId("write-pages-line")).toBeNull();
   });
 
-  it("goes once a new page is opened from the finished run", async () => {
+  it("says the run is done; its pages are in the home list, not here", async () => {
     // Started long enough ago that the run reads as finished.
     localStorage.setItem("askAi:writePages:run", JSON.stringify({ startedAt: Date.now() - 600_000, tool: "Claude Code" }));
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(1));
-    const onSelectPage = vi.fn();
     const born = new Date(Date.now() - 300_000).toISOString();
-    wrap(<Line pages={[page("a", born)]} onSelectPage={onSelectPage} />);
+    wrap(<Line pages={[page("a", born)]} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveAttribute("data-state", "done");
-    fireEvent.click(screen.getByRole("button", { name: "Page a" }));
-    expect(onSelectPage).toHaveBeenCalledWith("a");
-    expect(screen.queryByTestId("write-pages-line")).toBeNull();
-    expect(localStorage.getItem("askAi:writePages:run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Page a" })).toBeNull();
   });
 
-  it("lists the pages written and opens one", async () => {
-    localStorage.setItem("askAi:writePages:run", JSON.stringify({ startedAt: START, tool: "Claude Code" }));
+  it("follows the run in one line", async () => {
+    localStorage.setItem("askAi:writePages:run", JSON.stringify({ startedAt: START, tool: "Claude Code", handedOver: "opened" }));
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(9, { held: 3 }));
-    const onSelectPage = vi.fn();
-    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z", "distilled", 8)]} onSelectPage={onSelectPage} />);
+    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z", "distilled", 8)]} />);
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveTextContent("Claude Code is writing pages: 1 ready");
-    // The new pages show until the user folds them.
-    expect(line).toHaveTextContent("8 sources");
-    fireEvent.click(screen.getByRole("button", { name: "Hide pages" }));
-    expect(line).not.toHaveTextContent("8 sources");
-    fireEvent.click(screen.getByRole("button", { name: "See new pages" }));
-    expect(line).toHaveTextContent("Writing the next page…");
-    fireEvent.click(screen.getByRole("button", { name: "Page a" }));
-    expect(onSelectPage).toHaveBeenCalledWith("a");
+    expect(screen.queryByRole("button", { name: "Page a" })).toBeNull();
+    // A page landed, so the tool did open: no copy fallback.
+    expect(screen.queryByRole("button", { name: /Copy the command/ })).toBeNull();
   });
 });

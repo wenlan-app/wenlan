@@ -210,3 +210,16 @@ fn a_reply_that_opens_with_a_diagram_keeps_its_fences() {
     let wrapped = format!("```markdown\n{note}\n```");
     assert_eq!(super::unfence(&wrapped), note);
 }
+
+#[tokio::test]
+async fn a_diagram_the_model_broke_is_dropped_and_the_rewrite_kept() {
+    let (db, _dir) = test_db().await;
+    let repo = Repo::new();
+    stale_note(&db, &repo, "page_a").await;
+    let model = Scripted::new(&format!(
+        "{FIXED}\n\n```mermaid\nflowchart LR\n  cli[\"CLI\"] -->\n```"
+    ));
+
+    assert_eq!(run(&db, &model).await, Some(CodeRewriteOutcome::Written));
+    assert_eq!(body_of(&db, "page_a").await, FIXED);
+}

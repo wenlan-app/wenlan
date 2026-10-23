@@ -1164,7 +1164,7 @@ carrying the authority of agreement.
 | `core/m6/signals.rs::orphan_wikilink_slot` | `private` | no | no | — | `core/m6/independence.rs::distinct_group_count`, `core/m6/signals.rs::containing_revisions`, `core/m6/signals.rs::scoped_root_ids` |
 | `core/m6/signals.rs::space_overview` | `pub` | no | no | — | `core/m6/independence.rs::distinct_group_count`, `core/m6/signals.rs::scoped_root_ids` |
 | `core/maintenance.rs::run_maintenance_stage_slice` | `pub` | no | **yes** | `server/scheduler.rs::fire_maintenance_stage_safe` | `core/db.rs::get_stale_page_after`, `core/db/maintenance_duplicate_reads.rs::scan_near_duplicate_slice`, `core/db/maintenance_retro_scan.rs::scan_automatic_retro_stub_slice` |
-| `core/onboarding.rs::check_after_refinery_pass` | `pub` | no | no | — | `core/db.rs::oldest_active_page` |
+| `core/onboarding.rs::check_first_page` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::oldest_active_page` |
 | `core/page_map_improve.rs::source_suggestions` | `private` | no | no | — | `core/db.rs::find_active_page_id_by_title` |
 | `core/post_ingest.rs::auto_link_entity` | `pub(crate)` | no | no | — | `core/db.rs::search_entities_by_vector` |
 | `core/post_ingest.rs::run_post_ingest_enrichment` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
@@ -1312,6 +1312,7 @@ carrying the authority of agreement.
 | `core/m6/oracle.rs::recompute_full` | `pub` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/m6/shadow.rs::admitted_proposals` | `private` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/maintenance/page_merge_order.rs::load_candidate` | `private` | no | no | — | `core/db.rs::get_page` |
+| `core/onboarding.rs::check_after_refinery_pass` | `pub` | no | no | — | `core/onboarding.rs::check_first_page` |
 | `core/page_map_improve.rs::improve_page_map` | `pub` | no | **yes** | `server/page_map_routes.rs::handle_improve_page_map` | `core/db.rs::get_page`, `core/page_map_improve.rs::source_suggestions` |
 | `core/page_map_improve.rs::run_proactive_page_maps` | `pub` | no | no | — | `core/db.rs::list_pages` |
 | `core/post_ingest.rs::grow_page` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::get_page` |
@@ -1328,7 +1329,7 @@ carrying the authority of agreement.
 | `core/refinery/mod.rs::maybe_refresh_overview_page` | `private` | no | no | — | `core/synthesis/overview.rs::refresh_overview_page` |
 | `core/refinery/mod.rs::re_distill_stale_pages` | `pub(crate)` | no | no | — | `core/db.rs::list_stale_pages` |
 | `core/refinery/mod.rs::run_periodic_steep_phase_with_api` | `pub` | no | **yes** | `server/scheduler.rs::fire_steep_phase` | `core/refinery/mod.rs::run_redistill_page_slice` |
-| `core/refinery/mod.rs::run_periodic_steep_with_api_scope` | `private` | no | no | — | `core/db.rs::resolve_orphan_page_links`, `core/kg/reweave.rs::reweave_entity_links`, `core/onboarding.rs::check_after_refinery_pass` |
+| `core/refinery/mod.rs::run_periodic_steep_with_api_scope` | `private` | no | no | — | `core/db.rs::resolve_orphan_page_links`, `core/kg/reweave.rs::reweave_entity_links` |
 | `core/repair.rs::apply_rename_page_title` | `private` | no | no | — | `core/post_write.rs::rename_page_title_cas` |
 | `core/repair.rs::apply_repair_with_pages` | `pub` | no | **yes** | `server/repair_routes.rs::handle_apply` | `core/repair.rs::apply_repair_with_pages_inner` |
 | `core/repair.rs::capture_page_projection_rollback` | `pub(crate)` | no | no | — | `core/repair.rs::projection_page_row_from_snapshot` |
@@ -1373,7 +1374,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_recent_pages` | `pub` | no | no | — | `core/db/scoped_pages.rs::list_recent_pages_with_badges_scoped` |
 | `server/routes.rs::handle_search_inner` | `private` | no | no | `server/routes.rs::handle_search` | `core/db.rs::search_memory` |
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
-| `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
+| `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `core/db.rs::get_page`, `core/onboarding.rs::check_first_page` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::waiting_page_ids` |
 

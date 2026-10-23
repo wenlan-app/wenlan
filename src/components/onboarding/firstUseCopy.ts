@@ -73,13 +73,13 @@ export const enFirstUse = {
     steps: {
       note: {
         title: "Write a page yourself",
-        body: "AI-written pages don't count. Write anything and save.",
+        body: "In your own words. A few lines is enough.",
         draftBody: "Your page is still a draft. Leave the editor and it is saved as a page your AI tools can find.",
         action: "Write a page",
       },
       tool: {
         title: "Connect an AI tool",
-        body: "Let Claude Code, Codex or ChatGPT read and write your pages.",
+        body: "Let Claude Code, Codex or ChatGPT use your pages.",
         action: "Connect a tool",
       },
       sources: {
@@ -213,7 +213,7 @@ export const hansFirstUse = {
     steps: {
       note: {
         title: "自己写一篇笔记",
-        body: "AI 写的不算，这篇是你自己的。随便写点什么，保存后就算完成。",
+        body: "用你自己的话写一篇，几行就好。",
         draftBody: "你的笔记还是草稿。离开编辑器后才会保存，AI 工具才能找到。",
         action: "写笔记",
       },
@@ -350,7 +350,7 @@ export const hantFirstUse = {
     steps: {
       note: {
         title: "自己寫一篇筆記",
-        body: "AI 寫的不算，這篇是你自己的。隨便寫點什麼，儲存後就算完成。",
+        body: "用你自己的話寫一篇，幾行就好。",
         draftBody: "你的筆記還是草稿。離開編輯器後才會儲存，AI 工具才能找到。",
         action: "寫筆記",
       },
