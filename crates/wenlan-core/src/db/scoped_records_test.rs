@@ -69,6 +69,100 @@ async fn webpage_chunks_are_exact_kind_scoped_and_ordered() {
 }
 
 #[tokio::test]
+async fn folder_chunk_locator_reads_sorted_siblings_within_scope() {
+    let (db, _temp) = test_db().await;
+    let conn = db.conn.lock().await;
+    for (id, source, source_id, index, space) in [
+        ("folder-chunk-2", "memory", "folder-doc", 2, "work"),
+        ("folder-chunk-0", "memory", "folder-doc", 0, "work"),
+        ("folder-chunk-1", "memory", "folder-doc", 1, "work"),
+        (
+            "folder-chunk-personal",
+            "memory",
+            "folder-doc",
+            3,
+            "personal",
+        ),
+        (
+            "folder-chunk-private",
+            "memory",
+            "same-name-doc",
+            0,
+            "personal",
+        ),
+        ("same-name-work", "memory", "same-name-doc", 0, "work"),
+        ("folder-webpage", "webpage", "folder-doc", 3, "work"),
+        ("folder-episode", "episode", "folder-doc", 4, "work"),
+    ] {
+        conn.execute(
+            "INSERT INTO memories (id, content, source, source_id, title, chunk_index,
+                last_modified, chunk_type, space)
+             VALUES (?1, ?1, ?2, ?3, 'Folder document', ?4, 1, 'text', ?5)",
+            libsql::params![id, source, source_id, index, space],
+        )
+        .await
+        .unwrap();
+    }
+    drop(conn);
+
+    let scope = ReadScope::Space("work".into());
+    let chunks = db
+        .get_chunks_scoped("folder-chunk-1", &scope)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|chunk| chunk.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["folder-chunk-0", "folder-chunk-1", "folder-chunk-2"]
+    );
+    assert!(
+        db.get_chunks_scoped("folder-chunk-private", &scope)
+            .await
+            .unwrap()
+            .is_none(),
+        "an out-of-scope chunk locator must not resolve through a same-name in-scope source"
+    );
+}
+
+#[tokio::test]
+async fn scoped_chunks_prefer_canonical_source_id_over_a_chunk_id_collision() {
+    let (db, _temp) = test_db().await;
+    let conn = db.conn.lock().await;
+    for (id, source, source_id, index) in [
+        ("canonical-file-0", "file", "requested", 0),
+        ("requested", "memory", "other-memory", 0),
+        ("canonical-file-1", "file", "requested", 1),
+    ] {
+        conn.execute(
+            "INSERT INTO memories (id, content, source, source_id, title, chunk_index,
+                last_modified, chunk_type, space)
+             VALUES (?1, ?1, ?2, ?3, 'Source', ?4, 1, 'text', 'work')",
+            libsql::params![id, source, source_id, index],
+        )
+        .await
+        .unwrap();
+    }
+    drop(conn);
+
+    let chunks = db
+        .get_chunks_scoped("requested", &ReadScope::Space("work".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        chunks
+            .iter()
+            .map(|chunk| chunk.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["canonical-file-0", "canonical-file-1"],
+        "an exact canonical source_id match must outrank a chunk id match"
+    );
+}
+
+#[tokio::test]
 async fn webpage_chunks_propagate_database_failures() {
     let (db, _temp) = test_db().await;
     db.conn

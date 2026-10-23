@@ -916,6 +916,138 @@ export async function deleteSpace(name: string): Promise<void> {
   return invoke("delete_space", { name });
 }
 
+// ── A Space bound to a git repository ──────────────────────────────────
+// Mirrors `wenlan_types::repo_wiki`. The daemon writes the Space's code
+// pages into a folder of the repository and opens a pull request.
+
+export type RepoWikiAgent = "claude" | "codex";
+
+export interface RepoWikiDaily {
+  enabled: boolean;
+  /** Local hour, 0 to 23, after which the day's update starts. */
+  hour: number;
+  agent: RepoWikiAgent;
+}
+
+export type RepoWikiPublishStatus =
+  | "no_changes"
+  | "pr_opened"
+  | "pr_updated"
+  | "pushed"
+  | "nothing_to_publish";
+
+export interface RepoWikiPublishResult {
+  status: RepoWikiPublishStatus;
+  pages: number;
+  left_out: number;
+  waiting: number;
+  branch?: string | null;
+  pr_url?: string | null;
+  compare_url?: string | null;
+  /** Doc fixes in this update's pull request. */
+  doc_fixes?: number;
+  /** Wiki pages edited in the repository and taken back into Wenlan. */
+  taken_back?: number;
+  /** Wiki pages edited in the repository while Wenlan changed them too. */
+  kept?: number;
+  /** Unix seconds. */
+  at: number;
+}
+
+export type RepoDocFixState = "pending" | "in_pr" | "dismissed";
+
+export interface RepoDocCode {
+  path: string;
+  line_start: number;
+  line_end: number;
+}
+
+/** A sentence of one of the repository's own docs the code no longer agrees with. */
+export interface RepoDocFix {
+  id: string;
+  path: string;
+  old_text: string;
+  new_text: string;
+  reason: string;
+  code?: RepoDocCode[];
+  state: RepoDocFixState;
+  /** Unix seconds. */
+  found_at: number;
+}
+
+export interface RepoDocCheck {
+  /** Unix seconds. */
+  at: number;
+  docs: number;
+}
+
+export interface RepoWikiBinding {
+  space: string;
+  repo_root: string;
+  folder: string;
+  remote_url?: string | null;
+  daily?: RepoWikiDaily | null;
+  last_publish?: RepoWikiPublishResult | null;
+  last_daily_run?: string | null;
+  doc_fixes?: RepoDocFix[];
+  doc_check?: RepoDocCheck | null;
+  /** Wiki page files the repository keeps as people wrote them, reported once. */
+  kept_edits?: string[];
+}
+
+export interface RepoDocsReply {
+  fix?: RepoDocFix | null;
+  open: number;
+}
+
+export interface RepoWikiCandidate {
+  repo_root: string;
+  pages: number;
+  remote_url?: string | null;
+}
+
+export interface RepoWikiSuggestion {
+  candidates: RepoWikiCandidate[];
+}
+
+export async function getRepoWiki(space: string): Promise<RepoWikiBinding | null> {
+  return invoke("get_repo_wiki", { space });
+}
+
+export async function suggestRepoWiki(space: string): Promise<RepoWikiSuggestion> {
+  return invoke("suggest_repo_wiki", { space });
+}
+
+/** Bind `space` to the repository holding `repoRoot`, or change its folder or
+ *  daily update. Leaving `daily` out keeps the current daily setting. */
+export async function bindRepoWiki(
+  space: string,
+  repoRoot: string,
+  folder?: string,
+  daily?: RepoWikiDaily,
+): Promise<RepoWikiBinding> {
+  return invoke("bind_repo_wiki", {
+    space,
+    repoRoot,
+    folder: folder ?? null,
+    daily: daily ?? null,
+  });
+}
+
+export async function unbindRepoWiki(space: string): Promise<void> {
+  return invoke("unbind_repo_wiki", { space });
+}
+
+/** Put the current pages into the repository; no AI rewrites anything. */
+export async function publishRepoWiki(space: string): Promise<RepoWikiPublishResult> {
+  return invoke("publish_repo_wiki", { space });
+}
+
+/** Decline a doc fix: it leaves the pull request on the next update. */
+export async function dismissRepoDocFix(space: string, id: string): Promise<RepoDocsReply> {
+  return invoke("dismiss_repo_doc_fix", { space, id });
+}
+
 export interface MoveSpaceResponse {
   affected: number;
 }

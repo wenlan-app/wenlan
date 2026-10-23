@@ -220,6 +220,14 @@ describe("GettingStarted", () => {
     expect(screen.queryByTestId("getting-started")).toBeNull();
   });
 
+  it("stays for a new library whose pages are mostly copies of brought-in files", async () => {
+    const copies = Array.from({ length: ESTABLISHED_LIBRARY_PAGES * 2 }, (_, i) =>
+      page({ id: `c${i}`, creation_kind: i % 2 ? "source" : "imported" }),
+    );
+    renderCard([...copies, written]);
+    expect(await screen.findByTestId("getting-started")).toBeTruthy();
+  });
+
   it("hides when every step is done", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listRegisteredSources).mockResolvedValue([folder]);
@@ -228,6 +236,21 @@ describe("GettingStarted", () => {
     await vi.waitFor(() => expect(listOnboardingMilestones).toHaveBeenCalled());
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.queryByTestId("getting-started")).toBeNull();
+  });
+
+  it("steps back to one line when writing a page by hand is all that is left", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
+    vi.mocked(listOnboardingMilestones).mockResolvedValue([recall]);
+    const props = renderCard([written]);
+    const card = await screen.findByTestId("getting-started");
+    expect(card).toHaveTextContent(i18n.t("firstUse.checklist.progress", { done: 3, total: 4 }));
+    expect(card).toHaveTextContent(i18n.t("firstUse.checklist.steps.note.title"));
+    expect(screen.queryByRole("heading", { name: title() })).toBeNull();
+    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.note.action") }));
+    expect(props.onWriteNote).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.hide") }));
+    expect(screen.getByRole("button", { name: i18n.t("firstUse.checklist.reopen") })).toBeInTheDocument();
   });
 
   it("tells a user whose only note is a draft to leave the editor so AI can find it", async () => {

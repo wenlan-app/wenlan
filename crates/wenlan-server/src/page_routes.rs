@@ -619,6 +619,10 @@ async fn handle_create_page_inner(
         )
     };
 
+    // The tool writing is registered like a memory writer, so its recall
+    // sees the page it is about to write.
+    crate::agent_presence::note_page_writer(&db, Some(&agent)).await?;
+
     let write_started_at = chrono::Utc::now().timestamp();
     let _space_write_guard = db.lock_space_writes().await;
     let target = normalize_page_write_target(&req.space, req.workspace.as_deref())?;
@@ -1662,6 +1666,9 @@ pub async fn handle_refresh_page(
     let session = crate::session_routes::extract_session_ref(&headers);
     let write_started_at = chrono::Utc::now().timestamp();
     let db = state.read().await.db.clone();
+    if let Some(db) = &db {
+        crate::agent_presence::note_page_writer(db, proposer.as_deref()).await?;
+    }
     let page_id = id.clone();
     let result = handle_refresh_page_inner(
         State(state),
@@ -2397,6 +2404,93 @@ mod create_page_endpoint_tests {
             body["error"], "distilled page requires at least 3 distinct source memories (got 2)",
             "error should explain the exact source floor: {body}"
         );
+    }
+
+    fn agent_page_write(agent: &str, title: &str) -> Request<Body> {
+        let body = json!({
+            "title": title,
+            "content": "Rust ownership borrowing and lifetimes keep references memory safe by validating references",
+            "summary": "Rust safety",
+            "source_memory_ids": [
+                "mem-page-floor-a",
+                "mem-page-floor-b",
+                "mem-page-floor-c"
+            ]
+        });
+        Request::builder()
+            .method("POST")
+            .uri("/api/pages")
+            .header("content-type", "application/json")
+            .header("x-agent-name", agent)
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
+    /// The hero run: an AI connected outside the app had only searched (a
+    /// read-created "unknown" row), then wrote pages. The write must promote
+    /// it, or the page gate hides those pages from its own recall.
+    #[tokio::test]
+    async fn a_page_write_promotes_the_writing_tool_so_its_recall_sees_pages() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (state, _tmp) = build_state_with_db(3).await;
+        let db = {
+            let s = state.read().await;
+            s.db.as_ref().cloned().unwrap()
+        };
+        db.record_agent_presence("claude-code").await.unwrap();
+        assert_eq!(
+            db.get_agent("claude-code")
+                .await
+                .unwrap()
+                .unwrap()
+                .trust_level,
+            "unknown"
+        );
+        let app = crate::router::build_router(state);
+
+        let response = app
+            .oneshot(agent_page_write("claude-code", "Rust Safety From An Agent"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let agent = db.get_agent("claude-code").await.unwrap().unwrap();
+        assert_eq!(agent.trust_level, "full");
+        assert!(agent.last_seen_at.is_some());
+        assert_eq!(agent.memory_count, 0, "a page is not a memory");
+    }
+
+    #[tokio::test]
+    async fn a_page_write_from_a_disabled_tool_is_refused() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let (state, _tmp) = build_state_with_db(3).await;
+        let db = {
+            let s = state.read().await;
+            s.db.as_ref().cloned().unwrap()
+        };
+        db.register_trusted_agent("off-bot").await.unwrap();
+        db.update_agent("off-bot", None, None, Some(false), None, None)
+            .await
+            .unwrap();
+        let app = crate::router::build_router(state);
+
+        let response = app
+            .oneshot(agent_page_write(
+                "off-bot",
+                "Rust Safety From A Disabled Tool",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

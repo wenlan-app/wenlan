@@ -698,6 +698,77 @@ pub fn export_okf_with_concept_paths(
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
 ) -> Result<ExportStats, WenlanError> {
+    export_okf_inner(pages, target, concept_paths, code_bases, false)
+}
+
+/// [`export_okf_with_concept_paths`] for a bundle that lives in a folder of a
+/// git repository: links between bundle files are written relative to the
+/// linking file (`pages/x.md` from the index, `x.md` between pages), since a
+/// repository host resolves `/pages/x.md` from the repository root, not the
+/// bundle's.
+pub fn export_okf_for_repository(
+    pages: &[Page],
+    target: &Path,
+    concept_paths: &ConceptPathMap,
+    code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
+) -> Result<ExportStats, WenlanError> {
+    export_okf_inner(pages, target, concept_paths, code_bases, true)
+}
+
+/// The body of a page file in a repository bundle (`pages/<file>`) as page
+/// content again: a link the export made to another page of `pages`
+/// (`[label](<file>)`) goes back to the `[[wikilink]]` it came from. A link
+/// to a heading or anywhere else stays as written.
+pub fn wikilinks_from_repository_body(body: &str, pages: &[Page]) -> String {
+    let titles: HashMap<String, &str> = plan_page_filenames(pages)
+        .into_iter()
+        .filter_map(|(id, file)| {
+            pages
+                .iter()
+                .find(|page| page.id == id)
+                .map(|page| (file, page.title.as_str()))
+        })
+        .collect();
+    replace_outside_code(body, &MD_LINK_RE, |cap| {
+        let (label, target) = (&cap[1], &cap[2]);
+        match titles.get(target) {
+            Some(title) => {
+                let label = label.replace("\\[", "[").replace("\\]", "]");
+                if label == *title {
+                    format!("[[{title}]]")
+                } else {
+                    format!("[[{title}|{label}]]")
+                }
+            }
+            None => cap[0].to_string(),
+        }
+    })
+}
+
+/// Rewrite the bundle-root links in `body` (a file at `path` in the bundle) to
+/// links relative to that file.
+fn relative_bundle_links(path: &str, body: &str) -> String {
+    let up = if path.contains('/') { "../" } else { "" };
+    let own_dir = path.rsplit_once('/').map(|(dir, _)| dir);
+    let mut out = body.to_owned();
+    for dir in [PAGES_DIR, SOURCES_DIR] {
+        let replacement = if own_dir == Some(dir) {
+            "](".to_owned()
+        } else {
+            format!("]({up}{dir}/")
+        };
+        out = out.replace(&format!("](/{dir}/"), &replacement);
+    }
+    out.replace(&format!("](/{INDEX_FILE}"), &format!("]({up}{INDEX_FILE}"))
+}
+
+fn export_okf_inner(
+    pages: &[Page],
+    target: &Path,
+    concept_paths: &ConceptPathMap,
+    code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
+    relative_links: bool,
+) -> Result<ExportStats, WenlanError> {
     let mut stats = ExportStats::default();
     for dir in [target, &target.join(PAGES_DIR), &target.join(SOURCES_DIR)] {
         if is_symlink(dir) {
@@ -798,6 +869,13 @@ pub fn export_okf_with_concept_paths(
         INDEX_FILE.to_string(),
         render_bundle_index(pages, &id_to_file).into_bytes(),
     );
+    if relative_links {
+        for (path, bytes) in planned_bytes.iter_mut() {
+            if let Ok(body) = std::str::from_utf8(bytes) {
+                *bytes = relative_bundle_links(path, body).into_bytes();
+            }
+        }
+    }
 
     // Preservation pass, before anything is written or removed. Being listed
     // in the last marker says Wenlan WROTE a file; it never says the bytes are
@@ -924,7 +1002,10 @@ pub fn export_okf_with_concept_paths(
         .filter(|page| written_ids.contains(page.id.as_str()))
         .cloned()
         .collect();
-    let index = render_bundle_index(&written_pages, &id_to_file);
+    let mut index = render_bundle_index(&written_pages, &id_to_file);
+    if relative_links {
+        index = relative_bundle_links(INDEX_FILE, &index);
+    }
     write_file_nofollow(&target.join(INDEX_FILE), index.as_bytes())?;
     new_digests.insert(INDEX_FILE.to_string(), digest_of(index.as_bytes()));
     // A planned file that failed to write keeps whatever digest the previous
@@ -956,6 +1037,20 @@ pub fn export_okf_with_concept_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repository_bundle_links_are_relative_to_the_linking_file() {
+        let body =
+            "[A](/pages/a.md) [S](/sources/s.md) [Home](/index.md) [x](https://e.com/pages/x)";
+        assert_eq!(
+            relative_bundle_links("index.md", body),
+            "[A](pages/a.md) [S](sources/s.md) [Home](index.md) [x](https://e.com/pages/x)"
+        );
+        assert_eq!(
+            relative_bundle_links("pages/b.md", body),
+            "[A](a.md) [S](../sources/s.md) [Home](../index.md) [x](https://e.com/pages/x)"
+        );
+    }
 
     fn test_page(id: &str, title: &str, content: &str) -> Page {
         Page {

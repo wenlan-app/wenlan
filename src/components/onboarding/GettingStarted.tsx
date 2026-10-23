@@ -83,6 +83,7 @@ export function GettingStarted({
     setPagesSkipped,
     pages,
     agents,
+    compact,
   } = useGettingStartedState();
   // Same key as the Intelligence settings, so turning it on there hides the line here.
   const backgroundAi = useQuery({
@@ -123,6 +124,38 @@ export function GettingStarted({
       >
         {t("firstUse.checklist.reopen")}
       </button>
+    );
+  }
+
+  // Only writing a page by hand is left: the card steps back to one line and
+  // the pages are the home.
+  if (compact && !writing) {
+    return (
+      <section
+        className="getting-started getting-started--compact"
+        data-testid="getting-started"
+        aria-label={t("firstUse.checklist.title")}
+      >
+        <p className="getting-started-compact-text">
+          {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
+          {" · "}
+          {t("firstUse.checklist.steps.note.title")}
+        </p>
+        <div className="getting-started-compact-actions">
+          <button type="button" className="getting-started-action" onClick={onWriteNote}>
+            {t("firstUse.checklist.steps.note.action")}
+          </button>
+          <button
+            type="button"
+            className="getting-started-hide"
+            aria-label={t("firstUse.checklist.hide")}
+            title={t("firstUse.checklist.hide")}
+            onClick={() => setDismissed(true)}
+          >
+            <X aria-hidden="true" weight="regular" />
+          </button>
+        </div>
+      </section>
     );
   }
 

@@ -202,3 +202,11 @@ async fn the_background_redistill_turn_takes_a_code_changed_note() {
     assert_eq!(report.items_processed, 1);
     assert_eq!(body_of(&db, "page_a").await, FIXED);
 }
+
+#[test]
+fn a_reply_that_opens_with_a_diagram_keeps_its_fences() {
+    let note = "```mermaid\nflowchart LR\n  a[\"CLI\"] --> b[\"daemon\"]\n```\n\nThe CLI calls the daemon.";
+    assert_eq!(super::unfence(note), note);
+    let wrapped = format!("```markdown\n{note}\n```");
+    assert_eq!(super::unfence(&wrapped), note);
+}

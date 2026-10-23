@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { Space } from "../../../lib/tauri";
 import type { SpaceDetailCopy } from "./copy";
@@ -27,6 +27,8 @@ type SpaceDossierHeaderProps = {
   readonly copy: SpaceDetailCopy;
   readonly mutationError: boolean;
   readonly space: Space;
+  /** Shown before New page, such as the GitHub button. */
+  readonly leadingAction?: ReactNode;
   readonly onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
 };
 
@@ -35,6 +37,7 @@ export function SpaceDossierHeader({
   copy,
   mutationError,
   space,
+  leadingAction,
   onRegisterFlush,
 }: SpaceDossierHeaderProps) {
   const { t } = useTranslation();
@@ -169,6 +172,7 @@ export function SpaceDossierHeader({
 
           {!space.suggested && (
             <div ref={actionsRef} className="space-dossier-actions">
+              {leadingAction}
               <button
                 className="page-create-action space-dossier-new-page"
                 onClick={actions.onCreatePage}

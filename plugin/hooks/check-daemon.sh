@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# SessionStart hook: probe the local Wenlan daemon and surface two issues:
+# SessionStart hook: probe the local Wenlan daemon, register Claude Code with
+# it, and surface two issues:
 #   1. Daemon not running → point user at /wenlan (it auto-installs).
 #   2. Daemon version mismatches the plugin manifest → point user at
 #      /wenlan (it upgrades/restarts and verifies the runtime).
@@ -44,6 +45,17 @@ MSG
 fi
 
 report_outbox
+
+# Installing the plugin is how the user connected Claude Code, so tell the
+# daemon, as connecting a tool from the app does (POST /api/agents): its first
+# recall then sees the user's pages, not only search results. Idempotent; a
+# tool the user edited or turned off in Connections stays as it is. Silent.
+case "$URL" in
+  */api/health)
+    curl -fsS -m 3 -o /dev/null -X POST -H 'Content-Type: application/json' \
+      -d '{"name":"claude-code"}' "${URL%/api/health}/api/agents" 2>/dev/null || true
+    ;;
+esac
 
 # Compare daemon version vs plugin manifest version. Silent unless the
 # major.minor differ: the daemon and plugin ride one release train, so a patch

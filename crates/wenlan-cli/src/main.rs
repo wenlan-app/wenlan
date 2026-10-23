@@ -203,6 +203,11 @@ enum Commands {
         #[command(subcommand)]
         command: commands::export::ExportCommand,
     },
+    /// Put this Space's code pages into its git repository as a pull request.
+    Wiki {
+        #[command(subcommand)]
+        command: commands::wiki::WikiCommand,
+    },
     /// Force one bounded pass over every due ambient job now, instead of
     /// waiting for a quiet turn.
     #[command(hide = true)]
@@ -216,7 +221,7 @@ const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
         &[
-            "brief", "capture", "recall", "pages", "memories", "curate", "lint", "spaces",
+            "brief", "capture", "recall", "pages", "memories", "curate", "lint", "spaces", "wiki",
         ],
     ),
     (
@@ -283,7 +288,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     let agent_name = resolve_agent_name(cli.agent_name.as_deref(), environment_agent.as_deref());
     let recovery_enabled = !matches!(
         &cli.command,
-        Commands::Status | Commands::Background { .. } | Commands::Restart
+        Commands::Status | Commands::Background { .. } | Commands::Restart | Commands::Connect(_)
     );
     let resolved_session =
         wenlan_types::session_context::resolve_session_from_env(cli.session.as_deref());
@@ -304,7 +309,7 @@ async fn main() -> anyhow::Result<ExitCode> {
             Some(CliSpaceOperation::Read)
         }
         Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
-        Commands::Capture { .. } => Some(CliSpaceOperation::Write),
+        Commands::Capture { .. } | Commands::Wiki { .. } => Some(CliSpaceOperation::Write),
         _ => None,
     };
     let is_lint = matches!(&cli.command, Commands::Lint { .. });
@@ -463,7 +468,7 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Models { command } => commands::setup::run_model(command).await?,
         Commands::Keys { command } => commands::setup::run_key(command).await?,
         Commands::Steep { command } => commands::setup::run_enrichment(command).await?,
-        Commands::Connect(args) => commands::mcp::run_connect(args, cli.quiet)?,
+        Commands::Connect(args) => commands::mcp::run_connect(&client, args, cli.quiet).await?,
         Commands::Search { query, limit } => {
             commands::search::run(&client, format, cli.quiet, query, limit).await?
         }
@@ -530,6 +535,16 @@ async fn main() -> anyhow::Result<ExitCode> {
         }
         Commands::Entities { cmd } => {
             commands::entities::run(&client, format, cli.quiet, cmd).await?
+        }
+        Commands::Wiki { command } => {
+            commands::wiki::run(
+                &client,
+                format,
+                cli.quiet,
+                effective_cli_space.as_deref(),
+                command,
+            )
+            .await?
         }
         Commands::Export { command } => {
             commands::export::run(&client, format, cli.quiet, command).await?

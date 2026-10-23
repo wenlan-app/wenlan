@@ -54,7 +54,9 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     const reading=page.locator(".wiki-workspace-reading");
     await expect(reading.getByRole("heading", { level: 1, name: "Open a page", exact: true })).toBeVisible();
     await expect(reading.locator(".asset-card, .wiki-table, .wiki-folder-lenses")).toHaveCount(0);
-    await expect(reading).not.toContainText("Fixture architecture");
+    // Pages appear on the home only in the new-pages list, never as a second directory.
+    await expect(reading.getByText("Fixture architecture", { exact: true })).toHaveCount(1);
+    await expect(reading.getByTestId("wiki-new-pages").getByText("Fixture architecture", { exact: true })).toBeVisible();
     const control=page.locator(".note-tab-create");
     await expect(control).toBeVisible();
     const box=await control.evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,height:r.height,width:r.width};});

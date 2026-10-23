@@ -41,8 +41,29 @@
 /* While the getting-started checklist is open it is the home's only content,
    so the panel steps out of sight and the checklist title leads. The landmark
    heading stays in the DOM for navigation and screen readers. */
-.wiki-reading-start[data-onboarding="true"] .wiki-reading-start-panel { clip-path:inset(50%);height:1px;overflow:hidden;padding:0;position:absolute;white-space:nowrap;width:1px; }
+.wiki-reading-start[data-onboarding="true"] .wiki-reading-start-panel,
+/* With pages listed, "open a page" would contradict the list under it; the
+   list leads and the heading stays for navigation only. */
+/* Hidden in place rather than lifted out of the flow, so the heading keeps
+   its spot under any notice at the top of the pane. */
+.wiki-reading-start[data-lists-pages="true"] .wiki-reading-start-panel { clip-path:inset(50%);flex:none;height:1px;margin:-1px 0 0;min-height:0;overflow:hidden;padding:0;white-space:nowrap;width:1px; }
 @media (max-width:639px) { .wiki-reading-start-panel { flex-basis:clamp(240px,42vh,420px);padding:24px 8px; }.wiki-reading-start-panel h1 { font-size:19px; } }
+/* Same width and left edge as the write-pages line and the one-line card, so
+   the home reads as one column. */
+.wiki-new-pages { margin:32px auto 24px;max-width:min(100%,640px);width:100%;min-width:0; }
+.write-pages-line + .wiki-new-pages,.getting-started--compact + .wiki-new-pages { margin-top:8px; }
+.wiki-new-pages-header { display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:0 0 6px;padding:0 8px; }
+.wiki-new-pages-header h2 { color:var(--mem-text);font:600 16px/1.4 var(--mem-font-body);margin:0; }
+.wiki-new-pages-all { border:0;background:none;padding:2px 0;color:var(--mem-text-secondary);font:13px var(--mem-font-body);cursor:pointer;white-space:nowrap; }
+.wiki-new-pages-all:hover { color:var(--mem-accent-page); }
+.wiki-new-pages ul { list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px; }
+.wiki-new-pages-row { display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:9px 8px;border:0;border-radius:6px;background:none;color:var(--mem-text);text-align:left;cursor:pointer; }
+.wiki-new-pages-row:hover { background:var(--mem-hover); }
+.wiki-new-pages-all:focus-visible,.wiki-new-pages-row:focus-visible { outline:2px solid var(--mem-accent-page);outline-offset:2px; }
+.wiki-new-pages-icon { flex:none;color:var(--mem-text-tertiary); }
+.wiki-new-pages-icon--fresh { color:var(--mem-status-success-text); }
+.wiki-new-pages-title { flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:500 15px/1.35 var(--mem-font-body); }
+.wiki-new-pages-meta { flex:none;color:var(--mem-text-tertiary);font:12px/1.4 var(--mem-font-body);font-variant-numeric:tabular-nums; }
 
 .wiki-projection-notice { display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:9px 12px;border:1px solid var(--mem-border);border-radius:6px;color:var(--mem-text-secondary);font:12px/1.5 var(--mem-font-body); }
 .wiki-projection-notice button { border:0;background:none;color:var(--mem-text);cursor:pointer;padding:3px 0;white-space:nowrap; }

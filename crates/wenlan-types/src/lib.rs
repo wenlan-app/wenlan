@@ -31,6 +31,7 @@ pub mod repair_prepare_operation;
 pub mod repair_recovery;
 pub mod repair_relation;
 pub mod repair_runtime;
+pub mod repo_wiki;
 pub mod requests;
 pub mod responses;
 pub mod session_context;

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for Wenlan",
-  "windows": ["main", "toast", "quick-capture"],
+  "windows": ["main", "toast", "quick-capture", "tray-panel"],
   "permissions": [
     "core:default",
     "global-shortcut:default",

@@ -613,6 +613,7 @@ fn each_subcommand_has_help() {
         "outbox",
         "entities",
         "export",
+        "wiki",
     ] {
         cli().args([sub, "--help"]).assert().success();
     }

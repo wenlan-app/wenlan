@@ -421,13 +421,13 @@ fn lint_rejects_oversized_daemon_response() {
 }
 
 #[test]
-fn lint_does_not_create_wiki_command_or_change_pages_doctor_query() {
+fn lint_does_not_create_wiki_check_command_or_change_pages_doctor_query() {
     cli()
         .args(["wiki", "check"])
         .assert()
         .code(2)
         .stdout("")
-        .stderr(predicates::str::contains("unrecognized subcommand 'wiki'"));
+        .stderr(predicates::str::contains("unrecognized subcommand 'check'"));
 
     let home = tempfile::tempdir().expect("isolated home");
     cli()

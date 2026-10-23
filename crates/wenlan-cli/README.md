@@ -549,6 +549,53 @@ Arguments:
 
 - `<NAME>`: Space name.
 
+### `wenlan wiki`
+
+Put this Space's code pages into its git repository as a pull request.
+
+```text
+wenlan wiki [OPTIONS] <COMMAND>
+```
+
+#### `wenlan wiki bind`
+
+Tie the Space to this git repository (or --repo), so its code pages can go into the repository as a pull request.
+
+```text
+wenlan wiki bind [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
+- `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
+- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`.
+
+#### `wenlan wiki publish`
+
+Write the Space's code pages into the repository and open or update the pull request.
+
+```text
+wenlan wiki publish [OPTIONS]
+```
+
+#### `wenlan wiki status`
+
+Show the repository the Space is bound to and the last publish.
+
+```text
+wenlan wiki status [OPTIONS]
+```
+
+#### `wenlan wiki unbind`
+
+Stop putting this Space's pages into its repository.
+
+```text
+wenlan wiki unbind [OPTIONS]
+```
+
 **Setup**
 
 ### `wenlan setup`

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Handing new material to the user's AI tool: one line at the top of the
-   Wiki home (no box, like a heading's rule under it), and the page list the
+   Wiki home (no box and no rule line; spacing sets it apart), and the page list the
    checklist step shares. Color and type come from --mem-* tokens. */
 
 .write-pages-line {
@@ -11,8 +11,9 @@
   max-width: min(100%, 640px);
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 0 10px;
-  border-bottom: 1px solid var(--mem-border);
+  /* Room for the close button, which keeps the top right corner. */
+  padding: 4px 30px 4px 0;
+  position: relative;
 }
 
 .write-pages-line-row {
@@ -33,8 +34,11 @@
   color: var(--mem-status-success-text);
 }
 
+/* The sentence keeps its own width, so when the button does not fit beside
+   it the button moves under it, rather than the last word wrapping alone. */
 .write-pages-text {
-  flex: 1 1 260px;
+  flex: 1 1 auto;
+  max-width: 100%;
   min-width: 0;
   margin: 0;
   color: var(--mem-text-secondary);
@@ -96,6 +100,9 @@
 }
 
 .write-pages-close {
+  position: absolute;
+  top: 2px;
+  right: 0;
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
@@ -145,6 +152,10 @@
 .write-pages-row-icon {
   flex-shrink: 0;
   font-size: 14px;
+}
+
+.write-pages-row-icon--page {
+  color: var(--mem-text-tertiary);
 }
 
 .write-pages-row-title {
