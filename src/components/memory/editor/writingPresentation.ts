@@ -149,6 +149,11 @@ class ImageWidget extends WidgetType {
     return other.source === this.source && other.alt === this.alt && other.kind === this.kind;
   }
 
+  // A click on an image opens its source; a video keeps its own controls.
+  ignoreEvent(event: Event): boolean {
+    return this.kind === "video" || event.type !== "mousedown";
+  }
+
   toDOM(): HTMLElement {
     if (this.kind === "video") {
       const video = document.createElement("video");
@@ -421,6 +426,7 @@ export function writingPresentation(): Extension {
       "data-editor-presentation-mode": "writing",
     }),
     writingPresentationPlugin,
+    EditorView.domEventHandlers({ mousedown: revealClickedImage }),
     EditorView.atomicRanges.of(
       (view) => view.plugin(writingPresentationPlugin)?.atomic ?? Decoration.none,
     ),
@@ -516,7 +522,7 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const attachment = attachmentName(target);
           const source = attachment ? attachmentUrl(target) : safeRemoteImageSource(target);
           if (attachment && !source) void primeAttachmentsDir();
-          if (!source || constructIsRevealed(state, node.from, node.to, contentFocused)) return;
+          if (!source || mediaIsRevealed(state, node.from, node.to, contentFocused)) return;
           addConcealment(
             node.from,
             node.to,
@@ -834,6 +840,35 @@ function lineConstructIsRevealed(
     if (range.empty) return range.head >= line.from && range.head <= line.to;
     return range.from <= constructTo && range.to >= constructFrom;
   });
+}
+
+/**
+ * An image or video stays shown while the caret only touches it, so Backspace
+ * after it or Delete before it removes the whole Markdown line as one unit.
+ */
+function mediaIsRevealed(
+  state: EditorView["state"],
+  constructFrom: number,
+  constructTo: number,
+  contentFocused: boolean,
+): boolean {
+  if (!contentFocused) return false;
+  return state.selection.ranges.some((range) =>
+    range.empty
+      ? range.head > constructFrom && range.head < constructTo
+      : range.from < constructTo && range.to > constructFrom,
+  );
+}
+
+function revealClickedImage(event: MouseEvent, view: EditorView): boolean {
+  const image = event.target instanceof Element ? event.target.closest("img.cm-writing-image") : null;
+  if (!image || event.button !== 0 || event.detail > 1) return false;
+  const from = view.posAtDOM(image);
+  if (view.state.sliceDoc(from, from + 2) !== "![") return false;
+  event.preventDefault();
+  view.focus();
+  view.dispatch({ selection: { anchor: from + 2 } });
+  return true;
 }
 
 function constructIsRevealed(

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { deleteCharBackward, deleteCharForward } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { forceParsing } from "@codemirror/language";
 import { EditorSelection, EditorState, type RangeSet } from "@codemirror/state";
@@ -415,6 +416,42 @@ describe("writingPresentation", () => {
     expect(video?.controls).toBe(true);
     expect(view.state.doc.toString()).toBe(source);
     resetAttachmentsDirForTest(null);
+  });
+
+  it("keeps an image shown while the caret touches it, so one key removes it whole", async () => {
+    const image = "![Wenlan graph](https://wenlan.app/graph.png)";
+    const source = `before\n${image}\nafter`;
+    const { from, to } = rangeFor(source, image);
+    const view = makeView(source, { selection: EditorSelection.single(to) });
+    await settleFocusChange();
+
+    expect(view.contentDOM.querySelector(".cm-writing-image")).not.toBeNull();
+    expect(deleteCharBackward(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("before\n\nafter");
+
+    view.dispatch({
+      changes: { from, insert: image },
+      selection: EditorSelection.single(from),
+    });
+    expect(view.contentDOM.querySelector(".cm-writing-image")).not.toBeNull();
+    expect(deleteCharForward(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("before\n\nafter");
+  });
+
+  it("reveals an image's source when the caret is inside it or a click lands on it", async () => {
+    const image = "![Wenlan graph](https://wenlan.app/graph.png)";
+    const source = `${image}\naway`;
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+    await settleFocusChange();
+
+    const rendered = view.contentDOM.querySelector<HTMLImageElement>("img.cm-writing-image");
+    expect(rendered).not.toBeNull();
+    rendered!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+
+    expect(view.state.selection.main.head).toBe(2);
+    expect(view.contentDOM.querySelector(".cm-writing-image")).toBeNull();
+    expect(view.contentDOM.textContent).toContain(image);
+    expect(view.state.doc.toString()).toBe(source);
   });
 
   it("keeps unsafe or unresolved image destinations as editable source", () => {
