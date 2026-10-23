@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 
@@ -56,6 +56,28 @@ export default function DaemonVersionBanner() {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  // A report sent while the daemon was not answering (a restart pressed in
+  // the sidebar, say) has no daemon version to compare and is stale once it
+  // answers. Ask again when the workspace becomes ready after waiting.
+  const waitedForDaemon = useRef(false);
+  useEffect(() => {
+    if (startupPhase !== "ready") {
+      waitedForDaemon.current = true;
+      return;
+    }
+    if (!waitedForDaemon.current) return;
+    waitedForDaemon.current = false;
+    let cancelled = false;
+    void getDaemonVersionStatus()
+      .then((report) => {
+        if (!cancelled) setStatus(report.matched ? null : report);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [startupPhase]);
 
   const handleRestart = async () => {
     setRestarting(true);

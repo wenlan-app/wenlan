@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
@@ -15,6 +15,7 @@ vi.mock("../lib/tauri", () => ({
 }));
 
 import DaemonVersionBanner from "./DaemonVersionBanner";
+import { setDaemonStartupPhase } from "../lib/daemonStartup";
 
 const listenMock = vi.mocked(listen);
 
@@ -107,6 +108,31 @@ describe("DaemonVersionBanner", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("daemon-version-banner")).not.toBeInTheDocument(),
     );
+  });
+
+  it("drops a report sent while the daemon was not answering once it answers", async () => {
+    act(() => setDaemonStartupPhase("failed"));
+    render(<DaemonVersionBanner />);
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(1));
+
+    // A restart pressed in the sidebar reports before any daemon answers.
+    act(() => fireVersionEvent({ daemon: "", app: "0.18.2", matched: false, restarted: false, owner: "launchd", program: null }));
+    expect(screen.queryByTestId("daemon-version-banner")).not.toBeInTheDocument();
+
+    act(() => setDaemonStartupPhase("ready"));
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId("daemon-version-banner")).not.toBeInTheDocument();
+  });
+
+  it("still warns after the wait when the daemon that answers is out of date", async () => {
+    act(() => setDaemonStartupPhase("starting"));
+    render(<DaemonVersionBanner />);
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(1));
+
+    getStatusMock.mockResolvedValue(mismatchedStatus);
+    act(() => setDaemonStartupPhase("ready"));
+
+    expect(await screen.findByTestId("daemon-version-banner")).toHaveTextContent("0.18.1");
   });
 
   it("invokes restart_daemon and hides the banner on success", async () => {
