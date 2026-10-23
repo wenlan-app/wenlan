@@ -369,6 +369,10 @@
   overflow-wrap: anywhere;
 }
 
+.repo-docs-drop {
+  margin-left: auto;
+}
+
 .repo-docs-drop,
 .repo-docs-more {
   flex: none;

@@ -25,6 +25,13 @@ const AGENT_NAMES: Record<RepoWikiAgent, string> = { claude: "Claude Code", code
 const DEFAULT_DAILY: RepoWikiDaily = { enabled: false, hour: 9, agent: "claude" };
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
+/** Keep the panel inside the window: it scrolls instead of running past the bottom. */
+function fitToWindow(panel: HTMLDivElement | null) {
+  if (!panel) return;
+  const room = window.innerHeight - panel.getBoundingClientRect().top - 16;
+  panel.style.maxHeight = `${Math.max(240, room)}px`;
+}
+
 /** `github.com/owner/repo` from an origin URL, or null for another host. */
 export function githubRepo(remote: string | null | undefined): string | null {
   const match = remote?.trim().match(/github\.com[:/]+([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
@@ -132,6 +139,7 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
       {open && (
         <div
           id={panelId}
+          ref={fitToWindow}
           className="mem-popover-surface repo-wiki-panel"
           onKeyDown={handleKeyDown}
           role="dialog"

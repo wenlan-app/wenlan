@@ -1417,17 +1417,19 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     // until someone changes the file or the page catches up.
     let mut kept_edits = Vec::new();
     for edit in &prepared.edits {
-        let written = export
-            && input.taken_back.contains(&edit.path)
-            && input.worktree.join(&edit.path).is_file();
-        if !written {
+        let taken = input.taken_back.contains(&edit.path);
+        if !(export && taken && input.worktree.join(&edit.path).is_file()) {
             restore(&input.worktree, &edit.tree, &edit.path)?;
-            let key = format!("{}#{}", edit.path, sha256_hex(&edit.body));
-            if !binding.kept_edits.contains(&key) {
-                kept.set(kept.get() + 1);
-            }
-            kept_edits.push(key);
         }
+        // Taken back, even with nothing exported: the page says what the file says.
+        if taken {
+            continue;
+        }
+        let key = format!("{}#{}", edit.path, sha256_hex(&edit.body));
+        if !binding.kept_edits.contains(&key) {
+            kept.set(kept.get() + 1);
+        }
+        kept_edits.push(key);
     }
     if export {
         // The export moves an edited file aside before writing. Every edit

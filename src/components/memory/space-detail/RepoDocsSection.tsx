@@ -114,8 +114,11 @@ export function RepoDocsSection({
               onClick={() => setOpen(open === AGENTS_FILE ? null : AGENTS_FILE)}
               type="button"
             >
-              <code>{t("repoWiki.docs.agentsFile")}</code>
-              <span className="repo-docs-chip">{t("repoWiki.docs.fixes", { count: agentsFixes.length })}</span>
+              <span className="repo-docs-name">
+                <code>{t("repoWiki.docs.agentsFile")}</code>
+                <span>{t("repoWiki.docs.fixes", { count: agentsFixes.length })}</span>
+              </span>
+              <span className="repo-docs-chip">{state(agentsFixes)}</span>
             </button>
           ) : (
             <div className="repo-docs-row">
