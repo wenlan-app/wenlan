@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -35,14 +35,18 @@ import { Button, Card, SectionHeader, Toggle } from "../memory/settings/primitiv
  *  Wenlan. It decides Added versus Connected. A tool the user adds from this
  *  list stays in place, saying "Added. Restart it to finish", and flips to
  *  Connected when its family first shows up in `seenFamilies`, instead of
- *  vanishing the moment its config is written. */
+ *  vanishing the moment its config is written. `onAddedChange` tells the
+ *  roster above which tools those are, so it does not list them a second
+ *  time as pending. */
 export default function ClientSetupList({
   connectedFamilies,
   seenFamilies,
   hideWhenComplete = false,
+  onAddedChange,
 }: {
   connectedFamilies?: Set<string>;
   seenFamilies?: Set<string>;
+  onAddedChange?: (clientTypes: Set<string>) => void;
   /** Hide a completed Add a tool section in compact Settings surfaces. */
   hideWhenComplete?: boolean;
 } = {}) {
@@ -58,6 +62,9 @@ export default function ClientSetupList({
   // The subset of those that were repaired rather than set up, which changes
   // what the row says next ("Repaired. Restart X to finish.").
   const [repaired, setRepaired] = useState<Record<string, true>>({});
+  useEffect(() => {
+    onAddedChange?.(new Set(Object.keys(added)));
+  }, [added, onAddedChange]);
   const seen = seenFamilies ?? connectedFamilies;
   const statusOf = (clientType: string): ConnectionStatus =>
     seen?.has(familyOfClient(clientType)) ? "connected" : "added";

@@ -53,6 +53,9 @@ export default function AgentsSection({ onSetupAgent, currentSpace }: { onSetupA
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // Tools the Add a tool list just added. That list keeps their row (with its
+  // switch) until they call, so a pending row here would show them twice.
+  const [listAdded, setListAdded] = useState<Set<string>>(() => new Set());
 
   // Live: refetched when the window regains focus and every 30 s while
   // visible, so a tool the user just restarted flips from Added to Connected
@@ -116,7 +119,7 @@ export default function AgentsSection({ onSetupAgent, currentSpace }: { onSetupA
     const family = familyOfClient(client.client_type);
     if (seenFamilies.has(family)) continue;
     if (connectedFamilies.has(family)) pendingNoteFamilies.add(family);
-    else pendingClients.push(client);
+    else if (!listAdded.has(client.client_type)) pendingClients.push(client);
   }
 
   const familyRows: FamilyRow[] = [...familyMap.entries()].map(([family, identities]) => {
@@ -223,7 +226,12 @@ export default function AgentsSection({ onSetupAgent, currentSpace }: { onSetupA
       </section>
 
       {/* ── Add a tool ────────────────────────────────────────────── */}
-      <ClientSetupList connectedFamilies={connectedFamilies} seenFamilies={seenFamilies} hideWhenComplete />
+      <ClientSetupList
+        connectedFamilies={connectedFamilies}
+        seenFamilies={seenFamilies}
+        hideWhenComplete
+        onAddedChange={setListAdded}
+      />
 
       {/* ── Web access ────────────────────────────────────────────── */}
       <section className="mem-fade-up" style={{ animationDelay: "60ms" }}>

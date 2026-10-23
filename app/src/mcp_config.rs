@@ -1013,7 +1013,9 @@ fn vscode_family_install(client_type: &str) -> Option<VscodeFamilyInstall> {
 /// CLI names that mean the client is installed, resolved without a shell.
 fn client_cli_names(client_type: &str) -> &'static [&'static str] {
     match client_type {
-        "cursor" => &["cursor"],
+        // `cursor-agent` is Cursor's CLI. It reads the same ~/.cursor config
+        // and skills, and can be installed without the editor.
+        "cursor" => &["cursor", "cursor-agent"],
         "claude_code" => &["claude"],
         // The unofficial Linux builds of Claude Desktop ship this launcher;
         // there is no official one on macOS or Windows, so a miss is normal.
@@ -5793,6 +5795,14 @@ args = ["-y", "wenlan-mcp"]
 
         let mut machine = Machine::new(HostKind::Linux);
         machine.on_path = vec!["cursor"];
+        assert_eq!(
+            machine.install_state(home, "cursor"),
+            InstallState::Installed
+        );
+
+        // Cursor's CLI alone, without the editor, still reads ~/.cursor.
+        let mut machine = Machine::new(HostKind::Linux);
+        machine.on_path = vec!["cursor-agent"];
         assert_eq!(
             machine.install_state(home, "cursor"),
             InstallState::Installed
