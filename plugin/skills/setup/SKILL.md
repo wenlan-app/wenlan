@@ -26,7 +26,7 @@ Otherwise, push through automatically.
 
 ```bash
 for i in 1 2 3; do
-  curl -fsS -m 3 http://127.0.0.1:7878/api/health && break
+  curl -fsS -m 3 "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" && break
   sleep 1
 done
 ```
@@ -40,7 +40,7 @@ Compare daemon version vs plugin manifest version:
 
 ```bash
 PLUGIN_JSON="${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json"
-"${CLAUDE_PLUGIN_ROOT}/scripts/version-drift.sh" --health-url http://127.0.0.1:7878/api/health --manifest "$PLUGIN_JSON"
+"${CLAUDE_PLUGIN_ROOT}/scripts/version-drift.sh" --health-url "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" --manifest "$PLUGIN_JSON"
 ```
 
 It prints one line, `daemon=<v> expected=<v> release=<v> result=<result>`,
@@ -115,7 +115,7 @@ downloads the embedding model (about 210 MB) before it answers:
 healthy=
 deadline=$((SECONDS + 240))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if curl -fsS -m 3 http://127.0.0.1:7878/api/health >/dev/null 2>&1; then
+  if curl -fsS -m 3 "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" >/dev/null 2>&1; then
     healthy=1
     break
   fi

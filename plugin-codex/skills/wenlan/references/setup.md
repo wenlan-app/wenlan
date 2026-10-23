@@ -15,7 +15,7 @@ Otherwise, push through automatically.
 
 ```bash
 for i in 1 2 3; do
-  curl -fsS -m 3 http://127.0.0.1:7878/api/health && break
+  curl -fsS -m 3 "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" && break
   sleep 1
 done
 ```
@@ -29,7 +29,7 @@ Compare daemon version vs plugin manifest version:
 
 ```bash
 PLUGIN_JSON="${CODEX_PLUGIN_ROOT:-plugin-codex}/.codex-plugin/plugin.json"
-"${CODEX_PLUGIN_ROOT:-plugin-codex}/bin/version-drift.sh" --health-url http://127.0.0.1:7878/api/health --manifest "$PLUGIN_JSON"
+"${CODEX_PLUGIN_ROOT:-plugin-codex}/bin/version-drift.sh" --health-url "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" --manifest "$PLUGIN_JSON"
 ```
 
 It prints one line, `daemon=<v> expected=<v> release=<v> result=<result>`,
@@ -51,7 +51,7 @@ comparing numerically per component with build metadata (`+g<sha>`) stripped.
 
 ```bash
 PLUGIN_JSON="${CODEX_PLUGIN_ROOT:-plugin-codex}/.codex-plugin/plugin.json"
-RELEASE_VER="$("${CODEX_PLUGIN_ROOT:-plugin-codex}/bin/version-drift.sh" --health-url http://127.0.0.1:7878/api/health --manifest "$PLUGIN_JSON" | sed -n 's/.* release=\([^ ]*\) .*/\1/p')"
+RELEASE_VER="$("${CODEX_PLUGIN_ROOT:-plugin-codex}/bin/version-drift.sh" --health-url "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" --manifest "$PLUGIN_JSON" | sed -n 's/.* release=\([^ ]*\) .*/\1/p')"
 curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v${RELEASE_VER}/install.sh | bash
 export PATH="$HOME/.wenlan/bin:$PATH"
 wenlan setup --basic
@@ -104,7 +104,7 @@ downloads the embedding model (about 210 MB) before it answers:
 healthy=
 deadline=$((SECONDS + 240))
 while [ "$SECONDS" -lt "$deadline" ]; do
-  if curl -fsS -m 3 http://127.0.0.1:7878/api/health >/dev/null 2>&1; then
+  if curl -fsS -m 3 "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health" >/dev/null 2>&1; then
     healthy=1
     break
   fi
