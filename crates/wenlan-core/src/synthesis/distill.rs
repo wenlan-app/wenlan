@@ -5081,6 +5081,7 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         );
     }
 
+    const ANNOTATION_SOURCE_ID: &str = "folder-docs::annotation.txt";
     const ANNOTATION_BODY: &str =
         "Cedar launches on February 4, 2027 after security sign-off. See [[Cedar launch facts]].";
     const ANNOTATION_FIXED: &str = "Cedar launches on February 4, 2027 after security sign-off. [1] See [[Cedar launch facts]].";
@@ -5109,7 +5110,7 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
                     .update_page_content(
                         "annotation_page",
                         "A concurrent human edit.",
-                        &["annotation_source"],
+                        &[ANNOTATION_SOURCE_ID],
                         "manual_edit",
                     )
                     .await
@@ -5154,13 +5155,28 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     }
 
     async fn missing_marker_fixture() -> (Arc<MemoryDB>, TempDir, MissingMarkerProvider) {
-        let (db, dir) = crate::db::tests::test_db().await;
+        let (db, dir) = crate::db::tests::test_db_with_character_chunker().await;
         let db = Arc::new(db);
         let source = format!(
             "{}\nCedar launches on February 4, 2027 after security sign-off.",
             "Historical project background. ".repeat(40)
         );
-        upsert_test_sources(&db, &[("annotation_source", &source)], None).await;
+        // This is an imported document, not an agent capture. Only folder
+        // sources expose every chunk to refresh; the ordinary-memory reader
+        // deliberately retains its chunk-zero contract.
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: ANNOTATION_SOURCE_ID.to_string(),
+            title: "Cedar launch source".to_string(),
+            content: source,
+            last_modified: chrono::Utc::now().timestamp(),
+            memory_type: Some("fact".to_string()),
+            source_agent: Some("folder".to_string()),
+            confirmed: Some(true),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
         let now = chrono::Utc::now().to_rfc3339();
         db.insert_page(
             "annotation_basis",
@@ -5181,7 +5197,7 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             "The original accepted summary.",
             None,
             None,
-            &["annotation_source"],
+            &[ANNOTATION_SOURCE_ID],
             &now,
         )
         .await
@@ -5214,7 +5230,7 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             vec![]
         };
         let sources = if include_sources {
-            vec!["annotation_source".to_string()]
+            vec![ANNOTATION_SOURCE_ID.to_string()]
         } else {
             vec![]
         };
@@ -5258,6 +5274,22 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     #[tokio::test]
     async fn mixed_basis_annotation_stages_verified_preview_from_full_source() {
         let (db, _dir, provider) = missing_marker_fixture().await;
+        let source_ids = [ANNOTATION_SOURCE_ID.to_string()];
+        let chunk_zero = db.get_memory_contents_by_ids(&source_ids).await.unwrap();
+        let full_source = db
+            .get_refresh_source_contents_by_ids(&source_ids)
+            .await
+            .unwrap();
+        assert_eq!(chunk_zero.len(), 1);
+        assert_eq!(full_source.len(), 1);
+        assert!(
+            !chunk_zero[0].1.contains("February 4, 2027"),
+            "the forced character splitter must place the fact after chunk zero"
+        );
+        assert!(
+            full_source[0].1.contains("February 4, 2027"),
+            "folder refresh must recover the later fact before synthesis"
+        );
         let provider = Arc::new(provider);
         let llm: Arc<dyn LlmProvider> = provider.clone();
         let before = db.get_page("annotation_page").await.unwrap().unwrap();
@@ -5270,7 +5302,7 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         )
         .await
         .unwrap();
-        assert!(result.gated && !result.wrote);
+        assert!(result.gated && !result.wrote, "{result:?}");
         let card = result
             .revision_card_id
             .expect("annotation should recover a reviewable proposal");
@@ -5293,11 +5325,13 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             .user_prompt
             .contains("February 4, 2027 after security sign-off."));
         assert!(calls[1].user_prompt.contains("--- BEGIN SOURCE [1] ---"));
-        assert!(
+        assert_eq!(
             calls[1]
                 .user_prompt
-                .contains(&"Historical project background. ".repeat(40)),
-            "annotation must see full evidence, not an 800-character prefix"
+                .matches("Historical project background.")
+                .count(),
+            40,
+            "annotation must see every context sentence across legitimate chunk separators"
         );
         drop(calls);
         let candidate = annotation_candidate(&db, provider.clone(), true, true).await;
@@ -5306,9 +5340,10 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         };
         assert_eq!(candidate.content, ANNOTATION_FIXED);
         let citations: serde_json::Value = serde_json::from_str(&candidate.citations_json).unwrap();
-        assert_eq!(citations[0]["locator"], "annotation_source");
+        assert_eq!(citations[0]["locator"], ANNOTATION_SOURCE_ID);
         assert_eq!(citations[0]["marker"], 1);
         assert_eq!(citations[0]["status"], "verified");
+        assert_eq!(citations[0]["source_kind"], "external_file");
     }
 
     #[tokio::test]

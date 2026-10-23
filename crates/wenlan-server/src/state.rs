@@ -97,6 +97,9 @@ pub struct ServerState {
     /// blocking startup model load. The scheduler observes it so no automatic
     /// heavy turn can race the load after both sampled the same quiet window.
     pub startup_model_load_reserved: Arc<std::sync::atomic::AtomicBool>,
+    /// Serializes startup preload and explicit model loads and signals successful
+    /// manual selection to a startup task still waiting for resource admission.
+    pub model_load: crate::model_load::ModelLoadCoordinator,
     /// API-based LLM provider for routine tasks (Anthropic Haiku by default).
     pub api_llm: Option<Arc<dyn LlmProvider>>,
     /// API-based LLM provider for synthesis tasks (Anthropic Sonnet by default).
@@ -191,6 +194,7 @@ impl Default for ServerState {
             llm: None,
             loaded_on_device_model: None,
             startup_model_load_reserved: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            model_load: crate::model_load::ModelLoadCoordinator::default(),
             api_llm: None,
             synthesis_llm: None,
             external_llm: None,

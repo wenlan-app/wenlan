@@ -634,21 +634,43 @@ pub async fn handle_download_on_device_model(
     };
     let model_id = model.id.to_string();
 
+    // One owner at a time covers construction and publication. Move the owned
+    // guard into spawn_blocking so dropping the HTTP future cannot release it
+    // while the constructor is still running.
+    let model_load = { state.read().await.model_load.clone() };
+    let guard = model_load.lock().await;
+
     // Run the blocking download + engine init on a dedicated thread so the
     // async runtime stays responsive.
-    let provider: Arc<dyn wenlan_core::llm_provider::LlmProvider> =
-        tokio::task::spawn_blocking(move || {
-            let provider =
-                wenlan_core::llm_provider::OnDeviceProvider::new_with_model(Some(&model_id))?;
-            Ok::<_, wenlan_core::error::WenlanError>(
-                Arc::new(provider) as Arc<dyn wenlan_core::llm_provider::LlmProvider>
-            )
-        })
-        .await
-        .map_err(|e| ServerError::Internal(format!("download task panicked: {}", e)))?
-        .map_err(|e| ServerError::Internal(format!("download failed: {}", e)))?;
+    let already_loaded = {
+        let s = state.read().await;
+        crate::model_load::ModelLoadCoordinator::reusable_loaded_provider(
+            s.loaded_on_device_model.as_deref(),
+            &req.model_id,
+            s.llm.clone(),
+        )
+    };
+    let (provider, guard) = if let Some(provider) = already_loaded {
+        (provider, guard)
+    } else {
+        let (provider, returned_guard) =
+            crate::model_load::ModelLoadCoordinator::construct_with_guard(guard, move || {
+                let provider =
+                    wenlan_core::llm_provider::OnDeviceProvider::new_with_model(Some(&model_id))?;
+                Ok::<_, wenlan_core::error::WenlanError>(
+                    Arc::new(provider) as Arc<dyn wenlan_core::llm_provider::LlmProvider>
+                )
+            })
+            .await
+            .map_err(|e| ServerError::Internal(format!("download task panicked: {}", e)))?
+            .map_err(|e| ServerError::Internal(format!("download failed: {}", e)))?;
+        (provider, returned_guard)
+    };
 
-    // Persist the selection.
+    // Once the state write lock is acquired, persist and publish synchronously
+    // before any further await. Cancellation cannot leave config selecting the
+    // manual model while startup still has authority to publish its old choice.
+    let mut s = state.write().await;
     config::update_config(|cfg| {
         apply_on_device_selection(cfg, &req.model_id);
         Ok(())
@@ -657,11 +679,11 @@ pub async fn handle_download_on_device_model(
 
     // Hot-swap the provider in ServerState. The old provider (if any) is
     // dropped here; its worker thread exits when the channel closes.
-    {
-        let mut s = state.write().await;
-        s.llm = Some(provider);
-        s.loaded_on_device_model = Some(req.model_id.clone());
-    }
+    s.llm = Some(provider);
+    s.loaded_on_device_model = Some(req.model_id.clone());
+    model_load.manual_load_succeeded();
+    drop(s);
+    drop(guard);
 
     tracing::info!("[on-device] model {} downloaded and loaded", req.model_id);
     Ok(Json(SuccessResponse { ok: true }))

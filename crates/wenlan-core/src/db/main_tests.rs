@@ -514,6 +514,14 @@ pub async fn test_db() -> (MemoryDB, tempfile::TempDir) {
     (memory_db, dir)
 }
 
+/// Reproduce hosts without a BGE tokenizer without changing shared caches or
+/// process environment. The embedder stays identical to [`test_db`].
+pub(crate) async fn test_db_with_character_chunker() -> (MemoryDB, tempfile::TempDir) {
+    let (mut db, dir) = test_db().await;
+    db.chunker = ChunkingEngine::default();
+    (db, dir)
+}
+
 /// [`test_db`] stopped at a historical schema state: the migration chain
 /// runs only up to `ceiling` (see `run_migrations_up_to` for the exact
 /// checkpoints), so a test gets the GENUINE `pages`/`edges` shape of that

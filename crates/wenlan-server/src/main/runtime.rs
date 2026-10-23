@@ -196,50 +196,116 @@ pub(super) async fn register_optional_runtime_workers(
                         .store(true, std::sync::atomic::Ordering::Release);
                     state.startup_model_load_reserved.clone()
                 };
-                let mut load_shutdown = {
+                let (mut load_shutdown, model_load) = {
                     let state = shared.read().await;
-                    state.shutdown.subscribe()
+                    (state.shutdown.subscribe(), state.model_load.clone())
                 };
+                let mut manual_supersession = model_load.startup_superseded();
                 let working_set_bytes = on_device_model_working_set_bytes(model);
                 let import_signal = shared.read().await.write_signal.clone();
                 tokio::spawn(async move {
                     let _reservation = StartupModelLoadReservation(reservation);
                     // Restore inference for an already approved repair without
                     // the quiet-CPU delay used by optional background preload.
-                    if !repair_recovery_pending
-                        && !scheduler::wait_for_startup_model_admission(
-                            working_set_bytes,
-                            &import_signal,
-                            &mut load_shutdown,
-                        )
-                        .await
+                    let admitted = if repair_recovery_pending {
+                        true
+                    } else if model_load.is_startup_superseded() {
+                        false
+                    } else {
+                        tokio::select! {
+                            biased;
+                            changed = manual_supersession.changed() => {
+                                let _ = changed;
+                                false
+                            }
+                            result = scheduler::wait_for_startup_model_admission(
+                                working_set_bytes,
+                                &import_signal,
+                                &mut load_shutdown,
+                            ) => result,
+                        }
+                    };
+                    if !admitted {
+                        tracing::info!(
+                            "[on-device] startup model preload retired before resource admission"
+                        );
+                        return;
+                    }
+                    let guard = model_load.lock().await;
+                    // A successful manual load may have completed while startup
+                    // waited for the lock. Also honor config changes made by the
+                    // manual route or another settings path before constructing.
+                    let selected = wenlan_core::config::load_config()
+                        .on_device_model
+                        .as_deref()
+                        .and_then(|id| {
+                            if repair_recovery_pending {
+                                wenlan_core::on_device_models::get_model(id)
+                            } else {
+                                Some(wenlan_core::on_device_models::resolve_or_default(Some(id)))
+                            }
+                        })
+                        .map(|selected| selected.id);
+                    if lifecycle::shutdown_requested(&load_shutdown)
+                        || !model_load.startup_selection_is_current(model.id, selected)
                     {
                         tracing::info!(
-                            "[on-device] shutdown requested before startup load admission"
+                            "[on-device] startup preload superseded by current selection"
                         );
                         return;
                     }
                     let model_id = model.id;
-                    let result = tokio::task::spawn_blocking(move || {
-                        let provider = if repair_recovery_pending {
-                            wenlan_core::llm_provider::OnDeviceProvider::new_cached_with_model(model_id)?
-                        } else {
-                            wenlan_core::llm_provider::OnDeviceProvider::new_with_model(Some(model_id))?
-                        };
-                        let arc: Arc<dyn wenlan_core::llm_provider::LlmProvider> =
-                            Arc::new(provider);
-                        Ok::<_, wenlan_core::error::WenlanError>((
-                            arc,
-                            model_id.to_string(),
-                        ))
-                    })
+                    let result = wenlan_server::model_load::ModelLoadCoordinator::construct_with_guard(
+                        guard,
+                        move || {
+                            let provider = if repair_recovery_pending {
+                                wenlan_core::llm_provider::OnDeviceProvider::new_cached_with_model(
+                                    model_id,
+                                )?
+                            } else {
+                                wenlan_core::llm_provider::OnDeviceProvider::new_with_model(Some(
+                                    model_id,
+                                ))?
+                            };
+                            let arc: Arc<dyn wenlan_core::llm_provider::LlmProvider> =
+                                Arc::new(provider);
+                            Ok::<_, wenlan_core::error::WenlanError>(
+                                (arc, model_id.to_string()),
+                            )
+                        },
+                    )
                     .await;
 
                     match result {
-                        Ok(Ok((provider, model_id))) => {
+                        Ok(Ok(((provider, model_id), guard))) => {
+                            let selected = wenlan_core::config::load_config()
+                                .on_device_model
+                                .as_deref()
+                                .and_then(|id| {
+                                    if repair_recovery_pending {
+                                        wenlan_core::on_device_models::get_model(id)
+                                    } else {
+                                        Some(wenlan_core::on_device_models::resolve_or_default(
+                                            Some(id),
+                                        ))
+                                    }
+                                })
+                                .map(|selected| selected.id);
+                            if lifecycle::shutdown_requested(&load_shutdown)
+                                || !model_load
+                                    .startup_selection_is_current(model_id.as_str(), selected)
+                            {
+                                tracing::info!(
+                                    "[on-device] startup provider discarded after selection changed"
+                                );
+                                drop(guard);
+                                return;
+                            }
                             let mut state = shared_for_llm.write().await;
                             state.llm = Some(provider);
                             state.loaded_on_device_model = Some(model_id.clone());
+                            drop(state);
+                            drop(guard);
                             tracing::info!("[on-device] model {} loaded and available", model_id);
                         }
                         Ok(Err(e)) => tracing::error!("[on-device] init failed: {}", e),

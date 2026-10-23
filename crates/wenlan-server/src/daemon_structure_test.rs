@@ -156,7 +156,7 @@ const RUNTIME_OPTIONAL_WORKER_SCOPES: &[&str] = &[
 // recovery preload cannot fall back to a downloading/config-mutating constructor.
 const RUNTIME_RECOVERY_PROVIDER_SCOPES: &[&str] = &[
     "let selected_model = config.on_device_model.as_deref().and_then(|id| {\n            if repair_recovery_pending {\n                wenlan_core::on_device_models::get_model(id)",
-    "let provider = if repair_recovery_pending {\n                            wenlan_core::llm_provider::OnDeviceProvider::new_cached_with_model(model_id)?\n                        } else {\n                            wenlan_core::llm_provider::OnDeviceProvider::new_with_model(Some(model_id))?",
+    "let provider = if repair_recovery_pending {\n                                wenlan_core::llm_provider::OnDeviceProvider::new_cached_with_model(\n                                    model_id,\n                                )?\n                            } else {\n                                wenlan_core::llm_provider::OnDeviceProvider::new_with_model(Some(\n                                    model_id,\n                                ))?",
 ];
 
 const RUNTIME_SERVE_ORDER: &[&str] = &[
@@ -175,7 +175,7 @@ const RUNTIME_SERVE_ORDER: &[&str] = &[
 const RUNTIME_REGISTER_SNAPSHOT_ORDER: &[&str] = &[
     "let reservation = {",
     "state.startup_model_load_reserved.clone()",
-    "let mut load_shutdown = {",
+    "let (mut load_shutdown, model_load) = {",
     "state.shutdown.subscribe()",
     "let (maintenance_for_ready, shutdown_for_reconcile) = {",
     "state.maintenance_coordinator.clone()",
@@ -760,15 +760,15 @@ fn runtime_carried_value_violations(source: &str, owner: &str) -> Vec<String> {
         violations.extend(exact_token_count_violations(&code, scope, 1, owner));
     }
     // Consent is intentionally live at snapshot and again before inference.
-    // All other configuration remains carried from startup. Pin the second
-    // read's purpose as well as the first read in RUNTIME_WORKER_ORDER.
+    // Startup model selection is also re-read before construction and install
+    // so a manual model choice cannot be overwritten by a stale preload.
     violations.extend(exact_token_count_violations(
         &code,
         ".filter(|_| wenlan_core::config::load_config().background_ai_enabled())",
         1,
         owner,
     ));
-    violations.extend(runtime_recompute_violations(&code, owner, 2));
+    violations.extend(runtime_recompute_violations(&code, owner, 4));
     violations
 }
 
@@ -2427,9 +2427,9 @@ fn second_review_mutations_reject_snapshot_reorder_and_stdout_deletion() {
                     state.startup_model_load_reserved.clone()
                 };
 "#;
-    let load_shutdown = r#"                let mut load_shutdown = {
+    let load_shutdown = r#"                let (mut load_shutdown, model_load) = {
                     let state = shared.read().await;
-                    state.shutdown.subscribe()
+                    (state.shutdown.subscribe(), state.model_load.clone())
                 };
 "#;
     let reordered_runtime = runtime.replacen(
