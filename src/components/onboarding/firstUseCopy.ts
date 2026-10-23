@@ -110,6 +110,10 @@ export const enFirstUse = {
         waiting: "The question is ready in {{tool}}. Send it, and this step checks itself once it reads your page.",
       },
     },
+    askAi: {
+      line: "Your AI can also organize and update pages.",
+      action: "See what it can do",
+    },
     steep: {
       line: "Optional: write pages with a local model instead of your AI tool.",
       action: "Set up",
@@ -250,6 +254,10 @@ export const hansFirstUse = {
         waiting: "问题已填好，在 {{tool}} 按下送出。它读到你的笔记后，这一步会自动打勾。",
       },
     },
+    askAi: {
+      line: "除了问答，AI 还能帮你整理和更新笔记。",
+      action: "看看 AI 能做什么",
+    },
     steep: {
       line: "可选：让文澜用本机模型在后台整理，不占用你的 AI 工具。",
       action: "设置",
@@ -386,6 +394,10 @@ export const hantFirstUse = {
         question: "問題：我的筆記裡關於「{{title}}」怎麼說？",
         waiting: "問題已填好，在 {{tool}} 按下送出。它讀到你的筆記後，這一步會自動打勾。",
       },
+    },
+    askAi: {
+      line: "除了問答，AI 還能幫你整理和更新筆記。",
+      action: "看看 AI 能做什麼",
     },
     steep: {
       line: "可選：讓文瀾用本機模型在背景整理，不佔用你的 AI 工具。",

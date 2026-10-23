@@ -990,6 +990,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     action: "dismiss",
     id: a?.id,
   }),
+  get_repo_wiki_github: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/github`),
+  setup_repo_wiki_github: (a) => post(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/github`, a?.request),
   update_space: async (a) => {
     const name = normalizedSpace(a?.name);
     const newName = normalizedSpace(a?.newName);
@@ -1207,6 +1209,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
 // to the main screen and render panels empty rather than crashing.
 export const DEFAULTS: Record<string, unknown> = {
   should_show_wizard: false,
+  local_setup_completed: false,
   get_setup_completed: true,
   // Telemetry is not exercised by the fixture harness. Keep its response
   // shaped like the daemon contract while remaining unavailable rather than

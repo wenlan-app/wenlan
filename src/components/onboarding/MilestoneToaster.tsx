@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useMilestones } from "./useMilestones";
@@ -122,9 +123,17 @@ function subtitleFor(t: TFunction, record: MilestoneRecord): {
   }
 }
 
+/** Milestone cards join the app's one stack of one-off messages, the sonner
+ *  toasts at the bottom centre (`src/components/AppToaster.tsx`). Each card
+ *  keeps its own eight-second clock, paused while hovered, focused, or while
+ *  the window is hidden, so sonner is told never to time it out. */
 export function MilestoneToaster() {
   const { milestones, acknowledge } = useMilestones();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const acknowledgeRef = useRef(acknowledge);
+  acknowledgeRef.current = acknowledge;
+  // Cards handed to the stack, so a rerender does not raise them again.
+  const raised = useRef(new Set<string>());
   // The first-page dialog has the stage; toasts wait until it closes.
   const modalOpen = useFirstPageModalOpen();
 
@@ -142,44 +151,51 @@ export function MilestoneToaster() {
     });
   }, [milestones, dismissed]);
 
-  return (
-    <div
-      style={{
-        position: "fixed",
-        bottom: 24,
-        right: 24,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        zIndex: 1000,
-      }}
-    >
-      {modalOpen ? null : visible.map((m, i) => (
-        <Toast
-          key={toastKey(m)}
-          record={m}
-          index={i}
-          onClick={() => {
-            acknowledge(m.id as MilestoneId);
-            setDismissed((p) => new Set(p).add(toastKey(m)));
-          }}
-          onExpire={() => {
-            setDismissed((p) => new Set(p).add(toastKey(m)));
-          }}
-        />
-      ))}
-    </div>
-  );
+  useEffect(() => {
+    // Cards already up leave while the dialog is open and come back after.
+    const shown = modalOpen ? [] : visible;
+    const keys = new Set(shown.map(toastKey));
+    for (const key of raised.current) {
+      if (keys.has(key)) continue;
+      raised.current.delete(key);
+      toast.dismiss(key);
+    }
+    for (const m of shown) {
+      const key = toastKey(m);
+      if (raised.current.has(key)) continue;
+      raised.current.add(key);
+      const forget = () => setDismissed((p) => new Set(p).add(key));
+      // The card takes itself out of the stack, so it goes even if this
+      // component has gone by then.
+      const hide = () => {
+        forget();
+        toast.dismiss(key);
+      };
+      toast.custom(
+        () => (
+          <MilestoneCard
+            record={m}
+            onClick={() => {
+              acknowledgeRef.current(m.id as MilestoneId);
+              hide();
+            }}
+            onExpire={hide}
+          />
+        ),
+        { id: key, duration: Infinity, onDismiss: forget },
+      );
+    }
+  }, [visible, modalOpen]);
+
+  return null;
 }
 
-function Toast({
+function MilestoneCard({
   record,
-  index,
   onClick,
   onExpire,
 }: {
   record: MilestoneRecord;
-  index: number;
   onClick: () => void;
   onExpire: () => void;
 }) {
@@ -280,20 +296,11 @@ function Toast({
       onClick={onClick}
       className="text-left group"
       style={{
-        position: "relative",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 8,
         fontFamily: "var(--mem-font-body)",
         color: "var(--mem-text)",
-        backgroundColor: "var(--mem-surface)",
-        border: "1px solid var(--mem-border)",
-        borderRadius: 10,
-        padding: "14px 44px 14px 18px",
-        boxShadow: "var(--mem-shadow-toast)",
-        animation: `mem-fade-up 400ms cubic-bezier(0.16, 1, 0.3, 1) ${index * 70}ms both`,
-        maxWidth: 380,
-        width: "min(380px, calc(100vw - 48px))",
-        minWidth: 0,
-        boxSizing: "border-box",
-        transition: "transform 180ms ease, border-color 180ms ease",
         cursor: "pointer",
       }}
       onFocusCapture={() => {
@@ -307,46 +314,16 @@ function Toast({
           startTimer();
         }
       }}
-      onMouseEnter={(e) => {
+      onMouseEnter={() => {
         hoveredRef.current = true;
         pauseTimer();
-        e.currentTarget.style.transform = "translateY(-1px)";
       }}
-      onMouseLeave={(e) => {
+      onMouseLeave={() => {
         hoveredRef.current = false;
         startTimer();
-        e.currentTarget.style.transform = "translateY(0)";
       }}
     >
-      <button
-        type="button"
-        aria-label={t("common.close")}
-        title={`${t("common.close")}: ${title}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          onClick();
-        }}
-        className="rounded-md p-1 transition-colors duration-150 hover:bg-[var(--mem-hover)]"
-        style={{
-          position: "absolute",
-          top: 8,
-          right: 8,
-          color: "var(--mem-text-tertiary)",
-          cursor: "pointer",
-        }}
-      >
-        <svg
-          aria-hidden="true"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
-      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>
       {eyebrow && (
         <div
           style={{
@@ -432,6 +409,35 @@ function Toast({
           {sub.text}
         </div>
       )}
+      </div>
+      <button
+        type="button"
+        aria-label={t("common.close")}
+        title={`${t("common.close")}: ${title}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onClick();
+        }}
+        className="rounded-md p-1 transition-colors duration-150 hover:bg-[var(--mem-hover)]"
+        style={{
+          flex: "none",
+          margin: "-4px -8px 0 0",
+          color: "var(--mem-text-tertiary)",
+          cursor: "pointer",
+        }}
+      >
+        <svg
+          aria-hidden="true"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <path d="M18 6 6 18M6 6l12 12" />
+        </svg>
+      </button>
     </div>
   );
 }

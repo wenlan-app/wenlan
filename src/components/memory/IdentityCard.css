@@ -8,6 +8,83 @@
   overflow: visible;
 }
 
+/* An app update is said on the account glyph itself: a small calm dot while
+   a version is on offer, a ring that fills while it installs, and an amber
+   dot when it failed. */
+.identity-menu-trigger {
+  position: relative;
+}
+
+.identity-glyph {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.identity-update-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mem-accent-indigo);
+  box-shadow: 0 0 0 2px var(--mem-sidebar);
+  pointer-events: none;
+}
+
+.identity-update-dot--failed {
+  background: var(--mem-accent-amber);
+}
+
+.identity-update-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--mem-accent-indigo) var(--identity-update-pct),
+    var(--mem-border) 0
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  pointer-events: none;
+  transition: background 300ms ease;
+}
+
+/* Size not known yet: a short arc that turns. */
+.identity-update-ring--waiting {
+  animation: identity-update-turn 1.4s linear infinite;
+}
+
+@keyframes identity-update-turn {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .identity-update-ring--waiting { animation: none; }
+}
+
+.identity-menu-item--update {
+  color: var(--mem-text);
+}
+
+.identity-menu-item--update .notes-navigation-glyph {
+  color: var(--mem-accent-indigo);
+}
+
+.identity-menu-item--failed .notes-navigation-glyph {
+  color: var(--mem-accent-amber);
+}
+
+/* Progress is something to read, not to press: quieter than the items. */
+.identity-menu-item:disabled,
+.identity-menu-item:disabled:hover {
+  background: transparent;
+  color: var(--mem-text-tertiary);
+  cursor: default;
+}
+
 .identity-menu-trigger[aria-expanded="true"] {
   background: var(--mem-hover);
 }

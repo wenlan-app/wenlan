@@ -4,8 +4,6 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
   detectMcpClients,
-  writeMcpConfig,
-  installClientPlugin,
   registerConnectedAgent,
   listAgents,
   getWireState,
@@ -36,6 +34,7 @@ import { NotesWelcome } from "./onboarding/NotesWelcome";
 import { ImportFlow } from "./ChatImport/ImportFlow";
 import VaultConnectCard, { type VaultPick } from "./memory/sources/VaultConnectCard";
 import { isPluginClient } from "./connect/pluginClients";
+import { connectClient } from "./connect/connectClient";
 import { unreadPluginWriteRisk } from "./connect/setupRisk";
 import ClientRow, { clientRowDescId } from "./connect/ClientRow";
 import { entryUnreadable, isConfigOnly, repairReasonOf } from "./connect/clientHealth";
@@ -1196,11 +1195,14 @@ function SettingUpStep({
         // The exception is a tool whose raw entry is already there and broken:
         // the row promised to repair it, and rewriting it in place adds no
         // second registration (Settings' Repair does the same).
+        // `connectClient` is that single home's caller for both surfaces: it
+        // also copies Wenlan's skills into a tool that reads them from its own
+        // folder (Cursor, Antigravity, GitHub Copilot, ...).
         const repair = repairReasonOf(row.client!) !== null;
-        const task: Promise<UndeterminedInput[]> =
-          isPluginClient(clientType) && !repair
-            ? installClientPlugin(clientType).then(() => [])
-            : writeMcpConfig(clientType);
+        const task: Promise<UndeterminedInput[]> = connectClient(
+          row.client!,
+          repair ? "repair" : "setup",
+        );
         task.then(
           (undetermined) => {
             setStatuses((prev) => ({ ...prev, [row.id]: "done" }));

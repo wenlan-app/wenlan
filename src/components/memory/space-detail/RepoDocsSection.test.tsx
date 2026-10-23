@@ -48,7 +48,7 @@ describe("RepoDocsSection", () => {
     expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
     expect(screen.queryByText("Matches the code")).not.toBeInTheDocument();
     expect(
-      screen.getByText("Docs are checked in the daily update, or when you run /wenlan wiki."),
+      screen.getByText("Checked daily, or when you run /wenlan wiki."),
     ).toBeInTheDocument();
   });
 
@@ -117,7 +117,7 @@ describe("RepoDocsSection", () => {
         at: 1_792_660_000,
       },
     });
-    expect(screen.getByText(/Someone edited 2 wiki pages on GitHub/)).toBeInTheDocument();
-    expect(screen.getByText(/1 wiki page was changed both on GitHub and in Wenlan/)).toBeInTheDocument();
+    expect(screen.getByText(/2 pages brought back from GitHub/)).toBeInTheDocument();
+    expect(screen.getByText(/1 page waits for your review/)).toBeInTheDocument();
   });
 });

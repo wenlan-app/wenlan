@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { daemonStartupWait } from "./daemonStartup";
 import type {
   ApplyRepairRequest, PrepareRepairRequest, PrepareCurrentRepairRequest, RepairApplyReceipt, RepairLintQuery,
   RepairLintReport, RepairManifest, RepairOperationStatus, RepairPrepareOperationRequest, RepairPrepareOperationStatus, RepairPlanEntriesPage, RepairPlanEntriesRequest, RepairRecovery,
   RepairPlanRequest, RepairPlanSummary, RepairRuntimeResumeApproval, RepairVerificationReceipt, VerifyRepairRequest,
 } from "./repairTypes";
 export { daemonMeetsFloor } from "./daemonVersion";
+
+// Every command below goes through here. While a window that opened before the
+// daemon answered is waiting for it, daemon calls wait instead of failing
+// (./daemonStartup). Otherwise the call is sent synchronously, as before.
+// The arguments pass through exactly as given, so a call reads the same to
+// Tauri (and to tests that mock it) as it did before this wrapper existed.
+function invoke<T>(...call: Parameters<typeof tauriInvoke>): Promise<T> {
+  const wait = daemonStartupWait(call[0]);
+  if (wait) return wait.then(() => tauriInvoke<T>(...call));
+  return tauriInvoke<T>(...call);
+}
 
 export async function repairLint(query: RepairLintQuery): Promise<RepairLintReport> {
   return invoke("repair_lint", { query });
@@ -910,11 +922,15 @@ export async function deleteSpace(name: string): Promise<void> {
 
 export type RepoWikiAgent = "claude" | "codex";
 
+/** Where the daily update runs: this computer, or GitHub Actions. */
+export type RepoWikiRunner = "computer" | "github";
+
 export interface RepoWikiDaily {
   enabled: boolean;
   /** Local hour, 0 to 23, after which the day's update starts. */
   hour: number;
   agent: RepoWikiAgent;
+  runs_on?: RepoWikiRunner;
 }
 
 export type RepoWikiPublishStatus =
@@ -936,7 +952,7 @@ export interface RepoWikiPublishResult {
   doc_fixes?: number;
   /** Wiki pages edited in the repository and taken back into Wenlan. */
   taken_back?: number;
-  /** Wiki pages edited in the repository while Wenlan changed them too. */
+  /** Wiki pages changed in the repository while Wenlan changed them too: they wait as a revision card. */
   kept?: number;
   /** Unix seconds. */
   at: number;
@@ -1034,6 +1050,46 @@ export async function publishRepoWiki(space: string): Promise<RepoWikiPublishRes
 /** Decline a doc fix: it leaves the pull request on the next update. */
 export async function dismissRepoDocFix(space: string, id: string): Promise<RepoDocsReply> {
   return invoke("dismiss_repo_doc_fix", { space, id });
+}
+
+/** Where the daily workflow file stands in the repository. */
+export type RepoWikiWorkflowState = "in_repo" | "in_pr" | "missing";
+
+export interface RepoWikiGithubRun {
+  /** RFC 3339. */
+  at: string;
+  url: string;
+  status: string;
+  conclusion?: string | null;
+  pr_url?: string | null;
+}
+
+/** What a daily update on GitHub still needs, and how it last went. */
+export interface RepoWikiGithubStatus {
+  /** `owner/name`; absent when `origin` is not on GitHub. */
+  repo?: string | null;
+  gh_ready: boolean;
+  workflow: RepoWikiWorkflowState;
+  secret?: boolean | null;
+  can_open_prs?: boolean | null;
+  last_run?: RepoWikiGithubRun | null;
+  actions_url?: string | null;
+}
+
+export type RepoWikiGithubRequest =
+  | { action: "claude_token" }
+  | { action: "openai_key"; key: string }
+  | { action: "allow_pull_requests" };
+
+export async function getRepoWikiGithub(space: string): Promise<RepoWikiGithubStatus> {
+  return invoke("get_repo_wiki_github", { space });
+}
+
+export async function setupRepoWikiGithub(
+  space: string,
+  request: RepoWikiGithubRequest,
+): Promise<RepoWikiGithubStatus> {
+  return invoke("setup_repo_wiki_github", { space, request });
 }
 
 export interface MoveSpaceResponse {
@@ -1151,15 +1207,20 @@ export const FACET_COLORS: Record<string, string> = {
 
 // One agent-slug prettifier for every surface (list row, card, detail).
 export const AGENT_DISPLAY: Record<string, string> = {
+  antigravity: "Antigravity",
   "claude-code": "Claude Code",
   "claude-desktop": "Claude Desktop",
   claude: "Claude",
   chatgpt: "ChatGPT",
   "chatgpt-mcp": "ChatGPT",
   codex: "Codex",
+  "copilot-cli": "GitHub Copilot",
   cursor: "Cursor",
   "gemini-cli": "Gemini CLI",
+  kiro: "Kiro",
   "muse-code": "Muse Code",
+  opencode: "OpenCode",
+  vscode: "VS Code",
   windsurf: "Windsurf",
   zed: "Zed",
   wenlan: "Wenlan",
@@ -3505,10 +3566,18 @@ export interface McpClient {
   install_state?: McpInstallState;
   /** Optional until every mock supplies it; the app always sends it. */
   entry_health?: McpEntryHealth;
+  /** Whether Wenlan's skills are in this tool's skills folder. `null` for a
+   *  tool without one (the plugin clients, Claude Desktop, Muse Code). */
+  has_skills?: Reading | null;
 }
 
 export async function shouldShowWizard(): Promise<boolean> {
   return invoke("should_show_wizard");
+}
+
+/** This machine's config file says setup finished. Answers without the daemon. */
+export async function localSetupCompleted(): Promise<boolean> {
+  return invoke("local_setup_completed");
 }
 
 export async function getSetupCompleted(): Promise<boolean> {
@@ -3588,6 +3657,15 @@ export type PluginInstallClientType = "claude_code" | "codex_cli";
  *  wizard on that rejection. */
 export async function installClientPlugin(clientType: PluginInstallClientType): Promise<void> {
   return invoke("install_client_plugin", { clientType });
+}
+
+/** Copies Wenlan's skills (the `wenlan` front door plus brief, capture,
+ *  recall and handoff) into `clientType`'s own skills folder. Only for a tool
+ *  whose `has_skills` is not null. Refuses, writing nothing, when a skill
+ *  folder of the same name exists that Wenlan did not put there. Resolves with
+ *  the skills folder it wrote to. */
+export async function installClientSkills(clientType: string): Promise<string> {
+  return invoke("install_client_skills", { clientType });
 }
 
 /** Tell the daemon the user connected `clientType` when setup found it already

@@ -197,6 +197,13 @@
   font: 12px/1.5 var(--mem-font-body);
 }
 
+/* Extra lines in a row share the one rule above them. */
+.getting-started-extra + .getting-started-extra {
+  margin-top: -6px;
+  padding-top: 0;
+  border-top: none;
+}
+
 .getting-started-link:focus-visible {
   outline: 2px solid var(--mem-focus-ring);
   outline-offset: 2px;

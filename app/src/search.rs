@@ -298,6 +298,18 @@ pub async fn set_setup_completed(
     client.set_setup_completed(completed).await
 }
 
+/// Whether this machine's config file already records a finished setup.
+///
+/// Read straight from disk, so it answers before the daemon does. The launch
+/// screen uses it to open a configured user's workspace at once and let the
+/// daemon finish starting behind it; `should_show_wizard` still runs and has
+/// the final say. A missing or unreadable file reads as not completed, which
+/// keeps a new user on the daemon-backed gate.
+#[tauri::command]
+pub fn local_setup_completed() -> bool {
+    crate::config::load_config().setup_completed
+}
+
 #[tauri::command]
 pub async fn should_show_wizard(state: tauri::State<'_, State>) -> Result<bool, String> {
     tokio::time::timeout(std::time::Duration::from_secs(6), async {
@@ -487,6 +499,34 @@ pub async fn install_client_plugin(
     let client = daemon_client(&state).await;
     register_connected_agent_best_effort(&client, &client_type).await;
     Ok(())
+}
+
+/// Installs Wenlan's skills into `client_type`'s own skills folder (Cursor,
+/// Gemini CLI, Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode)
+/// — see `skills_install::install_skills`. Returns the skills folder. Refuses,
+/// writing nothing, when a same-named skill folder there was not written by
+/// Wenlan. Runs on a blocking thread (it writes a folder tree).
+///
+/// The "Set up" flow calls this after `write_mcp_config`; "Add skills" calls
+/// it alone for a tool that already has its MCP entry. Either way, once the
+/// skills are on disk the daemon is told the user connected this tool, with
+/// the same best-effort contract as `write_mcp_config` and
+/// `install_client_plugin`: a failed install returns before it.
+#[tauri::command]
+pub async fn install_client_skills(
+    state: tauri::State<'_, State>,
+    client_type: String,
+) -> Result<String, String> {
+    let install_client_type = client_type.clone();
+    let dir = tokio::task::spawn_blocking(move || {
+        crate::skills_install::install_skills(&install_client_type)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    let client = daemon_client(&state).await;
+    register_connected_agent_best_effort(&client, &client_type).await;
+    Ok(dir.to_string_lossy().to_string())
 }
 
 /// Tells the daemon the user connected `client_type` when the wizard FOUND it
@@ -6874,6 +6914,12 @@ mod register_connected_agent_tests {
             ("cursor", "cursor"),
             ("gemini_cli", "gemini-cli"),
             ("muse_code", "muse-code"),
+            ("antigravity", "antigravity"),
+            ("copilot_cli", "copilot-cli"),
+            ("vscode", "vscode"),
+            ("windsurf", "windsurf"),
+            ("kiro", "kiro"),
+            ("opencode", "opencode"),
         ] {
             // The name sent is the one the written entry reports with
             // `--agent-name`, or the daemon would trust a row the tool never uses.

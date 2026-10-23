@@ -284,6 +284,28 @@ async fn main() -> anyhow::Result<ExitCode> {
     if cli.all_spaces && matches!(&cli.command, Commands::Brief(_)) {
         anyhow::bail!("Brief is owned by one Space; --all-spaces is not supported");
     }
+    if matches!(&cli.command, Commands::Wiki { command } if command.is_offline()) {
+        let (format, quiet) = (cli.format.resolve(), cli.quiet);
+        if cli.space.is_some() || cli.all_spaces {
+            anyhow::bail!("--space/--all-spaces are not supported by this command");
+        }
+        return match cli.command {
+            Commands::Wiki {
+                command: commands::wiki::WikiCommand::Refresh(args),
+            } => Ok(if commands::wiki_refresh::refresh(args, format, quiet)? {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }),
+            Commands::Wiki {
+                command: commands::wiki::WikiCommand::Workflow(args),
+            } => {
+                commands::wiki_refresh::workflow(args, quiet)?;
+                Ok(ExitCode::SUCCESS)
+            }
+            _ => unreachable!("only offline wiki commands get here"),
+        };
+    }
     let environment_agent = std::env::var("WENLAN_AGENT_NAME").ok();
     let agent_name = resolve_agent_name(cli.agent_name.as_deref(), environment_agent.as_deref());
     let recovery_enabled = !matches!(

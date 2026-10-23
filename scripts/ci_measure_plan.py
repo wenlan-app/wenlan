@@ -93,6 +93,7 @@ KNOWN_NONOWNER_PREFIXES = (
     "docs/",
     "homebrew/",
     "plugin/",
+    "plugin-agents/",
     "plugin-codex/",
     "scripts/",
 )

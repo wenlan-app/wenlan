@@ -207,8 +207,7 @@ body {
 }
 
 /* Entrance animation — referenced by className throughout
-   src/components/memory/settings/sections/*.tsx and by
-   UpdaterDialog.tsx:88, but never defined until now. */
+   src/components/memory/settings/sections/*.tsx and others. */
 @keyframes mem-fade-up {
   from { opacity: 0; transform: translateY(6px); }
   /* Ends at the element's own target opacity, not a hard 1. This animation runs
@@ -3919,6 +3918,13 @@ p.entity-error {
 @media (prefers-reduced-motion: reduce) {
   .mem-activity-pulse-running { animation: none; }
 }
+
+/* While a workspace that opened early waits for the daemon, Activity's row
+   says so: the same row, not pressable, with the pulse running. */
+.mem-activity-status--still { cursor: default; }
+.mem-activity-status--still:hover { background: transparent; }
+.mem-daemon-startup-body { margin: 0; color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; }
+.mem-daemon-startup-failure { margin: 0; color: var(--mem-status-danger-text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 
 /* The summary opens upward from the sidebar footer and stays within the
    viewport on narrow windows. */

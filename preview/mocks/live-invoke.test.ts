@@ -1267,6 +1267,7 @@ const UNSTUBBED_DEBT = new Set([
   "import_chat_export",
   "ingest_webpage",
   "install_client_plugin",
+  "install_client_skills",
   "list_external_models",
   "move_space",
   "open_file",

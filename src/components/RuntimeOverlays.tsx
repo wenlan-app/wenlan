@@ -1,6 +1,6 @@
 import { MilestoneToaster } from "./onboarding/MilestoneToaster";
-import DaemonVersionBanner from "./DaemonVersionBanner";
-import UpdaterDialog from "./UpdaterDialog";
+import DaemonVersionWatcher from "./DaemonVersionWatcher";
+import UpdateWatcher from "./UpdateWatcher";
 
 type RuntimeOverlaysProps = {
   readonly review?: boolean;
@@ -16,8 +16,8 @@ export function RuntimeOverlays({
   return (
     <>
       {variant === "main" && <MilestoneToaster />}
-      <UpdaterDialog />
-      <DaemonVersionBanner />
+      <UpdateWatcher />
+      <DaemonVersionWatcher />
     </>
   );
 }
