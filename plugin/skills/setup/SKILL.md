@@ -61,7 +61,7 @@ comparing numerically per component with build metadata (`+g<sha>`) stripped.
   runtime (`result=older`):
 
 ```bash
-npx -y wenlan@0.19.3 setup
+npx -y wenlan@0.20.0 setup
 export PATH="$HOME/.wenlan/bin:$PATH"
 ```
 
@@ -84,7 +84,7 @@ pinned to this plugin's exact version. It installs the runtime into
 prints the status:
 
 ```bash
-npx -y wenlan@0.19.3 setup
+npx -y wenlan@0.20.0 setup
 export PATH="$HOME/.wenlan/bin:$PATH"
 ```
 
