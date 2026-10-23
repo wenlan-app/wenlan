@@ -21,6 +21,7 @@ pub mod status;
 pub mod store;
 pub mod sweep;
 pub mod wiki;
+pub mod wiki_refresh;
 
 #[cfg(not(target_os = "windows"))]
 pub use service::service_unit_path;

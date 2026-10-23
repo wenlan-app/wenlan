@@ -379,6 +379,32 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     assert!(!files.contains("entry-point"), "{files}");
     let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
     assert!(claude.starts_with("# Notes\n\nKeep it small.\n\n<!-- WENLAN:START -->"));
+    // Beside the pages: the code each relies on, anchored in the default
+    // branch, for `wenlan wiki refresh` to check from a plain checkout.
+    let manifest: crate::repo_wiki_ci::CodeManifest = serde_json::from_str(&sh(
+        &origin,
+        &[
+            "show",
+            &format!("{REPO_WIKI_BRANCH}:wiki/.wenlan-code.json"),
+        ],
+    ))
+    .unwrap();
+    assert_eq!(
+        manifest.base.as_deref(),
+        Some(sh(&origin, &["rev-parse", "main"]).as_str())
+    );
+    let entry = &manifest.pages[page_file.strip_prefix("wiki/").unwrap()];
+    assert_eq!(entry.id, "p1");
+    assert_eq!(
+        entry
+            .code
+            .iter()
+            .map(|span| (span.path.as_str(), span.start, span.end))
+            .collect::<Vec<_>>(),
+        [("src/lib.rs", 1, 2)]
+    );
+    let checked = crate::repo_wiki_ci::check(&worktree, "wiki").unwrap();
+    assert_eq!((checked.unchanged, checked.pages.len()), (1, 0));
 
     // The user's copy: same branch, same uncommitted edit, no wiki folder.
     assert_eq!(sh(&clone, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");

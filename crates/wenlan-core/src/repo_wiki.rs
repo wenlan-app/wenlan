@@ -128,7 +128,7 @@ pub fn normalize_folder(folder: &str) -> Result<String, WenlanError> {
     Ok(parts.join("/"))
 }
 
-fn git(dir: &Path) -> Command {
+pub(crate) fn git(dir: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .arg("-C")
@@ -139,7 +139,7 @@ fn git(dir: &Path) -> Command {
     command
 }
 
-fn run(mut command: Command, what: &str) -> Result<String, WenlanError> {
+pub(crate) fn run(mut command: Command, what: &str) -> Result<String, WenlanError> {
     let output = command
         .output()
         .map_err(|error| WenlanError::Generic(format!("{what}: could not run: {error}")))?;
@@ -166,7 +166,7 @@ pub fn repository_top_level(path: &Path) -> Result<PathBuf, WenlanError> {
     Ok(std::fs::canonicalize(&top).unwrap_or_else(|_| PathBuf::from(top)))
 }
 
-fn origin_url(repo: &Path) -> Option<String> {
+pub fn origin_url(repo: &Path) -> Option<String> {
     let mut command = git(repo);
     command.args(["remote", "get-url", "origin"]);
     run(command, "git remote get-url origin")
@@ -358,6 +358,16 @@ pub fn with_code_footer(
     if spans.is_empty() {
         return content.to_owned();
     }
+    code_footer(content, spans, folder)
+}
+
+/// `content` with the closing `## Code` list for `spans` (path, first line,
+/// last line), sorted and deduplicated by the caller.
+pub(crate) fn code_footer<'a>(
+    content: &str,
+    spans: impl IntoIterator<Item = (&'a str, u32, u32)>,
+    folder: &str,
+) -> String {
     let up = up_to_repo_root(folder);
     let mut out = content.trim_end().to_owned();
     out.push_str("\n\n## Code\n\n");
@@ -613,6 +623,69 @@ fn pr_body(binding: &RepoWikiBinding, pages: usize, left_out: usize, waiting: us
     body
 }
 
+/// Record beside the pages which code lines each one relies on, with their
+/// anchors in the default branch, for `wenlan wiki refresh` to check from a
+/// plain checkout ([`crate::repo_wiki_ci`]).
+fn write_code_manifest(
+    repo: &Path,
+    base: &str,
+    target: &Path,
+    published_bases: &HashMap<String, Vec<CodeBasisLocator>>,
+    base_files: &HashMap<String, Option<String>>,
+) -> Result<(), WenlanError> {
+    let mut command = git(repo);
+    command.args(["rev-parse", &format!("origin/{base}")]);
+    let commit = run(command, "git rev-parse").ok();
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(target.join("pages"))? {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Some(id) = frontmatter_origin_id(&text) else {
+            continue;
+        };
+        let Some(spans) = published_bases.get(id) else {
+            continue;
+        };
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let mut spans: Vec<(String, u32, u32)> = spans
+            .iter()
+            .map(|locator| (locator.path.clone(), locator.line_start, locator.line_end))
+            .collect();
+        spans.sort();
+        spans.dedup();
+        files.push((format!("pages/{name}"), id.to_owned(), spans));
+    }
+    let manifest = crate::repo_wiki_ci::build_manifest(commit, files, |path| {
+        base_files.get(path).and_then(|text| text.as_deref())
+    });
+    // Same pages on the same lines: keep the commit it names, so a publish
+    // after unrelated commits does not churn the pull request.
+    if crate::repo_wiki_ci::read_manifest(target)
+        .is_ok_and(|current| current.pages == manifest.pages)
+    {
+        return Ok(());
+    }
+    crate::repo_wiki_ci::write_manifest(target, &manifest)
+}
+
+/// The `origin_id:` of a page file's frontmatter.
+pub fn frontmatter_origin_id(text: &str) -> Option<&str> {
+    let frontmatter = text.strip_prefix("---\n")?;
+    let end = frontmatter.find("\n---\n")?;
+    frontmatter[..end]
+        .lines()
+        .find_map(|line| line.strip_prefix("origin_id: "))
+        .map(str::trim)
+}
+
 /// Write the pages into the repository and offer them as a pull request.
 /// Blocking: runs git and gh. The user's working copy is only read (its
 /// remote and objects); everything is written in `input.worktree`.
@@ -745,6 +818,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
             stats.failed
         )));
     }
+    write_code_manifest(&repo, &base, &target, &published_bases, &base_files)?;
     let touched = maintain_agent_files(&input.worktree, &folder)?;
 
     let mut command = git(&input.worktree);

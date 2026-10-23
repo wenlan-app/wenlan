@@ -58,6 +58,21 @@ pub enum WikiCommand {
     Status,
     /// Stop putting this Space's pages into its repository.
     Unbind,
+    /// Check the wiki folder of this checkout against the code: fix line
+    /// numbers that moved and have an AI tool rewrite pages whose code
+    /// changed. Works without Wenlan running; the GitHub Actions workflow
+    /// runs it.
+    Refresh(super::wiki_refresh::RefreshArgs),
+    /// Print, or `--write`, the GitHub Actions workflow that runs `refresh`
+    /// every day and opens a pull request when a page changed.
+    Workflow(super::wiki_refresh::WorkflowArgs),
+}
+
+impl WikiCommand {
+    /// Runs from the checkout alone, without Wenlan's daemon or a Space.
+    pub fn is_offline(&self) -> bool {
+        matches!(self, WikiCommand::Refresh(_) | WikiCommand::Workflow(_))
+    }
 }
 
 pub async fn run(
@@ -121,6 +136,9 @@ pub async fn run(
                 Ok(())
             }
         },
+        WikiCommand::Refresh(_) | WikiCommand::Workflow(_) => {
+            unreachable!("offline wiki commands run before the daemon is reached")
+        }
         WikiCommand::Unbind => {
             let removed = client.unbind_repo_wiki(space).await?;
             if !quiet {
