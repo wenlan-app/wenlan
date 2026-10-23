@@ -339,8 +339,12 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
             worktree: worktree.clone(),
             gh: None,
             now: 1,
+            prepared: None,
+            taken_back: BTreeSet::new(),
+            took_back: 0,
         })
         .unwrap()
+        .result
     };
 
     let first = publish_once(pages.clone());
@@ -466,6 +470,9 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
         worktree: dir.path().join("data/repo-wiki/site"),
         gh: None,
         now: 1,
+        prepared: None,
+        taken_back: BTreeSet::new(),
+        took_back: 0,
     })
     .unwrap_err();
     assert!(
@@ -485,6 +492,9 @@ fn publish_with_no_selected_pages_does_nothing() {
         daily: None,
         last_publish: None,
         last_daily_run: None,
+        doc_fixes: Vec::new(),
+        doc_check: None,
+        kept_edits: Vec::new(),
     };
     let result = publish(PublishInput {
         binding: &binding,
@@ -496,8 +506,12 @@ fn publish_with_no_selected_pages_does_nothing() {
         worktree: dir.path().join("wt"),
         gh: None,
         now: 7,
+        prepared: None,
+        taken_back: BTreeSet::new(),
+        took_back: 0,
     })
-    .unwrap();
+    .unwrap()
+    .result;
     assert_eq!(result.status, RepoWikiPublishStatus::NothingToPublish);
     assert_eq!(result.left_out, 4);
     assert!(!dir.path().join("wt").exists());
@@ -518,6 +532,9 @@ fn daily_is_due_once_a_day_after_its_hour() {
         }),
         last_publish: None,
         last_daily_run: None,
+        doc_fixes: Vec::new(),
+        doc_check: None,
+        kept_edits: Vec::new(),
     };
     let before = chrono::Local
         .with_ymd_and_hms(2026, 10, 24, 8, 59, 0)
@@ -562,4 +579,487 @@ fn daily_agent_args_run_one_skill_non_interactively() {
             "$wenlan steep space:site"
         ]
     );
+}
+
+fn readme_fix(old: &str, new: &str) -> DocFixRequest {
+    DocFixRequest {
+        path: "README.md".into(),
+        old_text: old.into(),
+        new_text: new.into(),
+        reason: "package.json now requires Node 20.".into(),
+        code: vec![RepoDocCode {
+            path: "package.json".into(),
+            line_start: 5,
+            line_end: 5,
+        }],
+    }
+}
+
+/// `repo_with_origin` plus a README pushed to `main`.
+fn repo_with_readme(root: &Path) -> (PathBuf, PathBuf) {
+    let (origin, clone) = repo_with_origin(root);
+    std::fs::write(
+        clone.join("README.md"),
+        "# Site\n\nRequires Node 18 or later.\n\nRun `pnpm dev`.\n",
+    )
+    .unwrap();
+    std::fs::write(clone.join("CHANGELOG.md"), "## 1.0\n\nNode 18.\n").unwrap();
+    sh(&clone, &["add", "."]);
+    sh(&clone, &["commit", "--quiet", "-m", "readme"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+    (origin, clone)
+}
+
+fn publish_input<'a>(
+    binding: &'a RepoWikiBinding,
+    pages: Vec<Page>,
+    code_bases: &'a HashMap<String, Vec<CodeBasisLocator>>,
+    anchors: &'a CodeAnchors,
+    concept_paths: &'a ConceptPathMap,
+    worktree: &Path,
+) -> PublishInput<'a> {
+    PublishInput {
+        binding,
+        pages,
+        left_out: 0,
+        code_bases,
+        anchors,
+        concept_paths,
+        worktree: worktree.to_path_buf(),
+        gh: None,
+        now: 1,
+        prepared: None,
+        taken_back: BTreeSet::new(),
+        took_back: 0,
+    }
+}
+
+#[test]
+fn doc_fixes_are_checked_against_the_file_before_they_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, clone) = repo_with_readme(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+
+    let refused = |request: DocFixRequest| {
+        suggest_doc_fix_at(&store, "site", request, 1)
+            .unwrap_err()
+            .to_string()
+    };
+    let mut wiki = readme_fix("x", "y");
+    wiki.path = "wiki/pages/a.md".into();
+    assert!(refused(wiki).contains("not one of the repository's docs"));
+    let mut changelog = readme_fix("Node 18.", "Node 20.");
+    changelog.path = "CHANGELOG.md".into();
+    assert!(refused(changelog).contains("not one of the repository's docs"));
+    let mut outside = readme_fix("x", "y");
+    outside.path = "../README.md".into();
+    assert!(refused(outside).contains("leaves the repository"));
+    assert!(refused(readme_fix("Node 16", "Node 20")).contains("not in README.md"));
+    assert!(refused(readme_fix("R", "r")).contains("occurs 2 times"));
+    assert!(
+        suggest_doc_fix_at(&store, "nope", readme_fix("Node 18", "Node 20"), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("not connected")
+    );
+
+    let (fix, open) = suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20 or later"),
+        5,
+    )
+    .unwrap();
+    assert_eq!(open, 1);
+    assert_eq!(fix.state, RepoDocFixState::Pending);
+    assert_eq!(fix.id, doc_fix_id("README.md", "Node 18 or later"));
+    // The same text again replaces the fix rather than adding one.
+    let (_, open) = suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20+"),
+        6,
+    )
+    .unwrap();
+    assert_eq!(open, 1);
+    let binding = binding_at(&store, "site").unwrap().unwrap();
+    assert_eq!(binding.doc_fixes[0].new_text, "Node 20+");
+
+    // Declined: not offered again.
+    let (_, open) = dismiss_doc_fix_at(&store, "site", &fix.id).unwrap();
+    assert_eq!(open, 0);
+    assert!(refused(readme_fix("Node 18 or later", "Node 20 or later")).contains("declined"));
+
+    assert_eq!(record_doc_check_at(&store, "site", 7, 9).unwrap(), 0);
+    let binding = binding_at(&store, "site").unwrap().unwrap();
+    assert_eq!(binding.doc_check, Some(RepoDocCheck { at: 9, docs: 7 }));
+}
+
+#[test]
+fn wenlans_own_block_takes_no_doc_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, clone) = repo_with_origin(dir.path());
+    std::fs::write(
+        clone.join("AGENTS.md"),
+        upsert_agents_block("# Agents\n\nUse pnpm.\n", "wiki"),
+    )
+    .unwrap();
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    let mut inside = readme_fix("Start at `wiki/index.md`", "Start anywhere");
+    inside.path = "AGENTS.md".into();
+    assert!(suggest_doc_fix_at(&store, "site", inside, 1)
+        .unwrap_err()
+        .to_string()
+        .contains("Wenlan's own block"));
+    let mut outside = readme_fix("Use pnpm.", "Use npm.");
+    outside.path = "AGENTS.md".into();
+    suggest_doc_fix_at(&store, "site", outside, 1).unwrap();
+}
+
+#[test]
+fn doc_fixes_go_into_the_wiki_pull_request_and_leave_once_merged() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_readme(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    bind_at(&store, "site", &clone, None, None).unwrap();
+    suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20 or later"),
+        1,
+    )
+    .unwrap();
+    let mut other = readme_fix("Run `pnpm dev`.", "Run `pnpm start`.");
+    other.reason = "The dev script was renamed.".into();
+    let (declined, _) = suggest_doc_fix_at(&store, "site", other, 1).unwrap();
+    dismiss_doc_fix_at(&store, "site", &declined.id).unwrap();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    let code_bases = HashMap::new();
+    let anchors = CodeAnchors::new();
+    let concept_paths = ConceptPathMap::new();
+    let publish_now = || {
+        let binding = binding_at(&store, "site").unwrap().unwrap();
+        let published = publish(publish_input(
+            &binding,
+            vec![],
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        ))
+        .unwrap();
+        settle_doc_fixes_at(&store, "site", &published.applied, &published.gone).unwrap();
+        published
+    };
+
+    // No wiki pages: the fix alone opens the pull request, and nothing is
+    // written into the wiki folder or AGENTS.md.
+    let first = publish_now();
+    assert_eq!(first.result.status, RepoWikiPublishStatus::Pushed);
+    assert_eq!((first.result.pages, first.result.doc_fixes), (0, 1));
+    let readme = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:README.md")]);
+    assert!(readme.contains("Requires Node 20 or later."), "{readme}");
+    assert!(
+        readme.contains("Run `pnpm dev`."),
+        "declined fix stays out: {readme}"
+    );
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(
+        !files.contains("wiki/") && !files.contains("AGENTS.md"),
+        "{files}"
+    );
+    let binding = binding_at(&store, "site").unwrap().unwrap();
+    let states: Vec<_> = binding.doc_fixes.iter().map(|fix| fix.state).collect();
+    assert_eq!(states, [RepoDocFixState::InPr, RepoDocFixState::Dismissed]);
+
+    // Merged: both old texts are gone or overtaken, so both fixes leave.
+    sh(&clone, &["fetch", "--quiet", "origin"]);
+    sh(
+        &clone,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    std::fs::write(
+        clone.join("README.md"),
+        "# Site\n\nRequires Node 20 or later.\n\nRun `pnpm serve`.\n",
+    )
+    .unwrap();
+    sh(&clone, &["commit", "--quiet", "-am", "serve"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+    let second = publish_now();
+    assert_eq!(second.gone.len(), 2);
+    assert!(binding_at(&store, "site")
+        .unwrap()
+        .unwrap()
+        .doc_fixes
+        .is_empty());
+}
+
+#[test]
+fn a_page_file_edited_in_the_repository_is_found_and_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let root = binding.repo_root.clone();
+    let code_bases = HashMap::from([(
+        "page_map".to_string(),
+        vec![locator(&root, "src/lib.rs", 1, 2)],
+    )]);
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let concept_paths = ConceptPathMap::new();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    let pages = vec![page("page_map", "Module map", "What each part owns.")];
+    let first = publish(publish_input(
+        &binding,
+        pages.clone(),
+        &code_bases,
+        &anchors,
+        &concept_paths,
+        &worktree,
+    ))
+    .unwrap();
+    assert_eq!(first.result.status, RepoWikiPublishStatus::Pushed);
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    let page_file = files
+        .lines()
+        .find(|f| f.starts_with("wiki/pages/") && f.ends_with(".md"))
+        .unwrap()
+        .to_owned();
+
+    // Merged, then someone edits the page on the default branch.
+    sh(&clone, &["fetch", "--quiet", "origin"]);
+    sh(
+        &clone,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    let text = std::fs::read_to_string(clone.join(&page_file)).unwrap();
+    std::fs::write(
+        clone.join(&page_file),
+        text.replace("What each part owns.", "What each part owns, by hand."),
+    )
+    .unwrap();
+    sh(&clone, &["commit", "--quiet", "-am", "edit the wiki"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+
+    let prepared = prepare(&binding, &worktree).unwrap();
+    assert_eq!(prepared.edits.len(), 1);
+    let edit = &prepared.edits[0];
+    assert_eq!(
+        (
+            edit.page_id.as_str(),
+            edit.path.as_str(),
+            edit.origin_version
+        ),
+        ("page_map", page_file.as_str(), 1)
+    );
+    assert_eq!(edit.body, "What each part owns, by hand.");
+
+    // Not taken back: the edit stays and nothing is offered.
+    let kept = publish(PublishInput {
+        prepared: Some(prepared),
+        ..publish_input(
+            &binding,
+            pages.clone(),
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
+    })
+    .unwrap();
+    assert_eq!(kept.result.status, RepoWikiPublishStatus::NoChanges);
+    assert_eq!(kept.result.kept, 1);
+
+    // Reported once: the next publish finds the same edit but says nothing.
+    let mut seen = binding.clone();
+    seen.kept_edits = kept.kept_edits.clone().unwrap();
+    let again = publish(PublishInput {
+        prepared: Some(prepare(&seen, &worktree).unwrap()),
+        ..publish_input(
+            &seen,
+            pages.clone(),
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
+    })
+    .unwrap();
+    assert_eq!(again.result.status, RepoWikiPublishStatus::NoChanges);
+    assert_eq!(again.result.kept, 0);
+    assert_eq!(again.kept_edits, kept.kept_edits);
+
+    // Taken back: the page now says it, and its file is written from it.
+    let prepared = prepare(&binding, &worktree).unwrap();
+    let mut taken = pages.clone();
+    taken[0].content = prepared.edits[0].body.clone();
+    taken[0].version = 2;
+    let back = publish(PublishInput {
+        taken_back: BTreeSet::from([page_file.clone()]),
+        took_back: 1,
+        prepared: Some(prepared),
+        ..publish_input(
+            &binding,
+            taken,
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
+    })
+    .unwrap();
+    assert_eq!(back.result.status, RepoWikiPublishStatus::Pushed);
+    assert_eq!((back.result.taken_back, back.result.kept), (1, 0));
+    let body = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")],
+    );
+    assert!(body.contains("origin_version: 2"), "{body}");
+    assert!(body.contains("by hand."), "{body}");
+    assert!(!files.contains(".wenlan-archive"));
+    let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
+    assert!(!files.contains(".wenlan-archive"), "{files}");
+}
+
+#[test]
+fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_readme(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let root = binding.repo_root.clone();
+    suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20 or later"),
+        1,
+    )
+    .unwrap();
+    let binding = binding_at(&store, "site").unwrap().unwrap();
+    let code_bases = HashMap::from([(
+        "page_map".to_string(),
+        vec![locator(&root, "src/lib.rs", 1, 2)],
+    )]);
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let concept_paths = ConceptPathMap::new();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    let pages = vec![page("page_map", "Module map", "What each part owns.")];
+    publish(publish_input(
+        &binding,
+        pages.clone(),
+        &code_bases,
+        &anchors,
+        &concept_paths,
+        &worktree,
+    ))
+    .unwrap();
+
+    // A reviewer rewords the fix and the page on the pull request's branch.
+    sh(&clone, &["fetch", "--quiet", "origin"]);
+    sh(
+        &clone,
+        &[
+            "checkout",
+            "--quiet",
+            "-b",
+            "review",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    let readme = std::fs::read_to_string(clone.join("README.md")).unwrap();
+    std::fs::write(
+        clone.join("README.md"),
+        readme.replace("Node 20 or later", "Node 20 (LTS)"),
+    )
+    .unwrap();
+    let files = sh(&clone, &["ls-files", "wiki/pages"]);
+    let page_file = files.lines().next().unwrap().to_owned();
+    let text = std::fs::read_to_string(clone.join(&page_file)).unwrap();
+    std::fs::write(
+        clone.join(&page_file),
+        text.replace("What each part owns.", "What each part owns, reviewed."),
+    )
+    .unwrap();
+    sh(&clone, &["commit", "--quiet", "-am", "review"]);
+    sh(
+        &clone,
+        &[
+            "push",
+            "--quiet",
+            "origin",
+            &format!("HEAD:{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    sh(&clone, &["checkout", "--quiet", "main"]);
+
+    // Wenlan's next publish, with a changed page: both edits stay.
+    let prepared = prepare(&binding, &worktree).unwrap();
+    assert_eq!(prepared.edits.len(), 1);
+    assert_eq!(prepared.edits[0].body, "What each part owns, reviewed.");
+    let mut changed = pages.clone();
+    changed[0].title = "Module map".into();
+    let next = publish(PublishInput {
+        prepared: Some(prepared),
+        ..publish_input(
+            &binding,
+            changed,
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
+    })
+    .unwrap();
+    assert_eq!(next.result.kept, 1);
+    let readme = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:README.md")]);
+    assert!(readme.contains("Node 20 (LTS)"), "{readme}");
+    let body = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")],
+    );
+    assert!(body.contains("reviewed."), "{body}");
+}
+
+#[test]
+fn a_page_file_reads_back_as_page_content() {
+    let pages = vec![
+        page("page_a", "Module map", "x"),
+        page("page_b", "How to run it", "y"),
+    ];
+    let text = "---\ntitle: \"Module map\"\norigin_id: page_a\norigin_version: 3\n---\n\n\
+                See [How to run it](how-to-run-it.md) and [the runner](how-to-run-it.md), \
+                not [this](https://example.com).\n\n## Code\n\n- [`src/lib.rs` lines 1-2](../../src/lib.rs#L1-L2)\n";
+    let (id, version, body) = parse_wiki_page_file(text).unwrap();
+    assert_eq!((id.as_str(), version), ("page_a", 3));
+    assert!(!body.contains("## Code"), "{body}");
+    assert_eq!(
+        crate::export::okf::wikilinks_from_repository_body(&body, &pages),
+        "See [[How to run it]] and [[How to run it|the runner]], not [this](https://example.com)."
+    );
+    // A `## Code` heading a person wrote with prose under it stays.
+    let own =
+        "---\norigin_id: page_a\norigin_version: 1\n---\n\nIntro.\n\n## Code\n\nWe like Rust.\n";
+    assert!(parse_wiki_page_file(own)
+        .unwrap()
+        .2
+        .ends_with("We like Rust."));
+    assert!(parse_wiki_page_file("no frontmatter").is_none());
 }

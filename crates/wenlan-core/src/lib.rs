@@ -26,6 +26,7 @@ pub mod contradiction;
 pub mod db;
 pub mod decay;
 mod derived_artifact_state;
+pub mod diagrams;
 pub mod document_enrichment;
 #[cfg(test)]
 mod drift_guard;

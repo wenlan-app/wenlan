@@ -17,7 +17,7 @@ describe("FirstPageModal", () => {
     );
     expect(screen.getByText(/Rust ownership/)).toBeInTheDocument();
     expect(screen.getByText(/ownership rules/)).toBeInTheDocument();
-    expect(screen.getByText(/compiled from 3 memories/i)).toBeInTheDocument();
+    expect(screen.getByText(/from 3 sources/i)).toBeInTheDocument();
   });
 
   it("calls onOpen when Open page clicked", () => {
@@ -41,10 +41,10 @@ describe("FirstPageModal", () => {
     expect(onDismiss).toHaveBeenCalled();
   });
 
-  it("focuses the first focusable element on mount", () => {
+  it("focuses Open page on mount", () => {
     render(<FirstPageModal page={sampleConcept} onOpen={vi.fn()} onDismiss={vi.fn()} />);
-    // Dismiss is the first button in the dialog, so it should receive focus.
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: /dismiss/i }));
+    // Opening the page is what the dialog is for, so Enter does it.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /open page/i }));
   });
 
   it("traps Tab at the last focusable element (cycles to first)", () => {
@@ -63,7 +63,7 @@ describe("FirstPageModal", () => {
     render(<FirstPageModal page={sampleConcept} onOpen={vi.fn()} onDismiss={vi.fn()} />);
     const dismissBtn = screen.getByRole("button", { name: /dismiss/i });
     const openBtn = screen.getByRole("button", { name: /open page/i });
-    // First element should already be focused on mount.
+    dismissBtn.focus();
     expect(document.activeElement).toBe(dismissBtn);
     // Shift+Tab at the start should cycle to the last focusable.
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });

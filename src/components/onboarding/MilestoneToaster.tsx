@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useMilestones } from "./useMilestones";
+import { useFirstPageModalOpen } from "./FirstPageModal";
 import type { MilestoneId, MilestoneRecord } from "../../lib/tauri";
 
 const TOAST_CHANNEL_IDS: Record<MilestoneId, boolean> = {
@@ -124,6 +125,8 @@ function subtitleFor(t: TFunction, record: MilestoneRecord): {
 export function MilestoneToaster() {
   const { milestones, acknowledge } = useMilestones();
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  // The first-page dialog has the stage; toasts wait until it closes.
+  const modalOpen = useFirstPageModalOpen();
 
   const visible = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -151,7 +154,7 @@ export function MilestoneToaster() {
         zIndex: 1000,
       }}
     >
-      {visible.map((m, i) => (
+      {modalOpen ? null : visible.map((m, i) => (
         <Toast
           key={toastKey(m)}
           record={m}

@@ -40,7 +40,8 @@ function resolvedRouting(): unknown {
 
 export function baseResponse(command: string, args: unknown, context: BaseResponseContext): unknown {
   switch (command) {
-    case "should_show_wizard": case "get_clipboard_enabled": return false;
+    // The early-open path stays off here so specs keep the daemon-backed gate.
+    case "should_show_wizard": case "local_setup_completed": case "get_clipboard_enabled": return false;
     case "get_remote_access_profile": return null;
     case "get_remote_access_status": return { status: "off" };
     case "set_traffic_lights_visible": case "set_setup_completed": return null;

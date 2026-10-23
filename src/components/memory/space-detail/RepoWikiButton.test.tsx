@@ -6,6 +6,7 @@ import { open as openExternal } from "@tauri-apps/plugin-shell";
 
 vi.mock("../../../lib/tauri", () => ({
   bindRepoWiki: vi.fn(),
+  dismissRepoDocFix: vi.fn(),
   getRepoWiki: vi.fn(),
   publishRepoWiki: vi.fn(),
   suggestRepoWiki: vi.fn(),

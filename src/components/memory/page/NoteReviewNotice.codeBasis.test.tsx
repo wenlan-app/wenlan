@@ -84,30 +84,38 @@ afterEach(() => {
 });
 
 describe("NoteReviewNotice with a code basis", () => {
-  it("says which lines changed, with the visible and tucked-away actions", async () => {
+  it("says which file changed in one line with one button, and decides in the dialog", async () => {
     const { onEditToConfirm } = renderNotice({ ...basePage, code_basis: [row()] });
 
-    expect(await screen.findByText("The code this page relies on changed: src/parser.rs lines 10–24"))
-      .toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "See code" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Confirm no impact" })).toBeInTheDocument();
-    expect(screen.queryByRole("menuitem")).toBeNull();
+    expect(await screen.findByText("src/parser.rs changed, needs a look")).toBeInTheDocument();
+    // One way in, nothing else on the notice.
+    expect(screen.getAllByRole("button")).toHaveLength(1);
     // Code on its own is a thing to look at, like a changed note.
     expect(screen.getByRole("status")).toHaveClass("note-review-notice--attention");
 
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.getByRole("menuitem", { name: "Stop relying on this code" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Edit this page yourself" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog", { name: "src/parser.rs lines 10–24" });
+    // A single row has no step count.
+    expect(within(dialog).queryByText("1 / 1")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "No impact" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Stop tracking" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Edit this page yourself" }));
     expect(onEditToConfirm).toHaveBeenCalledWith(expect.objectContaining({ path: "src/parser.rs", line_start: 10 }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("names a single line without a range", async () => {
-    renderNotice({ ...basePage, code_basis: [row({ line_start: 7, line_end: 7 })] });
+  it("counts several rows in one line", async () => {
+    renderNotice({
+      ...basePage,
+      code_basis: [row({ path: "a.rs" }), row({ path: "b.rs", state: "unavailable", reason: "file_missing" })],
+    });
 
-    expect(await screen.findByText("The code this page relies on changed: src/parser.rs line 7")).toBeInTheDocument();
+    expect(await screen.findByText("2 code spots behind this page need a look")).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.queryByText(/a\.rs/)).toBeNull();
   });
 
-  it("shows what the background check concluded under a row it could not settle, and leaves a stale row to the steep", async () => {
+  it("shows what the background check concluded in the dialog, and leaves a stale row to the steep", async () => {
     renderNotice({
       ...basePage,
       code_basis: [
@@ -117,14 +125,15 @@ describe("NoteReviewNotice with a code basis", () => {
       ],
     });
 
-    expect(await screen.findByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.")).toBeInTheDocument();
-    // The stale row is the next steep's, not the person's: no line, no buttons for it.
-    expect(screen.queryByText(/next steep fixes it/)).toBeNull();
-    expect(screen.queryByText(/b\.rs/)).toBeNull();
-    expect(screen.getAllByText(/^AI looked:/)).toHaveLength(1);
-    // Without a model nobody will look at c.rs, so it is still shown: one set of buttons per shown row.
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Confirm no impact" })).toHaveLength(2));
-    expect(screen.queryByText(/b\.rs/)).toBeNull();
+    // Without a model nobody will look at c.rs, so it counts; the stale b.rs is the next steep's.
+    expect(await screen.findByText("2 code spots behind this page need a look")).toBeInTheDocument();
+    expect(screen.queryByText(/^AI looked:/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog", { name: "a.rs lines 10–24" });
+    expect(within(dialog).getByText("1 / 2")).toBeInTheDocument();
+    expect(within(dialog).getByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48."))
+      .toBeInTheDocument();
   });
 
   it("with a model in the background, shows only the row the check could not settle", async () => {
@@ -138,10 +147,8 @@ describe("NoteReviewNotice with a code basis", () => {
       ],
     });
 
-    expect(await screen.findByText("AI looked: The note says 32 bits are kept on purpose; the code now keeps 48.")).toBeInTheDocument();
     await waitFor(() => expect(getResolvedRouting).toHaveBeenCalled());
-    expect(screen.getAllByRole("button", { name: "Confirm no impact" })).toHaveLength(1);
-    expect(screen.queryByText(/c\.rs/)).toBeNull();
+    expect(await screen.findByText("a.rs changed, needs a look")).toBeInTheDocument();
   });
 
   it("shows nothing at all while every changed row is the background check's to look at", async () => {
@@ -160,39 +167,46 @@ describe("NoteReviewNotice with a code basis", () => {
     vi.mocked(getResolvedRouting).mockResolvedValue(routing("basic"));
     renderNotice({ ...basePage, code_basis: [row()] });
 
-    expect(await screen.findByText("The code this page relies on changed: src/parser.rs lines 10–24")).toBeInTheDocument();
+    expect(await screen.findByText("src/parser.rs changed, needs a look")).toBeInTheDocument();
   });
 
-  it("keeps the check's sentence off a row that is no longer pending", async () => {
-    renderNotice({
-      ...basePage,
-      code_basis: [row(), row({ path: "ok.rs", state: "ok", ai_verdict: "stale", explanation: "Old news." })],
-    });
-
-    expect(await screen.findByText(/The code this page relies on changed: src\/parser.rs/)).toBeInTheDocument();
-    expect(screen.queryByText(/^AI looked:/)).not.toBeInTheDocument();
-  });
-
-  it("explains code that cannot be found by its reason and offers only a way out", async () => {
+  it("says code that cannot be found by its reason in the dialog, without reading it", async () => {
+    vi.mocked(removePageCodeBasis).mockResolvedValue({ removed: true });
     renderNotice({
       ...basePage,
       code_basis: [
         row({ path: "a.rs", state: "unavailable", reason: "file_missing" }),
         row({ path: "b.rs", state: "unavailable", reason: "repo_missing" }),
         row({ path: "c.rs", state: "unavailable", reason: "outside_repo" }),
-        row({ path: "d.rs", state: "unavailable", reason: "too_large" }),
-        row({ path: "e.rs", state: "unavailable" }),
       ],
     });
 
-    expect(await screen.findByText("Code not found: a.rs (the file is gone)")).toBeInTheDocument();
-    expect(screen.getByText("Code not found: b.rs (the repository is gone)")).toBeInTheDocument();
-    expect(screen.getByText("Cannot read code: c.rs")).toBeInTheDocument();
-    expect(screen.getByText("Cannot read code: d.rs")).toBeInTheDocument();
-    expect(screen.getByText("Cannot read code: e.rs")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "See code" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Confirm no impact" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Stop relying on this code" })).toHaveLength(5);
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    let dialog = await screen.findByRole("dialog", { name: "a.rs lines 10–24" });
+    expect(within(dialog).getByText("Code not found: a.rs (the file is gone)")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "No impact" })).toBeNull();
+    expect(readCodeLines).not.toHaveBeenCalled();
+    expect(getPageCodeBasisCited).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Later" }));
+    dialog = await screen.findByRole("dialog", { name: "b.rs lines 10–24" });
+    expect(within(dialog).getByText("Code not found: b.rs (the repository is gone)")).toBeInTheDocument();
+    expect(removePageCodeBasis).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop tracking" }));
+    await waitFor(() => expect(removePageCodeBasis).toHaveBeenCalledWith("page-1", expect.objectContaining({ path: "b.rs" })));
+    dialog = await screen.findByRole("dialog", { name: "c.rs lines 10–24" });
+    expect(within(dialog).getByText("Cannot read code: c.rs")).toBeInTheDocument();
+    expect(within(dialog).getByText("3 / 3")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Later" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("names a missing file in the one line", async () => {
+    renderNotice({ ...basePage, code_basis: [row({ state: "unavailable", reason: "file_missing" })] });
+
+    expect(await screen.findByText("Can’t find src/parser.rs")).toBeInTheDocument();
   });
 
   it("shows nothing for lines that are up to date or only moved", async () => {
@@ -206,67 +220,64 @@ describe("NoteReviewNotice with a code basis", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("confirms the lines that changed and refreshes what shows them", async () => {
-    vi.mocked(confirmPageCodeBasis).mockResolvedValue({ outcome: "confirmed", code_basis: row({ state: "ok" }) });
-    const { client } = renderNotice({ ...basePage, code_basis: [row()] });
-    const invalidate = vi.spyOn(client, "invalidateQueries");
-
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm no impact" }));
-
-    await waitFor(() => expect(confirmPageCodeBasis).toHaveBeenCalledWith("page-1", expect.objectContaining({
-      repo_root: "/repo", path: "src/parser.rs", line_start: 10, line_end: 24,
-    })));
-    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["code-basis-pending"] }));
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["page", "page-1"] });
-    expect(screen.queryByText(/changed again/)).toBeNull();
-  });
-
-  it("asks for another look when the code changed again", async () => {
-    vi.mocked(confirmPageCodeBasis).mockResolvedValue({ outcome: "conflict", message: "the file changed again" });
-    renderNotice({ ...basePage, code_basis: [row()] });
-
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm no impact" }));
-
-    expect(await screen.findByText("The code changed again, please look once more.")).toHaveAttribute("role", "status");
-  });
-
-  it("reports a failed confirm and a failed stop in their own words", async () => {
-    vi.mocked(confirmPageCodeBasis).mockRejectedValue(new Error("offline"));
-    vi.mocked(removePageCodeBasis).mockRejectedValue(new Error("offline"));
-    renderNotice({ ...basePage, code_basis: [row()] });
-
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm no impact" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not confirm, please try again.");
-
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Stop relying on this code" }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Could not stop relying on it, please try again."));
-  });
-
-  it("stops relying on the lines", async () => {
-    vi.mocked(removePageCodeBasis).mockResolvedValue({ removed: true });
-    renderNotice({ ...basePage, code_basis: [row({ state: "unavailable", reason: "file_missing" })] });
-
-    fireEvent.click(await screen.findByRole("button", { name: "Stop relying on this code" }));
-
-    await waitFor(() => expect(removePageCodeBasis).toHaveBeenCalledWith("page-1", expect.objectContaining({
-      path: "src/parser.rs", line_start: 10, line_end: 24,
-    })));
-  });
-
-  it("opens the lines side by side from the notice and confirms from there", async () => {
+  it("confirms the lines side by side, refreshes what shows them, and goes on to the next row", async () => {
     vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: "0123456789abcdef0123456789abcdef01234567", confirmed_at: 1, state: "pending" });
     vi.mocked(readGitBlobLines).mockResolvedValue(["old();"]);
     vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
     vi.mocked(confirmPageCodeBasis).mockResolvedValue({ outcome: "confirmed", code_basis: row({ state: "ok" }) });
-    renderNotice({ ...basePage, code_basis: [row({ line_start: 3, line_end: 3 })] });
+    const { client } = renderNotice({
+      ...basePage,
+      code_basis: [row({ line_start: 3, line_end: 3 }), row({ path: "b.rs" })],
+    });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
 
-    fireEvent.click(await screen.findByRole("button", { name: "See code" }));
-    const dialog = await screen.findByRole("dialog", { name: "src/parser.rs line 3" });
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    let dialog = await screen.findByRole("dialog", { name: "src/parser.rs line 3" });
     expect(await within(dialog).findByTestId("code-basis-after")).toHaveTextContent("new();");
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm no impact" }));
-    await waitFor(() => expect(confirmPageCodeBasis).toHaveBeenCalledTimes(1));
+    fireEvent.click(within(dialog).getByRole("button", { name: "No impact" }));
+    await waitFor(() => expect(confirmPageCodeBasis).toHaveBeenCalledWith("page-1", expect.objectContaining({
+      repo_root: "/repo", path: "src/parser.rs", line_start: 3, line_end: 3,
+    })));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["code-basis-pending"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["page", "page-1"] });
+
+    dialog = await screen.findByRole("dialog", { name: "b.rs lines 10–24" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "No impact" }));
+    await waitFor(() => expect(confirmPageCodeBasis).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("stays on the row and asks for another look when the code changed again", async () => {
+    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
+    vi.mocked(confirmPageCodeBasis).mockResolvedValue({ outcome: "conflict", message: "the file changed again" });
+    renderNotice({ ...basePage, code_basis: [row()] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "No impact" }));
+
+    expect(await screen.findByText("The code changed again, please look once more.")).toHaveAttribute("role", "status");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // The lines are read afresh for the second look.
+    await waitFor(() => expect(readCodeLines).toHaveBeenCalledTimes(2));
+  });
+
+  it("reports a failed confirm and a failed stop in their own words", async () => {
+    vi.mocked(readCodeLines).mockResolvedValue(["new();"]);
+    vi.mocked(getPageCodeBasisCited).mockResolvedValue({ cited_blob: null, confirmed_at: 1, state: "pending" });
+    vi.mocked(confirmPageCodeBasis).mockRejectedValue(new Error("offline"));
+    vi.mocked(removePageCodeBasis).mockRejectedValue(new Error("offline"));
+    renderNotice({ ...basePage, code_basis: [row()] });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "No impact" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not confirm, please try again.");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop tracking" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Could not stop tracking it, please try again."));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });

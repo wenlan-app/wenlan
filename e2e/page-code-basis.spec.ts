@@ -12,10 +12,10 @@ import type { Page as KnowledgePage } from "../src/lib/tauri";
  * Notes that rely on lines of code ("code basis"): the scenarios of the
  * approved design, driven through the real UI on the Tauri mock.
  *
- *  1. A note whose code changed: the notice, "Confirm no impact", and a
- *     second look when the code changed again.
+ *  1. A note whose code changed: one line and one "Review" on the notice;
+ *     "No impact" in the dialog, and a second look when the code changed again.
  *  2. Code that cannot be found: called out in plain words, only a way out.
- *  3. "See code": the lines as cited next to the lines now.
+ *  3. The dialog: the lines as cited next to the lines now.
  *  4. The Info rail lists the code and copies a location.
  *  5. Home shows one line, and the review has a group for it.
  */
@@ -97,6 +97,11 @@ async function openNote(page: Page, title = NOTE) {
   await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
 }
 
+/** The notice's one button: it opens the dialog on the first row that needs a look. */
+async function openReview(page: Page, t: ReturnType<typeof copyFor>) {
+  await page.locator(".note-review-notice").getByRole("button", { name: t("codeBasis.notice.review"), exact: true }).click();
+}
+
 function callsOf(controller: Awaited<ReturnType<typeof installTauriMock>>, command: string) {
   return controller.calls().filter((call) => call.command === command).map((call) => call.args);
 }
@@ -117,12 +122,18 @@ for (const locale of LOCALES) {
       const controller = await install(page, locale, { codeBasis: withFile([row("page-architecture")]) });
       await openNote(page);
 
-      const line = page.getByText(t("codeBasis.changedLine", span), { exact: true });
+      const line = page.getByText(t("codeBasis.notice.changedOne", { file: FILE }), { exact: true });
       await expect(line).toBeVisible();
-      await expect(page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true })).toBeVisible();
+      // One way in and nothing else on the notice.
+      await expect(page.locator(".note-review-notice").getByRole("button")).toHaveCount(1);
+      // The line fits on one line in every locale.
+      expect(await line.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       await page.screenshot({ path: testInfo.outputPath(`code-notice-${locale}.png`) });
 
-      await page.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true }).click();
+      await openReview(page, t);
+      const dialog = page.getByRole("dialog", { name: t("codeBasis.dialog.title", span) });
+      await dialog.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true }).click();
+      await expect(dialog).toHaveCount(0);
       await expect(line).toHaveCount(0);
       expect(callsOf(controller, "confirm_page_code_basis")).toEqual([
         { pageId: "page-architecture", locator: locatorOf() },
@@ -143,13 +154,16 @@ for (const locale of LOCALES) {
       });
       await openNote(page);
 
-      const confirm = page.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true });
+      await openReview(page, t);
+      const dialog = page.getByRole("dialog");
+      const confirm = dialog.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true });
       await confirm.click();
-      await expect(page.getByText(t("codeBasis.changedAgain"), { exact: true })).toBeVisible();
-      await expect(page.getByText(t("codeBasis.changedLine", span), { exact: true })).toBeVisible();
+      await expect(dialog.getByText(t("codeBasis.changedAgain"), { exact: true })).toBeVisible();
+      await expect(page.getByText(t("codeBasis.notice.changedOne", { file: FILE }), { exact: true })).toBeVisible();
 
       await confirm.click();
-      await expect(page.getByText(t("codeBasis.changedLine", span), { exact: true })).toHaveCount(0);
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByText(t("codeBasis.notice.changedOne", { file: FILE }), { exact: true })).toHaveCount(0);
       expect(callsOf(controller, "confirm_page_code_basis")).toHaveLength(2);
       expect(errors.pageErrors).toEqual([]);
       expect(errors.consoleErrors).toEqual([]);
@@ -164,14 +178,19 @@ for (const locale of LOCALES) {
       });
       await openNote(page);
 
-      const line = page.getByText(t("codeBasis.missingFile", { file: "src/gone.rs" }), { exact: true });
+      const line = page.getByText(t("codeBasis.notice.missingOne", { file: "src/gone.rs" }), { exact: true });
       await expect(line).toBeVisible();
-      // Nothing to confirm for code that is gone: only a way out.
-      await expect(page.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true })).toHaveCount(0);
-      await expect(page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true })).toHaveCount(0);
+      await openReview(page, t);
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByText(t("codeBasis.missingFile", { file: "src/gone.rs" }), { exact: true })).toBeVisible();
+      // Nothing to confirm or show for code that is gone: only a way out.
+      await expect(dialog.getByRole("button", { name: t("codeBasis.confirmNoImpact"), exact: true })).toHaveCount(0);
+      await expect(dialog.getByTestId("code-basis-after")).toHaveCount(0);
+      expect(callsOf(controller, "read_code_lines")).toEqual([]);
       await page.screenshot({ path: testInfo.outputPath(`code-missing-${locale}.png`) });
 
-      await page.getByRole("button", { name: t("codeBasis.stopRelying"), exact: true }).click();
+      await dialog.getByRole("button", { name: t("codeBasis.stopRelying"), exact: true }).click();
+      await expect(dialog).toHaveCount(0);
       await expect(line).toHaveCount(0);
       expect(callsOf(controller, "remove_page_code_basis")).toEqual([
         { pageId: "page-architecture", locator: locatorOf({ path: "src/gone.rs", line_start: 4, line_end: 9 }) },
@@ -185,7 +204,7 @@ for (const locale of LOCALES) {
       const controller = await install(page, locale, { codeBasis: withFile([row("page-architecture")]) });
       await openNote(page);
 
-      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      await openReview(page, t);
       const dialog = page.getByRole("dialog", { name: t("codeBasis.dialog.title", span) });
       await expect(dialog).toBeVisible();
       const before = dialog.getByTestId("code-basis-before");
@@ -214,13 +233,9 @@ for (const locale of LOCALES) {
         { repoRoot: REPO, blob: CITED_BLOB, lineStart: 10, lineEnd: 13 },
       ]);
       expect(callsOf(controller, "read_code_lines")).toEqual([
-        { path: `${REPO}/${FILE}`, lineStart: 10, lineEnd: 13 },
+        { path: `${REPO}/${FILE}`, lineStart: 10, lineEnd: 63 },
       ]);
       await page.screenshot({ path: testInfo.outputPath(`code-dialog-${locale}.png`) });
-
-      await dialog.getByRole("button", { name: t("codeBasis.copyLocation"), exact: true }).click();
-      await expect(dialog.getByRole("button", { name: t("codeBasis.copied"), exact: true })).toBeVisible();
-      expect(lastCopied(controller)).toContain(`${FILE}:10`);
 
       await dialog.getByRole("button", { name: t("codeBasis.close"), exact: true }).click();
       await expect(dialog).toHaveCount(0);
@@ -241,7 +256,7 @@ for (const locale of LOCALES) {
       });
       await page.setViewportSize({ width: 1280, height: 900 });
       await openNote(page);
-      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      await openReview(page, t);
       const dialog = page.getByRole("dialog");
       for (const id of ["code-basis-before", "code-basis-after"]) {
         const box = dialog.getByTestId(id);
@@ -276,12 +291,43 @@ for (const locale of LOCALES) {
       expect(errors.pageErrors).toEqual([]);
     });
 
+    test("follows lines an insertion pushed past the cited span, and folds the unchanged ones", async ({ page }) => {
+      const errors = collectBrowserErrors(page);
+      const cited = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+      const now = [...cited.slice(0, 5), "inserted();", ...cited.slice(5), "after the span"];
+      await install(page, locale, {
+        codeBasis: {
+          rows: [row("page-architecture", { lineStart: 1, lineEnd: 30 })],
+          files: { [`${REPO}/${FILE}`]: `${now.join("\n")}\n` },
+          blobs: { [CITED_BLOB]: `${cited.join("\n")}\n` },
+        },
+      });
+      await openNote(page);
+      await openReview(page, t);
+      const dialog = page.getByRole("dialog");
+      const before = dialog.getByTestId("code-basis-before");
+      const after = dialog.getByTestId("code-basis-after");
+      // Only the inserted line is marked: line 30, now line 31, is not taken for removed.
+      await expect(after.locator("[data-change]")).toHaveCount(1);
+      await expect(after.locator("[data-change]")).toContainText("inserted();");
+      await expect(before.locator("[data-change]")).toHaveCount(0);
+      await expect(after).not.toContainText("after the span");
+      // The 22 equal lines after the change fold to three of context and one row.
+      const fold = before.getByRole("button", { name: t("codeBasis.dialog.unchanged", { count: 22 }) });
+      await expect(fold).toBeVisible();
+      await expect(after.locator(".code-basis__line")).toHaveCount(5 + 1 + 3);
+      await fold.click();
+      await expect(after.locator(".code-basis__line")).toHaveCount(31);
+      await expect(before.locator(".code-basis__line")).toHaveCount(30);
+      expect(errors.pageErrors).toEqual([]);
+    });
+
     test("sizes the one column to its lines when there is nothing to compare", async ({ page }) => {
       await install(page, locale, {
         codeBasis: { rows: [row("page-architecture", { citedBlob: null })], files: { [`${REPO}/${FILE}`]: NOW } },
       });
       await openNote(page);
-      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      await openReview(page, t);
       const box = page.getByRole("dialog").getByTestId("code-basis-after");
       await expect(box.locator(".code-basis__line")).toHaveCount(4);
       const { box: boxHeight, lines } = await box.evaluate((el) => ({
@@ -300,7 +346,7 @@ for (const locale of LOCALES) {
       });
       await openNote(page);
 
-      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      await openReview(page, t);
       const dialog = page.getByRole("dialog", { name: t("codeBasis.dialog.title", span) });
       await expect(dialog.getByText(t("codeBasis.dialog.noBefore"), { exact: true })).toBeVisible();
       await expect(dialog.getByText(t("codeBasis.dialog.unavailable"), { exact: true })).toBeVisible();
@@ -316,7 +362,7 @@ for (const locale of LOCALES) {
       });
       await openNote(page);
 
-      await page.getByRole("button", { name: t("codeBasis.seeCode"), exact: true }).click();
+      await openReview(page, t);
       const dialog = page.getByRole("dialog", { name: t("codeBasis.dialog.title", span) });
       await expect(dialog.getByText(t("codeBasis.dialog.noBefore"), { exact: true })).toBeVisible();
       await expect(dialog.getByTestId("code-basis-after")).toContainText("lex_v2(input)");

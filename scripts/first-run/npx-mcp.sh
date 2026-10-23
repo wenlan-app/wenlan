@@ -56,4 +56,4 @@ info npx-mcp-command "npx -y $PKG"
 check_output npx-mcp-version "$VERSION" -- npx -y "$PKG" --version
 
 MCP_BIN=npx MCP_ARGS="[\"-y\",\"$PKG\",\"--origin-url\",\"http://127.0.0.1:$PORT\"]" \
-    EXPECT_TOOL_COUNT=34 MCP_TOOLS=capture,recall,brief python3 "$HELPERS/mcp-roundtrip.py"
+    EXPECT_TOOL_COUNT=35 MCP_TOOLS=capture,recall,brief python3 "$HELPERS/mcp-roundtrip.py"

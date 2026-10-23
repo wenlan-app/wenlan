@@ -6,8 +6,8 @@ import type { Page } from "../../../lib/tauri";
 import type { WritePagesState, WritePagesView } from "../../memory/askAi/WritePages";
 import { WritePagesStep } from "../WritePagesStep";
 
-function page(id: string): Page {
-  return { id, title: `Page ${id}`, creation_kind: "distilled", source_memory_ids: ["m1", "m2", "m3"] } as Page;
+function page(id: string, createdAt = "2026-10-22T10:01:00Z", kind = "distilled"): Page {
+  return { id, title: `Page ${id}`, creation_kind: kind, created_at: createdAt, source_memory_ids: ["m1", "m2", "m3"] } as Page;
 }
 
 function state(view: WritePagesView, overrides: Partial<WritePagesState> = {}): WritePagesState {
@@ -53,9 +53,10 @@ describe("WritePagesStep", () => {
     expect(ready.start).toHaveBeenCalled();
   });
 
-  it("copies the command for a tool no link can open", () => {
+  it("copies the command for a tool no link can open, and says where it goes", () => {
     renderStep({ state: state({ kind: "ready", list: { items: [], total: 16 } }, { opensTool: false }) });
     expect(screen.getByRole("button", { name: "Copy command" })).toBeInTheDocument();
+    expect(screen.getByTestId("row")).toHaveTextContent("Then paste it into Claude Code and press Enter.");
   });
 
   it("offers the local model when no tool is connected", () => {
@@ -67,15 +68,38 @@ describe("WritePagesStep", () => {
 
   it("follows the run in the row and opens a page from it", () => {
     const onSelectPage = vi.fn();
+    const run = { startedAt: Date.parse("2026-10-22T10:00:00Z"), tool: "Claude Code", handedOver: "opened" as const };
     renderStep({
-      state: state({ kind: "working", written: [page("a")], writing: true, stuck: false }),
+      state: state({ kind: "working", written: [page("a")], writing: true, stuck: false }, { run }),
+      pages: [page("old", "2026-10-20T10:00:00Z"), page("a")],
       done: true,
       onSelectPage,
     });
     expect(screen.getByTestId("row")).toHaveTextContent("Claude Code is writing pages: 1 ready");
     expect(screen.getByTestId("row")).toHaveTextContent("Writing the next page…");
+    // Earlier pages stay listed under the new one.
+    expect(screen.getByRole("button", { name: "Page old" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Page a" }));
     expect(onSelectPage).toHaveBeenCalledWith("a");
+  });
+
+  it("offers the copy fallback only while nothing has landed", () => {
+    const run = { startedAt: Date.parse("2026-10-22T10:00:00Z"), tool: "Claude Code", handedOver: "opened" as const };
+    const working = state({ kind: "working", written: [], writing: false, stuck: false }, { run });
+    renderStep({ state: working, onSelectPage: vi.fn() });
+    fireEvent.click(screen.getByRole("button", { name: "Didn't open? Copy the command" }));
+    expect(working.copyCommand).toHaveBeenCalled();
+  });
+
+  it("keeps the newest pages in the finished step, with what came in since", () => {
+    const ready = state({ kind: "ready", list: { items: [], total: 4 } });
+    renderStep({ state: ready, pages: [page("a"), page("mine", "2026-10-22T11:00:00Z", "imported")], done: true, onSelectPage: vi.fn() });
+    expect(screen.getByRole("button", { name: "Page a" })).toBeInTheDocument();
+    // Copies of brought-in files are not pages to open from here.
+    expect(screen.queryByRole("button", { name: "Page mine" })).toBeNull();
+    expect(screen.getByTestId("row")).toHaveTextContent("12 notes and 4 files aren't in any page yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(ready.start).toHaveBeenCalled();
   });
 
   it("says Wenlan does it in Automatic mode", () => {

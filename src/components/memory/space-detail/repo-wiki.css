@@ -79,6 +79,8 @@
   box-sizing: border-box;
   width: 380px;
   max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
   padding: 16px;
   border: 1px solid var(--mem-popover-border);
   border-radius: var(--mem-popover-radius);
@@ -206,7 +208,6 @@
   gap: 8px;
   margin-top: 4px;
   padding-top: 10px;
-  border-top: 1px solid var(--mem-border);
   color: var(--mem-text-secondary);
   font-size: var(--mem-text-xs);
 }
@@ -218,4 +219,193 @@
 
 @media (max-width: 639px) {
   .repo-wiki-panel { max-width: calc(100vw - 48px); }
+}
+
+/* The repository's own docs: a card for AGENTS.md, then one line per doc
+   with fixes. Rows are set apart by spacing and hover, not rules. */
+.repo-docs {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.repo-docs-title {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 500 var(--mem-text-xs)/1.3 var(--mem-font-body);
+}
+
+.repo-docs-agents {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--mem-radius-md);
+  background: var(--mem-surface);
+}
+
+.repo-docs-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.repo-docs-row code,
+.repo-docs-name code {
+  overflow: hidden;
+  font: 400 var(--mem-text-xs)/1.4 var(--mem-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-docs-chip {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--mem-radius-full);
+  background: var(--mem-indigo-bg);
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-xs);
+  white-space: nowrap;
+}
+
+.repo-docs-doc {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.repo-docs-toggle {
+  width: 100%;
+  padding: 5px 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--mem-radius-sm);
+  background: transparent;
+  color: var(--mem-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.repo-docs-toggle:hover {
+  background: var(--mem-hover);
+}
+
+.repo-docs-toggle:focus-visible,
+.repo-docs-drop:focus-visible,
+.repo-docs-more:focus-visible {
+  outline: 2px solid var(--mem-accent-page);
+  outline-offset: 2px;
+}
+
+.repo-docs-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.repo-docs-name span {
+  flex: none;
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-xs);
+}
+
+.repo-docs-fixes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-docs-fix {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--mem-radius-md);
+  background: var(--mem-surface);
+  font-size: var(--mem-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.repo-docs-fix del,
+.repo-docs-fix ins {
+  padding: 2px 6px;
+  border-radius: var(--mem-radius-sm);
+  text-decoration: none;
+}
+
+.repo-docs-fix del {
+  background: var(--mem-status-danger-bg);
+  color: var(--mem-status-danger-text);
+  text-decoration: line-through;
+}
+
+.repo-docs-fix ins {
+  background: var(--mem-status-success-bg);
+  color: var(--mem-status-success-text);
+}
+
+.repo-docs-why {
+  color: var(--mem-text-secondary);
+}
+
+.repo-docs-fix-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.repo-docs-fix-foot code {
+  min-width: 0;
+  color: var(--mem-link);
+  font: 400 var(--mem-text-xs)/1.4 var(--mem-font-mono);
+  overflow-wrap: anywhere;
+}
+
+.repo-docs-drop {
+  margin-left: auto;
+}
+
+.repo-docs-drop,
+.repo-docs-more {
+  flex: none;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--mem-text-secondary);
+  font: inherit;
+  font-size: var(--mem-text-xs);
+  cursor: pointer;
+}
+
+.repo-docs-drop:hover,
+.repo-docs-more:hover {
+  color: var(--mem-text);
+}
+
+.repo-docs-drop:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.repo-docs-more {
+  justify-self: start;
+  color: var(--mem-link);
+}
+
+.repo-docs-callout {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: var(--mem-radius-md);
+  background: var(--mem-indigo-bg);
+  color: var(--mem-text-secondary);
+  font-size: var(--mem-text-xs);
+  line-height: 1.5;
 }
