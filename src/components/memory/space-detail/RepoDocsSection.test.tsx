@@ -48,7 +48,7 @@ describe("RepoDocsSection", () => {
     expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
     expect(screen.queryByText("Matches the code")).not.toBeInTheDocument();
     expect(
-      screen.getByText("Docs are checked in the daily update, or when you run /wenlan wiki."),
+      screen.getByText("Checked daily, or when you run /wenlan wiki."),
     ).toBeInTheDocument();
   });
 

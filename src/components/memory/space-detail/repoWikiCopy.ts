@@ -89,7 +89,7 @@ export const enRepoWiki = {
     checkedClean_other: "Checked {{count}} docs on {{date}}. They match the code.",
     checkedSome_one: "Checked {{count}} doc on {{date}}.",
     checkedSome_other: "Checked {{count}} docs on {{date}}. The rest match the code.",
-    notChecked: "Docs are checked in the daily update, or when you run /wenlan wiki.",
+    notChecked: "Checked daily, or when you run /wenlan wiki.",
     takenBack_one: "{{count}} page brought back from GitHub",
     takenBack_other: "{{count}} pages brought back from GitHub",
     kept_one: "{{count}} page waits for your review",

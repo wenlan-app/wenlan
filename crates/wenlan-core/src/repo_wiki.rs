@@ -1692,11 +1692,18 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
             .success()
     {
+        // Nothing new, but the pull request is still open: keep pointing at it.
+        let open = match (input.gh.as_ref(), github_slug(&remote)) {
+            (Some(gh), Some(slug)) => open_pull_request(gh, &input.worktree, &slug)
+                .ok()
+                .filter(|url| !url.is_empty()),
+            _ => None,
+        };
         return Ok(settled(result(
             RepoWikiPublishStatus::NoChanges,
             page_count,
             Some(REPO_WIKI_BRANCH),
-            None,
+            open,
             None,
         )));
     }
@@ -1740,22 +1747,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     let (Some(gh), Some(slug)) = (input.gh.as_ref(), slug.as_ref()) else {
         return pushed(compare_url);
     };
-    let mut command = Command::new(gh);
-    command.current_dir(&input.worktree).args([
-        "pr",
-        "list",
-        "--repo",
-        slug,
-        "--head",
-        REPO_WIKI_BRANCH,
-        "--state",
-        "open",
-        "--json",
-        "url",
-        "--jq",
-        ".[0].url // \"\"",
-    ]);
-    let open = match run(command, "gh pr list") {
+    let open = match open_pull_request(gh, &input.worktree, slug) {
         Ok(url) => url,
         Err(error) => {
             log::warn!("[repo_wiki] {error}");
@@ -1814,6 +1806,26 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
             pushed(compare_url)
         }
     }
+}
+
+/// The URL of the open wiki pull request in `slug`, or empty.
+fn open_pull_request(gh: &Path, worktree: &Path, slug: &str) -> Result<String, WenlanError> {
+    let mut command = Command::new(gh);
+    command.current_dir(worktree).args([
+        "pr",
+        "list",
+        "--repo",
+        slug,
+        "--head",
+        REPO_WIKI_BRANCH,
+        "--state",
+        "open",
+        "--json",
+        "url",
+        "--jq",
+        ".[0].url // \"\"",
+    ]);
+    run(command, "gh pr list")
 }
 
 /// Find an executable named `name` on `PATH` or in the usual install
