@@ -251,4 +251,35 @@ describe("RepoWikiButton", () => {
     expect(await screen.findByText("Use your OpenAI key", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("Allow it to open PRs").closest("[data-done]")).not.toBeNull();
   });
+
+  it("keeps Antigravity, which signs in only in person, on this computer", async () => {
+    vi.mocked(getRepoWiki).mockResolvedValue({
+      ...bound,
+      daily: { enabled: true, hour: 9, agent: "antigravity", runs_on: "computer" },
+    });
+    vi.mocked(bindRepoWiki).mockImplementation(async (_space, _root, _folder, daily) => ({
+      ...bound,
+      daily: daily ?? null,
+    }));
+    vi.mocked(getRepoWikiGithub).mockResolvedValue({
+      repo: "7xuanlu/wenlan-site",
+      gh_ready: true,
+      workflow: "missing",
+      secret: false,
+      can_open_prs: true,
+    });
+    renderButton();
+    fireEvent.click(await screen.findByRole("button", { name: "GitHub repository settings" }));
+    expect(await screen.findByRole("option", { name: "Antigravity" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
+    await waitFor(() =>
+      expect(bindRepoWiki).toHaveBeenCalledWith("site", ROOT, undefined, {
+        enabled: true,
+        hour: 9,
+        agent: "claude",
+        runs_on: "github",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("option", { name: "Antigravity" })).toBeNull());
+  });
 });

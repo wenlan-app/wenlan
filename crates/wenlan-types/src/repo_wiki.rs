@@ -25,8 +25,9 @@ pub enum RepoWikiAgent {
     Cursor,
     /// GitHub Copilot CLI (`copilot`).
     Copilot,
-    /// Gemini CLI (`gemini`), with a paid Gemini API key on GitHub.
-    Gemini,
+    /// Antigravity CLI (`agy`). It signs in only in person, so it runs on
+    /// this computer and never on GitHub.
+    Antigravity,
 }
 
 impl RepoWikiAgent {
@@ -36,7 +37,7 @@ impl RepoWikiAgent {
         RepoWikiAgent::Codex,
         RepoWikiAgent::Cursor,
         RepoWikiAgent::Copilot,
-        RepoWikiAgent::Gemini,
+        RepoWikiAgent::Antigravity,
     ];
 
     /// The name on the wire and in `wenlan wiki ... --agent`.
@@ -46,7 +47,7 @@ impl RepoWikiAgent {
             RepoWikiAgent::Codex => "codex",
             RepoWikiAgent::Cursor => "cursor",
             RepoWikiAgent::Copilot => "copilot",
-            RepoWikiAgent::Gemini => "gemini",
+            RepoWikiAgent::Antigravity => "antigravity",
         }
     }
 
@@ -57,7 +58,7 @@ impl RepoWikiAgent {
             RepoWikiAgent::Codex => "Codex",
             RepoWikiAgent::Cursor => "Cursor",
             RepoWikiAgent::Copilot => "GitHub Copilot",
-            RepoWikiAgent::Gemini => "Gemini CLI",
+            RepoWikiAgent::Antigravity => "Antigravity",
         }
     }
 
@@ -69,8 +70,13 @@ impl RepoWikiAgent {
             // `agent` is the newer name, but too common a word to look for first.
             RepoWikiAgent::Cursor => &["cursor-agent", "agent"],
             RepoWikiAgent::Copilot => &["copilot"],
-            RepoWikiAgent::Gemini => &["gemini"],
+            RepoWikiAgent::Antigravity => &["agy"],
         }
+    }
+
+    /// Whether the tool can run on GitHub, signed in with a stored secret.
+    pub fn runs_on_github(self) -> bool {
+        self != RepoWikiAgent::Antigravity
     }
 }
 
@@ -158,7 +164,7 @@ pub enum RepoWikiGithubRequest {
     /// is never kept or returned.
     ClaudeToken,
     /// Store `key` as the repository secret the chosen tool reads: an
-    /// OpenAI, Cursor or Gemini API key, or a GitHub token for Copilot. The
+    /// OpenAI or Cursor API key, or a GitHub token for Copilot. The
     /// key is never kept or returned.
     #[serde(alias = "openai_key")]
     ApiKey { key: String },

@@ -650,12 +650,15 @@ pub fn refresh_agent_args(
             "--no-ask-user".into(),
             "-s".into(),
         ],
-        // Read-only tools need no approval; `auto_edit` approves the edits.
-        RepoWikiAgent::Gemini => vec![
+        // A refresh run by hand on this computer; `accept-edits` lets it
+        // write the pages.
+        RepoWikiAgent::Antigravity => vec![
             "-p".into(),
             prompt.to_owned(),
-            "--approval-mode".into(),
-            "auto_edit".into(),
+            "--mode".into(),
+            "accept-edits".into(),
+            "--output-format".into(),
+            "text".into(),
         ],
     }
 }
@@ -675,9 +678,15 @@ pub fn workflow(
     folder: &str,
     agent: wenlan_types::repo_wiki::RepoWikiAgent,
     utc_hour: u8,
-) -> String {
+) -> Result<String, WenlanError> {
     use wenlan_types::repo_wiki::RepoWikiAgent;
     let (name, install, key_help, env) = match agent {
+        RepoWikiAgent::Antigravity => {
+            return Err(WenlanError::Validation(format!(
+                "{} signs in only in person, so it cannot run on GitHub",
+                agent.display_name()
+            )))
+        }
         RepoWikiAgent::Claude => (
             "Claude Code",
             "npm install --global @anthropic-ai/claude-code",
@@ -706,14 +715,8 @@ pub fn workflow(
              #   \"Copilot Requests\" permission).",
             "          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}\n",
         ),
-        RepoWikiAgent::Gemini => (
-            "Gemini CLI",
-            "npm install --global @google/gemini-cli",
-            "GEMINI_API_KEY (a paid Gemini API key).",
-            "          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}\n",
-        ),
     };
-    format!(
+    Ok(format!(
         "# Written by Wenlan (https://wenlan.app). Every day, checks whether the code the\n\
          # pages in `{folder}/` rely on changed, has the AI tool fix the pages whose code\n\
          # changed, and opens a pull request from `{REFRESH_BRANCH}`. Nothing changed: no\n\
@@ -752,7 +755,7 @@ pub fn workflow(
          \x20         WENLAN_NO_AUTOSTART: \"1\"\n\
          \x20       run: wenlan wiki refresh --folder {folder} --agent {agent_arg} --pull-request\n",
         agent_arg = agent.slug(),
-    )
+    ))
 }
 
 #[cfg(test)]

@@ -65,8 +65,10 @@ export function RepoWikiGithub({
       setApiKey("");
     },
   });
-  // Claude Code signs in through the browser; every other tool takes a key.
-  const pastesKey = agent !== "claude";
+  // Claude Code signs in through the browser; every other tool that runs on
+  // GitHub takes a key.
+  const keyAgent = agent === "claude" || agent === "antigravity" ? null : agent;
+  const pastesKey = keyAgent !== null;
   const current = status.data;
   if (!current) return null;
   if (!current.repo) return <p className="repo-wiki-note">{t("repoWiki.github.notGithub")}</p>;
@@ -123,14 +125,14 @@ export function RepoWikiGithub({
           }}
         >
           <span className="repo-wiki-sheet-title">
-            {t(pastesKey ? `repoWiki.github.keyTitle.${agent}` : "repoWiki.github.claudeTitle")}
+            {t(keyAgent ? `repoWiki.github.keyTitle.${keyAgent}` : "repoWiki.github.claudeTitle")}
           </span>
           <p className="repo-wiki-note">
-            {t(pastesKey ? `repoWiki.github.keyBody.${agent}` : "repoWiki.github.claudeBody")}
+            {t(keyAgent ? `repoWiki.github.keyBody.${keyAgent}` : "repoWiki.github.claudeBody")}
           </p>
           {pastesKey && (
             <Input
-              aria-label={t(`repoWiki.github.keyTitle.${agent}`)}
+              aria-label={keyAgent ? t(`repoWiki.github.keyTitle.${keyAgent}`) : undefined}
               autoComplete="off"
               mono
               onChange={(event) => setApiKey(event.target.value)}

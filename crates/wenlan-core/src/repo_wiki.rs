@@ -204,6 +204,12 @@ pub fn bind_at(
                 daily.hour
             )));
         }
+        if daily.runs_on == RepoWikiRunner::Github && !daily.agent.runs_on_github() {
+            return Err(WenlanError::Validation(format!(
+                "{} signs in only in person, so it cannot run on GitHub",
+                daily.agent.display_name()
+            )));
+        }
     }
     let top = repository_top_level(repo_path)?;
     let remote_url = origin_url(&top);
@@ -1884,8 +1890,8 @@ const CLAUDE_DAILY_TOOLS: &[&str] = &[
 /// `agent` on `space`. The run is non-interactive and writes only through
 /// Wenlan: Claude Code gets only the read-only tools above, Codex runs in its
 /// read-only sandbox, Copilot may only read and call Wenlan, Cursor runs
-/// without `--force` (it proposes file changes but makes none), and Gemini
-/// CLI approves only Wenlan's tools besides its read-only ones.
+/// without `--force` (it proposes file changes but makes none), and
+/// Antigravity starts in plan mode.
 pub fn daily_agent_args(agent: RepoWikiAgent, space: &str, verb: &str) -> Vec<String> {
     let prompt = format!("Use the wenlan skill to run Wenlan: /wenlan {verb} space:{space}");
     match agent {
@@ -1919,13 +1925,13 @@ pub fn daily_agent_args(agent: RepoWikiAgent, space: &str, verb: &str) -> Vec<St
             "--no-ask-user".into(),
             "-s".into(),
         ],
-        RepoWikiAgent::Gemini => vec![
+        RepoWikiAgent::Antigravity => vec![
             "-p".into(),
             prompt,
-            "--allowed-mcp-server-names".into(),
-            "wenlan".into(),
-            "--allowed-tools".into(),
-            "mcp_wenlan_*".into(),
+            "--mode".into(),
+            "plan".into(),
+            "--output-format".into(),
+            "text".into(),
         ],
     }
 }
@@ -1946,24 +1952,31 @@ pub fn find_agent(agent: RepoWikiAgent) -> Option<PathBuf> {
     agent.programs().iter().find_map(|name| find_tool(name))
 }
 
-/// Where `agent` reads Wenlan's skill under `home`, for the tools that read
-/// Agent Skills from a per-user folder the app's Set up fills. Claude Code and
-/// Codex get theirs from a plugin instead, so they have none.
-pub fn wenlan_skill_path(agent: RepoWikiAgent, home: &Path) -> Option<PathBuf> {
-    let folder = match agent {
-        RepoWikiAgent::Claude | RepoWikiAgent::Codex => return None,
-        RepoWikiAgent::Cursor => ".cursor",
-        RepoWikiAgent::Copilot => ".copilot",
-        RepoWikiAgent::Gemini => ".gemini",
+/// Where `agent` may read Wenlan's skill under `home`, for the tools that
+/// read Agent Skills from a per-user folder the app's Set up fills. Claude
+/// Code and Codex get theirs from a plugin instead, so they have none.
+pub fn wenlan_skill_paths(agent: RepoWikiAgent, home: &Path) -> Vec<PathBuf> {
+    let folders: &[&str] = match agent {
+        RepoWikiAgent::Claude | RepoWikiAgent::Codex => &[],
+        RepoWikiAgent::Cursor => &[".cursor/skills"],
+        RepoWikiAgent::Copilot => &[".copilot/skills"],
+        // Antigravity CLI moved its skills from Gemini CLI's folder.
+        RepoWikiAgent::Antigravity => &[".gemini/antigravity-cli/skills", ".gemini/skills"],
     };
-    Some(home.join(folder).join("skills/wenlan/SKILL.md"))
+    folders
+        .iter()
+        .map(|folder| home.join(folder).join("wenlan/SKILL.md"))
+        .collect()
 }
 
 /// Whether a daily run of `agent` on this computer can use Wenlan: without
 /// the skill, the tool runs, finds no `/wenlan`, and changes nothing.
 pub fn has_wenlan_skill(agent: RepoWikiAgent) -> bool {
     match dirs::home_dir() {
-        Some(home) => wenlan_skill_path(agent, &home).is_none_or(|path| path.is_file()),
+        Some(home) => {
+            let paths = wenlan_skill_paths(agent, &home);
+            paths.is_empty() || paths.iter().any(|path| path.is_file())
+        }
         None => true,
     }
 }

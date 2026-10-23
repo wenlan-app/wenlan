@@ -293,6 +293,14 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
         runs_on: Default::default(),
     };
     assert!(bind_at(&store, "site", &clone, None, Some(late)).is_err());
+    // Antigravity signs in only in person, so it cannot run on GitHub.
+    let antigravity_on_github = RepoWikiDaily {
+        enabled: true,
+        hour: 9,
+        agent: RepoWikiAgent::Antigravity,
+        runs_on: wenlan_types::repo_wiki::RepoWikiRunner::Github,
+    };
+    assert!(bind_at(&store, "site", &clone, None, Some(antigravity_on_github)).is_err());
     assert!(unbind_at(&store, "site").unwrap());
     assert!(!unbind_at(&store, "site").unwrap());
     assert!(binding_at(&store, "site").unwrap().is_none());
@@ -630,6 +638,11 @@ fn daily_agent_args_run_one_skill_non_interactively() {
     let copilot = daily_agent_args(RepoWikiAgent::Copilot, "site", "wiki");
     assert_eq!(&copilot[..2], ["-p", skill]);
     assert!(copilot.contains(&"--no-ask-user".to_owned()));
+    let antigravity = daily_agent_args(RepoWikiAgent::Antigravity, "site", "wiki");
+    assert_eq!(
+        antigravity,
+        ["-p", skill, "--mode", "plan", "--output-format", "text"]
+    );
     let allowed = copilot
         .iter()
         .find(|arg| arg.starts_with("--allow-tool="))
@@ -638,26 +651,24 @@ fn daily_agent_args_run_one_skill_non_interactively() {
         allowed.contains("wenlan") && !allowed.contains("write"),
         "{allowed}"
     );
-    let gemini = daily_agent_args(RepoWikiAgent::Gemini, "site", "wiki");
-    assert_eq!(&gemini[..2], ["-p", skill]);
-    assert!(!gemini.iter().any(|arg| arg == "yolo" || arg == "--yolo"));
 }
 
 #[test]
 fn only_tools_that_read_agent_skills_need_wenlans_skill_folder() {
     let home = Path::new("/home/someone");
-    assert_eq!(wenlan_skill_path(RepoWikiAgent::Claude, home), None);
-    assert_eq!(wenlan_skill_path(RepoWikiAgent::Codex, home), None);
-    for (agent, folder) in [
-        (RepoWikiAgent::Cursor, ".cursor"),
-        (RepoWikiAgent::Copilot, ".copilot"),
-        (RepoWikiAgent::Gemini, ".gemini"),
-    ] {
-        assert_eq!(
-            wenlan_skill_path(agent, home),
-            Some(home.join(folder).join("skills/wenlan/SKILL.md"))
-        );
-    }
+    assert!(wenlan_skill_paths(RepoWikiAgent::Claude, home).is_empty());
+    assert!(wenlan_skill_paths(RepoWikiAgent::Codex, home).is_empty());
+    assert_eq!(
+        wenlan_skill_paths(RepoWikiAgent::Copilot, home),
+        [home.join(".copilot/skills/wenlan/SKILL.md")]
+    );
+    assert_eq!(
+        wenlan_skill_paths(RepoWikiAgent::Antigravity, home),
+        [
+            home.join(".gemini/antigravity-cli/skills/wenlan/SKILL.md"),
+            home.join(".gemini/skills/wenlan/SKILL.md"),
+        ]
+    );
 }
 
 fn readme_fix(old: &str, new: &str) -> DocFixRequest {
