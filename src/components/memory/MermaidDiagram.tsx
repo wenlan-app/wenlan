@@ -5,6 +5,7 @@
 // from the app's theme tokens and are redrawn when the theme flips. A block
 // Mermaid cannot parse stays visible as its source, as it was before.
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 /** A wide diagram shrinks to the column down to this share of its own size,
  * then scrolls; below it the labels get too small to read. */
@@ -65,6 +66,9 @@ async function draw(id: string, source: string): Promise<string> {
     theme: "base",
     darkMode: theme.dark,
     fontFamily: theme.font,
+    // Tighter than Mermaid's defaults, so a diagram stays close to the size
+    // of the text around it.
+    flowchart: { nodeSpacing: 30, rankSpacing: 36, diagramPadding: 8 },
     themeVariables: {
       darkMode: theme.dark,
       background: theme.bg,
@@ -94,7 +98,16 @@ async function draw(id: string, source: string): Promise<string> {
     },
   });
   const { svg } = await mermaid.render(id, source);
-  return svg;
+  return withMinWidth(svg);
+}
+
+/** The SVG with a min-width of MIN_SCALE times its own width, so a wide
+ * diagram stops shrinking there and its frame scrolls instead. */
+function withMinWidth(svg: string): string {
+  const width = Number(/viewBox="[\d.-]+ [\d.-]+ ([\d.]+)/.exec(svg)?.[1]);
+  if (!width) return svg;
+  const rule = `min-width: ${Math.round(width * MIN_SCALE)}px;`;
+  return svg.replace(/<svg([^>]*?)style="/, `<svg$1style="${rule} `);
 }
 
 export default function MermaidDiagram({ source }: { source: string }) {
@@ -106,10 +119,19 @@ export default function MermaidDiagram({ source }: { source: string }) {
 
   const frame = useRef<HTMLElement>(null);
 
+  const { t } = useTranslation();
+  const [overflowing, setOverflowing] = useState(false);
+
   useLayoutEffect(() => {
-    const svg = frame.current?.querySelector("svg");
-    const width = svg?.viewBox?.baseVal?.width;
-    if (svg && width) svg.style.minWidth = `${Math.round(width * MIN_SCALE)}px`;
+    const el = frame.current;
+    if (!el || state.kind !== "drawn") return;
+    // A diagram wider than its frame scrolls; a fade at the edge says so.
+    const measure = () => setOverflowing(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [state]);
 
   useEffect(() => {
@@ -131,16 +153,21 @@ export default function MermaidDiagram({ source }: { source: string }) {
 
   if (state.kind === "failed") {
     return (
-      <pre className="page-diagram-source">
-        <code className="language-mermaid">{source}</code>
-      </pre>
+      <>
+        <p className="page-diagram-note">{t("pageDetail.diagramFailed")}</p>
+        <pre className="page-diagram-source">
+          <code className="language-mermaid">{source}</code>
+        </pre>
+      </>
     );
   }
   return (
     <figure
       ref={frame}
-      className="page-diagram"
+      className={overflowing ? "page-diagram is-overflowing" : "page-diagram"}
       data-testid="page-diagram"
+      // A diagram wider than its frame can be scrolled from the keyboard.
+      tabIndex={overflowing ? 0 : undefined}
       aria-busy={state.kind === "loading"}
       // Mermaid's own sanitizer (securityLevel strict) cleans the SVG.
       dangerouslySetInnerHTML={state.kind === "drawn" ? { __html: state.svg } : undefined}

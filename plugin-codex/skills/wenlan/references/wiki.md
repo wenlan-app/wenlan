@@ -148,7 +148,10 @@ in Wenlan, on GitHub and in Obsidian:
   and forth).
 - At most about 12 boxes, each label a few words in the page's language.
   Keep about 5 boxes across in `flowchart LR`; for more, use `flowchart TD`
-  so the diagram is not too wide to read.
+  so the diagram is not too wide to read. Edge labels are one or two words.
+- File names go in box labels only on the module map; elsewhere a box names
+  its role (`Worker`, not `worker.ts`), so a renamed file does not leave the
+  diagram wrong.
 - In a flowchart, name each box with a short ASCII id and put its label in
   double quotes, `api["HTTP server"]`, edge labels too, `-- "yes" -->`.
 - Never a bare number in square brackets anywhere in the diagram, such as

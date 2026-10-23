@@ -816,6 +816,7 @@ const en = {
   },
   references: { page: "Page", source: "Source" },
   pageDetail: {
+    diagramFailed: "This diagram could not be drawn, so its text is shown.",
     actions: "Page actions",
     deleteConfirm: "Delete this page?",
     deleteError: "Could not delete this page. Try again.",
@@ -3646,6 +3647,7 @@ const zhHans = {
   },
   references: { page: "笔记", source: "来源" },
   pageDetail: {
+    diagramFailed: "这张图画不出来，下面是它的原文。",
     actions: "笔记操作",
     deleteConfirm: "删除此笔记？",
     deleteError: "无法删除此笔记，请重试。",
@@ -6431,6 +6433,7 @@ const zhHant = {
   },
   references: { page: "筆記", source: "來源" },
   pageDetail: {
+    diagramFailed: "這張圖畫不出來，下面是它的原文。",
     actions: "筆記操作",
     deleteConfirm: "刪除此筆記？",
     deleteError: "無法刪除此筆記，請再試一次。",

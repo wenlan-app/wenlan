@@ -45,6 +45,18 @@ describe("Mermaid diagrams in a page", () => {
     expect(container.textContent).not.toContain("flowchart LR");
   });
 
+  it("lets a wide diagram shrink only to 80% of its own width", async () => {
+    mermaid.render.mockResolvedValue({
+      svg: '<svg id="x" width="100%" viewBox="0 0 1500 200" style="max-width: 1500px;"></svg>',
+    });
+    const { container } = render(<ContentRenderer content={PAGE} variant="detail" />);
+
+    await waitFor(() => expect(container.querySelector("svg#x")).not.toBeNull());
+    expect(container.querySelector("svg#x")?.getAttribute("style")).toBe(
+      "min-width: 1200px; max-width: 1500px;",
+    );
+  });
+
   it("shows the diagram's text when Mermaid cannot draw it", async () => {
     mermaid.render.mockRejectedValue(new Error("Parse error"));
     const { container } = render(<ContentRenderer content={PAGE} variant="detail" />);
@@ -55,5 +67,6 @@ describe("Mermaid diagrams in a page", () => {
       ),
     );
     expect(screen.queryByTestId("page-diagram")).toBeNull();
+    expect(screen.getByText(/could not be drawn/)).toBeInTheDocument();
   });
 });

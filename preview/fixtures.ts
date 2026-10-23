@@ -202,6 +202,16 @@ flowchart LR
   server -- "getJob" --> store
 \`\`\`
 
+## Plain code
+
+\`\`\`sh
+pnpm install && pnpm exec vite --config vite.preview.config.ts --port 1421 --strictPort --host 127.0.0.1
+\`\`\`
+
+\`\`\`
+wiki/overview.md
+\`\`\`
+
 ## A diagram Mermaid cannot draw
 
 \`\`\`mermaid
