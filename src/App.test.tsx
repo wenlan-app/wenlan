@@ -148,7 +148,7 @@ import { localSetupCompleted, setSetupCompleted, shouldShowWizard } from "./lib/
 import { getDaemonStartupPhase, setDaemonStartupPhase } from "./lib/daemonStartup";
 import { bootQueryBudgetMs } from "./lib/bootRetryPolicy";
 import { resources } from "./i18n/resources";
-import { dragStripHeight } from "./lib/windowChrome";
+import { getServiceNotices, setServiceFallback } from "./lib/serviceNotices";
 
 const STARTING_RUNTIME = resources.en.translation.common.startingRuntime;
 const BOOT = resources.en.translation.boot;
@@ -671,17 +671,14 @@ describe("App - first-run wizard gate", () => {
   });
 });
 
-describe("App - origin-fallback-mode banner", () => {
+describe("App - origin-fallback-mode", () => {
   beforeEach(() => {
     eventListeners.clear();
     emitMock.mockReset().mockResolvedValue(undefined);
     vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
     vi.mocked(localSetupCompleted).mockReset().mockResolvedValue(false);
     setDaemonStartupPhase("ready");
-    startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
-    getWireStateMock
-      .mockReset()
-      .mockResolvedValue({ daemon: { reachable: true, error: null } });
+    setServiceFallback(false);
   });
 
   function fireFallback() {
@@ -693,113 +690,24 @@ describe("App - origin-fallback-mode banner", () => {
   it("stays silent until Rust says it is running degraded", async () => {
     renderApp();
     expect(await screen.findByTestId("home-main")).toBeInTheDocument();
-    expect(screen.queryByTestId("fallback-service-banner")).not.toBeInTheDocument();
+    expect(getServiceNotices().fallback).toBe(false);
   });
 
   it.each([
     ["Home", false, "home-main"],
     ["the wizard", true, "setup-wizard"],
-  ])("renders over %s when the event fires", async (_label, showWizard, testid) => {
+  ])("keeps the report for the sidebar and lays nothing over %s", async (_label, showWizard, testid) => {
     vi.mocked(shouldShowWizard).mockResolvedValue(showWizard);
     renderApp();
     await screen.findByTestId(testid);
 
     fireFallback();
 
-    const banner = screen.getByTestId("fallback-service-banner");
-    expect(banner).toHaveTextContent(BOOT.fallbackBanner);
-    // Both surfaces paint a full-viewport box of their own, so the banner is
-    // fixed rather than stacked, or one of them would push it off screen.
-    expect(banner).toHaveStyle({ position: "fixed" });
-    // Under the macOS overlay title bar the traffic lights own the top strip;
-    // the banner starts below it or its first words are hidden behind them.
-    expect(banner).toHaveStyle({ top: `${dragStripHeight()}px` });
+    // The sidebar's service row says it (src/components/memory/ServiceStatus.tsx);
+    // the wizard's own service row covers first run.
+    expect(getServiceNotices().fallback).toBe(true);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId(testid)).toBeInTheDocument();
-  });
-
-  it("starts the service, proves it answers, and only then clears itself", async () => {
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByTestId("fallback-start-service"));
-
-    await waitFor(() => expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1));
-    // A spawn is not a service. The banner is the user's only warning that
-    // nothing is syncing, so only a probe that came back may retire it.
-    await waitFor(() => expect(getWireStateMock).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
-      expect(screen.queryByTestId("fallback-service-banner")).not.toBeInTheDocument(),
-    );
-  });
-
-  it("keeps the banner when the spawn succeeds but the service still does not answer", async () => {
-    getWireStateMock.mockResolvedValue({
-      daemon: { reachable: false, error: "tcp connect error: connection refused" },
-    });
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByTestId("fallback-start-service"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("fallback-service-banner")).toHaveTextContent(
-        "tcp connect error: connection refused",
-      ),
-    );
-    expect(screen.getByTestId("fallback-service-banner")).toBeInTheDocument();
-  });
-
-  it("refuses a second start while the first is still in flight", async () => {
-    let release: (() => void) | null = null;
-    startDaemonSidecarMock.mockReturnValue(
-      new Promise((resolve) => { release = () => resolve({ status: "started" }); }),
-    );
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    const button = screen.getByTestId("fallback-start-service");
-    fireEvent.click(button);
-    fireEvent.click(button);
-    fireEvent.click(button);
-
-    expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1);
-    await act(async () => { release!(); });
-  });
-
-  it("keeps the banner and shows the raw reason when the start fails", async () => {
-    startDaemonSidecarMock.mockResolvedValue({
-      status: "failed",
-      message: "launchctl bootstrap: Operation not permitted",
-    });
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByTestId("fallback-start-service"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("fallback-service-banner")).toHaveTextContent(
-        "launchctl bootstrap: Operation not permitted",
-      ),
-    );
-    expect(screen.getByTestId("fallback-service-banner")).toHaveTextContent(
-      BOOT.startFailed,
-    );
-  });
-
-  it("dismisses on request and comes back if Rust says it again", async () => {
-    renderApp();
-    await screen.findByTestId("home-main");
-    fireFallback();
-
-    fireEvent.click(screen.getByRole("button", { name: BOOT.dismiss }));
-    expect(screen.queryByTestId("fallback-service-banner")).not.toBeInTheDocument();
-
-    fireFallback();
-    expect(screen.getByTestId("fallback-service-banner")).toBeInTheDocument();
   });
 });
 

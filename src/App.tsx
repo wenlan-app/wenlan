@@ -12,8 +12,6 @@ import {
   shouldShowWizard,
   localSetupCompleted,
   setSetupCompleted,
-  startDaemonSidecar,
-  getWireState,
 } from "./lib/tauri";
 import {
   ATTEMPT_TIMEOUT_MS,
@@ -28,8 +26,8 @@ import Main from "./components/memory/Main";
 import SetupWizard from "./components/SetupWizard";
 import { RuntimeOverlays } from "./components/RuntimeOverlays";
 import { AppToaster } from "./components/AppToaster";
-import { dragStripHeight } from "./lib/windowChrome";
 import { setDaemonStartupPhase, type DaemonStartupPhase } from "./lib/daemonStartup";
+import { setServiceFallback } from "./lib/serviceNotices";
 
 export default function App() {
   const { t } = useTranslation();
@@ -139,13 +137,6 @@ export default function App() {
   }
 
   const [migration, setMigration] = useState<{ current: number; total: number; phase: string } | null>(null);
-  // Rust decided, before this webview existed, that it could not put the
-  // background service under launchd. It says so once on this event and then
-  // runs degraded: no config hydration, no file watcher, no sync. Nothing in
-  // the frontend used to listen, so the only symptom a user ever saw was
-  // memories that quietly never went anywhere.
-  const [fallbackMode, setFallbackMode] = useState(false);
-  const [fallbackDismissed, setFallbackDismissed] = useState(false);
   // How long the gate has been holding the "Starting Wenlan" screen. The gate
   // itself is allowed the better part of three minutes (bootRetryPolicy), and
   // for all of it the screen said one thing and named nothing.
@@ -259,9 +250,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Rust decided, before this webview existed, that it could not put the
+    // background service under launchd, and runs degraded: no config
+    // hydration, no file watcher, no sync. It says so once, possibly before
+    // the sidebar that reports it has mounted, so the report is kept in
+    // src/lib/serviceNotices.ts. On the first-run wizard its own service row
+    // speaks instead.
     const unlisten = listen("origin-fallback-mode", () => {
-      setFallbackMode(true);
-      setFallbackDismissed(false);
+      setServiceFallback(true);
     });
     return () => { unlisten.then((f) => f()); };
   }, []);
@@ -409,129 +405,11 @@ export default function App() {
 
   return (
     <>
-      {fallbackMode && !fallbackDismissed && (
-        <FallbackServiceBanner onDismiss={() => setFallbackDismissed(true)} />
-      )}
       {body}
       <AppToaster />
       <RuntimeOverlays
         variant={showsMain ? "main" : "updater-only"}
       />
     </>
-  );
-}
-
-/** Persistent, dismissable, and above everything: the wizard and Main both
- *  paint a full-viewport surface of their own, so this is fixed rather than
- *  stacked, or one of the two would push it off screen. */
-function FallbackServiceBanner({ onDismiss }: { onDismiss: () => void }) {
-  const { t } = useTranslation();
-  const [starting, setStarting] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  // `starting` renders the button; this refuses the second click that lands
-  // before React has re-rendered with it.
-  const startingRef = useRef(false);
-
-  async function handleStart() {
-    if (startingRef.current) return;
-    startingRef.current = true;
-    setStarting(true);
-    setFailure(null);
-    try {
-      const result = await startDaemonSidecar();
-      if (result.status === "failed") {
-        setFailure(result.message);
-        return;
-      }
-      // started / already_running / launchd_managed says a process was
-      // spawned, not that it answers. The wizard's daemon row never trusted
-      // that word on its own and neither does this banner: dismissing on a
-      // spawn alone would retire the only warning the user has while sync is
-      // still silently dead.
-      const wire = await getWireState();
-      if (!wire.daemon.reachable) {
-        setFailure(wire.daemon.error ?? t("boot.startNotReachable"));
-        return;
-      }
-      onDismiss();
-    } catch (err) {
-      setFailure(err instanceof Error ? err.message : String(err));
-    } finally {
-      startingRef.current = false;
-      setStarting(false);
-    }
-  }
-
-  return (
-    <div
-      role="alert"
-      data-testid="fallback-service-banner"
-      style={{
-        position: "fixed",
-        // On macOS the title bar is an overlay: the traffic lights sit in the
-        // top 32px of the webview and would cover the banner's first words.
-        // Start below that strip, like the wizard's own drag region does.
-        top: dragStripHeight(),
-        left: 0,
-        right: 0,
-        zIndex: 70,
-        display: "flex",
-        alignItems: "center",
-        gap: "12px",
-        padding: "10px 16px",
-        fontFamily: "var(--mem-font-body)",
-        fontSize: "var(--mem-text-sm)",
-        lineHeight: "1.5",
-        color: "var(--mem-status-warning-text)",
-        backgroundColor: "var(--mem-status-warning-bg)",
-        borderBottom: "1px solid var(--mem-status-warning-border)",
-      }}
-    >
-      <span style={{ flex: 1, minWidth: 0 }}>
-        {t("boot.fallbackBanner")}
-        {failure && (
-          <span style={{ display: "block", color: "var(--mem-status-danger-text)" }}>
-            {t("boot.startFailed")} {failure}
-          </span>
-        )}
-      </span>
-      <button
-        type="button"
-        onClick={() => { void handleStart(); }}
-        disabled={starting}
-        data-testid="fallback-start-service"
-        style={{
-          flexShrink: 0,
-          padding: "4px 10px",
-          borderRadius: "6px",
-          border: "1px solid var(--mem-status-warning-border)",
-          background: "transparent",
-          color: "inherit",
-          cursor: starting ? "default" : "pointer",
-          fontFamily: "inherit",
-          fontSize: "inherit",
-        }}
-      >
-        {starting ? t("boot.starting") : t("boot.startService")}
-      </button>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label={t("boot.dismiss")}
-        style={{
-          flexShrink: 0,
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          color: "inherit",
-          padding: 2,
-          lineHeight: 0,
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-          <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-      </button>
-    </div>
   );
 }

@@ -7,8 +7,8 @@ vi.mock("./onboarding/MilestoneToaster", () => ({
 vi.mock("./UpdaterDialog", () => ({
   default: () => <div>updater runtime</div>,
 }));
-vi.mock("./DaemonVersionBanner", () => ({
-  default: () => <div>daemon version runtime</div>,
+vi.mock("./DaemonVersionWatcher", () => ({
+  default: () => <div>daemon version watcher</div>,
 }));
 
 import { RuntimeOverlays } from "./RuntimeOverlays";
@@ -35,9 +35,9 @@ describe("RuntimeOverlays", () => {
     expect(screen.getByText("updater runtime")).toBeInTheDocument();
   });
 
-  it("mounts the daemon version banner next to the updater outside Review", () => {
+  it("mounts the daemon version watcher next to the updater outside Review", () => {
     render(<RuntimeOverlays review={false} />);
 
-    expect(screen.getByText("daemon version runtime")).toBeInTheDocument();
+    expect(screen.getByText("daemon version watcher")).toBeInTheDocument();
   });
 });

@@ -11,7 +11,8 @@
  * retried into a daemon that may already have received it.
  *
  * "failed" lets every waiting call through so the usual error states appear,
- * and the window says why in one banner instead of on every surface.
+ * and the sidebar's service row (src/components/memory/ServiceStatus.tsx)
+ * says why, instead of every surface.
  */
 import { useSyncExternalStore } from "react";
 
@@ -19,7 +20,7 @@ export type DaemonStartupPhase = "ready" | "starting" | "failed";
 
 /**
  * Commands that must reach Rust while the daemon is still starting: the gate
- * itself, the reads and actions the startup banner uses, and the window and
+ * itself, the reads and actions the service row uses, and the window and
  * quit plumbing that never touches the daemon.
  */
 const ANSWERS_WITHOUT_DAEMON = new Set<string>([
