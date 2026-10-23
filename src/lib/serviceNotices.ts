@@ -5,9 +5,11 @@
  * The sidebar's service row (`src/components/memory/ServiceStatus.tsx`) is the
  * only surface that speaks about the service in the workspace: while it
  * starts, when it does not answer, when it runs an older version than the
- * app, and when Rust could not put it under launchd. The same row also says
- * when a new version of the app is ready, the one lasting notice that is not
- * about the service. The sources stay where the events arrive
+ * app, and when Rust could not put it under launchd. The same row also
+ * carries an app update the user started (in progress, or failed). A version
+ * that is only on offer is quieter still: a dot on the account entry
+ * (`src/components/memory/IdentityCard.tsx`), which reads it from here too.
+ * The sources stay where the events arrive
  * (`src/App.tsx` for the fallback event,
  * `src/components/DaemonVersionWatcher.tsx` for version reports,
  * `src/components/UpdateWatcher.tsx` for the updater) and write here, so a
@@ -78,11 +80,10 @@ export type ServiceStatusKind =
   | "outOfDate"
   | "notRunning"
   | "updating"
-  | "updateFailed"
-  | "updateAvailable";
+  | "updateFailed";
 
 /** One thing at a time, the one that matters most first: the service, then
- *  an update the user started, then an update on offer. */
+ *  an update the user started. An update only on offer has no row. */
 export function serviceStatusKind(
   phase: DaemonStartupPhase,
   { version, fallback, update }: ServiceNotices,
@@ -95,6 +96,5 @@ export function serviceStatusKind(
   if (fallback) return "notRunning";
   if (update?.phase === "installing") return "updating";
   if (update?.phase === "failed") return "updateFailed";
-  if (update) return "updateAvailable";
   return null;
 }

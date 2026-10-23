@@ -21,7 +21,7 @@ import "../../i18n";
 import { resources } from "../../i18n/resources";
 import { setDaemonStartupPhase } from "../../lib/daemonStartup";
 import { getServiceNotices, setServiceFallback, setUpdateNotice, setVersionReport } from "../../lib/serviceNotices";
-import { onUpdateAvailable, onUpdateProgress, onUpdateStatus } from "../../lib/appUpdate";
+import { installUpdate, onUpdateAvailable, onUpdateProgress, onUpdateStatus } from "../../lib/appUpdate";
 import ServiceStatus from "./ServiceStatus";
 
 const BOOT = resources.en.translation.boot;
@@ -207,42 +207,19 @@ describe("ServiceStatus", () => {
     await act(async () => { release(); });
   });
 
-  describe("a new version", () => {
-    it("is offered in the same row, calm and closed until clicked", () => {
+  describe("an app update", () => {
+    it("says nothing while a version is only on offer", () => {
       renderStatus(<ServiceStatus />);
       act(() => onUpdateAvailable("0.20.1"));
-
-      expect(row()).toHaveAttribute("data-kind", "updateAvailable");
-      expect(row()).toHaveTextContent(UPDATER.available);
-      expect(screen.queryByTestId("service-status-popover")).not.toBeInTheDocument();
-
-      fireEvent.click(row());
-      const popover = screen.getByTestId("service-status-popover");
-      expect(popover).toHaveTextContent("Wenlan 0.20.1 is ready");
-      expect(action()).toHaveTextContent(UPDATER.install);
-      expect(screen.getByTestId("service-status-secondary")).toHaveTextContent(UPDATER.later);
+      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
     });
 
-    it("gives way to a service problem", () => {
-      renderStatus(<ServiceStatus />);
-      act(() => {
-        onUpdateAvailable("0.20.1");
-        setVersionReport(OUT_OF_DATE);
-      });
-      expect(row()).toHaveAttribute("data-kind", "outOfDate");
-
-      act(() => setVersionReport(null));
-      expect(row()).toHaveAttribute("data-kind", "updateAvailable");
-    });
-
-    it("installs, then shows its progress as one quiet line", async () => {
+    it("shows an install in progress as one quiet line", async () => {
       renderStatus(<ServiceStatus />);
       act(() => onUpdateAvailable("0.20.1"));
-      fireEvent.click(row());
+      await act(() => installUpdate());
 
-      fireEvent.click(action());
-
-      await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://action", "install"));
+      expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
       const line = screen.getByTestId("service-status-updating");
       expect(line).toHaveTextContent(UPDATER.updating);
 
@@ -251,23 +228,21 @@ describe("ServiceStatus", () => {
       expect(line).toHaveTextContent("Updating 42%");
     });
 
-    it("puts the version off and goes quiet", async () => {
+    it("gives way to a service problem", async () => {
       renderStatus(<ServiceStatus />);
       act(() => onUpdateAvailable("0.20.1"));
-      fireEvent.click(row());
+      await act(() => installUpdate());
+      act(() => setVersionReport(OUT_OF_DATE));
+      expect(row()).toHaveAttribute("data-kind", "outOfDate");
 
-      fireEvent.click(screen.getByTestId("service-status-secondary"));
-
-      await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://action", "later"));
-      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+      act(() => setVersionReport(null));
+      expect(screen.getByTestId("service-status-updating")).toBeInTheDocument();
     });
 
     it("turns into a warning when the install fails, and tries again in one press", async () => {
       renderStatus(<ServiceStatus />);
       act(() => onUpdateAvailable("0.20.1"));
-      fireEvent.click(row());
-      fireEvent.click(action());
-      await waitFor(() => expect(screen.getByTestId("service-status-updating")).toBeInTheDocument());
+      await act(() => installUpdate());
 
       act(() => onUpdateProgress({ error: "network unavailable" }));
       expect(row()).toHaveAttribute("data-kind", "updateFailed");
@@ -288,13 +263,7 @@ describe("ServiceStatus", () => {
       renderStatus(<ServiceStatus />);
       act(() => onUpdateStatus({ state: "error", error: "offline" }));
       expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
-    });
-
-    it("goes away when the app turns out to be current", () => {
-      renderStatus(<ServiceStatus />);
-      act(() => onUpdateAvailable("0.20.1"));
-      act(() => onUpdateStatus({ state: "current" }));
-      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+      expect(getServiceNotices().update).toBeNull();
     });
   });
 });

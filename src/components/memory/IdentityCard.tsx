@@ -2,8 +2,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { GearSix, Info, User } from "@phosphor-icons/react";
+import { ArrowCircleUp, GearSix, Info, User } from "@phosphor-icons/react";
 import { getProfile } from "../../lib/tauri";
+import { useServiceNotices } from "../../lib/serviceNotices";
+import { installUpdate } from "../../lib/appUpdate";
 import ProfileAvatar from "./ProfileAvatar";
 import "./IdentityCard.css";
 
@@ -24,9 +26,15 @@ export default function IdentityCard({ compact = true, onOpenDetail, onOpenSetti
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: getProfile });
   const displayName = profile?.display_name || profile?.name || "";
   const labelText = displayName || t("identityCard.account");
-  const triggerLabel = displayName
+  // A new version on offer is not urgent: a dot here and one item in the
+  // menu, instead of a row of its own in the sidebar footer. Once installing
+  // or failed it moves to the service row (src/components/memory/ServiceStatus.tsx).
+  const { update } = useServiceNotices();
+  const offer = update?.phase === "available" ? update : null;
+  const menuLabel = displayName
     ? t("identityCard.namedAccountMenu", { name: displayName })
     : t("identityCard.accountMenu");
+  const triggerLabel = offer ? `${menuLabel}, ${t("updater.available")}` : menuLabel;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -75,10 +83,11 @@ export default function IdentityCard({ compact = true, onOpenDetail, onOpenSetti
           <span aria-hidden="true" className="notes-navigation-glyph"><User /></span>
         )}
         {!compact && <span>{labelText}</span>}
+        {offer && <span aria-hidden="true" className="identity-update-dot" data-testid="identity-update-dot" />}
       </button>
       {menuOpen && (
         <div
-          aria-label={triggerLabel}
+          aria-label={menuLabel}
           className="identity-rail-menu"
           data-keyboard-navigation={keyboardNavigation ? "true" : "false"}
           onKeyDown={(event) => {
@@ -98,6 +107,22 @@ export default function IdentityCard({ compact = true, onOpenDetail, onOpenSetti
           ref={menuRef}
           role="menu"
         >
+          {offer && (
+            <button
+              className="identity-menu-item identity-menu-item--update"
+              data-testid="identity-update"
+              onClick={() => {
+                setMenuOpen(false);
+                void installUpdate().catch(() => {});
+              }}
+              role="menuitem"
+              title={t("updater.installBody")}
+              type="button"
+            >
+              <span aria-hidden="true" className="notes-navigation-glyph"><ArrowCircleUp /></span>
+              {t("updater.updateTo", { version: offer.version })}
+            </button>
+          )}
           <button
             className="identity-menu-item"
             onClick={() => {

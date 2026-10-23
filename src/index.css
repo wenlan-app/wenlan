@@ -3956,8 +3956,6 @@ p.entity-error {
   white-space: nowrap;
 }
 .mem-activity-popover-action:hover { background: var(--mem-hover); color: var(--mem-text); }
-.mem-service-status-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.mem-service-status-actions .mem-activity-popover-action { margin-left: 0; }
 .mem-activity-popover-action:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 1px; }
 
 .mem-activity-review-link {

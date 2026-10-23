@@ -8,6 +8,32 @@
   overflow: visible;
 }
 
+/* A new version on offer: a small calm dot on the account entry, never amber,
+   since nothing is wrong. */
+.identity-menu-trigger {
+  position: relative;
+}
+
+.identity-update-dot {
+  position: absolute;
+  top: 8px;
+  left: 30px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mem-accent-indigo);
+  box-shadow: 0 0 0 2px var(--mem-sidebar);
+  pointer-events: none;
+}
+
+.identity-menu-item--update {
+  color: var(--mem-text);
+}
+
+.identity-menu-item--update .notes-navigation-glyph {
+  color: var(--mem-accent-indigo);
+}
+
 .identity-menu-trigger[aria-expanded="true"] {
   background: var(--mem-hover);
 }

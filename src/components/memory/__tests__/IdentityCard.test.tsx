@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
 import IdentityCard from "../IdentityCard";
+import { setUpdateNotice } from "../../../lib/serviceNotices";
+
+const emitMock = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/event", () => ({ emit: emitMock }));
 
 vi.mock("../../../lib/tauri", () => ({
   getProfile: vi.fn(),
@@ -155,5 +159,39 @@ describe("IdentityCard", () => {
     expect(screen.getByRole("button", { name: "帳戶選單" })).toHaveAttribute("title", "帳戶");
     expect(screen.queryByText("設定你的個人資料")).not.toBeInTheDocument();
     expect(screen.queryByText("Set up your profile")).not.toBeInTheDocument();
+  });
+});
+
+describe("IdentityCard: a new version on offer", () => {
+  beforeEach(() => {
+    emitMock.mockReset().mockResolvedValue(undefined);
+    setUpdateNotice({ phase: "available", version: "0.20.1", pct: null });
+  });
+  afterEach(() => {
+    setUpdateNotice(null);
+  });
+
+  it("puts a dot on the account entry and names it", async () => {
+    renderIdentityCard(false);
+    expect(screen.getByTestId("identity-update-dot")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Update available/ })).toBeInTheDocument();
+  });
+
+  it("installs from the account menu", async () => {
+    renderIdentityCard(false);
+    fireEvent.click(screen.getByRole("button", { name: /account menu/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Update to 0.20.1" }));
+
+    expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("identity-update-dot")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing extra without an offer", () => {
+    setUpdateNotice(null);
+    renderIdentityCard(false);
+    expect(screen.queryByTestId("identity-update-dot")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /account menu/i }));
+    expect(screen.queryByRole("menuitem", { name: /Update to/ })).not.toBeInTheDocument();
   });
 });

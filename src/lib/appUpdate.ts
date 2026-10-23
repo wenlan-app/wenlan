@@ -4,8 +4,10 @@
  *
  * `app/src/updater.rs` offers a new version and then waits for an answer.
  * `src/components/UpdateWatcher.tsx` turns its events into the
- * `update` notice in `src/lib/serviceNotices.ts`; the row
- * (`src/components/memory/ServiceStatus.tsx`) answers with the actions here.
+ * `update` notice in `src/lib/serviceNotices.ts`. The account menu
+ * (`src/components/memory/IdentityCard.tsx`) offers the install, and the
+ * sidebar's service row (`src/components/memory/ServiceStatus.tsx`) shows its
+ * progress and offers to try again; both use the actions here.
  *
  * Events in:
  *   - `updater://available`  payload `{ version }`: a version is on offer
@@ -13,7 +15,8 @@
  *   - `updater://status`     payload `{ state, version?, error? }`
  * Events out:
  *   - `updater://ui-ready`   ask the backend to replay a pending offer
- *   - `updater://action`     payload `"install"` | `"later"`
+ *   - `updater://action`     payload `"install"` (the offer stays open
+ *                            until then; "later" is never sent)
  *   - `updater://check-now`  after a failed install, to try again
  */
 import { emit } from "@tauri-apps/api/event";
@@ -96,19 +99,6 @@ export async function installUpdate(): Promise<void> {
   installing(update.version);
   try {
     await emit("updater://action", "install");
-  } catch (error) {
-    setUpdateNotice(update);
-    throw error;
-  }
-}
-
-/** Put off this version; the backend stays quiet about it for a day. */
-export async function postponeUpdate(): Promise<void> {
-  const update = current();
-  if (update?.phase !== "available") return;
-  setUpdateNotice(null);
-  try {
-    await emit("updater://action", "later");
   } catch (error) {
     setUpdateNotice(update);
     throw error;
