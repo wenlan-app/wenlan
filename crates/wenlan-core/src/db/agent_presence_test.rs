@@ -524,3 +524,93 @@ async fn registering_a_connected_tool_rejects_names_the_read_path_rejects() {
     }
     assert_eq!(row_count(&db).await, 0);
 }
+
+// A tool that writes a page has used Wenlan, the same as one that stores a
+// memory: a name nobody has seen is registered at "full" and marked seen,
+// without counting a memory.
+#[tokio::test]
+async fn a_page_write_registers_a_new_tool_at_full_and_marks_it_seen() {
+    let (db, _dir) = test_db().await;
+
+    let trust = db.note_page_writer("Claude Code").await.unwrap();
+
+    assert_eq!(trust.as_deref(), Some("full"));
+    let agent = db.get_agent("claude-code").await.unwrap().unwrap();
+    assert_eq!(agent.trust_level, "full");
+    assert!(agent.last_seen_at.is_some());
+    assert_eq!(agent.memory_count, 0);
+}
+
+// The hero run: the AI recalled first (a read-created "unknown" row), then
+// wrote pages through steep. The page write must promote it, or the page
+// gate keeps hiding those pages from its recall.
+#[tokio::test]
+async fn a_page_write_promotes_an_untouched_read_row() {
+    let (db, _dir) = test_db().await;
+    db.record_agent_presence("claude-code").await.unwrap();
+    assert_eq!(
+        db.get_agent("claude-code")
+            .await
+            .unwrap()
+            .unwrap()
+            .trust_level,
+        "unknown"
+    );
+
+    let trust = db.note_page_writer("claude-code").await.unwrap();
+
+    assert_eq!(trust.as_deref(), Some("full"));
+    assert_eq!(
+        db.get_agent("claude-code")
+            .await
+            .unwrap()
+            .unwrap()
+            .trust_level,
+        "full"
+    );
+    assert_eq!(row_count(&db).await, 1);
+}
+
+#[tokio::test]
+async fn a_page_write_keeps_a_trust_level_the_user_chose() {
+    let (db, _dir) = test_db().await;
+    db.record_agent_presence("careful-bot").await.unwrap();
+    db.update_agent("careful-bot", None, None, None, Some("unknown"), None)
+        .await
+        .unwrap();
+
+    let trust = db.note_page_writer("careful-bot").await.unwrap();
+
+    assert_eq!(trust.as_deref(), Some("unknown"));
+    assert_eq!(
+        db.get_agent("careful-bot")
+            .await
+            .unwrap()
+            .unwrap()
+            .trust_level,
+        "unknown"
+    );
+}
+
+#[tokio::test]
+async fn a_page_write_from_a_disabled_tool_is_refused() {
+    let (db, _dir) = test_db().await;
+    db.register_trusted_agent("off-bot").await.unwrap();
+    db.update_agent("off-bot", None, None, Some(false), None, None)
+        .await
+        .unwrap();
+
+    let error = db.note_page_writer("off-bot").await.unwrap_err();
+
+    assert!(matches!(error, crate::error::WenlanError::AgentDisabled(_)));
+}
+
+#[tokio::test]
+async fn a_page_write_with_a_name_a_read_may_not_record_creates_nothing() {
+    let (db, _dir) = test_db().await;
+
+    for name in ["", "   ", "unknown", "wenlan-setup"] {
+        assert_eq!(db.note_page_writer(name).await.unwrap(), None, "{name:?}");
+    }
+    assert_eq!(row_count(&db).await, 0);
+}

@@ -8,7 +8,8 @@ use crate::state::AppState;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult, RepoWikiSuggestion,
+    BindRepoWikiRequest, RepoDocsReply, RepoDocsRequest, RepoWikiBinding, RepoWikiDaily,
+    RepoWikiGithubRequest, RepoWikiGithubStatus, RepoWikiPublishResult, RepoWikiSuggestion,
 };
 
 type State = Arc<RwLock<AppState>>;
@@ -89,5 +90,47 @@ pub async fn publish_repo_wiki(
     client(&state)
         .await
         .post_empty(&wiki_path(&space, "publish"))
+        .await
+}
+
+/// Decline the doc fix `id` of `space`: it leaves the pull request on the
+/// next update and is not suggested again.
+#[tauri::command]
+pub async fn dismiss_repo_doc_fix(
+    state: tauri::State<'_, State>,
+    space: String,
+    id: String,
+) -> Result<RepoDocsReply, String> {
+    client(&state)
+        .await
+        .post_json(&wiki_path(&space, "docs"), &RepoDocsRequest::Dismiss { id })
+        .await
+}
+
+/// What a daily update on GitHub still needs in the repository of `space`,
+/// and its last run.
+#[tauri::command]
+pub async fn get_repo_wiki_github(
+    state: tauri::State<'_, State>,
+    space: String,
+) -> Result<RepoWikiGithubStatus, String> {
+    client(&state)
+        .await
+        .get_json(&wiki_path(&space, "github"))
+        .await
+}
+
+/// One setup step for a daily update on GitHub: store the AI tool's secret
+/// (signing in to Claude in the browser, or a pasted OpenAI key), or let
+/// Actions open pull requests. Returns the status after it.
+#[tauri::command]
+pub async fn setup_repo_wiki_github(
+    state: tauri::State<'_, State>,
+    space: String,
+    request: RepoWikiGithubRequest,
+) -> Result<RepoWikiGithubStatus, String> {
+    client(&state)
+        .await
+        .post_json(&wiki_path(&space, "github"), &request)
         .await
 }

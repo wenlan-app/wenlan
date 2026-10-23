@@ -715,6 +715,36 @@ pub fn export_okf_for_repository(
     export_okf_inner(pages, target, concept_paths, code_bases, true)
 }
 
+/// The body of a page file in a repository bundle (`pages/<file>`) as page
+/// content again: a link the export made to another page of `pages`
+/// (`[label](<file>)`) goes back to the `[[wikilink]]` it came from. A link
+/// to a heading or anywhere else stays as written.
+pub fn wikilinks_from_repository_body(body: &str, pages: &[Page]) -> String {
+    let titles: HashMap<String, &str> = plan_page_filenames(pages)
+        .into_iter()
+        .filter_map(|(id, file)| {
+            pages
+                .iter()
+                .find(|page| page.id == id)
+                .map(|page| (file, page.title.as_str()))
+        })
+        .collect();
+    replace_outside_code(body, &MD_LINK_RE, |cap| {
+        let (label, target) = (&cap[1], &cap[2]);
+        match titles.get(target) {
+            Some(title) => {
+                let label = label.replace("\\[", "[").replace("\\]", "]");
+                if label == *title {
+                    format!("[[{title}]]")
+                } else {
+                    format!("[[{title}|{label}]]")
+                }
+            }
+            None => cap[0].to_string(),
+        }
+    })
+}
+
 /// Rewrite the bundle-root links in `body` (a file at `path` in the bundle) to
 /// links relative to that file.
 fn relative_bundle_links(path: &str, body: &str) -> String {

@@ -571,6 +571,7 @@ Options:
 - `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
 - `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
 - `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`.
+- `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
 
 #### `wenlan wiki publish`
 
@@ -595,6 +596,37 @@ Stop putting this Space's pages into its repository.
 ```text
 wenlan wiki unbind [OPTIONS]
 ```
+
+#### `wenlan wiki refresh`
+
+Check the wiki folder of this checkout against the code: fix line numbers that moved and have an AI tool rewrite pages whose code changed. Works without Wenlan running; the GitHub Actions workflow runs it.
+
+```text
+wenlan wiki refresh [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
+- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
+- `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
+
+#### `wenlan wiki workflow`
+
+Print, or `--write`, the GitHub Actions workflow that runs `refresh` every day and opens a pull request when a page changed.
+
+```text
+wenlan wiki workflow [OPTIONS]
+```
+
+Options:
+
+- `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
+- `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
+- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`. Default: `claude`.
+- `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
+- `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
 
 **Setup**
 

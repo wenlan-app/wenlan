@@ -59,7 +59,7 @@ wenlan-mcp --origin-url http://127.0.0.1:7879
 
 ## Tools
 
-The local stdio surface is locked at exactly 34 tools. The table below calls
+The local stdio surface is locked at exactly 35 tools. The table below calls
 out the wiki loop, the primary memory loop, and the unique refinement-review
 queue.
 
@@ -71,6 +71,7 @@ queue.
 | `page_basis` | Mark, diff, confirm or remove what one page relies on another page for. `mark` and `confirm` take the basis note's `version` and are refused if it moved on. Changes are local stdio only. |
 | `page_code_basis` | Confirm or remove a line span of code a page relies on. `confirm` re-reads the file and re-anchors the row as `ok` after you have looked at the change. Pass the row's `repo_root`, `path`, `line_start` and `line_end` as `read_page` shows them. Local stdio only. |
 | `steep` | Steep on demand: `list` the notes waiting because their sources changed or were removed, `claim` one (its surviving sources numbered, a token, and a plan), then `commit` the rewrite citing `[n]`, say `still_accurate`, or `release` it. A commit is refused with nothing written when the note or its sources moved since the claim; a note the user wrote becomes a revision card. Claim and commit are local stdio only. |
+| `doc_fix` | For a Space connected to a repository: record a fix to a sentence of the repository's own docs (README, `docs/`, `AGENTS.md`, `CLAUDE.md`, `SKILL.md`) that the code no longer agrees with. The old text must occur once in the file; the fix goes into the wiki pull request for the user to review, and a fix the user declined is refused. `checked` records how many docs were read. Local stdio only. |
 | `brief` | Read the current Space Brief; an optional topic appends separately labeled same-Space context. |
 | `update_brief` | Hand off to the next session: replace the summary and add, edit, move, gate, or complete items. Local stdio only. |
 | `capture` | Save one durable memory and return its explicit `source_memory_id`. |

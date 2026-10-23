@@ -623,9 +623,10 @@ mod tests {
         let mut archive = zip::ZipArchive::new(cursor).unwrap();
         let conversations = ClaudeParser::new().parse(&mut archive).unwrap();
         // Empty-content assistant message is filtered out, leaving a lone
-        // user message. The unpaired user message is then dropped by pairing,
-        // resulting in zero messages and the conversation being skipped.
-        assert_eq!(conversations.len(), 0);
+        // user message. Pairing keeps it on its own: it is the user's words.
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(conversations[0].messages.len(), 1);
+        assert_eq!(conversations[0].messages[0].role, MessageRole::User);
     }
 
     #[test]
@@ -648,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_skips_unpaired_user_message() {
+    fn parse_keeps_unpaired_user_message() {
         let json = r#"[
           {
             "uuid": "conv-u",
@@ -679,8 +680,11 @@ mod tests {
         let cursor = Cursor::new(zip_bytes.as_slice());
         let mut archive = zip::ZipArchive::new(cursor).unwrap();
         let conversations = ClaudeParser::new().parse(&mut archive).unwrap();
-        // Single unpaired user message is dropped; empty conversation is skipped.
-        assert_eq!(conversations.len(), 0);
+        // A user message nobody replied to is still the user's own words.
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(conversations[0].messages.len(), 1);
+        assert_eq!(conversations[0].messages[0].content, "User: hi");
+        assert_eq!(conversations[0].messages[0].role, MessageRole::User);
     }
 
     #[test]

@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   detectMcpClients: vi.fn(),
   writeMcpConfig: vi.fn(),
   installClientPlugin: vi.fn(),
+  installClientSkills: vi.fn(),
+  removeRawMcpEntry: vi.fn(),
 }));
 vi.mock("../../lib/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/tauri")>();
@@ -52,7 +54,7 @@ function rowFor(name: string) {
 }
 
 async function clickSetUp(name: string) {
-  await userEvent.click(within(rowFor(name)).getByRole("button", { name: "Set up" }));
+  await userEvent.click(within(rowFor(name)).getByRole("button", { name: /^Connect / }));
 }
 
 describe("ClientSetupList — one Set up button, two different jobs behind it", () => {
@@ -65,7 +67,7 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
 
   it("every detected client gets the same one-click Set up — no slash commands, no copy-a-prompt", async () => {
     renderList();
-    const setUps = await screen.findAllByRole("button", { name: "Set up" });
+    const setUps = await screen.findAllByRole("button", { name: /^Connect (?!all)/ });
     expect(setUps).toHaveLength(CLIENTS.length);
 
     expect(screen.queryByRole("button", { name: "Copy setup prompt" })).not.toBeInTheDocument();
@@ -157,18 +159,25 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
     }
   });
 
-  it("undetected clients show Not installed, not a Set up button", async () => {
+  it("undetected clients get no row; they are named once on the Also works with line", async () => {
     mocks.detectMcpClients.mockResolvedValue([
       { name: "Claude Code", client_type: "claude_code", config_path: "~/.claude.json", detected: NO, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
       { name: "Codex CLI", client_type: "codex_cli", config_path: "~/.codex/config.toml", detected: NO, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+      { name: "Cursor", client_type: "cursor", config_path: "~/.cursor/mcp.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
     ]);
     renderList();
-    for (const name of ["Claude Code", "Codex CLI"]) {
-      await screen.findByText(name);
-      const row = rowFor(name);
-      expect(within(row).getByText("Not installed")).toBeInTheDocument();
-      expect(within(row).queryByRole("button", { name: "Set up" })).not.toBeInTheDocument();
-    }
+    expect(await screen.findByText("Also works with Claude Code, Codex CLI (not installed)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect Codex CLI" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Connect Cursor" })).toBeInTheDocument();
+  });
+
+  it("with nothing installed to add, the line still says what works", async () => {
+    mocks.detectMcpClients.mockResolvedValue([
+      { name: "Kiro", client_type: "kiro", config_path: "~/.kiro/settings/mcp.json", detected: NO, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, has_skills: NO },
+    ]);
+    renderList();
+    expect(await screen.findByText("Also works with Kiro (not installed)")).toBeInTheDocument();
   });
 
   it("a failed Set up shows the error in the danger-text token, not a raw Tailwind color", async () => {
@@ -306,7 +315,7 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
     expect(within(row).getByText(/Access is denied/)).toBeInTheDocument();
     // And the action survives: withholding Set up would be the same false
     // negative, expressed as a missing button instead of a wrong label.
-    expect(within(row).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /^Connect / })).toBeInTheDocument();
   });
 
   // The hide filter was `!client.already_configured`, which is FALSY-negated to
@@ -369,7 +378,7 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
     const row = rowFor("Claude Desktop");
 
     // SEES: not the same button a measured `no` gets.
-    expect(within(row).queryByRole("button", { name: "Set up" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /^Connect / })).not.toBeInTheDocument();
     const button = within(row).getByRole("button", { name: "Set up anyway" });
 
     // SEES: what could not be read, and what writing anyway would do.
@@ -402,7 +411,7 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
 
     await screen.findByText("Claude Desktop");
     const row = rowFor("Claude Desktop");
-    expect(within(row).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /^Connect / })).toBeInTheDocument();
     expect(within(row).queryByText(/second registration/i)).not.toBeInTheDocument();
   });
 
@@ -426,7 +435,7 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
 
     await screen.findByText("Claude Code");
     const row = rowFor("Claude Code");
-    expect(within(row).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /^Connect / })).toBeInTheDocument();
     expect(within(row).queryByText(/second registration/i)).not.toBeInTheDocument();
   });
 
@@ -475,10 +484,76 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
     const row = rowFor("Cursor");
     expect(await within(row).findByText("Added")).toBeInTheDocument();
     expect(within(row).getByRole("status")).toHaveTextContent("Added. Restart Cursor to finish.");
-    // Nothing left to press, and nothing claims a connection yet.
-    expect(within(row).queryByRole("button", { name: "Set up" })).not.toBeInTheDocument();
+    // The switch now reads on, and nothing claims a connection yet.
+    expect(within(row).getByRole("button", { name: "Connect Cursor" })).toHaveAttribute("aria-pressed", "true");
     expect(within(row).queryByText("Connected")).not.toBeInTheDocument();
     expect(mocks.writeMcpConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("turning the switch back off removes the entry it just wrote", async () => {
+    mocks.removeRawMcpEntry.mockResolvedValue(undefined);
+    renderList();
+    await screen.findByText("Cursor");
+    await clickSetUp("Cursor");
+    const toggle = await within(rowFor("Cursor")).findByRole("button", { name: "Connect Cursor" });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-pressed", "true"));
+    await userEvent.click(toggle);
+
+    expect(mocks.removeRawMcpEntry).toHaveBeenCalledWith("cursor");
+    await waitFor(() =>
+      expect(within(rowFor("Cursor")).getByRole("button", { name: "Connect Cursor" })).toHaveAttribute("aria-pressed", "false"),
+    );
+  });
+
+  it("a plugin tool has no switch to turn back off once added", async () => {
+    renderList();
+    await screen.findByText("Codex CLI");
+    await clickSetUp("Codex CLI");
+    const row = rowFor("Codex CLI");
+    expect(await within(row).findByText("Added. Restart Codex CLI to finish.")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /^Connect / })).not.toBeInTheDocument();
+  });
+
+  it("Connect all sets up every installed tool one after another", async () => {
+    renderList();
+    expect(await screen.findByText("Found 5 AI tools to connect")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Connect all" }));
+
+    await waitFor(() => expect(mocks.installClientPlugin).toHaveBeenCalledTimes(2));
+    expect(mocks.installClientPlugin).toHaveBeenCalledWith("claude_code");
+    expect(mocks.installClientPlugin).toHaveBeenCalledWith("codex_cli");
+    expect(mocks.writeMcpConfig.mock.calls.map(([type]) => type).sort()).toEqual(["claude_desktop", "cursor", "gemini_cli"]);
+    // Every one is added now, so the offer goes away.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Connect all" })).not.toBeInTheDocument());
+  });
+
+  it("one tool left to add needs no Connect all", async () => {
+    mocks.detectMcpClients.mockResolvedValue([CLIENTS[2]]);
+    renderList();
+    await screen.findByRole("button", { name: "Connect Cursor" });
+    expect(screen.queryByRole("button", { name: "Connect all" })).not.toBeInTheDocument();
+  });
+
+  it("a skills tool says the skills come along, and its switch installs them after the entry", async () => {
+    mocks.detectMcpClients.mockResolvedValue([{ ...CLIENTS[2], has_skills: NO }]);
+    mocks.installClientSkills.mockResolvedValue("/home/u/.cursor/skills");
+    renderList();
+    expect(await screen.findByText("Connects and adds skills")).toBeInTheDocument();
+    await clickSetUp("Cursor");
+    await waitFor(() => expect(mocks.installClientSkills).toHaveBeenCalledWith("cursor"));
+    expect(mocks.writeMcpConfig).toHaveBeenCalledWith("cursor");
+  });
+
+  it("a tool connected before it had skills keeps a row with Add skills, even when the roster shows it", async () => {
+    mocks.detectMcpClients.mockResolvedValue([
+      { ...CLIENTS[2], already_configured: YES, has_raw_entry: YES, has_skills: NO },
+    ]);
+    mocks.installClientSkills.mockResolvedValue("/home/u/.cursor/skills");
+    renderList(undefined, new Set(["cursor"]), new Set(["cursor"]));
+    expect(await screen.findByText("No skills yet")).toBeInTheDocument();
+    await userEvent.click(within(rowFor("Cursor")).getByRole("button", { name: "Add skills" }));
+    await waitFor(() => expect(mocks.installClientSkills).toHaveBeenCalledWith("cursor"));
+    expect(mocks.writeMcpConfig).not.toHaveBeenCalled();
   });
 
   it("the same row flips to Connected once the roster has seen the tool", async () => {
@@ -513,7 +588,7 @@ describe("ClientSetupList — one Set up button, two different jobs behind it", 
       "permission denied: ~/.cursor/mcp.json",
     );
     // The row stays actionable, so the user can try again.
-    expect(within(rowFor("Cursor")).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+    expect(within(rowFor("Cursor")).getByRole("button", { name: /^Connect / })).toBeInTheDocument();
   });
 
   it.each([
@@ -583,7 +658,7 @@ describe("ClientSetupList — repair and install state", () => {
     expect(within(row).getByText(line)).toBeInTheDocument();
     expect(within(row).getByText("Needs repair")).toBeInTheDocument();
     expect(within(row).getByRole("button", { name: "Repair" })).toBeInTheDocument();
-    expect(within(row).queryByRole("button", { name: "Set up" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: /^Connect / })).not.toBeInTheDocument();
     // Not "Added": restarting a tool whose entry cannot start fixes nothing.
     expect(within(row).queryByText("Added")).not.toBeInTheDocument();
     expect(document.body.textContent).not.toContain("RUST-ONLY-ENGLISH-DETAIL");
@@ -712,7 +787,7 @@ describe("ClientSetupList — repair and install state", () => {
     const row = rowFor("Cursor");
     expect(within(row).getByText("Settings found, app not found")).toBeInTheDocument();
     expect(within(row).queryByText(/installed/i)).not.toBeInTheDocument();
-    expect(within(row).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /^Connect / })).toBeInTheDocument();
   });
 
   it.each([
@@ -726,7 +801,7 @@ describe("ClientSetupList — repair and install state", () => {
 
     await screen.findByText("Cursor");
     const row = rowFor("Cursor");
-    expect(within(row).getByRole("button", { name: "Set up" })).toBeInTheDocument();
+    expect(within(row).getByRole("button", { name: /^Connect / })).toBeInTheDocument();
     expect(within(row).queryByText("Needs repair")).not.toBeInTheDocument();
     expect(within(row).queryByText("Settings found, app not found")).not.toBeInTheDocument();
     expect(within(row).queryByTestId("client-row-entry-unreadable-cursor")).not.toBeInTheDocument();

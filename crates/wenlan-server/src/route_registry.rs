@@ -426,9 +426,15 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/steep/new/commit",
     // A repository-bound Space names its Space in the path; the binding,
     // suggest, publish and run routes return paths, counts and links, no
-    // page text.
+    // page text. The docs route returns one doc fix (text of a file in the
+    // user's own repository, sent by their own AI tool), no page text.
     "/api/spaces/{name}/wiki/repo", "/api/spaces/{name}/wiki/suggest",
     "/api/spaces/{name}/wiki/publish", "/api/spaces/{name}/wiki/run",
+    "/api/spaces/{name}/wiki/docs",
+    // Setting up a daily update on GitHub: which settings the repository
+    // has, as booleans, and the last run's links. A token goes to GitHub
+    // and is never returned.
+    "/api/spaces/{name}/wiki/github",
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[

@@ -338,10 +338,10 @@ fn accept_manual_check(state: &SharedLifecycleState) -> bool {
 /// choice via the `updater://action` event. RuntimeOverlays mounts once as a
 /// stable sibling of App's branch body and is reconciled in place, rather than
 /// remounted as App moves between branches. The `updater://ui-ready` handshake
-/// covers webview-load timing: UpdaterDialog emits one ready event after its
+/// covers webview-load timing: UpdateWatcher emits one ready event after its
 /// listeners register, and the backend re-emits availability if the prompt
-/// predates it. The actual UI is rendered by `UpdaterDialog` inside the main
-/// window's React tree (see `src/components/UpdaterDialog.tsx`).
+/// predates it. The offer is shown as a row in the sidebar's service status
+/// (see `src/components/UpdateWatcher.tsx` and `src/lib/appUpdate.ts`).
 async fn prompt_via_overlay(app: &AppHandle, version: &str) -> bool {
     let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
     let tx = Arc::new(Mutex::new(Some(tx)));

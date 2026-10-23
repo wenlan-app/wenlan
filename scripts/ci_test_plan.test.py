@@ -974,6 +974,10 @@ class PluginOwnerTests(unittest.TestCase):
             "scripts/gen-plugin-verbs.test.mjs",
             "scripts/gen-codex-plugin.mjs",
             "scripts/gen-codex-plugin.test.mjs",
+            "plugin-agents/skills/wenlan/SKILL.md",
+            "plugin-agents/overlay.json",
+            "scripts/gen-agent-skills.mjs",
+            "scripts/gen-agent-skills.test.mjs",
         )
 
         for path in paths:

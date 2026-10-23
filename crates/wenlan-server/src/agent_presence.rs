@@ -110,6 +110,83 @@ fn note_agent_read_at(
     }))
 }
 
+/// Fire the `first-recall` milestone the first time a named AI tool gets
+/// something back from a search. The getting-started step "Ask your AI" and
+/// its toast read that milestone; nothing fired it before. The app's own
+/// searches carry no agent name and never count. Off the response path; a
+/// failure is logged, never returned.
+pub fn note_agent_recall(
+    db: Arc<MemoryDB>,
+    raw_agent: &str,
+    results: &[wenlan_types::memory::SearchResult],
+    pages: Option<&[wenlan_types::memory::SearchResult]>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let pages = pages.unwrap_or_default();
+    let hits = results.len() + pages.len();
+    if hits == 0 {
+        return None;
+    }
+    let canonical = presence_agent_id(raw_agent)?;
+    // A page is what the step is about, so it is the one quoted when there is
+    // one; otherwise the top memory, char-safe.
+    let preview = match pages.first() {
+        Some(page) => Some(page.title.clone()),
+        None => results.first().map(|hit| {
+            let short: String = hit.content.chars().take(100).collect();
+            if short.chars().count() < hit.content.chars().count() {
+                format!("{}…", short.trim_end())
+            } else {
+                short
+            }
+        }),
+    };
+    Some(tokio::spawn(async move {
+        // The toast names the tool the way Connections does ("Claude Code").
+        let agent = db
+            .get_agent(&canonical)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|agent| agent.display_name)
+            .unwrap_or_else(|| canonical.clone());
+        let evaluator = wenlan_core::onboarding::MilestoneEvaluator::new(
+            &db,
+            Arc::new(wenlan_core::events::NoopEmitter),
+        );
+        if let Err(error) = evaluator
+            .check_after_context_call(&agent, hits, preview.as_deref())
+            .await
+        {
+            tracing::warn!(agent = %canonical, %error, "first recall not recorded");
+        }
+    }))
+}
+
+/// Register the tool named on a page write (`x-agent-name`) before the write.
+///
+/// A page write is a write: the tool is registered and promoted as a memory
+/// write would be (`MemoryDB::note_page_writer`), so its next recall sees the
+/// pages it wrote. A disabled tool is refused with 403, as a memory write is.
+/// Any other failure is logged and the write goes ahead: the page matters
+/// more than the bookkeeping. No header, or a name a read may not record, does
+/// nothing.
+pub async fn note_page_writer(
+    db: &MemoryDB,
+    agent: Option<&str>,
+) -> Result<(), crate::error::ServerError> {
+    let Some(agent) = agent.map(str::trim).filter(|a| !a.is_empty()) else {
+        return Ok(());
+    };
+    match db.note_page_writer(agent).await {
+        Ok(_) => Ok(()),
+        Err(error @ WenlanError::AgentDisabled(_)) => Err(error.into()),
+        Err(error) => {
+            tracing::warn!(%agent, %error, "page writer not registered");
+            Ok(())
+        }
+    }
+}
+
 /// Log the outcome of a presence write. An error is never returned to the
 /// request; it only gives the throttle claim back so the next read retries.
 fn settle(

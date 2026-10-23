@@ -49284,6 +49284,39 @@ async fn oldest_active_page_excludes_entity_kind_shadow() {
     );
 }
 
+// The first-page milestone announces the first page Wenlan wrote from the
+// user's material. An older copy of a brought-in file or a page the user
+// wrote must not take that place.
+#[tokio::test]
+async fn oldest_active_page_is_the_oldest_page_written_from_material() {
+    let (db, _dir) = test_db().await;
+    {
+        let conn = db.conn.lock().await;
+        for (id, created_at, kind) in [
+            ("oldest-copy", "2024-01-01T00:00:00Z", "source"),
+            ("older-own", "2024-01-02T00:00:00Z", "authored"),
+            ("first-written", "2024-01-03T00:00:00Z", "distilled"),
+            ("second-written", "2024-01-04T00:00:00Z", "distilled"),
+        ] {
+            conn.execute(
+                "INSERT INTO pages (id, title, content, created_at, last_compiled, last_modified, creation_kind) \
+                 VALUES (?1, ?1, 'content', ?2, ?2, ?2, ?3)",
+                libsql::params![id, created_at, kind],
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    let oldest = db
+        .oldest_active_page()
+        .await
+        .unwrap()
+        .expect("a written page");
+
+    assert_eq!(oldest.id, "first-written");
+}
+
 #[tokio::test]
 async fn first_active_page_excludes_entity_kind_shadow() {
     // Fix wave (stage c review, Critical-1 leak site 4): first_active_page

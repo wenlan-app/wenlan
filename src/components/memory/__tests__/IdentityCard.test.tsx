@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
 import IdentityCard from "../IdentityCard";
+import { getServiceNotices, setUpdateNotice } from "../../../lib/serviceNotices";
+import { onUpdateAvailable, onUpdateProgress, onUpdateStatus } from "../../../lib/appUpdate";
+
+const emitMock = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/event", () => ({ emit: emitMock }));
 
 vi.mock("../../../lib/tauri", () => ({
   getProfile: vi.fn(),
+  listAgents: vi.fn().mockResolvedValue([]),
   listEntities: vi.fn(),
   getEntityDetail: vi.fn(),
 }));
@@ -128,12 +134,22 @@ describe("IdentityCard", () => {
     renderIdentityCard();
     const trigger = await screen.findByRole("button", { name: /Lucian account menu/ });
     await user.click(trigger);
+    expect(screen.getByRole("menuitem", { name: "What your AI can do" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "Settings" })).toHaveFocus();
     await user.keyboard("{ArrowDown}");
     expect(screen.getByRole("menuitem", { name: "About Wenlan" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("opens what your AI can do from the menu", async () => {
+    renderIdentityCard();
+    fireEvent.click(await screen.findByRole("button", { name: /Lucian account menu/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "What your AI can do" }));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "What your AI can do" })).toBeInTheDocument();
   });
 
   it("does not mistake the first person in the knowledge base for the user", async () => {
@@ -155,5 +171,102 @@ describe("IdentityCard", () => {
     expect(screen.getByRole("button", { name: "帳戶選單" })).toHaveAttribute("title", "帳戶");
     expect(screen.queryByText("設定你的個人資料")).not.toBeInTheDocument();
     expect(screen.queryByText("Set up your profile")).not.toBeInTheDocument();
+  });
+});
+
+describe("IdentityCard: a new version on offer", () => {
+  beforeEach(() => {
+    emitMock.mockReset().mockResolvedValue(undefined);
+    setUpdateNotice({ phase: "available", version: "0.20.1", pct: null });
+  });
+  afterEach(() => {
+    setUpdateNotice(null);
+  });
+
+  it("puts a dot on the account entry and names it", async () => {
+    renderIdentityCard(false);
+    expect(screen.getByTestId("identity-update-dot")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Update available/ })).toBeInTheDocument();
+  });
+
+  it("installs from the account menu", async () => {
+    renderIdentityCard(false);
+    fireEvent.click(screen.getByRole("button", { name: /account menu/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Update to 0.20.1" }));
+
+    expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("identity-update-dot")).not.toBeInTheDocument();
+  });
+
+  it("shows nothing extra without an offer", () => {
+    setUpdateNotice(null);
+    renderIdentityCard(false);
+    expect(screen.queryByTestId("identity-update-dot")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /account menu/i }));
+    expect(screen.queryByRole("menuitem", { name: /Update to/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("IdentityCard: an update under way", () => {
+  beforeEach(() => {
+    emitMock.mockReset().mockResolvedValue(undefined);
+    act(() => onUpdateAvailable("0.20.1"));
+  });
+  afterEach(() => {
+    act(() => setUpdateNotice(null));
+  });
+
+  async function install() {
+    fireEvent.click(screen.getByRole("button", { name: /account menu/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Update to 0.20.1" }));
+    await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://action", "install"));
+  }
+
+  it("fills a ring on the account entry and says how far it got", async () => {
+    renderIdentityCard(true);
+    await install();
+
+    expect(screen.getByTestId("identity-update-ring")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Updating…/ })).toBeInTheDocument();
+
+    act(() => onUpdateProgress({ chunk: 0, total: 1000 }));
+    act(() => onUpdateProgress({ chunk: 420 }));
+    const trigger = screen.getByRole("button", { name: /Updating 42%/ });
+    expect(screen.getByTestId("identity-update-ring").style.getPropertyValue("--identity-update-pct")).toBe("42%");
+
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("identity-update-progress")).toHaveTextContent("Updating 42%");
+    expect(screen.getByTestId("identity-update-progress")).toBeDisabled();
+    // The quiet line is not where the menu puts focus.
+    expect(screen.getByRole("menuitem", { name: "What your AI can do" })).toHaveFocus();
+  });
+
+  it("turns amber when the install fails, and tries again in one press", async () => {
+    renderIdentityCard(true);
+    await install();
+    act(() => onUpdateProgress({ error: "network unavailable" }));
+
+    expect(screen.getByTestId("identity-update-failed")).toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: /Update failed/ });
+    emitMock.mockClear();
+
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Try updating again" }));
+    await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://check-now"));
+    expect(screen.getByTestId("identity-update-ring")).toBeInTheDocument();
+
+    // The check offers the version again; "Try updating again" already said yes.
+    act(() => onUpdateAvailable("0.20.1"));
+    expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
+    expect(screen.getByTestId("identity-update-ring")).toBeInTheDocument();
+  });
+
+  it("ignores background check reports when nothing was offered", () => {
+    act(() => setUpdateNotice(null));
+    renderIdentityCard(true);
+    act(() => onUpdateStatus({ state: "error", error: "offline" }));
+    expect(getServiceNotices().update).toBeNull();
+    expect(screen.queryByTestId("identity-update-failed")).not.toBeInTheDocument();
   });
 });

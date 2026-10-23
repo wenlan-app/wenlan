@@ -21,7 +21,7 @@ pub enum Reading {
 }
 
 impl Reading {
-    fn of(value: bool) -> Self {
+    pub(crate) fn of(value: bool) -> Self {
         if value {
             Reading::Yes
         } else {
@@ -35,13 +35,27 @@ impl Reading {
     /// entry, so if either half is a measured yes the answer is yes whatever
     /// happened to the other — and if neither is, an unread half means the
     /// answer is unknown, not "no".
-    fn or(self, other: Reading) -> Reading {
+    pub(crate) fn or(self, other: Reading) -> Reading {
         match (self, other) {
             (Reading::Yes, _) | (_, Reading::Yes) => Reading::Yes,
             (Reading::Unreadable { error }, _) | (_, Reading::Unreadable { error }) => {
                 Reading::Unreadable { error }
             }
             (Reading::No, Reading::No) => Reading::No,
+        }
+    }
+
+    /// AND over two readings, the mirror of [`Reading::or`]: a measured `No`
+    /// wins (one half is certainly false, so the whole is), then
+    /// `Unreadable`, then `Yes`. "Every skill is installed" is an AND, and a
+    /// skill that could not be looked at must not let it read as yes.
+    pub(crate) fn and(self, other: Reading) -> Reading {
+        match (self, other) {
+            (Reading::No, _) | (_, Reading::No) => Reading::No,
+            (Reading::Unreadable { error }, _) | (_, Reading::Unreadable { error }) => {
+                Reading::Unreadable { error }
+            }
+            (Reading::Yes, Reading::Yes) => Reading::Yes,
         }
     }
 }
@@ -63,6 +77,34 @@ fn read_config(path: &Path) -> ConfigRead {
         Ok(contents) => ConfigRead::Contents(contents),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => ConfigRead::Absent,
         Err(e) => ConfigRead::Unreadable(e.to_string()),
+    }
+}
+
+/// [`read_config`] for a client whose config is in `dialect`, adding the one
+/// rule about a config that lives in a DIFFERENT file: OpenCode reads
+/// `opencode.jsonc` as well as `opencode.json`, and JSONC (comments, trailing
+/// commas) does not survive a JSON round trip. So when `opencode.json` is
+/// absent and `opencode.jsonc` is there, the config is reported UNREADABLE —
+/// never absent, which would let a write create a second settings file beside
+/// the user's, and never parsed and rewritten, which would strip their
+/// comments. A `.jsonc` that could not be looked for is unreadable too.
+fn read_config_for(dialect: JsonDialect, path: &Path) -> ConfigRead {
+    let read = read_config(path);
+    if dialect != JsonDialect::OpenCode || !matches!(read, ConfigRead::Absent) {
+        return read;
+    }
+    let jsonc = path.with_extension("jsonc");
+    match path_exists_reading(&jsonc) {
+        Reading::No => ConfigRead::Absent,
+        Reading::Yes => ConfigRead::Unreadable(format!(
+            "OpenCode's settings are in {}, a JSON-with-comments file Wenlan does not rewrite; \
+             add the Wenlan server to it by hand",
+            jsonc.display()
+        )),
+        Reading::Unreadable { error } => ConfigRead::Unreadable(format!(
+            "could not check whether OpenCode keeps its settings in {} ({error})",
+            jsonc.display()
+        )),
     }
 }
 
@@ -155,6 +197,15 @@ pub struct McpClient {
     /// Whether the raw entry Wenlan wrote into the client's own config would
     /// actually launch. `already_configured` only says an entry EXISTS.
     pub entry_health: EntryHealth,
+    /// Whether Wenlan's skills are installed in this client's own skills
+    /// folder: `Yes` when every skill in the bundle carries the
+    /// `.wenlan-managed` marker, `No` when at least one is measured absent,
+    /// `Unreadable` when a look failed. `None` (JSON `null`) for a client with
+    /// no skills folder (Claude Code and Codex get skills through their
+    /// plugins; Claude Desktop and Muse Code are MCP only). See
+    /// [`crate::skills_install::skills_reading`].
+    #[serde(default)]
+    pub has_skills: Option<Reading>,
 }
 
 /// What kind of trace of a client is on this machine.
@@ -284,6 +335,26 @@ pub(crate) fn client_config_path_for(
         // and Windows that is `Library/Application Support` / `AppData`, which
         // is not where Muse Code looks.
         "muse_code" => under(home, HOME, &[".config", "muse", "settings.json"]),
+        // Antigravity's global MCP file. Older builds kept it at
+        // `~/.gemini/antigravity/mcp_config.json`; that folder still counts as
+        // a leftover in `client_home_dir_reading`.
+        "antigravity" => under(home, HOME, &[".gemini", "config", "mcp_config.json"]),
+        "copilot_cli" => under(home, HOME, &[".copilot", "mcp-config.json"]),
+        // VS Code's user-profile `mcp.json` sits in its user-data folder, which
+        // IS the platform config dir: `~/Library/Application Support/Code/User`
+        // on macOS, `$XDG_CONFIG_HOME/Code/User` on Linux, `%APPDATA%\Code\User`
+        // on Windows.
+        "vscode" => under(
+            config_dir,
+            "an application-configuration directory",
+            &["Code", "User", "mcp.json"],
+        ),
+        "windsurf" => under(home, HOME, &[".codeium", "windsurf", "mcp_config.json"]),
+        "kiro" => under(home, HOME, &[".kiro", "settings", "mcp.json"]),
+        // OpenCode reads `~/.config/opencode/opencode.json` on every platform
+        // (not `config_dir`, same as Muse Code). A JSONC-only install is
+        // refused, never rewritten: see `read_config_for`.
+        "opencode" => under(home, HOME, &[".config", "opencode", "opencode.json"]),
         _ => ClientConfigPath::UnknownClient,
     }
 }
@@ -311,12 +382,27 @@ enum JsonDialect {
     /// and a per-server `mode` that defaults to `required`, which ABORTS the
     /// whole Muse Code run when that server fails to start.
     Muse,
+    /// GitHub Copilot CLI's `~/.copilot/mcp-config.json`: `mcpServers`, with
+    /// `"type": "local"` and `"tools": ["*"]` on each entry (a local server
+    /// with no tool allowlist exposes no tools).
+    Copilot,
+    /// VS Code's user `mcp.json`: `{"servers": {"wenlan": {"type": "stdio",
+    /// "command": .., "args": [..]}}}`.
+    VsCode,
+    /// OpenCode's `opencode.json`: `{"mcp": {"wenlan": {"type": "local",
+    /// "command": [cmd, ..args], "enabled": true}}}`. A different ENTRY shape:
+    /// the program and its arguments are one list, so the entry readers
+    /// ([`entry_spec_for`]) split it rather than reading `args`.
+    OpenCode,
 }
 
 impl JsonDialect {
     fn for_client(client_type: &str) -> Self {
         match client_type {
             "muse_code" => JsonDialect::Muse,
+            "copilot_cli" => JsonDialect::Copilot,
+            "vscode" => JsonDialect::VsCode,
+            "opencode" => JsonDialect::OpenCode,
             _ => JsonDialect::McpServers,
         }
     }
@@ -324,9 +410,31 @@ impl JsonDialect {
     /// The top-level key the client's servers live under.
     fn servers_key(self) -> &'static str {
         match self {
-            JsonDialect::McpServers => "mcpServers",
+            JsonDialect::McpServers | JsonDialect::Copilot => "mcpServers",
             JsonDialect::Muse => "mcp_servers",
+            JsonDialect::VsCode => "servers",
+            JsonDialect::OpenCode => "mcp",
         }
+    }
+
+    /// The JSON entry this dialect writes for `entry`. `{command, args}` plus
+    /// [`JsonDialect::decorate_entry`]'s fields, except for OpenCode, whose
+    /// entry holds the program and its arguments in one `command` list.
+    fn entry_value(self, entry: WenlanMcpEntry) -> Result<serde_json::Value, AppError> {
+        if self == JsonDialect::OpenCode {
+            let mut command = Vec::with_capacity(entry.args.len() + 1);
+            command.push(entry.command);
+            command.extend(entry.args);
+            return Ok(serde_json::json!({
+                "type": "local",
+                "command": command,
+                "enabled": true,
+            }));
+        }
+        let mut value =
+            serde_json::to_value(entry).map_err(|e| AppError::Generic(e.to_string()))?;
+        self.decorate_entry(&mut value);
+        Ok(value)
     }
 
     /// Add the fields this dialect needs beside `command`/`args` to the entry
@@ -338,9 +446,23 @@ impl JsonDialect {
     /// Code from running at all, and a memory layer must never be able to do
     /// that to the tool it serves.
     fn decorate_entry(self, entry: &mut serde_json::Value) {
-        if let (JsonDialect::Muse, Some(entry)) = (self, entry.as_object_mut()) {
-            entry.insert("transport".into(), serde_json::json!("stdio"));
-            entry.insert("mode".into(), serde_json::json!("optional"));
+        let Some(entry) = entry.as_object_mut() else {
+            return;
+        };
+        match self {
+            JsonDialect::Muse => {
+                entry.insert("transport".into(), serde_json::json!("stdio"));
+                entry.insert("mode".into(), serde_json::json!("optional"));
+            }
+            JsonDialect::Copilot => {
+                entry.insert("type".into(), serde_json::json!("local"));
+                entry.insert("tools".into(), serde_json::json!(["*"]));
+            }
+            JsonDialect::VsCode => {
+                entry.insert("type".into(), serde_json::json!("stdio"));
+            }
+            // OpenCode's entry is built whole by `entry_value`.
+            JsonDialect::McpServers | JsonDialect::OpenCode => {}
         }
     }
 
@@ -811,15 +933,89 @@ fn app_candidates(
                 out.push(local.join("Programs").join("Claude").join("Claude.exe"));
             }
         }
-        _ => {}
+        // The VS Code family (VS Code and the editors built from it) installs
+        // the same way everywhere: a `.app` bundle on macOS, a per-user
+        // `%LOCALAPPDATA%\Programs\<folder>\<exe>` or a machine-wide
+        // `%ProgramFiles%\<folder>\<exe>` on Windows, and
+        // `/usr/share/<pkg>/<bin>` from the .deb/.rpm on Linux (its `/usr/bin`
+        // launcher is found through the CLI lookup).
+        (client_type, host) => {
+            let Some(family) = vscode_family_install(client_type) else {
+                return out;
+            };
+            match host {
+                HostKind::MacOs => {
+                    out.push(PathBuf::from("/Applications").join(family.mac_bundle));
+                    out.extend(under_home(&format!("Applications/{}", family.mac_bundle)));
+                }
+                HostKind::Windows => {
+                    if let Some(local) = local {
+                        out.push(
+                            local
+                                .join("Programs")
+                                .join(family.windows_folder)
+                                .join(family.windows_exe),
+                        );
+                    }
+                    out.extend(
+                        program_files
+                            .iter()
+                            .map(|dir| dir.join(family.windows_folder).join(family.windows_exe)),
+                    );
+                }
+                HostKind::Linux => {
+                    out.extend(family.linux_paths.iter().map(PathBuf::from));
+                }
+            }
+        }
     }
     out
+}
+
+/// Where one editor of the VS Code family installs, per OS.
+struct VscodeFamilyInstall {
+    mac_bundle: &'static str,
+    windows_folder: &'static str,
+    windows_exe: &'static str,
+    linux_paths: &'static [&'static str],
+}
+
+fn vscode_family_install(client_type: &str) -> Option<VscodeFamilyInstall> {
+    Some(match client_type {
+        "antigravity" => VscodeFamilyInstall {
+            mac_bundle: "Antigravity.app",
+            windows_folder: "Antigravity",
+            windows_exe: "Antigravity.exe",
+            linux_paths: &["/usr/share/antigravity/antigravity"],
+        },
+        "vscode" => VscodeFamilyInstall {
+            mac_bundle: "Visual Studio Code.app",
+            windows_folder: "Microsoft VS Code",
+            windows_exe: "Code.exe",
+            linux_paths: &["/usr/share/code/code", "/snap/bin/code"],
+        },
+        "windsurf" => VscodeFamilyInstall {
+            mac_bundle: "Windsurf.app",
+            windows_folder: "Windsurf",
+            windows_exe: "Windsurf.exe",
+            linux_paths: &["/usr/share/windsurf/windsurf"],
+        },
+        "kiro" => VscodeFamilyInstall {
+            mac_bundle: "Kiro.app",
+            windows_folder: "Kiro",
+            windows_exe: "Kiro.exe",
+            linux_paths: &["/usr/share/kiro/kiro"],
+        },
+        _ => return None,
+    })
 }
 
 /// CLI names that mean the client is installed, resolved without a shell.
 fn client_cli_names(client_type: &str) -> &'static [&'static str] {
     match client_type {
-        "cursor" => &["cursor"],
+        // `cursor-agent` is Cursor's CLI. It reads the same ~/.cursor config
+        // and skills, and can be installed without the editor.
+        "cursor" => &["cursor", "cursor-agent"],
         "claude_code" => &["claude"],
         // The unofficial Linux builds of Claude Desktop ship this launcher;
         // there is no official one on macOS or Windows, so a miss is normal.
@@ -827,6 +1023,12 @@ fn client_cli_names(client_type: &str) -> &'static [&'static str] {
         "gemini_cli" => &["gemini"],
         "codex_cli" => &["codex"],
         "muse_code" => &["muse"],
+        "antigravity" => &["agy", "antigravity"],
+        "copilot_cli" => &["copilot"],
+        "vscode" => &["code"],
+        "windsurf" => &["windsurf"],
+        "kiro" => &["kiro", "kiro-cli"],
+        "opencode" => &["opencode"],
         _ => &[],
     }
 }
@@ -869,10 +1071,12 @@ fn has_claude_store_package(local: &Path, list_dir: &dyn Fn(&Path) -> Vec<PathBu
 /// report, makes an empty result "unknown", never "absent".
 fn program_reading(client_type: &str, home: Option<&Path>, probes: &DetectProbes) -> Reading {
     let seed = match client_type {
-        "cursor" | "claude_desktop" => home_lookup_reading(home).or(local_data_lookup_reading(
-            probes.host,
-            probes.local_data_dir,
-        )),
+        "cursor" | "claude_desktop" | "antigravity" | "vscode" | "windsurf" | "kiro" => {
+            home_lookup_reading(home).or(local_data_lookup_reading(
+                probes.host,
+                probes.local_data_dir,
+            ))
+        }
         _ => Reading::No,
     };
     let app = if client_type == "codex_cli" {
@@ -926,18 +1130,34 @@ fn client_home_dir_reading(
     exists: &dyn Fn(&Path) -> Reading,
 ) -> Reading {
     // Path components rather than one string, so `.config/muse` is joined with
-    // the platform's own separator.
-    let dir: &[&str] = match client_type {
-        "cursor" => &[".cursor"],
-        "codex_cli" => &[".codex"],
-        "muse_code" => &[".config", "muse"],
+    // the platform's own separator. Several places are an OR.
+    let dirs: &[&[&str]] = match client_type {
+        "cursor" => &[&[".cursor"]],
+        "codex_cli" => &[&[".codex"]],
+        "muse_code" => &[&[".config", "muse"]],
+        // Antigravity's own folder under `~/.gemini`, current and older. NOT
+        // `~/.gemini` itself, which Gemini CLI owns, and not `~/.gemini/skills`,
+        // which Wenlan's own skills install creates.
+        "antigravity" => &[&[".gemini", "config"], &[".gemini", "antigravity"]],
+        // Files Copilot CLI writes on first run, not the `~/.copilot` folder:
+        // installing skills for VS Code creates `~/.copilot/skills`, and that
+        // must not make a Copilot CLI that was never here look like a leftover.
+        "copilot_cli" => &[&[".copilot", "config.json"], &[".copilot", "logs"]],
+        "windsurf" => &[&[".codeium", "windsurf"]],
+        "kiro" => &[&[".kiro"]],
+        "opencode" => &[&[".config", "opencode"]],
         _ => return Reading::No,
     };
     match home {
-        Some(home) => exists(
-            &dir.iter()
-                .fold(home.to_path_buf(), |acc, part| acc.join(part)),
-        ),
+        Some(home) => dirs
+            .iter()
+            .map(|dir| {
+                exists(
+                    &dir.iter()
+                        .fold(home.to_path_buf(), |acc, part| acc.join(part)),
+                )
+            })
+            .fold(Reading::No, Reading::or),
         // The missing home is already reported through the config path and the
         // program search; adding it here would only repeat it.
         None => Reading::No,
@@ -996,13 +1216,19 @@ fn raw_duplicate_reading(client_type: &str, config: &ConfigRead) -> Reading {
 /// already-read file (the removal verbs' round-trip tests).
 #[cfg(test)]
 pub(crate) fn client_config_has_raw_entry(client_type: &str, config_path: &Path) -> Reading {
-    raw_entry_reading(client_type, &read_config(config_path))
+    raw_entry_reading(
+        client_type,
+        &read_config_for(JsonDialect::for_client(client_type), config_path),
+    )
 }
 
 /// `raw_duplicate_reading` against a path. Same reason.
 #[cfg(test)]
 pub(crate) fn client_config_has_both_raw_entries(client_type: &str, config_path: &Path) -> Reading {
-    raw_duplicate_reading(client_type, &read_config(config_path))
+    raw_duplicate_reading(
+        client_type,
+        &read_config_for(JsonDialect::for_client(client_type), config_path),
+    )
 }
 
 /// Whether `client_type`'s Wenlan plugin is enabled — the plugin half of
@@ -1062,6 +1288,63 @@ fn entry_spec_json(entry: &serde_json::Value) -> EntrySpec {
             .and_then(|u| u.as_str())
             .is_some_and(|u| !u.trim().is_empty()),
         not_an_entry: (!entry.is_object()).then(|| json_type_name(entry)),
+    }
+}
+
+/// [`entry_spec_json`] for `dialect`'s entry shape. OpenCode keeps the program
+/// and its arguments in ONE `command` list (`["wenlan-mcp", "--agent-name",
+/// "opencode"]`), so the list is split here; a `command` string is the shape
+/// every other client uses and OpenCode refuses, so it reads as invalid
+/// arguments (and a repair rewrites it), never as a healthy entry.
+fn entry_spec_for(dialect: JsonDialect, entry: &serde_json::Value) -> EntrySpec {
+    if dialect != JsonDialect::OpenCode {
+        return entry_spec_json(entry);
+    }
+    let has_url = entry
+        .get("url")
+        .and_then(|u| u.as_str())
+        .is_some_and(|u| !u.trim().is_empty());
+    let not_an_entry = (!entry.is_object()).then(|| json_type_name(entry));
+    let (command, args) = match entry.get("command") {
+        Some(serde_json::Value::Array(items)) => {
+            match items
+                .iter()
+                .map(|item| item.as_str().map(String::from))
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(parts) => {
+                    let mut parts = parts.into_iter();
+                    let command = parts
+                        .next()
+                        .map(|c| c.trim().to_string())
+                        .filter(|c| !c.is_empty());
+                    (command, Ok(parts.collect()))
+                }
+                None => (
+                    items
+                        .first()
+                        .and_then(|c| c.as_str())
+                        .map(|c| c.trim().to_string())
+                        .filter(|c| !c.is_empty()),
+                    Err("`command` has to be a list of strings".to_string()),
+                ),
+            }
+        }
+        Some(serde_json::Value::String(command)) if !command.trim().is_empty() => (
+            Some(command.trim().to_string()),
+            Err(
+                "OpenCode needs `command` to be a list (the program, then its arguments), \
+                 not a single string"
+                    .to_string(),
+            ),
+        ),
+        _ => (None, Ok(Vec::new())),
+    };
+    EntrySpec {
+        command,
+        args,
+        has_url,
+        not_an_entry,
     }
 }
 
@@ -1264,14 +1547,13 @@ fn entry_health_reading(
             Ok(value) => value,
             Err(error) => return EntryHealth::Unreadable { error },
         };
-        match value
-            .get(JsonDialect::for_client(client_type).servers_key())
-            .and_then(|servers| {
-                servers
-                    .get(MCP_SERVER_KEY)
-                    .or(servers.get(LEGACY_MCP_SERVER_KEY))
-            }) {
-            Some(entry) => entry_health_of(entry_spec_json(entry), probes),
+        let dialect = JsonDialect::for_client(client_type);
+        match value.get(dialect.servers_key()).and_then(|servers| {
+            servers
+                .get(MCP_SERVER_KEY)
+                .or(servers.get(LEGACY_MCP_SERVER_KEY))
+        }) {
+            Some(entry) => entry_health_of(entry_spec_for(dialect, entry), probes),
             None => EntryHealth::NoEntry,
         }
     }
@@ -1340,6 +1622,12 @@ pub(crate) fn detect_mcp_clients_with(
         ("Gemini CLI", "gemini_cli"),
         ("Codex CLI", "codex_cli"),
         ("Muse Code", "muse_code"),
+        ("Antigravity", "antigravity"),
+        ("GitHub Copilot", "copilot_cli"),
+        ("VS Code", "vscode"),
+        ("Windsurf", "windsurf"),
+        ("Kiro", "kiro"),
+        ("OpenCode", "opencode"),
     ];
 
     clients
@@ -1353,7 +1641,10 @@ pub(crate) fn detect_mcp_clients_with(
                 ClientConfigPath::Known(path) => {
                     // ONE read answers both "is the file there" and "what does
                     // it say" — see `ConfigRead`.
-                    (Some(path.to_string_lossy().to_string()), read_config(path))
+                    (
+                        Some(path.to_string_lossy().to_string()),
+                        read_config_for(JsonDialect::for_client(client_type), path),
+                    )
                 }
                 ClientConfigPath::UnknownClient => (
                     None,
@@ -1382,6 +1673,8 @@ pub(crate) fn detect_mcp_clients_with(
                     .or(client_home_dir_reading(client_type, home, probes.exists));
             let detected = program.clone().or(leftovers.clone());
             let install_state = install_state_of(&program, &leftovers);
+            let has_skills =
+                crate::skills_install::skills_reading(client_type, home, probes.exists);
 
             McpClient {
                 name: name.to_string(),
@@ -1394,6 +1687,7 @@ pub(crate) fn detect_mcp_clients_with(
                 has_plugin,
                 install_state,
                 entry_health,
+                has_skills,
             }
         })
         .collect()
@@ -2226,6 +2520,12 @@ pub fn agent_name_for_client(client_type: &str) -> Option<&'static str> {
         "cursor" => Some("cursor"),
         "gemini_cli" => Some("gemini-cli"),
         "muse_code" => Some("muse-code"),
+        "antigravity" => Some("antigravity"),
+        "copilot_cli" => Some("copilot-cli"),
+        "vscode" => Some("vscode"),
+        "windsurf" => Some("windsurf"),
+        "kiro" => Some("kiro"),
+        "opencode" => Some("opencode"),
         _ => None,
     }
 }
@@ -2274,8 +2574,8 @@ fn entry_to_write(
 /// The config file's current contents, or `None` when it is measurably absent.
 /// ONE read, three answers — see `unreadable_config_message` for the branch
 /// that `exists()` plus a separate `read_to_string` truncates.
-fn existing_config(config_path: &Path) -> Result<Option<String>, AppError> {
-    match read_config(config_path) {
+fn existing_config(config_path: &Path, read: ConfigRead) -> Result<Option<String>, AppError> {
+    match read {
         ConfigRead::Contents(contents) => Ok(Some(contents)),
         ConfigRead::Absent => Ok(None),
         ConfigRead::Unreadable(error) => Err(unreadable_config_message(config_path, &error)),
@@ -2285,8 +2585,8 @@ fn existing_config(config_path: &Path) -> Result<Option<String>, AppError> {
 /// The same read for the removal verbs, where an absent file is an error rather
 /// than a fresh start. `exists()` reported "No config file found" for a metadata
 /// denial too, presenting a failed look as a measured absence.
-fn config_to_remove_from(config_path: &Path) -> Result<String, AppError> {
-    match read_config(config_path) {
+fn config_to_remove_from(config_path: &Path, read: ConfigRead) -> Result<String, AppError> {
+    match read {
         ConfigRead::Contents(contents) => Ok(contents),
         ConfigRead::Absent => Err(AppError::Generic(
             "No config file found — nothing to remove".into(),
@@ -2351,7 +2651,7 @@ fn write_wenlan_entry_in(
     decision: McpEntryDecision,
 ) -> Result<Vec<UndeterminedInput>, AppError> {
     let (entry, undetermined) = entry_to_write(decision)?;
-    let existing = existing_config(config_path)?;
+    let existing = existing_config(config_path, read_config_for(dialect, config_path))?;
     let mut root = match &existing {
         // Read, parse, CHECK THE SHAPE, build the new document, and only then
         // back up — see `back_up_parsed`. Backing up first overwrites a
@@ -2382,10 +2682,7 @@ fn write_wenlan_entry_in(
     if !root.get(servers_key).is_some_and(|v| v.is_object()) {
         root[servers_key] = serde_json::json!({});
     }
-    let mut entry_value =
-        serde_json::to_value(entry).map_err(|e| AppError::Generic(e.to_string()))?;
-    dialect.decorate_entry(&mut entry_value);
-    root[servers_key][MCP_SERVER_KEY] = entry_value;
+    root[servers_key][MCP_SERVER_KEY] = dialect.entry_value(entry)?;
     if let Some(servers) = root[servers_key].as_object_mut() {
         servers.remove(LEGACY_MCP_SERVER_KEY);
     }
@@ -2429,7 +2726,7 @@ pub(crate) fn write_wenlan_entry_toml_with(
     use toml_edit::{DocumentMut, Item, Table};
 
     let (entry, undetermined) = entry_to_write(decision)?;
-    let existing = existing_config(config_path)?;
+    let existing = existing_config(config_path, read_config(config_path))?;
     let mut doc: DocumentMut = match &existing {
         // Same ordering as `write_wenlan_entry_with`: parse FIRST, back up only
         // what parsed.
@@ -2502,7 +2799,7 @@ fn remove_json_keys(
     keys: &[&str],
     not_found: &str,
 ) -> Result<(), AppError> {
-    let contents = config_to_remove_from(config_path)?;
+    let contents = config_to_remove_from(config_path, read_config_for(dialect, config_path))?;
     let mut root = serde_json::from_str::<serde_json::Value>(&contents).map_err(|e| {
         AppError::Generic(format!("Invalid JSON in {}: {}", config_path.display(), e))
     })?;
@@ -2544,7 +2841,7 @@ fn remove_toml_keys(
 ) -> Result<(), AppError> {
     use toml_edit::DocumentMut;
 
-    let contents = config_to_remove_from(config_path)?;
+    let contents = config_to_remove_from(config_path, read_config(config_path))?;
     let mut doc: DocumentMut = contents.parse().map_err(|e| {
         AppError::Generic(format!("Invalid TOML in {}: {}", config_path.display(), e))
     })?;
@@ -2726,6 +3023,12 @@ mod tests {
             ("gemini_cli", &[".gemini", "settings.json"]),
             ("codex_cli", &[".codex", "config.toml"]),
             ("muse_code", &[".config", "muse", "settings.json"]),
+            ("antigravity", &[".gemini", "config", "mcp_config.json"]),
+            ("copilot_cli", &[".copilot", "mcp-config.json"]),
+            ("vscode", &["Code", "User", "mcp.json"]),
+            ("windsurf", &[".codeium", "windsurf", "mcp_config.json"]),
+            ("kiro", &[".kiro", "settings", "mcp.json"]),
+            ("opencode", &[".config", "opencode", "opencode.json"]),
         ] {
             let path = client_config_path(client_type).unwrap();
             let expected = tail.iter().fold(PathBuf::new(), |acc, part| acc.join(part));
@@ -4310,6 +4613,11 @@ mod tests {
             "gemini_cli",
             "codex_cli",
             "muse_code",
+            "antigravity",
+            "copilot_cli",
+            "windsurf",
+            "kiro",
+            "opencode",
         ] {
             match client_config_path_for(client_type, None, Some(&config_dir)) {
                 ClientConfigPath::Undetermined(why) => assert!(
@@ -4335,7 +4643,7 @@ mod tests {
         let clients = detect_mcp_clients_from(None, None, |_| Reading::No);
         assert_eq!(
             clients.len(),
-            6,
+            12,
             "a client whose path could not be built must still be a row that says so"
         );
         for client in &clients {
@@ -4499,6 +4807,12 @@ mod tests {
             "gemini_cli",
             "codex_cli",
             "muse_code",
+            "antigravity",
+            "copilot_cli",
+            "vscode",
+            "windsurf",
+            "kiro",
+            "opencode",
         ] {
             assert!(types.contains(&expected.to_string()), "missing {expected}");
         }
@@ -5481,6 +5795,14 @@ args = ["-y", "wenlan-mcp"]
 
         let mut machine = Machine::new(HostKind::Linux);
         machine.on_path = vec!["cursor"];
+        assert_eq!(
+            machine.install_state(home, "cursor"),
+            InstallState::Installed
+        );
+
+        // Cursor's CLI alone, without the editor, still reads ~/.cursor.
+        let mut machine = Machine::new(HostKind::Linux);
+        machine.on_path = vec!["cursor-agent"];
         assert_eq!(
             machine.install_state(home, "cursor"),
             InstallState::Installed
@@ -6865,5 +7187,742 @@ args = ["-y", "wenlan-mcp"]
         );
         // Not a neighbour's row: nothing else claims Muse's settings file.
         assert_eq!(row(&clients, "gemini_cli").has_raw_entry, Reading::No);
+    }
+
+    // ── Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode ───
+
+    /// What each platform's `dirs` lookups report, as fixtures: the home
+    /// directory and the application-configuration directory.
+    fn host_dirs() -> Vec<(HostKind, PathBuf, PathBuf)> {
+        vec![
+            (
+                HostKind::MacOs,
+                PathBuf::from("/Users/a"),
+                PathBuf::from("/Users/a/Library/Application Support"),
+            ),
+            (
+                HostKind::Linux,
+                PathBuf::from("/home/a"),
+                PathBuf::from("/home/a/.config"),
+            ),
+            (
+                HostKind::Windows,
+                PathBuf::from(r"C:\Users\a"),
+                PathBuf::from(r"C:\Users\a\AppData\Roaming"),
+            ),
+        ]
+    }
+
+    fn joined(base: &Path, tail: &[&str]) -> PathBuf {
+        tail.iter()
+            .fold(base.to_path_buf(), |acc, part| acc.join(part))
+    }
+
+    #[test]
+    fn new_client_config_paths_on_each_os() {
+        for (host, home, config) in host_dirs() {
+            for (client_type, tail) in [
+                (
+                    "antigravity",
+                    [".gemini", "config", "mcp_config.json"].as_slice(),
+                ),
+                ("copilot_cli", &[".copilot", "mcp-config.json"]),
+                ("windsurf", &[".codeium", "windsurf", "mcp_config.json"]),
+                ("kiro", &[".kiro", "settings", "mcp.json"]),
+                // Not `config_dir`, on any OS.
+                ("opencode", &[".config", "opencode", "opencode.json"]),
+            ] {
+                assert_eq!(
+                    client_config_path_for(client_type, Some(&home), Some(&config)),
+                    ClientConfigPath::Known(joined(&home, tail)),
+                    "{client_type} on {host:?}"
+                );
+            }
+            // VS Code's user mcp.json is under the config dir, and only that.
+            assert_eq!(
+                client_config_path_for("vscode", Some(&home), Some(&config)),
+                ClientConfigPath::Known(joined(&config, &["Code", "User", "mcp.json"])),
+                "vscode on {host:?}"
+            );
+            assert_eq!(
+                client_config_path_for("vscode", None, Some(&config)),
+                ClientConfigPath::Known(joined(&config, &["Code", "User", "mcp.json"])),
+            );
+            match client_config_path_for("vscode", Some(&home), None) {
+                ClientConfigPath::Undetermined(why) => {
+                    assert!(why.contains("application-configuration"), "{why}")
+                }
+                other => panic!("vscode without a config dir reported {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn new_clients_pick_their_dialect_and_agent_name() {
+        for (client_type, dialect, key, agent) in [
+            (
+                "antigravity",
+                JsonDialect::McpServers,
+                "mcpServers",
+                "antigravity",
+            ),
+            (
+                "copilot_cli",
+                JsonDialect::Copilot,
+                "mcpServers",
+                "copilot-cli",
+            ),
+            ("vscode", JsonDialect::VsCode, "servers", "vscode"),
+            (
+                "windsurf",
+                JsonDialect::McpServers,
+                "mcpServers",
+                "windsurf",
+            ),
+            ("kiro", JsonDialect::McpServers, "mcpServers", "kiro"),
+            ("opencode", JsonDialect::OpenCode, "mcp", "opencode"),
+        ] {
+            assert_eq!(
+                JsonDialect::for_client(client_type),
+                dialect,
+                "{client_type}"
+            );
+            assert_eq!(dialect.servers_key(), key, "{client_type}");
+            assert_eq!(agent_name_for_client(client_type), Some(agent));
+        }
+    }
+
+    /// The entry each new dialect writes for `/w/wenlan-mcp --agent-name <n>`.
+    fn dialect_entry(dialect: JsonDialect, command: &str, agent: &str) -> serde_json::Value {
+        let args = ["--agent-name", agent];
+        match dialect {
+            JsonDialect::Copilot => serde_json::json!({
+                "type": "local", "tools": ["*"], "command": command, "args": args,
+            }),
+            JsonDialect::VsCode => serde_json::json!({
+                "type": "stdio", "command": command, "args": args,
+            }),
+            JsonDialect::OpenCode => serde_json::json!({
+                "type": "local",
+                "command": [command, "--agent-name", agent],
+                "enabled": true,
+            }),
+            other => panic!("not a new dialect: {other:?}"),
+        }
+    }
+
+    /// Write, detect, migrate the legacy `origin` entry, back up, and remove —
+    /// the same contract Cursor's `mcpServers` file has — for each dialect
+    /// that is not plain `{command, args}`.
+    #[test]
+    fn new_dialects_round_trip_write_detect_migrate_and_remove() {
+        for (client_type, dialect) in [
+            ("copilot_cli", JsonDialect::Copilot),
+            ("vscode", JsonDialect::VsCode),
+            ("opencode", JsonDialect::OpenCode),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let config_path = tmp.path().join("nested").join("config.json");
+            let key = dialect.servers_key();
+            let agent = agent_name_for_client(client_type).unwrap();
+            let decision = || with_agent_name(staged_write(), Some(agent));
+            let expected = dialect_entry(dialect, "/opt/wenlan/bin/wenlan-mcp", agent);
+
+            // A fresh file: created, holding only the servers key.
+            assert_eq!(
+                client_config_has_raw_entry(client_type, &config_path),
+                Reading::No
+            );
+            write_wenlan_entry_in(&config_path, false, dialect, decision()).unwrap();
+            assert_eq!(
+                read_json(&config_path),
+                serde_json::json!({ key: { "wenlan": expected.clone() } }),
+                "{client_type}"
+            );
+            assert!(!config_path.with_extension("json.bak").exists());
+            assert!(yes(client_config_has_raw_entry(client_type, &config_path)));
+
+            // An existing file with a legacy entry, a sibling and unrelated
+            // keys: the legacy entry goes, the rest stays, the old bytes are
+            // backed up, and no duplicate is left.
+            let original = serde_json::json!({
+                "theme": "dark",
+                key: {
+                    "origin": {"command": "/gone/origin-mcp"},
+                    "other": {"command": "x"},
+                },
+            });
+            std::fs::write(&config_path, original.to_string()).unwrap();
+            assert!(yes(client_config_has_raw_entry(client_type, &config_path)));
+            write_wenlan_entry_in(&config_path, false, dialect, decision()).unwrap();
+            let written = read_json(&config_path);
+            assert_eq!(written["theme"], "dark", "{client_type}");
+            assert_eq!(written[key]["other"], original[key]["other"]);
+            assert!(written[key]["origin"].is_null(), "{client_type}");
+            assert_eq!(written[key]["wenlan"], expected, "{client_type}");
+            assert_eq!(read_json(&config_path.with_extension("json.bak")), original);
+            assert!(!yes(client_config_has_both_raw_entries(
+                client_type,
+                &config_path
+            )));
+
+            // The raw duplicate is seen, and the legacy removal keeps wenlan.
+            let mut both = written.clone();
+            both[key]["origin"] = serde_json::json!({"command": "/gone/origin-mcp"});
+            std::fs::write(&config_path, both.to_string()).unwrap();
+            assert!(yes(client_config_has_both_raw_entries(
+                client_type,
+                &config_path
+            )));
+            remove_legacy_origin_entry_for(&config_path, client_type).unwrap();
+            let after = read_json(&config_path);
+            assert!(after[key]["origin"].is_null());
+            assert_eq!(after[key]["wenlan"], expected);
+
+            // Removal clears exactly Wenlan's entry.
+            remove_wenlan_entry_for(&config_path, client_type).unwrap();
+            let after = read_json(&config_path);
+            assert!(after[key]["wenlan"].is_null(), "{client_type}");
+            assert_eq!(after[key]["other"], original[key]["other"]);
+            assert_eq!(
+                client_config_has_raw_entry(client_type, &config_path),
+                Reading::No
+            );
+            assert!(remove_wenlan_entry_for(&config_path, client_type).is_err());
+        }
+    }
+
+    /// Each dialect reads its own key only: a Cursor-style `mcpServers` entry
+    /// is invisible to VS Code and OpenCode, and theirs to Cursor.
+    #[test]
+    fn new_dialects_read_their_own_key_and_only_it() {
+        let cursor_style = r#"{"mcpServers": {"wenlan": {"command": "c"}}}"#;
+        let vscode_style = r#"{"servers": {"wenlan": {"type": "stdio", "command": "c"}}}"#;
+        let opencode_style = r#"{"mcp": {"wenlan": {"type": "local", "command": ["c"]}}}"#;
+        let configured = |client: &str, body: &str| {
+            yes(raw_entry_reading(
+                client,
+                &ConfigRead::Contents(body.into()),
+            ))
+        };
+        assert!(configured("copilot_cli", cursor_style));
+        assert!(configured("vscode", vscode_style));
+        assert!(!configured("vscode", cursor_style));
+        assert!(configured("opencode", opencode_style));
+        assert!(!configured("opencode", cursor_style));
+        assert!(!configured("cursor", vscode_style));
+        assert!(!configured("cursor", opencode_style));
+        for client in ["antigravity", "windsurf", "kiro"] {
+            assert!(configured(client, cursor_style), "{client}");
+            assert!(!configured(client, vscode_style), "{client}");
+        }
+        assert!(matches!(
+            raw_entry_reading("vscode", &ConfigRead::Contents("// jsonc\n{}".into())),
+            Reading::Unreadable { .. }
+        ));
+    }
+
+    /// The plain `mcpServers` clients write exactly what Cursor writes, named
+    /// for themselves.
+    #[test]
+    #[serial_test::serial]
+    fn mcp_servers_clients_write_command_and_args_named_for_themselves() {
+        let _env = EnvGuard::capture(&[MCP_RESOLVER_HOME_ENV, "WENLAN_MCP_DEV_BIN"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let installed = install_wenlan_mcp_into(tmp.path());
+        std::env::remove_var("WENLAN_MCP_DEV_BIN");
+        std::env::set_var(MCP_RESOLVER_HOME_ENV, tmp.path());
+        let command = installed.to_str().unwrap();
+
+        for (client_type, agent) in [
+            ("antigravity", "antigravity"),
+            ("windsurf", "windsurf"),
+            ("kiro", "kiro"),
+        ] {
+            let config_path = client_config_path_for(client_type, Some(tmp.path()), None).unwrap();
+            write_wenlan_entry(&config_path, client_type).unwrap();
+            assert_eq!(
+                read_json(&config_path),
+                serde_json::json!({"mcpServers": {"wenlan": {
+                    "command": command, "args": ["--agent-name", agent],
+                }}}),
+                "{client_type}"
+            );
+        }
+        // And the decorated dialects through the real entry point.
+        for client_type in ["copilot_cli", "opencode"] {
+            let config_path = client_config_path_for(client_type, Some(tmp.path()), None).unwrap();
+            write_wenlan_entry(&config_path, client_type).unwrap();
+            let dialect = JsonDialect::for_client(client_type);
+            assert_eq!(
+                read_json(&config_path)[dialect.servers_key()]["wenlan"],
+                dialect_entry(
+                    dialect,
+                    command,
+                    agent_name_for_client(client_type).unwrap()
+                ),
+            );
+        }
+    }
+
+    /// OpenCode with only `opencode.jsonc`: unreadable to detection, and a
+    /// write or removal is refused without touching either file.
+    #[test]
+    fn an_opencode_jsonc_only_config_is_unreadable_and_never_rewritten() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let config_path = client_config_path_for("opencode", Some(home), None).unwrap();
+        let jsonc = config_path.with_extension("jsonc");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        let body = "{\n  // mine\n  \"mcp\": {\"wenlan\": {\"type\": \"local\", \"command\": [\"c\"]},},\n}\n";
+        std::fs::write(&jsonc, body).unwrap();
+
+        let reading = client_config_has_raw_entry("opencode", &config_path);
+        match &reading {
+            Reading::Unreadable { error } => assert!(error.contains("opencode.jsonc"), "{error}"),
+            other => panic!("a JSONC-only OpenCode reported {other:?}"),
+        }
+
+        let error = write_wenlan_entry_in(
+            &config_path,
+            false,
+            JsonDialect::OpenCode,
+            with_agent_name(staged_write(), Some("opencode")),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Nothing was written"), "{error}");
+        assert!(error.contains("opencode.jsonc"), "{error}");
+        assert!(
+            !config_path.exists(),
+            "no opencode.json is created beside it"
+        );
+        assert_eq!(std::fs::read_to_string(&jsonc).unwrap(), body);
+        assert!(remove_wenlan_entry_for(&config_path, "opencode").is_err());
+        assert!(remove_legacy_origin_entry_for(&config_path, "opencode").is_err());
+        assert_eq!(std::fs::read_to_string(&jsonc).unwrap(), body);
+
+        // Through detection: the row says unreadable, never "not configured",
+        // and the entry is not judged. The folder still says OpenCode was here.
+        let mut machine = Machine::new(HostKind::Linux);
+        machine.existing = vec![home.join(".config").join("opencode")];
+        let clients = machine.detect(home);
+        let opencode = row(&clients, "opencode");
+        assert!(matches!(opencode.has_raw_entry, Reading::Unreadable { .. }));
+        assert!(matches!(
+            opencode.already_configured,
+            Reading::Unreadable { .. }
+        ));
+        assert!(matches!(
+            opencode.entry_health,
+            EntryHealth::Unreadable { .. }
+        ));
+        assert_eq!(opencode.detected, Reading::Yes);
+        assert_eq!(opencode.install_state, InstallState::ConfigOnly);
+
+        // Only the JSONC-only case: with an `opencode.json` too, that file is
+        // the one Wenlan edits, and the `.jsonc` is left alone.
+        std::fs::write(
+            &config_path,
+            r#"{"$schema": "https://opencode.ai/config.json"}"#,
+        )
+        .unwrap();
+        write_wenlan_entry_in(
+            &config_path,
+            false,
+            JsonDialect::OpenCode,
+            with_agent_name(staged_write(), Some("opencode")),
+        )
+        .unwrap();
+        let written = read_json(&config_path);
+        assert_eq!(written["$schema"], "https://opencode.ai/config.json");
+        assert!(written["mcp"]["wenlan"].is_object());
+        assert_eq!(std::fs::read_to_string(&jsonc).unwrap(), body);
+
+        // The rule is OpenCode's alone: a `.jsonc` beside another client's
+        // absent file changes nothing.
+        let cursor = home.join("mcp.json");
+        std::fs::write(home.join("mcp.jsonc"), "{}").unwrap();
+        assert_eq!(client_config_has_raw_entry("cursor", &cursor), Reading::No);
+    }
+
+    #[test]
+    fn opencode_entry_health_reads_the_command_list() {
+        let health = |entry: serde_json::Value, names: &[&str]| {
+            let which = resolves(names);
+            entry_health_reading(
+                "opencode",
+                &ConfigRead::Contents(serde_json::json!({"mcp": {"wenlan": entry}}).to_string()),
+                &health_probes(HostKind::MacOs, &which, &is_a_file),
+            )
+        };
+        assert_eq!(
+            health(
+                dialect_entry(
+                    JsonDialect::OpenCode,
+                    "/opt/wenlan/bin/wenlan-mcp",
+                    "opencode"
+                ),
+                &[]
+            ),
+            EntryHealth::Healthy
+        );
+        assert_eq!(
+            health(
+                serde_json::json!({"type": "local", "command": ["wenlan-mcp"]}),
+                &["wenlan-mcp"]
+            ),
+            EntryHealth::Healthy
+        );
+        assert_repair(
+            health(
+                serde_json::json!({"type": "local", "command": ["wenlan-mcp"]}),
+                &[],
+            ),
+            RepairReason::CommandNotFound,
+        );
+        // npx is judged on the list's tail, as `args` elsewhere.
+        assert_eq!(
+            health(
+                serde_json::json!({"command": ["npx", "-y", "wenlan-mcp"]}),
+                &["npx"]
+            ),
+            EntryHealth::Healthy
+        );
+        assert_repair(
+            health(
+                serde_json::json!({"command": ["npx", "-y", "other"]}),
+                &["npx"],
+            ),
+            RepairReason::ArgsInvalid,
+        );
+        // The shape every other client uses is one OpenCode refuses.
+        let detail = assert_repair(
+            health(
+                serde_json::json!({"command": "/opt/wenlan/bin/wenlan-mcp", "args": []}),
+                &[],
+            ),
+            RepairReason::ArgsInvalid,
+        );
+        assert!(detail.contains("list"), "{detail}");
+        assert_repair(
+            health(serde_json::json!({"command": ["/w", 3]}), &[]),
+            RepairReason::ArgsInvalid,
+        );
+        assert_repair(
+            health(serde_json::json!({"type": "local", "command": []}), &[]),
+            RepairReason::CommandMissing,
+        );
+        assert_eq!(
+            health(
+                serde_json::json!({"type": "remote", "url": "https://x"}),
+                &[]
+            ),
+            EntryHealth::Healthy
+        );
+        // A `servers`/`mcpServers` entry is not OpenCode's.
+        let which = resolves(&[]);
+        assert_eq!(
+            entry_health_reading(
+                "opencode",
+                &ConfigRead::Contents(r#"{"mcpServers": {"wenlan": {"command": "/w"}}}"#.into()),
+                &health_probes(HostKind::MacOs, &which, &is_a_file),
+            ),
+            EntryHealth::NoEntry
+        );
+    }
+
+    #[test]
+    fn copilot_and_vscode_entry_health_read_their_entry() {
+        let which = resolves(&[]);
+        let probes = health_probes(HostKind::MacOs, &which, &is_a_file);
+        for (client_type, dialect) in [
+            ("copilot_cli", JsonDialect::Copilot),
+            ("vscode", JsonDialect::VsCode),
+        ] {
+            let body = serde_json::json!({ dialect.servers_key(): {
+                "wenlan": dialect_entry(dialect, "/opt/wenlan/bin/wenlan-mcp", "x"),
+            }})
+            .to_string();
+            assert_eq!(
+                entry_health_reading(client_type, &ConfigRead::Contents(body), &probes),
+                EntryHealth::Healthy,
+                "{client_type}"
+            );
+            let broken = serde_json::json!({ dialect.servers_key(): {
+                "wenlan": {"type": "stdio", "command": "wenlan-mcp"},
+            }})
+            .to_string();
+            assert_repair(
+                entry_health_reading(client_type, &ConfigRead::Contents(broken), &probes),
+                RepairReason::CommandNotFound,
+            );
+        }
+    }
+
+    /// Every app location, one at a time, on each OS: each case makes exactly
+    /// that path the only thing on the machine, after an empty-machine control.
+    #[test]
+    fn vscode_family_apps_are_found_on_each_os() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let local = home.join("AppData").join("Local");
+        let program_files = home.join("PF");
+        for (client_type, bundle, folder, exe, linux) in [
+            (
+                "antigravity",
+                "Antigravity.app",
+                "Antigravity",
+                "Antigravity.exe",
+                ["/usr/share/antigravity/antigravity"].as_slice(),
+            ),
+            (
+                "vscode",
+                "Visual Studio Code.app",
+                "Microsoft VS Code",
+                "Code.exe",
+                &["/usr/share/code/code", "/snap/bin/code"],
+            ),
+            (
+                "windsurf",
+                "Windsurf.app",
+                "Windsurf",
+                "Windsurf.exe",
+                &["/usr/share/windsurf/windsurf"],
+            ),
+            (
+                "kiro",
+                "Kiro.app",
+                "Kiro",
+                "Kiro.exe",
+                &["/usr/share/kiro/kiro"],
+            ),
+        ] {
+            let mut cases: Vec<(HostKind, PathBuf)> = vec![
+                (HostKind::MacOs, PathBuf::from("/Applications").join(bundle)),
+                (HostKind::MacOs, home.join("Applications").join(bundle)),
+                (
+                    HostKind::Windows,
+                    local.join("Programs").join(folder).join(exe),
+                ),
+                (HostKind::Windows, program_files.join(folder).join(exe)),
+            ];
+            cases.extend(linux.iter().map(|p| (HostKind::Linux, PathBuf::from(p))));
+            for (host, hit) in cases {
+                let mut machine = Machine::new(host);
+                machine.local = Some(local.clone());
+                machine.program_files = vec![program_files.clone()];
+                assert_eq!(
+                    machine.install_state(home, client_type),
+                    InstallState::NotFound,
+                    "control: {client_type} on an empty {host:?} machine"
+                );
+                machine.existing = vec![hit.clone()];
+                assert_eq!(
+                    machine.install_state(home, client_type),
+                    InstallState::Installed,
+                    "{client_type}: {} was not probed on {host:?}",
+                    hit.display()
+                );
+            }
+        }
+        // A Windows machine whose local-data folder is unknown has not been
+        // searched, so it is not "not found".
+        assert!(matches!(
+            Machine::new(HostKind::Windows).install_state(home, "vscode"),
+            InstallState::Unreadable { .. }
+        ));
+    }
+
+    #[test]
+    fn new_clients_are_found_by_their_cli() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        for (client_type, names) in [
+            ("antigravity", ["agy", "antigravity"].as_slice()),
+            ("copilot_cli", &["copilot"]),
+            ("vscode", &["code"]),
+            ("windsurf", &["windsurf"]),
+            ("kiro", &["kiro", "kiro-cli"]),
+            ("opencode", &["opencode"]),
+        ] {
+            assert_eq!(
+                Machine::new(HostKind::Linux).install_state(home, client_type),
+                InstallState::NotFound,
+                "control: {client_type}"
+            );
+            for name in names {
+                let mut machine = Machine::new(HostKind::Linux);
+                machine.on_path = vec![*name];
+                let clients = machine.detect(home);
+                assert_eq!(
+                    row(&clients, client_type).install_state,
+                    InstallState::Installed,
+                    "{client_type} via `{name}`"
+                );
+                // The CLI is that client's only: no neighbour claims it.
+                for other in clients.iter().filter(|c| c.client_type != client_type) {
+                    assert_ne!(
+                        other.install_state,
+                        InstallState::Installed,
+                        "`{name}` also installed {}",
+                        other.client_type
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn new_clients_home_folders_are_leftovers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        for (client_type, folder) in [
+            ("antigravity", [".gemini", "config"].as_slice()),
+            ("antigravity", &[".gemini", "antigravity"]),
+            ("copilot_cli", &[".copilot", "config.json"]),
+            ("copilot_cli", &[".copilot", "logs"]),
+            ("windsurf", &[".codeium", "windsurf"]),
+            ("kiro", &[".kiro"]),
+            ("opencode", &[".config", "opencode"]),
+        ] {
+            let mut machine = Machine::new(HostKind::MacOs);
+            machine.existing = vec![joined(home, folder)];
+            let clients = machine.detect(home);
+            let client = row(&clients, client_type);
+            assert_eq!(
+                client.install_state,
+                InstallState::ConfigOnly,
+                "{client_type}: {folder:?}"
+            );
+            assert_eq!(client.detected, Reading::Yes);
+        }
+        // Wenlan's own skills folders are not traces of a tool: VS Code's
+        // skills live in `~/.copilot/skills`, and Gemini CLI's (shared with
+        // Antigravity) in `~/.gemini/skills`.
+        let mut machine = Machine::new(HostKind::MacOs);
+        machine.existing = vec![
+            home.join(".copilot"),
+            home.join(".copilot").join("skills"),
+            home.join(".gemini"),
+            home.join(".gemini").join("skills"),
+        ];
+        let clients = machine.detect(home);
+        assert_eq!(
+            row(&clients, "copilot_cli").install_state,
+            InstallState::NotFound
+        );
+        assert_eq!(
+            row(&clients, "antigravity").install_state,
+            InstallState::NotFound
+        );
+        assert_eq!(
+            row(&clients, "vscode").install_state,
+            InstallState::NotFound,
+            "control: VS Code leaves nothing in the home folder this app looks for"
+        );
+    }
+
+    #[test]
+    fn has_skills_is_reported_for_skills_clients_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let mut skills: Vec<&str> = crate::agent_skills_bundle::FILES
+            .iter()
+            .filter_map(|(path, _)| path.split('/').next())
+            .collect();
+        skills.sort_unstable();
+        skills.dedup();
+
+        let clients = Machine::new(HostKind::MacOs).detect(home);
+        for client_type in [
+            "cursor",
+            "gemini_cli",
+            "antigravity",
+            "copilot_cli",
+            "vscode",
+            "windsurf",
+            "kiro",
+            "opencode",
+        ] {
+            assert_eq!(
+                row(&clients, client_type).has_skills,
+                Some(Reading::No),
+                "{client_type}"
+            );
+        }
+        for client_type in ["claude_code", "codex_cli", "claude_desktop", "muse_code"] {
+            assert_eq!(row(&clients, client_type).has_skills, None, "{client_type}");
+        }
+
+        // Every marker present under Kiro's folder: yes for Kiro only.
+        let mut machine = Machine::new(HostKind::MacOs);
+        let kiro = home.join(".kiro").join("skills");
+        machine.existing = skills
+            .iter()
+            .map(|skill| kiro.join(skill).join(crate::skills_install::MANAGED_MARKER))
+            .collect();
+        let clients = machine.detect(home);
+        assert_eq!(row(&clients, "kiro").has_skills, Some(Reading::Yes));
+        assert_eq!(row(&clients, "cursor").has_skills, Some(Reading::No));
+
+        // A marker the OS would not stat is unknown, not "no skills".
+        let mut machine = Machine::new(HostKind::MacOs);
+        machine.unreadable = vec![kiro
+            .join(skills[0])
+            .join(crate::skills_install::MANAGED_MARKER)];
+        machine.existing = skills
+            .iter()
+            .skip(1)
+            .map(|skill| kiro.join(skill).join(crate::skills_install::MANAGED_MARKER))
+            .collect();
+        let clients = machine.detect(home);
+        assert!(matches!(
+            row(&clients, "kiro").has_skills,
+            Some(Reading::Unreadable { .. })
+        ));
+
+        // No home: unknown for skills clients, still absent for the others.
+        let clients = detect_mcp_clients_from(None, None, |_| Reading::No);
+        assert!(matches!(
+            row(&clients, "opencode").has_skills,
+            Some(Reading::Unreadable { .. })
+        ));
+        assert_eq!(row(&clients, "muse_code").has_skills, None);
+
+        // On the wire: `null` for a client with no skills folder.
+        let value = serde_json::to_value(row(
+            &Machine::new(HostKind::MacOs).detect(home),
+            "claude_code",
+        ))
+        .unwrap();
+        assert_eq!(value["has_skills"], serde_json::Value::Null);
+        let value =
+            serde_json::to_value(row(&Machine::new(HostKind::MacOs).detect(home), "cursor"))
+                .unwrap();
+        assert_eq!(value["has_skills"], serde_json::json!({"kind": "no"}));
+    }
+
+    #[test]
+    fn new_client_rows_carry_their_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clients = Machine::new(HostKind::MacOs).detect(tmp.path());
+        for (client_type, name) in [
+            ("antigravity", "Antigravity"),
+            ("copilot_cli", "GitHub Copilot"),
+            ("vscode", "VS Code"),
+            ("windsurf", "Windsurf"),
+            ("kiro", "Kiro"),
+            ("opencode", "OpenCode"),
+        ] {
+            let client = row(&clients, client_type);
+            assert_eq!(client.name, name);
+            assert_eq!(
+                client.has_plugin,
+                Reading::No,
+                "{client_type} has no plugin route"
+            );
+            assert_eq!(client.install_state, InstallState::NotFound);
+        }
     }
 }

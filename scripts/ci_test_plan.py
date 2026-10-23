@@ -108,6 +108,7 @@ MANUAL_CORE_INTEGRATION = {"cached_scenario_db_check", "eval_harness"}
 PLUGIN_JOB_PREFIXES = (
     "plugin",
     "plugin-codex",
+    "plugin-agents",
     ".agents/plugins",
     ".claude-plugin",
 )
@@ -120,6 +121,8 @@ PLUGIN_JOB_FILES = {
     "scripts/gen-plugin-verbs.test.mjs",
     "scripts/gen-codex-plugin.mjs",
     "scripts/gen-codex-plugin.test.mjs",
+    "scripts/gen-agent-skills.mjs",
+    "scripts/gen-agent-skills.test.mjs",
 }
 
 DOCS_JOB_PREFIXES = ("docs",)
