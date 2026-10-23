@@ -141,3 +141,25 @@
 
 /* The code lines follow the note lines as one list: close the notice's row gap. */
 .note-review-notice__basis-list + .note-review-notice__basis-list { margin-top: -6px; }
+
+/* The code that needs a look: one line across the notice, its button at the end. */
+.note-review-notice__code-summary {
+  flex: 1 1 100%;
+  flex-wrap: nowrap;
+}
+.note-review-notice__code-summary .note-review-notice__basis-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-review-notice__code-summary .note-review-notice__basis-text::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--mem-accent-amber);
+  vertical-align: 1px;
+}
+.note-review-notice__basis-list + .note-review-notice__code-summary { margin-top: -6px; }

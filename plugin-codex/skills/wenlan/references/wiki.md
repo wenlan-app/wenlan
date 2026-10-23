@@ -191,9 +191,46 @@ One line per planned page with its title: written, left as is, waiting for
 steep, re-pointed, or staged for review. When pages are left over for the next
 run, say how many and that `$wenlan wiki` again writes them. Then one line on
 what happens later: `/brief` names how many pages rely on code that changed,
-and `$wenlan steep` brings them up to date.
+and `$wenlan steep` brings them up to date. When step 7 ran, one more line:
+how many docs were read and how many fixes go into the pull request, each as
+the file name and what changes.
 
-## 7. Put the wiki in the repository
+## 7. Check the repository's own docs
+
+When the Space is connected to this repository, Wenlan also keeps the
+repository's own docs honest: a sentence the code no longer agrees with gets a
+fix, and the fix goes into the same pull request as the wiki for the user to
+review. In Wenlan's daily run (`WENLAN_AGENT_NAME` is `wenlan-daily`) the Space
+is connected. Otherwise run the `wiki status` command of step 8 first; when it
+prints `null`, or the command is missing, skip this step.
+
+1. List the docs with `git ls-files '*.md' '*.mdx'`. Leave out the wiki folder
+   (`folder` in the status, `wiki` by default), any changelog and anything
+   under `node_modules`. Read at most 30 per run, in this order: `README.md`,
+   `AGENTS.md`, `CLAUDE.md`, then files under `docs/`, then `SKILL.md` files,
+   then the rest.
+2. In each doc, look at sentences that state something the code decides:
+   commands, scripts, file and folder names, versions, settings and their
+   defaults, flags, routes, function or type names, and the steps to run,
+   build or test. Check each one in the code.
+3. Only when the code clearly says otherwise, call `doc_fix` with
+   `action: "suggest"`, `space`, the doc's `path`, `old_text` copied exactly
+   from the file (the sentence, or the part of it that is wrong; it must occur
+   in the file once), `new_text` that changes only what is wrong, in the same
+   language, tone and formatting, `reason` (one sentence: what the code says
+   instead) and `code` (the lines that show it, as a list:
+   `[{"path": "src/server.ts", "line_start": 4, "line_end": 6}]`).
+4. Never fix opinions, plans, history, style, wording or typos, anything you
+   cannot check in the code, Wenlan's own block between `<!-- WENLAN:START -->`
+   and `<!-- WENLAN:END -->`, or anything in the wiki folder. When unsure,
+   leave the sentence alone.
+5. Suggest at most 10 fixes per run. A refusal saying the user declined it:
+   leave that sentence alone. A refusal saying the text occurs more than once
+   or not at all: copy it again with more of the sentence, once.
+6. Finish with `doc_fix` `action: "checked"`, `space` and `docs` set to how
+   many docs you read, even when you found nothing to fix.
+
+## 8. Put the wiki in the repository
 
 Wenlan can write the pages that rest on this repository's code into a folder of
 the repository and offer them as a pull request. Skip this step when
@@ -223,10 +260,11 @@ publish line says how many stayed out.
 
 - Reads and writes of pages just happen; no approval is needed.
 - Wiki never deletes a page and never edits the repository's files itself.
-  Step 7 asks Wenlan to write the wiki folder on its own `wenlan/wiki` branch,
+  A doc fix of step 7 is only recorded; it reaches the repository through the
+  pull request of step 8, for the user to review. Step 8 asks Wenlan to write the wiki folder on its own `wenlan/wiki` branch,
   apart from the working copy, and open a pull request; only with the user's
   yes or an existing binding.
 - Wiki only reads the repository. Shell commands are read-only ones such as
   `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
-  `ls`, `wc`, `grep` and `sed -n`, plus the `wenlan wiki` commands of step 7;
+  `ls`, `wc`, `grep` and `sed -n`, plus the `wenlan wiki` commands of step 8;
   nothing that builds, installs, or changes a file.

@@ -756,11 +756,12 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/spaces/{name}/confirm` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/spaces/{name}/pin` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/spaces/{name}/star` | main | yes | automatic | `none` | `handle_toggle_space_starred` | opaque response type — fail-closed |
+| `POST` | `/api/spaces/{name}/wiki/docs` | main | no | not_applicable | `none` | — | receipt only: the doc fix just recorded or declined (repository file text, not page text) and the open count |
 | `POST` | `/api/spaces/{name}/wiki/publish` | main | no | not_applicable | `none` | — | receipt only: status, page counts, branch and links; page files go to the bound repository, not the response |
 | `DELETE` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
-| `GET` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | binding only: repository path, folder, daily setting and last publish receipt, no prose |
+| `GET` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | binding only: repository path, folder, daily setting, last publish receipt and doc fixes (text of the user's own repository files, not page text) |
 | `GET` | `/api/spaces/{name}/wiki/suggest` | main | no | not_applicable | `none` | — | candidates only: repository paths, page counts and remote URLs, no prose |
-| `PUT` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | binding only: repository path, folder, daily setting and last publish receipt, no prose |
+| `PUT` | `/api/spaces/{name}/wiki/repo` | main | no | not_applicable | `none` | — | binding only: repository path, folder, daily setting, last publish receipt and doc fixes (text of the user's own repository files, not page text) |
 | `POST` | `/api/spaces/{name}/wiki/run` | main | no | not_applicable | `none` | — | receipt only: started flag, no prose |
 | `GET` | `/api/status` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/status` | repair | no | not_applicable | `none` | — | no prose fields |
@@ -797,6 +798,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `delete_page` | yes | automatic | `none` | tool handler |
 | `dismiss_revision` | yes | automatic | `none` | tool handler |
 | `distill` | yes | automatic | `none` | tool handler |
+| `doc_fix` | no | not_applicable | `none` | — |
 | `forget` | yes | automatic | `none` | tool handler |
 | `get_memory_revisions` | yes | automatic | `none` | tool handler |
 | `get_page_revisions` | yes | automatic | `none` | tool handler |
@@ -1444,7 +1446,7 @@ carrying the authority of agreement.
 | `core/m6/shadow.rs::sample_oracle` | `private` | no | no | — | `core/m6/oracle.rs::recompute_full` |
 | `core/maintenance/page_merge_order.rs::order_survivor` | `pub(super)` | no | no | — | `core/maintenance/page_merge_order.rs::load_candidate` |
 | `core/post_ingest.rs::write_grown_page` | `private` | no | no | — | `core/db.rs::find_page_by_source_memory` |
-| `core/post_write/page_dispatch.rs::page_write` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_update_page` | `core/post_write/page_create.rs::create_page_impl`, `core/post_write/page_create.rs::replace_source_page_impl`, `core/post_write/page_create.rs::write_document_source_page_impl` |
+| `core/post_write/page_dispatch.rs::page_write` | `pub` | no | **yes** | `server/page_routes.rs::handle_create_page_inner`, `server/page_routes.rs::handle_refresh_page_inner`, `server/page_routes.rs::handle_update_page`, `server/repo_wiki_routes.rs::take_back_edits` | `core/post_write/page_create.rs::create_page_impl`, `core/post_write/page_create.rs::replace_source_page_impl`, `core/post_write/page_create.rs::write_document_source_page_impl` |
 | `core/post_write/page_revision.rs::accept_pending_revision_with_knowledge_path` | `pub` | no | **yes** | `server/memory_routes.rs::handle_accept_revision` | `core/post_write/page_revision.rs::accept_page_revision_card`, `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_revision.rs::dismiss_pending_revision` | `pub` | yes | no | — | `core/post_write/page_revision.rs::resolve_page_revision_card` |
 | `core/post_write/page_update.rs::update_page_impl` | `pub(super)` | no | no | — | `core/post_write/page_update.rs::project_latest_page`, `core/post_write/page_update.rs::update_page_db_impl` |

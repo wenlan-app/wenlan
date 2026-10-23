@@ -122,3 +122,51 @@ html[data-theme="light"] .code-basis-panel {
 @media (max-width: 720px) {
   .code-basis__columns { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Deciding one row after another: the title, where in the list it is, and a way out. */
+.code-basis__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.code-basis__head .basis-diff__title { flex: 1 1 auto; min-width: 0; }
+.code-basis__step {
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Editing the page yourself is the quiet way out on the left; the decision sits on the right. */
+.code-basis__decide { justify-content: space-between; }
+.code-basis__decide-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Lined-up sides: a blank row stands in for a line the other side has, and a
+   run of equal lines is one quiet row that opens on click. Both are exactly one
+   line tall so the two columns stay level. */
+.code-basis__filler {
+  display: block;
+  height: 1.55em;
+  background: var(--mem-hover);
+  opacity: 0.5;
+}
+.code-basis__fold {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 1.55em;
+  padding: 0 12px;
+  border: 0;
+  background: var(--mem-hover);
+  color: var(--mem-text-secondary);
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  white-space: pre;
+  cursor: pointer;
+}
+.code-basis__fold:hover { color: var(--mem-text); }

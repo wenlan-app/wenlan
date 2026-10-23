@@ -11,6 +11,9 @@
 //!   update the pull request.
 //! - `POST /api/spaces/{name}/wiki/run`: start the daily run now, in the
 //!   background (the user's AI tool, then a publish).
+//! - `POST /api/spaces/{name}/wiki/docs`: an AI tool suggests a fix to one of
+//!   the repository's own docs, or reports how many it read; the user
+//!   declines a fix.
 //!
 //! The work lives in `wenlan_core::repo_wiki`; git and gh run on a blocking
 //! thread.
@@ -27,7 +30,8 @@ use tokio::sync::RwLock;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::repo_wiki;
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoWikiBinding, RepoWikiPublishResult, RepoWikiSuggestion,
+    BindRepoWikiRequest, RepoDocFixState, RepoDocsReply, RepoDocsRequest, RepoWikiBinding,
+    RepoWikiPublishResult, RepoWikiSuggestion,
 };
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
@@ -41,6 +45,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/spaces/{name}/wiki/suggest", get(handle_suggest))
         .route("/api/spaces/{name}/wiki/publish", post(handle_publish))
         .route("/api/spaces/{name}/wiki/run", post(handle_run_now))
+        .route("/api/spaces/{name}/wiki/docs", post(handle_docs))
 }
 
 async fn db_of(state: &Arc<RwLock<ServerState>>) -> Result<Arc<MemoryDB>, ServerError> {
@@ -147,8 +152,42 @@ async fn handle_publish(
 ) -> Result<Json<RepoWikiPublishResult>, ServerError> {
     let db = db_of(&state).await?;
     let space = registered_space(&db, &space).await?;
-    let result = publish_space(&db, &space).await?;
+    let page_root = page_root_of(&state).await;
+    let result = publish_space(&db, &space, page_root.as_deref()).await?;
     Ok(Json(result))
+}
+
+/// The pages folder of this daemon, for re-projecting a page taken back from
+/// the repository.
+pub(crate) async fn page_root_of(state: &Arc<RwLock<ServerState>>) -> Option<std::path::PathBuf> {
+    let s = state.read().await;
+    s.lint_config.page_root().map(std::path::Path::to_path_buf)
+}
+
+/// POST /api/spaces/{name}/wiki/docs
+async fn handle_docs(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(space): Path<String>,
+    Json(req): Json<RepoDocsRequest>,
+) -> Result<Json<RepoDocsReply>, ServerError> {
+    let db = db_of(&state).await?;
+    let space = registered_space(&db, &space).await?;
+    let now = chrono::Utc::now().timestamp();
+    // Refusals carry a code the MCP tool passes on to the AI tool, so it can
+    // correct the fix: the words name only the file, counts and the rule.
+    let refused = |error: wenlan_core::WenlanError| {
+        use wenlan_core::WenlanError as E;
+        match error {
+            E::Validation(message) => E::Validation(format!("doc_fix_refused: {message}")),
+            E::Conflict(message) => E::Conflict(format!("doc_fix_refused: {message}")),
+            E::NotFound(message) => E::NotFound(format!("doc_fix_refused: {message}")),
+            other => other,
+        }
+    };
+    let reply =
+        blocking(move || docs_action(&repo_wiki::store_path(), &space, req, now).map_err(refused))
+            .await?;
+    Ok(Json(reply))
 }
 
 /// POST /api/spaces/{name}/wiki/run
@@ -185,22 +224,67 @@ async fn handle_run_now(
     Ok(Json(serde_json::json!({ "started": true })))
 }
 
-/// Publish the bound Space `space`: used by the route and by the daily run.
-pub(crate) async fn publish_space(
+/// One `POST .../wiki/docs` request against the store at `store`.
+fn docs_action(
+    store: &std::path::Path,
+    space: &str,
+    req: RepoDocsRequest,
+    now: i64,
+) -> Result<RepoDocsReply, wenlan_core::WenlanError> {
+    Ok(match req {
+        RepoDocsRequest::Suggest {
+            path,
+            old_text,
+            new_text,
+            reason,
+            code,
+        } => {
+            let (fix, open) = repo_wiki::suggest_doc_fix_at(
+                store,
+                space,
+                repo_wiki::DocFixRequest {
+                    path,
+                    old_text,
+                    new_text,
+                    reason,
+                    code,
+                },
+                now,
+            )?;
+            RepoDocsReply {
+                fix: Some(fix),
+                open,
+            }
+        }
+        RepoDocsRequest::Dismiss { id } => {
+            let (fix, open) = repo_wiki::dismiss_doc_fix_at(store, space, &id)?;
+            RepoDocsReply {
+                fix: Some(fix),
+                open,
+            }
+        }
+        RepoDocsRequest::Checked { docs } => RepoDocsReply {
+            fix: None,
+            open: repo_wiki::record_doc_check_at(store, space, docs, now)?,
+        },
+    })
+}
+
+/// What a publish of `space` writes from: its pages that may go into the
+/// repository, with their code bases and anchors.
+struct Gathered {
+    pages: Vec<wenlan_core::pages::Page>,
+    left_out: usize,
+    code_bases: std::collections::HashMap<String, Vec<wenlan_types::code_basis::CodeBasisLocator>>,
+    concept_paths: wenlan_core::export::okf::ConceptPathMap,
+    anchors: repo_wiki::CodeAnchors,
+}
+
+async fn gather(
     db: &MemoryDB,
     space: &str,
-) -> Result<RepoWikiPublishResult, ServerError> {
-    let store = repo_wiki::store_path();
-    let lookup_space = space.to_owned();
-    let lookup_store = store.clone();
-    let binding = blocking(move || repo_wiki::binding_at(&lookup_store, &lookup_space))
-        .await?
-        .ok_or_else(|| {
-            ServerError::NotFound(format!(
-                "Space {space:?} is not bound to a repository; bind it first"
-            ))
-        })?;
-
+    binding: &RepoWikiBinding,
+) -> Result<Gathered, ServerError> {
     let pages = exportable_pages(db, space).await?;
     let code_bases = db
         .code_basis_locators_by_page()
@@ -222,27 +306,157 @@ pub(crate) async fn publish_space(
         })
         .collect();
     let (pages, left_out) = repo_wiki::select_pages(pages, &code_bases, &binding.repo_root);
+    Ok(Gathered {
+        pages,
+        left_out,
+        code_bases,
+        concept_paths,
+        anchors,
+    })
+}
+
+/// Take wiki page files people edited in the repository back into Wenlan,
+/// as an edit of the page by a person (so a review lock applies as for any
+/// edit of theirs). Returns the paths Wenlan now holds (taken back, or
+/// already matching the page), whose files the publish then writes from the
+/// page again, and how many pages changed. An edit of a page Wenlan changed
+/// since that file was written stays only in the repository.
+async fn take_back_edits(
+    db: &MemoryDB,
+    edits: &[repo_wiki::WikiFileEdit],
+    pages: &[wenlan_core::pages::Page],
+    page_root: Option<&std::path::Path>,
+) -> (std::collections::BTreeSet<String>, usize) {
+    let lock = wenlan_core::config::load_config().lock_my_pages;
+    let mut taken = std::collections::BTreeSet::new();
+    let mut wrote = 0;
+    for edit in edits {
+        let Some(page) = pages.iter().find(|page| page.id == edit.page_id) else {
+            continue;
+        };
+        let content = wenlan_core::export::okf::wikilinks_from_repository_body(&edit.body, pages);
+        if content.trim() == page.content.trim() {
+            taken.insert(edit.path.clone());
+            continue;
+        }
+        if edit.origin_version < page.version {
+            continue;
+        }
+        let written = wenlan_core::post_write::page_write(
+            db,
+            wenlan_core::post_write::PageWrite::UpdatePreservingSources {
+                page_id: &page.id,
+                req: wenlan_types::requests::UpdatePageRequest {
+                    content,
+                    source_memory_ids: page.source_memory_ids.clone(),
+                    expected_version: Some(page.version),
+                    caller_id: None,
+                    operation_id: None,
+                },
+                edited_by: "fs_edit",
+                knowledge_path: page_root,
+                basis: wenlan_core::db::BasisWrite {
+                    lock_on_first_human_edit: lock,
+                    ..wenlan_core::db::BasisWrite::default()
+                },
+            },
+        )
+        .await;
+        match written.map(|result| result.outcome) {
+            Ok(wenlan_core::post_write::WriteOutcome::Wrote) => {
+                tracing::info!(
+                    "[repo_wiki] took back the repository edit of {} ({})",
+                    page.id,
+                    edit.path
+                );
+                taken.insert(edit.path.clone());
+                wrote += 1;
+            }
+            Ok(outcome) => tracing::info!(
+                "[repo_wiki] kept the repository edit of {} as it is: {outcome:?}",
+                page.id
+            ),
+            Err(error) => tracing::warn!(
+                "[repo_wiki] could not take back the repository edit of {}: {error}",
+                page.id
+            ),
+        }
+    }
+    (taken, wrote)
+}
+
+/// Publish the bound Space `space`: used by the route and by the daily run.
+/// Edits people made to its wiki pages in the repository are taken back
+/// first; doc fixes go into the same pull request.
+pub(crate) async fn publish_space(
+    db: &MemoryDB,
+    space: &str,
+    page_root: Option<&std::path::Path>,
+) -> Result<RepoWikiPublishResult, ServerError> {
+    let store = repo_wiki::store_path();
+    let lookup_space = space.to_owned();
+    let lookup_store = store.clone();
+    let binding = blocking(move || repo_wiki::binding_at(&lookup_store, &lookup_space))
+        .await?
+        .ok_or_else(|| {
+            ServerError::NotFound(format!(
+                "Space {space:?} is not bound to a repository; bind it first"
+            ))
+        })?;
+
+    let mut gathered = gather(db, space, &binding).await?;
+    let open_fix = binding
+        .doc_fixes
+        .iter()
+        .any(|fix| fix.state != RepoDocFixState::Dismissed);
+    let worktree = repo_wiki::worktree_for(space);
+    let mut prepared = None;
+    let mut taken_back = std::collections::BTreeSet::new();
+    let mut took_back = 0;
+    if !gathered.pages.is_empty() || open_fix {
+        let for_prepare = binding.clone();
+        let at = worktree.clone();
+        let found = blocking(move || repo_wiki::prepare(&for_prepare, &at)).await?;
+        (taken_back, took_back) =
+            take_back_edits(db, &found.edits, &gathered.pages, page_root).await;
+        if took_back > 0 {
+            gathered = gather(db, space, &binding).await?;
+        }
+        prepared = Some(found);
+    }
     let now = chrono::Utc::now().timestamp();
     let space = space.to_owned();
     let result = blocking(move || {
-        let result = repo_wiki::publish(repo_wiki::PublishInput {
+        let Gathered {
+            pages,
+            left_out,
+            code_bases,
+            concept_paths,
+            anchors,
+        } = gathered;
+        let published = repo_wiki::publish(repo_wiki::PublishInput {
             binding: &binding,
             pages,
             left_out,
             code_bases: &code_bases,
             anchors: &anchors,
             concept_paths: &concept_paths,
-            worktree: repo_wiki::worktree_for(&space),
+            worktree,
             gh: repo_wiki::find_gh(),
             now,
+            prepared,
+            taken_back,
+            took_back,
         })?;
-        repo_wiki::record_publish_at(&store, &space, &result)?;
-        Ok(result)
+        repo_wiki::settle_doc_fixes_at(&store, &space, &published.applied, &published.gone)?;
+        repo_wiki::record_publish_at(&store, &space, &published)?;
+        Ok(published.result)
     })
     .await?;
     tracing::info!(
-        "[repo_wiki] published {} page(s): {:?} {}",
+        "[repo_wiki] published {} page(s), {} doc fix(es): {:?} {}",
         result.pages,
+        result.doc_fixes,
         result.status,
         result.pr_url.as_deref().unwrap_or("")
     );

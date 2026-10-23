@@ -932,8 +932,41 @@ export interface RepoWikiPublishResult {
   branch?: string | null;
   pr_url?: string | null;
   compare_url?: string | null;
+  /** Doc fixes in this update's pull request. */
+  doc_fixes?: number;
+  /** Wiki pages edited in the repository and taken back into Wenlan. */
+  taken_back?: number;
+  /** Wiki pages edited in the repository while Wenlan changed them too. */
+  kept?: number;
   /** Unix seconds. */
   at: number;
+}
+
+export type RepoDocFixState = "pending" | "in_pr" | "dismissed";
+
+export interface RepoDocCode {
+  path: string;
+  line_start: number;
+  line_end: number;
+}
+
+/** A sentence of one of the repository's own docs the code no longer agrees with. */
+export interface RepoDocFix {
+  id: string;
+  path: string;
+  old_text: string;
+  new_text: string;
+  reason: string;
+  code?: RepoDocCode[];
+  state: RepoDocFixState;
+  /** Unix seconds. */
+  found_at: number;
+}
+
+export interface RepoDocCheck {
+  /** Unix seconds. */
+  at: number;
+  docs: number;
 }
 
 export interface RepoWikiBinding {
@@ -944,6 +977,15 @@ export interface RepoWikiBinding {
   daily?: RepoWikiDaily | null;
   last_publish?: RepoWikiPublishResult | null;
   last_daily_run?: string | null;
+  doc_fixes?: RepoDocFix[];
+  doc_check?: RepoDocCheck | null;
+  /** Wiki page files the repository keeps as people wrote them, reported once. */
+  kept_edits?: string[];
+}
+
+export interface RepoDocsReply {
+  fix?: RepoDocFix | null;
+  open: number;
 }
 
 export interface RepoWikiCandidate {
@@ -987,6 +1029,11 @@ export async function unbindRepoWiki(space: string): Promise<void> {
 /** Put the current pages into the repository; no AI rewrites anything. */
 export async function publishRepoWiki(space: string): Promise<RepoWikiPublishResult> {
   return invoke("publish_repo_wiki", { space });
+}
+
+/** Decline a doc fix: it leaves the pull request on the next update. */
+export async function dismissRepoDocFix(space: string, id: string): Promise<RepoDocsReply> {
+  return invoke("dismiss_repo_doc_fix", { space, id });
 }
 
 export interface MoveSpaceResponse {

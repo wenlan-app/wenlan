@@ -49,4 +49,4 @@ DAEMON_PID="$(cat "$DATA_DIR/daemon.pid" 2>/dev/null || true)"
 info archive-daemon "$DAEMON_LINE"
 
 MCP_BIN="$MCP" MCP_ARGS="[\"--origin-url\",\"http://127.0.0.1:$PORT\"]" \
-    EXPECT_TOOL_COUNT=34 MCP_TOOLS=capture,recall,brief python3 "$HELPERS/mcp-roundtrip.py"
+    EXPECT_TOOL_COUNT=35 MCP_TOOLS=capture,recall,brief python3 "$HELPERS/mcp-roundtrip.py"
