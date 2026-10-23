@@ -429,9 +429,11 @@ pub fn suggest_doc_fix_at(
                 "old_text is not in {path}; copy it from the file exactly"
             )))
         }
-        n => return Err(WenlanError::Validation(format!(
+        n => {
+            return Err(WenlanError::Validation(format!(
             "old_text occurs {n} times in {path}; include more of the sentence so it occurs once"
-        ))),
+        )))
+        }
     }
     if inside_agents_block(&text, &old_text) {
         return Err(WenlanError::Validation(format!(

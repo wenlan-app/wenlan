@@ -18,6 +18,7 @@ import {
   type RepoWikiPublishResult,
 } from "../../../lib/tauri";
 import { Input, Select, Toggle } from "../settings/primitives";
+import { RepoDocsSection } from "./RepoDocsSection";
 import "./repo-wiki.css";
 
 const AGENT_NAMES: Record<RepoWikiAgent, string> = { claude: "Claude Code", codex: "Codex" };
@@ -357,10 +358,15 @@ function BoundPanel({
       </div>
       <p className="repo-wiki-status" aria-live="polite">
         {publish
-          ? t(`repoWiki.last.${publish.status}`, {
-            count: publish.pages,
-            time: timeFormat.format(new Date(publish.at * 1000)),
-          })
+          ? publish.pages === 0 && (publish.doc_fixes ?? 0) > 0
+            ? t("repoWiki.docs.lastDocs", {
+              count: publish.doc_fixes,
+              time: timeFormat.format(new Date(publish.at * 1000)),
+            })
+            : t(`repoWiki.last.${publish.status}`, {
+              count: publish.pages,
+              time: timeFormat.format(new Date(publish.at * 1000)),
+            })
           : t("repoWiki.never")}
       </p>
       {number && pr && (
@@ -393,6 +399,7 @@ function BoundPanel({
           {update.isPending ? t("repoWiki.updating") : t("repoWiki.updateNow")}
         </button>
       </div>
+      <RepoDocsSection binding={binding} onChanged={onPublished} />
       <DailyFields daily={daily} disabled={save.isPending} onChange={(next) => save.mutate(next)} />
       {(update.isError || (publishFailed && update.isIdle)) && (
         <p className="repo-wiki-error" role="alert" title={String(update.error)}>{t("repoWiki.updateFailed")}</p>
