@@ -658,16 +658,24 @@ fn doc_fixes_are_checked_against_the_file_before_they_are_kept() {
             .contains("not connected")
     );
 
-    let (fix, open) =
-        suggest_doc_fix_at(&store, "site", readme_fix("Node 18 or later", "Node 20 or later"), 5)
-            .unwrap();
+    let (fix, open) = suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20 or later"),
+        5,
+    )
+    .unwrap();
     assert_eq!(open, 1);
     assert_eq!(fix.state, RepoDocFixState::Pending);
     assert_eq!(fix.id, doc_fix_id("README.md", "Node 18 or later"));
     // The same text again replaces the fix rather than adding one.
-    let (_, open) =
-        suggest_doc_fix_at(&store, "site", readme_fix("Node 18 or later", "Node 20+"), 6)
-            .unwrap();
+    let (_, open) = suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20+"),
+        6,
+    )
+    .unwrap();
     assert_eq!(open, 1);
     let binding = binding_at(&store, "site").unwrap().unwrap();
     assert_eq!(binding.doc_fixes[0].new_text, "Node 20+");
@@ -710,8 +718,13 @@ fn doc_fixes_go_into_the_wiki_pull_request_and_leave_once_merged() {
     let (origin, clone) = repo_with_readme(dir.path());
     let store = dir.path().join("data/repo-wiki.json");
     bind_at(&store, "site", &clone, None, None).unwrap();
-    suggest_doc_fix_at(&store, "site", readme_fix("Node 18 or later", "Node 20 or later"), 1)
-        .unwrap();
+    suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20 or later"),
+        1,
+    )
+    .unwrap();
     let mut other = readme_fix("Run `pnpm dev`.", "Run `pnpm start`.");
     other.reason = "The dev script was renamed.".into();
     let (declined, _) = suggest_doc_fix_at(&store, "site", other, 1).unwrap();
@@ -742,21 +755,29 @@ fn doc_fixes_go_into_the_wiki_pull_request_and_leave_once_merged() {
     assert_eq!((first.result.pages, first.result.doc_fixes), (0, 1));
     let readme = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:README.md")]);
     assert!(readme.contains("Requires Node 20 or later."), "{readme}");
-    assert!(readme.contains("Run `pnpm dev`."), "declined fix stays out: {readme}");
+    assert!(
+        readme.contains("Run `pnpm dev`."),
+        "declined fix stays out: {readme}"
+    );
     let files = sh(&origin, &["ls-tree", "-r", "--name-only", REPO_WIKI_BRANCH]);
-    assert!(!files.contains("wiki/") && !files.contains("AGENTS.md"), "{files}");
+    assert!(
+        !files.contains("wiki/") && !files.contains("AGENTS.md"),
+        "{files}"
+    );
     let binding = binding_at(&store, "site").unwrap().unwrap();
     let states: Vec<_> = binding.doc_fixes.iter().map(|fix| fix.state).collect();
-    assert_eq!(
-        states,
-        [RepoDocFixState::InPr, RepoDocFixState::Dismissed]
-    );
+    assert_eq!(states, [RepoDocFixState::InPr, RepoDocFixState::Dismissed]);
 
     // Merged: both old texts are gone or overtaken, so both fixes leave.
     sh(&clone, &["fetch", "--quiet", "origin"]);
     sh(
         &clone,
-        &["merge", "--quiet", "--ff-only", &format!("origin/{REPO_WIKI_BRANCH}")],
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
     );
     std::fs::write(
         clone.join("README.md"),
@@ -813,7 +834,12 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     sh(&clone, &["fetch", "--quiet", "origin"]);
     sh(
         &clone,
-        &["merge", "--quiet", "--ff-only", &format!("origin/{REPO_WIKI_BRANCH}")],
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
     );
     let text = std::fs::read_to_string(clone.join(&page_file)).unwrap();
     std::fs::write(
@@ -828,7 +854,11 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     assert_eq!(prepared.edits.len(), 1);
     let edit = &prepared.edits[0];
     assert_eq!(
-        (edit.page_id.as_str(), edit.path.as_str(), edit.origin_version),
+        (
+            edit.page_id.as_str(),
+            edit.path.as_str(),
+            edit.origin_version
+        ),
         ("page_map", page_file.as_str(), 1)
     );
     assert_eq!(edit.body, "What each part owns, by hand.");
@@ -857,12 +887,22 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     let back = publish(PublishInput {
         taken_back: BTreeSet::from([page_file.clone()]),
         prepared: Some(prepared),
-        ..publish_input(&binding, taken, &code_bases, &anchors, &concept_paths, &worktree)
+        ..publish_input(
+            &binding,
+            taken,
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
     })
     .unwrap();
     assert_eq!(back.result.status, RepoWikiPublishStatus::Pushed);
     assert_eq!((back.result.taken_back, back.result.kept), (1, 0));
-    let body = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")]);
+    let body = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")],
+    );
     assert!(body.contains("origin_version: 2"), "{body}");
     assert!(body.contains("by hand."), "{body}");
     assert!(!files.contains(".wenlan-archive"));
@@ -877,8 +917,13 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     let store = dir.path().join("data/repo-wiki.json");
     let binding = bind_at(&store, "site", &clone, None, None).unwrap();
     let root = binding.repo_root.clone();
-    suggest_doc_fix_at(&store, "site", readme_fix("Node 18 or later", "Node 20 or later"), 1)
-        .unwrap();
+    suggest_doc_fix_at(
+        &store,
+        "site",
+        readme_fix("Node 18 or later", "Node 20 or later"),
+        1,
+    )
+    .unwrap();
     let binding = binding_at(&store, "site").unwrap().unwrap();
     let code_bases = HashMap::from([(
         "page_map".to_string(),
@@ -905,7 +950,13 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     sh(&clone, &["fetch", "--quiet", "origin"]);
     sh(
         &clone,
-        &["checkout", "--quiet", "-b", "review", &format!("origin/{REPO_WIKI_BRANCH}")],
+        &[
+            "checkout",
+            "--quiet",
+            "-b",
+            "review",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
     );
     let readme = std::fs::read_to_string(clone.join("README.md")).unwrap();
     std::fs::write(
@@ -924,7 +975,12 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     sh(&clone, &["commit", "--quiet", "-am", "review"]);
     sh(
         &clone,
-        &["push", "--quiet", "origin", &format!("HEAD:{REPO_WIKI_BRANCH}")],
+        &[
+            "push",
+            "--quiet",
+            "origin",
+            &format!("HEAD:{REPO_WIKI_BRANCH}"),
+        ],
     );
     sh(&clone, &["checkout", "--quiet", "main"]);
 
@@ -936,13 +992,23 @@ fn edits_people_push_to_the_wiki_branch_survive_the_next_publish() {
     changed[0].title = "Module map".into();
     let next = publish(PublishInput {
         prepared: Some(prepared),
-        ..publish_input(&binding, changed, &code_bases, &anchors, &concept_paths, &worktree)
+        ..publish_input(
+            &binding,
+            changed,
+            &code_bases,
+            &anchors,
+            &concept_paths,
+            &worktree,
+        )
     })
     .unwrap();
     assert_eq!(next.result.kept, 1);
     let readme = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:README.md")]);
     assert!(readme.contains("Node 20 (LTS)"), "{readme}");
-    let body = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")]);
+    let body = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:{page_file}")],
+    );
     assert!(body.contains("reviewed."), "{body}");
 }
 
@@ -963,7 +1029,11 @@ fn a_page_file_reads_back_as_page_content() {
         "See [[How to run it]] and [[How to run it|the runner]], not [this](https://example.com)."
     );
     // A `## Code` heading a person wrote with prose under it stays.
-    let own = "---\norigin_id: page_a\norigin_version: 1\n---\n\nIntro.\n\n## Code\n\nWe like Rust.\n";
-    assert!(parse_wiki_page_file(own).unwrap().2.ends_with("We like Rust."));
+    let own =
+        "---\norigin_id: page_a\norigin_version: 1\n---\n\nIntro.\n\n## Code\n\nWe like Rust.\n";
+    assert!(parse_wiki_page_file(own)
+        .unwrap()
+        .2
+        .ends_with("We like Rust."));
     assert!(parse_wiki_page_file("no frontmatter").is_none());
 }

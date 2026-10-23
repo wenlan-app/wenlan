@@ -418,9 +418,10 @@ pub fn suggest_doc_fix_at(
             ..entry
         });
     }
-    let text = std::fs::read_to_string(Path::new(&binding.repo_root).join(&path)).map_err(|_| {
-        WenlanError::Validation(format!("{path} cannot be read in {}", binding.repo_root))
-    })?;
+    let text =
+        std::fs::read_to_string(Path::new(&binding.repo_root).join(&path)).map_err(|_| {
+            WenlanError::Validation(format!("{path} cannot be read in {}", binding.repo_root))
+        })?;
     match occurrences(&text, &old_text) {
         1 => {}
         0 => {
@@ -428,11 +429,9 @@ pub fn suggest_doc_fix_at(
                 "old_text is not in {path}; copy it from the file exactly"
             )))
         }
-        n => {
-            return Err(WenlanError::Validation(format!(
-                "old_text occurs {n} times in {path}; include more of the sentence so it occurs once"
-            )))
-        }
+        n => return Err(WenlanError::Validation(format!(
+            "old_text occurs {n} times in {path}; include more of the sentence so it occurs once"
+        ))),
     }
     if inside_agents_block(&text, &old_text) {
         return Err(WenlanError::Validation(format!(
@@ -466,7 +465,11 @@ pub fn suggest_doc_fix_at(
             state: RepoDocFixState::Pending,
             found_at: now,
         };
-        match binding.doc_fixes.iter_mut().find(|existing| existing.id == id) {
+        match binding
+            .doc_fixes
+            .iter_mut()
+            .find(|existing| existing.id == id)
+        {
             Some(existing) => *existing = fix.clone(),
             None => binding.doc_fixes.push(fix.clone()),
         }
@@ -914,7 +917,12 @@ fn tree_file(repo: &Path, tree: &str, path: &str) -> Option<String> {
 /// The object id of `path` in `tree`, or `None` when it is not there.
 fn tree_blob(repo: &Path, tree: &str, path: &str) -> Option<String> {
     let mut command = git(repo);
-    command.args(["rev-parse", "--verify", "--quiet", &format!("{tree}:{path}")]);
+    command.args([
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{tree}:{path}"),
+    ]);
     run(command, "git rev-parse").ok()
 }
 
@@ -1035,7 +1043,14 @@ fn files_changed_by_others(repo: &Path, base_tree: &str, branch: &str, fork: &st
             continue;
         }
         let mut command = git(repo);
-        command.args(["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", sha]);
+        command.args([
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            sha,
+        ]);
         if let Ok(out) = run(command, "git diff-tree") {
             paths.extend(
                 out.split('\0')
@@ -1079,9 +1094,8 @@ pub fn prepare(binding: &RepoWikiBinding, worktree: &Path) -> Result<Prepared, W
         if let Ok(fork) = run(command, "git merge-base") {
             // Only what the default branch has not changed since: once the
             // pull request is merged, the default branch is the newer copy.
-            let unchanged = |path: &str| {
-                tree_blob(&repo, &base_tree, path) == tree_blob(&repo, &fork, path)
-            };
+            let unchanged =
+                |path: &str| tree_blob(&repo, &base_tree, path) == tree_blob(&repo, &fork, path);
             for edit in wiki_file_edits(&repo, &branch, &folder) {
                 if unchanged(&edit.path) {
                     edits.retain(|earlier| earlier.page_id != edit.page_id);
@@ -1149,7 +1163,10 @@ fn pr_body(body: PrBody<'_>) -> String {
         slug,
         base,
     } = body;
-    let mut out = format!("Written by [Wenlan](https://wenlan.app) from the `{}` Space.", binding.space);
+    let mut out = format!(
+        "Written by [Wenlan](https://wenlan.app) from the `{}` Space.",
+        binding.space
+    );
     if pages > 0 {
         out.push_str(&format!(
             " {pages} wiki page{} in `{}/`, each ending with the code lines it relies on. \
@@ -1392,12 +1409,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         // The export moves an edited file aside before writing. Every edit
         // was settled above, so the moved copy stays out of the pull request.
         let mut command = git(&input.worktree);
-        command.args([
-            "clean",
-            "-fdq",
-            "--",
-            &format!("{folder}/{BUNDLE_ARCHIVE}"),
-        ]);
+        command.args(["clean", "-fdq", "--", &format!("{folder}/{BUNDLE_ARCHIVE}")]);
         run(command, "git clean")?;
     }
 
@@ -1409,7 +1421,11 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     let mut gone = Vec::new();
     for fix in &binding.doc_fixes {
         let on_base = tree_file(&repo, &base_tree, &fix.path);
-        if on_base.as_deref().map(|text| occurrences(text, &fix.old_text)) != Some(1) {
+        if on_base
+            .as_deref()
+            .map(|text| occurrences(text, &fix.old_text))
+            != Some(1)
+        {
             gone.push(fix.id.clone());
             continue;
         }
@@ -1598,7 +1614,6 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         }
     }
 }
-
 
 /// Find an executable named `name` on `PATH` or in the usual install
 /// folders a daemon started at login does not have on its `PATH`.

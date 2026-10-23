@@ -169,6 +169,7 @@ main|post|/api/spaces/{from}/move-to/{to}|wenlan_server::spaces_routes::handle_m
 main|post|/api/spaces/{name}/confirm|wenlan_server::spaces_routes::handle_confirm_space
 main|post|/api/spaces/{name}/pin|wenlan_server::spaces_routes::handle_pin_space
 main|post|/api/spaces/{name}/star|wenlan_server::spaces_routes::handle_toggle_space_starred
+main|post|/api/spaces/{name}/wiki/docs|wenlan_server::repo_wiki_routes::handle_docs
 main|post|/api/spaces/{name}/wiki/publish|wenlan_server::repo_wiki_routes::handle_publish
 main|post|/api/spaces/{name}/wiki/run|wenlan_server::repo_wiki_routes::handle_run_now
 main|post|/api/steep|wenlan_server::routes::handle_steep
