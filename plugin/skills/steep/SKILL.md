@@ -114,9 +114,12 @@ For each page:
 4. Rewrite it yourself, with your main model. Never let the small model write
    the page. Use only the numbered sources, cite every claim with its
    number like `[2]`, keep the title, headings and language, and drop
-   anything only a removed source said. For `code_changed`, change only what
-   the code contradicts; the code is not a numbered source, so a sentence
-   only the code supports carries no `[n]`. When the plan is `review_card`,
+   anything only a removed source said. Keep a `mermaid` diagram block the
+   page has, as it is, unless what it draws changed: then fix those boxes
+   and arrows (labels stay in double quotes, never a bare `[n]` in one), or
+   drop the diagram when the parts it shows are gone. For `code_changed`,
+   change only what the code contradicts; the code is not a numbered source,
+   so a sentence only the code supports carries no `[n]`. When the plan is `review_card`,
    keep every line the claim's `note` lists as the user's own, word for word
    and in place; they need no `[n]`. Then call `steep` with
    `action: "commit"`, the token, and the new body as `content`.

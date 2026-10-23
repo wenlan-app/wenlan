@@ -222,3 +222,80 @@ async fn moved_indexed_file_handlers_preserve_typed_contracts() {
         assert_eq!(error.error, "Database not initialized");
     }
 }
+
+// A folder source page cites a chunk locator; its preview must still resolve the
+// original document, without requiring the UI to reconstruct its grouping key.
+#[tokio::test]
+async fn folder_page_source_locator_opens_original_document() {
+    let (router, _tmp, db) = common::test_app_no_gate().await;
+    let document_id = "directory-cedar::/synthetic/cedar.md";
+    common::insert_memory(
+        &db,
+        document_id,
+        "Cedar approved launch: November 19. Price unknown.",
+        "memory",
+        Some("folder"),
+        None,
+        false,
+        100,
+    )
+    .await;
+    let chunks = db
+        .get_chunks_scoped(document_id, &wenlan_core::read_scope::ReadScope::Global)
+        .await
+        .unwrap()
+        .unwrap();
+    let locator = &chunks[0].id;
+    assert_ne!(locator, document_id);
+    let page_id =
+        wenlan_core::document_enrichment::source_page_id("directory-cedar", "/synthetic/cedar.md");
+    wenlan_core::post_write::page_write(
+        &db,
+        wenlan_core::post_write::PageWrite::Create {
+            page_id: Some(&page_id),
+            req: wenlan_types::requests::CreateConceptRequest {
+                title: "Cedar source page".into(),
+                content: "Cedar source document".into(),
+                summary: None,
+                entity_id: None,
+                space: None.into(),
+                source_memory_ids: vec![locator.clone()],
+                creation_kind: Some("source".into()),
+                workspace: None,
+            },
+            agent: "doc-enrich",
+            knowledge_path: None,
+            page_min_cluster_size: 1,
+            page_match_threshold: 0.0,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (status, sources): (StatusCode, Vec<wenlan_types::PageSourceWithMemory>) = request_typed(
+        &router,
+        Method::GET,
+        &format!("/api/pages/{page_id}/sources"),
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(sources.len(), 1);
+    let preview_id = &sources[0].memory.as_ref().unwrap().source_id;
+    assert_eq!(preview_id, locator);
+    let (status, body) = request_bytes(
+        &router,
+        Method::GET,
+        &format!("/api/chunks/{preview_id}"),
+        Body::empty(),
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let preview: Vec<MemoryDetail> = serde_json::from_slice(&body).unwrap();
+    assert_eq!(preview.len(), chunks.len());
+    assert_eq!(preview[0].source_id, document_id);
+    assert_eq!(preview[0].content, chunks[0].content);
+}

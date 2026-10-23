@@ -137,6 +137,36 @@ write_page(space="<space>", title="<page title>", content="<page>",
 
 Whenever a tool offers a `space` field, pass the resolved Space in it; a write without it goes to the connection's default Space, which may not be this repository's. When the connection is locked to one Space the field is absent, and nothing needs passing.
 
+**Diagrams.** Add a Mermaid diagram where a picture says it faster than
+prose: how the parts call each other (module map, overview), a flow from
+entry to effect, what is stored where, how a release goes out. Skip it on
+`How to run it` and `Known pitfalls`, and when it would have fewer than three
+boxes. At most two per page, each right after the paragraph it pictures.
+Every box and arrow is something the page's own sentences say and cite; a
+diagram never carries a fact the text does not. Write it so it draws the same
+in Wenlan, on GitHub and in Obsidian:
+
+- A fenced code block tagged `mermaid`, using only `flowchart LR` (how
+  parts connect), `flowchart TD` (a flow) or `sequenceDiagram` (calls back
+  and forth).
+- At most about 12 boxes, each label a few words in the page's language.
+  Keep about 5 boxes across in `flowchart LR`; for more, use `flowchart TD`
+  so the diagram is not too wide to read. Edge labels are one or two words.
+- File names go in box labels only on the module map; elsewhere a box names
+  its role (`Worker`, not `worker.ts`), so a renamed file does not leave the
+  diagram wrong.
+- In a flowchart, name each box with a short ASCII id and put its label in
+  double quotes, `api["HTTP server"]`, edge labels too, `-- "yes" -->`.
+- Never a bare number in square brackets anywhere in the diagram, such as
+  `step[1]`: Wenlan reads `[1]` as a citation.
+- No styling, `click`, links, HTML or icons.
+
+```mermaid
+flowchart LR
+  cli["CLI"] --> server["HTTP server"]
+  server --> store[("Database")]
+```
+
 Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say wiki needs local Wenlan and stop. A `warnings`
 entry saying a code basis was not recorded is reported, not hidden.

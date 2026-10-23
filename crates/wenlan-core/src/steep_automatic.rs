@@ -186,12 +186,16 @@ fn drop_markers(body: &str) -> String {
     MARKER.replace_all(body, "").into_owned()
 }
 
-/// The reply without a code fence wrapped around all of it.
+/// The reply without a code fence wrapped around all of it. A note that opens
+/// with a diagram block is the note, not a wrapper.
 fn unfence(reply: &str) -> String {
     let trimmed = reply.trim();
     let Some(rest) = trimmed.strip_prefix("```") else {
         return trimmed.to_string();
     };
+    if rest.starts_with("mermaid") {
+        return trimmed.to_string();
+    }
     let Some(body) = rest.strip_suffix("```") else {
         return trimmed.to_string();
     };

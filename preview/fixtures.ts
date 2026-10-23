@@ -156,6 +156,107 @@ The launch date moved to November after the vendor confirmed the revised invoice
       "# Memory Distillation\n\nA page with no citation markers at all — the pre-citations rendering path.",
     citations: undefined,
   } as Page,
+  // A wiki page with Mermaid diagrams (module map and one flow), as
+  // `/wenlan wiki` writes them, in English and Traditional Chinese.
+  "page-diagram": {
+    ...base,
+    id: "page-diagram",
+    title: "Module map",
+    content: `# Module map
+
+Wenlan is one daemon that every tool talks to. The CLI, the MCP server and the desktop app never open the database themselves; they call the daemon's HTTP API.
+
+\`\`\`mermaid
+flowchart LR
+  cli["wenlan CLI"] --> server
+  mcp["wenlan-mcp"] --> server
+  app["Desktop app"] --> server
+  server["wenlan-server (daemon)"] --> core["wenlan-core"]
+  core --> db[("libSQL database")]
+  core --> pages["Pages folder"]
+\`\`\`
+
+**wenlan-server** owns HTTP and is the only writer to the database. **wenlan-core** holds the business logic: storage, search, and steep.
+
+## How a page is written
+
+\`\`\`mermaid
+flowchart TD
+  ask["AI tool calls write_page"] --> check{"Cited code still there?"}
+  check -- "yes" --> save["Save page and its code basis"]
+  check -- "no" --> refuse["Refuse and name the span"]
+  save --> watch["Recheck when the code changes"]
+\`\`\`
+
+When the cited code changes later, the page goes on steep's list instead of being rewritten on the spot.
+
+## A wide diagram
+
+\`\`\`mermaid
+flowchart LR
+  cli["CLI (cli.ts)"] -- "POST /jobs, GET /jobs/:id" --> server["HTTP server (server.ts)"]
+  server -- "enqueue" --> queue["In-memory queue (queue.ts)"]
+  queue -- "dequeue" --> consumer["Consumer (consumer.ts)"]
+  consumer -- "runHandler" --> handlers["Handlers (handlers.ts)"]
+  consumer -- "saveJob" --> store[("SQLite store (store.ts)")]
+  server -- "getJob" --> store
+\`\`\`
+
+## Plain code
+
+\`\`\`sh
+pnpm install && pnpm exec vite --config vite.preview.config.ts --port 1421 --strictPort --host 127.0.0.1
+\`\`\`
+
+\`\`\`
+wiki/overview.md
+\`\`\`
+
+## A diagram Mermaid cannot draw
+
+\`\`\`mermaid
+flowchart LR
+  a -->
+\`\`\`
+
+The rest of the page still reads normally.
+`,
+    citations: undefined,
+  } as Page,
+  "page-diagram-zh": {
+    ...base,
+    id: "page-diagram-zh",
+    title: "模組地圖",
+    content: `# 模組地圖
+
+Wenlan 只有一個背景服務，所有工具都找它。命令列、MCP 和桌面 App 都不直接碰資料庫，而是呼叫它的 HTTP 介面。
+
+\`\`\`mermaid
+flowchart LR
+  cli["wenlan 命令列"] --> server
+  mcp["wenlan-mcp"] --> server
+  app["桌面 App"] --> server
+  server["wenlan-server（背景服務）"] --> core["wenlan-core"]
+  core --> db[("libSQL 資料庫")]
+  core --> pages["頁面資料夾"]
+\`\`\`
+
+**wenlan-server** 負責 HTTP，也是唯一會寫資料庫的地方。**wenlan-core** 放真正的邏輯：儲存、搜尋和沉澱。
+
+## 一頁是怎麼寫進來的
+
+\`\`\`mermaid
+flowchart TD
+  ask["AI 工具呼叫 write_page"] --> check{"引用的程式碼還在嗎？"}
+  check -- "在" --> save["存下頁面和程式依據"]
+  check -- "不在" --> refuse["拒絕，並指出哪幾行"]
+  save --> watch["程式碼改了就重新檢查"]
+\`\`\`
+
+之後引用的程式碼若有變動，這頁會排進沉澱清單，而不是當場改寫。
+`,
+    citations: undefined,
+  } as Page,
   // --- page_merge dossier pair 1: subset case (nothing lost) ---
   "page-threads-ranking": {
     id: "page-threads-ranking",
