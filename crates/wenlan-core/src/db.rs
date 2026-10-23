@@ -32807,23 +32807,29 @@ impl MemoryDB {
 
         let mut affected_pages: Vec<_> = affected_pages.into_iter().collect();
         affected_pages.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut marked_any_page = false;
         for (page_id, changed_source_count) in affected_pages {
-            conn.execute(
-                "UPDATE pages
+            let affected = conn
+                .execute(
+                    "UPDATE pages
                  SET stale_reason = 'source_updated',
                      refresh_blocked_reason = NULL,
                      sources_updated_count = COALESCE(sources_updated_count, 0) + ?1,
                      source_revision = COALESCE(source_revision, 0) + 1,
                      citations = NULL
                  WHERE id = ?2",
-                libsql::params![changed_source_count, page_id.as_str()],
-            )
-            .await
-            .map_err(|e| {
-                WenlanError::VectorDb(format!(
-                    "invalidate page {page_id} for dependent memory sources: {e}"
-                ))
-            })?;
+                    libsql::params![changed_source_count, page_id.as_str()],
+                )
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!(
+                        "invalidate page {page_id} for dependent memory sources: {e}"
+                    ))
+                })?;
+            marked_any_page |= affected > 0;
+        }
+        if marked_any_page {
+            Self::bump_source_updated_maintenance_generation(conn).await?;
         }
         Ok(())
     }
@@ -49494,38 +49500,39 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("merge chunk cleanup begin: {e}")))?;
-        let result: Result<(), WenlanError> =
-            async {
-                let mut chunk_rows = conn
-                    .query(
-                        "SELECT id FROM memories
+        let result: Result<(), WenlanError> = async {
+            let mut chunk_rows = conn
+                .query(
+                    "SELECT id FROM memories
                      WHERE source_id = ?1 AND source = 'memory' AND chunk_index > 0",
-                        libsql::params![source_id],
-                    )
-                    .await
-                    .map_err(|e| {
-                        WenlanError::VectorDb(format!("merge chunk cleanup inventory: {e}"))
-                    })?;
-                let mut chunk_ids = Vec::new();
-                while let Some(row) = chunk_rows.next().await.map_err(|e| {
-                    WenlanError::VectorDb(format!("merge chunk cleanup inventory row: {e}"))
-                })? {
-                    chunk_ids.push(row.get::<String>(0).map_err(|e| {
+                    libsql::params![source_id],
+                )
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("merge chunk cleanup inventory: {e}"))
+                })?;
+            let mut chunk_ids = Vec::new();
+            while let Some(row) = chunk_rows.next().await.map_err(|e| {
+                WenlanError::VectorDb(format!("merge chunk cleanup inventory row: {e}"))
+            })? {
+                chunk_ids.push(
+                    row.get::<String>(0).map_err(|e| {
                         WenlanError::VectorDb(format!("merge chunk cleanup id: {e}"))
-                    })?);
-                }
-                drop(chunk_rows);
+                    })?,
+                );
+            }
+            drop(chunk_rows);
 
-                let mut affected_pages = HashSet::new();
-                for chunk_id in &chunk_ids {
-                    // G6 Stage 1.3: the `page_sources` EXISTS clause reads
-                    // `edges` (`cites`, `dst_kind='memory'`) instead -- same
-                    // reader #6 twin as `mark_pages_depending_on_memory_sources_except`.
-                    // The `pages.source_memory_ids` legacy JSON mirror stays
-                    // untouched -- out of scope (Stage 1.4).
-                    let mut page_rows = conn
-                        .query(
-                            "SELECT DISTINCT p.id
+            let mut affected_pages = HashSet::new();
+            for chunk_id in &chunk_ids {
+                // G6 Stage 1.3: the `page_sources` EXISTS clause reads
+                // `edges` (`cites`, `dst_kind='memory'`) instead -- same
+                // reader #6 twin as `mark_pages_depending_on_memory_sources_except`.
+                // The `pages.source_memory_ids` legacy JSON mirror stays
+                // untouched -- out of scope (Stage 1.4).
+                let mut page_rows = conn
+                    .query(
+                        "SELECT DISTINCT p.id
                          FROM pages p
                          WHERE EXISTS (
                                    SELECT 1 FROM edges ps
@@ -49538,27 +49545,29 @@ impl MemoryDB {
                                    FROM json_each(COALESCE(p.source_memory_ids, '[]')) legacy_source
                                    WHERE CAST(legacy_source.value AS TEXT) = ?1
                                )",
-                            libsql::params![chunk_id.as_str()],
-                        )
-                        .await
-                        .map_err(|e| {
-                            WenlanError::VectorDb(format!(
-                                "merge chunk cleanup page inventory for {chunk_id}: {e}"
-                            ))
-                        })?;
-                    while let Some(row) = page_rows.next().await.map_err(|e| {
-                        WenlanError::VectorDb(format!("merge chunk cleanup page row: {e}"))
-                    })? {
-                        affected_pages.insert(row.get::<String>(0).map_err(|e| {
-                            WenlanError::VectorDb(format!("merge chunk cleanup page id: {e}"))
-                        })?);
-                    }
+                        libsql::params![chunk_id.as_str()],
+                    )
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!(
+                            "merge chunk cleanup page inventory for {chunk_id}: {e}"
+                        ))
+                    })?;
+                while let Some(row) = page_rows.next().await.map_err(|e| {
+                    WenlanError::VectorDb(format!("merge chunk cleanup page row: {e}"))
+                })? {
+                    affected_pages.insert(row.get::<String>(0).map_err(|e| {
+                        WenlanError::VectorDb(format!("merge chunk cleanup page id: {e}"))
+                    })?);
                 }
+            }
 
-                let mut affected_pages: Vec<_> = affected_pages.into_iter().collect();
-                affected_pages.sort();
-                for page_id in affected_pages {
-                    conn.execute(
+            let mut affected_pages: Vec<_> = affected_pages.into_iter().collect();
+            affected_pages.sort();
+            let mut marked_any_page = false;
+            for page_id in affected_pages {
+                let affected = conn
+                    .execute(
                         "UPDATE pages
                      SET stale_reason = 'source_updated',
                          refresh_blocked_reason = NULL,
@@ -49571,18 +49580,22 @@ impl MemoryDB {
                     .map_err(|e| {
                         WenlanError::VectorDb(format!("merge chunk cleanup page invalidation: {e}"))
                     })?;
-                }
-
-                conn.execute(
-                    "DELETE FROM memories
-                 WHERE source_id = ?1 AND source = 'memory' AND chunk_index > 0",
-                    libsql::params![source_id],
-                )
-                .await
-                .map_err(|e| WenlanError::VectorDb(format!("apply_merge dedup memories: {e}")))?;
-                Ok(())
+                marked_any_page |= affected > 0;
             }
-            .await;
+            if marked_any_page {
+                Self::bump_source_updated_maintenance_generation(&conn).await?;
+            }
+
+            conn.execute(
+                "DELETE FROM memories
+                 WHERE source_id = ?1 AND source = 'memory' AND chunk_index > 0",
+                libsql::params![source_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("apply_merge dedup memories: {e}")))?;
+            Ok(())
+        }
+        .await;
         if let Err(error) = result {
             let _ = conn.execute("ROLLBACK", ()).await;
             return Err(error);
@@ -54782,6 +54795,7 @@ impl MemoryDB {
                        version = version + 1, \
                        citations = NULL, \
                        stale_reason = 'source_updated', \
+                       refresh_blocked_reason = NULL, \
                        sources_updated_count = COALESCE(sources_updated_count, 0) + ?2, \
                        source_revision = COALESCE(source_revision, 0) + 1, \
                        last_modified = ?3 \
@@ -54800,6 +54814,7 @@ impl MemoryDB {
                     "page_merge survivor {survivor_id} could not be updated"
                 )));
             }
+            Self::bump_source_updated_maintenance_generation(&conn).await?;
             Self::append_page_history(&conn, survivor_id, "page_merge", now_ts)
                 .await
                 .map_err(|e| {
@@ -55966,8 +55981,92 @@ impl MemoryDB {
 /// the last examined one; deleted once a sweep reaches the tail, so the next
 /// sweep starts fresh from the head.
 const ORPHAN_SWEEP_CURSOR_KEY: &str = "orphan_sweep_cursor";
+const SOURCE_UPDATED_MAINTENANCE_GENERATION_KEY: &str = "source_updated_maintenance_generation_v1";
+const SOURCE_UPDATED_MAINTENANCE_ACK_KEY: &str = "source_updated_maintenance_ack_v1";
 
 impl MemoryDB {
+    /// Read both durable source-update generations in one bounded query.
+    /// Missing keys are generation zero, so upgrades require no schema change.
+    pub async fn source_updated_maintenance_generations(&self) -> Result<(u64, u64), WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT key, value FROM app_metadata WHERE key IN (?1, ?2)",
+                libsql::params![
+                    SOURCE_UPDATED_MAINTENANCE_GENERATION_KEY,
+                    SOURCE_UPDATED_MAINTENANCE_ACK_KEY
+                ],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("source update generations: {e}")))?;
+        let (mut generation, mut acknowledged) = (0, 0);
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("source update generation row: {e}")))?
+        {
+            let key = row
+                .get::<String>(0)
+                .map_err(|e| WenlanError::VectorDb(format!("source update generation key: {e}")))?;
+            let value = row
+                .get::<String>(1)
+                .map_err(|e| WenlanError::VectorDb(format!("source update generation value: {e}")))?
+                .parse::<u64>()
+                .map_err(|e| WenlanError::VectorDb(format!("invalid {key} metadata: {e}")))?;
+            match key.as_str() {
+                SOURCE_UPDATED_MAINTENANCE_GENERATION_KEY => generation = value,
+                SOURCE_UPDATED_MAINTENANCE_ACK_KEY => acknowledged = value,
+                _ => unreachable!("query only selects the two source-generation keys"),
+            }
+        }
+        Ok((generation, acknowledged))
+    }
+
+    /// Acknowledge only the generation captured when a finite maintenance
+    /// round began. MAX prevents an older concurrent round from moving the ack
+    /// backwards; a newer source mark remains pending.
+    pub async fn acknowledge_source_updated_maintenance_generation(
+        &self,
+        captured_generation: u64,
+    ) -> Result<(), WenlanError> {
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "INSERT INTO app_metadata (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = CAST(
+                 MAX(CAST(value AS INTEGER), CAST(excluded.value AS INTEGER)) AS TEXT
+             )",
+            libsql::params![
+                SOURCE_UPDATED_MAINTENANCE_ACK_KEY,
+                captured_generation.to_string()
+            ],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("acknowledge source update generation: {e}")))?;
+        Ok(())
+    }
+
+    /// Must be called on the existing connection inside the transaction that
+    /// marks a Page `source_updated`.
+    async fn bump_source_updated_maintenance_generation(
+        conn: &libsql::Connection,
+    ) -> Result<(), WenlanError> {
+        Self::increment_source_updated_maintenance_generation(conn)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("increment source update generation: {e}")))
+    }
+
+    async fn increment_source_updated_maintenance_generation(
+        conn: &libsql::Connection,
+    ) -> Result<(), libsql::Error> {
+        conn.execute(
+            "INSERT INTO app_metadata (key, value) VALUES (?1, '1')
+             ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+            libsql::params![SOURCE_UPDATED_MAINTENANCE_GENERATION_KEY],
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Per-invocation cap on the orphan sweep: bounds how long the sweep can
     /// hold the sole connection mutex. The sweep re-runs after every publish,
     /// so a backlog above the cap drains across invocations instead of
@@ -56892,17 +56991,24 @@ impl MemoryDB {
                 let source_ids_json = serde_json::to_string(&source_ids).map_err(|e| {
                     WenlanError::VectorDb(format!("link_page_source source JSON: {e}"))
                 })?;
-                conn.execute(
-                    "UPDATE pages
+                let affected = conn
+                    .execute(
+                        "UPDATE pages
                  SET source_memory_ids = ?1, citations = NULL,
                      stale_reason = 'source_updated',
+                     refresh_blocked_reason = NULL,
                      sources_updated_count = COALESCE(sources_updated_count, 0) + 1,
                      source_revision = COALESCE(source_revision, 0) + 1
                  WHERE id = ?2",
-                    libsql::params![source_ids_json, page_id],
-                )
-                .await
-                .map_err(|e| WenlanError::VectorDb(format!("link_page_source page bump: {e}")))?;
+                        libsql::params![source_ids_json, page_id],
+                    )
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("link_page_source page bump: {e}"))
+                    })?;
+                if affected > 0 {
+                    Self::bump_source_updated_maintenance_generation(&conn).await?;
+                }
             }
 
             Ok(())
@@ -57091,19 +57197,24 @@ impl MemoryDB {
                 let source_ids_json = serde_json::to_string(&after.1).map_err(|e| {
                     WenlanError::VectorDb(format!("replace_page_sources source JSON: {e}"))
                 })?;
-                conn.execute(
-                    "UPDATE pages
+                let affected = conn
+                    .execute(
+                        "UPDATE pages
                      SET source_memory_ids = ?1, citations = NULL,
                          stale_reason = 'source_updated',
+                         refresh_blocked_reason = NULL,
                          sources_updated_count = COALESCE(sources_updated_count, 0) + 1,
                          source_revision = COALESCE(source_revision, 0) + 1
                      WHERE id = ?2",
-                    libsql::params![source_ids_json, page_id],
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("replace_page_sources page bump: {e}"))
-                })?;
+                        libsql::params![source_ids_json, page_id],
+                    )
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!("replace_page_sources page bump: {e}"))
+                    })?;
+                if affected > 0 {
+                    Self::bump_source_updated_maintenance_generation(&conn).await?;
+                }
             }
             Ok(())
         }
@@ -57521,16 +57632,20 @@ impl MemoryDB {
             .await?;
 
             if inserted > 0 {
-                conn.execute(
+                let affected = conn.execute(
                     "UPDATE pages
                      SET citations = NULL,
                          stale_reason = 'source_updated',
+                         refresh_blocked_reason = NULL,
                          sources_updated_count = COALESCE(sources_updated_count, 0) + 1,
                          source_revision = COALESCE(source_revision, 0) + 1
                      WHERE id = ?1",
                     libsql::params![page_id],
                 )
                 .await?;
+                if affected > 0 {
+                    Self::increment_source_updated_maintenance_generation(&conn).await?;
+                }
             }
 
             // Dual-write (M2 PR-1): a NULL locator (e.g. `authored`) has no
@@ -57916,6 +58031,7 @@ impl MemoryDB {
             let removed_count: usize = affected_pages.values().map(HashSet::len).sum();
             let mut affected_pages: Vec<_> = affected_pages.into_iter().collect();
             affected_pages.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut marked_any_page = false;
             for (page_id, removed_locators) in affected_pages {
                 // G6 Stage 2 PR 2b: reads `edges` instead of the frozen
                 // `page_sources` -- the edge-invalidation loop just above
@@ -57995,28 +58111,34 @@ impl MemoryDB {
                         "cleanup_orphaned_page_sources serialize sources: {e}"
                     ))
                 })?;
-                conn.execute(
-                    "UPDATE pages
+                let affected = conn
+                    .execute(
+                        "UPDATE pages
                      SET source_memory_ids = ?1,
                          stale_reason = 'source_updated',
+                         refresh_blocked_reason = NULL,
                          sources_updated_count = COALESCE(sources_updated_count, 0) + ?2,
                          source_revision = COALESCE(source_revision, 0) + 1,
                          last_modified = ?3,
                          citations = NULL
                      WHERE id = ?4",
-                    libsql::params![
-                        source_ids_json,
-                        removed_locators.len() as i64,
-                        now.as_str(),
-                        page_id.as_str()
-                    ],
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!(
-                        "cleanup_orphaned_page_sources synchronize page: {e}"
-                    ))
-                })?;
+                        libsql::params![
+                            source_ids_json,
+                            removed_locators.len() as i64,
+                            now.as_str(),
+                            page_id.as_str()
+                        ],
+                    )
+                    .await
+                    .map_err(|e| {
+                        WenlanError::VectorDb(format!(
+                            "cleanup_orphaned_page_sources synchronize page: {e}"
+                        ))
+                    })?;
+                marked_any_page |= affected > 0;
+            }
+            if marked_any_page {
+                Self::bump_source_updated_maintenance_generation(&conn).await?;
             }
 
             Ok(removed_count)
@@ -58366,17 +58488,37 @@ impl MemoryDB {
     pub async fn set_page_stale(&self, page_id: &str, reason: &str) -> Result<(), WenlanError> {
         let conn = self.conn.lock().await;
         Self::reject_page_draft_on_conn(&conn, page_id).await?;
-        conn.execute(
-            "UPDATE pages
+        conn.execute("BEGIN", ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("set_page_stale begin: {e}")))?;
+        let result: Result<(), WenlanError> = async {
+            let affected = conn
+                .execute(
+                    "UPDATE pages
              SET stale_reason = ?1,
                  refresh_blocked_reason = NULL,
                  source_revision = COALESCE(source_revision, 0) + 1
              WHERE id = ?2",
-            libsql::params![reason, page_id],
-        )
-        .await
-        .map_err(|e| WenlanError::VectorDb(format!("set_page_stale: {e}")))?;
-        Ok(())
+                    libsql::params![reason, page_id],
+                )
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("set_page_stale: {e}")))?;
+            if reason == "source_updated" && affected > 0 {
+                Self::bump_source_updated_maintenance_generation(&conn).await?;
+            }
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => commit_or_rollback(&conn)
+                .await
+                .map(|_| ())
+                .map_err(|e| WenlanError::VectorDb(format!("set_page_stale commit: {e}"))),
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(error)
+            }
+        }
     }
 
     /// Record why a stale page's automatic re-synthesis was discarded without

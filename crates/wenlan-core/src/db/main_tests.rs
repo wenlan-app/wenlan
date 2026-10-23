@@ -27446,6 +27446,15 @@ async fn test_stale_concepts_lifecycle() {
 #[tokio::test]
 async fn refresh_blocked_reason_pauses_stale_sweep_until_rearmed() {
     let (db, _dir) = test_db().await;
+    db.upsert_documents(vec![make_memory_doc(
+        "mem_blocked_rearm",
+        "Source that changed after a blocked refresh",
+        "fact",
+        "work",
+        "agent",
+    )])
+    .await
+    .unwrap();
     let now = chrono::Utc::now().to_rfc3339();
 
     db.insert_page(
@@ -27502,9 +27511,9 @@ async fn refresh_blocked_reason_pauses_stale_sweep_until_rearmed() {
         "stale listing still shows the blocked page"
     );
 
-    // A fresh source change re-marks the page stale AND clears the marker,
-    // re-arming the sweep for the changed evidence.
-    db.set_page_stale("c_blocked", "source_updated")
+    // A real source/evidence change re-marks the page stale AND clears the
+    // marker, re-arming the sweep for the changed evidence.
+    db.link_page_source("c_blocked", "mem_blocked_rearm", "test")
         .await
         .unwrap();
     let page = db.get_page("c_blocked").await.unwrap().unwrap();
@@ -59461,5 +59470,195 @@ fn daemon_cache_dir_never_falls_through_to_the_cwd_default() {
     assert_eq!(
         daemon_fastembed_cache_dir_from(Some("".into()), None, None, db_path),
         db_path.join("fastembed_cache")
+    );
+}
+
+#[tokio::test]
+async fn source_updated_generation_tracks_effective_page_source_changes_across_restart() {
+    let (db, dir) = test_db().await;
+    db.upsert_documents(vec![
+        make_memory_doc("generation_source_a", "Source A", "fact", "work", "agent"),
+        make_memory_doc("generation_source_b", "Source B", "fact", "work", "agent"),
+    ])
+    .await
+    .unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page(
+        "generation_page",
+        "Generation Page",
+        None,
+        "Page content",
+        None,
+        Some("work"),
+        &[],
+        &now,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (0, 0)
+    );
+    {
+        let conn = db.conn.lock().await;
+        conn.execute(
+            "CREATE TRIGGER reject_source_generation
+             BEFORE INSERT ON app_metadata
+             WHEN NEW.key = 'source_updated_maintenance_generation_v1'
+             BEGIN SELECT RAISE(ABORT, 'blocked generation bump'); END",
+            (),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(db
+        .set_page_stale("generation_page", "source_updated")
+        .await
+        .is_err());
+    assert_eq!(
+        db.get_page("generation_page")
+            .await
+            .unwrap()
+            .unwrap()
+            .stale_reason,
+        None,
+        "a failed generation bump rolls back the stale mark"
+    );
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("DROP TRIGGER reject_source_generation", ())
+            .await
+            .unwrap();
+    }
+
+    db.set_page_stale("generation_page", "manual_edit")
+        .await
+        .unwrap();
+    db.set_page_stale("missing_generation_page", "source_updated")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (0, 0),
+        "unrelated reasons and zero-row stale writes do not arm maintenance"
+    );
+
+    // The generation helper runs on the same connection as the stale mark;
+    // rolling back that transaction must undo both writes.
+    {
+        let conn = db.conn.lock().await;
+        conn.execute("BEGIN", ()).await.unwrap();
+        conn.execute(
+            "UPDATE pages SET stale_reason = 'source_updated' WHERE id = 'generation_page'",
+            (),
+        )
+        .await
+        .unwrap();
+        MemoryDB::increment_source_updated_maintenance_generation(&conn)
+            .await
+            .unwrap();
+        conn.execute("ROLLBACK", ()).await.unwrap();
+    }
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (0, 0)
+    );
+
+    db.link_page_source("generation_page", "generation_source_a", "test")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (1, 0)
+    );
+
+    // A write replacing content behind an existing citation is the main
+    // file-edit path; the stale mark and generation share a transaction.
+    db.acknowledge_source_updated_maintenance_generation(1)
+        .await
+        .unwrap();
+    db.upsert_documents(vec![make_memory_doc(
+        "generation_source_a",
+        "Source A revised",
+        "fact",
+        "work",
+        "agent",
+    )])
+    .await
+    .unwrap();
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (2, 1)
+    );
+    assert_eq!(
+        db.get_page("generation_page")
+            .await
+            .unwrap()
+            .unwrap()
+            .stale_reason
+            .as_deref(),
+        Some("source_updated")
+    );
+
+    // The canonical write is idempotent: a no-op must not create another wake.
+    db.link_page_source("generation_page", "generation_source_a", "test")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (2, 1)
+    );
+
+    db.acknowledge_source_updated_maintenance_generation(2)
+        .await
+        .unwrap();
+    db.link_page_source("generation_page", "generation_source_b", "test")
+        .await
+        .unwrap();
+    assert_eq!(
+        db.source_updated_maintenance_generations().await.unwrap(),
+        (3, 2)
+    );
+
+    drop(db);
+    let reopened = MemoryDB::new_with_shared_embedder(
+        dir.path(),
+        Arc::new(crate::NoopEmitter),
+        shared_embedder(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        reopened
+            .source_updated_maintenance_generations()
+            .await
+            .unwrap(),
+        (3, 2),
+        "unacknowledged source changes and the prior ack survive daemon restart"
+    );
+    reopened
+        .acknowledge_source_updated_maintenance_generation(0)
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened
+            .source_updated_maintenance_generations()
+            .await
+            .unwrap(),
+        (3, 2),
+        "an older completion must not move the durable ack backward"
+    );
+    reopened
+        .acknowledge_source_updated_maintenance_generation(3)
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened
+            .source_updated_maintenance_generations()
+            .await
+            .unwrap(),
+        (3, 3),
+        "acknowledging the latest captured generation clears pending work"
     );
 }

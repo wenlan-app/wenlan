@@ -987,10 +987,14 @@ impl AutomaticSteepBatch {
 
 struct AutomaticMaintenanceRound {
     stages: VecDeque<wenlan_core::maintenance::MaintenanceStage>,
+    captured_source_generation: Option<u64>,
 }
 
 impl AutomaticMaintenanceRound {
-    fn new(cursor: Option<wenlan_core::maintenance::MaintenanceStage>) -> Self {
+    fn new(
+        cursor: Option<wenlan_core::maintenance::MaintenanceStage>,
+        captured_source_generation: Option<u64>,
+    ) -> Self {
         let mut stages = wenlan_core::maintenance::MaintenanceStage::ALL
             .iter()
             .copied()
@@ -1000,7 +1004,10 @@ impl AutomaticMaintenanceRound {
                 stages.rotate_left(position);
             }
         }
-        Self { stages }
+        Self {
+            stages,
+            captured_source_generation,
+        }
     }
 
     /// One pass over the stages that need no model, for On demand mode.
@@ -1013,6 +1020,7 @@ impl AutomaticMaintenanceRound {
                 .copied()
                 .filter(|stage| !stage.needs_model())
                 .collect(),
+            captured_source_generation: None,
         }
     }
 
@@ -1130,6 +1138,23 @@ async fn persist_automatic_phase_cursor(
 
 fn queues_maintenance_followup(trigger: &AutomaticTrigger) -> bool {
     matches!(trigger, AutomaticTrigger::Idle | AutomaticTrigger::Backstop)
+}
+
+fn source_updated_generation_pending((generation, acknowledged): (u64, u64)) -> bool {
+    generation > acknowledged
+}
+
+async fn acknowledge_completed_source_updated_round(
+    db: &wenlan_core::db::MemoryDB,
+    round: &AutomaticMaintenanceRound,
+) -> Result<bool, wenlan_core::WenlanError> {
+    if let Some(captured_generation) = round.captured_source_generation {
+        db.acknowledge_source_updated_maintenance_generation(captured_generation)
+            .await?;
+    }
+    db.source_updated_maintenance_generations()
+        .await
+        .map(source_updated_generation_pending)
 }
 
 /// Drain completed write bursts that cannot produce any bounded automatic
@@ -1485,6 +1510,23 @@ pub fn spawn_scheduler(
             // Filesystem sync can take long enough for fresh writes to arrive;
             // all time comparisons below must use a post-sync clock sample.
             let now = Instant::now();
+            // Source invalidations are durable, but cheap to inspect: they
+            // only arm the existing gated maintenance lane. The round keeps
+            // this observed generation so writes made during its stages are
+            // left pending for a later round.
+            let source_update_generations = match db.source_updated_maintenance_generations().await
+            {
+                Ok(generations) => {
+                    if source_updated_generation_pending(generations) {
+                        maintenance_pending = true;
+                    }
+                    Some(generations)
+                }
+                Err(error) => {
+                    tracing::warn!("[scheduler] source update generation read failed: {error}");
+                    None
+                }
+            };
             let host_activity = sample_host_activity();
             let resource_status =
                 apply_host_activity(resource_probe.sample(now, resource_policy), host_activity);
@@ -1890,7 +1932,10 @@ pub fn spawn_scheduler(
                     AutomaticTrigger::Maintenance => {
                         if maintenance_round.is_none() {
                             let cursor = load_automatic_maintenance_cursor(&db).await;
-                            maintenance_round = Some(AutomaticMaintenanceRound::new(cursor));
+                            maintenance_round = Some(AutomaticMaintenanceRound::new(
+                                cursor,
+                                source_update_generations.map(|(generation, _)| generation),
+                            ));
                         }
                         let stage = maintenance_round
                             .as_ref()
@@ -1921,8 +1966,19 @@ pub fn spawn_scheduler(
                         };
                         persist_automatic_maintenance_cursor(&db, cursor).await;
                         if disposition == AutomaticBatchDisposition::Complete {
+                            let round = maintenance_round
+                                .as_ref()
+                                .expect("maintenance round survives its final stage");
+                            match acknowledge_completed_source_updated_round(&db, round).await {
+                                Ok(pending) => maintenance_pending = pending,
+                                Err(error) => {
+                                    tracing::warn!(
+                                        "[scheduler] source update generation ack failed: {error}"
+                                    );
+                                    maintenance_pending = true;
+                                }
+                            }
                             maintenance_round = None;
-                            maintenance_pending = false;
                             maintenance_stage_ran_since_steep = false;
                         } else {
                             maintenance_stage_ran_since_steep = true;

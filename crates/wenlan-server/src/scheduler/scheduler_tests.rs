@@ -275,7 +275,7 @@ fn retryable_or_paused_phase_is_not_requeued_in_current_trigger() {
 
 #[test]
 fn maintenance_round_stays_pending_until_every_stage_attempted() {
-    let mut round = AutomaticMaintenanceRound::new(None);
+    let mut round = AutomaticMaintenanceRound::new(None, Some(7));
     assert_eq!(
         round.remaining_stages(),
         wenlan_core::maintenance::MaintenanceStage::ALL
@@ -330,9 +330,10 @@ fn on_demand_round_runs_only_the_stages_that_need_no_model() {
 
 #[test]
 fn maintenance_round_cursor_rotates_a_paused_stage_behind_the_rest() {
-    let mut round = AutomaticMaintenanceRound::new(Some(
-        wenlan_core::maintenance::MaintenanceStage::RetroReview,
-    ));
+    let mut round = AutomaticMaintenanceRound::new(
+        Some(wenlan_core::maintenance::MaintenanceStage::RetroReview),
+        None,
+    );
     assert_eq!(
         round.next_stage(),
         Some(wenlan_core::maintenance::MaintenanceStage::RetroReview)
@@ -357,7 +358,7 @@ fn maintenance_round_cursor_rotates_a_paused_stage_behind_the_rest() {
 #[test]
 fn maintenance_successful_more_stage_rotates_to_tail() {
     let stage = wenlan_core::maintenance::MaintenanceStage::NearDuplicate;
-    let mut round = AutomaticMaintenanceRound::new(Some(stage));
+    let mut round = AutomaticMaintenanceRound::new(Some(stage), None);
 
     let disposition = round.complete_stage(
         stage,
@@ -405,8 +406,10 @@ async fn automatic_phase_cursor_persists_after_retryable_attempt() {
 #[tokio::test]
 async fn maintenance_stage_cursor_persists_after_attempt() {
     let (db, _db_dir) = new_test_db().await;
-    let mut round =
-        AutomaticMaintenanceRound::new(Some(wenlan_core::maintenance::MaintenanceStage::StalePage));
+    let mut round = AutomaticMaintenanceRound::new(
+        Some(wenlan_core::maintenance::MaintenanceStage::StalePage),
+        None,
+    );
     round.complete_stage(
         wenlan_core::maintenance::MaintenanceStage::StalePage,
         AutomaticMaintenanceOutcome::default(),
@@ -1529,6 +1532,51 @@ fn pending_maintenance_yields_to_due_steep_after_one_stage() {
             now - BACKSTOP_INTERVAL - Duration::from_secs(1),
         ),
         Some(AutomaticTrigger::Backstop)
+    );
+}
+
+#[test]
+fn durable_source_generation_rearms_maintenance_after_idle_without_bypassing_gates() {
+    let now = Instant::now() + DAILY_INTERVAL + Duration::from_secs(1);
+    let no_writes = HashMap::new();
+    assert!(!source_updated_generation_pending((4, 4)));
+    assert!(source_updated_generation_pending((5, 4)));
+    let admission = maintenance_admission(source_updated_generation_pending((5, 4)), false);
+    assert_eq!(admission, MaintenanceAdmission::Ready);
+
+    // Idle has already fired; a durable source update arms maintenance ahead
+    // of the normal backstop on the next admitted heavy turn.
+    assert_eq!(
+        select_due_automatic_trigger(now, &no_writes, admission, now, true, now, now,),
+        Some(AutomaticTrigger::Maintenance)
+    );
+    assert!(!automatic_heavy_turn_allowed(
+        false,
+        false,
+        now,
+        now + Duration::from_secs(1),
+    ));
+}
+
+#[test]
+fn maintenance_round_keeps_the_generation_observed_at_its_start() {
+    let mut round = AutomaticMaintenanceRound::new(None, Some(12));
+    for stage in wenlan_core::maintenance::MaintenanceStage::ALL
+        .iter()
+        .copied()
+    {
+        round.complete_stage(
+            stage,
+            AutomaticMaintenanceOutcome {
+                retryable: true,
+                ..AutomaticMaintenanceOutcome::default()
+            },
+        );
+    }
+    assert_eq!(round.captured_source_generation, Some(12));
+    assert!(
+        source_updated_generation_pending((13, 12)),
+        "a write after round start remains pending after acknowledging its captured value"
     );
 }
 
