@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5b7ce765bf93ffae95a72966fb1fbce8e8fb4a143836e40aa7ce8ba17af2ff41 -->
+<!-- README_SYNC: source=README.md sha256=26279e5d809356d37577cc055502f5aecd857dea2eb7e2d0875a8d36ea46ad4f -->
 
 <p align="center">
   <picture>
@@ -8,8 +8,8 @@
 </p>
 
 <p align="center">
-  Wenlan organiza notas, documentos y conversaciones dispersos en una base de conocimiento que se actualiza y enlaza a sus fuentes,<br>
-  para que tú y herramientas de IA como Claude y Codex reutilicéis lo aprendido sin tener que explicar de nuevo decisiones anteriores.
+  Wenlan convierte tus notas, archivos, conversaciones con IA y código en una wiki viva.<br>
+  Tu IA la mantiene al día, tus herramientas de IA pueden buscar en ella y citarla, y cada frase citada se comprueba con su fuente.
 </p>
 
 <p align="center">

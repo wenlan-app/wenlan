@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=5b7ce765bf93ffae95a72966fb1fbce8e8fb4a143836e40aa7ce8ba17af2ff41 -->
+<!-- README_SYNC: source=README.md sha256=26279e5d809356d37577cc055502f5aecd857dea2eb7e2d0875a8d36ea46ad4f -->
 
 <p align="center">
   <picture>
@@ -8,8 +8,8 @@
 </p>
 
 <p align="center">
-  文澜把散落各处的笔记、文档、AI 对话和写代码的记录，<br>
-  整理成一份本地、能查回原文、你和 AI 工具共用、会跟着来源更新的知识库。
+  文澜把笔记、文档、AI 对话和代码，整理成持续更新的知识库。<br>
+  你的 AI 帮你持续更新，你的 AI 工具都查得到、引用得到，引用的句子都对照过来源。
 </p>
 
 <p align="center">
@@ -43,9 +43,9 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 
 我做文澜，是因为对自己的知识一直有种焦虑：笔记、文档和 AI 对话散落各处，又一直在变。要让 Obsidian 仓库三个月后不荒废，得装插件、设计流程、不停维护；LLM wiki 那类做法，日常用起来也不轻松。我想要一个 AI 原生、不用费心照顾的知识库 App。
 
-- **散落的资料收进一处：** 文档、Markdown 文件、Obsidian 仓库、Logseq 图谱、网页链接，还有导出的 AI 对话，都进到同一个知识库。
-- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor、GitHub Copilot、Gemini CLI、Windsurf 等 MCP 工具都用同一个知识库。
-- **流程全部内置：** 保存、整理、引用到更新笔记，都在同一个 App 里，不用再拼装一堆插件。
+- **AI 帮你持续更新：** 文档、Markdown、Obsidian 仓库、Logseq 图谱、网页链接和 AI 对话都变成笔记，保留来源，来源变了就跟着更新。全部内置，不用拼装一堆插件。
+- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor、GitHub Copilot 等 MCP 工具都查得到、引用得到同一批笔记。
+- **对照过来源：** 文澜会检查所引来源是否支持每个句子，未通过的引用太多时，不会保存该笔记。笔记是本地 Markdown，AI 要改你写的笔记，会先等你审核。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -169,9 +169,11 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 <a id="用-ai-延续已有知识"></a>
 
+<a id="让-ai-接续已有知识"></a>
+
 <br>
 
-## 让 AI 接续已有知识
+## 让知识活用起来
 
 资料放进文澜后，AI 就能接着用：找回带有依据的既有决定、保存新成果，并随着证据变化继续使用。
 

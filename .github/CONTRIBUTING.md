@@ -1,6 +1,6 @@
 # Contributing to Wenlan
 
-Wenlan is a local-first living knowledge base your agents build as they work. We welcome bug fixes, features, tests, docs, and design feedback.
+Wenlan is a local-first living wiki your AI tools write, keep current, and cite. We welcome bug fixes, features, tests, docs, and design feedback.
 
 This repo holds the daemon (`wenlan-server`), the CLI (`wenlan`), the MCP server (`wenlan-mcp`), the shared types/core (`wenlan-types`, `wenlan-core`), and the Tauri desktop app (`wenlan-app`, in `app/`). Bug reports for the local runtime, CLI, MCP server, desktop app, and plugin are welcome here.
 

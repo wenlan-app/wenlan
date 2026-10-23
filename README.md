@@ -6,8 +6,8 @@
 </p>
 
 <p align="center">
-  Wenlan turns your scattered documents, AI chats, and coding sessions into one local wiki with citations:<br>
-  a source of truth for you and your AI tools that keeps up as they change.
+  Wenlan turns your notes, files, AI chats, and code into a living wiki.<br>
+  Your AI keeps it current, your AI tools can search and cite it, and cited sentences are checked against their sources.
 </p>
 
 <p align="center">
@@ -41,9 +41,9 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI chats scattered everywhere, always changing. Keeping an Obsidian vault from rotting within three months took plugins, a workflow, and constant upkeep, and LLM-wiki setups weren't much easier day to day. I wanted an AI-native knowledge base app that stays useful without the hassle.
 
-- **Everything in one place:** Documents, Markdown files, Obsidian vaults, Logseq graphs, web links, and exported AI chats come into one wiki.
-- **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, Windsurf, and other MCP clients work from the same pages.
-- **Built in, not bolted on:** Saving, organizing, citing, and updating pages live in one app, with no maze of plugins to wire up.
+- **Kept current by your AI:** Documents, Markdown, Obsidian vaults, Logseq graphs, web links, and AI chats become pages that keep their sources and update when those change. Built in, with no maze of plugins.
+- **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, and other MCP clients search and cite the same pages.
+- **Checked against the source:** Wenlan checks the cited source supports each sentence, and does not save a page when too many citations fail. Pages are local Markdown, and AI edits to pages you wrote wait for your review.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

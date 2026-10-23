@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Wenlan CLI for setup, service management, and local AI work memory."
+description = "Wenlan CLI for setup, service management, and your living wiki."
 default-run = "wenlan"
 publish = false
 
