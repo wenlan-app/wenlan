@@ -56,15 +56,15 @@ const LEFTOVER_TOKENS = [
   "npx -y wenlan@",
 ];
 
-class GenError extends Error {}
+export class GenError extends Error {}
 
-function fail(skill, message) {
+export function fail(skill, message) {
   throw new GenError(`${skill}: ${message}`);
 }
 
 // --- markdown helpers -------------------------------------------------------
 
-function splitFrontmatter(skill, text) {
+export function splitFrontmatter(skill, text) {
   const lines = text.split("\n");
   if (lines[0] !== "---") fail(skill, "SKILL.md must start with frontmatter");
   const end = lines.indexOf("---", 1);
@@ -94,7 +94,7 @@ function headingIndexes(lines) {
 
 // A section runs from its heading line to the line before the next heading of
 // any level (flat, no nesting). `null` drops it; an array replaces it.
-function applySections(skill, body, sections) {
+export function applySections(skill, body, sections) {
   let lines = body;
   for (const [heading, replacement] of Object.entries(sections)) {
     const heads = headingIndexes(lines);
@@ -126,7 +126,7 @@ function findRun(lines, run) {
 
 // Each entry: { from: [lines], to: [lines] | null }. `from` must match exactly
 // one contiguous run in the Claude body (after `sections`).
-function applyReplace(skill, body, replace) {
+export function applyReplace(skill, body, replace) {
   let lines = body;
   replace.forEach((entry, n) => {
     const { from, to } = entry;
@@ -143,7 +143,7 @@ function applyReplace(skill, body, replace) {
 
 // --- frontmatter -----------------------------------------------------------
 
-function parseFrontmatter(skill, lines) {
+export function parseFrontmatter(skill, lines) {
   // Ordered list of { key, value: string[] } (value lines without the "key:" head).
   const fields = [];
   for (const line of lines) {
@@ -168,7 +168,7 @@ function renderFrontmatter(fields) {
   return out;
 }
 
-function checkHiddenFrontmatter(skill, lines) {
+export function checkHiddenFrontmatter(skill, lines) {
   const fields = parseFrontmatter(skill, lines);
   const byKey = (k) => fields.find((f) => f.key === k);
   if (byKey("name")?.value[0] !== skill) fail(skill, "frontmatter name mismatch");
@@ -381,7 +381,7 @@ export function strayFiles(root, outputs, codexRoot) {
   return out.sort();
 }
 
-function pruneEmptyDirs(dir) {
+export function pruneEmptyDirs(dir) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.isDirectory()) pruneEmptyDirs(resolve(dir, e.name));
   }

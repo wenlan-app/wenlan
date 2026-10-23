@@ -353,6 +353,27 @@ mod tests {
             route_for("muse_code", &Reading::Yes, &Reading::No),
             "config"
         );
+        // The tools added for skills have no Wenlan plugin either: a detected
+        // one is written a raw entry (and its skills by a separate command).
+        for client_type in [
+            "antigravity",
+            "copilot_cli",
+            "vscode",
+            "windsurf",
+            "kiro",
+            "opencode",
+        ] {
+            assert_eq!(
+                route_for(client_type, &Reading::Yes, &Reading::No),
+                "config",
+                "{client_type}"
+            );
+            assert_eq!(
+                route_for(client_type, &Reading::No, &Reading::No),
+                "skip",
+                "{client_type}"
+            );
+        }
     }
 
     #[test]
@@ -788,6 +809,7 @@ mod tests {
             has_plugin: Reading::No,
             install_state: mcp_config::InstallState::Installed,
             entry_health: mcp_config::EntryHealth::NoEntry,
+            has_skills: Some(Reading::No),
         }
     }
 

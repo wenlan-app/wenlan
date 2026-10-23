@@ -3,15 +3,10 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import {
-  detectMcpClients,
-  writeMcpConfig,
-  installClientPlugin,
-  type McpClient,
-} from "../../lib/tauri";
+import { detectMcpClients, type McpClient } from "../../lib/tauri";
 import { readingIsNo, readingIsYes } from "../../lib/reading";
 import { describeSetupError, setupErrorHeadingKey, type DescribedSetupError } from "../../lib/setupErrors";
-import { isPluginClient } from "./pluginClients";
+import { connectClient } from "./connectClient";
 import { unreadPluginWriteRisk } from "./setupRisk";
 import ClientRow, { clientRowDescId } from "./ClientRow";
 import { familyOfClient, type ConnectionStatus } from "./connectionState";
@@ -139,28 +134,25 @@ export default function ClientSetupList({
    *  `write_mcp_config` Set up uses, for every client including the plugin
    *  ones: the broken thing IS the raw entry, and rewriting it in place adds
    *  no second registration. */
-  const setUp = async (clientType: string, mode: "setup" | "repair" = "setup") => {
+  const setUp = async (client: McpClient, mode: "setup" | "repair" = "setup") => {
+    const clientType = client.client_type;
     setBusy(clientType);
     setErrors((prev) => ({ ...prev, [clientType]: null }));
     setWarnings((prev) => ({ ...prev, [clientType]: "" }));
     try {
-      if (mode === "setup" && isPluginClient(clientType)) {
-        await installClientPlugin(clientType);
-      } else {
-        const undetermined = await writeMcpConfig(clientType);
-        // An empty array is a measurement: every resolver input was read.
-        // A non-empty one is the round-5 D4 fact arriving at the pixel — the
-        // entry was written by a search that never built some of its
-        // candidates, and saying nothing would make that identical to a search
-        // that read them all.
-        if (undetermined.length > 0) {
-          setWarnings((prev) => ({
-            ...prev,
-            [clientType]: undetermined
-              .map((u) => t("connectMatrix.wroteWithUndeterminedInput", { ...u }))
-              .join(" "),
-          }));
-        }
+      const undetermined = await connectClient(client, mode);
+      // An empty array is a measurement: every resolver input was read.
+      // A non-empty one is the round-5 D4 fact arriving at the pixel — the
+      // entry was written by a search that never built some of its
+      // candidates, and saying nothing would make that identical to a search
+      // that read them all.
+      if (undetermined.length > 0) {
+        setWarnings((prev) => ({
+          ...prev,
+          [clientType]: undetermined
+            .map((u) => t("connectMatrix.wroteWithUndeterminedInput", { ...u }))
+            .join(" "),
+        }));
       }
       setAdded((prev) => ({ ...prev, [clientType]: true }));
       if (mode === "repair") setRepaired((prev) => ({ ...prev, [clientType]: true }));
@@ -205,7 +197,7 @@ export default function ClientSetupList({
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => setUp(client.client_type, "repair")}
+          onClick={() => setUp(client, "repair")}
           disabled={busy === client.client_type}
           aria-describedby={clientRowDescId(client.client_type)}
         >
@@ -224,7 +216,7 @@ export default function ClientSetupList({
         type="button"
         variant="secondary"
         size="sm"
-        onClick={() => setUp(client.client_type)}
+        onClick={() => setUp(client)}
         disabled={busy === client.client_type}
         aria-describedby={duplicateRisk ? clientRowDescId(client.client_type) : undefined}
       >
