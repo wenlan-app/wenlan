@@ -72,6 +72,7 @@ main|get|/api/snapshots/{id}/captures-with-content|wenlan_server::snapshot_route
 main|get|/api/sources|wenlan_server::source_routes::handle_list_sources
 main|get|/api/spaces|wenlan_server::spaces_routes::handle_list_spaces
 main|get|/api/spaces/default|wenlan_server::spaces_routes::handle_get_default_space
+main|get|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_status
 main|get|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_get_binding
 main|get|/api/spaces/{name}/wiki/suggest|wenlan_server::repo_wiki_routes::handle_suggest
 main|get|/api/status|wenlan_server::routes::handle_status
@@ -170,6 +171,7 @@ main|post|/api/spaces/{name}/confirm|wenlan_server::spaces_routes::handle_confir
 main|post|/api/spaces/{name}/pin|wenlan_server::spaces_routes::handle_pin_space
 main|post|/api/spaces/{name}/star|wenlan_server::spaces_routes::handle_toggle_space_starred
 main|post|/api/spaces/{name}/wiki/docs|wenlan_server::repo_wiki_routes::handle_docs
+main|post|/api/spaces/{name}/wiki/github|wenlan_server::repo_wiki_routes::handle_github_setup
 main|post|/api/spaces/{name}/wiki/publish|wenlan_server::repo_wiki_routes::handle_publish
 main|post|/api/spaces/{name}/wiki/run|wenlan_server::repo_wiki_routes::handle_run_now
 main|post|/api/steep|wenlan_server::routes::handle_steep

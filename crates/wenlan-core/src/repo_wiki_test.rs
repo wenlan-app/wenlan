@@ -268,6 +268,7 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
         enabled: true,
         hour: 9,
         agent: RepoWikiAgent::Claude,
+        runs_on: Default::default(),
     };
     let bound = bind_at(
         &store,
@@ -289,6 +290,7 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
         enabled: true,
         hour: 24,
         agent: RepoWikiAgent::Codex,
+        runs_on: Default::default(),
     };
     assert!(bind_at(&store, "site", &clone, None, Some(late)).is_err());
     assert!(unbind_at(&store, "site").unwrap());
@@ -564,6 +566,7 @@ fn daily_is_due_once_a_day_after_its_hour() {
             enabled: true,
             hour: 9,
             agent: RepoWikiAgent::Claude,
+            runs_on: Default::default(),
         }),
         last_publish: None,
         last_daily_run: None,
@@ -583,6 +586,10 @@ fn daily_is_due_once_a_day_after_its_hour() {
     assert!(!daily_due(&binding, after));
     binding.last_daily_run = Some("2026-10-23".into());
     assert!(daily_due(&binding, after));
+    // Run on GitHub: this computer leaves it to the workflow.
+    binding.daily.as_mut().unwrap().runs_on = RepoWikiRunner::Github;
+    assert!(!daily_due(&binding, after));
+    binding.daily.as_mut().unwrap().runs_on = RepoWikiRunner::Computer;
     binding.daily.as_mut().unwrap().enabled = false;
     assert!(!daily_due(&binding, after));
     binding.daily = None;

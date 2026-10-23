@@ -150,6 +150,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "set_telemetry_enabled",
   "set_source_follow_changes",
   "set_source_pin",
+  "setup_repo_wiki_github",
   "start_daemon_sidecar",
   "store_memory",
   "suggest_tags",

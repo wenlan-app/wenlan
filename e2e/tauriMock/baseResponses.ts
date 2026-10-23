@@ -69,6 +69,7 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
     // No fixture Space is bound to a repository or has code pages to offer.
     case "get_repo_wiki": return null;
     case "suggest_repo_wiki": return { candidates: [] };
+    case "get_repo_wiki_github": return { gh_ready: false, workflow: "missing" };
     // The main shell asks on every launch whether a wenlan://pair link is waiting.
     case "take_remote_pairing_link": return null;
     // Web access stopped on its own: the fixture never stops, so no notice waits.

@@ -22,7 +22,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use wenlan_types::repo_wiki::{
     RepoDocCheck, RepoDocCode, RepoDocFix, RepoDocFixState, RepoWikiAgent, RepoWikiBinding,
-    RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus,
+    RepoWikiCandidate, RepoWikiDaily, RepoWikiPublishResult, RepoWikiPublishStatus, RepoWikiRunner,
     DEFAULT_REPO_WIKI_FOLDER, REPO_WIKI_BRANCH,
 };
 use wenlan_types::CodeBasisLocator;
@@ -843,7 +843,7 @@ pub struct Published {
     pub kept_edits: Option<Vec<String>>,
 }
 
-fn remote_default_branch(repo: &Path) -> String {
+pub(crate) fn remote_default_branch(repo: &Path) -> String {
     let mut command = git(repo);
     command.args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
     if let Ok(name) = run(command, "git symbolic-ref") {
@@ -1644,6 +1644,12 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     if export {
         maintain_agent_files(&input.worktree, &folder)?;
     }
+    crate::repo_wiki_github::maintain_workflow(
+        &input.worktree,
+        &folder,
+        binding.daily.as_ref(),
+        crate::repo_wiki_github::local_offset_seconds(),
+    )?;
 
     let mut command = git(&input.worktree);
     command.args(["add", "--all"]);
@@ -1902,6 +1908,7 @@ pub fn daily_due(binding: &RepoWikiBinding, now: chrono::DateTime<chrono::Local>
         return false;
     };
     daily.enabled
+        && daily.runs_on == RepoWikiRunner::Computer
         && now.hour() >= u32::from(daily.hour)
         && binding.last_daily_run.as_deref() != Some(now.format("%Y-%m-%d").to_string().as_str())
 }

@@ -14,6 +14,11 @@
 //! - `POST /api/spaces/{name}/wiki/docs`: an AI tool suggests a fix to one of
 //!   the repository's own docs, or reports how many it read; the user
 //!   declines a fix.
+//! - `GET /api/spaces/{name}/wiki/github`: what a daily update on GitHub
+//!   Actions still needs in the repository, and its last run.
+//! - `POST /api/spaces/{name}/wiki/github`: one of those settings: store the
+//!   AI tool's secret (signing in to Claude in the browser, or a pasted
+//!   OpenAI key), or let Actions open pull requests.
 //!
 //! The work lives in `wenlan_core::repo_wiki`; git and gh run on a blocking
 //! thread.
@@ -30,8 +35,9 @@ use tokio::sync::RwLock;
 use wenlan_core::db::MemoryDB;
 use wenlan_core::repo_wiki;
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoDocFixState, RepoDocsReply, RepoDocsRequest, RepoWikiBinding,
-    RepoWikiPublishResult, RepoWikiSuggestion,
+    BindRepoWikiRequest, RepoDocFixState, RepoDocsReply, RepoDocsRequest, RepoWikiAgent,
+    RepoWikiBinding, RepoWikiGithubRequest, RepoWikiGithubStatus, RepoWikiPublishResult,
+    RepoWikiSuggestion,
 };
 
 pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<SharedState> {
@@ -46,6 +52,10 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/spaces/{name}/wiki/publish", post(handle_publish))
         .route("/api/spaces/{name}/wiki/run", post(handle_run_now))
         .route("/api/spaces/{name}/wiki/docs", post(handle_docs))
+        .route(
+            "/api/spaces/{name}/wiki/github",
+            get(handle_github_status).post(handle_github_setup),
+        )
 }
 
 async fn db_of(state: &Arc<RwLock<ServerState>>) -> Result<Arc<MemoryDB>, ServerError> {
@@ -188,6 +198,73 @@ async fn handle_docs(
         blocking(move || docs_action(&repo_wiki::store_path(), &space, req, now).map_err(refused))
             .await?;
     Ok(Json(reply))
+}
+
+/// The binding of the registered Space `space`, or 404.
+async fn bound(db: &MemoryDB, space: &str) -> Result<RepoWikiBinding, ServerError> {
+    let space = registered_space(db, space).await?;
+    let lookup = space.clone();
+    blocking(move || repo_wiki::binding_at(&repo_wiki::store_path(), &lookup))
+        .await?
+        .ok_or_else(|| {
+            ServerError::NotFound(format!(
+                "Space {space:?} is not bound to a repository; bind it first"
+            ))
+        })
+}
+
+/// GET /api/spaces/{name}/wiki/github
+async fn handle_github_status(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(space): Path<String>,
+) -> Result<Json<RepoWikiGithubStatus>, ServerError> {
+    let db = db_of(&state).await?;
+    let binding = bound(&db, &space).await?;
+    let status = blocking(move || {
+        Ok(wenlan_core::repo_wiki_github::status(
+            &binding,
+            repo_wiki::find_gh().as_deref(),
+        ))
+    })
+    .await?;
+    Ok(Json(status))
+}
+
+/// POST /api/spaces/{name}/wiki/github
+async fn handle_github_setup(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Path(space): Path<String>,
+    Json(req): Json<RepoWikiGithubRequest>,
+) -> Result<Json<RepoWikiGithubStatus>, ServerError> {
+    use wenlan_core::repo_wiki_github as github;
+    let db = db_of(&state).await?;
+    let binding = bound(&db, &space).await?;
+    let status = blocking(move || {
+        let gh = repo_wiki::find_gh().ok_or_else(|| {
+            wenlan_core::WenlanError::Validation(
+                "install the GitHub CLI (gh) and sign in with `gh auth login`".to_owned(),
+            )
+        })?;
+        match req {
+            RepoWikiGithubRequest::ClaudeToken => {
+                let claude = repo_wiki::find_agent(RepoWikiAgent::Claude).ok_or_else(|| {
+                    wenlan_core::WenlanError::Validation(
+                        "Claude Code is not installed on this computer".to_owned(),
+                    )
+                })?;
+                github::store_claude_token(&binding, &gh, &claude)?;
+            }
+            RepoWikiGithubRequest::OpenaiKey { key } => {
+                github::store_openai_key(&binding, &gh, &key)?;
+            }
+            RepoWikiGithubRequest::AllowPullRequests => {
+                github::allow_pull_requests(&binding, &gh)?;
+            }
+        }
+        Ok(github::status(&binding, Some(&gh)))
+    })
+    .await?;
+    Ok(Json(status))
 }
 
 /// POST /api/spaces/{name}/wiki/run

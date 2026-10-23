@@ -982,6 +982,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     action: "dismiss",
     id: a?.id,
   }),
+  get_repo_wiki_github: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/github`),
+  setup_repo_wiki_github: (a) => post(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/github`, a?.request),
   update_space: async (a) => {
     const name = normalizedSpace(a?.name);
     const newName = normalizedSpace(a?.newName);

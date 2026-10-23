@@ -11,7 +11,7 @@ use clap::{Subcommand, ValueEnum};
 use std::path::PathBuf;
 use wenlan_types::repo_wiki::{
     BindRepoWikiRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult,
-    RepoWikiPublishStatus,
+    RepoWikiPublishStatus, RepoWikiRunner,
 };
 
 use crate::client::WenlanClient;
@@ -50,6 +50,10 @@ pub enum WikiCommand {
         /// The AI tool the daily run starts. Default: claude.
         #[arg(long, value_enum, requires = "daily")]
         agent: Option<AgentArg>,
+        /// Run the daily update on GitHub Actions instead of this computer:
+        /// the next publish adds the workflow to the pull request.
+        #[arg(long, requires = "daily")]
+        on_github: bool,
     },
     /// Write the Space's code pages into the repository and open or update
     /// the pull request.
@@ -93,13 +97,14 @@ pub async fn run(
             folder,
             daily,
             agent,
+            on_github,
         } => {
             let repo = match repo {
                 Some(repo) => repo,
                 None => std::env::current_dir()?,
             };
             let repo = std::path::absolute(repo)?;
-            let daily = parse_daily(daily.as_deref(), agent)?;
+            let daily = parse_daily(daily.as_deref(), agent, on_github)?;
             let binding = client
                 .bind_repo_wiki(
                     space,
@@ -155,16 +160,26 @@ pub async fn run(
     }
 }
 
-fn parse_daily(daily: Option<&str>, agent: Option<AgentArg>) -> Result<Option<RepoWikiDaily>> {
+fn parse_daily(
+    daily: Option<&str>,
+    agent: Option<AgentArg>,
+    on_github: bool,
+) -> Result<Option<RepoWikiDaily>> {
     let Some(daily) = daily else {
         return Ok(None);
     };
     let agent = agent.map(Into::into).unwrap_or(RepoWikiAgent::Claude);
+    let runs_on = if on_github {
+        RepoWikiRunner::Github
+    } else {
+        RepoWikiRunner::Computer
+    };
     if daily.eq_ignore_ascii_case("off") {
         return Ok(Some(RepoWikiDaily {
             enabled: false,
             hour: 9,
             agent,
+            runs_on,
         }));
     }
     let hour: u8 = daily
@@ -177,6 +192,7 @@ fn parse_daily(daily: Option<&str>, agent: Option<AgentArg>) -> Result<Option<Re
         enabled: true,
         hour,
         agent,
+        runs_on,
     }))
 }
 
@@ -196,11 +212,15 @@ fn print_binding(format: ResolvedFormat, quiet: bool, binding: &RepoWikiBinding)
     }
     match &binding.daily {
         Some(daily) if daily.enabled => println!(
-            "  daily: after {:02}:00, with {}",
+            "  daily: after {:02}:00, with {}, on {}",
             daily.hour,
             match daily.agent {
                 RepoWikiAgent::Claude => "Claude Code",
                 RepoWikiAgent::Codex => "Codex",
+            },
+            match daily.runs_on {
+                RepoWikiRunner::Computer => "this computer",
+                RepoWikiRunner::Github => "GitHub",
             }
         ),
         _ => println!("  daily: off"),
@@ -264,17 +284,19 @@ mod tests {
 
     #[test]
     fn daily_takes_an_hour_or_off() {
-        let on = parse_daily(Some("9"), None).unwrap().unwrap();
+        let on = parse_daily(Some("9"), None, false).unwrap().unwrap();
         assert!(on.enabled);
         assert_eq!(on.hour, 9);
         assert_eq!(on.agent, RepoWikiAgent::Claude);
-        let off = parse_daily(Some("OFF"), Some(AgentArg::Codex))
+        assert_eq!(on.runs_on, RepoWikiRunner::Computer);
+        let off = parse_daily(Some("OFF"), Some(AgentArg::Codex), true)
             .unwrap()
             .unwrap();
         assert!(!off.enabled);
         assert_eq!(off.agent, RepoWikiAgent::Codex);
-        assert!(parse_daily(Some("24"), None).is_err());
-        assert!(parse_daily(Some("nine"), None).is_err());
-        assert!(parse_daily(None, None).unwrap().is_none());
+        assert_eq!(off.runs_on, RepoWikiRunner::Github);
+        assert!(parse_daily(Some("24"), None, false).is_err());
+        assert!(parse_daily(Some("nine"), None, false).is_err());
+        assert!(parse_daily(None, None, false).unwrap().is_none());
     }
 }

@@ -164,6 +164,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // fixture answers with none, so the GitHub button stays hidden.
     "get_repo_wiki",
     "suggest_repo_wiki",
+    "get_repo_wiki_github",
   ],
   entityDetail: [
     "get_entity_detail_cmd",
