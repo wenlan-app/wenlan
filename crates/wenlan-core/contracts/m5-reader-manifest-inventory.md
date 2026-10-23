@@ -1312,7 +1312,6 @@ carrying the authority of agreement.
 | `core/ingest.rs::run_canonical_enrichment` | `pub` | no | no | — | `core/post_ingest.rs::run_post_ingest_enrichment` |
 | `core/kg_quality.rs::run_rethink` | `pub` | no | no | — | `core/kg_quality.rs::find_merge_candidates`, `core/kg_quality.rs::refresh_stale_entity_embeddings`, `core/kg_quality.rs::scan_contradictions` |
 | `core/kg_quality.rs::verify_entity` | `pub` | no | no | — | `core/kg_quality.rs::entity_self_retrieval` |
-| `core/kg_quality.rs::verify_page` | `pub` | no | no | — | `core/db.rs::search_memory` |
 | `core/m6/oracle.rs::recompute_full` | `pub` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/m6/shadow.rs::admitted_proposals` | `private` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/maintenance/page_merge_order.rs::load_candidate` | `private` | no | no | — | `core/db.rs::get_page` |

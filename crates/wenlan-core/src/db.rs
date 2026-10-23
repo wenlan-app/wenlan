@@ -2298,7 +2298,7 @@ pub fn compute_rerank_fetch_pool(
 /// returns the top `limit`.
 ///
 /// Deliberately a STANDALONE step, NOT folded into `search_memory`, so internal
-/// callers (`search_corrections_by_topic`, `verify_page`) that call `search_memory`
+/// callers (e.g. `search_corrections_by_topic`) that call `search_memory`
 /// directly never get — or pay for — CE. The daemon handler fetches a widened pool
 /// via plain `search_memory`, then calls this. On reranker error / empty output the
 /// input order is preserved. The sync CE runs off the async runtime via

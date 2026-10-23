@@ -70,21 +70,14 @@ pub async fn verify_page(
 ) -> Result<VerificationResult, WenlanError> {
     let mut warnings = Vec::new();
 
+    // Search pages directly: search_memory only merges pages in when
+    // WENLAN_ENABLE_PAGE_CHANNEL is set, so it misses every page by default.
     let self_retrieval_passed = match db
-        .search_memory(
-            page_title,
-            10,
-            None,
-            &ReadScope::Global,
-            None,
-            None,
-            None,
-            None,
-        )
+        .search_pages_scoped(page_title, 10, None, &ReadScope::Global)
         .await
     {
         Ok(results) => {
-            let found = results.iter().any(|r| r.source_id == page_id);
+            let found = results.iter().any(|p| p.id == page_id);
             if !found {
                 warnings.push(format!(
                     "Page '{}' ({}) not found in top-10 self-retrieval results",
@@ -560,6 +553,64 @@ mod tests {
         // closest result even for an unrelated query, so this may still pass.
         // The important thing is the function executes without error.
         assert!(result.entity_self_retrieval_passed.is_some());
+    }
+
+    async fn insert_test_page(db: &MemoryDB, id: &str, title: &str, content: &str) {
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page_with_kind(
+            id,
+            title,
+            None,
+            content,
+            None,
+            None,
+            &[],
+            &now,
+            "distilled",
+            "confirmed",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_verify_page_finds_fresh_page_without_page_channel() {
+        // Default config leaves WENLAN_ENABLE_PAGE_CHANNEL off, which keeps
+        // pages out of search_memory. The check must still find the page.
+        let (db, _dir) = test_db().await;
+        insert_test_page(
+            &db,
+            "page-wiki-publish",
+            "Repository wiki publish flow",
+            "Publishing pushes the wiki branch and opens a pull request.",
+        )
+        .await;
+
+        let result = verify_page(&db, "page-wiki-publish", "Repository wiki publish flow")
+            .await
+            .unwrap();
+        assert_eq!(result.concept_self_retrieval_passed, Some(true));
+        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    }
+
+    #[tokio::test]
+    async fn test_verify_page_warns_when_page_is_not_retrieved() {
+        let (db, _dir) = test_db().await;
+        insert_test_page(
+            &db,
+            "page-wiki-publish",
+            "Repository wiki publish flow",
+            "Publishing pushes the wiki branch and opens a pull request.",
+        )
+        .await;
+
+        let result = verify_page(&db, "page-not-stored", "Repository wiki publish flow")
+            .await
+            .unwrap();
+        assert_eq!(result.concept_self_retrieval_passed, Some(false));
+        assert_eq!(result.warnings.len(), 1);
     }
 
     #[tokio::test]

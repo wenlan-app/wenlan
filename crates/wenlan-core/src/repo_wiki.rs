@@ -710,6 +710,42 @@ fn maintain_agent_files(worktree: &Path, folder: &str) -> Result<Vec<&'static st
     Ok(touched)
 }
 
+/// `text` with the files the export rewrites on every publish marked
+/// `linguist-generated`, so GitHub folds them in the pull request diff. Adds
+/// only the lines that are missing and leaves every other line as it was. A
+/// folder that would need quoting in a pattern is left unmarked.
+fn upsert_generated_attributes(text: &str, folder: &str) -> String {
+    if folder
+        .chars()
+        .any(|c| c.is_whitespace() || "*?[]\\\"#!".contains(c))
+    {
+        return text.to_owned();
+    }
+    let mut out = text.to_owned();
+    for file in [crate::repo_wiki_ci::CODE_FILE, BUNDLE_MARKER] {
+        let line = format!("{folder}/{file} linguist-generated=true");
+        if text.lines().any(|existing| existing.trim() == line) {
+            continue;
+        }
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+fn maintain_gitattributes(worktree: &Path, folder: &str) -> Result<(), WenlanError> {
+    let path = worktree.join(".gitattributes");
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    let updated = upsert_generated_attributes(&current, folder);
+    if updated != current {
+        std::fs::write(&path, updated)?;
+    }
+    Ok(())
+}
+
 /// `owner/name` of a github.com remote URL.
 pub fn github_slug(remote: &str) -> Option<String> {
     let rest = remote
@@ -1640,6 +1676,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     }
     if export {
         maintain_agent_files(&input.worktree, &folder)?;
+        maintain_gitattributes(&input.worktree, &folder)?;
     }
     crate::repo_wiki_github::maintain_workflow(
         &input.worktree,

@@ -156,6 +156,32 @@ fn github_slug_reads_https_and_ssh_remotes() {
 }
 
 #[test]
+fn generated_attributes_are_added_once_beside_other_lines() {
+    let first = upsert_generated_attributes("*.png binary", "wiki");
+    assert_eq!(
+        first,
+        "*.png binary\n\
+         wiki/.wenlan-code.json linguist-generated=true\n\
+         wiki/.wenlan-okf-export.json linguist-generated=true\n"
+    );
+    assert_eq!(upsert_generated_attributes(&first, "wiki"), first);
+    // A line already there, even unmarked by us, is not added twice.
+    let partial = "wiki/.wenlan-okf-export.json linguist-generated=true\n";
+    assert_eq!(
+        upsert_generated_attributes(partial, "wiki")
+            .matches("okf-export")
+            .count(),
+        1
+    );
+    assert_eq!(
+        upsert_generated_attributes("", "docs/wiki"),
+        "docs/wiki/.wenlan-code.json linguist-generated=true\n\
+         docs/wiki/.wenlan-okf-export.json linguist-generated=true\n"
+    );
+    assert_eq!(upsert_generated_attributes("x\n", "my wiki"), "x\n");
+}
+
+#[test]
 fn agents_block_is_appended_then_replaced_in_place() {
     let first = upsert_agents_block("# Rules\n\nBe kind.\n", "wiki");
     assert!(first.starts_with("# Rules\n\nBe kind.\n\n<!-- WENLAN:START -->"));
@@ -383,6 +409,14 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     assert!(index.contains("](pages/"), "{index}");
     assert!(!index.contains("](/pages/"), "{index}");
     assert!(!files.contains("entry-point"), "{files}");
+    let attributes = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:.gitattributes")],
+    );
+    assert!(
+        attributes.contains("wiki/.wenlan-code.json linguist-generated=true"),
+        "{attributes}"
+    );
     let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
     assert!(claude.starts_with("# Notes\n\nKeep it small.\n\n<!-- WENLAN:START -->"));
     // Beside the pages: the code each relies on, anchored in the default
