@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=bfff26060bd6fcba5c5fb76020468f1809430ccf338d1556d4aa923109a58405 -->
+<!-- README_SYNC: source=README.md sha256=5b7ce765bf93ffae95a72966fb1fbce8e8fb4a143836e40aa7ce8ba17af2ff41 -->
 
 <p align="center">
   <picture>
@@ -197,7 +197,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 在程式碼儲存庫中執行 `/wenlan wiki`（Codex 中為 `$wenlan wiki`）。AI 工具會依據儲存庫本身規劃 wiki：先寫一篇列出所有筆記的總覽，再為新人需要了解的每個部分或流程各寫一篇。小工具只需幾篇，大型 monorepo 會多得多。再次執行時只補寫缺少的筆記。`/wenlan wiki` 取代了 `/wenlan map`，舊名稱沒有保留別名。
 
-- **與程式碼綁定**：每個關鍵句子都會記錄它所依據的程式碼行。程式碼變動時，筆記會顯示改了什麼，並提供一個審核按鈕；沉澱會把筆記更新到最新。
+- **與程式碼綁定**：每篇筆記都會記錄它所依據的程式碼行。程式碼變動時，筆記會顯示改了什麼，並提供一個審核按鈕；沉澱會把筆記更新到最新。
 - **以 pull request 放進儲存庫**：Space 上的 GitHub 按鈕會把 Space 連接到對應的儲存庫，並把依據這些程式碼的筆記以 pull request 放進儲存庫的 `wiki/` 資料夾。可以從按鈕執行，也可以開啟每日更新：在你的電腦上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的金鑰存成儲存庫 secret），電腦關著也行。同一個 pull request 還會修正儲存庫自身文件中與程式碼不再相符的句子，供你審核。
 - **保留你的修改**：有人在儲存庫中修改過的 wiki 筆記會保留那次修改。引用你的記憶或對話的筆記不會放進儲存庫。
 

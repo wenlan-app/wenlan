@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=bfff26060bd6fcba5c5fb76020468f1809430ccf338d1556d4aa923109a58405 -->
+<!-- README_SYNC: source=README.md sha256=5b7ce765bf93ffae95a72966fb1fbce8e8fb4a143836e40aa7ce8ba17af2ff41 -->
 
 <p align="center">
   <picture>
@@ -197,7 +197,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。AI 工具会依据仓库本身规划 wiki：先写一篇列出所有笔记的总览，再为新人需要了解的每个部分或流程各写一篇。小工具只需几篇，大型 monorepo 会多得多。再次运行时只补写缺少的笔记。`/wenlan wiki` 取代了 `/wenlan map`，旧名称没有保留别名。
 
-- **与代码绑定：** 每个关键句子都会记录它所依据的代码行。代码改动时，笔记会显示改了什么，并提供一个审核按钮；沉淀会把笔记更新到最新。
+- **与代码绑定：** 每篇笔记都会记录它所依据的代码行。代码改动时，笔记会显示改了什么，并提供一个审核按钮；沉淀会把笔记更新到最新。
 - **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把 Space 连接到对应的仓库，并把依据这些代码的笔记以 pull request 放进仓库的 `wiki/` 文件夹。可以从按钮运行，也可以开启每日更新：在你的电脑上用你自己的 AI 工具运行，或在 GitHub Actions 上运行（AI 工具的密钥存为仓库 secret），电脑关着也可以。同一个 pull request 还会修正仓库自身文档中与代码不再相符的句子，供你审核。
 - **保留你的修改：** 有人在仓库中修改过的 wiki 笔记会保留那次修改。引用你的记忆或对话的笔记不会放进仓库。
 

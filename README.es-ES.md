@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=bfff26060bd6fcba5c5fb76020468f1809430ccf338d1556d4aa923109a58405 -->
+<!-- README_SYNC: source=README.md sha256=5b7ce765bf93ffae95a72966fb1fbce8e8fb4a143836e40aa7ce8ba17af2ff41 -->
 
 <p align="center">
   <picture>
@@ -183,7 +183,7 @@ Activa el interruptor **Web access** en Settings para que clientes web de IA com
 
 Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA planifica la wiki a partir del propio repositorio: una página de resumen que enumera todas las páginas y, después, una página para cada parte o flujo que necesita conocer alguien nuevo. Una herramienta pequeña tiene pocas páginas; un monorepo grande, muchas más. Al volver a ejecutarlo solo escribe las páginas que faltan. `/wenlan wiki` sustituye a `/wenlan map`, sin alias para el nombre anterior.
 
-- **Ligada al código:** Cada frase clave registra las líneas de código de las que se extrajo. Cuando ese código cambia, la página muestra qué cambió con un solo botón Review, y Steep pone la página al día.
+- **Ligada al código:** Cada página registra las líneas de código de las que se extrajo. Cuando ese código cambia, la página muestra qué cambió con un solo botón Review, y Steep pone la página al día.
 - **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria: usa tu propia herramienta de IA en tu ordenador, o se ejecuta en GitHub Actions con la clave de tu herramienta de IA guardada como secret del repositorio, así tu ordenador puede estar apagado. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
 - **Tus ediciones se conservan:** Una página de la wiki que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats no entran en el repositorio.
 

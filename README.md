@@ -193,7 +193,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 
 Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing. `/wenlan wiki` replaces `/wenlan map`, with no alias for the old name.
 
-- **Tied to the code:** Each key sentence records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
+- **Tied to the code:** Each page records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
 - **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update: it runs your own AI tool on your computer, or runs on GitHub Actions with your AI tool's key saved as a repository secret, so your computer can stay off. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
 - **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
 
