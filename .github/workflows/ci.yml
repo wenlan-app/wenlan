@@ -371,6 +371,10 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'scripts/ci_test_plan.test.py'
             macos:
+              # Folder alias regressions use real Unix symlinks; prove both platform branches.
+              - 'crates/wenlan-core/src/document_enrichment.rs'
+              - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
+              - 'crates/wenlan-server/src/source_routes.rs'
               # macOS owns launchd/host-activity behavior and native code.
               # Shared CLI/server/MCP code stays on the Ubuntu canonical lane;
               # drift_guard fails if a cfg-bearing source lacks an owner here
@@ -472,6 +476,10 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
             windows:
+              # Folder alias regressions use real Unix symlinks; prove both platform branches.
+              - 'crates/wenlan-core/src/document_enrichment.rs'
+              - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
+              - 'crates/wenlan-server/src/source_routes.rs'
               # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,
               # and packaging. Shared Rust stays on Ubuntu; MCP's Unix/non-Unix
               # branches compile in the focused mcp-platform job.
