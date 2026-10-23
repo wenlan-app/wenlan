@@ -12,7 +12,7 @@ This directory contains user guides and project documentation for contributors a
 - `assets/`: images used by the READMEs.
 - `eval/`: evaluation method, receipts, and the README snapshot workflow.
 
-`plans/` and `superpowers/` are gitignored local scratch space for working design docs. They are not part of the repository. Nothing under `docs/` is read by code or CI: the two specs that are live test fixtures live in `crates/wenlan-core/contracts/`, next to the tests that parse them.
+`plans/` and `superpowers/` are gitignored local scratch space for working design docs. They are not part of the repository. Apart from `docs/eval/`, whose metrics and results files CI and scripts check, nothing under `docs/` is read by code or CI: the two specs that are live test fixtures live in `crates/wenlan-core/contracts/`, next to the tests that parse them.
 
 ## Reading a local plan file safely
 

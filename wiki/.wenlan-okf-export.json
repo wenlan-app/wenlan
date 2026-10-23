@@ -1,0 +1,34 @@
+{
+  "okf_version": "0.2",
+  "generated_by": "wenlan/0.20.0+g279fad04",
+  "files": [
+    "index.md",
+    "pages/data-and-storage.md",
+    "pages/desktop-app.md",
+    "pages/how-a-page-is-written.md",
+    "pages/how-search-works.md",
+    "pages/how-steep-keeps-pages-current.md",
+    "pages/how-tests-run.md",
+    "pages/how-to-run-it.md",
+    "pages/known-pitfalls.md",
+    "pages/mcp-server.md",
+    "pages/module-map.md",
+    "pages/the-http-daemon.md",
+    "pages/what-wenlan-is.md"
+  ],
+  "digests": {
+    "index.md": "92e47cf8cd9a5005e7f348abe6d4cc3100e20686ff90f6a2672a0f982063d2ad",
+    "pages/data-and-storage.md": "6715d6447c937fdb93a298bb03fddb52ae7471da50ba431b6cb6b3a18f66ada9",
+    "pages/desktop-app.md": "7aa2b4276c92ce380ec7296a1a30870d9446ed1f04e55a51cc314cbb132bc381",
+    "pages/how-a-page-is-written.md": "e59b7a9dcb9cc2b514cfcae074135822e9dd43217bbc385ca81d1e13e0bef590",
+    "pages/how-search-works.md": "d36c4cf292bfb8297390cb55c965087f78139497af4c3541d72229d8abcfd92d",
+    "pages/how-steep-keeps-pages-current.md": "82fb9b082d2f1faeb59acd9b2647b86676cd6de544e79c58debb5e3c51362200",
+    "pages/how-tests-run.md": "ebbf0f1a7fff4b9bc6e56d3e550d6757ea2644e53cfebcff690117f99b88eda5",
+    "pages/how-to-run-it.md": "af9ef3f6fd6b33591a7fadff67c84e63627e16e53b1097be6e52efc288b1ce1f",
+    "pages/known-pitfalls.md": "a73de2eb6e5fa183482e81e838b005d19ff50e55171c86eea7a81c5f8302ed05",
+    "pages/mcp-server.md": "47d98f2a1ae98e1028a52278d1b1914a35adee76bec70e5b67d7e0091b169a8a",
+    "pages/module-map.md": "89626bd444cc546cd6f4f2c891185bc572f7e8288c92fb515782e4fdfc666514",
+    "pages/the-http-daemon.md": "37eead0e4971bb6ea11a9d25bfcfdea7f1111d4a7a526f3bf285854f70de8a11",
+    "pages/what-wenlan-is.md": "89549a32620b790fedd18b58836174936ecb7233dc7ea384b5a86fc993973ad9"
+  }
+}
