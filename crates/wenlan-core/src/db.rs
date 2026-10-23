@@ -49,6 +49,7 @@ mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;
 mod kg_quality_vocabulary;
+mod legacy_directory_copies;
 mod lint_snapshot;
 #[cfg(feature = "eval-harness")]
 mod m5_page_size_snapshot;
@@ -158,6 +159,8 @@ mod kg_quality_duplicate_candidates_test;
 mod kg_quality_embedding_refresh_test;
 #[cfg(test)]
 mod kg_quality_vocabulary_test;
+#[cfg(test)]
+mod legacy_directory_copies_test;
 #[cfg(test)]
 mod lint_snapshot_test;
 #[cfg(test)]
@@ -27972,7 +27975,12 @@ impl MemoryDB {
             "superseder.pending_revision = 0 AND superseder.source = 'memory' \
              AND superseder.supersede_mode = 'hide'",
         );
-        let supersedes_exclusion = format!("AND c.pending_revision = 0 AND {hidden_by_superseder}");
+        // `evicted` is self-state, including on retained legacy-source rows.
+        // Apply the same exclusion to both vector and FTS branches so a
+        // canonicalized duplicate cannot reappear in general search.
+        let supersedes_exclusion = format!(
+            "AND c.pending_revision = 0 AND COALESCE(c.supersede_mode, '') <> 'evicted' AND {hidden_by_superseder}"
+        );
 
         // --- Vector search ---
         let mut vector_results: Vec<SearchResult> = Vec::new();

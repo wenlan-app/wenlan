@@ -10,6 +10,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::sources::RawDocument;
@@ -95,6 +96,132 @@ async fn handle_ingest_text_inner(
     State(state): State<Arc<RwLock<ServerState>>>,
     Json(req): Json<IngestTextRequest>,
 ) -> Result<Json<IngestResponse>, ServerError> {
+    if req.source == "local_files" {
+        let config = wenlan_core::config::load_config();
+        if let Some((source, registered_file)) =
+            resolve_registered_directory_file(&req.source_id, &config)?
+        {
+            if !matches!(source.status, wenlan_types::sources::SyncStatus::Active) {
+                return Err(ServerError::ValidationError(format!(
+                    "Registered directory source '{}' is not active; enable following changes before ingesting this file",
+                    source.id
+                )));
+            }
+            if !wenlan_core::sources::directory::is_directory_format_supported(&registered_file) {
+                // Formats without a canonical Directory parser keep the
+                // legacy raw-ingest path. Still enforce shared structural
+                // path rules so this exception applies to extension alone.
+                if !wenlan_core::sources::directory::is_directory_path_admissible(
+                    &source.path,
+                    &registered_file,
+                ) {
+                    return Err(ServerError::ValidationError(format!(
+                        "File is not eligible for its registered Directory source: {}",
+                        req.source_id
+                    )));
+                }
+            } else {
+                let db = {
+                    let s = state.read().await;
+                    s.db.clone().ok_or(ServerError::DbNotInitialized)?
+                };
+                if !wenlan_core::sources::directory::is_directory_file_indexable(
+                    &source.path,
+                    &registered_file,
+                ) {
+                    return Err(ServerError::ValidationError(format!(
+                        "File is not eligible for its registered Directory source: {}",
+                        req.source_id
+                    )));
+                }
+                let parse_path = registered_file.clone();
+                let parse_source_id = source.id.clone();
+                let knowledge_path = config.knowledge_path_or_default();
+                let parse_knowledge_path = knowledge_path.clone();
+                let outcome = tokio::task::spawn_blocking(move || {
+                    wenlan_core::sources::directory::file_to_documents(
+                        &parse_source_id,
+                        &parse_path,
+                        Some(&parse_knowledge_path),
+                    )
+                })
+                .await
+                .map_err(|error| {
+                    ServerError::Internal(format!("Directory file parse task failed: {error}"))
+                })?;
+                let documents = match outcome {
+                    wenlan_core::sources::directory::FileOutcome::Ingested(documents) => documents,
+                    wenlan_core::sources::directory::FileOutcome::Skipped(reason)
+                    | wenlan_core::sources::directory::FileOutcome::Error(reason) => {
+                        return Err(ServerError::ValidationError(format!(
+                            "Registered Directory file cannot be indexed: {reason}"
+                        )));
+                    }
+                };
+                let mut hashes = documents.iter().map(|document| {
+                    document
+                        .content_hash
+                        .as_deref()
+                        .filter(|hash| !hash.is_empty())
+                });
+                let Some(content_hash) = hashes.next().flatten() else {
+                    return Err(ServerError::ValidationError(
+                        "Registered Directory parser returned no content hash".to_string(),
+                    ));
+                };
+                if hashes.any(|hash| hash != Some(content_hash)) {
+                    return Err(ServerError::ValidationError(
+                        "Registered Directory parser returned mixed content hashes".to_string(),
+                    ));
+                }
+                let content_hash = content_hash.to_string();
+
+                // A legacy watcher can fire before the first source sync, and it
+                // can fire again for a same-mtime content change. Enqueue the bytes
+                // actually on disk under the folder's identity, then let the
+                // canonical generation guard retire only a verified duplicate.
+                db.retire_legacy_directory_copies(
+                    &req.source_id,
+                    &source.id,
+                    &registered_file,
+                    Some(&knowledge_path),
+                    &content_hash,
+                    None,
+                )
+                .await
+                .map_err(|error| ServerError::IngestFailed(error.to_string()))?;
+                let file_key = registered_file.to_string_lossy().into_owned();
+                let already_queued = db
+                    .get_queue_entry(&source.id, &file_key)
+                    .await
+                    .map_err(|error| ServerError::IngestFailed(error.to_string()))?
+                    .is_some_and(|entry| {
+                        entry.content_hash.as_deref() == Some(content_hash.as_str())
+                    });
+                db.enqueue_document(&source.id, &file_key, Some(&content_hash))
+                    .await
+                    .map_err(|error| ServerError::IngestFailed(error.to_string()))?;
+                if !already_queued {
+                    crate::import_routes::request_import_priority(&state, &db, None).await;
+                }
+                let document_id = wenlan_core::sources::directory::document_source_id(
+                    &source.id,
+                    &registered_file,
+                    Some(&knowledge_path),
+                );
+                return Ok(Json(IngestResponse {
+                    // Directory work is queued here and creates no chunks
+                    // synchronously, so keep the legacy response truthful.
+                    chunks_created: 0,
+                    document_id,
+                    // Directory parsing currently writes to the default Unfiled
+                    // scope; only OKF enrichment assigns a source Space.
+                    space: None,
+                }));
+            }
+        }
+    }
+
     let document_id = req.source_id.clone();
 
     let doc = RawDocument {
@@ -134,6 +261,144 @@ async fn handle_ingest_text_inner(
         document_id,
         space: None,
     }))
+}
+
+/// Resolve an absolute file path to its unique registered Directory source.
+/// Lexical matching catches missing paths and traversal attempts without
+/// silently falling back to a second local_files identity; canonical matching
+/// verifies that an existing target and root still refer to the same tree.
+fn resolve_registered_directory_file(
+    source_id: &str,
+    config: &wenlan_core::config::Config,
+) -> Result<Option<(wenlan_types::sources::Source, PathBuf)>, ServerError> {
+    let requested = FsPath::new(source_id);
+    if !requested.is_absolute() {
+        return Ok(None);
+    }
+    let requested_has_parent = requested
+        .components()
+        .any(|component| matches!(component, Component::ParentDir));
+    if requested_has_parent {
+        return Err(ServerError::ValidationError(format!(
+            "Path traversal is not allowed for local file ingestion: {source_id}"
+        )));
+    }
+    let Some(lexical_requested) = normalize_absolute_path(requested) else {
+        return Ok(None);
+    };
+    let canonical_requested = requested.canonicalize().ok();
+
+    let mut owners = Vec::new();
+    for source in config
+        .sources
+        .iter()
+        .filter(|source| source.source_type == wenlan_types::sources::SourceType::Directory)
+    {
+        let lexical_root = absolute_lexical_path(&source.path);
+        let root_is_file = std::fs::metadata(&source.path)
+            .ok()
+            .map(|metadata| metadata.is_file());
+        let lexical_match = lexical_root
+            .as_ref()
+            .is_some_and(|root| path_is_owned(root, &lexical_requested, root_is_file));
+        let canonical_root = source.path.canonicalize().ok();
+        let canonical_match = canonical_requested.as_ref().is_some_and(|target| {
+            canonical_root
+                .as_ref()
+                .is_some_and(|root| path_is_owned(root, target, root_is_file))
+        });
+        if lexical_match || canonical_match {
+            owners.push((source.clone(), lexical_match, canonical_root, root_is_file));
+        }
+    }
+
+    if owners.is_empty() {
+        return Ok(None);
+    }
+    if owners.len() != 1 {
+        return Err(ServerError::ValidationError(format!(
+            "File path is owned by multiple registered Directory sources: {source_id}"
+        )));
+    }
+    let (source, lexical_match, canonical_root, root_is_file) = owners.pop().unwrap();
+    let Some(canonical_root) = canonical_root else {
+        return Err(ServerError::ValidationError(format!(
+            "Registered Directory source '{}' is missing or unreadable: {}",
+            source.id,
+            source.path.display()
+        )));
+    };
+    let canonical_file = match requested.canonicalize() {
+        Ok(path) => path,
+        Err(_) if lexical_match => {
+            return Err(ServerError::ValidationError(format!(
+                "Registered Directory source file does not exist or is unreadable: {source_id}"
+            )));
+        }
+        Err(_) => return Ok(None),
+    };
+    if !path_is_owned(&canonical_root, &canonical_file, root_is_file) {
+        return Err(ServerError::ValidationError(format!(
+            "Registered Directory source file resolves outside its source root: {source_id}"
+        )));
+    }
+    if !canonical_file.is_file() {
+        return Err(ServerError::ValidationError(format!(
+            "Registered Directory source path is not a file: {source_id}"
+        )));
+    }
+
+    // Rebuild the key under the spelling stored in config; the shared sync
+    // routine scans that spelling and uses it for sync-state and document ids.
+    let registered_file = if root_is_file == Some(true) {
+        source.path.clone()
+    } else {
+        let relative = canonical_file.strip_prefix(&canonical_root).map_err(|_| {
+            ServerError::ValidationError(format!(
+                "Registered Directory source file resolves outside its source root: {source_id}"
+            ))
+        })?;
+        source.path.join(relative)
+    };
+    Ok(Some((source, registered_file)))
+}
+
+fn path_is_owned(root: &FsPath, candidate: &FsPath, root_is_file: Option<bool>) -> bool {
+    if root_is_file == Some(true) || (root_is_file.is_none() && candidate == root) {
+        candidate == root
+    } else {
+        candidate != root && candidate.starts_with(root)
+    }
+}
+
+fn absolute_lexical_path(path: &FsPath) -> Option<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    normalize_absolute_path(&absolute)
+}
+
+fn normalize_absolute_path(path: &FsPath) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    Some(normalized)
 }
 
 /// POST /api/ingest/webpage
@@ -344,6 +609,10 @@ pub async fn handle_delete_document(
         .map_err(|e| ServerError::Internal(e.to_string()))?;
     Ok(Json(DeleteResponse { deleted: true }))
 }
+
+#[cfg(test)]
+#[path = "ingest_routes_regression_tests.rs"]
+mod regression_tests;
 
 #[cfg(test)]
 mod content_length_gate_tests {
