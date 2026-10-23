@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { EditorState, Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, ViewPlugin } from "@codemirror/view";
 import type { AttachedFile } from "../../../lib/tauri";
 import { isAttachableFile, primeAttachmentsDir, uploadAttachment } from "../../../lib/pageAttachments";
 
@@ -54,21 +54,43 @@ export function mediaPaste(options: MediaPasteOptions): Extension {
     const files = [...(list ?? [])].filter(isAttachableFile);
     return files.length > 0 && !options.blocked(view) ? files : null;
   };
-  return EditorView.domEventHandlers({
-    paste(event, view) {
-      const files = take(view, event.clipboardData?.files);
-      if (!files) return false;
+  // CodeMirror only sees drops on editable text: an image or video preview is
+  // a widget it ignores, and WebKit opens a file dropped there in place of the
+  // app. Listening on the whole editor takes the drop anywhere inside it.
+  const drops = ViewPlugin.define((view) => {
+    const dragover = (event: DragEvent) => {
+      if (!event.dataTransfer?.types.includes("Files") || options.blocked(view)) return;
       event.preventDefault();
-      insertFiles(view, files, view.state.selection.main.head);
-      return true;
-    },
-    drop(event, view) {
+      event.dataTransfer.dropEffect = "copy";
+    };
+    // Capture phase, so CodeMirror's own file drop does not read the image as text.
+    const drop = (event: DragEvent) => {
       const files = take(view, event.dataTransfer?.files);
-      if (!files) return false;
+      if (!files) return;
       event.preventDefault();
-      const at = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.selection.main.head;
+      event.stopPropagation();
+      const at = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
       insertFiles(view, files, at);
-      return true;
-    },
+    };
+    view.dom.addEventListener("dragover", dragover);
+    view.dom.addEventListener("drop", drop, true);
+    return {
+      destroy() {
+        view.dom.removeEventListener("dragover", dragover);
+        view.dom.removeEventListener("drop", drop, true);
+      },
+    };
   });
+  return [
+    drops,
+    EditorView.domEventHandlers({
+      paste(event, view) {
+        const files = take(view, event.clipboardData?.files);
+        if (!files) return false;
+        event.preventDefault();
+        insertFiles(view, files, view.state.selection.main.head);
+        return true;
+      },
+    }),
+  ];
 }

@@ -70,6 +70,58 @@ describe("media paste", () => {
 });
 
 describe("dropping files from Finder or Explorer", () => {
+  function dragEvent(type: string, files: File[]): Event {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    const dataTransfer = { files, types: ["Files"], dropEffect: "none", getData: () => "" };
+    Object.defineProperties(event, { dataTransfer: { value: dataTransfer }, clientX: { value: 0 }, clientY: { value: 0 } });
+    return event;
+  }
+
+  function editor(upload: () => Promise<AttachedFile>, blocked = false): EditorView {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({ doc: "Intro\n", extensions: [mediaPaste({ blocked: () => blocked, upload })] }),
+    });
+    views.push(view);
+    return view;
+  }
+
+  // A preview widget or the editor's margin is not editable text, so the drop
+  // lands outside CodeMirror's content; left alone, WebKit opens the file in
+  // place of the app.
+  it("takes a file dragged over any part of the editor", async () => {
+    const upload = vi.fn(async () => attached("![a](_attachments/a.png)"));
+    const view = editor(upload);
+    const over = dragEvent("dragover", [new File(["png"], "a.png", { type: "image/png" })]);
+    view.dom.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(true);
+    const drop = dragEvent("drop", [new File(["png"], "a.png", { type: "image/png" })]);
+    view.dom.dispatchEvent(drop);
+    expect(drop.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toContain("![a](_attachments/a.png)"));
+    expect(upload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps CodeMirror from reading a dropped image as text", async () => {
+    const upload = vi.fn(async () => attached("![a](_attachments/a.png)"));
+    const view = editor(upload);
+    view.contentDOM.dispatchEvent(dragEvent("drop", [new File(["png-bytes"], "a.png", { type: "image/png" })]));
+    await vi.waitFor(() => expect(view.state.doc.toString()).toContain("![a](_attachments/a.png)"));
+    expect(view.state.doc.toString()).not.toContain("png-bytes");
+  });
+
+  it("does not accept a drop while the editor is blocked", () => {
+    const upload = vi.fn(async () => attached("![a](x)"));
+    const view = editor(upload, true);
+    const over = dragEvent("dragover", [new File(["png"], "a.png", { type: "image/png" })]);
+    view.dom.dispatchEvent(over);
+    expect(over.defaultPrevented).toBe(false);
+    view.dom.dispatchEvent(dragEvent("drop", [new File(["png"], "a.png", { type: "image/png" })]));
+    expect(upload).not.toHaveBeenCalled();
+  });
+
   // With Tauri's own file drop on, the webview never sees the drop, so the
   // editor's drop handler above would not run.
   it.each(["tauri.conf.json", "tauri.review.conf.json", "tauri.dev-live.conf.json"])(
