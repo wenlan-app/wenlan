@@ -11,7 +11,9 @@
   max-width: min(100%, 640px);
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 0;
+  /* Room for the close button, which keeps the top right corner. */
+  padding: 4px 30px 4px 0;
+  position: relative;
 }
 
 .write-pages-line-row {
@@ -32,8 +34,11 @@
   color: var(--mem-status-success-text);
 }
 
+/* The sentence keeps its own width, so when the button does not fit beside
+   it the button moves under it, rather than the last word wrapping alone. */
 .write-pages-text {
-  flex: 1 1 260px;
+  flex: 1 1 auto;
+  max-width: 100%;
   min-width: 0;
   margin: 0;
   color: var(--mem-text-secondary);
@@ -95,6 +100,9 @@
 }
 
 .write-pages-close {
+  position: absolute;
+  top: 2px;
+  right: 0;
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;

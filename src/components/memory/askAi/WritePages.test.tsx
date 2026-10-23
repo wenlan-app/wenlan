@@ -151,7 +151,7 @@ describe("WritePagesLine", () => {
     await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
     // Typed in, not yet sent: it does not claim the tool is writing.
-    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The command is typed in Claude Code. Press Enter there to start.");
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Typed in Claude Code. Press Enter there to start.");
     // Only now, in case the tool did not open, the command can be copied.
     fireEvent.click(screen.getByRole("button", { name: "Didn't open? Copy the command" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep"));
@@ -184,7 +184,9 @@ describe("WritePagesLine", () => {
     wrap(<Line pages={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
-    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Copied. Paste it into Codex and press Enter."));
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Paste the command into Codex and press Enter."));
+    // Said once, on the button that copied it.
+    expect(screen.getByTestId("write-pages-line").textContent?.match(/Copied/g)).toHaveLength(1);
     expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
   });
 
