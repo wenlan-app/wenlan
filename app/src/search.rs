@@ -298,6 +298,18 @@ pub async fn set_setup_completed(
     client.set_setup_completed(completed).await
 }
 
+/// Whether this machine's config file already records a finished setup.
+///
+/// Read straight from disk, so it answers before the daemon does. The launch
+/// screen uses it to open a configured user's workspace at once and let the
+/// daemon finish starting behind it; `should_show_wizard` still runs and has
+/// the final say. A missing or unreadable file reads as not completed, which
+/// keeps a new user on the daemon-backed gate.
+#[tauri::command]
+pub fn local_setup_completed() -> bool {
+    crate::config::load_config().setup_completed
+}
+
 #[tauri::command]
 pub async fn should_show_wizard(state: tauri::State<'_, State>) -> Result<bool, String> {
     tokio::time::timeout(std::time::Duration::from_secs(6), async {

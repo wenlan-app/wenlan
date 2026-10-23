@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useState, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { emit, listen } from "@tauri-apps/api/event";
@@ -10,6 +10,7 @@ import {
   quitWenlanFull,
   setTrafficLightsVisible,
   shouldShowWizard,
+  localSetupCompleted,
   setSetupCompleted,
   startDaemonSidecar,
   getWireState,
@@ -26,6 +27,7 @@ import SetupWizard from "./components/SetupWizard";
 import { RuntimeOverlays } from "./components/RuntimeOverlays";
 import { AppToaster } from "./components/AppToaster";
 import { dragStripHeight } from "./lib/windowChrome";
+import { setDaemonStartupPhase, type DaemonStartupPhase } from "./lib/daemonStartup";
 
 export default function App() {
   const { t } = useTranslation();
@@ -58,6 +60,48 @@ export default function App() {
     // would strand the gate below with no data and no error.
     networkMode: "always",
   });
+
+  // This machine's own config file, read without the daemon. When it says
+  // setup is done the workspace opens at once and the daemon gate above keeps
+  // running behind it: the daemon can take from seconds (a running one) to
+  // the better part of a minute (a cold boot, or a restart after an update
+  // that backs up the database first) to answer. A false or failed read
+  // leaves the gate in charge, as before, so a new user still gets the
+  // wizard only after the daemon has said so.
+  const { data: localSetupDone, isPending: localSetupPending } = useQuery({
+    queryKey: ["localSetupCompleted"],
+    queryFn: () => localSetupCompleted().catch(() => false),
+    staleTime: Infinity,
+    retry: false,
+    networkMode: "always",
+  });
+  const openedEarly = localSetupDone === true;
+  const daemonStartupPhase: DaemonStartupPhase = !openedEarly
+    ? "ready"
+    : wizardPending
+      ? "starting"
+      : wizardError
+        ? "failed"
+        : "ready";
+  // A layout effect, so daemon calls are held before any child's passive
+  // effect (where queries start fetching) can send one.
+  const startupFailedOnce = useRef(false);
+  useLayoutEffect(() => {
+    setDaemonStartupPhase(daemonStartupPhase);
+    if (daemonStartupPhase === "failed") startupFailedOnce.current = true;
+    // After a failure the held calls were let through and failed, and most
+    // queries do not retry on their own. Ask them again once it answers.
+    if (daemonStartupPhase === "ready" && startupFailedOnce.current) {
+      startupFailedOnce.current = false;
+      void queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] !== "shouldShowWizard" && query.queryKey[0] !== "localSetupCompleted",
+      });
+    }
+  }, [daemonStartupPhase, queryClient]);
+
+  const retryDaemonGate = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["shouldShowWizard"] });
+  }, [queryClient]);
 
   // A rejection propagates to the wizard's Done step, which stays put with an
   // inline alert. Invalidate the gate only after the save lands: refetching a
@@ -198,13 +242,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!wizardPending) {
+    if (!wizardPending || openedEarly) {
       setBootSlow(false);
       return;
     }
     const id = setTimeout(() => setBootSlow(true), BOOT_SLOW_NOTICE_MS);
     return () => clearTimeout(id);
-  }, [wizardPending]);
+  }, [wizardPending, openedEarly]);
 
   // Embedding migration progress overlay
   useEffect(() => {
@@ -277,7 +321,12 @@ export default function App() {
   // false whenever the query is paused rather than fetching — that would fall
   // through to Home with no answer. isPending is true until we actually have one.
   let body: ReactNode;
-  if (wizardPending) {
+  let showsMain = false;
+  if (wizardPending && localSetupPending) {
+    // One local file read, well under a frame or two. The background is what
+    // index.html already paints, so this is the same empty window, not a flash.
+    body = <div className="w-screen h-screen bg-[var(--bg-primary)]" />;
+  } else if (wizardPending && !openedEarly) {
     // The daemon can take seconds to answer on a cold start. Say so, instead
     // of holding an empty window. --bg-primary is what index.html paints
     // before React mounts (src/__tests__/firstPaint.test.ts pins the two to
@@ -296,7 +345,7 @@ export default function App() {
         )}
       </div>
     );
-  } else if (showWizard || wizardError) {
+  } else if (showWizard || (wizardError && !openedEarly)) {
     // ponytail: fail CLOSED. If the daemon is still unreachable after retries,
     // show the wizard rather than silently falling through to Home — an
     // existing user whose daemon is dead for 15s+ sees the wizard too, but its
@@ -320,6 +369,7 @@ export default function App() {
       </div>
     );
   } else {
+    showsMain = true;
     body = (
       <div className="w-screen min-h-screen bg-[var(--bg-secondary)]">
         <Main
@@ -337,14 +387,13 @@ export default function App() {
       {fallbackMode && !fallbackDismissed && (
         <FallbackServiceBanner onDismiss={() => setFallbackDismissed(true)} />
       )}
+      {showsMain && daemonStartupPhase === "failed" && !(fallbackMode && !fallbackDismissed) && (
+        <DaemonNotAnsweringBanner onRetry={retryDaemonGate} />
+      )}
       {body}
       <AppToaster />
       <RuntimeOverlays
-        variant={
-          wizardPending || showWizard || wizardError || migration
-            ? "updater-only"
-            : "main"
-        }
+        variant={showsMain ? "main" : "updater-only"}
       />
     </>
   );
@@ -460,6 +509,90 @@ function FallbackServiceBanner({ onDismiss }: { onDismiss: () => void }) {
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
           <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
+      </button>
+    </div>
+  );
+}
+
+/** Shown only when a workspace that opened before the daemon answered has
+ *  given up waiting for it: the first-run gate spent its whole budget. Until
+ *  then the sidebar's quiet "starting" line is the only sign of the wait. */
+function DaemonNotAnsweringBanner({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation();
+  const [starting, setStarting] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const startingRef = useRef(false);
+
+  async function handleRestart() {
+    if (startingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    setFailure(null);
+    try {
+      const result = await startDaemonSidecar();
+      if (result.status === "failed") {
+        setFailure(result.message);
+        return;
+      }
+      // Asking the gate again puts the workspace back to "starting"; the
+      // banner goes, and comes back only if this attempt runs out too.
+      onRetry();
+    } catch (err) {
+      setFailure(err instanceof Error ? err.message : String(err));
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
+    }
+  }
+
+  return (
+    <div
+      role="alert"
+      data-testid="daemon-not-answering-banner"
+      style={{
+        position: "fixed",
+        top: dragStripHeight(),
+        left: 0,
+        right: 0,
+        zIndex: 70,
+        display: "flex",
+        alignItems: "center",
+        gap: "12px",
+        padding: "10px 16px",
+        fontFamily: "var(--mem-font-body)",
+        fontSize: "var(--mem-text-sm)",
+        lineHeight: "1.5",
+        color: "var(--mem-status-warning-text)",
+        backgroundColor: "var(--mem-status-warning-bg)",
+      }}
+    >
+      <span style={{ flex: 1, minWidth: 0 }}>
+        {t("boot.notAnswering")}
+        {failure && (
+          <span style={{ display: "block", color: "var(--mem-status-danger-text)" }}>
+            {t("boot.startFailed")} {failure}
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        onClick={() => { void handleRestart(); }}
+        disabled={starting}
+        data-testid="daemon-not-answering-restart"
+        style={{
+          flexShrink: 0,
+          padding: "4px 10px",
+          borderRadius: "6px",
+          border: "1px solid var(--mem-status-warning-border)",
+          background: "transparent",
+          color: "inherit",
+          cursor: starting ? "default" : "pointer",
+          fontFamily: "inherit",
+          fontSize: "inherit",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {starting ? t("boot.starting") : t("boot.restart")}
       </button>
     </div>
   );

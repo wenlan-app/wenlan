@@ -234,7 +234,7 @@ const en = {
   },
   common: {
     close: "Close",
-    startingRuntime: "Starting the local runtime…",
+    startingRuntime: "Starting Wenlan…",
   },
   boot: {
     stillWaiting: "Still waiting for Wenlan's background service to answer.",
@@ -248,6 +248,9 @@ const en = {
     startFailed: "Wenlan could not start its background service.",
     startNotReachable: "The service still is not answering.",
     dismiss: "Dismiss",
+    startingInBackground: "Starting up…",
+    notAnswering: "The background service isn’t answering, so pages can’t load yet.",
+    restart: "Restart",
   },
   setup: {
     welcomeTitle: "Welcome to Wenlan",
@@ -3085,7 +3088,7 @@ const zhHans = {
   },
   common: {
     close: "关闭",
-    startingRuntime: "正在启动本地运行时…",
+    startingRuntime: "正在启动文澜…",
   },
   boot: {
     stillWaiting: "仍在等待文澜的后台服务响应。",
@@ -3098,6 +3101,9 @@ const zhHans = {
     startFailed: "文澜无法启动后台服务。",
     startNotReachable: "服务仍然没有响应。",
     dismiss: "关闭",
+    startingInBackground: "正在后台启动…",
+    notAnswering: "后台服务没有响应，笔记暂时无法加载。",
+    restart: "重新启动",
   },
   setup: {
     welcomeTitle: "欢迎使用文澜",
@@ -5874,7 +5880,7 @@ const zhHant = {
   },
   common: {
     close: "關閉",
-    startingRuntime: "正在啟動本機執行時…",
+    startingRuntime: "正在啟動文瀾…",
   },
   boot: {
     stillWaiting: "仍在等待文瀾的背景服務回應。",
@@ -5887,6 +5893,9 @@ const zhHant = {
     startFailed: "文瀾無法啟動背景服務。",
     startNotReachable: "服務仍然沒有回應。",
     dismiss: "關閉",
+    startingInBackground: "正在背景啟動…",
+    notAnswering: "背景服務沒有回應，筆記暫時無法載入。",
+    restart: "重新啟動",
   },
   setup: {
     welcomeTitle: "歡迎使用文瀾",

@@ -9,6 +9,7 @@
 export const REVIEW_COMMAND_CAPABILITIES = {
   navigationAndHome: [
     "should_show_wizard",
+    "local_setup_completed",
     "set_traffic_lights_visible",
     "set_setup_completed",
     "search",

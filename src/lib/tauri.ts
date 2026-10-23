@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { daemonStartupWait } from "./daemonStartup";
 import type {
   ApplyRepairRequest, PrepareRepairRequest, PrepareCurrentRepairRequest, RepairApplyReceipt, RepairLintQuery,
   RepairLintReport, RepairManifest, RepairOperationStatus, RepairPrepareOperationRequest, RepairPrepareOperationStatus, RepairPlanEntriesPage, RepairPlanEntriesRequest, RepairRecovery,
   RepairPlanRequest, RepairPlanSummary, RepairRuntimeResumeApproval, RepairVerificationReceipt, VerifyRepairRequest,
 } from "./repairTypes";
 export { daemonMeetsFloor } from "./daemonVersion";
+
+// Every command below goes through here. While a window that opened before the
+// daemon answered is waiting for it, daemon calls wait instead of failing
+// (./daemonStartup). Otherwise the call is sent synchronously, as before.
+// The arguments pass through exactly as given, so a call reads the same to
+// Tauri (and to tests that mock it) as it did before this wrapper existed.
+function invoke<T>(...call: Parameters<typeof tauriInvoke>): Promise<T> {
+  const wait = daemonStartupWait(call[0]);
+  if (wait) return wait.then(() => tauriInvoke<T>(...call));
+  return tauriInvoke<T>(...call);
+}
 
 export async function repairLint(query: RepairLintQuery): Promise<RepairLintReport> {
   return invoke("repair_lint", { query });
@@ -3346,6 +3358,11 @@ export interface McpClient {
 
 export async function shouldShowWizard(): Promise<boolean> {
   return invoke("should_show_wizard");
+}
+
+/** This machine's config file says setup finished. Answers without the daemon. */
+export async function localSetupCompleted(): Promise<boolean> {
+  return invoke("local_setup_completed");
 }
 
 export async function getSetupCompleted(): Promise<boolean> {

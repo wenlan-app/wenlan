@@ -1184,6 +1184,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
 // to the main screen and render panels empty rather than crashing.
 export const DEFAULTS: Record<string, unknown> = {
   should_show_wizard: false,
+  local_setup_completed: false,
   get_setup_completed: true,
   // Telemetry is not exercised by the fixture harness. Keep its response
   // shaped like the daemon contract while remaining unavailable rather than

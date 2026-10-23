@@ -1695,6 +1695,7 @@ pub fn run() {
             search::get_lock_my_pages,
             search::set_lock_my_pages,
             search::should_show_wizard,
+            search::local_setup_completed,
             search::detect_mcp_clients_cmd,
             search::write_mcp_config,
             search::remove_raw_mcp_entry,
