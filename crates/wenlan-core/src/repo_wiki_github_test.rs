@@ -76,7 +76,7 @@ fn a_pasted_key_goes_to_the_secret_its_tool_reads() {
     for agent in RepoWikiAgent::ALL {
         if let Some(secret) = key_secret(agent) {
             assert!(secrets_for(agent).contains(&secret), "{agent:?}");
-            let workflow = crate::repo_wiki_ci::workflow("wiki", agent, 9).unwrap();
+            let workflow = crate::repo_wiki_ci::workflow("wiki", agent, 9);
             assert!(
                 workflow.contains(&format!("${{{{ secrets.{secret} }}}}")),
                 "{agent:?}: {workflow}"
@@ -112,7 +112,7 @@ fn a_workflow_for_another_tool_counts_as_not_written() {
     git_in(&seed, &["config", "user.name", "Test"]);
     git_in(&seed, &["config", "user.email", "test@example.com"]);
     git_in(&seed, &["config", "commit.gpgsign", "false"]);
-    let claude = repo_wiki_ci::workflow("wiki", RepoWikiAgent::Claude, 9).unwrap();
+    let claude = repo_wiki_ci::workflow("wiki", RepoWikiAgent::Claude, 9);
     let path = seed.join(WORKFLOW_PATH);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, &claude).unwrap();
@@ -138,7 +138,7 @@ fn a_workflow_for_another_tool_counts_as_not_written() {
         RepoWikiWorkflowState::InRepo
     );
     assert_eq!(workflow_state(&clone, None), RepoWikiWorkflowState::InRepo);
-    let copilot = repo_wiki_ci::workflow("wiki", RepoWikiAgent::Copilot, 9).unwrap();
+    let copilot = repo_wiki_ci::workflow("wiki", RepoWikiAgent::Copilot, 9);
     assert_eq!(
         workflow_state(&clone, Some(&copilot)),
         RepoWikiWorkflowState::Missing

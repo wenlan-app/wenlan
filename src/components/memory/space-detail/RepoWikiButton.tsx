@@ -28,10 +28,7 @@ const AGENT_NAMES: Record<RepoWikiAgent, string> = {
   codex: "Codex",
   cursor: "Cursor",
   copilot: "GitHub Copilot",
-  antigravity: "Antigravity",
 };
-/** Whether a tool can run on GitHub: Antigravity signs in only in person. */
-const runsOnGithub = (agent: RepoWikiAgent) => agent !== "antigravity";
 const DEFAULT_DAILY: RepoWikiDaily = { enabled: false, hour: 9, agent: "claude", runs_on: "computer" };
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
@@ -227,11 +224,7 @@ function DailyFields({
             <span className="repo-wiki-note">{t("repoWiki.github.runsOn")}</span>
             <SegmentedControl<RepoWikiRunner>
               aria-label={t("repoWiki.github.runsOn")}
-              onChange={(runsOn) => {
-                if (disabled) return;
-                const agent = runsOn === "github" && !runsOnGithub(daily.agent) ? "claude" : daily.agent;
-                onChange({ ...daily, runs_on: runsOn, agent });
-              }}
+              onChange={(runsOn) => { if (!disabled) onChange({ ...daily, runs_on: runsOn }); }}
               options={[
                 { value: "computer", label: t("repoWiki.github.computer") },
                 { value: "github", label: t("repoWiki.github.github") },
@@ -256,9 +249,9 @@ function DailyFields({
               size="sm"
               value={daily.agent}
             >
-              {(Object.keys(AGENT_NAMES) as RepoWikiAgent[])
-                .filter((agent) => daily.runs_on !== "github" || runsOnGithub(agent))
-                .map((agent) => <option key={agent} value={agent}>{AGENT_NAMES[agent]}</option>)}
+              {(Object.keys(AGENT_NAMES) as RepoWikiAgent[]).map((agent) => (
+                <option key={agent} value={agent}>{AGENT_NAMES[agent]}</option>
+              ))}
             </Select>
           </div>
           <p className="repo-wiki-note">

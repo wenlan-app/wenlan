@@ -570,7 +570,7 @@ Options:
 - `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
 - `--folder <FOLDER>`: Folder inside the repository for the pages. Default: wiki.
 - `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
-- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`, `antigravity`.
+- `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
 - `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
 
 #### `wenlan wiki publish`
@@ -609,7 +609,7 @@ Options:
 
 - `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
 - `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
-- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `antigravity`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
+- `--agent <AGENT>`: The AI tool that rewrites pages whose code changed. Possible values: `claude`, `codex`, `cursor`, `copilot`, `none` (Only fix line numbers and list the pages that need rewriting). Default: `claude`.
 - `--pull-request`: Commit the changed pages on `wenlan/wiki-refresh` and open or update the pull request.
 
 #### `wenlan wiki workflow`
@@ -624,7 +624,7 @@ Options:
 
 - `--repo <REPO>`: Any folder inside the repository. Default: the current folder.
 - `--folder <FOLDER>`: The wiki folder inside the repository. Default: `wiki`.
-- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`, `antigravity`. Default: `claude`.
+- `--agent <AGENT>`: The AI tool the workflow runs. Possible values: `claude`, `codex`, `cursor`, `copilot`. Default: `claude`.
 - `--utc-hour <UTC_HOUR>`: The hour (0-23, UTC) it runs every day. Default: `1`.
 - `--write`: Write it into the repository's GitHub workflows folder, as wenlan-wiki.yml, instead of printing it.
 

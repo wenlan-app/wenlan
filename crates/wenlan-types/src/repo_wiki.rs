@@ -25,19 +25,15 @@ pub enum RepoWikiAgent {
     Cursor,
     /// GitHub Copilot CLI (`copilot`).
     Copilot,
-    /// Antigravity CLI (`agy`). It signs in only in person, so it runs on
-    /// this computer and never on GitHub.
-    Antigravity,
 }
 
 impl RepoWikiAgent {
     /// Every tool, in the order a picker lists them.
-    pub const ALL: [RepoWikiAgent; 5] = [
+    pub const ALL: [RepoWikiAgent; 4] = [
         RepoWikiAgent::Claude,
         RepoWikiAgent::Codex,
         RepoWikiAgent::Cursor,
         RepoWikiAgent::Copilot,
-        RepoWikiAgent::Antigravity,
     ];
 
     /// The name on the wire and in `wenlan wiki ... --agent`.
@@ -47,7 +43,6 @@ impl RepoWikiAgent {
             RepoWikiAgent::Codex => "codex",
             RepoWikiAgent::Cursor => "cursor",
             RepoWikiAgent::Copilot => "copilot",
-            RepoWikiAgent::Antigravity => "antigravity",
         }
     }
 
@@ -58,7 +53,6 @@ impl RepoWikiAgent {
             RepoWikiAgent::Codex => "Codex",
             RepoWikiAgent::Cursor => "Cursor",
             RepoWikiAgent::Copilot => "GitHub Copilot",
-            RepoWikiAgent::Antigravity => "Antigravity",
         }
     }
 
@@ -70,13 +64,7 @@ impl RepoWikiAgent {
             // `agent` is the newer name, but too common a word to look for first.
             RepoWikiAgent::Cursor => &["cursor-agent", "agent"],
             RepoWikiAgent::Copilot => &["copilot"],
-            RepoWikiAgent::Antigravity => &["agy"],
         }
-    }
-
-    /// Whether the tool can run on GitHub, signed in with a stored secret.
-    pub fn runs_on_github(self) -> bool {
-        self != RepoWikiAgent::Antigravity
     }
 }
 

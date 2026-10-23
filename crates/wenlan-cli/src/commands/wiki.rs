@@ -23,7 +23,6 @@ pub enum AgentArg {
     Codex,
     Cursor,
     Copilot,
-    Antigravity,
 }
 
 impl From<AgentArg> for RepoWikiAgent {
@@ -33,7 +32,6 @@ impl From<AgentArg> for RepoWikiAgent {
             AgentArg::Codex => RepoWikiAgent::Codex,
             AgentArg::Cursor => RepoWikiAgent::Cursor,
             AgentArg::Copilot => RepoWikiAgent::Copilot,
-            AgentArg::Antigravity => RepoWikiAgent::Antigravity,
         }
     }
 }

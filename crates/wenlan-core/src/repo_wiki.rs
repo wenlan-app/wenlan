@@ -204,12 +204,6 @@ pub fn bind_at(
                 daily.hour
             )));
         }
-        if daily.runs_on == RepoWikiRunner::Github && !daily.agent.runs_on_github() {
-            return Err(WenlanError::Validation(format!(
-                "{} signs in only in person, so it cannot run on GitHub",
-                daily.agent.display_name()
-            )));
-        }
     }
     let top = repository_top_level(repo_path)?;
     let remote_url = origin_url(&top);
@@ -1890,8 +1884,7 @@ const CLAUDE_DAILY_TOOLS: &[&str] = &[
 /// `agent` on `space`. The run is non-interactive and writes only through
 /// Wenlan: Claude Code gets only the read-only tools above, Codex runs in its
 /// read-only sandbox, Copilot may only read and call Wenlan, Cursor runs
-/// without `--force` (it proposes file changes but makes none), and
-/// Antigravity starts in plan mode.
+/// without `--force` (it proposes file changes but makes none).
 pub fn daily_agent_args(agent: RepoWikiAgent, space: &str, verb: &str) -> Vec<String> {
     let prompt = format!("Use the wenlan skill to run Wenlan: /wenlan {verb} space:{space}");
     match agent {
@@ -1925,14 +1918,6 @@ pub fn daily_agent_args(agent: RepoWikiAgent, space: &str, verb: &str) -> Vec<St
             "--no-ask-user".into(),
             "-s".into(),
         ],
-        RepoWikiAgent::Antigravity => vec![
-            "-p".into(),
-            prompt,
-            "--mode".into(),
-            "plan".into(),
-            "--output-format".into(),
-            "text".into(),
-        ],
     }
 }
 
@@ -1960,12 +1945,6 @@ pub fn wenlan_skill_paths(agent: RepoWikiAgent, home: &Path) -> Vec<PathBuf> {
         RepoWikiAgent::Claude | RepoWikiAgent::Codex => &[],
         RepoWikiAgent::Cursor => &[".cursor/skills"],
         RepoWikiAgent::Copilot => &[".copilot/skills"],
-        // Antigravity CLI's own folders, then Gemini CLI's, which it also reads.
-        RepoWikiAgent::Antigravity => &[
-            ".gemini/config/skills",
-            ".gemini/antigravity-cli/skills",
-            ".gemini/skills",
-        ],
     };
     folders
         .iter()
@@ -1973,99 +1952,16 @@ pub fn wenlan_skill_paths(agent: RepoWikiAgent, home: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// What Antigravity may do without asking in a daily run: Wenlan's tools and
-/// read-only git. Its headless mode refuses anything else that would ask, so
-/// without these it stops at its first `git` command.
-pub const ANTIGRAVITY_ALLOW: &[&str] = &[
-    "mcp(wenlan/*)",
-    "command(git rev-parse)",
-    "command(git ls-files)",
-    "command(git check-ignore)",
-    "command(git status)",
-    "command(git log)",
-    "command(git show)",
-];
-
-/// Antigravity CLI's settings file under `home`, which holds its permissions.
-pub fn antigravity_settings_path(home: &Path) -> PathBuf {
-    home.join(".gemini/antigravity-cli/settings.json")
-}
-
-/// Add [`ANTIGRAVITY_ALLOW`] to `permissions.allow` in the settings at
-/// `path`, keeping everything else. A file that is not a JSON object is left
-/// alone and reported, never overwritten.
-pub fn allow_antigravity_daily(path: &Path) -> Result<(), WenlanError> {
-    let mut settings = match std::fs::read_to_string(path) {
-        Ok(text) if text.trim().is_empty() => serde_json::json!({}),
-        Ok(text) => serde_json::from_str::<serde_json::Value>(&text).map_err(|error| {
-            WenlanError::Validation(format!("{} is not valid JSON: {error}", path.display()))
-        })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::json!({}),
-        Err(error) => return Err(error.into()),
-    };
-    let not_object = || {
-        WenlanError::Validation(format!(
-            "{} has an unexpected shape; Wenlan left it alone",
-            path.display()
-        ))
-    };
-    let root = settings.as_object_mut().ok_or_else(not_object)?;
-    let permissions = root
-        .entry("permissions")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(not_object)?;
-    let allow = permissions
-        .entry("allow")
-        .or_insert_with(|| serde_json::json!([]))
-        .as_array_mut()
-        .ok_or_else(not_object)?;
-    let missing: Vec<&str> = ANTIGRAVITY_ALLOW
-        .iter()
-        .copied()
-        .filter(|rule| !allow.iter().any(|have| have.as_str() == Some(rule)))
-        .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    allow.extend(missing.into_iter().map(serde_json::Value::from));
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let text = serde_json::to_string_pretty(&settings)
-        .map_err(|error| WenlanError::Validation(error.to_string()))?;
-    std::fs::write(path, text + "\n")?;
-    Ok(())
-}
-
-/// Whether the settings at `path` let a headless Antigravity run do its job.
-pub fn antigravity_allows_daily(path: &Path) -> bool {
-    let Some(settings) = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-    else {
-        return false;
-    };
-    let allow = settings
-        .pointer("/permissions/allow")
-        .and_then(serde_json::Value::as_array);
-    ANTIGRAVITY_ALLOW
-        .iter()
-        .all(|rule| allow.is_some_and(|allow| allow.iter().any(|have| have.as_str() == Some(rule))))
-}
-
 /// Whether a daily run of `agent` on this computer can use Wenlan: without
-/// the skill, the tool runs, finds no `/wenlan`, and changes nothing; and
-/// Antigravity without its permissions stops at its first command.
-pub fn set_up_for_daily(agent: RepoWikiAgent) -> bool {
-    let Some(home) = dirs::home_dir() else {
-        return true;
-    };
-    let paths = wenlan_skill_paths(agent, &home);
-    let skill = paths.is_empty() || paths.iter().any(|path| path.is_file());
-    skill
-        && (agent != RepoWikiAgent::Antigravity
-            || antigravity_allows_daily(&antigravity_settings_path(&home)))
+/// the skill, the tool runs, finds no `/wenlan`, and changes nothing.
+pub fn has_wenlan_skill(agent: RepoWikiAgent) -> bool {
+    match dirs::home_dir() {
+        Some(home) => {
+            let paths = wenlan_skill_paths(agent, &home);
+            paths.is_empty() || paths.iter().any(|path| path.is_file())
+        }
+        None => true,
+    }
 }
 
 /// Whether a daily run of `binding` is due at local `now`: enabled, past its

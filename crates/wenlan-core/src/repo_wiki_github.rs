@@ -33,7 +33,6 @@ pub fn key_secret(agent: RepoWikiAgent) -> Option<&'static str> {
         RepoWikiAgent::Codex => Some(OPENAI_SECRET),
         RepoWikiAgent::Cursor => Some("CURSOR_API_KEY"),
         RepoWikiAgent::Copilot => Some("COPILOT_GITHUB_TOKEN"),
-        RepoWikiAgent::Antigravity => None,
     }
 }
 /// Longest wait for the user to confirm the Claude sign-in in the browser.
@@ -66,7 +65,7 @@ pub fn maintain_workflow(
     match daily {
         Some(daily) if daily.enabled && daily.runs_on == RepoWikiRunner::Github => {
             let text =
-                repo_wiki_ci::workflow(folder, daily.agent, utc_hour(daily.hour, offset_seconds))?;
+                repo_wiki_ci::workflow(folder, daily.agent, utc_hour(daily.hour, offset_seconds));
             if current.as_deref() != Some(text.as_str()) {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
@@ -128,7 +127,6 @@ fn secrets_for(agent: RepoWikiAgent) -> &'static [&'static str] {
         RepoWikiAgent::Codex => &[OPENAI_SECRET],
         RepoWikiAgent::Cursor => &["CURSOR_API_KEY"],
         RepoWikiAgent::Copilot => &["COPILOT_GITHUB_TOKEN"],
-        RepoWikiAgent::Antigravity => &[],
     }
 }
 
@@ -171,12 +169,11 @@ fn expected_workflow(binding: &RepoWikiBinding) -> Option<String> {
         .as_ref()
         .filter(|daily| daily.enabled && daily.runs_on == RepoWikiRunner::Github)?;
     let folder = repo_wiki::normalize_folder(&binding.folder).ok()?;
-    repo_wiki_ci::workflow(
+    Some(repo_wiki_ci::workflow(
         &folder,
         daily.agent,
         utc_hour(daily.hour, local_offset_seconds()),
-    )
-    .ok()
+    ))
 }
 
 /// What a daily update on GitHub still needs, and its last run. Blocking:

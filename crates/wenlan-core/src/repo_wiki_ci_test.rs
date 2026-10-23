@@ -141,30 +141,29 @@ fn spans_outside_the_repository_are_never_read() {
 #[test]
 fn the_workflow_runs_refresh_daily_with_the_chosen_tool() {
     use wenlan_types::repo_wiki::RepoWikiAgent;
-    let claude = workflow("docs/wiki", RepoWikiAgent::Claude, 1).unwrap();
+    let claude = workflow("docs/wiki", RepoWikiAgent::Claude, 1);
     assert!(claude.contains("    - cron: \"17 1 * * *\"\n"), "{claude}");
     assert!(claude.contains("CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"));
     assert!(claude.contains("GH_TOKEN: ${{ github.token }}"));
     assert!(claude
         .contains("run: wenlan wiki refresh --folder docs/wiki --agent claude --pull-request\n"));
-    let codex = workflow("wiki", RepoWikiAgent::Codex, 23).unwrap();
+    let codex = workflow("wiki", RepoWikiAgent::Codex, 23);
     assert!(codex.contains("CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}"));
     assert!(codex.contains("npm install --global @openai/codex"));
     assert!(!codex.contains("ANTHROPIC"));
-    let cursor = workflow("wiki", RepoWikiAgent::Cursor, 3).unwrap();
+    let cursor = workflow("wiki", RepoWikiAgent::Cursor, 3);
     assert!(cursor.contains(
         "          curl -fsS https://cursor.com/install | bash\n          echo \"$HOME/.cursor/bin\" >> \"$GITHUB_PATH\"\n"
     ), "{cursor}");
     assert!(cursor.contains("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}"));
     assert!(cursor.contains("--agent cursor --pull-request"));
-    let copilot = workflow("wiki", RepoWikiAgent::Copilot, 3).unwrap();
+    let copilot = workflow("wiki", RepoWikiAgent::Copilot, 3);
     assert!(copilot.contains("npm install --global @github/copilot"));
     assert!(copilot.contains("COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}"));
     assert!(
         copilot.contains("#   \"Copilot Requests\" permission)."),
         "{copilot}"
     );
-    assert!(workflow("wiki", RepoWikiAgent::Antigravity, 3).is_err());
     if std::env::var_os("PRINT_WORKFLOW").is_some() {
         println!("{claude}");
     }
@@ -185,17 +184,6 @@ fn every_tool_may_edit_pages_and_read_history_in_a_refresh() {
             "--allow-tool=read, write, shell(git diff:*), shell(git log:*), shell(git show:*)",
             "--no-ask-user",
             "-s"
-        ]
-    );
-    assert_eq!(
-        refresh_agent_args(RepoWikiAgent::Antigravity, "fix"),
-        [
-            "-p",
-            "fix",
-            "--mode",
-            "accept-edits",
-            "--output-format",
-            "text"
         ]
     );
 }

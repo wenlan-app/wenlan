@@ -293,14 +293,6 @@ fn bind_stores_the_top_level_and_keeps_daily_when_not_named() {
         runs_on: Default::default(),
     };
     assert!(bind_at(&store, "site", &clone, None, Some(late)).is_err());
-    // Antigravity signs in only in person, so it cannot run on GitHub.
-    let antigravity_on_github = RepoWikiDaily {
-        enabled: true,
-        hour: 9,
-        agent: RepoWikiAgent::Antigravity,
-        runs_on: wenlan_types::repo_wiki::RepoWikiRunner::Github,
-    };
-    assert!(bind_at(&store, "site", &clone, None, Some(antigravity_on_github)).is_err());
     assert!(unbind_at(&store, "site").unwrap());
     assert!(!unbind_at(&store, "site").unwrap());
     assert!(binding_at(&store, "site").unwrap().is_none());
@@ -638,11 +630,6 @@ fn daily_agent_args_run_one_skill_non_interactively() {
     let copilot = daily_agent_args(RepoWikiAgent::Copilot, "site", "wiki");
     assert_eq!(&copilot[..2], ["-p", skill]);
     assert!(copilot.contains(&"--no-ask-user".to_owned()));
-    let antigravity = daily_agent_args(RepoWikiAgent::Antigravity, "site", "wiki");
-    assert_eq!(
-        antigravity,
-        ["-p", skill, "--mode", "plan", "--output-format", "text"]
-    );
     let allowed = copilot
         .iter()
         .find(|arg| arg.starts_with("--allow-tool="))
@@ -661,14 +648,6 @@ fn only_tools_that_read_agent_skills_need_wenlans_skill_folder() {
     assert_eq!(
         wenlan_skill_paths(RepoWikiAgent::Copilot, home),
         [home.join(".copilot/skills/wenlan/SKILL.md")]
-    );
-    assert_eq!(
-        wenlan_skill_paths(RepoWikiAgent::Antigravity, home),
-        [
-            home.join(".gemini/config/skills/wenlan/SKILL.md"),
-            home.join(".gemini/antigravity-cli/skills/wenlan/SKILL.md"),
-            home.join(".gemini/skills/wenlan/SKILL.md"),
-        ]
     );
 }
 
@@ -1243,34 +1222,4 @@ fn a_page_file_reads_back_as_page_content() {
         .2
         .ends_with("We like Rust."));
     assert!(parse_wiki_page_file("no frontmatter").is_none());
-}
-
-#[test]
-fn antigravity_gets_its_daily_permissions_beside_the_users_own() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = antigravity_settings_path(dir.path());
-    assert!(!antigravity_allows_daily(&path));
-    allow_antigravity_daily(&path).unwrap();
-    assert!(antigravity_allows_daily(&path));
-
-    std::fs::write(
-        &path,
-        r#"{"model": "x", "permissions": {"allow": ["command(git)"], "deny": ["command(rm)"]}}"#,
-    )
-    .unwrap();
-    allow_antigravity_daily(&path).unwrap();
-    allow_antigravity_daily(&path).unwrap();
-    let settings: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(settings["model"], "x");
-    assert_eq!(settings["permissions"]["deny"][0], "command(rm)");
-    let allow = settings["permissions"]["allow"].as_array().unwrap();
-    assert_eq!(allow[0], "command(git)");
-    assert_eq!(allow.len(), 1 + ANTIGRAVITY_ALLOW.len());
-    assert!(antigravity_allows_daily(&path));
-
-    // A file Wenlan cannot read as an object is left as it is.
-    std::fs::write(&path, "[1, 2]").unwrap();
-    assert!(allow_antigravity_daily(&path).is_err());
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "[1, 2]");
 }

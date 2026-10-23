@@ -28,7 +28,6 @@ pub enum RefreshAgentArg {
     Codex,
     Cursor,
     Copilot,
-    Antigravity,
     /// Only fix line numbers and list the pages that need rewriting.
     None,
 }
@@ -139,7 +138,7 @@ fn restore(top: &Path, path: &str) -> Result<()> {
 
 pub fn workflow(args: WorkflowArgs, quiet: bool) -> Result<()> {
     let folder = repo_wiki::normalize_folder(&args.folder)?;
-    let text = repo_wiki_ci::workflow(&folder, args.agent.into(), args.utc_hour)?;
+    let text = repo_wiki_ci::workflow(&folder, args.agent.into(), args.utc_hour);
     if !args.write {
         print!("{text}");
         return Ok(());
@@ -185,7 +184,6 @@ pub fn refresh(args: RefreshArgs, format: ResolvedFormat, quiet: bool) -> Result
         RefreshAgentArg::Codex => Some(RepoWikiAgent::Codex),
         RefreshAgentArg::Cursor => Some(RepoWikiAgent::Cursor),
         RefreshAgentArg::Copilot => Some(RepoWikiAgent::Copilot),
-        RefreshAgentArg::Antigravity => Some(RepoWikiAgent::Antigravity),
         RefreshAgentArg::None => None,
     };
     let to_rewrite: Vec<String> = found.to_rewrite().map(|page| page.file.clone()).collect();

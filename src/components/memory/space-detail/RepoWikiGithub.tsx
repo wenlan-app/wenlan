@@ -65,9 +65,8 @@ export function RepoWikiGithub({
       setApiKey("");
     },
   });
-  // Claude Code signs in through the browser; every other tool that runs on
-  // GitHub takes a key.
-  const keyAgent = agent === "claude" || agent === "antigravity" ? null : agent;
+  // Claude Code signs in through the browser; every other tool takes a key.
+  const keyAgent = agent === "claude" ? null : agent;
   const pastesKey = keyAgent !== null;
   const current = status.data;
   if (!current) return null;
