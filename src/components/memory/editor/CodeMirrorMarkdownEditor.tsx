@@ -294,6 +294,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             mediaPaste({
               blocked: actionsBlocked,
               onError: (file) => toast.error(t("pageAttachments.failed", { name: file.name || "file" })),
+              pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
             }),
             props.linkNotes ? createLinkCompletion({
               notes: () => linkNotesRef.current,

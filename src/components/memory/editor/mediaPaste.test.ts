@@ -53,6 +53,48 @@ describe("media paste", () => {
     expect(upload).toHaveBeenCalledTimes(1);
   });
 
+  it("shows where a file will land while it uploads, without writing it into the page", async () => {
+    let finish: (value: AttachedFile) => void = () => {};
+    const upload = vi.fn(() => new Promise<AttachedFile>((resolve) => { finish = resolve; }));
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: "Intro\n",
+        selection: EditorSelection.single(6),
+        extensions: [mediaPaste({ blocked: () => false, upload, pendingLabel: (file) => `Adding ${file.name}…` })],
+      }),
+    });
+    views.push(view);
+    view.contentDOM.dispatchEvent(pasteEvent([new File(["png"], "shot.png", { type: "image/png" })]));
+
+    expect(view.contentDOM.querySelector(".cm-media-pending")?.textContent).toBe("Adding shot.png…");
+    expect(view.state.doc.toString()).toBe("Intro\n");
+    view.dispatch({ changes: { from: 0, insert: "New " } });
+
+    finish(attached("![shot](_attachments/shot-1.png)"));
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe("New Intro\n![shot](_attachments/shot-1.png)"));
+    expect(view.contentDOM.querySelector(".cm-media-pending")).toBeNull();
+  });
+
+  it("clears the upload note when the upload fails", async () => {
+    const onError = vi.fn();
+    const upload = vi.fn(async () => { throw new Error("nope"); });
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({ doc: "", extensions: [mediaPaste({ blocked: () => false, upload, onError })] }),
+    });
+    views.push(view);
+    view.contentDOM.dispatchEvent(pasteEvent([new File(["png"], "shot.png", { type: "image/png" })]));
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
+    expect(view.contentDOM.querySelector(".cm-media-pending")).toBeNull();
+    expect(view.state.doc.toString()).toBe("");
+  });
+
   it("leaves non-media pastes to the editor", () => {
     const upload = vi.fn();
     const parent = document.createElement("div");

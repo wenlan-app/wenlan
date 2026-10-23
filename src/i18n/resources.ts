@@ -750,6 +750,7 @@ const en = {
   },
   pageAttachments: {
     failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
+    adding: "Adding {{name}}…",
   },
   slashEditing: {
     label: "Basic editing",
@@ -3629,6 +3630,7 @@ const zhHans = {
   },
   pageAttachments: {
     failed: "无法加入 {{name}}。页面里只能放图片和视频。",
+    adding: "正在加入 {{name}}…",
   },
   slashEditing: {
     label: "基本编辑",
@@ -6463,6 +6465,7 @@ const zhHant = {
   },
   pageAttachments: {
     failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",
+    adding: "正在加入 {{name}}…",
   },
   slashEditing: {
     label: "基本編輯",

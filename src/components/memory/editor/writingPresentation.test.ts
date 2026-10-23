@@ -438,7 +438,7 @@ describe("writingPresentation", () => {
     expect(view.state.doc.toString()).toBe("before\n\nafter");
   });
 
-  it("reveals an image's source when the caret is inside it or a click lands on it", async () => {
+  it("keeps a clicked image in view above its editable source", async () => {
     const image = "![Wenlan graph](https://wenlan.app/graph.png)";
     const source = `${image}\naway`;
     const view = makeView(source, { selection: EditorSelection.single(source.length) });
@@ -449,9 +449,33 @@ describe("writingPresentation", () => {
     rendered!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
 
     expect(view.state.selection.main.head).toBe(2);
-    expect(view.contentDOM.querySelector(".cm-writing-image")).toBeNull();
-    expect(view.contentDOM.textContent).toContain(image);
+    expect(view.contentDOM.querySelector("img.cm-writing-image-open")).toHaveAttribute("src", "https://wenlan.app/graph.png");
+    expect(view.contentDOM.querySelector(".cm-writing-media-source")?.textContent).toBe(image);
+    expect(concealedAtomicRanges(view)).toEqual([]);
     expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("removes an image and the empty line under it with one Backspace", async () => {
+    const image = "![Wenlan graph](https://wenlan.app/graph.png)";
+    const source = `before\n${image}\n\nafter`;
+    const view = makeView(source, { selection: EditorSelection.single(source.indexOf("\nafter")) });
+    await settleFocusChange();
+
+    expect(view.contentDOM.querySelector(".cm-writing-image")).not.toBeNull();
+    view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", keyCode: 8, bubbles: true, cancelable: true }));
+
+    expect(view.state.doc.toString()).toBe("before\nafter");
+    expect(view.state.selection.main.head).toBe("before".length);
+  });
+
+  it("keeps Backspace ordinary under text or an unrendered image", async () => {
+    for (const above of ["plain words", "![local](./attachment.png)"]) {
+      const source = `${above}\n\nafter`;
+      const view = makeView(source, { selection: EditorSelection.single(above.length + 1) });
+      await settleFocusChange();
+      view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", keyCode: 8, bubbles: true, cancelable: true }));
+      expect(view.state.doc.toString()).toBe(source);
+    }
   });
 
   it("keeps unsafe or unresolved image destinations as editable source", () => {
