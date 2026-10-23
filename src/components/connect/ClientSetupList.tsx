@@ -3,28 +3,33 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { detectMcpClients, type McpClient } from "../../lib/tauri";
+import { detectMcpClients, removeRawMcpEntry, type McpClient } from "../../lib/tauri";
 import { readingIsNo, readingIsYes } from "../../lib/reading";
 import { describeSetupError, setupErrorHeadingKey, type DescribedSetupError } from "../../lib/setupErrors";
-import { connectClient } from "./connectClient";
+import { connectClient, isSkillsClient, needsSkillsOnly } from "./connectClient";
+import { isPluginClient } from "./pluginClients";
 import { unreadPluginWriteRisk } from "./setupRisk";
 import ClientRow, { clientRowDescId } from "./ClientRow";
 import { familyOfClient, type ConnectionStatus } from "./connectionState";
-import { entryUnreadable, repairReasonOf } from "./clientHealth";
-import { Button, SectionHeader } from "../memory/settings/primitives";
+import { entryUnreadable, isConfigOnly, repairReasonOf } from "./clientHealth";
+import { Button, Card, SectionHeader, Toggle } from "../memory/settings/primitives";
 
-/** Apps & CLIs group. Every detected client has the same one-click "Set up" —
- *  what that button *does* differs by client, and `isPluginClient` is the only
- *  thing that decides: Claude Code and Codex get the Wenlan plugin (which
- *  registers the MCP server itself), everyone else gets an MCP config write.
+/** Apps & CLIs group. Every installed tool that is not connected yet gets one
+ *  row with a switch; turning it on is the one "Set up", and `connectClient`
+ *  decides what that does: Claude Code and Codex get the Wenlan plugin (which
+ *  registers the MCP server itself), everyone else gets an MCP config write,
+ *  plus Wenlan's skills for a tool that reads them from its own folder.
  *  Writing a config for a plugin client would register Wenlan twice, so this
- *  surface obeys the same invariant the wizard does.
+ *  surface obeys the same invariant the wizard does. With two or more such
+ *  tools, "Connect all" sets them all up in one press. Tools measured as not
+ *  installed get no row; they are named once on an "Also works with" line.
  *
  *  `connectedFamilies` (the tool families the roster above already shows)
  *  is the single source of truth for what to hide here: a client whose family
  *  already has an identity is represented above, so re-listing it — even when
  *  its own config file looks unconfigured — is the duplication the user
- *  vetoed.
+ *  vetoed. The exception is a tool connected before it had skills: its row
+ *  stays with an "Add skills" button.
  *
  *  `seenFamilies` is the narrower set whose identities have actually called
  *  Wenlan. It decides Added versus Connected. A tool the user adds from this
@@ -44,6 +49,7 @@ export default function ClientSetupList({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
+  const [connectingAll, setConnectingAll] = useState(false);
   const [errors, setErrors] = useState<
     Record<string, (DescribedSetupError & { mode: "setup" | "repair" }) | null>
   >({});
@@ -81,6 +87,8 @@ export default function ClientSetupList({
     return (
       added[client.client_type] ||
       repairReasonOf(client) !== null ||
+      // Connected before Wenlan shipped skills for it: one step left.
+      (needsSkillsOnly(client) && !readingIsNo(client.detected)) ||
       (entryUnreadable(client) && !familyConnected) ||
       (!readingIsYes(client.already_configured) && !familyConnected)
     );
@@ -170,11 +178,24 @@ export default function ClientSetupList({
     }
   };
 
-  const notInstalled = (
-    <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-      {t("connectMatrix.notDetected")}
-    </span>
-  );
+  const disconnect = async (client: McpClient) => {
+    const clientType = client.client_type;
+    setBusy(clientType);
+    setErrors((prev) => ({ ...prev, [clientType]: null }));
+    try {
+      await removeRawMcpEntry(clientType);
+      setAdded((prev) => {
+        const next = { ...prev };
+        delete next[clientType];
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [clientType]: { ...describeSetupError(err), mode: "setup" } }));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const notChecked = (
     <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-status-warning-text)" }}>
@@ -182,14 +203,28 @@ export default function ClientSetupList({
     </span>
   );
 
-  // Three branches, because there are three readings. Only a MEASURED `no`
-  // says "Not installed"; a failed look says so, and still offers the button —
+  // A measured `no` gets no row at all: those tools are named once, on the
+  // "Also works with" line. A failed look still gets its row and its switch —
   // withholding the action would be the same false negative wearing a
   // different coat.
   const trailing = (client: McpClient) => {
-    // A tool added from this list has nothing left to press.
-    if (added[client.client_type]) return null;
-    if (client.detected.kind === "no") return notInstalled;
+    const clientType = client.client_type;
+    const isBusy = busy === clientType || connectingAll;
+    if (added[clientType]) {
+      // A plugin cannot be taken back from here; the row only says what is
+      // left to do (restart the tool).
+      if (isPluginClient(clientType)) return null;
+      return (
+        <Toggle
+          enabled
+          valueUnknown={busy === clientType}
+          unknownState="saving"
+          onToggle={() => void disconnect(client)}
+          aria-label={t("connectMatrix.connectTool", { name: client.name })}
+          aria-describedby={clientRowDescId(clientType)}
+        />
+      );
+    }
     // The entry exists and would not start: one action, and it is a fix.
     if (repairReasonOf(client) !== null) {
       return (
@@ -198,47 +233,82 @@ export default function ClientSetupList({
           variant="secondary"
           size="sm"
           onClick={() => setUp(client, "repair")}
-          disabled={busy === client.client_type}
-          aria-describedby={clientRowDescId(client.client_type)}
+          disabled={isBusy}
+          aria-describedby={clientRowDescId(clientType)}
         >
-          {busy === client.client_type ? t("connectMatrix.repairing") : t("connectMatrix.repair")}
+          {busy === clientType ? t("connectMatrix.repairing") : t("connectMatrix.repair")}
+        </Button>
+      );
+    }
+    // Already connected; only the skills are missing. A switch that is off
+    // would read as "not connected", so this is a plain button.
+    if (needsSkillsOnly(client)) {
+      return (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setUp(client)}
+          disabled={isBusy}
+          aria-describedby={clientRowDescId(clientType)}
+        >
+          {busy === clientType ? t("connectMatrix.settingUp") : t("connectMatrix.addSkills")}
         </Button>
       );
     }
     // Round 6, D6a. A write that could produce a duplicate registration must
-    // not be offered as the SAME unqualified action a measured `no` gets. The
-    // label changes to "Set up anyway", and the button points at the body line
-    // that says what could not be read — so a screen reader hears the risk as
-    // part of the button, not several nodes away from it.
-    const duplicateRisk = unreadPluginWriteRisk(client) !== null;
-    const button = (
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        onClick={() => setUp(client)}
-        disabled={busy === client.client_type}
-        aria-describedby={duplicateRisk ? clientRowDescId(client.client_type) : undefined}
-      >
-        {busy === client.client_type
-          ? t("connectMatrix.settingUp")
-          : duplicateRisk
-            ? t("connectMatrix.setUpAnyway")
-            : t("connectMatrix.setUp")}
-      </Button>
-    );
+    // not be offered as the SAME one-tap switch a measured `no` gets. It stays
+    // a button labelled "Set up anyway" that points at the body line saying
+    // what could not be read — so a screen reader hears the risk as part of
+    // the control, not several nodes away from it.
+    const control =
+      unreadPluginWriteRisk(client) !== null ? (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setUp(client)}
+          disabled={isBusy}
+          aria-describedby={clientRowDescId(clientType)}
+        >
+          {busy === clientType ? t("connectMatrix.settingUp") : t("connectMatrix.setUpAnyway")}
+        </Button>
+      ) : (
+        <Toggle
+          enabled={false}
+          valueUnknown={isBusy}
+          unknownState="saving"
+          onToggle={() => void setUp(client)}
+          aria-label={t("connectMatrix.connectTool", { name: client.name })}
+          aria-describedby={clientRowDescId(clientType)}
+        />
+      );
     if (client.detected.kind === "unreadable") {
       return (
         <div className="flex items-center gap-2">
           {notChecked}
-          {button}
+          {control}
         </div>
       );
     }
-    return button;
+    return control;
   };
 
-  if (clients && actionable.length === 0) {
+  const notInstalledNames = (clients ?? [])
+    .filter((client) => client.detected.kind === "no" && !added[client.client_type])
+    .map((client) => client.name);
+  const alsoWorksWith =
+    notInstalledNames.length > 0 ? (
+      <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)", lineHeight: "1.5", margin: 0 }}>
+        {t("connectMatrix.alsoWorksWith", { names: notInstalledNames.join(t("connectMatrix.nameSeparator")) })}
+      </p>
+    ) : null;
+
+  const rows = actionable.filter(
+    (client) => client.detected.kind !== "no" || added[client.client_type],
+  );
+
+  if (clients && rows.length === 0) {
     if (hideWhenComplete && clients.length > 0) return null;
     // A written config is not a live connection. Clients that are configured
     // but whose family never appeared in the roster are "added", not
@@ -252,88 +322,137 @@ export default function ClientSetupList({
         !readingIsNo(client.detected) &&
         !(seen?.has(familyOfClient(client.client_type)) ?? false),
     );
-    if (pendingRestart.length === 0) {
-      return (
-        section(
-          <>
-            {title}
-            <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-              {t("connectMatrix.allConnected")}
-            </span>
-          </>,
-        )
-      );
-    }
-    return (
-      section(
-        <>
-          {title}
-          <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-            {t("connectMatrix.allAdded")}
-          </span>
-        </>,
-      )
+    return section(
+      <div className="flex flex-col" style={{ gap: "6px" }}>
+        {title}
+        <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
+          {t(pendingRestart.length === 0 ? "connectMatrix.allConnected" : "connectMatrix.allAdded")}
+        </span>
+        {alsoWorksWith}
+      </div>,
     );
   }
+
+  // "Connect all" takes only the rows a single tap would set up with no
+  // question left: a measured install, no unread plugin state, not a leftover
+  // settings folder, not already done or already connected. Anything else
+  // keeps its own control.
+  const connectAllTargets = rows.filter(
+    (client) =>
+      !added[client.client_type] &&
+      !needsSkillsOnly(client) &&
+      readingIsYes(client.detected) &&
+      !isConfigOnly(client) &&
+      repairReasonOf(client) === null &&
+      unreadPluginWriteRisk(client) === null,
+  );
+  const connectAll = async () => {
+    setConnectingAll(true);
+    try {
+      // One at a time: two tools can share a skills folder (Antigravity and
+      // Gemini CLI, GitHub Copilot and VS Code), and every write takes a
+      // backup first.
+      for (const client of connectAllTargets) await setUp(client);
+    } finally {
+      setConnectingAll(false);
+    }
+  };
 
   return section(
     <div className="flex flex-col" style={{ gap: "8px" }}>
       {title}
-      {actionable.map((client) => {
-        const duplicateRiskError = unreadPluginWriteRisk(client);
-        const addedHere = added[client.client_type] === true;
-        const failure = errors[client.client_type];
-        return (
-          <ClientRow
-            key={client.client_type}
-            client={client}
-            configured={client.already_configured}
-            status={addedHere ? statusOf(client.client_type) : null}
-            error={
-              failure
-                ? `${t(
-                    failure.mode === "repair" ? "connectMatrix.repairFailed" : "connectMatrix.addFailed",
-                    { name: client.name },
-                  )} ${t(setupErrorHeadingKey(failure.kind))}`
-                : null
-            }
-            errorDetail={failure?.detail}
-            warning={
-              // Two independent non-fatal notes, and they can both be live:
-              // the plugin state could not be read BEFORE the write, and the
-              // binary search skipped an input DURING it. Joined, not ranked.
-              [
-                duplicateRiskError
-                  ? t("connectMatrix.pluginStateUnknownBeforeWrite", { error: duplicateRiskError })
-                  : null,
-                warnings[client.client_type] || null,
-              ]
-                .filter(Boolean)
-                .join(" ") || null
-            }
-            trailing={trailing(client)}
-          >
-            {addedHere && (
-              <p
-                role="status"
-                style={{
-                  fontFamily: "var(--mem-font-body)",
-                  fontSize: "var(--mem-text-sm)",
-                  color: "var(--mem-text-tertiary)",
-                  lineHeight: "1.5",
-                  margin: 0,
-                }}
+      {connectAllTargets.length >= 2 && (
+        <Card>
+          <div className="flex flex-col" style={{ gap: "10px" }}>
+            <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 600, color: "var(--mem-text)", margin: 0 }}>
+              {t("connectMatrix.foundTools", { count: connectAllTargets.length })}
+            </p>
+            <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-sm)", color: "var(--mem-text-secondary)", margin: 0 }}>
+              {connectAllTargets.map((client) => client.name).join(t("connectMatrix.nameSeparator"))}
+            </p>
+            <div className="flex items-center flex-wrap" style={{ gap: "10px" }}>
+              <Button type="button" variant="primary" size="sm" onClick={() => void connectAll()} disabled={connectingAll || busy !== null}>
+                {connectingAll ? t("connectMatrix.settingUp") : t("connectMatrix.connectAll")}
+              </Button>
+              <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
+                {t("connectMatrix.connectAllHint")}
+              </span>
+            </div>
+          </div>
+        </Card>
+      )}
+      <Card padding="none">
+        <div className="flex flex-col py-1">
+          {rows.map((client) => {
+            const duplicateRiskError = unreadPluginWriteRisk(client);
+            const addedHere = added[client.client_type] === true;
+            const failure = errors[client.client_type];
+            const skillsNote =
+              addedHere || repairReasonOf(client) !== null || !isSkillsClient(client)
+                ? null
+                : needsSkillsOnly(client)
+                  ? t("connectMatrix.needsSkills")
+                  : t("connectMatrix.addsSkills");
+            return (
+              <ClientRow
+                key={client.client_type}
+                client={client}
+                bare
+                configured={client.already_configured}
+                status={addedHere || needsSkillsOnly(client) ? statusOf(client.client_type) : null}
+                error={
+                  failure
+                    ? `${t(
+                        failure.mode === "repair" ? "connectMatrix.repairFailed" : "connectMatrix.addFailed",
+                        { name: client.name },
+                      )} ${t(setupErrorHeadingKey(failure.kind))}`
+                    : null
+                }
+                errorDetail={failure?.detail}
+                warning={
+                  // Two independent non-fatal notes, and they can both be live:
+                  // the plugin state could not be read BEFORE the write, and the
+                  // binary search skipped an input DURING it. Joined, not ranked.
+                  [
+                    duplicateRiskError
+                      ? t("connectMatrix.pluginStateUnknownBeforeWrite", { error: duplicateRiskError })
+                      : null,
+                    warnings[client.client_type] || null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || null
+                }
+                trailing={trailing(client)}
               >
-                {repaired[client.client_type]
-                  ? t("connectMatrix.repairedRestart", { name: client.name })
-                  : statusOf(client.client_type) === "connected"
-                    ? t("connectMatrix.connectedHint", { name: client.name })
-                    : t("connectMatrix.addedRestart", { name: client.name })}
-              </p>
-            )}
-          </ClientRow>
-        );
-      })}
+                {skillsNote && (
+                  <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)", lineHeight: "1.5", margin: 0 }}>
+                    {skillsNote}
+                  </p>
+                )}
+                {addedHere && (
+                  <p
+                    role="status"
+                    style={{
+                      fontFamily: "var(--mem-font-body)",
+                      fontSize: "var(--mem-text-sm)",
+                      color: "var(--mem-text-tertiary)",
+                      lineHeight: "1.5",
+                      margin: 0,
+                    }}
+                  >
+                    {repaired[client.client_type]
+                      ? t("connectMatrix.repairedRestart", { name: client.name })
+                      : statusOf(client.client_type) === "connected"
+                        ? t("connectMatrix.connectedHint", { name: client.name })
+                        : t("connectMatrix.addedRestart", { name: client.name })}
+                  </p>
+                )}
+              </ClientRow>
+            );
+          })}
+        </div>
+      </Card>
+      {alsoWorksWith}
     </div>,
   );
 }
