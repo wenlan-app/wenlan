@@ -35,8 +35,12 @@ pub struct CodeBasisRef {
     /// When the content was first seen changed. Only while `pending`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changed_at: Option<i64>,
-    /// Why a code basis is `unavailable`: `file_missing`, `repo_missing`,
-    /// `outside_repo`, `unreadable` or `too_large`.
+    /// Why a code basis is `unavailable`: `file_deleted` (git saw the file
+    /// deleted; steep updates the note and stops relying on it),
+    /// `file_missing` (gone for a reason git does not give), `repo_missing`,
+    /// `outside_repo`, `unreadable` or `too_large`. On a `pending` row,
+    /// `lines_not_found`: the lines are no longer in the file at all, so a
+    /// person looks. A renamed file is followed and never shows here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// One sentence from the everyday model about a changed code basis it

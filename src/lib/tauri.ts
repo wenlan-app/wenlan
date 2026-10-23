@@ -2026,12 +2026,19 @@ export async function listBasisPending(
  */
 export type CodeBasisState = "ok" | "moved" | "pending" | "unavailable";
 
+/**
+ * Why a row is `unavailable`, or, for a `pending` row, `lines_not_found`: the
+ * lines are no longer in the file at all. `file_deleted` means git saw the
+ * file deleted; steep then updates the page and stops relying on it.
+ */
 export type CodeBasisUnavailableReason =
   | "file_missing"
+  | "file_deleted"
   | "repo_missing"
   | "outside_repo"
   | "unreadable"
-  | "too_large";
+  | "too_large"
+  | "lines_not_found";
 
 export interface CodeBasisRef {
   /** Absolute. */
@@ -2044,7 +2051,7 @@ export interface CodeBasisRef {
   state: CodeBasisState;
   /** Unix seconds when the lines were first seen changed; only while pending. */
   changed_at?: number | null;
-  /** Why the code is unavailable. */
+  /** Why the code is unavailable, or that a changed row's lines are lost. */
   reason?: CodeBasisUnavailableReason | null;
   /** What the background check concluded about a pending row: `"stale"` or `"needs_human"`. */
   ai_verdict?: string;

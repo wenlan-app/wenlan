@@ -95,7 +95,8 @@ pub struct SteepWorklistQuery {
 /// GET /api/steep/worklist?space=&limit=&cursor=
 ///
 /// The notes waiting for steep that the caller may see, newest change first,
-/// with the full count. Needs no model.
+/// with the full count, after a check of the code they rely on. Needs no
+/// model.
 pub async fn handle_steep_worklist(
     State(state): State<Arc<RwLock<ServerState>>>,
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
@@ -110,6 +111,9 @@ pub async fn handle_steep_worklist(
         header_space.as_deref(),
     )
     .await?;
+    // Code changed, renamed or deleted since the last look is steep's work
+    // too, so the files are looked at first (cheap: a `stat` per quiet file).
+    crate::code_basis_routes::recheck_for_list(&db, &scope).await;
     let waiting = wenlan_core::steep::waiting_page_ids(&db).await?;
     let visible = visible_ids(&db, &view.grant, &scope, &waiting).await?;
     let list = wenlan_core::steep::list_work(

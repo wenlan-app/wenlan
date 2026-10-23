@@ -143,6 +143,10 @@ pub struct SteepCode {
     pub excerpt: String,
     /// What the note should now say, from the model that judged the change.
     pub what_changed: String,
+    /// The file was deleted from the repository: `excerpt` shows the lines as
+    /// they were, and the rewrite drops or corrects what only they supported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deleted: bool,
 }
 
 /// One question for the caller's small model in a `judge` claim.

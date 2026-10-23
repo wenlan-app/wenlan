@@ -28,7 +28,9 @@ When the argument is empty, report status. Read only; change nothing. Run
 all four checks in order; only a failed runtime check stops early. A problem
 in a later check becomes its line, and the remaining checks still run.
 
-1. Runtime: `curl -fsS -m 3 http://127.0.0.1:7878/api/health`. If it fails,
+1. Runtime: `curl -fsS -m 3 "${WENLAN_HOST:-http://127.0.0.1:7878}/api/health"`
+   (`WENLAN_HOST` names a test daemon; never look at the default one instead
+   while it is set). If it fails,
    say Wenlan is not running yet and run the **setup** workflow (step 3). Setup
    asks before it installs anything; do not skip its consent.
 2. Space: resolve it.
@@ -104,7 +106,8 @@ then follow that skill to the end. Its arguments:
 
 Answer these from here, without a tool call, and only the part asked:
 
-- Data lives under `~/.wenlan/`: `pages/` holds notes as Markdown,
+- Data lives under `~/.wenlan/` (under `$WENLAN_DATA_DIR` when that is set,
+  as it is for a test daemon): `pages/` holds notes as Markdown,
   `sessions/` holds session logs by date, and `sessions/_status/` holds the
   receipts written from each project's Brief. Memories and links live in a
   local database; `docs/setup-and-data.md` says where.
