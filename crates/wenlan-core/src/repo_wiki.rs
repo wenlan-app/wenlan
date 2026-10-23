@@ -1887,7 +1887,7 @@ const CLAUDE_DAILY_TOOLS: &[&str] = &[
 /// without `--force` (it proposes file changes but makes none), and Gemini
 /// CLI approves only Wenlan's tools besides its read-only ones.
 pub fn daily_agent_args(agent: RepoWikiAgent, space: &str, verb: &str) -> Vec<String> {
-    let prompt = format!("Use the wenlan skill: /wenlan {verb} space:{space}");
+    let prompt = format!("Use the wenlan skill to run Wenlan: /wenlan {verb} space:{space}");
     match agent {
         RepoWikiAgent::Claude => {
             let mut args = vec![
@@ -1944,6 +1944,28 @@ const COPILOT_DAILY_TOOLS: &[&str] = &[
 /// The executable for `agent`.
 pub fn find_agent(agent: RepoWikiAgent) -> Option<PathBuf> {
     agent.programs().iter().find_map(|name| find_tool(name))
+}
+
+/// Where `agent` reads Wenlan's skill under `home`, for the tools that read
+/// Agent Skills from a per-user folder the app's Set up fills. Claude Code and
+/// Codex get theirs from a plugin instead, so they have none.
+pub fn wenlan_skill_path(agent: RepoWikiAgent, home: &Path) -> Option<PathBuf> {
+    let folder = match agent {
+        RepoWikiAgent::Claude | RepoWikiAgent::Codex => return None,
+        RepoWikiAgent::Cursor => ".cursor",
+        RepoWikiAgent::Copilot => ".copilot",
+        RepoWikiAgent::Gemini => ".gemini",
+    };
+    Some(home.join(folder).join("skills/wenlan/SKILL.md"))
+}
+
+/// Whether a daily run of `agent` on this computer can use Wenlan: without
+/// the skill, the tool runs, finds no `/wenlan`, and changes nothing.
+pub fn has_wenlan_skill(agent: RepoWikiAgent) -> bool {
+    match dirs::home_dir() {
+        Some(home) => wenlan_skill_path(agent, &home).is_none_or(|path| path.is_file()),
+        None => true,
+    }
 }
 
 /// Whether a daily run of `binding` is due at local `now`: enabled, past its

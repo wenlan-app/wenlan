@@ -121,6 +121,9 @@ pub(crate) async fn run_once(
         .map(|daily| daily.agent)
         .unwrap_or(wenlan_types::repo_wiki::RepoWikiAgent::Claude);
     match repo_wiki::find_agent(agent) {
+        Some(_) if !repo_wiki::has_wenlan_skill(agent) => tracing::warn!(
+            "[repo_wiki] daily run of {space}: {agent:?} is not set up with Wenlan's skills; publishing what is there"
+        ),
         Some(program) => {
             for verb in ["steep", "wiki"] {
                 run_step(&program, agent, binding, verb, &date).await;
