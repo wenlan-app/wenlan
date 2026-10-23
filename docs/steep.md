@@ -69,7 +69,14 @@ A pending revision applies to its named page, not every page touched by the same
 
 ## Enable Steep and check its work
 
-In Settings, configure an AI service, assign it to background organization and/or page synthesis, and turn on **Background steeping**. Choose on-device Qwen through llama.cpp, an OpenAI-compatible local server such as Ollama or LM Studio, or a supported cloud provider. A remote provider receives the material needed for its tasks. [Model choices and privacy](setup-and-data.md#models).
+In Settings, under **Steeping**, choose a mode:
+
+- **On demand** (new installs start here) needs no model. When your AI tool saves or writes into Wenlan, it steeps as it goes. Run `/wenlan steep` (`$wenlan steep` in Codex) to finish the rest at once.
+- **Automatic** steeps in the background while your computer is idle. Configure an AI service and assign it to background organization and/or page synthesis.
+
+The model check of each sentence against its source runs only in Automatic for now; in On demand, pages show “Not checked”.
+
+For Automatic, choose on-device Qwen through llama.cpp, an OpenAI-compatible local server such as Ollama or LM Studio, or a supported cloud provider. A remote provider receives the material needed for its tasks. [Model choices and privacy](setup-and-data.md#models).
 
 From the CLI:
 

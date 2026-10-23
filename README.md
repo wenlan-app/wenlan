@@ -42,7 +42,7 @@ https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI chats scattered everywhere, always changing. Keeping an Obsidian vault from rotting within three months took plugins, a workflow, and constant upkeep, and LLM-wiki setups weren't much easier day to day. I wanted an AI-native knowledge base app that stays useful without the hassle.
 
 - **Everything in one place:** Documents, Markdown files, Obsidian vaults, Logseq graphs, web links, and exported AI chats come into one wiki.
-- **One wiki for all your AI tools:** Claude Code, Codex, Cursor, and other MCP clients work from the same pages.
+- **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, Windsurf, and other MCP clients work from the same pages.
 - **Built in, not bolted on:** Saving, organizing, citing, and updating pages live in one app, with no maze of plugins to wire up.
 
 <a id="quickstart"></a>
@@ -77,15 +77,18 @@ Create a page in Wenlan, connect an Obsidian vault or a Logseq graph, add a fold
 |---|---|---|
 | Claude Code / Claude Desktop | Plugin / MCP | [Claude guide](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
-| Cursor, VS Code, Gemini CLI, Muse Code | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+
+In the App's Settings, **Add a tool** lists the AI tools installed on your computer, and **Connect all** sets them up in one press. Tools that read skills also get Wenlan's skills for setup, recall, capture, brief, and handoff.
 
 After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed.
 
 Imported material is ready to use right away, and you can turn it into pages whenever you want. Ask your AI:
 
-> /recall my earlier notes and decisions on this, then help me: …
+> /recall my earlier pages and decisions on this, then help me: …
 
-In Codex, use `$recall`. With an MCP-only tool, just ask: “Check Wenlan for my earlier notes and decisions on this, then help me: …”
+In Codex, use `$recall`. With an MCP-only tool, just ask: “Check Wenlan for my earlier pages and decisions on this, then help me: …”
 
 To turn imported material into cited pages, run `/wenlan steep` (`$wenlan steep` in Codex). New installs [steep](#steep-keep-knowledge-useful-as-it-changes) On demand, with your AI tool; switch to Automatic with a [model](docs/steep.md#enable-steep) to organize memories and update pages in the background.
 
@@ -138,7 +141,7 @@ Scanned PDFs need text extraction first; chat attachments are not imported. [Imp
 
 ## In everyday use
 
-Save new findings and progress as you work, then pick up where you left off next time.
+Save new findings and progress as you work, and start the next session with them.
 
 <p align="center">
   <img src="./docs/assets/wenlan-daily-workflow.png" alt="Sources and saved memories accumulate in Wenlan; use them in the App or AI tools, then save new memories and work progress for later." width="100%">
@@ -146,7 +149,7 @@ Save new findings and progress as you work, then pick up where you left off next
 
 Simplified workflow. Plugin commands and page organization are optional, with no fixed sequence.
 
-- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI.
+- **Work in the App.** Add material, write or edit pages, follow citations, and review proposed changes without connecting AI. The menu bar (or tray) icon opens a small panel with what needs you, your latest pages, and Quick capture.
 - **Use your knowledge and write new pages.** Ask your AI to find relevant sources and memories for the task (`/recall`). It can also write cited pages or update existing ones from their current version, then save them to Wenlan. When a page cites its sources as `[n]`, Wenlan checks the cited source supports each sentence, and does not save the page when too many citations fail.
 - **Keep what you learn.** Save a decision or lesson, with its reasons and sources, in the App or through your AI (`/capture`).
 - **Pause and resume.** Save findings and a session log, update affected pages, and record progress and next steps in the project Brief (`/handoff`). Pick up that context next time (`/brief`).
@@ -172,7 +175,7 @@ Once your material is in Wenlan, your AI tools can build on it: retrieve earlier
 
 - **Development:** Bring earlier technical decisions, lessons, and acceptance criteria into implementation and debugging.
 - **Products and websites:** Use customer research, positioning, and design principles to draft specifications or build pages.
-- **Research and learning:** Turn reading material and saved findings into cited reports or study notes you can reuse.
+- **Research and learning:** Turn reading material and saved findings into cited reports or study guides you can reuse.
 
 **Retrieval and connections:** Plugins guide retrieval and saving; MCP connections expose the tools for your AI to call.
 
@@ -191,7 +194,7 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing. `/wenlan wiki` replaces `/wenlan map`, with no alias for the old name.
 
 - **Tied to the code:** Each key sentence records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
-- **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
+- **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update: it runs your own AI tool on your computer, or runs on GitHub Actions with your AI tool's key saved as a repository secret, so your computer can stay off. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
 - **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
 
 <a id="what-makes-wenlan-distinct"></a>

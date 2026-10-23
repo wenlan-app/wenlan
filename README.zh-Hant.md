@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=293c4cc4fec5327467c507276c8b65b2f87df9144fd3e5900a67c461c5498159 -->
+<!-- README_SYNC: source=README.md sha256=bfff26060bd6fcba5c5fb76020468f1809430ccf338d1556d4aa923109a58405 -->
 
 <p align="center">
   <picture>
@@ -44,7 +44,7 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 我做文瀾，是因為對自己的知識一直有種焦慮：筆記、文件和 AI 對話散落各處，又一直在變。要讓 Obsidian vault 三個月後不荒廢，得裝外掛、設計流程、不停維護；LLM wiki 那類做法，日常用起來也不輕鬆。我想要一個 AI 原生、不用費心照顧的知識庫 App。
 
 - **散落的資料收進一處：** 文件、Markdown 檔、Obsidian vault、Logseq 圖譜、網頁連結，還有匯出的 AI 對話，都進到同一個知識庫。
-- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor 等 MCP 工具都用同一個知識庫。
+- **所有 AI 工具共用一份：** Claude Code、Codex、Cursor、GitHub Copilot、Gemini CLI、Windsurf 等 MCP 工具都用同一個知識庫。
 - **流程全部內建：** 保存、整理、引用到更新筆記，都在同一個 App 裡，不用再拼裝一堆外掛。
 
 <a id="quickstart"></a>
@@ -79,7 +79,10 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 |---|---|---|
 | Claude Code／Claude Desktop | 插件／MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、VS Code、Gemini CLI、Muse Code | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+
+在 App 的設定裡，「新增工具」會列出你電腦上裝好的 AI 工具，按「全部連接」一次設好。能讀技能的工具，也會拿到文瀾的技能，例如找回和記下。
 
 安裝插件後，開啟新的 AI 對話並執行 `/wenlan`（Codex 中為 `$wenlan`）。它會確認 Wenlan 是否正常，需要時自動完成設定。
 
@@ -149,7 +152,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 簡化流程示意；插件指令與筆記整理均按需使用，沒有固定順序。
 
-- **在 App 裡使用。** 加入資料、撰寫或編輯筆記、查回引用來源與審核修訂，不必連接 AI。
+- **在 App 裡使用。** 加入資料、撰寫或編輯筆記、查回引用來源與審核修訂，不必連接 AI。點選單列（或系統匣）圖示會打開一個小面板，列出需要你處理的事、最近的筆記和快速記下。
 - **運用知識、撰寫新筆記。** 請 AI 找回相關來源與記憶，用於目前的任務（`/recall`）；也能撰寫帶引用的新筆記，或依據現有版本更新筆記，再存回 Wenlan。筆記用 `[n]` 引用來源時，文瀾會檢查所引來源是否支持每個句子；未通過檢查的引用太多時，不會儲存該筆記。
 - **留下你的新發現。** 保存決定或心得，以及其理由與來源；可在 App 操作，或請 AI 代存（`/capture`）。
 - **告一段落，下次接續。** 保存發現與工作階段紀錄，更新受影響的筆記，將進度與下一步寫進專案摘要 Brief（`/handoff`）。下次讀取摘要，接著工作（`/brief`）。
@@ -176,7 +179,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 - **開發**：把先前的技術決定、經驗與驗收條件，用於功能實作與除錯。
 - **產品與網站**：依據使用者研究、產品定位與設計原則，撰寫規格或製作網頁。
-- **研究與學習**：把閱讀資料與保存的發現整理成帶引用的報告或學習筆記，供後續重用。
+- **研究與學習**：把閱讀資料與保存的發現整理成帶引用的報告或學習資料，供後續重用。
 
 **檢索與連接方式：** 插件引導 AI 取用與保存知識；MCP 連接提供可供 AI 呼叫的工具。
 
@@ -195,7 +198,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 在程式碼儲存庫中執行 `/wenlan wiki`（Codex 中為 `$wenlan wiki`）。AI 工具會依據儲存庫本身規劃 wiki：先寫一篇列出所有筆記的總覽，再為新人需要了解的每個部分或流程各寫一篇。小工具只需幾篇，大型 monorepo 會多得多。再次執行時只補寫缺少的筆記。`/wenlan wiki` 取代了 `/wenlan map`，舊名稱沒有保留別名。
 
 - **與程式碼綁定**：每個關鍵句子都會記錄它所依據的程式碼行。程式碼變動時，筆記會顯示改了什麼，並提供一個審核按鈕；沉澱會把筆記更新到最新。
-- **以 pull request 放進儲存庫**：Space 上的 GitHub 按鈕會把 Space 連接到對應的儲存庫，並把依據這些程式碼的筆記以 pull request 放進儲存庫的 `wiki/` 資料夾。可以從按鈕執行，也可以開啟每日更新。同一個 pull request 還會修正儲存庫自身文件中與程式碼不再相符的句子，供你審核。
+- **以 pull request 放進儲存庫**：Space 上的 GitHub 按鈕會把 Space 連接到對應的儲存庫，並把依據這些程式碼的筆記以 pull request 放進儲存庫的 `wiki/` 資料夾。可以從按鈕執行，也可以開啟每日更新：在你的電腦上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的金鑰存成儲存庫 secret），電腦關著也行。同一個 pull request 還會修正儲存庫自身文件中與程式碼不再相符的句子，供你審核。
 - **保留你的修改**：有人在儲存庫中修改過的 wiki 筆記會保留那次修改。引用你的記憶或對話的筆記不會放進儲存庫。
 
 <a id="what-makes-wenlan-distinct"></a>

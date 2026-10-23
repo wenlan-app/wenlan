@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=293c4cc4fec5327467c507276c8b65b2f87df9144fd3e5900a67c461c5498159 -->
+<!-- README_SYNC: source=README.md sha256=bfff26060bd6fcba5c5fb76020468f1809430ccf338d1556d4aa923109a58405 -->
 
 <p align="center">
   <picture>
@@ -67,9 +67,12 @@ Crea una página en Wenlan, conecta una bóveda de Obsidian o un grafo de Logseq
 |---|---|---|
 | Claude Code / Claude Desktop | Plugin / MCP | [Guía de Claude](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Guía de Codex](docs/setup-with-ai.md#codex) |
-| Cursor, VS Code, Gemini CLI, Muse Code | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/wenlan` (`$wenlan` en Codex). Comprueba que Wenlan funciona y lo configura si hace falta. Para todo lo demás, escribe lo que quieres a continuación, por ejemplo `/wenlan abre mi nota sobre el plan de lanzamiento`.
+En los ajustes de la aplicación, **Add a tool** muestra las herramientas de IA instaladas en tu ordenador y **Connect all** las configura con un solo clic. Las herramientas que leen skills también reciben las skills de Wenlan para configurar, recuperar, guardar, el brief y el traspaso.
+
+Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/wenlan` (`$wenlan` en Codex). Comprueba que Wenlan funciona y lo configura si hace falta. Para todo lo demás, escribe lo que quieres a continuación, por ejemplo `/wenlan abre mi página sobre el plan de lanzamiento`.
 
 El material importado ya está listo para usar; no hace falta crear una página primero. Pregunta a tu IA:
 
@@ -85,7 +88,7 @@ Para convertir el material importado en páginas con citas, ejecuta `/wenlan ste
 
 ## Uso diario
 
-Guarda los nuevos hallazgos y avances mientras trabajas y retoma donde lo dejaste la próxima vez.
+Guarda los nuevos hallazgos y avances mientras trabajas y empieza la próxima sesión con ellos.
 
 <p align="center">
   <img src="./docs/assets/wenlan-daily-workflow-es-ES.png" alt="Las fuentes y memorias previas se acumulan en Wenlan; úsalas en la aplicación o con IA y guarda nuevas memorias y el progreso para continuar después." width="100%">
@@ -93,7 +96,7 @@ Guarda los nuevos hallazgos y avances mientras trabajas y retoma donde lo dejast
 
 Flujo simplificado. Los comandos del plugin y la organización de páginas son opcionales, sin un orden fijo.
 
-- **Trabaja en la aplicación.** Añade material, escribe o edita páginas, consulta las citas y revisa los cambios propuestos sin conectar una IA.
+- **Trabaja en la aplicación.** Añade material, escribe o edita páginas, consulta las citas y revisa los cambios propuestos sin conectar una IA. El icono de la barra de menús (o de la bandeja) abre un panel pequeño con lo que necesita tu atención, tus páginas recientes y Quick capture.
 - **Usa tu conocimiento y escribe páginas nuevas.** Pide a tu IA que recupere fuentes y memorias relevantes para la tarea (`/recall`). También puede escribir una página con citas o actualizar una existente a partir de su versión actual y guardarla en Wenlan. Cuando una página cita sus fuentes como `[n]`, Wenlan comprueba que la fuente citada respalda cada frase y no guarda la página si fallan demasiadas citas.
 - **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o a través de tu IA (`/capture`).
 - **Pausa y retoma.** Guarda hallazgos y un registro de la sesión, actualiza las páginas afectadas y anota el progreso y los siguientes pasos en el Brief del proyecto (`/handoff`). La próxima vez, recupera ese contexto para continuar (`/brief`).
@@ -162,7 +165,7 @@ Un agente puede leer archivos y escribir texto. Wenlan añade una **base de cono
 
 - **Desarrollo:** Incorpora decisiones técnicas, aprendizajes y criterios de aceptación anteriores al implementar y depurar.
 - **Productos y sitios web:** Usa investigación de clientes, posicionamiento y principios de diseño para redactar especificaciones o crear páginas.
-- **Investigación y aprendizaje:** Convierte lecturas y hallazgos guardados en informes citados o apuntes de estudio reutilizables.
+- **Investigación y aprendizaje:** Convierte lecturas y hallazgos guardados en informes citados o guías de estudio reutilizables.
 
 **Recuperación y conexiones:** Los plugins orientan la recuperación y el guardado; las conexiones MCP exponen las herramientas para que las use tu IA.
 
@@ -181,7 +184,7 @@ Activa el interruptor **Web access** en Settings para que clientes web de IA com
 Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA planifica la wiki a partir del propio repositorio: una página de resumen que enumera todas las páginas y, después, una página para cada parte o flujo que necesita conocer alguien nuevo. Una herramienta pequeña tiene pocas páginas; un monorepo grande, muchas más. Al volver a ejecutarlo solo escribe las páginas que faltan. `/wenlan wiki` sustituye a `/wenlan map`, sin alias para el nombre anterior.
 
 - **Ligada al código:** Cada frase clave registra las líneas de código de las que se extrajo. Cuando ese código cambia, la página muestra qué cambió con un solo botón Review, y Steep pone la página al día.
-- **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
+- **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria: usa tu propia herramienta de IA en tu ordenador, o se ejecuta en GitHub Actions con la clave de tu herramienta de IA guardada como secret del repositorio, así tu ordenador puede estar apagado. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
 - **Tus ediciones se conservan:** Una página de la wiki que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats no entran en el repositorio.
 
 <a id="what-makes-wenlan-distinct"></a>
