@@ -19,8 +19,10 @@ import {
   ATTEMPT_TIMEOUT_MS,
   BOOT_QUERY_RETRY,
   BOOT_SLOW_NOTICE_MS,
+  FAILED_GATE_RECHECK_MS,
   bootQueryRetryDelay,
   runBootGate,
+  withBootAttemptTimeout,
 } from "./lib/bootRetryPolicy";
 import Main from "./components/memory/Main";
 import SetupWizard from "./components/SetupWizard";
@@ -97,6 +99,33 @@ export default function App() {
         predicate: (query) => query.queryKey[0] !== "shouldShowWizard" && query.queryKey[0] !== "localSetupCompleted",
       });
     }
+  }, [daemonStartupPhase, queryClient]);
+
+  // The gate gave up, but the daemon may still come up by itself. Keep asking
+  // quietly, without putting the gate back to pending (that would flip the
+  // sidebar warning back to "Starting up…" on every try). The first answer
+  // fills the gate, which moves the phase on as if it had answered in time.
+  useEffect(() => {
+    if (daemonStartupPhase !== "failed") return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const recheck = () => {
+      timer = setTimeout(() => {
+        withBootAttemptTimeout(shouldShowWizard()).then(
+          (value) => {
+            if (!stopped) queryClient.setQueryData(["shouldShowWizard"], value);
+          },
+          () => {
+            if (!stopped) recheck();
+          },
+        );
+      }, FAILED_GATE_RECHECK_MS);
+    };
+    recheck();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [daemonStartupPhase, queryClient]);
 
   // A rejection propagates to the wizard's Done step, which stays put with an

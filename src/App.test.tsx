@@ -78,6 +78,7 @@ vi.mock("./lib/bootRetryPolicy", async (importOriginal) => {
     // Shrunk with the rest of the ladder: the production 15s would outlast the
     // two-attempt policy above, so the notice could never render here.
     BOOT_SLOW_NOTICE_MS: 20,
+    FAILED_GATE_RECHECK_MS: 10,
     bootQueryRetryDelay: () => 10,
     bootQueryBudgetMs: () => 10_010,
   };
@@ -852,6 +853,29 @@ describe("App - opening before the daemon answers", () => {
     expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
     // No banner over the workspace: the sidebar row turns into the warning.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("clears the warning by itself when the daemon comes up later", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    renderApp();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+
+    // Started by launchd or the CLI: nobody presses Restart.
+    vi.mocked(shouldShowWizard).mockReset().mockResolvedValue(false);
+
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
+    expect(screen.getByTestId("home-main")).toBeInTheDocument();
+  });
+
+  it("keeps trying quietly while the daemon stays down", async () => {
+    vi.mocked(shouldShowWizard).mockRejectedValue(new Error("connection refused"));
+    renderApp();
+    await waitFor(() => expect(getDaemonStartupPhase()).toBe("failed"));
+    const callsAtFailure = vi.mocked(shouldShowWizard).mock.calls.length;
+
+    await waitFor(() => expect(vi.mocked(shouldShowWizard).mock.calls.length).toBeGreaterThan(callsAtFailure + 1));
+    // Each try leaves the warning in place instead of flashing "Starting up…".
+    expect(getDaemonStartupPhase()).toBe("failed");
   });
 
   it("asks every query again once the daemon answers after a failure", async () => {

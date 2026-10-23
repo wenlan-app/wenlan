@@ -3430,7 +3430,7 @@ const zhHans = {
       reviewStatusUnconfirmed: "待审核",
       unconfirmed: "待审核",
       draft: "草稿",
-      untitledDraft: "未命名筆記",
+      untitledDraft: "未命名笔记",
       cleanupSuggested: "建议清理",
       previewCandidate: "预览候选笔记：{{title}}",
       columns: {
