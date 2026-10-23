@@ -109,6 +109,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "open_file",
   "open_search_result",
   "open_tool_with_prompt",
+  "open_quick_capture",
   "position_quick_capture",
   // Binding a Space to a git repository, and pushing to it, need a real
   // daemon with git and gh; the fixture answers only that none is bound.
@@ -157,6 +158,12 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "test_external_llm",
   "test_remote_mcp_connection",
   "toggle_remote_access",
+  // The menu bar panel is its own native window; the Review surface has none.
+  "tray_panel_daemon_state",
+  "tray_panel_hide",
+  "tray_panel_open_main",
+  "tray_panel_quit",
+  "tray_panel_set_height",
   "unbind_repo_wiki",
   "update_agent",
   "update_chunk",
