@@ -665,6 +665,7 @@ fn only_tools_that_read_agent_skills_need_wenlans_skill_folder() {
     assert_eq!(
         wenlan_skill_paths(RepoWikiAgent::Antigravity, home),
         [
+            home.join(".gemini/config/skills/wenlan/SKILL.md"),
             home.join(".gemini/antigravity-cli/skills/wenlan/SKILL.md"),
             home.join(".gemini/skills/wenlan/SKILL.md"),
         ]

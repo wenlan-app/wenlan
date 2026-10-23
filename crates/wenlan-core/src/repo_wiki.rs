@@ -1960,8 +1960,12 @@ pub fn wenlan_skill_paths(agent: RepoWikiAgent, home: &Path) -> Vec<PathBuf> {
         RepoWikiAgent::Claude | RepoWikiAgent::Codex => &[],
         RepoWikiAgent::Cursor => &[".cursor/skills"],
         RepoWikiAgent::Copilot => &[".copilot/skills"],
-        // Antigravity CLI moved its skills from Gemini CLI's folder.
-        RepoWikiAgent::Antigravity => &[".gemini/antigravity-cli/skills", ".gemini/skills"],
+        // Antigravity CLI's own folders, then Gemini CLI's, which it also reads.
+        RepoWikiAgent::Antigravity => &[
+            ".gemini/config/skills",
+            ".gemini/antigravity-cli/skills",
+            ".gemini/skills",
+        ],
     };
     folders
         .iter()

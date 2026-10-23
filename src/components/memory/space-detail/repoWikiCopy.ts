@@ -47,7 +47,7 @@ export const enRepoWiki = {
   daily: "Update every day",
   hour: "Time",
   tool: "Tool",
-  quota: "At that time {{tool}} updates the pages in the background, using its quota. Your computer needs to be on.",
+  quota: "At that hour {{tool}} updates the pages in the background, on its quota. Keep your computer on.",
   consent: "Only pages based on code go in; pages that cite your notes or chats stay out. Your own git and gh open the pull request, without touching files you're editing.",
   cancel: "Cancel",
   connectGo: "Connect and open PR",
