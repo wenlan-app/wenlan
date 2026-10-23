@@ -133,35 +133,57 @@ fn secrets_for(agent: RepoWikiAgent) -> &'static [&'static str] {
 }
 
 /// Where the workflow file stands: on the default branch, in the open wiki
-/// pull request, or not written yet. Fetches first, so a merge on GitHub
-/// shows.
-fn workflow_state(repo: &Path) -> RepoWikiWorkflowState {
+/// pull request, or not written yet. With `expected`, the workflow the next
+/// update would write, a file that differs from it (another AI tool or
+/// hour) counts as not written. Fetches first, so a merge on GitHub shows.
+fn workflow_state(repo: &Path, expected: Option<&str>) -> RepoWikiWorkflowState {
     let mut command = git(repo);
     command.args(["fetch", "--quiet", "origin"]);
     if let Err(error) = run(command, "git fetch origin") {
         log::warn!("[repo_wiki] {error}");
     }
-    let exists = |tree: &str| {
+    let current = |tree: &str| {
         let mut command = git(repo);
-        command.args(["cat-file", "-e", &format!("{tree}:{WORKFLOW_PATH}")]);
-        command.stdout(Stdio::null()).stderr(Stdio::null());
-        command.status().is_ok_and(|status| status.success())
+        command.args(["show", &format!("{tree}:{WORKFLOW_PATH}")]);
+        command.stdin(Stdio::null()).stderr(Stdio::null());
+        command
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| output.stdout)
+            .is_some_and(|text| expected.is_none_or(|expected| text == expected.as_bytes()))
     };
     let base = repo_wiki::remote_default_branch(repo);
-    if exists(&format!("origin/{base}")) {
+    if current(&format!("origin/{base}")) {
         RepoWikiWorkflowState::InRepo
-    } else if exists(&format!("origin/{REPO_WIKI_BRANCH}")) {
+    } else if current(&format!("origin/{REPO_WIKI_BRANCH}")) {
         RepoWikiWorkflowState::InPr
     } else {
         RepoWikiWorkflowState::Missing
     }
 }
 
+/// The workflow a publish of `binding` writes, when its daily update runs on
+/// GitHub.
+fn expected_workflow(binding: &RepoWikiBinding) -> Option<String> {
+    let daily = binding
+        .daily
+        .as_ref()
+        .filter(|daily| daily.enabled && daily.runs_on == RepoWikiRunner::Github)?;
+    let folder = repo_wiki::normalize_folder(&binding.folder).ok()?;
+    Some(repo_wiki_ci::workflow(
+        &folder,
+        daily.agent,
+        utc_hour(daily.hour, local_offset_seconds()),
+    ))
+}
+
 /// What a daily update on GitHub still needs, and its last run. Blocking:
 /// runs git and gh. A setting gh cannot read is `None`, not `false`.
 pub fn status(binding: &RepoWikiBinding, gh: Option<&Path>) -> RepoWikiGithubStatus {
     let repo = slug_of(binding).ok();
-    let workflow = workflow_state(Path::new(&binding.repo_root));
+    let expected = expected_workflow(binding);
+    let workflow = workflow_state(Path::new(&binding.repo_root), expected.as_deref());
     let gh = gh.filter(|gh| gh_signed_in(gh));
     let mut out = RepoWikiGithubStatus {
         actions_url: repo

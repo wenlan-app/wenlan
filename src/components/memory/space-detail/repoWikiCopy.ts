@@ -82,8 +82,8 @@ export const enRepoWiki = {
   docs: {
     agentsFile: "AGENTS.md",
     forAi: "For AI tools",
-    agentsWho: "Claude Code, Codex and Cursor read this first.",
-    agentsOurs: "Wenlan writes one short part, saying where the wiki is. The rest changes only when it no longer matches the code.",
+    agentsWho: "Most AI coding tools read this first.",
+    agentsOurs: "Wenlan adds a short part saying where the wiki is. The rest changes only when the code does.",
     upToDate: "Matches the code",
     fixes_one: "{{count}} fix",
     fixes_other: "{{count}} fixes",
@@ -190,7 +190,7 @@ export const hansRepoWiki = {
   docs: {
     agentsFile: "AGENTS.md",
     forAi: "给 AI 的说明",
-    agentsWho: "Claude Code、Codex、Cursor 开工前会先读这份。",
+    agentsWho: "多数 AI 写代码工具开工前会先读这份。",
     agentsOurs: "其中一小段是文澜写的，告诉 AI wiki 在哪。其他内容只在和代码对不上时才建议改。",
     upToDate: "和代码一致",
     fixes_one: "{{count}} 处",
@@ -298,7 +298,7 @@ export const hantRepoWiki = {
   docs: {
     agentsFile: "AGENTS.md",
     forAi: "給 AI 的說明",
-    agentsWho: "Claude Code、Codex、Cursor 開工前會先讀這份。",
+    agentsWho: "多數 AI 寫程式工具開工前會先讀這份。",
     agentsOurs: "其中一小段是文瀾寫的，告訴 AI wiki 在哪。其他內容只在和程式碼對不上時才建議改。",
     upToDate: "和程式碼一致",
     fixes_one: "{{count}} 處",
