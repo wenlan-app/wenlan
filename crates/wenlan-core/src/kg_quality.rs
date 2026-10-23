@@ -7,7 +7,6 @@ use crate::db::{
 };
 use crate::error::WenlanError;
 use crate::llm_provider::LlmProvider;
-use crate::read_scope::ReadScope;
 use crate::tuning::RefineryConfig;
 use std::sync::Arc;
 
@@ -15,7 +14,6 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct VerificationResult {
     pub entity_self_retrieval_passed: Option<bool>,
-    pub concept_self_retrieval_passed: Option<bool>,
     pub warnings: Vec<String>,
 }
 
@@ -57,41 +55,6 @@ pub async fn verify_entity(
 
     Ok(VerificationResult {
         entity_self_retrieval_passed: self_retrieval_passed,
-        concept_self_retrieval_passed: None,
-        warnings,
-    })
-}
-
-/// Run post-store verification on a newly distilled page.
-pub async fn verify_page(
-    db: &MemoryDB,
-    page_id: &str,
-    page_title: &str,
-) -> Result<VerificationResult, WenlanError> {
-    let mut warnings = Vec::new();
-
-    // Search pages directly: search_memory only merges pages in when
-    // WENLAN_ENABLE_PAGE_CHANNEL is set, so it misses every page by default.
-    let self_retrieval_passed = match db
-        .search_pages_scoped(page_title, 10, None, &ReadScope::Global)
-        .await
-    {
-        Ok(results) => {
-            let found = results.iter().any(|p| p.id == page_id);
-            if !found {
-                warnings.push(format!(
-                    "Page '{}' ({}) not found in top-10 self-retrieval results",
-                    page_title, page_id
-                ));
-            }
-            Some(found)
-        }
-        Err(_) => None,
-    };
-
-    Ok(VerificationResult {
-        entity_self_retrieval_passed: None,
-        concept_self_retrieval_passed: self_retrieval_passed,
         warnings,
     })
 }
@@ -553,64 +516,6 @@ mod tests {
         // closest result even for an unrelated query, so this may still pass.
         // The important thing is the function executes without error.
         assert!(result.entity_self_retrieval_passed.is_some());
-    }
-
-    async fn insert_test_page(db: &MemoryDB, id: &str, title: &str, content: &str) {
-        let now = chrono::Utc::now().to_rfc3339();
-        db.insert_page_with_kind(
-            id,
-            title,
-            None,
-            content,
-            None,
-            None,
-            &[],
-            &now,
-            "distilled",
-            "confirmed",
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_verify_page_finds_fresh_page_without_page_channel() {
-        // Default config leaves WENLAN_ENABLE_PAGE_CHANNEL off, which keeps
-        // pages out of search_memory. The check must still find the page.
-        let (db, _dir) = test_db().await;
-        insert_test_page(
-            &db,
-            "page-wiki-publish",
-            "Repository wiki publish flow",
-            "Publishing pushes the wiki branch and opens a pull request.",
-        )
-        .await;
-
-        let result = verify_page(&db, "page-wiki-publish", "Repository wiki publish flow")
-            .await
-            .unwrap();
-        assert_eq!(result.concept_self_retrieval_passed, Some(true));
-        assert!(result.warnings.is_empty(), "{:?}", result.warnings);
-    }
-
-    #[tokio::test]
-    async fn test_verify_page_warns_when_page_is_not_retrieved() {
-        let (db, _dir) = test_db().await;
-        insert_test_page(
-            &db,
-            "page-wiki-publish",
-            "Repository wiki publish flow",
-            "Publishing pushes the wiki branch and opens a pull request.",
-        )
-        .await;
-
-        let result = verify_page(&db, "page-not-stored", "Repository wiki publish flow")
-            .await
-            .unwrap();
-        assert_eq!(result.concept_self_retrieval_passed, Some(false));
-        assert_eq!(result.warnings.len(), 1);
     }
 
     #[tokio::test]

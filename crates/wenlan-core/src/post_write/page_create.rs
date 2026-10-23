@@ -526,15 +526,7 @@ pub(super) async fn create_page_impl(
         warnings.push(format!("orphan link resolve failed: {e}"));
     }
 
-    // 2. Self-retrieval verification
-    if let Ok(result) = crate::kg_quality::verify_page(db, &id, &req.title).await {
-        for w in &result.warnings {
-            log::warn!("[create_page] {w}");
-            warnings.push(w.clone());
-        }
-    }
-
-    // 3. Activity log (matches synthesis/distill.rs:498 shape — source ids as the memory ids list)
+    // 2. Activity log (matches synthesis/distill.rs:498 shape — source ids as the memory ids list)
     let detail = format!(
         "title={}, sources={}",
         req.title,
