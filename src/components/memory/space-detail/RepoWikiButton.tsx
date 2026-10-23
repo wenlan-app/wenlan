@@ -70,6 +70,7 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
   const [publishFailed, setPublishFailed] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
 
   const bindingQuery = useQuery({
@@ -95,6 +96,19 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
     };
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    // The page under the panel can scroll or the window resize while it is open.
+    const fit = () => fitToWindow(panelRef.current);
+    fit();
+    window.addEventListener("resize", fit);
+    document.addEventListener("scroll", fit, true);
+    return () => {
+      window.removeEventListener("resize", fit);
+      document.removeEventListener("scroll", fit, true);
+    };
   }, [open]);
 
   if (!binding && candidates.length === 0) return null;
@@ -139,7 +153,7 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
       {open && (
         <div
           id={panelId}
-          ref={fitToWindow}
+          ref={panelRef}
           className="mem-popover-surface repo-wiki-panel"
           onKeyDown={handleKeyDown}
           role="dialog"
@@ -371,10 +385,16 @@ function BoundPanel({
               count: publish.doc_fixes,
               time: timeFormat.format(new Date(publish.at * 1000)),
             })
-            : t(`repoWiki.last.${publish.status}`, {
-              count: publish.pages,
-              time: timeFormat.format(new Date(publish.at * 1000)),
-            })
+            : t(
+              // Every page waits for its code: the waiting line below says so.
+              publish.status === "nothing_to_publish" && publish.waiting > 0
+                ? "repoWiki.last.no_changes"
+                : `repoWiki.last.${publish.status}`,
+              {
+                count: publish.pages,
+                time: timeFormat.format(new Date(publish.at * 1000)),
+              },
+            )
           : t("repoWiki.never")}
       </p>
       {number && pr && (
