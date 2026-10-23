@@ -5,8 +5,10 @@ import { Toaster } from "sonner";
  * Renders `toast()` calls made from the main window. Sonner keeps one toast
  * store per window, and the `#toast` overlay window's Toaster only shows the
  * capture pills raised there, so without this every main-window toast was
- * dropped. Bottom centre keeps clear of the updater (bottom left) and the
- * milestone cards (bottom right).
+ * dropped. This is the app's one place for one-off messages: milestone cards
+ * (`onboarding/MilestoneToaster.tsx`) join the same stack. Lasting states,
+ * the service and a new version among them, live in the sidebar's service
+ * row instead.
  */
 export function AppToaster() {
   return (

@@ -207,8 +207,7 @@ body {
 }
 
 /* Entrance animation — referenced by className throughout
-   src/components/memory/settings/sections/*.tsx and by
-   UpdaterDialog.tsx:88, but never defined until now. */
+   src/components/memory/settings/sections/*.tsx and others. */
 @keyframes mem-fade-up {
   from { opacity: 0; transform: translateY(6px); }
   /* Ends at the element's own target opacity, not a hard 1. This animation runs
@@ -3891,6 +3890,9 @@ p.entity-error {
   height: 6px;
   width: 6px;
 }
+/* An update in progress: the same line, in the calm colour of the notice
+   that offered it, since nothing is wrong. */
+.mem-daemon-startup-dot--calm { background: var(--mem-accent-indigo); }
 .mem-daemon-startup-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem-daemon-startup-body { margin: 0; color: var(--mem-text-secondary); font-size: 12px; line-height: 1.5; }
 .mem-daemon-startup-failure { margin: 0; color: var(--mem-status-danger-text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -3954,6 +3956,8 @@ p.entity-error {
   white-space: nowrap;
 }
 .mem-activity-popover-action:hover { background: var(--mem-hover); color: var(--mem-text); }
+.mem-service-status-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mem-service-status-actions .mem-activity-popover-action { margin-left: 0; }
 .mem-activity-popover-action:focus-visible { outline: 2px solid var(--mem-accent-indigo); outline-offset: 1px; }
 
 .mem-activity-review-link {

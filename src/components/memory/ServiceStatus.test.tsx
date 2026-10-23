@@ -9,6 +9,8 @@ const { restartDaemonMock, startDaemonSidecarMock, getWireStateMock } = vi.hoist
   startDaemonSidecarMock: vi.fn(),
   getWireStateMock: vi.fn(),
 }));
+const emitMock = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/event", () => ({ emit: emitMock }));
 vi.mock("../../lib/tauri", () => ({
   restartDaemon: restartDaemonMock,
   startDaemonSidecar: startDaemonSidecarMock,
@@ -18,11 +20,13 @@ vi.mock("../../lib/tauri", () => ({
 import "../../i18n";
 import { resources } from "../../i18n/resources";
 import { setDaemonStartupPhase } from "../../lib/daemonStartup";
-import { getServiceNotices, setServiceFallback, setVersionReport } from "../../lib/serviceNotices";
+import { getServiceNotices, setServiceFallback, setUpdateNotice, setVersionReport } from "../../lib/serviceNotices";
+import { onUpdateAvailable, onUpdateProgress, onUpdateStatus } from "../../lib/appUpdate";
 import ServiceStatus from "./ServiceStatus";
 
 const BOOT = resources.en.translation.boot;
 const SERVICE = resources.en.translation.daemonService;
+const UPDATER = resources.en.translation.updater;
 const OUT_OF_DATE = { daemon: "0.19.3", app: "0.20.0", matched: false, owner: "launchd", program: null } as const;
 
 function renderStatus(node: ReactNode) {
@@ -40,12 +44,14 @@ describe("ServiceStatus", () => {
     restartDaemonMock.mockReset().mockResolvedValue("0.20.0");
     startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
     getWireStateMock.mockReset().mockResolvedValue({ daemon: { reachable: true, error: null } });
+    emitMock.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => {
     act(() => {
       setDaemonStartupPhase("ready");
       setVersionReport(null);
       setServiceFallback(false);
+      setUpdateNotice(null);
     });
   });
 
@@ -199,5 +205,96 @@ describe("ServiceStatus", () => {
 
     expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1);
     await act(async () => { release(); });
+  });
+
+  describe("a new version", () => {
+    it("is offered in the same row, calm and closed until clicked", () => {
+      renderStatus(<ServiceStatus />);
+      act(() => onUpdateAvailable("0.20.1"));
+
+      expect(row()).toHaveAttribute("data-kind", "updateAvailable");
+      expect(row()).toHaveTextContent(UPDATER.available);
+      expect(screen.queryByTestId("service-status-popover")).not.toBeInTheDocument();
+
+      fireEvent.click(row());
+      const popover = screen.getByTestId("service-status-popover");
+      expect(popover).toHaveTextContent("Wenlan 0.20.1 is ready");
+      expect(action()).toHaveTextContent(UPDATER.install);
+      expect(screen.getByTestId("service-status-secondary")).toHaveTextContent(UPDATER.later);
+    });
+
+    it("gives way to a service problem", () => {
+      renderStatus(<ServiceStatus />);
+      act(() => {
+        onUpdateAvailable("0.20.1");
+        setVersionReport(OUT_OF_DATE);
+      });
+      expect(row()).toHaveAttribute("data-kind", "outOfDate");
+
+      act(() => setVersionReport(null));
+      expect(row()).toHaveAttribute("data-kind", "updateAvailable");
+    });
+
+    it("installs, then shows its progress as one quiet line", async () => {
+      renderStatus(<ServiceStatus />);
+      act(() => onUpdateAvailable("0.20.1"));
+      fireEvent.click(row());
+
+      fireEvent.click(action());
+
+      await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://action", "install"));
+      const line = screen.getByTestId("service-status-updating");
+      expect(line).toHaveTextContent(UPDATER.updating);
+
+      act(() => onUpdateProgress({ chunk: 0, total: 1000 }));
+      act(() => onUpdateProgress({ chunk: 420 }));
+      expect(line).toHaveTextContent("Updating 42%");
+    });
+
+    it("puts the version off and goes quiet", async () => {
+      renderStatus(<ServiceStatus />);
+      act(() => onUpdateAvailable("0.20.1"));
+      fireEvent.click(row());
+
+      fireEvent.click(screen.getByTestId("service-status-secondary"));
+
+      await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://action", "later"));
+      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+    });
+
+    it("turns into a warning when the install fails, and tries again in one press", async () => {
+      renderStatus(<ServiceStatus />);
+      act(() => onUpdateAvailable("0.20.1"));
+      fireEvent.click(row());
+      fireEvent.click(action());
+      await waitFor(() => expect(screen.getByTestId("service-status-updating")).toBeInTheDocument());
+
+      act(() => onUpdateProgress({ error: "network unavailable" }));
+      expect(row()).toHaveAttribute("data-kind", "updateFailed");
+      expect(screen.getByTestId("service-status-popover")).toHaveTextContent(UPDATER.failedBody);
+      emitMock.mockClear();
+
+      fireEvent.click(action());
+      await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://check-now"));
+      expect(screen.getByTestId("service-status-updating")).toBeInTheDocument();
+
+      // The check offers the version again; "Try again" already said yes.
+      act(() => onUpdateAvailable("0.20.1"));
+      expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
+      expect(screen.getByTestId("service-status-updating")).toBeInTheDocument();
+    });
+
+    it("ignores background check reports when nothing was offered", () => {
+      renderStatus(<ServiceStatus />);
+      act(() => onUpdateStatus({ state: "error", error: "offline" }));
+      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+    });
+
+    it("goes away when the app turns out to be current", () => {
+      renderStatus(<ServiceStatus />);
+      act(() => onUpdateAvailable("0.20.1"));
+      act(() => onUpdateStatus({ state: "current" }));
+      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+    });
   });
 });

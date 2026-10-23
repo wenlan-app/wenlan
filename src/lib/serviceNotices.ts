@@ -5,10 +5,13 @@
  * The sidebar's service row (`src/components/memory/ServiceStatus.tsx`) is the
  * only surface that speaks about the service in the workspace: while it
  * starts, when it does not answer, when it runs an older version than the
- * app, and when Rust could not put it under launchd. The sources stay where
- * the events arrive (`src/App.tsx` for the fallback event,
- * `src/components/DaemonVersionWatcher.tsx` for version reports) and write
- * here, so a report that lands before the sidebar mounts is not lost.
+ * app, and when Rust could not put it under launchd. The same row also says
+ * when a new version of the app is ready, the one lasting notice that is not
+ * about the service. The sources stay where the events arrive
+ * (`src/App.tsx` for the fallback event,
+ * `src/components/DaemonVersionWatcher.tsx` for version reports,
+ * `src/components/UpdateWatcher.tsx` for the updater) and write here, so a
+ * report that lands before the sidebar mounts is not lost.
  */
 import { useSyncExternalStore } from "react";
 import type { DaemonVersionEvent, DaemonVersionStatus } from "./tauri";
@@ -21,12 +24,22 @@ export interface ServiceNotices {
   readonly version: VersionReport | null;
   /** Rust runs without a managed service (`origin-fallback-mode`). */
   readonly fallback: boolean;
+  /** A newer app version the updater offered, from the offer until it is
+   *  installed, put off, or found to be current after all. */
+  readonly update: UpdateNotice | null;
 }
 
-let notices: ServiceNotices = { version: null, fallback: false };
+export interface UpdateNotice {
+  readonly phase: "available" | "installing" | "failed";
+  readonly version: string;
+  /** Download progress while installing, when the size is known. */
+  readonly pct: number | null;
+}
+
+let notices: ServiceNotices = { version: null, fallback: false, update: null };
 const listeners = new Set<() => void>();
 
-function update(next: Partial<ServiceNotices>): void {
+function publish(next: Partial<ServiceNotices>): void {
   notices = { ...notices, ...next };
   for (const listener of listeners) listener();
 }
@@ -35,11 +48,15 @@ function update(next: Partial<ServiceNotices>): void {
  *  nothing answered (a restart pressed with the daemon down) has no daemon
  *  version and says nothing about which version will answer. */
 export function setVersionReport(report: VersionReport | null): void {
-  update({ version: report && !report.matched && report.daemon ? report : null });
+  publish({ version: report && !report.matched && report.daemon ? report : null });
 }
 
 export function setServiceFallback(fallback: boolean): void {
-  update({ fallback });
+  publish({ fallback });
+}
+
+export function setUpdateNotice(update: UpdateNotice | null): void {
+  publish({ update });
 }
 
 export function getServiceNotices(): ServiceNotices {
@@ -55,12 +72,20 @@ export function useServiceNotices(): ServiceNotices {
   return useSyncExternalStore(subscribe, getServiceNotices, getServiceNotices);
 }
 
-export type ServiceStatusKind = "starting" | "notAnswering" | "outOfDate" | "notRunning";
+export type ServiceStatusKind =
+  | "starting"
+  | "notAnswering"
+  | "outOfDate"
+  | "notRunning"
+  | "updating"
+  | "updateFailed"
+  | "updateAvailable";
 
-/** One thing at a time, the one that matters most first. */
+/** One thing at a time, the one that matters most first: the service, then
+ *  an update the user started, then an update on offer. */
 export function serviceStatusKind(
   phase: DaemonStartupPhase,
-  { version, fallback }: ServiceNotices,
+  { version, fallback, update }: ServiceNotices,
 ): ServiceStatusKind | null {
   if (phase === "failed") return "notAnswering";
   // While the workspace waits, nothing else is known yet: an old report or a
@@ -68,5 +93,8 @@ export function serviceStatusKind(
   if (phase === "starting") return "starting";
   if (version) return "outOfDate";
   if (fallback) return "notRunning";
+  if (update?.phase === "installing") return "updating";
+  if (update?.phase === "failed") return "updateFailed";
+  if (update) return "updateAvailable";
   return null;
 }

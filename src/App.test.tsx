@@ -140,7 +140,7 @@ vi.mock("./components/onboarding/MilestoneToaster", () => ({
   MilestoneToaster: () => null,
 }));
 
-vi.mock("./components/UpdaterDialog", () => ({
+vi.mock("./components/UpdateWatcher", () => ({
   default: () => null,
 }));
 

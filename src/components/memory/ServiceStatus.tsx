@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { WarningCircle } from "@phosphor-icons/react";
+import { ArrowCircleUp, WarningCircle } from "@phosphor-icons/react";
 import { useDaemonStartupPhase } from "../../lib/daemonStartup";
 import {
   serviceStatusKind,
@@ -15,59 +15,89 @@ import {
 } from "../../lib/serviceNotices";
 import { getWireState, restartDaemon, startDaemonSidecar } from "../../lib/tauri";
 import { restartErrorKey } from "../../lib/daemonRestartErrors";
+import { installUpdate, postponeUpdate, retryUpdate } from "../../lib/appUpdate";
 
-/** Everything the background service has to say, in one place: the top of
- *  the sidebar footer, above 「AI 能做什麼」 and Activity.
+/** Every lasting notice, in one place: the top of the sidebar footer, above
+ *  「AI 能做什麼」 and Activity. The service says here what it is doing and
+ *  what is wrong with it, and the updater says a new version is ready.
+ *  One-off messages go to the toast stack at the bottom centre instead.
  *
- *  Something in progress (starting) is one muted line. Something that needs
- *  the user (not answering, out of date, not running) turns the same row
- *  into a warning styled like Activity's failed state, which opens once by
- *  itself with what is wrong and the one action that fixes it. When the
- *  problem goes away the row goes quiet again. Nothing is laid over the
- *  workspace. Which one shows is decided in src/lib/serviceNotices.ts. */
+ *  Something in progress (starting, updating) is one muted line. Something
+ *  that needs the user (not answering, out of date, not running, update
+ *  failed) turns the same row into a warning styled like Activity's failed
+ *  state, which opens once by itself with what is wrong and the one action
+ *  that fixes it. A new version is the same row in a calm colour that opens
+ *  only when clicked. When the state goes away the row goes quiet again.
+ *  Nothing is laid over the workspace. Which one shows is decided in
+ *  src/lib/serviceNotices.ts. */
 export default function ServiceStatus({ compact = false }: { readonly compact?: boolean }) {
   const phase = useDaemonStartupPhase();
   const notices = useServiceNotices();
   const kind = serviceStatusKind(phase, notices);
   if (kind === null) return null;
-  if (kind === "starting") return <StartingLine compact={compact} />;
+  if (kind === "starting" || kind === "updating") {
+    return <ProgressLine kind={kind} pct={notices.update?.pct ?? null} compact={compact} />;
+  }
   // Keyed by kind: a new problem opens its explanation once and starts
   // without the last one's error.
   return <ServiceWarning key={kind} kind={kind} notices={notices} compact={compact} />;
 }
 
-function StartingLine({ compact }: { readonly compact: boolean }) {
+function ProgressLine({
+  kind,
+  pct,
+  compact,
+}: {
+  readonly kind: "starting" | "updating";
+  readonly pct: number | null;
+  readonly compact: boolean;
+}) {
   const { t } = useTranslation();
-  const label = t("boot.startingInBackground");
+  const label =
+    kind === "starting"
+      ? t("boot.startingInBackground")
+      : pct === null
+        ? t("updater.updating")
+        : t("updater.updatingPct", { pct });
   return (
     <div
       role="status"
       aria-label={compact ? label : undefined}
       title={compact ? label : undefined}
-      data-testid="service-status-starting"
+      data-testid={`service-status-${kind}`}
       className={`mem-daemon-startup-status${compact ? " mem-daemon-startup-status--compact" : ""}`}
     >
-      <span aria-hidden="true" className="mem-daemon-startup-dot" />
+      <span
+        aria-hidden="true"
+        className={`mem-daemon-startup-dot${kind === "updating" ? " mem-daemon-startup-dot--calm" : ""}`}
+      />
       {!compact && <span className="mem-daemon-startup-label">{label}</span>}
     </div>
   );
 }
 
-type WarningKind = Exclude<ServiceStatusKind, "starting">;
+type WarningKind = Exclude<ServiceStatusKind, "starting" | "updating">;
 
 interface WarningCopy {
   readonly label: string;
+  readonly title?: string;
   readonly body: readonly string[];
   readonly action: string;
+  /** A second, quieter choice, such as putting an update off. */
+  readonly secondary?: string;
+  readonly busy: string;
+  /** Calm notices wait to be clicked; warnings open once by themselves. */
+  readonly calm?: boolean;
 }
 
-function warningCopy(kind: WarningKind, { version }: ServiceNotices, t: TFunction): WarningCopy {
+function warningCopy(kind: WarningKind, { version, update }: ServiceNotices, t: TFunction): WarningCopy {
   switch (kind) {
     case "notAnswering":
       return {
         label: t("boot.notAnsweringLabel"),
         body: [t("boot.notAnsweringBody")],
         action: t("daemonService.restart"),
+        busy: t("boot.starting"),
       };
     case "outOfDate":
       return {
@@ -77,12 +107,31 @@ function warningCopy(kind: WarningKind, { version }: ServiceNotices, t: TFunctio
           ...(version?.program ? [t("daemonService.outsideBundle", { program: version.program })] : []),
         ],
         action: t("daemonService.restart"),
+        busy: t("boot.starting"),
       };
     case "notRunning":
       return {
         label: t("boot.fallbackLabel"),
         body: [t("boot.fallbackBody")],
         action: t("boot.startService"),
+        busy: t("boot.starting"),
+      };
+    case "updateFailed":
+      return {
+        label: t("updater.failed"),
+        body: [t("updater.failedBody")],
+        action: t("updater.retry"),
+        busy: t("updater.updating"),
+      };
+    case "updateAvailable":
+      return {
+        label: t("updater.available"),
+        title: t("updater.ready", { version: update?.version }),
+        body: [t("updater.installBody")],
+        action: t("updater.install"),
+        secondary: t("updater.later"),
+        busy: t("updater.updating"),
+        calm: true,
       };
   }
 }
@@ -90,6 +139,14 @@ function warningCopy(kind: WarningKind, { version }: ServiceNotices, t: TFunctio
 /** Runs the warning's one action. Resolves with the text to show when it did
  *  not fix things, or null when it did. */
 async function runAction(kind: WarningKind, queryClient: QueryClient, t: TFunction): Promise<string | null> {
+  if (kind === "updateAvailable") {
+    await installUpdate();
+    return null;
+  }
+  if (kind === "updateFailed") {
+    await retryUpdate();
+    return null;
+  }
   if (kind === "notRunning") {
     const result = await startDaemonSidecar();
     if (result.status === "failed") return `${t("boot.startFailed")} ${result.message}`;
@@ -121,16 +178,16 @@ function ServiceWarning({
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  // Opens by itself once, since this needs the user. After that it opens
-  // only on request; the row itself stays until the problem is gone.
-  const [expanded, setExpanded] = useState(true);
+  const copy = warningCopy(kind, notices, t);
+  // A warning opens by itself once, since it needs the user. After that it
+  // opens only on request; the row itself stays until the problem is gone.
+  const [expanded, setExpanded] = useState(!copy.calm);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const busyRef = useRef(false);
   const anchorRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverId = useId();
-  const copy = warningCopy(kind, notices, t);
 
   useEffect(() => {
     if (!expanded) return;
@@ -155,6 +212,15 @@ function ServiceWarning({
     } finally {
       busyRef.current = false;
       setBusy(false);
+    }
+  }
+
+  async function handleSecondary() {
+    setFailure(null);
+    try {
+      await postponeUpdate();
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -187,13 +253,23 @@ function ServiceWarning({
         }}
         className={`mem-activity-status${compact ? " mem-activity-status--compact" : ""}`}
       >
-        <WarningCircle
-          aria-hidden="true"
-          className="mem-activity-status-icon"
-          style={{ color: "var(--mem-accent-amber)" }}
-          size={22}
-          weight="regular"
-        />
+        {copy.calm ? (
+          <ArrowCircleUp
+            aria-hidden="true"
+            className="mem-activity-status-icon"
+            style={{ color: "var(--mem-accent-indigo)" }}
+            size={22}
+            weight="regular"
+          />
+        ) : (
+          <WarningCircle
+            aria-hidden="true"
+            className="mem-activity-status-icon"
+            style={{ color: "var(--mem-accent-amber)" }}
+            size={22}
+            weight="regular"
+          />
+        )}
         {!compact && <span aria-hidden="true" className="mem-activity-status-label">{copy.label}</span>}
       </button>
       {expanded && (
@@ -204,12 +280,12 @@ function ServiceWarning({
           role="dialog"
           aria-label={copy.label}
         >
-          <h2 className="mem-activity-summary-title">{copy.label}</h2>
+          <h2 className="mem-activity-summary-title">{copy.title ?? copy.label}</h2>
           {copy.body.map((line) => (
             <p key={line} className="mem-daemon-startup-body">{line}</p>
           ))}
           {failure && <p role="alert" className="mem-daemon-startup-failure">{failure}</p>}
-          <div>
+          <div className="mem-service-status-actions">
             <button
               type="button"
               className="mem-activity-popover-action"
@@ -217,8 +293,19 @@ function ServiceWarning({
               disabled={busy}
               onClick={() => { void handleAction(); }}
             >
-              {busy ? t("boot.starting") : copy.action}
+              {busy ? copy.busy : copy.action}
             </button>
+            {copy.secondary && (
+              <button
+                type="button"
+                className="mem-activity-popover-action"
+                data-testid="service-status-secondary"
+                disabled={busy}
+                onClick={() => { void handleSecondary(); }}
+              >
+                {copy.secondary}
+              </button>
+            )}
           </div>
         </div>
       )}
