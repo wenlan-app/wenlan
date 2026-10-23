@@ -1,0 +1,184 @@
+/* The menu bar panel. The window is transparent and exactly this card's
+   size, so the native shadow follows the rounded corners. Rows are set apart
+   by spacing and hover, never by divider lines. */
+.tray-panel {
+  box-sizing: border-box;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 12px;
+  --tray-control: color-mix(in srgb, var(--mem-text) 7%, transparent);
+  --tray-control-hover: color-mix(in srgb, var(--mem-text) 12%, transparent);
+  background: var(--mem-popover);
+  border: 1px solid var(--mem-popover-border);
+  color: var(--mem-text);
+  font-family: var(--mem-font-body);
+  font-size: 14px;
+  line-height: 1.35;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tray-panel button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.tray-panel button:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 1px;
+}
+
+.tray-panel-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+}
+
+.tray-panel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--mem-text-tertiary);
+}
+.tray-panel-dot--up { background: var(--mem-accent-sage); }
+.tray-panel-dot--down { background: var(--mem-danger); }
+
+.tray-panel-title {
+  flex: 1;
+  font-family: var(--mem-font-heading);
+  font-size: 15px;
+}
+
+.tray-panel-meta,
+.tray-panel-row-meta {
+  color: var(--mem-text-tertiary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tray-panel .tray-panel-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--tray-control);
+  color: var(--mem-text-tertiary);
+}
+.tray-panel .tray-panel-search:hover { background: var(--tray-control-hover); }
+
+.tray-panel-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tray-panel-label {
+  padding: 0 6px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mem-text-tertiary);
+}
+
+.tray-panel .tray-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 6px;
+  border-radius: 7px;
+}
+.tray-panel .tray-panel-row:hover { background: var(--tray-control); }
+
+.tray-panel-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--mem-page-icon, var(--mem-accent-indigo));
+}
+
+.tray-panel-row-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-panel-need {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: var(--mem-status-warning-bg);
+}
+.tray-panel-need--danger { background: var(--mem-status-danger-bg); }
+
+.tray-panel-need-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-panel .tray-panel-need-action {
+  flex: none;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--mem-status-warning-text);
+}
+.tray-panel .tray-panel-need--danger .tray-panel-need-action { color: var(--mem-status-danger-text); }
+.tray-panel .tray-panel-need-action:disabled { cursor: default; opacity: 0.7; }
+
+.tray-panel-quiet {
+  margin: 0;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--mem-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-panel-foot {
+  display: flex;
+  gap: 6px;
+}
+
+.tray-panel .tray-panel-btn {
+  flex: 1;
+  padding: 7px 4px;
+  border-radius: 7px;
+  text-align: center;
+  font-size: 13px;
+  white-space: nowrap;
+  background: var(--tray-control);
+  color: var(--mem-text-secondary);
+}
+.tray-panel .tray-panel-btn:hover { background: var(--tray-control-hover); color: var(--mem-text); }
+
+.tray-panel .tray-panel-btn--main {
+  background: var(--mem-accent-indigo);
+  color: var(--mem-text-on-accent);
+  font-weight: 600;
+}
+.tray-panel .tray-panel-btn--main:hover {
+  background: var(--mem-accent-indigo-hover);
+  color: var(--mem-text-on-accent);
+}
+
+.tray-panel .tray-panel-btn--small { flex: 0 0 auto; padding: 7px 12px; }

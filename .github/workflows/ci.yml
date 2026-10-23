@@ -375,6 +375,10 @@ jobs:
               # Shared CLI/server/MCP code stays on the Ubuntu canonical lane;
               # drift_guard fails if a cfg-bearing source lacks an owner here
               # or in the focused MCP platform-compile filter.
+              # Folder alias regressions use real Unix symlinks; prove both platform branches.
+              - 'crates/wenlan-core/src/document_enrichment.rs'
+              - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
+              - 'crates/wenlan-server/src/source_routes.rs'
               - 'scripts/first-run/macos-app.sh'
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
@@ -480,6 +484,10 @@ jobs:
               # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,
               # and packaging. Shared Rust stays on Ubuntu; MCP's Unix/non-Unix
               # branches compile in the focused mcp-platform job.
+              # Folder alias regressions use real Unix symlinks; prove both platform branches.
+              - 'crates/wenlan-core/src/document_enrichment.rs'
+              - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
+              - 'crates/wenlan-server/src/source_routes.rs'
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/mod.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'

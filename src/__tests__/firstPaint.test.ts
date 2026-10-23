@@ -128,7 +128,7 @@ describe("which window gets a background", () => {
     expect(runFirstPaint({ hash: "#toast", label: "main" }).window).toBe("main");
   });
 
-  it.each(["toast", "quick-capture"])(
+  it.each(["toast", "quick-capture", "tray-panel"])(
     "leaves the %s window transparent even with no fragment",
     (label) => {
       const r = runFirstPaint({ hash: "", label });

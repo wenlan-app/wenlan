@@ -3814,6 +3814,60 @@ p.entity-error {
   text-decoration: none;
 }
 
+/* A ```mermaid block drawn as a diagram: centered at its own size, with a
+   quiet frame so it reads as one figure. A wide one shrinks to the column,
+   but only so far (MermaidDiagram sets a min-width); past that it scrolls
+   inside its frame so its labels stay readable. */
+.content-renderer .page-diagram {
+  margin: 0 0 var(--content-para-gap, 0.75em);
+  padding: 16px;
+  border: 1px solid var(--mem-border);
+  border-radius: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  text-align: center;
+}
+.content-renderer .page-diagram::-webkit-scrollbar {
+  height: 6px;
+}
+.content-renderer .page-diagram.is-overflowing {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+.content-renderer .page-diagram-note {
+  margin: 0 0 4px;
+  color: var(--mem-text-tertiary);
+  font-family: var(--mem-font-body);
+  font-size: var(--mem-text-meta);
+}
+.content-renderer .page-diagram[aria-busy="true"] {
+  min-height: 120px;
+}
+.content-renderer .page-diagram svg {
+  display: inline-block;
+  height: auto;
+  max-width: 100%;
+}
+/* Every code block in a page, and a diagram shown as its text, sits in one
+   soft box; long lines wrap instead of widening the page. */
+.content-renderer pre {
+  margin: 0 0 var(--content-para-gap, 0.75em);
+  padding: 12px 14px;
+  border-radius: 6px;
+  background-color: var(--mem-hover);
+  color: var(--mem-text);
+  font-family: var(--mem-font-mono);
+  font-size: var(--content-code-size, 12px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* A fence without a language reaches the inline-code renderer; inside a
+   block it must not draw its own chip. */
+.content-renderer pre code {
+  padding: 0 !important;
+  background-color: transparent !important;
+}
+
 /* Sidebar Activity button carries the global background state. The pulse fades gently only while
    steeping work can run, so the one moving thing on the page always means
    "work is in flight"; steeping held until the computer is quiet stays still.

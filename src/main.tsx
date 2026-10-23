@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import ToastOverlay from "./components/ToastOverlay";
 import QuickCaptureWindow from "./components/QuickCaptureWindow";
+import TrayPanelWindow from "./components/TrayPanelWindow";
 import { initializeI18n } from "./i18n";
 import { applyTheme } from "./lib/theme";
 import "./devTools";
@@ -23,6 +24,7 @@ async function bootstrap() {
 
   const isToast = window.location.hash === "#toast";
   const isQuickCapture = window.location.hash === "#quick-capture";
+  const isTrayPanel = window.location.hash === "#tray-panel";
 
   if (isToast) {
     // No StrictMode for the toast overlay — its double-mount behavior causes
@@ -34,6 +36,12 @@ async function bootstrap() {
     ReactDOM.createRoot(document.getElementById("root")!).render(
       <React.StrictMode>
         <QuickCaptureWindow />
+      </React.StrictMode>,
+    );
+  } else if (isTrayPanel) {
+    ReactDOM.createRoot(document.getElementById("root")!).render(
+      <React.StrictMode>
+        <TrayPanelWindow />
       </React.StrictMode>,
     );
   } else {

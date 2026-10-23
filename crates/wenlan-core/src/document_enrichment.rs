@@ -413,6 +413,54 @@ async fn run_document_enrichment_with_request_budget(
         }
         return DocumentEnrichmentOutcome::terminal_no_page(doc_source_id);
     }
+    // A legacy desktop watcher could have stored the same file under its
+    // bare path (`local_files`) before the registered folder source queued this
+    // canonical `folder` generation. Retire that legacy search copy only after
+    // the committed canonical chunks have been read back. OKF has its own
+    // provenance and Space rules, so it is deliberately excluded here.
+    if profile.is_none() && is_fresh {
+        if let Some(expected_hash) = entry.content_hash.as_deref() {
+            let legacy_paths = match matching_legacy_directory_copy_paths(db, &file_path).await {
+                Ok(paths) => paths,
+                Err(error) => {
+                    log::error!(
+                        "[doc-enrich] {file_path}: legacy duplicate path lookup failed: {error}; pausing"
+                    );
+                    pause(db, entry, "legacy duplicate path lookup failed").await;
+                    return DocumentEnrichmentOutcome::paused_no_page(doc_source_id);
+                }
+            };
+            for legacy_path in legacy_paths {
+                match db
+                    .retire_legacy_directory_copies(
+                        &legacy_path,
+                        &source_id,
+                        Path::new(&file_path),
+                        knowledge_path,
+                        expected_hash,
+                        None,
+                    )
+                    .await
+                {
+                    Ok(retired) if retired > 0 => log::info!(
+                        "[doc-enrich] {file_path}: retired {retired} retained legacy duplicate chunk(s) from {legacy_path}"
+                    ),
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::error!(
+                            "[doc-enrich] {file_path}: legacy duplicate reconciliation failed: {error}; pausing"
+                        );
+                        pause(db, entry, "legacy duplicate reconciliation failed").await;
+                        return DocumentEnrichmentOutcome::paused_no_page(doc_source_id);
+                    }
+                }
+            }
+        } else {
+            log::warn!(
+                "[doc-enrich] {file_path}: cannot reconcile legacy duplicate without a committed content hash"
+            );
+        }
+    }
     if let Some(stored_title) = chunks
         .iter()
         .map(|c| c.title.trim())
@@ -649,6 +697,32 @@ async fn run_document_enrichment_with_request_budget(
         completed: true,
         paused: false,
     }
+}
+
+/// Enumerate old watcher paths once for a fresh canonical generation and
+/// resolve physical identity away from the database connection's async lock.
+/// Returning the original spelling preserves the exact legacy source_id used
+/// by the transactional retirement helper.
+async fn matching_legacy_directory_copy_paths(
+    db: &MemoryDB,
+    registered_file_path: &str,
+) -> Result<Vec<String>, WenlanError> {
+    let legacy_paths = db.legacy_directory_copy_paths().await?;
+    let registered_file_path = PathBuf::from(registered_file_path);
+    tokio::task::spawn_blocking(move || {
+        let Ok(registered_canonical) = std::fs::canonicalize(&registered_file_path) else {
+            return Vec::new();
+        };
+        legacy_paths
+            .into_iter()
+            .filter(|legacy_path| {
+                std::fs::canonicalize(legacy_path)
+                    .is_ok_and(|legacy_canonical| legacy_canonical == registered_canonical)
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| WenlanError::VectorDb(format!("legacy-copy path resolution: {error}")))
 }
 
 async fn yield_document_slice(
@@ -1524,6 +1598,82 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(q.status, "done");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn first_canonical_enrichment_retires_physical_path_alias() {
+        let (db, dir) = test_db().await;
+        let path = write_doc(dir.path());
+        let alias = dir.path().join("legacy-doc-alias.txt");
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        let file_path = path.to_string_lossy().to_string();
+        let legacy_path = alias.to_string_lossy().to_string();
+        let content_hash = file_hash(&path);
+
+        db.upsert_documents(vec![crate::sources::RawDocument {
+            source: "local_files".into(),
+            source_id: legacy_path.clone(),
+            title: "legacy-doc-alias.txt".into(),
+            content: std::fs::read_to_string(&path).unwrap(),
+            url: Some(format!("file://{legacy_path}")),
+            last_modified: 1,
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        db.enqueue_document("folder-notes", &file_path, Some(&content_hash))
+            .await
+            .unwrap();
+        let entry = db.claim_next_pending().await.unwrap().expect("claim");
+
+        let outcome = run_document_enrichment(
+            &db,
+            &entry,
+            None,
+            Some(&mock(&analysis_responses())),
+            &PromptRegistry::default(),
+        )
+        .await;
+        assert!(outcome.completed, "canonical enrichment succeeds");
+
+        let specific = db
+            .search_memory(
+                "Wenlanborg",
+                50,
+                None,
+                &ReadScope::Global,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(specific
+            .iter()
+            .any(|row| row.source_id == outcome.doc_source_id));
+        assert!(specific.iter().all(|row| row.source_id != legacy_path));
+
+        let general = db
+            .search("Wenlanborg", 50, None, &ReadScope::Global)
+            .await
+            .unwrap();
+        assert!(general
+            .iter()
+            .any(|row| row.source_id == outcome.doc_source_id));
+        assert!(general.iter().all(|row| row.source_id != legacy_path));
+
+        let conn = db.test_primary_session().await;
+        let mut rows = conn
+            .query(
+                "SELECT COUNT(*) FROM memories WHERE source = 'local_files' AND source_id = ?1",
+                [legacy_path.as_str()],
+            )
+            .await
+            .unwrap();
+        let retained: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert!(retained > 0, "retirement retains the legacy source rows");
     }
 
     #[tokio::test]
