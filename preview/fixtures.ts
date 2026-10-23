@@ -189,6 +189,27 @@ flowchart TD
 \`\`\`
 
 When the cited code changes later, the page goes on steep's list instead of being rewritten on the spot.
+
+## A wide diagram
+
+\`\`\`mermaid
+flowchart LR
+  cli["CLI (cli.ts)"] -- "POST /jobs, GET /jobs/:id" --> server["HTTP server (server.ts)"]
+  server -- "enqueue" --> queue["In-memory queue (queue.ts)"]
+  queue -- "dequeue" --> consumer["Consumer (consumer.ts)"]
+  consumer -- "runHandler" --> handlers["Handlers (handlers.ts)"]
+  consumer -- "saveJob" --> store[("SQLite store (store.ts)")]
+  server -- "getJob" --> store
+\`\`\`
+
+## A diagram Mermaid cannot draw
+
+\`\`\`mermaid
+flowchart LR
+  a -->
+\`\`\`
+
+The rest of the page still reads normally.
 `,
     citations: undefined,
   } as Page,

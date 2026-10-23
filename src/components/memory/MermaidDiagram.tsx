@@ -4,7 +4,11 @@
 // a page cannot run script or load anything through its diagram. Colors come
 // from the app's theme tokens and are redrawn when the theme flips. A block
 // Mermaid cannot parse stays visible as its source, as it was before.
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+
+/** A wide diagram shrinks to the column down to this share of its own size,
+ * then scrolls; below it the labels get too small to read. */
+const MIN_SCALE = 0.8;
 
 type MermaidApi = typeof import("mermaid").default;
 
@@ -100,6 +104,14 @@ export default function MermaidDiagram({ source }: { source: string }) {
     { kind: "loading" } | { kind: "drawn"; svg: string } | { kind: "failed" }
   >({ kind: "loading" });
 
+  const frame = useRef<HTMLElement>(null);
+
+  useLayoutEffect(() => {
+    const svg = frame.current?.querySelector("svg");
+    const width = svg?.viewBox?.baseVal?.width;
+    if (svg && width) svg.style.minWidth = `${Math.round(width * MIN_SCALE)}px`;
+  }, [state]);
+
   useEffect(() => {
     let live = true;
     const run = queue.then(() => draw(id, source));
@@ -126,6 +138,7 @@ export default function MermaidDiagram({ source }: { source: string }) {
   }
   return (
     <figure
+      ref={frame}
       className="page-diagram"
       data-testid="page-diagram"
       aria-busy={state.kind === "loading"}

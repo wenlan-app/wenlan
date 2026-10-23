@@ -3814,9 +3814,10 @@ p.entity-error {
   text-decoration: none;
 }
 
-/* A ```mermaid block drawn as a diagram: centered at its own size, never
-   wider than the text column (a wide one shrinks to fit), with a quiet frame
-   so it reads as one figure. */
+/* A ```mermaid block drawn as a diagram: centered at its own size, with a
+   quiet frame so it reads as one figure. A wide one shrinks to the column,
+   but only so far (MermaidDiagram sets a min-width); past that it scrolls
+   inside its frame so its labels stay readable. */
 .content-renderer .page-diagram {
   margin: 0 0 var(--content-para-gap, 0.75em);
   padding: 16px;
@@ -3834,6 +3835,10 @@ p.entity-error {
   max-width: 100%;
 }
 .content-renderer .page-diagram-source {
+  margin: 0 0 var(--content-para-gap, 0.75em);
+  padding: 12px 14px;
+  border-radius: 6px;
+  background-color: var(--mem-hover);
   font-family: var(--mem-font-mono);
   font-size: var(--content-code-size, 12px);
   white-space: pre-wrap;
