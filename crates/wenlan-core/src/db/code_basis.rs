@@ -115,17 +115,31 @@ pub enum CodeBasisVerdict {
     Pending,
     /// The file could not be read; the word is the reason.
     Unavailable(&'static str),
+    /// The file was renamed and the row follows it to `path`, at `span`
+    /// (`crate::code_basis_follow`). `anchor` is the lines' fresh fingerprint
+    /// when they read the same there (the row is `moved`); `None` when they
+    /// changed (the row is `pending` and keeps the anchor it was confirmed
+    /// with, so the change is judged the usual way).
+    Renamed {
+        path: String,
+        span: LineSpan,
+        anchor: Option<CodeAnchor>,
+        stamp: Option<FileStamp>,
+    },
 }
 
 /// The columns a `CodeBasisRef` is read from, in `ref_from`'s order. The last
-/// is computed: whether the model's stored verdict is about the note as it is
+/// is computed: 1 when the model's stored verdict is about the note as it is
 /// now (`recheck_digest` ends in `@v<pages.version>`, see
-/// [`crate::code_basis_recheck::recheck_key`]); a verdict left for an older
-/// version of the note reads as absent.
+/// [`crate::code_basis_recheck::recheck_key`]; a verdict left for an older
+/// version of the note reads as absent), 2 when the lines could not be found
+/// in the file at all ([`crate::code_basis_recheck::UNRESOLVED_DIGEST`]).
 const REF_COLUMNS: &str =
     "repo_root, path, line_start, line_end, state, unavailable_reason, changed_at, recheck_note, \
      recheck_verdict, \
-     (recheck_digest LIKE '%@v' || (SELECT p.version FROM pages p WHERE p.id = page_code_basis.page_id))";
+     CASE WHEN recheck_digest = 'unresolved' THEN 2 \
+          WHEN recheck_digest LIKE '%@v' || (SELECT p.version FROM pages p WHERE p.id = page_code_basis.page_id) \
+          THEN 1 ELSE 0 END";
 
 /// The same test, for a query that joins `page_code_basis b` with `pages c`.
 pub(crate) const RECHECK_CURRENT: &str = "(b.recheck_digest LIKE '%@v' || c.version)";
@@ -136,17 +150,21 @@ fn ref_from(row: &libsql::Row) -> Result<CodeBasisRef, libsql::Error> {
     let changed_at: Option<i64> = row.get(6)?;
     let recheck_note: Option<String> = row.get(7)?;
     let recheck_verdict: Option<String> = row.get(8)?;
-    let recheck_current = row.get::<Option<i64>>(9)?.unwrap_or(0) != 0;
-    let judged_now = state == CODE_BASIS_STATE_PENDING && recheck_current;
+    let recheck_flag = row.get::<Option<i64>>(9)?.unwrap_or(0);
+    let judged_now = state == CODE_BASIS_STATE_PENDING && recheck_flag == 1;
+    let lines_lost = state == CODE_BASIS_STATE_PENDING && recheck_flag == 2;
     Ok(CodeBasisRef {
         repo_root: row.get(0)?,
         path: row.get(1)?,
         line_start: u32::try_from(row.get::<i64>(2)?).unwrap_or(u32::MAX),
         line_end: u32::try_from(row.get::<i64>(3)?).unwrap_or(u32::MAX),
-        // Only the reason for an unavailable row and the first-seen time of a
-        // pending one mean anything to a reader.
+        // Only the reason for an unavailable row (or a pending one whose
+        // lines are lost) and the first-seen time of a pending one mean
+        // anything to a reader.
         reason: if state == CODE_BASIS_STATE_UNAVAILABLE {
             reason
+        } else if lines_lost {
+            Some(crate::code_basis::LINES_NOT_FOUND.to_string())
         } else {
             None
         },
@@ -186,7 +204,8 @@ fn decode(context: &'static str) -> impl Fn(libsql::Error) -> WenlanError {
 pub(crate) const ROW_SELECT: &str =
     "SELECT b.repo_root, b.path, b.line_start, b.line_end, b.state, \
     b.unavailable_reason, b.changed_at, b.recheck_note, b.recheck_verdict, \
-    (b.recheck_digest LIKE '%@v' || c.version), b.anchor_json, \
+    CASE WHEN b.recheck_digest = 'unresolved' THEN 2 \
+         WHEN b.recheck_digest LIKE '%@v' || c.version THEN 1 ELSE 0 END, b.anchor_json, \
     b.page_id, c.title, b.file_len, b.file_mtime_ns, b.recheck_digest, b.recheck_attempts \
     FROM page_code_basis b JOIN pages c ON c.id = b.page_id";
 
@@ -1191,6 +1210,81 @@ async fn apply_verdict(
         }
         // Handled by `try_move_row` (it needs the batch to order the moves).
         CodeBasisVerdict::Moved { .. } => {}
+        CodeBasisVerdict::Renamed {
+            path,
+            span,
+            anchor,
+            stamp,
+        } => {
+            // The note already relying on those lines at the new path makes
+            // this row the same reliance stated twice: it goes.
+            let mut taken = conn
+                .query(
+                    "SELECT 1 FROM page_code_basis \
+                     WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+                       AND line_start = ?4 AND line_end = ?5",
+                    libsql::params![
+                        row.page_id.as_str(),
+                        r.repo_root.as_str(),
+                        path.as_str(),
+                        i64::from(span.start),
+                        i64::from(span.end)
+                    ],
+                )
+                .await?;
+            if taken.next().await?.is_some() {
+                conn.execute(
+                    "DELETE FROM page_code_basis \
+                     WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+                       AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
+                    libsql::params![
+                        row.page_id.as_str(),
+                        r.repo_root.as_str(),
+                        r.path.as_str(),
+                        i64::from(r.line_start),
+                        i64::from(r.line_end),
+                        row.anchor_json.as_str()
+                    ],
+                )
+                .await?;
+                return Ok(());
+            }
+            let (state, anchor_json, changed_at) = match anchor {
+                Some(anchor) => (
+                    CODE_BASIS_STATE_MOVED,
+                    serde_json::to_string(anchor).unwrap_or_else(|_| row.anchor_json.clone()),
+                    None,
+                ),
+                None => (CODE_BASIS_STATE_PENDING, row.anchor_json.clone(), Some(now)),
+            };
+            conn.execute(
+                "UPDATE page_code_basis \
+                 SET path = ?7, line_start = ?8, line_end = ?9, anchor_json = ?10, state = ?11, \
+                     unavailable_reason = NULL, changed_at = ?12, \
+                     file_len = ?13, file_mtime_ns = ?14, \
+                     recheck_note = NULL, recheck_verdict = NULL, recheck_digest = NULL, \
+                     recheck_attempts = 0 \
+                 WHERE page_id = ?1 AND repo_root = ?2 AND path = ?3 \
+                   AND line_start = ?4 AND line_end = ?5 AND anchor_json = ?6",
+                libsql::params![
+                    row.page_id.as_str(),
+                    r.repo_root.as_str(),
+                    r.path.as_str(),
+                    i64::from(r.line_start),
+                    i64::from(r.line_end),
+                    row.anchor_json.as_str(),
+                    path.as_str(),
+                    i64::from(span.start),
+                    i64::from(span.end),
+                    anchor_json,
+                    state,
+                    changed_at,
+                    stamp.map(|s| s.len),
+                    stamp.map(|s| s.mtime_ns)
+                ],
+            )
+            .await?;
+        }
         CodeBasisVerdict::Pending => {
             // The first time the content was seen changed is kept while the
             // row stays pending.

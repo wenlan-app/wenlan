@@ -25,7 +25,9 @@ import {
 import { tags } from "@lezer/highlight";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { toast } from "sonner";
 import { createSlashEditing, refreshSlashLabels, slashItems, type SlashLabels } from "./slashEditing";
+import { mediaPaste } from "./mediaPaste";
 import type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
@@ -289,6 +291,11 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             }),
             writingPresentation(),
             createSlashEditing({ labels: () => slashLabelsRef.current, blocked: actionsBlocked }).extension,
+            mediaPaste({
+              blocked: actionsBlocked,
+              onError: (file) => toast.error(t("pageAttachments.failed", { name: file.name || "file" })),
+              pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
+            }),
             props.linkNotes ? createLinkCompletion({
               notes: () => linkNotesRef.current,
               labels: () => linkLabelsRef.current,

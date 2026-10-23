@@ -35,6 +35,7 @@ export function codeBasisLineText(t: TFunction, row: CodeBasisRef): string {
   }
   if (row.state === "unavailable") {
     if (row.reason === "file_missing") return t("codeBasis.missingFile", vars);
+    if (row.reason === "file_deleted") return t("codeBasis.deletedFile", vars);
     if (row.reason === "repo_missing") return t("codeBasis.missingRepo", vars);
     return t("codeBasis.unreadable", vars);
   }
@@ -48,6 +49,7 @@ export function codeBasisLineText(t: TFunction, row: CodeBasisRef): string {
  */
 export function codeBasisAiLineText(t: TFunction, row: CodeBasisRef): string | null {
   if (row.state !== "pending") return null;
+  if (row.reason === "lines_not_found") return t("codeBasis.linesLost");
   const sentence = row.explanation?.trim();
   if (!sentence) return null;
   if (row.ai_verdict !== "stale") return t("codeBasis.aiLooked", { sentence });
@@ -59,10 +61,12 @@ export function codeBasisAiLineText(t: TFunction, row: CodeBasisRef): string | n
 
 /**
  * The quiet word on a changed row in the info panel, where nothing is asked of
- * the person: what the check concluded, or that the next steep will look.
- * Null when the row is not pending, or when no model will look at it.
+ * the person: what the check concluded, that the next steep will look, or that
+ * it updates the page for a deleted file. Null otherwise, or when no model
+ * will look at a changed row.
  */
 export function codeBasisQuietNoteText(t: TFunction, row: CodeBasisRef, modelAvailable: boolean): string | null {
+  if (row.state === "unavailable" && row.reason === "file_deleted") return t("codeBasis.deletedWillFix");
   if (row.state !== "pending") return null;
   const judged = codeBasisAiLineText(t, row);
   if (judged) return judged;

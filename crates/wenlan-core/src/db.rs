@@ -131,6 +131,8 @@ mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
 #[cfg(test)]
+mod code_basis_follow_test;
+#[cfg(test)]
 mod code_basis_recheck_test;
 #[cfg(test)]
 pub(crate) mod code_basis_test;

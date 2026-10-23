@@ -356,7 +356,7 @@ pub(crate) async fn read_git_blob(repo_root: &str, blob: &str) -> Option<String>
 /// anchored lines found in it again (the stored span can be off when the row
 /// was once `moved`). `None` when the row has no blob, git cannot produce it,
 /// or the anchored lines are not in it.
-async fn cited_excerpt(db: &MemoryDB, row: &CodeBasisRow) -> Option<Excerpt> {
+pub(crate) async fn cited_excerpt(db: &MemoryDB, row: &CodeBasisRow) -> Option<Excerpt> {
     let locator = CodeBasisLocator::from(&row.reference);
     let blob = db
         .get_code_basis_cited(&row.page_id, &locator)

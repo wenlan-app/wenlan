@@ -2134,12 +2134,19 @@ export async function listBasisPending(
  */
 export type CodeBasisState = "ok" | "moved" | "pending" | "unavailable";
 
+/**
+ * Why a row is `unavailable`, or, for a `pending` row, `lines_not_found`: the
+ * lines are no longer in the file at all. `file_deleted` means git saw the
+ * file deleted; steep then updates the page and stops relying on it.
+ */
 export type CodeBasisUnavailableReason =
   | "file_missing"
+  | "file_deleted"
   | "repo_missing"
   | "outside_repo"
   | "unreadable"
-  | "too_large";
+  | "too_large"
+  | "lines_not_found";
 
 export interface CodeBasisRef {
   /** Absolute. */
@@ -2152,7 +2159,7 @@ export interface CodeBasisRef {
   state: CodeBasisState;
   /** Unix seconds when the lines were first seen changed; only while pending. */
   changed_at?: number | null;
-  /** Why the code is unavailable. */
+  /** Why the code is unavailable, or that a changed row's lines are lost. */
   reason?: CodeBasisUnavailableReason | null;
   /** What the background check concluded about a pending row: `"stale"` or `"needs_human"`. */
   ai_verdict?: string;
@@ -3258,6 +3265,37 @@ export async function getKnowledgePath(): Promise<string> {
 
 export async function countKnowledgeFiles(): Promise<number> {
   return invoke("count_knowledge_files");
+}
+
+// ===== Page attachments =====
+
+/** A file copied into the pages folder's `_attachments/`. */
+export interface AttachedFile {
+  /** Root-relative link target, `_attachments/<name>`. */
+  path: string;
+  absolute_path: string;
+  kind: "image" | "video";
+  bytes: number;
+  /** The Markdown line that shows the file in a page. */
+  markdown: string;
+  created: boolean;
+}
+
+/** The folder of files shown in pages; the webview may load files from it. */
+export async function pageAttachmentsDir(): Promise<string> {
+  return invoke("page_attachments_dir");
+}
+
+/** Copy a file on this computer into the pages folder. */
+export async function attachFileToPage(path: string, alt?: string): Promise<AttachedFile> {
+  return invoke("attach_file_to_page", { path, alt: alt ?? null });
+}
+
+/** Copy pasted or dropped file bytes into the pages folder. */
+export async function attachBytesToPage(name: string, bytes: Uint8Array): Promise<AttachedFile> {
+  return invoke("attach_bytes_to_page", bytes, {
+    headers: { "x-file-name": encodeURIComponent(name) },
+  });
 }
 
 // ===== Profile =====

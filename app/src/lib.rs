@@ -24,6 +24,7 @@ mod identity_paths;
 mod indexer;
 mod lifecycle;
 pub mod mcp_config;
+mod page_attachments;
 mod page_review;
 mod pairing_link;
 pub mod plugin_install;
@@ -1833,6 +1834,9 @@ pub fn run() {
             search::export_pages_as_okf,
             search::get_knowledge_path,
             search::count_knowledge_files,
+            page_attachments::page_attachments_dir,
+            page_attachments::attach_file_to_page,
+            page_attachments::attach_bytes_to_page,
             // Decision log commands
             search::list_decisions_cmd,
             search::list_decision_domains_cmd,

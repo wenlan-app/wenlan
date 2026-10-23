@@ -43,7 +43,9 @@ function CodeRow({ row, modelAvailable, onUnmark }: CodeRowProps) {
       </span>
     </button>
     <span className="note-info-link-status" role={copied ? "status" : undefined}>
-      {copied ? t("codeBasis.copied") : t(`codeBasis.state.${row.state}`)}
+      {copied
+        ? t("codeBasis.copied")
+        : t(row.reason === "file_deleted" ? "codeBasis.state.deleted" : `codeBasis.state.${row.state}`)}
     </span>
     {onUnmark && <OverflowMenu
       label={t("codeBasis.moreActions")}

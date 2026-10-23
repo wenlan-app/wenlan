@@ -535,7 +535,7 @@ A surface that transmits anyway is a failing test on that surface. That gate is
 soft, and saying so plainly is what cooperative-tier means. It is also no longer
 load-bearing: the shape gate holds even when this one is bypassed.
 
-## HTTP — all 197 registered `(method, path, handler)` triples
+## HTTP — all 198 registered `(method, path, handler)` triples
 
 73 page-bearing, 124 not.
 
@@ -592,6 +592,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/knowledge/folders` | main | no | not_applicable | `none` | — | creates a physical directory without page prose |
 | `POST` | `/api/pages/{id}/move` | main | yes | automatic | `none` | `handle_move_page` | EFFECT: moves an authorized live page projection |
 | `GET` | `/api/knowledge/count` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/attachments` | main | no | not_applicable | `none` | — | copies one media file; returns its path and a Markdown line |
 | `GET` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint_submission` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
@@ -775,7 +776,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/tags/{name}` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/ws/updates` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 
-## MCP — all 33 `#[tool(` declarations
+## MCP — all 36 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and
@@ -792,6 +793,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 |---|---|---|---|---|
 | `accept_refinement` | yes | automatic | `none` | tool handler |
 | `accept_revision` | yes | automatic | `none` | tool handler |
+| `attach_file` | yes | automatic | `none` | tool handler |
 | `brief` | yes | automatic | `none` | tool handler |
 | `capture` | yes | automatic | `none` | tool handler |
 | `confirm_memory` | yes | automatic | `none` | tool handler |

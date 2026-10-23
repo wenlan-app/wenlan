@@ -964,6 +964,21 @@ pub struct KnowledgePathResponse {
     pub path: String,
 }
 
+/// A file copied into the pages folder's `_attachments/` so pages can show it.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AttachFileResponse {
+    /// Root-relative link target, `_attachments/<name>`.
+    pub path: String,
+    pub absolute_path: String,
+    /// `image` or `video`.
+    pub kind: String,
+    pub bytes: u64,
+    /// The Markdown line that shows the file in a page.
+    pub markdown: String,
+    /// False when an identical file was already stored.
+    pub created: bool,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KnowledgeCountResponse {
     pub count: u64,

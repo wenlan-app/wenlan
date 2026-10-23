@@ -104,3 +104,25 @@
   font: 500 var(--reading-title-size)/1.22 var(--mem-font-heading);
   letter-spacing: -0.01em;
 }
+
+/* Images and videos a page shows from the pages folder's `_attachments/`. */
+.content-renderer .page-attachment {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 32rem;
+  height: auto;
+  margin: 0.75em 0;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-sm);
+  object-fit: contain;
+}
+
+.content-renderer .page-attachment-video {
+  width: 100%;
+  background: var(--mem-detail-surface);
+}
+
+.content-renderer .page-attachment-pending {
+  color: var(--mem-text-tertiary);
+}

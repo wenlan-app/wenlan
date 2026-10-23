@@ -12,6 +12,7 @@ import { ReferenceLink } from "./links/ReferenceLink";
 import { referenceTargetFromHref } from "./links/referenceTypes";
 import { displayUrl, isBareUrlLink } from "../../lib/displayUrl";
 import MermaidDiagram from "./MermaidDiagram";
+import { attachmentKind, attachmentName, attachmentUrl, useAttachmentsDir, videoSource } from "../../lib/pageAttachments";
 
 interface ContentRendererProps {
   content: string;
@@ -42,7 +43,26 @@ function mermaidSource(node: HastNode | undefined): string | null {
   return text.trim() ? text : null;
 }
 
+/** An image or video a page shows from the pages folder's `_attachments/`;
+ * any other image link renders as before. */
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const name = attachmentName(src);
+  if (!name) return <img src={src} alt={alt ?? ""} />;
+  return <AttachmentMedia src={src!} name={name} alt={alt ?? ""} />;
+}
+
+function AttachmentMedia({ src, name, alt }: { src: string; name: string; alt: string }) {
+  const url = attachmentUrl(src, useAttachmentsDir());
+  if (!url) return <span className="page-attachment-pending">{alt}</span>;
+  return attachmentKind(name) === "video" ? (
+    <video className="page-attachment page-attachment-video" src={videoSource(url)} controls preload="metadata" aria-label={alt || name} />
+  ) : (
+    <img className="page-attachment" src={url} alt={alt} loading="lazy" decoding="async" />
+  );
+}
+
 const markdownComponents = {
+  img: ({ src, alt }: { src?: string; alt?: string }) => <MarkdownImage src={src} alt={alt} />,
   pre: ({ node, children }: { node?: HastNode; children?: React.ReactNode }) => {
     const source = mermaidSource(node);
     return source !== null ? <MermaidDiagram source={source} /> : <pre>{children}</pre>;

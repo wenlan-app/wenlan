@@ -114,7 +114,7 @@ info daemon-command "pid=${SERVER_PID:-none} cmd=$SERVER_CMD"
 check daemon-binary-in-bundle -- bash -c '[[ "$1" == "$2"/wenlan-server* ]]' _ "$SERVER_CMD" "$MACOS"
 
 WENLAN_BIN="$MACOS/wenlan" bash "$HELPERS/cli-roundtrip.sh"
-MCP_BIN="$MACOS/wenlan-mcp" MCP_ARGS='[]' EXPECT_TOOL_COUNT=35 MCP_TOOLS=capture,recall,brief \
+MCP_BIN="$MACOS/wenlan-mcp" MCP_ARGS='[]' EXPECT_TOOL_COUNT=36 MCP_TOOLS=capture,recall,brief \
     python3 "$HELPERS/mcp-roundtrip.py"
 check_output doctor "Daemon: running on" -- "$MACOS/wenlan" doctor
 

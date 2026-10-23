@@ -105,8 +105,11 @@ const en = {
     aiLooked: "AI looked: {{sentence}}",
     aiStaleSuffix: ", next steep fixes it",
     aiWillLook: "Changed, the next steep looks at it",
+    deletedWillFix: "File deleted, the next steep updates the page",
+    linesLost: "The lines this page relied on are no longer in the file",
     missingFile: "Code not found: {{file}} (the file is gone)",
     missingRepo: "Code not found: {{file}} (the repository is gone)",
+    deletedFile: "Code deleted: {{file}}",
     unreadable: "Cannot read code: {{file}}",
     seeCode: "See code",
     confirmNoImpact: "No impact",
@@ -142,6 +145,7 @@ const en = {
       moved: "Moved",
       pending: "Changed",
       unavailable: "Not found",
+      deleted: "Deleted",
     },
     group: "Code",
     groupLabel: "Code this page relies on",
@@ -751,6 +755,10 @@ const en = {
   linkCompletion: {
     label: "Link a page",
     empty: "No matching pages",
+  },
+  pageAttachments: {
+    failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
+    adding: "Adding {{name}}…",
   },
   slashEditing: {
     label: "Basic editing",
@@ -3010,8 +3018,11 @@ const zhHans = {
     aiLooked: "AI 看过：{{sentence}}",
     aiStaleSuffix: "，下次沉淀会改好",
     aiWillLook: "有变动，下次沉淀时 AI 会看",
+    deletedWillFix: "文件已删除，下次沉淀会更新这篇",
+    linesLost: "原本那几行在文件里找不到了",
     missingFile: "找不到代码：{{file}}（文件已不在）",
     missingRepo: "找不到代码：{{file}}（仓库已不在）",
+    deletedFile: "代码已删除：{{file}}",
     unreadable: "读不到代码：{{file}}",
     seeCode: "查看代码",
     confirmNoImpact: "没有影响",
@@ -3047,6 +3058,7 @@ const zhHans = {
       moved: "位置变了",
       pending: "有变动",
       unavailable: "找不到",
+      deleted: "已删除",
     },
     group: "代码",
     groupLabel: "本笔记依据的代码",
@@ -3639,6 +3651,10 @@ const zhHans = {
   linkCompletion: {
     label: "链接笔记",
     empty: "没有匹配的笔记",
+  },
+  pageAttachments: {
+    failed: "无法加入 {{name}}。页面里只能放图片和视频。",
+    adding: "正在加入 {{name}}…",
   },
   slashEditing: {
     label: "基本编辑",
@@ -5853,8 +5869,11 @@ const zhHant = {
     aiLooked: "AI 看過：{{sentence}}",
     aiStaleSuffix: "，下次沉澱會改好",
     aiWillLook: "有變動，下次沉澱時 AI 會看",
+    deletedWillFix: "檔案已刪除，下次沉澱會更新這篇",
+    linesLost: "原本那幾行在檔案裡找不到了",
     missingFile: "找不到代碼：{{file}}（檔案已不在）",
     missingRepo: "找不到代碼：{{file}}（倉庫已不在）",
+    deletedFile: "代碼已刪除：{{file}}",
     unreadable: "讀不到代碼：{{file}}",
     seeCode: "查看代碼",
     confirmNoImpact: "沒有影響",
@@ -5890,6 +5909,7 @@ const zhHant = {
       moved: "位置變了",
       pending: "有變動",
       unavailable: "找不到",
+      deleted: "已刪除",
     },
     group: "代碼",
     groupLabel: "本筆記依據的代碼",
@@ -6482,6 +6502,10 @@ const zhHant = {
   linkCompletion: {
     label: "連結筆記",
     empty: "沒有相符的筆記",
+  },
+  pageAttachments: {
+    failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",
+    adding: "正在加入 {{name}}…",
   },
   slashEditing: {
     label: "基本編輯",

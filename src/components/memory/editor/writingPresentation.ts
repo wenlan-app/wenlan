@@ -16,12 +16,22 @@ import {
   Decoration,
   type DecorationSet,
   EditorView,
+  keymap,
   ViewPlugin,
   type ViewUpdate,
   WidgetType,
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { hiddenUrlPrefixLength } from "../../../lib/displayUrl";
+import {
+  attachmentKind,
+  attachmentName,
+  attachmentUrl,
+  primeAttachmentsDir,
+  subscribeAttachmentsDir,
+  videoSource,
+  type AttachmentKind,
+} from "../../../lib/pageAttachments";
 
 export const setWritingCompositionActive = StateEffect.define<boolean>();
 const refreshWritingPresentation = StateEffect.define<null>();
@@ -131,17 +141,35 @@ class ImageWidget extends WidgetType {
   constructor(
     readonly source: string,
     readonly alt: string,
+    readonly kind: AttachmentKind = "image",
+    /** Shown above its own Markdown while the caret is in it. */
+    readonly open = false,
   ) {
     super();
   }
 
   eq(other: ImageWidget): boolean {
-    return other.source === this.source && other.alt === this.alt;
+    return other.source === this.source && other.alt === this.alt && other.kind === this.kind
+      && other.open === this.open;
+  }
+
+  // A click on an image opens its source; a video keeps its own controls.
+  ignoreEvent(event: Event): boolean {
+    return this.kind === "video" || event.type !== "mousedown";
   }
 
   toDOM(): HTMLElement {
+    if (this.kind === "video") {
+      const video = document.createElement("video");
+      video.className = `cm-writing-image cm-writing-video${this.open ? " cm-writing-image-open" : ""}`;
+      video.src = videoSource(this.source);
+      video.controls = true;
+      video.preload = "metadata";
+      if (this.alt) video.setAttribute("aria-label", this.alt);
+      return video;
+    }
     const image = document.createElement("img");
-    image.className = "cm-writing-image";
+    image.className = `cm-writing-image${this.open ? " cm-writing-image-open" : ""}`;
     image.src = this.source;
     image.alt = this.alt;
     image.setAttribute("loading", "lazy");
@@ -189,9 +217,18 @@ class HorizontalRuleWidget extends WidgetType {
 class WritingPresentationValue {
   decorations: DecorationSet;
   atomic: DecorationSet;
+  private readonly stopAttachmentWatch: () => void;
 
   constructor(view: EditorView) {
     ({ decorations: this.decorations, atomic: this.atomic } = buildWritingRanges(view));
+    // Page images from `_attachments/` show once the folder is known.
+    this.stopAttachmentWatch = subscribeAttachmentsDir(() => {
+      view.dispatch({ effects: refreshWritingPresentation.of(null) });
+    });
+  }
+
+  destroy(): void {
+    this.stopAttachmentWatch();
   }
 
   update(update: ViewUpdate): void {
@@ -312,6 +349,18 @@ const writingTheme = EditorView.theme({
     objectFit: "contain",
     verticalAlign: "middle",
   },
+  ".cm-writing-image-open": {
+    display: "block",
+    marginBottom: "0.25rem",
+  },
+  ".cm-writing-media-source": {
+    color: "var(--mem-text-tertiary)",
+    fontSize: "0.85em",
+  },
+  // Quiet the link and URL highlighting inside the source too.
+  ".cm-writing-media-source *": {
+    color: "inherit",
+  },
   ".cm-writing-list-marker": {
     boxSizing: "border-box",
     display: "inline-block",
@@ -393,6 +442,8 @@ export function writingPresentation(): Extension {
       "data-editor-presentation-mode": "writing",
     }),
     writingPresentationPlugin,
+    EditorView.domEventHandlers({ mousedown: revealClickedImage }),
+    keymap.of([{ key: "Backspace", run: deleteMediaLineAbove }]),
     EditorView.atomicRanges.of(
       (view) => view.plugin(writingPresentationPlugin)?.atomic ?? Decoration.none,
     ),
@@ -484,16 +535,21 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const opening = marks[0];
           const closingLabel = marks[1];
           if (!url || !opening || !closingLabel || marks.length < 4) return;
-          const source = safeRemoteImageSource(state.sliceDoc(url.from, url.to));
-          if (!source || constructIsRevealed(state, node.from, node.to, contentFocused)) return;
-          addConcealment(
-            node.from,
-            node.to,
-            new ImageWidget(
-              source,
-              state.sliceDoc(opening.to, closingLabel.from),
-            ),
+          const target = state.sliceDoc(url.from, url.to);
+          const source = mediaSource(target);
+          if (!source) return;
+          const alt = state.sliceDoc(opening.to, closingLabel.from);
+          const kind = attachmentKind(attachmentName(target) ?? "") ?? "image";
+          if (!mediaIsRevealed(state, node.from, node.to, contentFocused)) {
+            addConcealment(node.from, node.to, new ImageWidget(source, alt, kind));
+            return;
+          }
+          if (compositionActive) return;
+          // The image stays in view, its Markdown a quiet line beneath it.
+          decorations.push(
+            Decoration.widget({ widget: new ImageWidget(source, alt, kind, true), side: -1 }).range(node.from),
           );
+          addMarkClass(node.from, node.to, "cm-writing-media-source");
           return;
         }
         if (node.name === "Link") {
@@ -736,6 +792,40 @@ function parseCalloutHeader(
   };
 }
 
+/** Where a rendered image or video loads from, or null when it stays as text. */
+function mediaSource(target: string): string | null {
+  const attachment = attachmentName(target);
+  if (!attachment) return safeRemoteImageSource(target);
+  const source = attachmentUrl(target);
+  if (!source) void primeAttachmentsDir();
+  return source;
+}
+
+const MEDIA_LINE = /^!\[[^\]\n]*\]\(([^)\s]+)\)\s*$/;
+
+/**
+ * Backspace on an empty line under an image or video removes both lines, so
+ * one key undoes a drop. Elsewhere Backspace keeps its ordinary meaning.
+ */
+function deleteMediaLineAbove(view: EditorView): boolean {
+  const { state } = view;
+  if (state.readOnly || state.selection.ranges.length > 1) return false;
+  const caret = state.selection.main;
+  const line = state.doc.lineAt(caret.head);
+  if (!caret.empty || line.length > 0 || line.number === 1) return false;
+  const above = state.doc.line(line.number - 1);
+  const target = MEDIA_LINE.exec(above.text)?.[1];
+  if (!target || !mediaSource(target)) return false;
+  const from = above.number > 1 ? above.from - 1 : above.from;
+  view.dispatch({
+    changes: { from, to: line.from },
+    selection: { anchor: from },
+    userEvent: "delete.backward",
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 function safeRemoteImageSource(source: string): string | null {
   try {
     const parsed = new URL(source);
@@ -802,6 +892,35 @@ function lineConstructIsRevealed(
     if (range.empty) return range.head >= line.from && range.head <= line.to;
     return range.from <= constructTo && range.to >= constructFrom;
   });
+}
+
+/**
+ * An image or video stays shown while the caret only touches it, so Backspace
+ * after it or Delete before it removes the whole Markdown line as one unit.
+ */
+function mediaIsRevealed(
+  state: EditorView["state"],
+  constructFrom: number,
+  constructTo: number,
+  contentFocused: boolean,
+): boolean {
+  if (!contentFocused) return false;
+  return state.selection.ranges.some((range) =>
+    range.empty
+      ? range.head > constructFrom && range.head < constructTo
+      : range.from < constructTo && range.to > constructFrom,
+  );
+}
+
+function revealClickedImage(event: MouseEvent, view: EditorView): boolean {
+  const image = event.target instanceof Element ? event.target.closest("img.cm-writing-image") : null;
+  if (!image || event.button !== 0 || event.detail > 1) return false;
+  const from = view.posAtDOM(image);
+  if (view.state.sliceDoc(from, from + 2) !== "![") return false;
+  event.preventDefault();
+  view.focus();
+  view.dispatch({ selection: { anchor: from + 2 } });
+  return true;
 }
 
 function constructIsRevealed(

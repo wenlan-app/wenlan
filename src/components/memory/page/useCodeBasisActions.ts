@@ -31,9 +31,10 @@ export function codeBasisNeedingAttention(
   modelAvailable = true,
 ): CodeBasisRef[] {
   return (rows ?? []).filter((row) => {
-    if (row.state === "unavailable") return true;
+    // A deleted file is steep's: it updates the page and stops relying on it.
+    if (row.state === "unavailable") return row.reason !== "file_deleted";
     if (row.state !== "pending") return false;
-    if (row.ai_verdict === "needs_human") return true;
+    if (row.ai_verdict === "needs_human" || row.reason === "lines_not_found") return true;
     return !row.ai_verdict && !modelAvailable;
   });
 }

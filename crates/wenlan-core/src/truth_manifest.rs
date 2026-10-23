@@ -233,6 +233,7 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Post, path: "/api/knowledge/folders", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "creates a physical directory without page prose" },
     HttpReader { method: ReaderMethod::Post, path: "/api/pages/{id}/move", builder: Builder::Main, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_move_page", evidence: "EFFECT: moves an authorized live page projection" },
     HttpReader { method: ReaderMethod::Get, path: "/api/knowledge/count", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
+    HttpReader { method: ReaderMethod::Post, path: "/api/attachments", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "copies one media file; returns its path and a Markdown line" },
     HttpReader { method: ReaderMethod::Get, path: "/api/knowledge/path", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "no prose fields" },
     HttpReader { method: ReaderMethod::Get, path: "/api/lint", builder: Builder::MainAndRepair, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_lint", evidence: "LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck" },
     HttpReader { method: ReaderMethod::Post, path: "/api/lint", builder: Builder::MainAndRepair, page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "handle_lint_submission", evidence: "LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck" },
@@ -413,11 +414,12 @@ pub const HTTP_READERS: &[HttpReader] = &[
     HttpReader { method: ReaderMethod::Get, path: "/ws/updates", builder: Builder::Main, page_bearing: PageBearing::No, class: TruthClass::NotApplicable, marker_shape: MarkerShape::None, adapter: "—", evidence: "DEMOTED — proof in the inventory doc" },
 ];
 
-/// All 32 `#[tool(` declarations in `crates/wenlan-mcp/src/tools.rs`.
+/// All 36 `#[tool(` declarations in `crates/wenlan-mcp/src/tools.rs`.
 #[rustfmt::skip]
 pub const MCP_READERS: &[McpReader] = &[
     McpReader { tool: "accept_refinement", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "accept_revision", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
+    McpReader { tool: "attach_file", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "brief", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "capture", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },
     McpReader { tool: "confirm_memory", page_bearing: PageBearing::Yes, class: TruthClass::Automatic, marker_shape: MarkerShape::None, adapter: "tool handler" },

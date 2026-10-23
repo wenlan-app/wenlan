@@ -2,7 +2,7 @@
 //! Knowledge directory inspection endpoints.
 
 use crate::error::ServerError;
-use crate::route_registry::{get, TrackedRouter};
+use crate::route_registry::{get, post, TrackedRouter};
 use crate::state::SharedState;
 use axum::response::Json;
 use wenlan_types::responses::{KnowledgeCountResponse, KnowledgePathResponse};
@@ -15,6 +15,42 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
             "/api/knowledge/folders",
             get(handle_list_knowledge_folders).post(handle_create_knowledge_folder),
         )
+        .route("/api/attachments", post(handle_attach_file))
+}
+
+/// POST /api/attachments
+///
+/// Copy an image or video on this computer into the pages folder's
+/// `_attachments/` and return the Markdown line that shows it. Reads only the
+/// named file, and only when its bytes are real media.
+pub async fn handle_attach_file(
+    axum::extract::State(state): axum::extract::State<SharedState>,
+    Json(req): Json<wenlan_types::requests::AttachFileRequest>,
+) -> Result<Json<wenlan_types::responses::AttachFileResponse>, ServerError> {
+    let source = std::path::PathBuf::from(req.source_path.trim());
+    if !source.is_absolute() {
+        return Err(ServerError::ValidationError(
+            "attachment_path_not_absolute".into(),
+        ));
+    }
+    let root = {
+        let s = state.read().await;
+        s.lint_config.page_root().map(std::path::Path::to_path_buf)
+    }
+    .unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
+    let stored = tokio::task::spawn_blocking(move || {
+        wenlan_core::attachments::store_attachment(&root, &source)
+    })
+    .await
+    .map_err(|e| ServerError::Internal(e.to_string()))??;
+    Ok(Json(wenlan_types::responses::AttachFileResponse {
+        markdown: stored.markdown(req.alt.as_deref()),
+        path: stored.path,
+        absolute_path: stored.absolute_path.to_string_lossy().to_string(),
+        kind: stored.kind.as_str().to_string(),
+        bytes: stored.bytes,
+        created: stored.created,
+    }))
 }
 
 /// GET /api/knowledge/path

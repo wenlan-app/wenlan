@@ -1,7 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, describe, it, expect } from "vitest";
+import { act, render, screen } from "@testing-library/react";
 import ContentRenderer from "./ContentRenderer";
+import { resetAttachmentsDirForTest } from "../../lib/pageAttachments";
+
+describe("ContentRenderer page attachments", () => {
+  afterEach(() => resetAttachmentsDirForTest(null));
+
+  it("shows images and videos from the pages folder and leaves web images alone", () => {
+    resetAttachmentsDirForTest("/pages/_attachments");
+    const content = "![Home](_attachments/home-1.png)\n\n![Film](_attachments/film-1.mp4)\n\n![Web](https://wenlan.app/a.png)";
+    const { container } = render(<ContentRenderer content={content} variant="detail" />);
+    expect(screen.getByAltText("Home")).toHaveAttribute("src", "asset://localhost//pages/_attachments/home-1.png");
+    const video = container.querySelector("video");
+    expect(video).toHaveAttribute("src", "asset://localhost//pages/_attachments/film-1.mp4#t=0.1");
+    expect(video).toHaveAttribute("aria-label", "Film");
+    expect(screen.getByAltText("Web")).toHaveAttribute("src", "https://wenlan.app/a.png");
+  });
+
+  it("shows the alt text until the folder is known", () => {
+    resetAttachmentsDirForTest(null);
+    render(<ContentRenderer content="![Home](_attachments/home-1.png)" variant="detail" />);
+    expect(screen.getByText("Home")).toBeInTheDocument();
+    act(() => resetAttachmentsDirForTest("/pages/_attachments"));
+    expect(screen.getByAltText("Home")).toHaveAttribute("src", "asset://localhost//pages/_attachments/home-1.png");
+  });
+});
 
 describe("ContentRenderer detail variant", () => {
   it("renders plain text as a paragraph", () => {

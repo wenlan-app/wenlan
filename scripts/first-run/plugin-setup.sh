@@ -132,7 +132,7 @@ check_output doctor "Daemon: running on" -- "$W" doctor
 # Step 5: MCP through the plugin's runner; prove it picked the installed binary, not npx.
 info runner-candidates "installed=$(ls -l "$BIN_DIR/wenlan-mcp" 2>&1) local=$([ -x "$CLAUDE_PLUGIN_ROOT/scripts/wenlan-mcp.local" ] && echo present || echo absent) WENLAN_MCP_DEV_BIN=${WENLAN_MCP_DEV_BIN:-unset}"
 check_output runner-uses-installed-binary "exec $BIN_DIR/wenlan-mcp" -- bash -c 'bash -x "$1" --version 2>&1 | grep -F "+ exec"' _ "$RUNNER"
-MCP_BIN="$RUNNER" MCP_ARGS='[]' EXPECT_TOOL_COUNT=35 MCP_TOOLS=capture,recall,brief \
+MCP_BIN="$RUNNER" MCP_ARGS='[]' EXPECT_TOOL_COUNT=36 MCP_TOOLS=capture,recall,brief \
     python3 "$HELPERS/mcp-roundtrip.py"
 
 # Step 6: hook again; silent when healthy and versions agree.

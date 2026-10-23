@@ -573,6 +573,18 @@ pub struct SearchPagesRequest {
     pub space: Option<String>,
 }
 
+// ===== Attachments =====
+
+/// Copy an image or video on this computer into the pages folder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachFileRequest {
+    /// Absolute path of the file on the daemon's computer.
+    pub source_path: String,
+    /// Alt text for the Markdown line; the file name when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
+}
+
 // ===== Ingest =====
 
 #[derive(Debug, Serialize, Deserialize)]

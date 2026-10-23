@@ -126,6 +126,8 @@ struct CodeSnap {
     key: String,
     /// The digest of the changed lines as the caller was shown them.
     code_digest: String,
+    /// The file was deleted: a commit removes the row instead of settling it.
+    deleted: bool,
 }
 
 fn is_code_work(reason: &str) -> bool {
@@ -806,15 +808,23 @@ async fn claim_code(
     holder: SteepHolder,
 ) -> Result<SteepClaim, SteepError> {
     let mut stale = Vec::new();
+    let mut deleted = Vec::new();
     let mut unjudged = Vec::new();
+    let mut changed_again = false;
     for reference in db.list_page_code_basis(&page.id).await? {
-        if reference.state != crate::code_basis::CODE_BASIS_STATE_PENDING {
+        let gone = reference.state == crate::code_basis::CODE_BASIS_STATE_UNAVAILABLE
+            && reference.reason.as_deref() == Some(crate::code_basis_follow::FILE_DELETED);
+        if reference.state != crate::code_basis::CODE_BASIS_STATE_PENDING && !gone {
             continue;
         }
         let locator = CodeBasisLocator::from(&reference);
         let Some(row) = db.get_code_basis_row(&page.id, &locator).await? else {
             continue;
         };
+        if gone {
+            deleted.push(row);
+            continue;
+        }
         match reference.ai_verdict.as_deref() {
             Some(crate::code_basis_recheck::STORED_STALE) => {
                 // Lines that changed again since the verdict are judged
@@ -829,7 +839,10 @@ async fn claim_code(
                     {
                         stale.push((row, code_digest, span, excerpt));
                     }
-                    Some(_) => unjudged.push(row),
+                    Some(_) => {
+                        changed_again = true;
+                        unjudged.push(row);
+                    }
                     None => {}
                 }
             }
@@ -838,7 +851,7 @@ async fn claim_code(
         }
     }
 
-    if !stale.is_empty() {
+    if !stale.is_empty() || !deleted.is_empty() {
         if db.get_pending_revision_for(&page.id).await?.is_some() {
             return Err(SteepError::NotWaiting(
                 "a revision card for this page is already waiting for the user".into(),
@@ -860,12 +873,38 @@ async fn claim_code(
                 line_end: span.end,
                 excerpt,
                 what_changed: row.recheck.note.clone().unwrap_or_default(),
+                deleted: false,
             });
             snaps.push(CodeSnap {
                 locator: CodeBasisLocator::from(&row.reference),
                 anchor_json: row.anchor_json.clone(),
                 key,
                 code_digest,
+                deleted: false,
+            });
+        }
+        for row in deleted {
+            let excerpt = crate::code_basis_recheck::cited_excerpt(db, &row)
+                .await
+                .map(|excerpt| excerpt.text)
+                .unwrap_or_default();
+            code.push(SteepCode {
+                path: row.reference.path.clone(),
+                line_start: row.reference.line_start,
+                line_end: row.reference.line_end,
+                excerpt,
+                what_changed: format!(
+                    "{} was deleted from the repository, so the page can no longer rely on it.",
+                    row.reference.path
+                ),
+                deleted: true,
+            });
+            snaps.push(CodeSnap {
+                locator: CodeBasisLocator::from(&row.reference),
+                anchor_json: row.anchor_json.clone(),
+                key: crate::code_basis_follow::FILE_DELETED.to_string(),
+                code_digest: String::new(),
+                deleted: true,
             });
         }
         if snaps.is_empty() {
@@ -896,7 +935,9 @@ async fn claim_code(
              contradicts. Correct the page so it agrees with the code below (lines marked > \
              are the ones it relies on); keep the rest of the page, its title, language and \
              citations. The code is not a numbered source: a sentence only the code supports \
-             carries no [n]. If the page still agrees with the code, commit still_accurate.",
+             carries no [n]. A code entry marked deleted is a file that was removed from the \
+             repository: its excerpt shows the lines as they were; drop or correct what only \
+             they supported. If the page still agrees with the code, commit still_accurate.",
         );
         if human_owned {
             note.push_str(
@@ -927,15 +968,44 @@ async fn claim_code(
     }
 
     let Some(instructions) = judge_instructions else {
-        return Err(not_waiting());
+        return Err(if changed_again {
+            SteepError::NotWaiting(
+                "the code this page relies on changed again since Wenlan's model looked at it; \
+                 the model looks again first, then the page waits for steep"
+                    .into(),
+            )
+        } else {
+            not_waiting()
+        });
     };
     let mut asks = Vec::new();
+    let mut lost = Vec::new();
     for row in unjudged {
-        if let Some(ask) = crate::code_basis_recheck::prepare_code_basis_ask(db, &row).await? {
-            asks.push(ask);
+        match crate::code_basis_recheck::prepare_code_basis_ask(db, &row).await? {
+            Some(ask) => asks.push(ask),
+            None => lost.push(row.reference.path.clone()),
         }
     }
     if asks.is_empty() {
+        // Lines that cannot be found any more are no model's to judge.
+        let lost: Vec<String> = db
+            .list_page_code_basis(&page.id)
+            .await?
+            .into_iter()
+            .filter(|r| r.reason.as_deref() == Some(crate::code_basis::LINES_NOT_FOUND))
+            .map(|r| r.path)
+            .filter(|path| lost.contains(path))
+            .collect();
+        if let Some(path) = lost.first() {
+            return Ok(needs_you(
+                &page,
+                format!(
+                    "The lines this page relies on in {path} can no longer be found in the \
+                     file, so no model can tell what they became. The user looks at it in \
+                     Wenlan."
+                ),
+            ));
+        }
         return Err(not_waiting());
     }
     let code_checks = asks
@@ -954,6 +1024,7 @@ async fn claim_code(
             anchor_json: ask.row.anchor_json.clone(),
             key: ask.key.clone(),
             code_digest: ask.code_digest.clone(),
+            deleted: false,
         })
         .collect();
     let (token, held_until) = hold(
@@ -1029,6 +1100,15 @@ async fn code_unmoved(
         let Some(row) = db.get_code_basis_row(page_id, &snap.locator).await? else {
             return Ok(None);
         };
+        if snap.deleted {
+            let still_gone = row.reference.state == crate::code_basis::CODE_BASIS_STATE_UNAVAILABLE
+                && row.reference.reason.as_deref() == Some(crate::code_basis_follow::FILE_DELETED);
+            if row.anchor_json != snap.anchor_json || !still_gone {
+                return Ok(None);
+            }
+            rows.push(row);
+            continue;
+        }
         let still_stale = row.reference.state == crate::code_basis::CODE_BASIS_STATE_PENDING
             && row.recheck.digest.as_deref() == Some(snap.key.as_str())
             && row.recheck.verdict.as_deref() == Some(crate::code_basis_recheck::STORED_STALE);
@@ -1051,8 +1131,8 @@ async fn code_unmoved(
 pub const STEEP_CONFIRMED_BY: &str = "steep";
 
 /// Settle the code bases a `code_changed` claim was about, at the lines the
-/// caller was shown. A row whose lines moved on since is left to be judged
-/// again.
+/// caller was shown, and stop relying on files that were deleted. A row whose
+/// lines moved on since is left to be judged again.
 async fn confirm_code(
     db: &MemoryDB,
     rows: &[crate::db::CodeBasisRow],
@@ -1060,6 +1140,15 @@ async fn confirm_code(
 ) -> Result<usize, WenlanError> {
     let mut confirmed = 0;
     for (row, snap) in rows.iter().zip(&snapshot.code) {
+        if snap.deleted {
+            if db
+                .remove_code_basis(&row.page_id, &CodeBasisLocator::from(&row.reference))
+                .await?
+            {
+                confirmed += 1;
+            }
+            continue;
+        }
         if crate::code_basis_recheck::confirm_code_basis_as_seen(
             db,
             row,
@@ -1072,6 +1161,21 @@ async fn confirm_code(
         }
     }
     Ok(confirmed)
+}
+
+/// Stop relying on the deleted files a `code_changed` claim was about.
+async fn forget_deleted(
+    db: &MemoryDB,
+    rows: &[crate::db::CodeBasisRow],
+    snapshot: &Snapshot,
+) -> Result<(), WenlanError> {
+    for (row, snap) in rows.iter().zip(&snapshot.code) {
+        if snap.deleted {
+            db.remove_code_basis(&row.page_id, &CodeBasisLocator::from(&row.reference))
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Land the caller's answers to a `judge` claim, each the way the background
@@ -1403,6 +1507,12 @@ pub async fn commit(
         Err(error) => return Err(error.into()),
     };
     let outcome = if result.gated {
+        // The card already reads without the deleted files, and whatever the
+        // user decides about it, those files are not coming back: the note
+        // stops relying on them now, so it is not offered again after the card.
+        if let Err(error) = forget_deleted(db, &code_rows, &snapshot).await {
+            log::warn!("[steep] {page_id} staged; deleted code basis not removed: {error}");
+        }
         "review_card"
     } else if result.wrote {
         if let Err(error) = db.update_page_summary(&page_id, summary.as_deref()).await {
@@ -1418,6 +1528,10 @@ pub async fn commit(
         }
         "written"
     } else if result.outcome == WriteOutcome::Unchanged && result.acknowledged {
+        // The same text again: it already reads without the deleted files.
+        if let Err(error) = forget_deleted(db, &code_rows, &snapshot).await {
+            log::warn!("[steep] {page_id} unchanged; deleted code basis not removed: {error}");
+        }
         "unchanged"
     } else {
         return Err(SteepError::Changed(CHANGED.into()));

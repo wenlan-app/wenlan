@@ -1193,7 +1193,10 @@ jobs:
     needs: [detect-changes, macos-nextest-build]
     if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
     runs-on: macos-14
-    timeout-minutes: ${{ github.event_name == 'pull_request' && 25 || 60 }}
+    # A slice that draws the slow server and legacy-copy tests runs about 21
+    # minutes of tests after a download that can take 4; 25 cut it off with
+    # every test passed.
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 35 || 60 }}
     strategy:
       fail-fast: true
       matrix:

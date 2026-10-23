@@ -137,6 +137,15 @@ fn user_prompt(claimed: &SteepClaim) -> String {
         }
     }
     for code in &claimed.code {
+        if code.deleted {
+            prompt.push_str(&format!(
+                "\nCode the note relied on, {} lines {} to {}: this file was deleted from the \
+                 repository. Drop or correct what only these lines supported. The lines as they \
+                 were:\n{}\n",
+                code.path, code.line_start, code.line_end, code.excerpt
+            ));
+            continue;
+        }
         prompt.push_str(&format!(
             "\nCode the note relies on, {} lines {} to {}, as it reads now:\n{}\n",
             code.path, code.line_start, code.line_end, code.excerpt
