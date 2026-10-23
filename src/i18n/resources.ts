@@ -1169,7 +1169,7 @@ const en = {
     available: "Update available",
     updateTo: "Update to {{version}}",
     installBody: "Updating closes Wenlan and reopens it when done.",
-    retry: "Try again",
+    retry: "Try updating again",
   },
   daemonService: {
     label: "Service out of date",
@@ -2299,7 +2299,7 @@ const en = {
     restoringService: "Restoring the Wenlan service…",
   },
   askAi: {
-    entry: "Ask your AI",
+    entry: "What your AI can do",
     title: "What your AI can do",
     close: "Close",
     toolsLabel: "AI tool",
@@ -3992,7 +3992,7 @@ const zhHans = {
     available: "有新版本",
     updateTo: "更新到 {{version}}",
     installBody: "更新时会关闭文澜，装好后自动重新打开。",
-    retry: "再试一次",
+    retry: "再试一次更新",
   },
   daemonService: {
     label: "后台服务版本过旧",
@@ -6781,7 +6781,7 @@ const zhHant = {
     available: "有新版本",
     updateTo: "更新到 {{version}}",
     installBody: "更新時會關閉文瀾，裝好後自動重新開啟。",
-    retry: "再試一次",
+    retry: "再試一次更新",
   },
   daemonService: {
     label: "背景服務版本過舊",

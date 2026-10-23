@@ -9,8 +9,6 @@ const { restartDaemonMock, startDaemonSidecarMock, getWireStateMock } = vi.hoist
   startDaemonSidecarMock: vi.fn(),
   getWireStateMock: vi.fn(),
 }));
-const emitMock = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/api/event", () => ({ emit: emitMock }));
 vi.mock("../../lib/tauri", () => ({
   restartDaemon: restartDaemonMock,
   startDaemonSidecar: startDaemonSidecarMock,
@@ -21,12 +19,10 @@ import "../../i18n";
 import { resources } from "../../i18n/resources";
 import { setDaemonStartupPhase } from "../../lib/daemonStartup";
 import { getServiceNotices, setServiceFallback, setUpdateNotice, setVersionReport } from "../../lib/serviceNotices";
-import { installUpdate, onUpdateAvailable, onUpdateProgress, onUpdateStatus } from "../../lib/appUpdate";
 import ServiceStatus from "./ServiceStatus";
 
 const BOOT = resources.en.translation.boot;
 const SERVICE = resources.en.translation.daemonService;
-const UPDATER = resources.en.translation.updater;
 const OUT_OF_DATE = { daemon: "0.19.3", app: "0.20.0", matched: false, owner: "launchd", program: null } as const;
 
 function renderStatus(node: ReactNode) {
@@ -44,7 +40,6 @@ describe("ServiceStatus", () => {
     restartDaemonMock.mockReset().mockResolvedValue("0.20.0");
     startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
     getWireStateMock.mockReset().mockResolvedValue({ daemon: { reachable: true, error: null } });
-    emitMock.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => {
     act(() => {
@@ -207,63 +202,38 @@ describe("ServiceStatus", () => {
     await act(async () => { release(); });
   });
 
-  describe("an app update", () => {
-    it("says nothing while a version is only on offer", () => {
-      renderStatus(<ServiceStatus />);
-      act(() => onUpdateAvailable("0.20.1"));
-      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+  describe("in Activity's place", () => {
+    const activity = <button type="button" data-testid="activity-status">Activity</button>;
+
+    it("leaves the slot to Activity when the service is fine", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      expect(screen.getByTestId("activity-status")).toBeInTheDocument();
     });
 
-    it("shows an install in progress as one quiet line", async () => {
-      renderStatus(<ServiceStatus />);
-      act(() => onUpdateAvailable("0.20.1"));
-      await act(() => installUpdate());
+    it("takes the slot while the service starts, then gives it back", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      act(() => setDaemonStartupPhase("starting"));
+      expect(screen.queryByTestId("activity-status")).not.toBeInTheDocument();
+      expect(screen.getByTestId("service-status-starting")).toHaveTextContent(BOOT.startingInBackground);
 
-      expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
-      const line = screen.getByTestId("service-status-updating");
-      expect(line).toHaveTextContent(UPDATER.updating);
-
-      act(() => onUpdateProgress({ chunk: 0, total: 1000 }));
-      act(() => onUpdateProgress({ chunk: 420 }));
-      expect(line).toHaveTextContent("Updating 42%");
+      act(() => setDaemonStartupPhase("ready"));
+      expect(screen.getByTestId("activity-status")).toBeInTheDocument();
     });
 
-    it("gives way to a service problem", async () => {
-      renderStatus(<ServiceStatus />);
-      act(() => onUpdateAvailable("0.20.1"));
-      await act(() => installUpdate());
+    it("takes the slot while something needs the user", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
       act(() => setVersionReport(OUT_OF_DATE));
+      expect(screen.queryByTestId("activity-status")).not.toBeInTheDocument();
       expect(row()).toHaveAttribute("data-kind", "outOfDate");
-
-      act(() => setVersionReport(null));
-      expect(screen.getByTestId("service-status-updating")).toBeInTheDocument();
     });
 
-    it("turns into a warning when the install fails, and tries again in one press", async () => {
-      renderStatus(<ServiceStatus />);
-      act(() => onUpdateAvailable("0.20.1"));
-      await act(() => installUpdate());
-
-      act(() => onUpdateProgress({ error: "network unavailable" }));
-      expect(row()).toHaveAttribute("data-kind", "updateFailed");
-      expect(screen.getByTestId("service-status-popover")).toHaveTextContent(UPDATER.failedBody);
-      emitMock.mockClear();
-
-      fireEvent.click(action());
-      await waitFor(() => expect(emitMock).toHaveBeenCalledWith("updater://check-now"));
-      expect(screen.getByTestId("service-status-updating")).toBeInTheDocument();
-
-      // The check offers the version again; "Try again" already said yes.
-      act(() => onUpdateAvailable("0.20.1"));
-      expect(emitMock).toHaveBeenCalledWith("updater://action", "install");
-      expect(screen.getByTestId("service-status-updating")).toBeInTheDocument();
-    });
-
-    it("ignores background check reports when nothing was offered", () => {
-      renderStatus(<ServiceStatus />);
-      act(() => onUpdateStatus({ state: "error", error: "offline" }));
-      expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
-      expect(getServiceNotices().update).toBeNull();
+    it("never speaks about an app update, which lives on the account entry", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      for (const phase of ["available", "installing", "failed"] as const) {
+        act(() => setUpdateNotice({ phase, version: "0.20.1", pct: 42 }));
+        expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+        expect(screen.getByTestId("activity-status")).toBeInTheDocument();
+      }
     });
   });
 });

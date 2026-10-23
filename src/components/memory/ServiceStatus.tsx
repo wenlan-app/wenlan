@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { TFunction } from "i18next";
-import { WarningCircle } from "@phosphor-icons/react";
+import { Pulse, WarningCircle } from "@phosphor-icons/react";
 import { useDaemonStartupPhase } from "../../lib/daemonStartup";
 import {
   serviceStatusKind,
@@ -15,69 +15,67 @@ import {
 } from "../../lib/serviceNotices";
 import { getWireState, restartDaemon, startDaemonSidecar } from "../../lib/tauri";
 import { restartErrorKey } from "../../lib/daemonRestartErrors";
-import { retryUpdate } from "../../lib/appUpdate";
 
-/** Every lasting state that needs saying, in one place: the top of the
- *  sidebar footer, above 「AI 能做什麼」 and Activity. The service says here
- *  what it is doing and what is wrong with it, and an app update the user
- *  started says how far it got. A version only on offer is a dot on the
- *  account entry instead, and one-off messages go to the toast stack at the
- *  bottom centre, so this row exists only while something is happening.
+/** The service speaks in Activity's place in the sidebar footer, so the
+ *  footer never grows a row of its own for it. Activity shows one thing at a
+ *  time, the one that matters most: a service problem, then the service
+ *  starting, then Activity itself (organizing, or quiet). An app update lives
+ *  on the account entry instead (src/components/memory/IdentityCard.tsx), and
+ *  one-off messages go to the toast stack, so nothing else is laid over the
+ *  workspace.
  *
- *  Something in progress (starting, updating) is one muted line. Something
- *  that needs the user (not answering, out of date, not running, update
- *  failed) turns the same row into a warning styled like Activity's failed
- *  state, which opens once by itself with what is wrong and the one action
- *  that fixes it. When the state goes away the row goes quiet again.
- *  Nothing is laid over the workspace. Which one shows is decided in
+ *  Starting is Activity's own row with a pulse and 「正在背景啟動…」. Something
+ *  that needs the user (not answering, out of date, not running) turns the
+ *  same slot amber, like Activity's failed state, and opens once by itself
+ *  with what is wrong and the one action that fixes it. When the state goes
+ *  away Activity comes back. Which one shows is decided in
  *  src/lib/serviceNotices.ts. */
-export default function ServiceStatus({ compact = false }: { readonly compact?: boolean }) {
+export default function ServiceStatus({
+  compact = false,
+  children,
+}: {
+  readonly compact?: boolean;
+  /** Activity, shown whenever the service has nothing to say. */
+  readonly children?: ReactNode;
+}) {
   const phase = useDaemonStartupPhase();
   const notices = useServiceNotices();
   const kind = serviceStatusKind(phase, notices);
-  if (kind === null) return null;
-  if (kind === "starting" || kind === "updating") {
-    return <ProgressLine kind={kind} pct={notices.update?.pct ?? null} compact={compact} />;
-  }
+  if (kind === null) return <>{children}</>;
+  if (kind === "starting") return <StartingRow compact={compact} />;
   // Keyed by kind: a new problem opens its explanation once and starts
   // without the last one's error.
   return <ServiceWarning key={kind} kind={kind} notices={notices} compact={compact} />;
 }
 
-function ProgressLine({
-  kind,
-  pct,
-  compact,
-}: {
-  readonly kind: "starting" | "updating";
-  readonly pct: number | null;
-  readonly compact: boolean;
-}) {
+function StartingRow({ compact }: { readonly compact: boolean }) {
   const { t } = useTranslation();
-  const label =
-    kind === "starting"
-      ? t("boot.startingInBackground")
-      : pct === null
-        ? t("updater.updating")
-        : t("updater.updatingPct", { pct });
+  const label = t("boot.startingInBackground");
   return (
     <div
-      role="status"
-      aria-label={compact ? label : undefined}
-      title={compact ? label : undefined}
-      data-testid={`service-status-${kind}`}
-      className={`mem-daemon-startup-status${compact ? " mem-daemon-startup-status--compact" : ""}`}
+      className={`mem-activity-status-anchor${compact ? " mem-activity-status-anchor--compact" : ""}`}
     >
-      <span
-        aria-hidden="true"
-        className={`mem-daemon-startup-dot${kind === "updating" ? " mem-daemon-startup-dot--calm" : ""}`}
-      />
-      {!compact && <span className="mem-daemon-startup-label">{label}</span>}
+      <div
+        role="status"
+        aria-label={label}
+        title={label}
+        data-testid="service-status-starting"
+        className={`mem-activity-status mem-activity-status--still${compact ? " mem-activity-status--compact" : ""}`}
+      >
+        <Pulse
+          aria-hidden="true"
+          className="mem-activity-status-icon mem-activity-pulse-running"
+          data-icon-state="organizing"
+          size={22}
+          weight="regular"
+        />
+        {!compact && <span aria-hidden="true" className="mem-activity-status-label">{label}</span>}
+      </div>
     </div>
   );
 }
 
-type WarningKind = Exclude<ServiceStatusKind, "starting" | "updating">;
+type WarningKind = Exclude<ServiceStatusKind, "starting">;
 
 interface WarningCopy {
   readonly label: string;
@@ -112,23 +110,12 @@ function warningCopy(kind: WarningKind, { version }: ServiceNotices, t: TFunctio
         action: t("boot.startService"),
         busy: t("boot.starting"),
       };
-    case "updateFailed":
-      return {
-        label: t("updater.failed"),
-        body: [t("updater.failedBody")],
-        action: t("updater.retry"),
-        busy: t("updater.updating"),
-      };
   }
 }
 
 /** Runs the warning's one action. Resolves with the text to show when it did
  *  not fix things, or null when it did. */
 async function runAction(kind: WarningKind, queryClient: QueryClient, t: TFunction): Promise<string | null> {
-  if (kind === "updateFailed") {
-    await retryUpdate();
-    return null;
-  }
   if (kind === "notRunning") {
     const result = await startDaemonSidecar();
     if (result.status === "failed") return `${t("boot.startFailed")} ${result.message}`;

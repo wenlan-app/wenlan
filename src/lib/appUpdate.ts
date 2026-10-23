@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * The app updater, as the sidebar's service row sees it.
+ * The app updater, as the account entry sees it.
  *
  * `app/src/updater.rs` offers a new version and then waits for an answer.
  * `src/components/UpdateWatcher.tsx` turns its events into the
- * `update` notice in `src/lib/serviceNotices.ts`. The account menu
- * (`src/components/memory/IdentityCard.tsx`) offers the install, and the
- * sidebar's service row (`src/components/memory/ServiceStatus.tsx`) shows its
- * progress and offers to try again; both use the actions here.
+ * `update` notice in `src/lib/serviceNotices.ts`. The account entry
+ * (`src/components/memory/IdentityCard.tsx`) offers the install, shows its
+ * progress, and offers to try again, with the actions here.
  *
  * Events in:
  *   - `updater://available`  payload `{ version }`: a version is on offer

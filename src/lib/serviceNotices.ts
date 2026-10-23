@@ -2,12 +2,11 @@
 /**
  * What the background service needs the user to know, said in one place.
  *
- * The sidebar's service row (`src/components/memory/ServiceStatus.tsx`) is the
- * only surface that speaks about the service in the workspace: while it
+ * The sidebar's Activity slot (`src/components/memory/ServiceStatus.tsx`) is
+ * the only surface that speaks about the service in the workspace: while it
  * starts, when it does not answer, when it runs an older version than the
- * app, and when Rust could not put it under launchd. The same row also
- * carries an app update the user started (in progress, or failed). A version
- * that is only on offer is quieter still: a dot on the account entry
+ * app, and when Rust could not put it under launchd. An app update, from the
+ * offer through installing to a failure, is on the account entry
  * (`src/components/memory/IdentityCard.tsx`), which reads it from here too.
  * The sources stay where the events arrive
  * (`src/App.tsx` for the fallback event,
@@ -78,15 +77,13 @@ export type ServiceStatusKind =
   | "starting"
   | "notAnswering"
   | "outOfDate"
-  | "notRunning"
-  | "updating"
-  | "updateFailed";
+  | "notRunning";
 
-/** One thing at a time, the one that matters most first: the service, then
- *  an update the user started. An update only on offer has no row. */
+/** One thing at a time, the one that matters most first. Null leaves the
+ *  slot to Activity. */
 export function serviceStatusKind(
   phase: DaemonStartupPhase,
-  { version, fallback, update }: ServiceNotices,
+  { version, fallback }: ServiceNotices,
 ): ServiceStatusKind | null {
   if (phase === "failed") return "notAnswering";
   // While the workspace waits, nothing else is known yet: an old report or a
@@ -94,7 +91,5 @@ export function serviceStatusKind(
   if (phase === "starting") return "starting";
   if (version) return "outOfDate";
   if (fallback) return "notRunning";
-  if (update?.phase === "installing") return "updating";
-  if (update?.phase === "failed") return "updateFailed";
   return null;
 }
