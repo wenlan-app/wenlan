@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { CodeBasisRef } from "../../../lib/tauri";
 import { CodeBasisDialog } from "./CodeBasisDialog";
-import { codeBasisAiLineText, codeBasisLineText } from "./codeBasisShared";
-import { OverflowMenu } from "./OverflowMenu";
+import { codeBasisAiLineText } from "./codeBasisShared";
 import { codeBasisKeyOf, type useCodeBasisActions } from "./useCodeBasisActions";
 
 export interface NoteCodeBasisHandlers {
@@ -20,7 +20,18 @@ interface CodeBasisLinesProps extends NoteCodeBasisHandlers {
   disabled?: boolean;
 }
 
-/** The code a note relies on that needs a look: one line each, with what can be done about it. */
+/** The notice's one line: the file when there is one row, a count when there are more. */
+function summaryText(t: TFunction, rows: readonly CodeBasisRef[]): string {
+  if (rows.length > 1) return t("codeBasis.notice.many", { count: rows.length });
+  const [row] = rows;
+  return t(row.state === "pending" ? "codeBasis.notice.changedOne" : "codeBasis.notice.missingOne", { file: row.path });
+}
+
+/**
+ * The code a note relies on that needs a look: one line and one button. The
+ * decisions are made in the dialog, one row after another, where the code can
+ * be seen; once every row is settled the line goes away.
+ */
 export function CodeBasisLines({
   pageId,
   codeBasis,
@@ -29,68 +40,72 @@ export function CodeBasisLines({
   onEditToConfirm,
 }: CodeBasisLinesProps) {
   const { t } = useTranslation();
-  const [viewing, setViewing] = useState<CodeBasisRef | null>(null);
-  const lines = codeBasis;
-  if (lines.length === 0) return null;
+  // The rows as they stood when the dialog opened: settling one refetches the
+  // page and drops it from `codeBasis`, and the step must not jump.
+  const [queue, setQueue] = useState<readonly CodeBasisRef[] | null>(null);
+  const [index, setIndex] = useState(0);
+  // Bumped when the code changed again, so the dialog reads the lines afresh.
+  const [attempt, setAttempt] = useState(0);
+  // Which button the person pressed, so only that one spins.
+  const [doing, setDoing] = useState<"confirm" | "stop" | null>(null);
+  const current = queue?.[index] ?? null;
+  if (codeBasis.length === 0 && !current) return null;
+
+  const close = () => { setQueue(null); setIndex(0); };
+  const next = () => {
+    if (!queue || index + 1 >= queue.length) close();
+    else setIndex(index + 1);
+  };
+
+  let message: { text: string; alert: boolean } | null = null;
+  if (current) {
+    const failure = actions.failureOf(pageId, current);
+    if (failure) message = { text: t(failure === "confirm" ? "codeBasis.confirmFailed" : "codeBasis.stopFailed"), alert: true };
+    else if (actions.hasChangedAgain(pageId, current)) message = { text: t("codeBasis.changedAgain"), alert: false };
+  }
 
   return <>
-    <ul className="note-review-notice__basis-list" aria-label={t("codeBasis.groupLabel")}>
-      {lines.map((row) => {
-        const busy = actions.isBusy(pageId, row);
-        const failure = actions.failureOf(pageId, row);
-        const stop = () => { void actions.stop(pageId, row); };
-        const aiLine = codeBasisAiLineText(t, row);
-        return <li key={codeBasisKeyOf(pageId, row)} className="note-review-notice__basis">
-          <div className="note-review-notice__basis-body">
-            <p className="note-review-notice__message note-review-notice__basis-text">{codeBasisLineText(t, row)}</p>
-            {aiLine && <p className="note-review-notice__message note-review-notice__basis-ai">{aiLine}</p>}
-          </div>
-          <div className="note-review-notice__actions">
-            {row.state === "pending" ? <>
-              <button
-                type="button"
-                className="note-review-notice__button"
-                disabled={disabled || busy}
-                onClick={() => setViewing(row)}
-              >{t("codeBasis.seeCode")}</button>
-              <button
-                type="button"
-                className="note-review-notice__button"
-                disabled={disabled || busy}
-                onClick={() => { void actions.confirm(pageId, row); }}
-              >{t("codeBasis.confirmNoImpact")}</button>
-              <OverflowMenu
-                label={t("codeBasis.moreActions")}
-                disabled={disabled || busy}
-                items={[
-                  { key: "edit", label: t("codeBasis.editYourself"), onSelect: () => onEditToConfirm(row) },
-                  { key: "stop", label: t("codeBasis.stopRelying"), onSelect: stop },
-                ]}
-              />
-            </> : <button
-              type="button"
-              className="note-review-notice__button note-review-notice__button--quiet"
-              disabled={disabled || busy}
-              onClick={stop}
-            >{t("codeBasis.stopRelying")}</button>}
-          </div>
-          {actions.hasChangedAgain(pageId, row) && <p className="note-review-notice__basis-note" role="status">
-            {t("codeBasis.changedAgain")}
-          </p>}
-          {failure && <p className="note-review-notice__basis-note" role="alert">
-            {t(failure === "confirm" ? "codeBasis.confirmFailed" : "codeBasis.stopFailed")}
-          </p>}
-        </li>;
-      })}
-    </ul>
-    {viewing && <CodeBasisDialog
+    {codeBasis.length > 0 && <div className="note-review-notice__basis note-review-notice__code-summary">
+      <p className="note-review-notice__message note-review-notice__basis-text">{summaryText(t, codeBasis)}</p>
+      <div className="note-review-notice__actions">
+        <button
+          type="button"
+          className="note-review-notice__button"
+          disabled={disabled}
+          onClick={() => { setQueue([...codeBasis]); setIndex(0); }}
+        >{t("codeBasis.notice.review")}</button>
+      </div>
+    </div>}
+    {current && queue && <CodeBasisDialog
+      key={`${codeBasisKeyOf(pageId, current)}\u0000${attempt}`}
       pageId={pageId}
-      row={viewing}
-      confirming={actions.isBusy(pageId, viewing)}
-      onClose={() => setViewing(null)}
+      row={current}
+      confirming={actions.isBusy(pageId, current) && doing === "confirm"}
+      onClose={close}
       onConfirm={() => {
-        const target = viewing;
-        void actions.confirm(pageId, target).then(() => setViewing(null));
+        const target = current;
+        setDoing("confirm");
+        void actions.confirm(pageId, target).then((answer) => {
+          if (answer === "confirmed") next();
+          else if (answer === "conflict") setAttempt((value) => value + 1);
+        });
+      }}
+      decide={{
+        step: { index, total: queue.length },
+        note: codeBasisAiLineText(t, current),
+        message,
+        stopping: actions.isBusy(pageId, current) && doing === "stop",
+        onStop: () => {
+          const target = current;
+          setDoing("stop");
+          void actions.stop(pageId, target).then((done) => { if (done) next(); });
+        },
+        onEdit: () => {
+          const target = current;
+          close();
+          onEditToConfirm(target);
+        },
+        onLater: next,
       }}
     />}
   </>;

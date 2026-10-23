@@ -122,3 +122,25 @@ html[data-theme="light"] .code-basis-panel {
 @media (max-width: 720px) {
   .code-basis__columns { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Deciding one row after another: the title, where in the list it is, and a way out. */
+.code-basis__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.code-basis__head .basis-diff__title { flex: 1 1 auto; min-width: 0; }
+.code-basis__step {
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Editing the page yourself is the quiet way out on the left; the decision sits on the right. */
+.code-basis__decide { justify-content: space-between; }
+.code-basis__decide-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

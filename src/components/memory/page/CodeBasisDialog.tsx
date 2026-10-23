@@ -7,6 +7,7 @@ import { getPageCodeBasisCited, readCodeLines, readGitBlobLines, type CodeBasisR
 import { Button } from "../settings/primitives";
 import {
   codeBasisAbsolutePath,
+  codeBasisLineText,
   codeBasisLocation,
   codeBasisSpanVars,
   useCopyLocation,
@@ -23,6 +24,25 @@ interface CodeBasisDialogProps {
   onConfirm: () => void;
   onClose: () => void;
   confirming?: boolean;
+  /**
+   * Present when the person decides here, one row after another (the page's
+   * own notice): the step, what the check said, and the other ways out. The
+   * review list leaves it out and keeps its copy and close buttons.
+   */
+  decide?: CodeBasisDecide;
+}
+
+export interface CodeBasisDecide {
+  step: { index: number; total: number };
+  /** What the background check said about the row, as the notice used to show it. */
+  note: string | null;
+  /** A conflict or a failure from the last try, said in the dialog. */
+  message: { text: string; alert: boolean } | null;
+  onStop: () => void;
+  onEdit: () => void;
+  /** Leave a row that cannot be found for now and go on. */
+  onLater: () => void;
+  stopping?: boolean;
 }
 
 function Column({ title, children }: { title: string; children: React.ReactNode }) {
@@ -63,12 +83,15 @@ function Code({ lines, firstLine, testId, marks, mark }: {
  * them, and as they read now. Lines that exist on one side only are tinted
  * (removed on the cited side, added on the current side); equal lines stay plain.
  */
-export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = false }: CodeBasisDialogProps) {
+export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = false, decide }: CodeBasisDialogProps) {
   const { t } = useTranslation();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const { copied, copy } = useCopyLocation();
   const rowKey = codeBasisKeyOf(pageId, row);
+  // Code that cannot be found has nothing to show side by side; the notice's
+  // own sentence says why.
+  const missing = Boolean(decide) && row.state === "unavailable";
   // The lines as cited: the file's git blob from when the note cited it, read
   // for these lines. No blob (an older row) is "nothing to compare"; a blob
   // that git cannot read is an error, which the view treats the same way.
@@ -82,6 +105,7 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    enabled: !missing,
   });
   const now = useQuery({
     queryKey: ["code-basis-now", rowKey],
@@ -89,6 +113,7 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
     staleTime: 0,
     gcTime: 0,
     retry: false,
+    enabled: !missing,
   });
 
   useEffect(() => {
@@ -174,13 +199,39 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
           }
         }}
       >
-        <h2 id={titleId} className="basis-diff__title">{title}</h2>
-        {noBefore && <p className="basis-diff__status" role="status">{t("codeBasis.dialog.noBefore")}</p>}
-        <div className={noBefore ? "code-basis__columns code-basis__columns--single" : "code-basis__columns"}>
+        {decide ? <div className="code-basis__head">
+          <h2 id={titleId} className="basis-diff__title">{title}</h2>
+          {decide.step.total > 1 && <span className="code-basis__step">
+            {t("codeBasis.step", { index: decide.step.index + 1, total: decide.step.total })}
+          </span>}
+          <Button variant="ghost" size="sm" aria-label={t("codeBasis.close")} onClick={onClose}>×</Button>
+        </div> : <h2 id={titleId} className="basis-diff__title">{title}</h2>}
+        {decide?.note && <p className="basis-diff__status">{decide.note}</p>}
+        {missing && <p className="basis-diff__status">{codeBasisLineText(t, row)}</p>}
+        {!missing && noBefore && <p className="basis-diff__status" role="status">{t("codeBasis.dialog.noBefore")}</p>}
+        {!missing && <div className={noBefore ? "code-basis__columns code-basis__columns--single" : "code-basis__columns"}>
           {!noBefore && <Column title={t("codeBasis.dialog.before")}>{before}</Column>}
           <Column title={t("codeBasis.dialog.after")}>{after}</Column>
-        </div>
-        <div className="basis-diff__actions">
+        </div>}
+        {decide?.message && <p className="basis-diff__status" role={decide.message.alert ? "alert" : "status"}>
+          {decide.message.text}
+        </p>}
+        {decide ? <div className="basis-diff__actions code-basis__decide">
+          <Button variant="ghost" onClick={decide.onEdit}>{t("codeBasis.editYourself")}</Button>
+          <div className="code-basis__decide-main">
+            {row.state === "pending" ? <>
+              <Button variant="secondary" loading={decide.stopping} disabled={confirming} onClick={decide.onStop}>
+                {t("codeBasis.stopRelying")}
+              </Button>
+              <Button variant="primary" loading={confirming} disabled={decide.stopping} onClick={onConfirm}>
+                {t("codeBasis.confirmNoImpact")}
+              </Button>
+            </> : <>
+              <Button variant="secondary" disabled={decide.stopping} onClick={decide.onLater}>{t("codeBasis.later")}</Button>
+              <Button variant="primary" loading={decide.stopping} onClick={decide.onStop}>{t("codeBasis.stopRelying")}</Button>
+            </>}
+          </div>
+        </div> : <div className="basis-diff__actions">
           <Button variant="secondary" onClick={() => { void copy(codeBasisLocation(row)); }}>
             {copied ? t("codeBasis.copied") : t("codeBasis.copyLocation")}
           </Button>
@@ -190,7 +241,7 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
             loading={confirming}
             onClick={onConfirm}
           >{t("codeBasis.confirmNoImpact")}</Button>}
-        </div>
+        </div>}
       </div>
     </div>,
     document.body,
