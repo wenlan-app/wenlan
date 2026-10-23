@@ -8,7 +8,8 @@ use crate::state::AppState;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wenlan_types::repo_wiki::{
-    BindRepoWikiRequest, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult, RepoWikiSuggestion,
+    BindRepoWikiRequest, RepoDocsReply, RepoDocsRequest, RepoWikiBinding, RepoWikiDaily,
+    RepoWikiPublishResult, RepoWikiSuggestion,
 };
 
 type State = Arc<RwLock<AppState>>;
@@ -89,5 +90,19 @@ pub async fn publish_repo_wiki(
     client(&state)
         .await
         .post_empty(&wiki_path(&space, "publish"))
+        .await
+}
+
+/// Decline the doc fix `id` of `space`: it leaves the pull request on the
+/// next update and is not suggested again.
+#[tauri::command]
+pub async fn dismiss_repo_doc_fix(
+    state: tauri::State<'_, State>,
+    space: String,
+    id: String,
+) -> Result<RepoDocsReply, String> {
+    client(&state)
+        .await
+        .post_json(&wiki_path(&space, "docs"), &RepoDocsRequest::Dismiss { id })
         .await
 }

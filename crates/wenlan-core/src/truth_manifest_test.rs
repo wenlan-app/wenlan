@@ -227,14 +227,15 @@ fn manifest_counts_match_the_spec() {
     // three steep new-page routes. Then 224 after POST `/api/pages/lock-edited`
     // (lock my pages backfill; a count receipt, not page-bearing). Then 229
     // after the five routes of a Space bound to a repository, and 230 after
-    // the route suggesting which repository to bind. Then 231 after POST
+    // the route suggesting which repository to bind, and 231 after the route
+    // taking fixes to the repository's own docs. Then 232 after POST
     // `/api/attachments` (copies a media file into the pages folder).
     assert_eq!(
         HTTP_READERS.len(),
-        231,
+        232,
         "registered (method, path, handler) triples"
     );
-    assert_eq!(MCP_READERS.len(), 35, "#[tool( declarations");
+    assert_eq!(MCP_READERS.len(), 36, "#[tool( declarations");
     // No hand-bumped CLI count here: `wenlan-cli`'s
     // `catalog_tests::truth_manifest_cli_rows_match_clap_subcommands` derives
     // the expected set from clap's `Commands` enum, which this crate cannot see.
@@ -242,7 +243,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        243,
+        244,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -250,7 +251,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        226,
+        227,
         "main builder entries"
     );
     assert_eq!(
@@ -426,7 +427,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        224 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +1: lock-edited, +6: repo wiki, +1: attachments)
+        225 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +1: lock-edited, +7: repo wiki, +1: attachments)
     );
 }
 

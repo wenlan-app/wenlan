@@ -44455,15 +44455,21 @@ impl MemoryDB {
     }
 
     /// Return the genuinely first-compiled active page (ordered by
-    /// `created_at` ascending). Used by `MilestoneEvaluator::check_after_refinery_pass`
+    /// `created_at` ascending). Used by `MilestoneEvaluator::check_first_page`
     /// so the `first-page` milestone payload references the page that
     /// was actually compiled first, not the most recently edited one.
+    ///
+    /// Only a page written from the user's material (`distilled`) counts: a
+    /// copy of a brought-in file or a page the user wrote is not the "first
+    /// page Wenlan put together" the milestone announces.
     pub async fn oldest_active_page(&self) -> Result<Option<crate::pages::Page>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
-                 FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' ORDER BY created_at ASC LIMIT 1",
+                 FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity'
+                   AND COALESCE(creation_kind, 'distilled') = 'distilled'
+                 ORDER BY created_at ASC LIMIT 1",
                 (),
             )
             .await

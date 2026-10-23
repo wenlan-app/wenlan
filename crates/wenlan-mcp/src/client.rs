@@ -454,6 +454,7 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "attachment_not_a_file"
             | "attachment_path_not_absolute"
             | "attachment_name_taken"
+            | "doc_fix_refused"
     );
     if !safe {
         return None;
@@ -464,7 +465,10 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     // A steep refusal is a fixed sentence from the daemon (counts at most),
     // and the agent acts on it: claim again, fix a citation, pick another
     // page. A write's citations refusal carries only counts.
-    if code == "code_basis_invalid" || code.starts_with("steep_") || code == "citations_unsupported"
+    if code == "code_basis_invalid"
+        || code.starts_with("steep_")
+        || code == "citations_unsupported"
+        || code == "doc_fix_refused"
     {
         if let Some((_, detail)) = reason.split_once(':') {
             let detail: String = detail

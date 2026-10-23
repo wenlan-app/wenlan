@@ -18,11 +18,19 @@ import {
   type RepoWikiPublishResult,
 } from "../../../lib/tauri";
 import { Input, Select, Toggle } from "../settings/primitives";
+import { RepoDocsSection } from "./RepoDocsSection";
 import "./repo-wiki.css";
 
 const AGENT_NAMES: Record<RepoWikiAgent, string> = { claude: "Claude Code", codex: "Codex" };
 const DEFAULT_DAILY: RepoWikiDaily = { enabled: false, hour: 9, agent: "claude" };
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+
+/** Keep the panel inside the window: it scrolls instead of running past the bottom. */
+function fitToWindow(panel: HTMLDivElement | null) {
+  if (!panel) return;
+  const room = window.innerHeight - panel.getBoundingClientRect().top - 16;
+  panel.style.maxHeight = `${Math.max(240, room)}px`;
+}
 
 /** `github.com/owner/repo` from an origin URL, or null for another host. */
 export function githubRepo(remote: string | null | undefined): string | null {
@@ -62,6 +70,7 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
   const [publishFailed, setPublishFailed] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
 
   const bindingQuery = useQuery({
@@ -87,6 +96,19 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
     };
     document.addEventListener("pointerdown", closeOutside);
     return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    // The page under the panel can scroll or the window resize while it is open.
+    const fit = () => fitToWindow(panelRef.current);
+    fit();
+    window.addEventListener("resize", fit);
+    document.addEventListener("scroll", fit, true);
+    return () => {
+      window.removeEventListener("resize", fit);
+      document.removeEventListener("scroll", fit, true);
+    };
   }, [open]);
 
   if (!binding && candidates.length === 0) return null;
@@ -131,6 +153,7 @@ export function RepoWikiButton({ space }: { readonly space: string }) {
       {open && (
         <div
           id={panelId}
+          ref={panelRef}
           className="mem-popover-surface repo-wiki-panel"
           onKeyDown={handleKeyDown}
           role="dialog"
@@ -357,10 +380,21 @@ function BoundPanel({
       </div>
       <p className="repo-wiki-status" aria-live="polite">
         {publish
-          ? t(`repoWiki.last.${publish.status}`, {
-            count: publish.pages,
-            time: timeFormat.format(new Date(publish.at * 1000)),
-          })
+          ? publish.pages === 0 && (publish.doc_fixes ?? 0) > 0
+            ? t("repoWiki.docs.lastDocs", {
+              count: publish.doc_fixes,
+              time: timeFormat.format(new Date(publish.at * 1000)),
+            })
+            : t(
+              // Every page waits for its code: the waiting line below says so.
+              publish.status === "nothing_to_publish" && publish.waiting > 0
+                ? "repoWiki.last.no_changes"
+                : `repoWiki.last.${publish.status}`,
+              {
+                count: publish.pages,
+                time: timeFormat.format(new Date(publish.at * 1000)),
+              },
+            )
           : t("repoWiki.never")}
       </p>
       {number && pr && (
@@ -393,6 +427,7 @@ function BoundPanel({
           {update.isPending ? t("repoWiki.updating") : t("repoWiki.updateNow")}
         </button>
       </div>
+      <RepoDocsSection binding={binding} onChanged={onPublished} />
       <DailyFields daily={daily} disabled={save.isPending} onChange={(next) => save.mutate(next)} />
       {(update.isError || (publishFailed && update.isIdle)) && (
         <p className="repo-wiki-error" role="alert" title={String(update.error)}>{t("repoWiki.updateFailed")}</p>

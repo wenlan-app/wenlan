@@ -114,6 +114,10 @@ pub struct SteepNewCommitResponse {
     /// How many cited sentences the source text backs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citations: Option<String>,
+    /// A problem in a ```mermaid block that would stop it drawing, one line
+    /// per diagram, so the agent fixes or drops it. The write still landed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[cfg(test)]

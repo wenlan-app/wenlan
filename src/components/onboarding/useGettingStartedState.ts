@@ -16,8 +16,10 @@ const DISMISSED_KEY = "onboarding:gettingStartedDismissed";
 /** "Skip for now" on the pages step, for someone with nothing to bring in.
  *  Cleared once material arrives, so the step comes back with its button. */
 const PAGES_SKIPPED_KEY = "onboarding:pagesStepSkipped";
-/** A library with this many pages is past first use; existing users upgrading
- *  into this card would read it as noise. */
+/** A library with this many pages written by the user or from their material
+ *  is past first use; existing users upgrading into this card would read it as
+ *  noise. Copies of brought-in files do not count (`libraryPagesForEstablished`),
+ *  or one imported folder would hide the card from a new user. */
 export const ESTABLISHED_LIBRARY_PAGES = 10;
 
 export type GettingStartedStepId = "note" | "tool" | "pages" | "recall";
@@ -60,6 +62,13 @@ export function askablePages(pages: readonly Page[]): Page[] {
     ...writtenPages(published),
   ];
 }
+
+/** Pages that say a library is past first use: every page except copies of
+ *  brought-in files and entity pages. */
+export function libraryPagesForEstablished(pages: readonly Page[]): Page[] {
+  return pages.filter((page) => !COPIED_OR_ENTITY.has(page.creation_kind ?? ""));
+}
+const COPIED_OR_ENTITY = new Set(["source", "imported", "entity"]);
 
 /** The AI tools the daemon knows, Wenlan's own identities excluded.
  *  Connecting a tool from the app registers it (`POST /api/agents`), so a row
@@ -157,11 +166,22 @@ export interface GettingStartedState {
   readonly setPagesSkipped: (value: boolean) => void;
   readonly pages: readonly Page[];
   readonly agents: AgentConnection[];
+  /** Only writing a page by hand is left, and there are pages to read: the
+   *  card shrinks to one line and the pages take the home. */
+  readonly compact: boolean;
+}
+
+/** Writing a page by hand is the one step left, and the library already has
+ *  pages worth reading. For many people that step is not the goal, so the
+ *  card stops taking the screen. */
+export function onlyOwnPageLeft(progress: GettingStartedProgress | null, pages: readonly Page[]): boolean {
+  return progress !== null && progress.tool && progress.pages && progress.recall && !progress.note
+    && askablePages(pages).length > 0;
 }
 
 export function useGettingStartedState(): GettingStartedState {
   const { pages, ready } = useLibraryInventory();
-  const established = pages.length >= ESTABLISHED_LIBRARY_PAGES;
+  const established = libraryPagesForEstablished(pages).length >= ESTABLISHED_LIBRARY_PAGES;
   const checking = !established;
   const agentsQuery = useLiveAgents(undefined, checking);
   // Same key as useMilestones, read without its event listener: the card only
@@ -180,7 +200,7 @@ export function useGettingStartedState(): GettingStartedState {
 
   const loaded = ready && agentsQuery.isSuccess && milestonesQuery.isSuccess;
   if (!loaded || established) {
-    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [] };
+    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [], compact: false };
   }
   const progress = gettingStartedProgress({
     pages,
@@ -190,5 +210,14 @@ export function useGettingStartedState(): GettingStartedState {
   });
   const doneCount = GETTING_STARTED_ORDER.filter((id) => progress[id]).length;
   const visible = doneCount < GETTING_STARTED_ORDER.length;
-  return { visible, progress: visible ? progress : null, doneCount, ...flags, pages, agents: agentsQuery.data };
+  const shown = visible ? progress : null;
+  return {
+    visible,
+    progress: shown,
+    doneCount,
+    ...flags,
+    pages,
+    agents: agentsQuery.data,
+    compact: onlyOwnPageLeft(shown, pages),
+  };
 }

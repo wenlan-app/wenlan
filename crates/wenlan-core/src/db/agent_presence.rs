@@ -152,6 +152,47 @@ impl MemoryDB {
         Ok(agent)
     }
 
+    /// Record that `raw_agent` wrote a page (write_page, a steep rewrite or a
+    /// new steep page). Same first-contact rules as a memory write
+    /// (`check_agent_for_write`), without counting a memory.
+    ///
+    /// A missing row is registered at `"full"`, a row the read path created is
+    /// promoted the way the first memory write promotes it, and
+    /// `last_seen_at` moves so the tool reads as used. A disabled tool is
+    /// refused with `WenlanError::AgentDisabled`, as a memory write is.
+    /// Returns the trust level after the call, or `None` for a name a read
+    /// may not record (`presence_agent_id`), which is left alone.
+    ///
+    /// Without this an AI that had only written pages stayed at the read
+    /// path's `"unknown"`, and the page gate then hid the pages it wrote from
+    /// its own recall.
+    pub async fn note_page_writer(&self, raw_agent: &str) -> Result<Option<String>, WenlanError> {
+        let Some(canonical) = presence_agent_id(raw_agent) else {
+            return Ok(None);
+        };
+        let agent = self.register_agent(raw_agent.trim()).await?;
+        if !agent.enabled {
+            return Err(WenlanError::AgentDisabled(format!(
+                "Agent '{}' is disabled",
+                raw_agent.trim()
+            )));
+        }
+        let trust_level = if agent.trust_level == "unknown" {
+            self.promote_untouched_read_agent(&canonical).await?
+        } else {
+            agent.trust_level
+        };
+        let now = chrono::Utc::now().timestamp();
+        let conn = self.conn.lock().await;
+        conn.execute(
+            "UPDATE agent_connections SET last_seen_at = ?1 WHERE name = ?2",
+            libsql::params![now, canonical],
+        )
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("note_page_writer: {}", e)))?;
+        Ok(Some(trust_level))
+    }
+
     /// First-write promotion of a row created by `record_agent_presence`.
     /// Returns the agent's trust level after the attempt.
     ///
