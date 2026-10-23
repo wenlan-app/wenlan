@@ -166,6 +166,17 @@ export interface GettingStartedState {
   readonly setPagesSkipped: (value: boolean) => void;
   readonly pages: readonly Page[];
   readonly agents: AgentConnection[];
+  /** Only writing a page by hand is left, and there are pages to read: the
+   *  card shrinks to one line and the pages take the home. */
+  readonly compact: boolean;
+}
+
+/** Writing a page by hand is the one step left, and the library already has
+ *  pages worth reading. For many people that step is not the goal, so the
+ *  card stops taking the screen. */
+export function onlyOwnPageLeft(progress: GettingStartedProgress | null, pages: readonly Page[]): boolean {
+  return progress !== null && progress.tool && progress.pages && progress.recall && !progress.note
+    && askablePages(pages).length > 0;
 }
 
 export function useGettingStartedState(): GettingStartedState {
@@ -189,7 +200,7 @@ export function useGettingStartedState(): GettingStartedState {
 
   const loaded = ready && agentsQuery.isSuccess && milestonesQuery.isSuccess;
   if (!loaded || established) {
-    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [] };
+    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [], compact: false };
   }
   const progress = gettingStartedProgress({
     pages,
@@ -199,5 +210,14 @@ export function useGettingStartedState(): GettingStartedState {
   });
   const doneCount = GETTING_STARTED_ORDER.filter((id) => progress[id]).length;
   const visible = doneCount < GETTING_STARTED_ORDER.length;
-  return { visible, progress: visible ? progress : null, doneCount, ...flags, pages, agents: agentsQuery.data };
+  const shown = visible ? progress : null;
+  return {
+    visible,
+    progress: shown,
+    doneCount,
+    ...flags,
+    pages,
+    agents: agentsQuery.data,
+    compact: onlyOwnPageLeft(shown, pages),
+  };
 }

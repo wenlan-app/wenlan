@@ -16,6 +16,7 @@ import { OWN_IDENTITY, resolveAgentDisplayName, toolFamilyOf } from "../../../li
 import { useSteepOnDemand } from "../../../lib/steepMode";
 import { useLiveAgents } from "../../connect/connectionState";
 import { writeClipboard } from "../page/codeBasisShared";
+import { PageIcon } from "../assets/PageIcon";
 import { useAskAiCommand } from "./AskAiHint";
 import "./writePages.css";
 
@@ -332,15 +333,19 @@ export function workingHeadline(
     : t("askAi.writePages.pasteIt", { tool: state.toolName });
 }
 
-/** The pages a run wrote, each one a link. */
+/** Pages as one-click rows: the ones this run wrote ticked, the rest with
+ *  their page icon, and a spinner row while the tool is still writing. */
 export function WrittenPages({
   rows,
   writing,
   onSelectPage,
+  fresh,
 }: {
   readonly rows: readonly Page[];
   readonly writing: boolean;
   readonly onSelectPage: (pageId: string) => void;
+  /** Rows to tick. Without it every row is one the run wrote. */
+  readonly fresh?: ReadonlySet<string>;
 }) {
   const { t } = useTranslation();
   if (rows.length === 0 && !writing) return null;
@@ -348,7 +353,11 @@ export function WrittenPages({
     <ul className="write-pages-list">
       {rows.slice(0, MAX_LISTED).map((page) => (
         <li key={page.id}>
-          <CheckCircle aria-hidden="true" weight="fill" className="write-pages-row-icon write-pages-row-icon--done" />
+          {fresh === undefined || fresh.has(page.id) ? (
+            <CheckCircle aria-hidden="true" weight="fill" className="write-pages-row-icon write-pages-row-icon--done" />
+          ) : (
+            <PageIcon className="write-pages-row-icon write-pages-row-icon--page" size={14} />
+          )}
           <button type="button" className="write-pages-row-title" onClick={() => onSelectPage(page.id)}>
             {page.title}
           </button>
@@ -372,10 +381,19 @@ export function WrittenPages({
   );
 }
 
+/** The one fallback once the command went out: copy it again. Opened in the
+ *  tool, it shows only until a page lands ("Didn't open?"); copied, it stays
+ *  for as long as the run is waiting. */
+export function copyAgainLabel(state: WritePagesState, written: number, t: TFunction): string | null {
+  if (state.copied) return t("askAi.copied");
+  if (state.run?.handedOver === "copied") return t("askAi.writePages.copyCommand");
+  if (state.run?.handedOver === "opened" && written === 0) return t("askAi.writePages.didntOpen");
+  return null;
+}
+
 interface WritePagesLineProps {
   readonly state: WritePagesState;
   readonly pages: readonly Page[];
-  readonly onSelectPage: (pageId: string) => void;
   readonly onConnectTool?: () => void;
   /** Opens the steep settings, where the local model is chosen. */
   readonly onUseLocalModel?: () => void;
@@ -383,15 +401,14 @@ interface WritePagesLineProps {
 
 /**
  * One line at the top of the Wiki home, in place of a card: what is waiting
- * and one link that hands it to the user's AI tool, then the same line
- * follows the run. The new pages land in the Wiki below it; "See new pages"
- * lists them here too. Shown only once the getting-started checklist, which
- * carries the same offer as a step, is out of the way.
+ * and one button that hands it to the user's AI tool, then the same line
+ * follows the run. The pages it writes land, ticked, in the home's page list
+ * right below, so the line itself lists none. Shown only once the
+ * getting-started checklist, which carries the same offer as a step, is out
+ * of the way.
  */
-export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUseLocalModel }: WritePagesLineProps) {
+export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }: WritePagesLineProps) {
   const { t } = useTranslation();
-  // The new pages are the point, so they show until the user folds them.
-  const [open, setOpen] = useState(true);
   const { view } = state;
   if (view.kind === "hidden" || !state.loaded) return null;
 
@@ -406,46 +423,35 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
       <X aria-hidden="true" weight="regular" />
     </button>
   );
-  const toggle = view.kind !== "ready" && view.written.length > 0 ? (
-    <button type="button" className="write-pages-link" aria-expanded={open} onClick={() => setOpen(!open)}>
-      {open ? t("askAi.writePages.hidePages") : t("askAi.writePages.showPages")}
-    </button>
-  ) : null;
 
   if (view.kind === "ready") {
+    // A tool the app cannot open gets the command to paste, and says so.
+    const pasteHint = state.tool && !state.opensTool
+      ? t("askAi.writePages.copiesCommand", { tool: state.tool.name })
+      : null;
     return (
       <div className="write-pages-line" data-testid="write-pages-line" data-state="ready" aria-live="polite">
         <div className="write-pages-line-row">
           <Sparkle aria-hidden="true" weight="regular" className="write-pages-icon" />
-          <p className="write-pages-text">{waitingLine(state, pages, t)}</p>
+          <p className="write-pages-text">
+            {waitingLine(state, pages, t)}
+            {pasteHint ? <span className="write-pages-hint">{pasteHint}</span> : null}
+          </p>
           <div className="write-pages-actions">
             {state.tool ? (
-              <>
-                <button
-                  type="button"
-                  className="write-pages-go"
-                  title={state.opensTool
-                    ? t("askAi.writePages.opensTool", { tool: state.tool.name })
-                    : t("askAi.writePages.copiesCommand", { tool: state.tool.name })}
-                  disabled={state.command === null}
-                  onClick={() => void state.start()}
-                >
-                  {/* Worded like the checklist step, so both places say the same. */}
-                  {state.opensTool
+              <button
+                type="button"
+                className="write-pages-go"
+                disabled={state.command === null}
+                onClick={() => void state.start()}
+              >
+                {/* Worded like the checklist step, so both places say the same. */}
+                {state.copied
+                  ? t("askAi.copied")
+                  : state.opensTool
                     ? t("askAi.writePages.askIn", { tool: state.tool.name })
                     : t("askAi.writePages.copyCommand")}
-                </button>
-                {state.opensTool ? (
-                  <button
-                    type="button"
-                    className="write-pages-link"
-                    disabled={state.command === null}
-                    onClick={() => void state.copyCommand()}
-                  >
-                    {state.copied ? t("askAi.copied") : t("askAi.writePages.copyCommand")}
-                  </button>
-                ) : null}
-              </>
+              </button>
             ) : (
               <>
                 {onConnectTool ? (
@@ -469,6 +475,7 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
 
   if (view.kind === "working") {
     const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
+    const copyAgain = copyAgainLabel(state, view.written.length, t);
     return (
       <div className="write-pages-line" data-testid="write-pages-line" data-state="working" aria-live="polite">
         <div className="write-pages-line-row">
@@ -477,19 +484,24 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
             {workingHeadline(state, view, t)}
             {hint ? <span className="write-pages-hint">{hint}</span> : null}
           </p>
-          <div className="write-pages-actions">{toggle}</div>
+          <div className="write-pages-actions">
+            {copyAgain ? (
+              <button
+                type="button"
+                className="write-pages-link"
+                disabled={state.command === null}
+                onClick={() => void state.copyCommand()}
+              >
+                {copyAgain}
+              </button>
+            ) : null}
+          </div>
           {closeButton}
         </div>
-        {open ? <WrittenPages rows={view.written} writing={view.writing} onSelectPage={onSelectPage} /> : null}
       </div>
     );
   }
 
-  // Done: opening one of the new pages is the end of it, so the line goes.
-  const openPage = (pageId: string) => {
-    state.close();
-    onSelectPage(pageId);
-  };
   return (
     <div className="write-pages-line" data-testid="write-pages-line" data-state="done" aria-live="polite">
       <div className="write-pages-line-row">
@@ -498,7 +510,6 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
           {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
         </p>
         <div className="write-pages-actions">
-          {toggle}
           {view.left >= WRITE_PAGES_MIN_ITEMS && state.tool ? (
             <button type="button" className="write-pages-link" disabled={state.command === null} onClick={() => void state.start()}>
               {t("askAi.writePages.again")}
@@ -507,7 +518,6 @@ export function WritePagesLine({ state, pages, onSelectPage, onConnectTool, onUs
         </div>
         {closeButton}
       </div>
-      {open ? <WrittenPages rows={view.written} writing={false} onSelectPage={openPage} /> : null}
     </div>
   );
 }

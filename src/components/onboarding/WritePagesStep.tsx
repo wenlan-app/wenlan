@@ -3,7 +3,15 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatsCircle, Eye, FolderSimplePlus } from "@phosphor-icons/react";
 import type { Page } from "../../lib/tauri";
-import { waitingLine, workingHeadline, WrittenPages, type WritePagesState } from "../memory/askAi/WritePages";
+import {
+  copyAgainLabel,
+  pagesWrittenSince,
+  waitingLine,
+  workingHeadline,
+  WrittenPages,
+  type WritePagesState,
+} from "../memory/askAi/WritePages";
+import { newestPages } from "../memory/pages/NewPagesList";
 
 interface WritePagesStepProps {
   /** Null outside the Wiki home, where nothing can be handed over. */
@@ -27,7 +35,9 @@ interface WritePagesStepProps {
  * user's material is (a folder of any kind, past AI chats, or the sample for
  * someone with none); once material is in, from an import or from what AI
  * tools saved, it hands it to the AI tool; then the same run the home line
- * follows shows here, so the pages appear in this row as they land.
+ * follows shows here, so the pages appear in this row as they land. Once
+ * done, the row keeps the newest pages, so the open checklist is the home's
+ * one card and its way into the pages.
  */
 export function WritePagesStep({
   state,
@@ -56,31 +66,43 @@ export function WritePagesStep({
       {done ? <span className="sr-only">{` ${t("firstUse.checklist.done")}`}</span> : null}
     </p>
   );
-  const list = (rows: readonly Page[], writing: boolean) =>
-    onSelectPage ? <WrittenPages rows={rows} writing={writing} onSelectPage={onSelectPage} /> : null;
+  // The newest pages, with the ones this run wrote ticked.
+  const fresh = new Set(state?.run ? pagesWrittenSince(pages, state.run.startedAt).map((page) => page.id) : []);
+  const list = (writing: boolean) =>
+    onSelectPage ? <WrittenPages rows={newestPages(pages)} fresh={fresh} writing={writing} onSelectPage={onSelectPage} /> : null;
+  const startLabel = state?.tool
+    ? state.opensTool
+      ? t("askAi.writePages.askIn", { tool: state.tool.name })
+      : t("askAi.writePages.copyCommand")
+    : null;
+  // A tool the app cannot open gets the command to paste, and says so.
+  const pasteHint = state?.tool && !state.opensTool
+    ? <p className="getting-started-step-hint">{t("askAi.writePages.copiesCommand", { tool: state.tool.name })}</p>
+    : null;
 
   if (state && view.kind === "working") {
     const headline = workingHeadline(state, view, t);
     const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
+    const copyAgain = copyAgainLabel(state, view.written.length, t);
     return (
-      <>
-        <div className="getting-started-copy">
-          {title}
-          <p className="getting-started-step-body">{headline}</p>
-          {hint ? <p className="getting-started-step-body">{hint}</p> : null}
-          {list(view.written, view.writing)}
-        </div>
-        {state.run?.handedOver === "copied" ? (
-          <button
-            type="button"
-            className="getting-started-action"
-            disabled={state.command === null}
-            onClick={() => void state.copyCommand()}
-          >
-            {state.copied ? t("askAi.copied") : t("askAi.writePages.copyCommand")}
-          </button>
+      <div className="getting-started-copy">
+        {title}
+        <p className="getting-started-step-body">{headline}</p>
+        {hint ? <p className="getting-started-step-body">{hint}</p> : null}
+        {copyAgain ? (
+          <p className="getting-started-step-body">
+            <button
+              type="button"
+              className="getting-started-link"
+              disabled={state.command === null}
+              onClick={() => void state.copyCommand()}
+            >
+              {copyAgain}
+            </button>
+          </p>
         ) : null}
-      </>
+        {list(view.writing)}
+      </div>
     );
   }
 
@@ -91,36 +113,55 @@ export function WritePagesStep({
         <p className="getting-started-step-body">
           {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
         </p>
-        {list(view.written, false)}
+        {list(false)}
       </div>
     );
   }
 
+  if (done && !comeBack) {
+    // Material that came in after the pages were written: say so under them,
+    // with the same one button.
+    const more = state && view.kind === "ready" && startLabel ? (
+      <div className="getting-started-pages-more">
+        <span>{waitingLine(state, pages, t)}</span>
+        <button
+          type="button"
+          className="getting-started-link"
+          disabled={state.command === null}
+          onClick={() => void state.start()}
+        >
+          {startLabel}
+        </button>
+      </div>
+    ) : null;
+    return (
+      <div className="getting-started-copy">
+        {title}
+        {list(false)}
+        {more}
+      </div>
+    );
+  }
   if (done && !comeBack) return <div className="getting-started-copy">{title}</div>;
 
   if (state && view.kind === "ready") {
-    const { tool } = state;
     return (
       <>
         <div className="getting-started-copy">
           {title}
           <p className="getting-started-step-body">
-            {tool ? waitingLine(state, pages, t) : t("askAi.writePages.noTool")}
+            {state.tool ? waitingLine(state, pages, t) : t("askAi.writePages.noTool")}
           </p>
+          {pasteHint}
         </div>
-        {tool ? (
+        {startLabel ? (
           <button
             type="button"
             className="getting-started-action"
-            title={state.opensTool
-              ? t("askAi.writePages.opensTool", { tool: tool.name })
-              : t("askAi.writePages.copiesCommand", { tool: tool.name })}
             disabled={state.command === null}
             onClick={() => void state.start()}
           >
-            {state.opensTool
-              ? t("askAi.writePages.askIn", { tool: tool.name })
-              : t("askAi.writePages.copyCommand")}
+            {startLabel}
           </button>
         ) : onUseLocalModel ? (
           <button type="button" className="getting-started-action" onClick={onUseLocalModel}>
