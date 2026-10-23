@@ -927,7 +927,8 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     assert_eq!(kept.result.status, RepoWikiPublishStatus::NoChanges);
     assert_eq!(kept.result.kept, 1);
 
-    // Reported once: the next publish finds the same edit but says nothing.
+    // Still waiting: the next publish finds the same edit and counts it again,
+    // so the panel keeps saying a page waits for review.
     let mut seen = binding.clone();
     seen.kept_edits = kept.kept_edits.clone().unwrap();
     let again = publish(PublishInput {
@@ -943,7 +944,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     })
     .unwrap();
     assert_eq!(again.result.status, RepoWikiPublishStatus::NoChanges);
-    assert_eq!(again.result.kept, 0);
+    assert_eq!(again.result.kept, 1);
     assert_eq!(again.kept_edits, kept.kept_edits);
 
     // Taken back: the page now says it, and its file is written from it.

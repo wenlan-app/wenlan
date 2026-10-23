@@ -1568,8 +1568,8 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     }
     // A page file someone edited: taken back into Wenlan, the export above
     // wrote it from the page again. Otherwise it goes back as they wrote it,
-    // and is counted the first time only: it stays an edit on every publish
-    // until someone changes the file or the page catches up.
+    // and is counted on every publish while it waits: it stays an edit until
+    // someone changes the file or the page catches up.
     let mut kept_edits = Vec::new();
     for edit in &prepared.edits {
         let taken = input.taken_back.contains(&edit.path);
@@ -1580,11 +1580,8 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
         if taken {
             continue;
         }
-        let key = kept_edit_key(edit);
-        if !binding.kept_edits.contains(&key) {
-            kept.set(kept.get() + 1);
-        }
-        kept_edits.push(key);
+        kept.set(kept.get() + 1);
+        kept_edits.push(kept_edit_key(edit));
     }
     if export {
         // The export moves an edited file aside before writing. Every edit
