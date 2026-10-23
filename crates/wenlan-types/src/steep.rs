@@ -193,6 +193,10 @@ pub struct SteepCommitResponse {
     /// The same commit was already applied; this is its recorded result.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub replayed: bool,
+    /// A problem in a ```mermaid block that would stop it drawing, one line
+    /// per diagram, so the agent fixes or drops it. The write still landed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[cfg(test)]

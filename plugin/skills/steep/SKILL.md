@@ -117,7 +117,9 @@ For each page:
    anything only a removed source said. Keep a `mermaid` diagram block the
    page has, as it is, unless what it draws changed: then fix those boxes
    and arrows (labels stay in double quotes, never a bare `[n]` in one), or
-   drop the diagram when the parts it shows are gone. For `code_changed`,
+   drop the diagram when the parts it shows are gone. A reply `warnings`
+   entry starting `diagram N line M` means that diagram will not draw: fix
+   it in the page with `write_page`, or remove it. For `code_changed`,
    change only what the code contradicts; the code is not a numbered source,
    so a sentence only the code supports carries no `[n]`. When the plan is `review_card`,
    keep every line the claim's `note` lists as the user's own, word for word
