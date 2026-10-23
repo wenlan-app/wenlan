@@ -22,6 +22,14 @@ import {
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { hiddenUrlPrefixLength } from "../../../lib/displayUrl";
+import {
+  attachmentKind,
+  attachmentName,
+  attachmentUrl,
+  primeAttachmentsDir,
+  subscribeAttachmentsDir,
+  type AttachmentKind,
+} from "../../../lib/pageAttachments";
 
 export const setWritingCompositionActive = StateEffect.define<boolean>();
 const refreshWritingPresentation = StateEffect.define<null>();
@@ -131,15 +139,25 @@ class ImageWidget extends WidgetType {
   constructor(
     readonly source: string,
     readonly alt: string,
+    readonly kind: AttachmentKind = "image",
   ) {
     super();
   }
 
   eq(other: ImageWidget): boolean {
-    return other.source === this.source && other.alt === this.alt;
+    return other.source === this.source && other.alt === this.alt && other.kind === this.kind;
   }
 
   toDOM(): HTMLElement {
+    if (this.kind === "video") {
+      const video = document.createElement("video");
+      video.className = "cm-writing-image cm-writing-video";
+      video.src = this.source;
+      video.controls = true;
+      video.preload = "metadata";
+      if (this.alt) video.setAttribute("aria-label", this.alt);
+      return video;
+    }
     const image = document.createElement("img");
     image.className = "cm-writing-image";
     image.src = this.source;
@@ -189,9 +207,18 @@ class HorizontalRuleWidget extends WidgetType {
 class WritingPresentationValue {
   decorations: DecorationSet;
   atomic: DecorationSet;
+  private readonly stopAttachmentWatch: () => void;
 
   constructor(view: EditorView) {
     ({ decorations: this.decorations, atomic: this.atomic } = buildWritingRanges(view));
+    // Page images from `_attachments/` show once the folder is known.
+    this.stopAttachmentWatch = subscribeAttachmentsDir(() => {
+      view.dispatch({ effects: refreshWritingPresentation.of(null) });
+    });
+  }
+
+  destroy(): void {
+    this.stopAttachmentWatch();
   }
 
   update(update: ViewUpdate): void {
@@ -484,7 +511,10 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           const opening = marks[0];
           const closingLabel = marks[1];
           if (!url || !opening || !closingLabel || marks.length < 4) return;
-          const source = safeRemoteImageSource(state.sliceDoc(url.from, url.to));
+          const target = state.sliceDoc(url.from, url.to);
+          const attachment = attachmentName(target);
+          const source = attachment ? attachmentUrl(target) : safeRemoteImageSource(target);
+          if (attachment && !source) void primeAttachmentsDir();
           if (!source || constructIsRevealed(state, node.from, node.to, contentFocused)) return;
           addConcealment(
             node.from,
@@ -492,6 +522,7 @@ function buildWritingRanges(view: EditorView): WritingRanges {
             new ImageWidget(
               source,
               state.sliceDoc(opening.to, closingLabel.from),
+              (attachment && attachmentKind(attachment)) || "image",
             ),
           );
           return;

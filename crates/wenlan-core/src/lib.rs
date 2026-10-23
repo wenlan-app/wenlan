@@ -8,6 +8,7 @@
 
 pub use wenlan_types;
 
+pub mod attachments;
 pub mod briefing;
 pub mod cache;
 pub mod chat_import;

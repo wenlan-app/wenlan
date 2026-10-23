@@ -408,6 +408,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/tags/{name}", "/api/documents/{source_id}/tags", "/api/memory/{id}/update", "/api/memory/{id}/stability",
     "/api/memory/{id}/correct", "/api/profile/narrative/regenerate", "/api/memory/{id}/pin", "/api/memory/{id}/unpin",
     "/api/snapshots/{id}/delete", "/api/memory/{id}/update-page", "/api/knowledge/path",
+    // Copies one named media file into the pages folder; returns its path only.
+    "/api/attachments",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
     "/api/pages/{id}/map/layout", "/api/pages/{id}/map/nodes", "/api/pages/{id}/map/edges",
     "/api/pages/{id}/map/nodes/{node_id}", "/api/pages/{id}/map/edges/{edge_id}",

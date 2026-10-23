@@ -52,6 +52,7 @@ fn reserved_directory(name: &str) -> bool {
     name.starts_with('.')
         || name.eq_ignore_ascii_case("archive")
         || name.eq_ignore_ascii_case("_sources")
+        || name.eq_ignore_ascii_case(crate::attachments::ATTACHMENTS_DIR)
 }
 
 fn validate_component(name: &str) -> Result<(), WenlanError> {

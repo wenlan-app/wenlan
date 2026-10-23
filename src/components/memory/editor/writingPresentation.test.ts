@@ -10,6 +10,7 @@ import {
   setWritingCompositionActive,
   writingPresentation,
 } from "./writingPresentation";
+import { resetAttachmentsDirForTest } from "../../../lib/pageAttachments";
 
 beforeAll(() => installCodeMirrorDomPolyfills());
 
@@ -395,6 +396,25 @@ describe("writingPresentation", () => {
     expect(image).toHaveAttribute("loading", "lazy");
     expect(view.contentDOM.textContent).not.toContain("![Wenlan graph]");
     expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("shows page images and videos from the pages folder once it is known", () => {
+    resetAttachmentsDirForTest(null);
+    const source = "![Home](_attachments/home-3f2a9c1b0d.png)\n\n![Film](_attachments/film-0a1b2c3d4e.mp4)\naway";
+    const view = makeView(source, {
+      selection: EditorSelection.single(source.length),
+    });
+    expect(view.contentDOM.querySelector(".cm-writing-image")).toBeNull();
+
+    resetAttachmentsDirForTest("/Users/me/.wenlan/pages/_attachments");
+    const image = view.contentDOM.querySelector<HTMLImageElement>("img.cm-writing-image");
+    const video = view.contentDOM.querySelector<HTMLVideoElement>("video.cm-writing-video");
+    expect(image).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/home-3f2a9c1b0d.png");
+    expect(image).toHaveAttribute("alt", "Home");
+    expect(video).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/film-0a1b2c3d4e.mp4");
+    expect(video?.controls).toBe(true);
+    expect(view.state.doc.toString()).toBe(source);
+    resetAttachmentsDirForTest(null);
   });
 
   it("keeps unsafe or unresolved image destinations as editable source", () => {

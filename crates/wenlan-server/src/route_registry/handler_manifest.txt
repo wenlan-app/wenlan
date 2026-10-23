@@ -1,5 +1,6 @@
 # Exact route-to-handler bindings, captured from the production builders.
 main|post|/api/webpage/fetch|wenlan_server::web_fetch_routes::handle_fetch_webpage
+main|post|/api/attachments|wenlan_server::knowledge_routes::handle_attach_file
 main|get|/api/activity|wenlan_server::activity_routes::handle_activity
 main|get|/api/activities|wenlan_server::activity_tag_routes::handle_list_activities
 main|get|/api/agents|wenlan_server::profile_agents_routes::handle_list_agents

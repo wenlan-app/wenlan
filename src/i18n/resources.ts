@@ -733,6 +733,9 @@ const en = {
     label: "Link a page",
     empty: "No matching pages",
   },
+  pageAttachments: {
+    failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
+  },
   slashEditing: {
     label: "Basic editing",
     heading1: "Heading 1",
@@ -3596,6 +3599,9 @@ const zhHans = {
     label: "链接笔记",
     empty: "没有匹配的笔记",
   },
+  pageAttachments: {
+    failed: "无法加入 {{name}}。页面里只能放图片和视频。",
+  },
   slashEditing: {
     label: "基本编辑",
     heading1: "一级标题",
@@ -6413,6 +6419,9 @@ const zhHant = {
   linkCompletion: {
     label: "連結筆記",
     empty: "沒有相符的筆記",
+  },
+  pageAttachments: {
+    failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",
   },
   slashEditing: {
     label: "基本編輯",

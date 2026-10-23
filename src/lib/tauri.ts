@@ -3152,6 +3152,37 @@ export async function countKnowledgeFiles(): Promise<number> {
   return invoke("count_knowledge_files");
 }
 
+// ===== Page attachments =====
+
+/** A file copied into the pages folder's `_attachments/`. */
+export interface AttachedFile {
+  /** Root-relative link target, `_attachments/<name>`. */
+  path: string;
+  absolute_path: string;
+  kind: "image" | "video";
+  bytes: number;
+  /** The Markdown line that shows the file in a page. */
+  markdown: string;
+  created: boolean;
+}
+
+/** The folder of files shown in pages; the webview may load files from it. */
+export async function pageAttachmentsDir(): Promise<string> {
+  return invoke("page_attachments_dir");
+}
+
+/** Copy a file on this computer into the pages folder. */
+export async function attachFileToPage(path: string, alt?: string): Promise<AttachedFile> {
+  return invoke("attach_file_to_page", { path, alt: alt ?? null });
+}
+
+/** Copy pasted or dropped file bytes into the pages folder. */
+export async function attachBytesToPage(name: string, bytes: Uint8Array): Promise<AttachedFile> {
+  return invoke("attach_bytes_to_page", bytes, {
+    headers: { "x-file-name": encodeURIComponent(name) },
+  });
+}
+
 // ===== Profile =====
 
 export async function getProfile(): Promise<Profile | null> {
