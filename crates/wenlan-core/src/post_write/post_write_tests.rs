@@ -1191,15 +1191,70 @@ async fn create_page_borns_distilled_unconfirmed() {
                 && proposal.source_ids.iter().any(|id| id == &result.id)
         })
         .collect();
-    assert_eq!(
-        keep_cards.len(),
-        1,
-        "distilled page birth must mint exactly one keep/archive card"
-    );
-    let payload = keep_cards[0].payload.as_deref().unwrap_or_default();
     assert!(
-        payload.contains("\"source_count\":3"),
-        "keep/archive card should preserve source count, got {payload}"
+        keep_cards.is_empty(),
+        "a new distilled page must not ask whether to keep it"
+    );
+}
+
+#[tokio::test]
+async fn create_page_thin_distilled_birth_mints_no_keep_card() {
+    let (db, _dir) = test_db().await;
+    let docs = [
+        (
+            "mem-thin-birth-a",
+            "Kestrel garden beds need straw before frost",
+        ),
+        (
+            "mem-thin-birth-b",
+            "Kestrel garden drip lines are drained in winter",
+        ),
+    ]
+    .into_iter()
+    .map(|(source_id, content)| crate::sources::RawDocument {
+        source: "memory".to_string(),
+        source_id: source_id.to_string(),
+        title: source_id.to_string(),
+        content: content.to_string(),
+        last_modified: chrono::Utc::now().timestamp(),
+        memory_type: Some("fact".to_string()),
+        source_agent: Some("test".to_string()),
+        confidence: Some(0.9),
+        ..Default::default()
+    })
+    .collect::<Vec<_>>();
+    db.upsert_documents(docs).await.unwrap();
+    let req = CreateConceptRequest {
+        title: "Kestrel Garden Winter".to_string(),
+        content: "Kestrel garden beds get straw and drained drip lines before winter".to_string(),
+        summary: None,
+        entity_id: None,
+        space: (None).into(),
+        source_memory_ids: vec![
+            "mem-thin-birth-a".to_string(),
+            "mem-thin-birth-b".to_string(),
+        ],
+        creation_kind: Some("distilled".to_string()),
+        workspace: None,
+    };
+
+    let result = create_page_with_floor(&db, req, "test", None, 1)
+        .await
+        .unwrap();
+
+    let keep_cards: Vec<_> = db
+        .get_pending_refinements()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|proposal| {
+            proposal.action == "page_keep_or_archive"
+                && proposal.source_ids.iter().any(|id| id == &result.id)
+        })
+        .collect();
+    assert!(
+        keep_cards.is_empty(),
+        "a thin distilled page must not ask at birth whether to keep it"
     );
 }
 

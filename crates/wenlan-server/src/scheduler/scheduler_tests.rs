@@ -4562,9 +4562,9 @@ async fn maintenance_slices_detect_page_merge_cards_and_route_stale_pages() {
         }
     };
 
-    // Distilled page birth mints a keep-or-archive card, and an open review
-    // card pauses the automatic retro/near-duplicate lanes. Clear the birth
-    // cards first so this test exercises detection, not the pause probe.
+    // An open keep-or-archive review card pauses the automatic
+    // retro/near-duplicate lanes. Clear any first so this test exercises
+    // detection, not the pause probe.
     for card in db.get_pending_refinements().await.unwrap() {
         if card.action == "page_keep_or_archive" {
             db.resolve_refinement_if_open(&card.id, "dismissed")
