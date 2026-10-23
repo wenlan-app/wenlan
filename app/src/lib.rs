@@ -48,6 +48,8 @@ mod test_env;
 // Public surface consumed by tray_menu (Task 15); suppress dead_code until then.
 #[allow(dead_code)]
 pub(crate) mod tray_health;
+#[cfg(not(feature = "review-fixtures"))]
+mod tray_panel;
 mod updater;
 pub mod wire_state;
 
@@ -566,9 +568,8 @@ fn cancel_guarded_quit_request(request_id: u64, delivery_id: u64) -> bool {
     if cancelled {
         lifecycle::clear_handover_bundle();
     }
-    // Likewise the tray's "Quit and stop background service" arm: the quit it
-    // was armed for is not happening, and a later plain "Quit Wenlan" must
-    // still uninstall the LaunchAgents.
+    // Likewise the tray's keep-registration arm: the quit it was armed for is
+    // not happening, and a later Cmd+Q must still uninstall the LaunchAgents.
     if cancelled {
         lifecycle::disarm_quit_keep_registration();
     }
@@ -662,17 +663,41 @@ pub(crate) fn release_part(version: &str) -> &str {
     version.split('+').next().unwrap_or(version)
 }
 
-/// Tray menu item ids. The builder and the menu-event handler both go through
-/// these, so the unit test on [`tray_menu_ids::ALL`] pins the contract the
-/// handler arms on — including `QUIT_AND_STOP`, the "Quit and stop background
-/// service" item under "Quit Wenlan".
+/// Tray menu item ids, for the platforms that show a menu instead of the
+/// panel (Linux trays send no clicks). The builder and the menu-event handler
+/// both go through these, so the unit test on [`tray_menu_ids::ALL`] pins the
+/// contract.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod tray_menu_ids {
     pub const SHOW: &str = "show";
-    pub const STATUS: &str = "status";
     pub const QUIT: &str = "quit";
-    pub const QUIT_AND_STOP: &str = "quit_and_stop";
     #[cfg(test)]
-    pub const ALL: [&str; 4] = [SHOW, STATUS, QUIT, QUIT_AND_STOP];
+    pub const ALL: [&str; 2] = [SHOW, QUIT];
+}
+
+/// The tray's one Quit, from the panel or the Linux menu. It stops Wenlan and
+/// its daemon now, and leaves the LaunchAgent registration alone: whether
+/// Wenlan comes back at next login is the Run at Login setting's call, which
+/// quitting from the tray must not change behind the user's back.
+#[cfg(not(feature = "review-fixtures"))]
+fn quit_from_tray(app: &tauri::AppHandle) {
+    crate::lifecycle::arm_quit_keep_registration();
+    if let Err(e) = request_full_quit(app) {
+        log::error!("[tray] failed to request guarded quit: {e}");
+        // The failed request disarmed; the forced quit that replaces it is
+        // still the tray's keep-registration quit.
+        crate::lifecycle::arm_quit_keep_registration();
+        force_full_quit(app.clone());
+    }
+}
+
+#[cfg(not(feature = "review-fixtures"))]
+#[tauri::command]
+fn tray_panel_quit(app: tauri::AppHandle) {
+    if let Some(win) = tauri::Manager::get_webview_window(&app, tray_panel::LABEL) {
+        tray_panel::hide(&win);
+    }
+    quit_from_tray(&app);
 }
 
 #[cfg(target_os = "macos")]
@@ -805,6 +830,7 @@ pub fn run() {
         .manage(quick_capture::QuickCapturePlacementState(
             std::sync::Mutex::new(Default::default()),
         ))
+        .manage(tray_panel::TrayPanelState::default())
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -1064,6 +1090,56 @@ pub fn run() {
                 }
             }
 
+            // The small panel under the tray icon, hidden until a click.
+            {
+                use tauri::{WebviewUrl, WebviewWindowBuilder, WindowEvent};
+
+                let panel_win = WebviewWindowBuilder::new(
+                    app,
+                    tray_panel::LABEL,
+                    WebviewUrl::App("index.html#tray-panel".into()),
+                )
+                .title("Wenlan")
+                .inner_size(tray_panel::WIDTH, tray_panel::INITIAL_HEIGHT)
+                .decorations(false)
+                .transparent(true)
+                .always_on_top(true)
+                .visible_on_all_workspaces(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .visible(false)
+                .build()?;
+
+                let handle_for_panel = handle.clone();
+                panel_win.on_window_event(move |event| {
+                    if let WindowEvent::Focused(false) = event {
+                        tray_panel::on_focus_lost(&handle_for_panel);
+                    }
+                });
+
+                #[cfg(target_os = "macos")]
+                #[allow(deprecated)]
+                {
+                    use cocoa::appkit::NSColor;
+                    use cocoa::base::{id, nil, NO};
+                    use raw_window_handle::HasWindowHandle;
+
+                    if let Ok(raw_handle) = panel_win.window_handle() {
+                        if let raw_window_handle::RawWindowHandle::AppKit(appkit) =
+                            raw_handle.as_raw()
+                        {
+                            let ns_view = appkit.ns_view.as_ptr() as id;
+                            unsafe {
+                                let ns_win: id = objc::msg_send![ns_view, window];
+                                let clear = NSColor::clearColor(nil);
+                                let _: () = msg_send![ns_win, setBackgroundColor: clear];
+                                let _: () = msg_send![ns_win, setOpaque: NO];
+                            }
+                        }
+                    }
+                }
+            }
+
             // Create quick-capture popup window
             {
                 use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -1215,125 +1291,62 @@ pub fn run() {
             // Read it with the `global_shortcut_status` command.
             app.manage(shortcut_status);
 
-            // Tray icon: left-click toggles window, right-click menu with Show / Status / Quit
+            // Tray icon. On macOS and Windows a click on it, either button,
+            // opens the small panel (`tray_panel`), which carries the one
+            // Quit. Linux trays send no clicks, so there the icon keeps a
+            // short menu: Show Wenlan and Quit Wenlan.
             {
-                use tauri::menu::{MenuBuilder, MenuItemBuilder};
                 use tauri::tray::TrayIconEvent;
                 use tauri::Manager;
-
-                let show_item =
-                    MenuItemBuilder::with_id(tray_menu_ids::SHOW, "Show Wenlan").build(app)?;
-                let status_item =
-                    MenuItemBuilder::with_id(tray_menu_ids::STATUS, "Status: Starting…")
-                        .enabled(false)
-                        .build(app)?;
-                let quit_item =
-                    MenuItemBuilder::with_id(tray_menu_ids::QUIT, "Quit Wenlan").build(app)?;
-                let quit_and_stop_item = MenuItemBuilder::with_id(
-                    tray_menu_ids::QUIT_AND_STOP,
-                    "Quit and stop background service",
-                )
-                .build(app)?;
-                let tray_menu = MenuBuilder::new(app)
-                    .item(&show_item)
-                    .separator()
-                    .item(&status_item)
-                    .separator()
-                    .item(&quit_item)
-                    .item(&quit_and_stop_item)
-                    .build()?;
 
                 let tray = app
                     .tray_by_id("main")
                     .or_else(|| app.tray_by_id("default"));
                 if let Some(tray) = tray {
-                    let _ = tray.set_menu(Some(tray_menu));
-
-                    // Spawn health poller; it updates the icon as state changes.
+                    // Health poller: it updates the icon as the daemon comes
+                    // and goes, and the panel reads the same signal.
                     let signal = crate::tray_health::spawn_poller(handle.clone());
+                    app.manage(signal);
 
-                    // Periodically refresh the status label from the signal.
+                    #[cfg(target_os = "linux")]
                     {
-                        let status_item = status_item.clone();
-                        let sig = signal.clone();
-                        tauri::async_runtime::spawn(async move {
-                            loop {
-                                let label = match sig.current() {
-                                    crate::tray_health::DaemonState::Up => {
-                                        "Status: Up".to_string()
-                                    }
-                                    crate::tray_health::DaemonState::Starting => {
-                                        "Status: Starting…".to_string()
-                                    }
-                                    crate::tray_health::DaemonState::Down => {
-                                        let n = sig.consecutive_down_count();
-                                        if n >= 3 {
-                                            format!("Status: Down ({}s)", n as u32 * 5)
-                                        } else {
-                                            "Status: Down".to_string()
-                                        }
-                                    }
-                                };
-                                let _ = status_item.set_text(&label);
-                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        use tauri::menu::{MenuBuilder, MenuItemBuilder};
+
+                        let show_item =
+                            MenuItemBuilder::with_id(tray_menu_ids::SHOW, "Show Wenlan")
+                                .build(app)?;
+                        let quit_item =
+                            MenuItemBuilder::with_id(tray_menu_ids::QUIT, "Quit Wenlan")
+                                .build(app)?;
+                        let tray_menu = MenuBuilder::new(app)
+                            .item(&show_item)
+                            .item(&quit_item)
+                            .build()?;
+                        let _ = tray.set_menu(Some(tray_menu));
+
+                        let handle_for_menu = handle.clone();
+                        tray.on_menu_event(move |_tray, event| match event.id().as_ref() {
+                            id if id == tray_menu_ids::SHOW => {
+                                reveal_main_window(&handle_for_menu);
                             }
+                            id if id == tray_menu_ids::QUIT => {
+                                quit_from_tray(&handle_for_menu);
+                            }
+                            _ => {}
                         });
                     }
 
                     let handle_for_tray = handle.clone();
                     tray.on_tray_icon_event(move |_tray, event| {
-                        if let TrayIconEvent::Click { button_state, .. } = event {
+                        if let TrayIconEvent::Click {
+                            rect, button_state, ..
+                        } = event
+                        {
                             if button_state == tauri::tray::MouseButtonState::Up {
-                                if let Some(win) = handle_for_tray.get_webview_window("main") {
-                                    if win.is_visible().unwrap_or(false) {
-                                        let _ = win.hide();
-                                        set_main_window_dock_visibility(&handle_for_tray, false);
-                                    } else {
-                                        set_main_window_dock_visibility(&handle_for_tray, true);
-                                        let _ = win.show();
-                                        let _ = win.set_focus();
-                                    }
-                                }
+                                let icon = tray_panel::icon_rect(&handle_for_tray, &rect);
+                                tray_panel::toggle(&handle_for_tray, Some(icon));
                             }
                         }
-                    });
-
-                    let handle_for_menu = handle.clone();
-                    tray.on_menu_event(move |_tray, event| match event.id().as_ref() {
-                        id if id == tray_menu_ids::SHOW => {
-                            if let Some(win) = handle_for_menu.get_webview_window("main") {
-                                set_main_window_dock_visibility(&handle_for_menu, true);
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                            }
-                        }
-                        id if id == tray_menu_ids::QUIT => {
-                            if let Err(e) = request_full_quit(&handle_for_menu) {
-                                log::error!("[tray] failed to request guarded quit: {e}");
-                                force_full_quit(handle_for_menu.clone());
-                            }
-                        }
-                        id if id == tray_menu_ids::QUIT_AND_STOP => {
-                            // "Quit and stop background service": the same
-                            // guarded quit as "Quit Wenlan", but the quit
-                            // leaves the LaunchAgent registration in place —
-                            // the daemon stops now (graceful shutdown, then
-                            // the sidecar stop, inside the quit) and comes
-                            // back at next login. The stop itself stays
-                            // inside the quit, after the frontend guard:
-                            // stopping first would kill memory while a
-                            // refused quit keeps the app open.
-                            crate::lifecycle::arm_quit_keep_registration();
-                            if let Err(e) = request_full_quit(&handle_for_menu) {
-                                log::error!("[tray] failed to request guarded quit: {e}");
-                                // The failed request disarmed; the forced
-                                // quit that replaces it is still this item's
-                                // stop-and-keep-registration quit.
-                                crate::lifecycle::arm_quit_keep_registration();
-                                force_full_quit(handle_for_menu.clone());
-                            }
-                        }
-                        _ => {}
                     });
                 }
             }
@@ -1601,6 +1614,10 @@ pub fn run() {
             search::dismiss_quick_capture,
             search::position_quick_capture,
             quick_capture::open_quick_capture,
+            tray_panel::tray_panel_hide,
+            tray_panel::tray_panel_set_height,
+            tray_panel::tray_panel_open_main,
+            tray_panel::tray_panel_daemon_state,
             search::get_session_snapshots,
             search::get_snapshot_captures,
             search::get_snapshot_captures_with_content,
@@ -1834,6 +1851,7 @@ pub fn run() {
             search::quit_wenlan_full,
             acknowledge_guarded_quit_request,
             cancel_guarded_quit_request,
+            tray_panel_quit,
             daemon_start::start_daemon_sidecar,
             daemon_start::daemon_version_status,
             daemon_start::restart_daemon,
@@ -1897,15 +1915,12 @@ mod platform_tests {
         assert_eq!(launch_agent_startup_enabled(), cfg!(target_os = "macos"));
     }
 
-    // Daemon lifecycle UX: the tray menu carries "Quit and stop background
-    // service" under "Quit Wenlan". The builder and the menu-event handler
-    // both use these ids, so pinning the set here pins the contract.
+    // The tray carries one Quit. Two ("Quit Wenlan" and "Quit and stop
+    // background service") differed only in whether Wenlan came back at next
+    // login, which nobody could tell apart. The builder and the menu-event
+    // handler both use these ids, so pinning the set here pins the contract.
     #[test]
-    fn tray_menu_carries_quit_and_stop_service() {
-        assert!(
-            tray_menu_ids::ALL.contains(&tray_menu_ids::QUIT_AND_STOP),
-            "tray menu must contain the quit-and-stop item"
-        );
+    fn tray_menu_carries_one_quit() {
         let mut sorted = tray_menu_ids::ALL;
         sorted.sort_unstable();
         for pair in sorted.windows(2) {
@@ -1916,12 +1931,7 @@ mod platform_tests {
         }
         assert_eq!(
             tray_menu_ids::ALL,
-            [
-                tray_menu_ids::SHOW,
-                tray_menu_ids::STATUS,
-                tray_menu_ids::QUIT,
-                tray_menu_ids::QUIT_AND_STOP
-            ]
+            [tray_menu_ids::SHOW, tray_menu_ids::QUIT]
         );
     }
 

@@ -6,6 +6,7 @@ import { RecentlyOpened, type RecentSearchItem } from "./RecentlyOpened";
 import { ArrowLeft, ArrowRight, X } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import type { TrayPanelTarget } from "../TrayPanel";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -921,6 +922,20 @@ export default function Main({
   const openWikiPage = (page: Page) => openWikiNote({
     kind: "page", pageId: page.id, inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
   });
+  // The menu bar panel hands over here once it has shown this window: a page
+  // from its recent list, or the review list for an AI edit waiting on the
+  // user. "Open Wenlan" sends Home, which keeps whatever was open.
+  const trayPanelNavigateRef = useRef<(target: TrayPanelTarget) => void>(() => {});
+  trayPanelNavigateRef.current = (target) => {
+    if (target.kind === "page") navigateTo({ kind: "page", pageId: target.pageId });
+    else if (target.kind === "review") navigateTo({ kind: "distill-review" });
+  };
+  useEffect(() => {
+    const unlisten = listen<TrayPanelTarget>("tray-panel-navigate", ({ payload }) => {
+      trayPanelNavigateRef.current(payload);
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
   const responsiveSidebar = useResponsiveSidebar(!sidebarPreferences.visible, toggleSidebar, sidebarToggleRef);
   useEffect(() => setSidebarPreview(null), [view.kind, responsiveSidebar.isNarrow]);
   const sidebarCollapsed = responsiveSidebar.isNarrow ? responsiveSidebar.collapsed : !effectiveSidebar.visible;
