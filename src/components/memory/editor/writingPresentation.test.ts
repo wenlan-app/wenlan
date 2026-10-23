@@ -411,7 +411,7 @@ describe("writingPresentation", () => {
     const video = view.contentDOM.querySelector<HTMLVideoElement>("video.cm-writing-video");
     expect(image).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/home-3f2a9c1b0d.png");
     expect(image).toHaveAttribute("alt", "Home");
-    expect(video).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/film-0a1b2c3d4e.mp4");
+    expect(video).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/film-0a1b2c3d4e.mp4#t=0.1");
     expect(video?.controls).toBe(true);
     expect(view.state.doc.toString()).toBe(source);
     resetAttachmentsDirForTest(null);

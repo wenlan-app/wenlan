@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
@@ -65,4 +67,17 @@ describe("media paste", () => {
     expect(upload).not.toHaveBeenCalled();
     expect(view.state.doc.toString()).toBe("");
   });
+});
+
+describe("dropping files from Finder or Explorer", () => {
+  // With Tauri's own file drop on, the webview never sees the drop, so the
+  // editor's drop handler above would not run.
+  it.each(["tauri.conf.json", "tauri.review.conf.json", "tauri.dev-live.conf.json"])(
+    "%s hands file drops to the page",
+    (name) => {
+      const config = JSON.parse(readFileSync(resolve(process.cwd(), "app", name), "utf8"));
+      const main = config.app.windows.find((window: { label: string }) => window.label === "main");
+      expect(main.dragDropEnabled).toBe(false);
+    },
+  );
 });

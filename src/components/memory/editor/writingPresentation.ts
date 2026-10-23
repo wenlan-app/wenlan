@@ -28,6 +28,7 @@ import {
   attachmentUrl,
   primeAttachmentsDir,
   subscribeAttachmentsDir,
+  videoSource,
   type AttachmentKind,
 } from "../../../lib/pageAttachments";
 
@@ -152,7 +153,7 @@ class ImageWidget extends WidgetType {
     if (this.kind === "video") {
       const video = document.createElement("video");
       video.className = "cm-writing-image cm-writing-video";
-      video.src = this.source;
+      video.src = videoSource(this.source);
       video.controls = true;
       video.preload = "metadata";
       if (this.alt) video.setAttribute("aria-label", this.alt);

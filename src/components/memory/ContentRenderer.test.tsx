@@ -13,7 +13,7 @@ describe("ContentRenderer page attachments", () => {
     const { container } = render(<ContentRenderer content={content} variant="detail" />);
     expect(screen.getByAltText("Home")).toHaveAttribute("src", "asset://localhost//pages/_attachments/home-1.png");
     const video = container.querySelector("video");
-    expect(video).toHaveAttribute("src", "asset://localhost//pages/_attachments/film-1.mp4");
+    expect(video).toHaveAttribute("src", "asset://localhost//pages/_attachments/film-1.mp4#t=0.1");
     expect(video).toHaveAttribute("aria-label", "Film");
     expect(screen.getByAltText("Web")).toHaveAttribute("src", "https://wenlan.app/a.png");
   });

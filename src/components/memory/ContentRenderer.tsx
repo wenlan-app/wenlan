@@ -12,7 +12,7 @@ import { ReferenceLink } from "./links/ReferenceLink";
 import { referenceTargetFromHref } from "./links/referenceTypes";
 import { displayUrl, isBareUrlLink } from "../../lib/displayUrl";
 import MermaidDiagram from "./MermaidDiagram";
-import { attachmentKind, attachmentName, attachmentUrl, useAttachmentsDir } from "../../lib/pageAttachments";
+import { attachmentKind, attachmentName, attachmentUrl, useAttachmentsDir, videoSource } from "../../lib/pageAttachments";
 
 interface ContentRendererProps {
   content: string;
@@ -55,7 +55,7 @@ function AttachmentMedia({ src, name, alt }: { src: string; name: string; alt: s
   const url = attachmentUrl(src, useAttachmentsDir());
   if (!url) return <span className="page-attachment-pending">{alt}</span>;
   return attachmentKind(name) === "video" ? (
-    <video className="page-attachment page-attachment-video" src={url} controls preload="metadata" aria-label={alt || name} />
+    <video className="page-attachment page-attachment-video" src={videoSource(url)} controls preload="metadata" aria-label={alt || name} />
   ) : (
     <img className="page-attachment" src={url} alt={alt} loading="lazy" decoding="async" />
   );

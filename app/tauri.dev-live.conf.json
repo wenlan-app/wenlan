@@ -23,7 +23,8 @@
       "hiddenTitle": true,
       "trafficLightPosition": { "x": 16, "y": 28 },
       "visible": true,
-      "zoomHotkeysEnabled": true
+      "zoomHotkeysEnabled": true,
+      "dragDropEnabled": false
     }]
   }
 }

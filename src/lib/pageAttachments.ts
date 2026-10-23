@@ -104,6 +104,11 @@ export function attachmentUrl(src: string | undefined | null, dir = attachmentsD
   return convertFileSrc(`${base}${name}`);
 }
 
+/** A video URL that starts at its first frame, so WebKit paints a still before play. */
+export function videoSource(url: string): string {
+  return url.includes("#") ? url : `${url}#t=0.1`;
+}
+
 /** Whether a dropped or pasted file is one a page can show. */
 export function isAttachableFile(file: File): boolean {
   return attachmentKind(uploadName(file)) !== null;
