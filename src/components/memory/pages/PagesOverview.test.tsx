@@ -127,7 +127,7 @@ describe("PagesOverview reading workspace", () => {
       renderOverview({});
       const panel = await screen.findByTestId("pages-unavailable");
       expect(panel).toHaveTextContent("Pages can’t load yet");
-      expect(panel).toHaveTextContent("Restart it from the bottom left.");
+      expect(panel).toHaveTextContent("Restart it at the bottom left.");
       // Not the reading start panel's advice, which cannot be followed yet.
       expect(screen.queryByRole("heading", { level: 1, name: "Open a page" })).not.toBeInTheDocument();
     } finally {

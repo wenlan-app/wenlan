@@ -112,7 +112,7 @@ export function PagesOverview({
         </div>
       )}
       {daemonPhase === "failed" && (
-        <div className="wiki-reading-start-panel" data-testid="pages-unavailable">
+        <div className="wiki-reading-start-panel wiki-reading-start-panel--unavailable" data-testid="pages-unavailable">
           <PageIcon className="wiki-reading-start-icon" size={32} />
           <h1>{t("pages.overview.unavailableTitle")}</h1>
           <p>{t("pages.overview.unavailableDescription")}</p>

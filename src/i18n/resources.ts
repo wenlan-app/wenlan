@@ -596,7 +596,7 @@ const en = {
       seeAllPages: "See all pages",
       justWritten: "Just written",
       unavailableTitle: "Pages can’t load yet",
-      unavailableDescription: "The background service isn’t answering. Restart it from the bottom left.",
+      unavailableDescription: "The service isn’t answering. Restart it at the bottom left.",
       allPages: "All pages",
       pageCount: "{{count}} pages",
       filtersLabel: "Wiki filters",
