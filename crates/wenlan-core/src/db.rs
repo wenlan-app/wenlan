@@ -69,6 +69,7 @@ mod page_rename;
 mod page_summary_backfill;
 mod presence_review;
 pub(crate) mod relation_write;
+mod revision_citations;
 pub(crate) use relation_write::RelationWriteInput;
 pub(crate) mod repair_deterministic;
 mod repair_memory_cas;
@@ -32356,6 +32357,14 @@ impl MemoryDB {
         if !pages_already_marked {
             Self::mark_pages_depending_on_memory_source(conn, source, source_id).await?;
         }
+        if source == "memory" {
+            conn.execute(
+                "DELETE FROM app_metadata WHERE key=?1",
+                libsql::params![revision_citations::revision_citations_key(source_id)],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("delete revision citation receipt: {e}")))?;
+        }
         let mut physical_row_ids = HashSet::new();
         if source != "episode" {
             let mut rows = conn
@@ -53081,6 +53090,10 @@ impl MemoryDB {
         expected_version: Option<i64>,
         expected_source_revision: Option<i64>,
         revision_source_id: &str,
+        expected_revision_version: i64,
+        expected_revision_fields: Option<&str>,
+        citations_json: Option<&str>,
+        expected_incarnation: Option<&str>,
         basis: &BasisWrite,
     ) -> Result<bool, WenlanError> {
         self.try_update_page_content(
@@ -53090,11 +53103,15 @@ impl MemoryDB {
             "revision_accept",
             false,
             Some(changelog),
-            None,
+            citations_json,
             expected_version,
             expected_source_revision,
-            None,
-            Some(revision_source_id),
+            expected_incarnation,
+            Some((
+                revision_source_id,
+                expected_revision_version,
+                expected_revision_fields,
+            )),
             None,
             None,
             false,
@@ -53126,7 +53143,7 @@ impl MemoryDB {
         expected_version: Option<i64>,
         expected_source_revision: Option<i64>,
         expected_incarnation: Option<&str>,
-        consume_revision_id: Option<&str>,
+        consume_revision_id: Option<(&str, i64, Option<&str>)>,
         receipt: Option<OperationReceipt<'_>>,
         page_growth_guard: Option<(&str, i64)>,
         machine_owned_only: bool,
@@ -53236,6 +53253,38 @@ impl MemoryDB {
         conn.execute("BEGIN", ())
             .await
             .map_err(|e| WenlanError::VectorDb(format!("update_page_content begin: {e}")))?;
+
+        // A human can edit the proposal while approval is resolving its
+        // evidence. Approval must consume exactly that version/body, not a
+        // newer card, and never overwrite the edited proposal with old prose.
+        if let Some((revision_id, revision_version, revision_fields)) = consume_revision_id {
+            let pending = Self::pending_memory_revision_payload_on_conn(&conn, revision_id).await;
+            let matches = match pending {
+                Ok(Some(payload)) => {
+                    payload.revision_id == revision_id
+                        && payload.supersedes == id
+                        && payload.revision_version == revision_version
+                        && payload.structured_fields.as_deref() == revision_fields
+                        && payload.full_body.unwrap_or(payload.content) == content
+                }
+                Ok(None) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(WenlanError::NotFound(format!(
+                        "pending page revision not found or already consumed: {revision_id}"
+                    )));
+                }
+                Err(error) => {
+                    let _ = conn.execute("ROLLBACK", ()).await;
+                    return Err(error);
+                }
+            };
+            if !matches {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                return Err(WenlanError::Conflict(format!(
+                    "pending page revision changed or was consumed while approving: {revision_id}; read the current proposal again"
+                )));
+            }
+        }
 
         // A Space-locked write checked the note's Space before it got here,
         // but moving a note to another Space does not bump its version, so
@@ -53878,7 +53927,7 @@ impl MemoryDB {
             }
         }
 
-        if let Some(revision_id) = consume_revision_id {
+        if let Some((revision_id, _, _)) = consume_revision_id {
             let pending = {
                 let mut rows = match conn
                     .query(

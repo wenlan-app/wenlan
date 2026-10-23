@@ -13,6 +13,8 @@ pub const PAGE_REVISION_OUTDATED: &str = "page_revision_outdated";
 pub(super) struct PageRevisionCard {
     page_id: String,
     revision_id: String,
+    revision_version: i64,
+    structured_fields: Option<String>,
     page_version: Option<i64>,
     source_revision: Option<i64>,
     content: String,
@@ -35,6 +37,7 @@ pub(super) async fn resolve_page_revision_card(
     let Some(payload) = payload else {
         return Ok(None);
     };
+    let structured_fields = payload.structured_fields.clone();
     let structured = payload
         .structured_fields
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
@@ -94,6 +97,8 @@ pub(super) async fn resolve_page_revision_card(
     Ok(Some(PageRevisionCard {
         page_id,
         revision_id: payload.revision_id,
+        revision_version: payload.revision_version,
+        structured_fields,
         page_version,
         source_revision,
         // The staged body, not the one chunk of it this row happens to
@@ -197,6 +202,25 @@ pub(super) async fn accept_page_revision_card(
     let new_changelog =
         crate::db::append_changelog_entry(&existing_cl, entry, DEFAULT_CHANGELOG_CAP)?;
 
+    // Never trust a citation map in structured_fields. A private receipt
+    // remembers the prompt's original marker identities; verify current
+    // evidence without changing the prose the person approved. Missing or
+    // edited legacy cards remain uncited instead of guessing their numbering.
+    let receipt = db.revision_citations(&card.revision_id).await?;
+    let receipt = receipt.filter(|r| {
+        r.page_id == card.page_id
+            && Some(r.page_version) == card.page_version
+            && Some(r.source_revision) == card.source_revision
+    });
+    let citations = match receipt.as_ref() {
+        Some(receipt) => {
+            receipt
+                .verify(db, &card.content, &source_memory_ids)
+                .await?
+        }
+        None => None,
+    };
+
     let projection = knowledge_path.map(|path| {
         crate::export::knowledge::KnowledgeProjectionWrite::new(path.to_path_buf(), db)
     });
@@ -209,6 +233,10 @@ pub(super) async fn accept_page_revision_card(
             card.page_version,
             card.source_revision,
             &card.revision_id,
+            card.revision_version,
+            card.structured_fields.as_deref(),
+            citations.as_deref(),
+            receipt.as_ref().map(|r| r.incarnation.as_str()),
             &crate::db::BasisWrite {
                 actor: actor.to_string(),
                 confirm_snapshot: card.basis_snapshot.clone(),

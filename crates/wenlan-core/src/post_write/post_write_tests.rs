@@ -8181,3 +8181,523 @@ async fn changelog_entry_records_agent_and_numeric_delta() {
     assert_eq!(entries[1]["sources_removed"], 1);
     assert!(entries[1]["delta_summary"].is_string());
 }
+
+#[tokio::test]
+async fn approved_locked_refresh_keeps_verified_citations() {
+    let (db, _dir) = test_db().await;
+    let id = "mem_approval_citations";
+    let fact = "The daemon binds to port 7878 by default.";
+    seed_memory(&db, id, fact).await;
+    let page_id = seed_page(&db, id, "Old daemon setup notes.").await;
+    db.set_page_review_required(&page_id, true).await.unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let fence = db.try_get_page_fence(&page_id).await.unwrap().unwrap();
+    let body = format!("{fact} [1]");
+    let (_, cites, _) = crate::citations::process_citation_output(
+        &body,
+        &[crate::citations::NumberedSource {
+            index: 1,
+            source_kind: "memory".into(),
+            locator: id.into(),
+            text: fact.into(),
+        }],
+    );
+    let result = super::page_update::update_page_impl(
+        &db,
+        &page_id,
+        UpdatePageRequest {
+            content: body.clone(),
+            source_memory_ids: vec![id.into()],
+            expected_version: Some(page.version),
+            caller_id: None,
+            operation_id: None,
+        },
+        "re_distill",
+        false,
+        Some(fence.source_revision),
+        None,
+        Some((serde_json::to_string(&cites).unwrap(), "verified".into())),
+        None,
+        false,
+        false,
+        Some(&fence),
+        None,
+        &crate::db::BasisWrite::default(),
+    )
+    .await
+    .unwrap();
+    let card_id = result.revision_card_id.unwrap();
+    accept_pending_revision(&db, &card_id, "test")
+        .await
+        .unwrap();
+    let accepted = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(accepted.content, body);
+    assert!(accepted.review_required);
+    assert_eq!(
+        accepted.citations.len(),
+        1,
+        "approval must keep the verified marker visible without rewriting the locked page"
+    );
+    assert_eq!(accepted.citations[0].locator, id);
+    assert_eq!(accepted.citations[0].status, "verified");
+}
+
+async fn staged_citation_refresh(db: &MemoryDB) -> (String, String, String) {
+    // Deliberately reverse input order versus lexical DB order, and use a
+    // folder document with its cited fact beyond chunk zero / the old 800 cap.
+    let folder = "folder::z-decision.md";
+    let short = "mem_a_port";
+    let tail = "Cedar launch is approved for January 14, 2027 after the data export review.";
+    let long = format!(
+        "{}\n{tail}",
+        "Historical notebook material and unrelated background. ".repeat(200)
+    );
+    db.upsert_documents(vec![crate::sources::RawDocument {
+        source: "memory".into(),
+        source_id: folder.into(),
+        source_agent: Some("folder".into()),
+        title: "Cedar".into(),
+        content: long,
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    seed_memory(db, short, "The daemon binds to port 7878 by default.").await;
+    let page_id = "page_citation_approval_regression".to_string();
+    db.insert_page(
+        &page_id,
+        "Citation approval regression",
+        None,
+        "Old setup.",
+        None,
+        None,
+        &[short, folder],
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    .unwrap();
+    db.set_page_review_required(&page_id, true).await.unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let fence = db.try_get_page_fence(&page_id).await.unwrap().unwrap();
+    let numbered: Vec<_> = db
+        .get_refresh_source_contents_by_ids(&page.source_memory_ids)
+        .await
+        .unwrap()
+        .into_iter()
+        .enumerate()
+        .map(|(i, (id, text))| crate::citations::NumberedSource {
+            index: (i + 1) as u32,
+            source_kind: if id == folder {
+                "external_file"
+            } else {
+                "memory"
+            }
+            .into(),
+            locator: id,
+            text,
+        })
+        .collect();
+    let folder_marker = numbered.iter().find(|s| s.locator == folder).unwrap().index;
+    let short_marker = numbered.iter().find(|s| s.locator == short).unwrap().index;
+    let body = format!(
+        "{tail} [{folder_marker}]\n\nThe daemon binds to port 7878 by default. [{short_marker}]"
+    );
+    let (_, cites, stats) = crate::citations::process_citation_output(&body, &numbered);
+    assert_eq!(stats.verified, 2);
+    let result = super::page_update::update_page_impl(
+        db,
+        &page_id,
+        UpdatePageRequest {
+            content: body.clone(),
+            source_memory_ids: page.source_memory_ids,
+            expected_version: Some(page.version),
+            caller_id: None,
+            operation_id: None,
+        },
+        "re_distill",
+        false,
+        Some(fence.source_revision),
+        None,
+        Some((serde_json::to_string(&cites).unwrap(), stats.summary())),
+        None,
+        false,
+        false,
+        Some(&fence),
+        None,
+        &crate::db::BasisWrite::default(),
+    )
+    .await
+    .unwrap();
+    (page_id, result.revision_card_id.unwrap(), body)
+}
+
+#[tokio::test]
+async fn approved_citations_keep_order_full_sources_and_restart() {
+    let (db, dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    drop(db);
+    let db = MemoryDB::new(&dir.path().join("test.db"), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    accept_pending_revision(&db, &card_id, "test")
+        .await
+        .unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.content, body);
+    assert!(page.review_required);
+    assert_eq!(page.citations.len(), 2);
+    assert_eq!(page.citations[0].locator, "folder::z-decision.md");
+    assert_eq!(page.citations[1].locator, "mem_a_port");
+    assert!(db.revision_citations(&card_id).await.unwrap().is_none());
+    drop(db);
+    let db = MemoryDB::new(&dir.path().join("test.db"), Arc::new(NoopEmitter))
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_page(&page_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .citations
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn approved_citations_never_rewrite_a_human_edited_card() {
+    let (db, _dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    let edited = format!("{body}\n\nMy own additional note. [99]");
+    update_memory(
+        &db,
+        &card_id,
+        MemoryUpdate {
+            content: Some(&edited),
+            expected_content: None,
+            space: None,
+            confirm: false,
+            memory_type: None,
+        },
+    )
+    .await
+    .unwrap();
+    accept_pending_revision(&db, &card_id, "test")
+        .await
+        .unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.content, edited);
+    assert!(page.citations.is_empty());
+    assert!(page.review_required);
+}
+
+#[tokio::test]
+async fn approved_citations_source_change_after_verification_cannot_commit() {
+    let (db, _dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    let receipt = db.revision_citations(&card_id).await.unwrap().unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let verified = receipt
+        .verify(&db, &body, &page.source_memory_ids)
+        .await
+        .unwrap()
+        .unwrap();
+    update_memory(
+        &db,
+        "mem_a_port",
+        MemoryUpdate {
+            content: Some("The daemon now binds to port 9999."),
+            expected_content: None,
+            space: None,
+            confirm: false,
+            memory_type: None,
+        },
+    )
+    .await
+    .unwrap();
+    let sources: Vec<_> = page.source_memory_ids.iter().map(String::as_str).collect();
+    assert!(!db
+        .try_accept_page_revision(
+            &page_id,
+            &body,
+            &sources,
+            "[]",
+            Some(receipt.page_version),
+            Some(receipt.source_revision),
+            &card_id,
+            db.pending_memory_revision_payload(&card_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision_version,
+            db.pending_memory_revision_payload(&card_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .structured_fields
+                .as_deref(),
+            Some(&verified),
+            Some(&receipt.incarnation),
+            &crate::db::BasisWrite::default()
+        )
+        .await
+        .unwrap());
+    let after = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(after.content, page.content);
+    assert!(after.citations.is_empty());
+}
+
+#[tokio::test]
+async fn approved_citations_legacy_card_cannot_supply_its_own_map() {
+    let (db, _dir) = test_db().await;
+    let id = "mem_legacy_citation_source";
+    seed_memory(&db, id, "The daemon binds to port 7878 by default.").await;
+    let page_id = seed_page(&db, id, "The daemon binds to port 7878 by default.").await;
+    db.set_page_review_required(&page_id, true).await.unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let source_revision = db.get_page_source_revision(&page_id).await.unwrap();
+    let body = "The daemon binds to port 7878 by default. [1]";
+    // RawDocument is the low-trust wire shape. Even plausible citation JSON
+    // and a copied internal receipt key must not manufacture provenance.
+    db.upsert_documents(vec![crate::sources::RawDocument {source:"memory".into(),source_id:"mem_forged_citation_card".into(),content:body.into(),supersedes:Some(page_id.clone()),pending_revision:true,structured_fields:Some(serde_json::json!({
+        "revision_kind":"page_write","target_kind":"page","page_version":page.version,"source_revision":source_revision,"source_memory_ids":[id],
+        "citations":[{"marker":1,"locator":id,"status":"verified"}],"citation_receipt":"page_revision_citations_v1:mem_forged_citation_card"
+    }).to_string()),..Default::default()}]).await.unwrap();
+    accept_pending_revision(&db, "mem_forged_citation_card", "test")
+        .await
+        .unwrap();
+    let after = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(after.content, body);
+    assert!(after.citations.is_empty());
+}
+
+#[tokio::test]
+async fn approved_citations_page_generation_guard_rejects_a_concurrent_rename() {
+    let (db, _dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    let receipt = db.revision_citations(&card_id).await.unwrap().unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let verified = receipt
+        .verify(&db, &body, &page.source_memory_ids)
+        .await
+        .unwrap()
+        .unwrap();
+    db.rename_page(
+        &page_id,
+        "Renamed while reviewing",
+        page.version,
+        &crate::read_scope::ReadScope::Global,
+        None,
+    )
+    .await
+    .unwrap();
+    let refs: Vec<_> = page.source_memory_ids.iter().map(String::as_str).collect();
+    assert!(!db
+        .try_accept_page_revision(
+            &page_id,
+            &body,
+            &refs,
+            "[]",
+            Some(receipt.page_version),
+            Some(receipt.source_revision),
+            &card_id,
+            db.pending_memory_revision_payload(&card_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision_version,
+            db.pending_memory_revision_payload(&card_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .structured_fields
+                .as_deref(),
+            Some(&verified),
+            Some(&receipt.incarnation),
+            &crate::db::BasisWrite::default()
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        db.get_page(&page_id).await.unwrap().unwrap().content,
+        page.content
+    );
+}
+
+#[tokio::test]
+async fn approved_citations_incarnation_guard_rejects_a_different_row() {
+    let (db, _dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    let receipt = db.revision_citations(&card_id).await.unwrap().unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    let verified = receipt
+        .verify(&db, &body, &page.source_memory_ids)
+        .await
+        .unwrap()
+        .unwrap();
+    let refs: Vec<_> = page.source_memory_ids.iter().map(String::as_str).collect();
+    db.delete_page(&page_id).await.unwrap();
+    db.insert_page(
+        &page_id,
+        "Replacement note",
+        None,
+        "Replacement body",
+        None,
+        None,
+        &refs,
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    .unwrap();
+    let replacement = db.get_page(&page_id).await.unwrap().unwrap();
+    let replacement_fence = db.try_get_page_fence(&page_id).await.unwrap().unwrap();
+    assert_ne!(replacement_fence.incarnation, receipt.incarnation);
+    let new_card = stage_page_revision_card(
+        &db,
+        &replacement,
+        &body,
+        &page.source_memory_ids,
+        replacement_fence.source_revision,
+        "re_distill",
+        None,
+    )
+    .await
+    .unwrap()
+    .revision_card_id
+    .unwrap();
+    // Even if counters match the replacement and it has a real pending card,
+    // citation evidence verified against the previous row cannot follow it.
+    assert!(!db
+        .try_accept_page_revision(
+            &page_id,
+            &body,
+            &refs,
+            "[]",
+            Some(replacement.version),
+            Some(replacement_fence.source_revision),
+            &new_card,
+            db.pending_memory_revision_payload(&new_card)
+                .await
+                .unwrap()
+                .unwrap()
+                .revision_version,
+            db.pending_memory_revision_payload(&new_card)
+                .await
+                .unwrap()
+                .unwrap()
+                .structured_fields
+                .as_deref(),
+            Some(&verified),
+            Some(&receipt.incarnation),
+            &crate::db::BasisWrite::default()
+        )
+        .await
+        .unwrap());
+    assert_eq!(
+        db.get_page(&page_id).await.unwrap().unwrap().content,
+        "Replacement body"
+    );
+}
+
+#[tokio::test]
+async fn approved_citations_concurrent_card_edit_cannot_be_consumed() {
+    let (db, _dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    let original_page = db.get_page(&page_id).await.unwrap().unwrap();
+    // Freeze the exact proposal resolved by the accept action, then let a
+    // person edit it before that action reaches its atomic commit.
+    let resolved = super::page_revision::resolve_page_revision_card(&db, &card_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let edited = format!("{body}\n\nMy newer correction must remain pending.");
+    update_memory(
+        &db,
+        &card_id,
+        MemoryUpdate {
+            content: Some(&edited),
+            expected_content: None,
+            space: None,
+            confirm: false,
+            memory_type: None,
+        },
+    )
+    .await
+    .unwrap();
+    let error = super::page_revision::accept_page_revision_card(&db, resolved, None, "test")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, crate::error::WenlanError::Conflict(_)),
+        "{error}"
+    );
+    assert!(error.to_string().contains("pending page revision changed"));
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.content, original_page.content);
+    assert_eq!(page.version, original_page.version);
+    let pending = db
+        .pending_memory_revision_payload(&card_id)
+        .await
+        .unwrap()
+        .expect("newer proposal must remain pending");
+    assert_eq!(pending.full_body.unwrap_or(pending.content), edited);
+    assert!(db.revision_citations(&card_id).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn approved_citations_recreated_card_metadata_cannot_be_consumed() {
+    let (db, _dir) = test_db().await;
+    let (page_id, card_id, body) = staged_citation_refresh(&db).await;
+    let original_page = db.get_page(&page_id).await.unwrap().unwrap();
+    let original = db
+        .pending_memory_revision_payload(&card_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let resolved = super::page_revision::resolve_page_revision_card(&db, &card_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut fields: serde_json::Value =
+        serde_json::from_str(original.structured_fields.as_deref().unwrap()).unwrap();
+    fields["source_memory_ids"] = serde_json::json!(["mem_a_port"]);
+    db.delete_by_source_id("memory", &card_id).await.unwrap();
+    db.upsert_documents(vec![crate::sources::RawDocument {
+        source: "memory".into(),
+        source_id: card_id.clone(),
+        content: body,
+        supersedes: Some(page_id.clone()),
+        pending_revision: true,
+        structured_fields: Some(fields.to_string()),
+        ..Default::default()
+    }])
+    .await
+    .unwrap();
+    let replacement = db
+        .pending_memory_revision_payload(&card_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        replacement.revision_version, original.revision_version,
+        "exercise reset version ABA"
+    );
+    let error = super::page_revision::accept_page_revision_card(&db, resolved, None, "test")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, crate::error::WenlanError::Conflict(_)),
+        "{error}"
+    );
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.content, original_page.content);
+    assert_eq!(page.version, original_page.version);
+    assert_eq!(
+        db.pending_memory_revision_payload(&card_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .structured_fields,
+        replacement.structured_fields
+    );
+}

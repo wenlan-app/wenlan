@@ -481,6 +481,39 @@ pub async fn update_page_at_source_revision(
     .await
 }
 
+/// Source refresh keeps its pre-generation incarnation fence when it stages
+/// a review card and its citation provenance. The direct-write branch retains
+/// the existing source-revision CAS; this adds no authority to overwrite.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn update_page_with_review_fence(
+    db: &MemoryDB,
+    page_id: &str,
+    req: UpdatePageRequest,
+    edited_by: &str,
+    require_stale: bool,
+    fence: &crate::db::PageFence,
+    knowledge_path: Option<&Path>,
+    citations: Option<(String, String)>,
+) -> Result<WriteResult, WenlanError> {
+    super::page_update::update_page_impl(
+        db,
+        page_id,
+        req,
+        edited_by,
+        require_stale,
+        Some(fence.source_revision),
+        knowledge_path,
+        citations,
+        None,
+        false,
+        false,
+        Some(fence),
+        None,
+        &crate::db::BasisWrite::default(),
+    )
+    .await
+}
+
 /// An on-demand steep rewrite: the stale rebuild of
 /// [`update_page_at_source_revision`], asked for by an agent. `agent` is named
 /// on the changelog and on a revision card, and `space_guard` is the Space the

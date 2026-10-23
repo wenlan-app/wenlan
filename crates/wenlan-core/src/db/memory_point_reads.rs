@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 pub(crate) struct PendingMemoryRevisionPayload {
     pub(crate) revision_id: String,
+    pub(crate) revision_version: i64,
     pub(crate) supersedes: String,
     /// One chunk of the staged text, exactly as `memories` stores it. This is
     /// what a memory-target revision accept has always used, and it stays that
@@ -116,6 +117,15 @@ impl MemoryDB {
         id: &str,
     ) -> Result<Option<PendingMemoryRevisionPayload>, WenlanError> {
         let conn = self.conn.lock().await;
+        Self::pending_memory_revision_payload_on_conn(&conn, id).await
+    }
+
+    /// The approval transaction must compare the same canonical body that
+    /// resolution showed, including multi-chunk reconstruction and edits.
+    pub(super) async fn pending_memory_revision_payload_on_conn(
+        conn: &libsql::Connection,
+        id: &str,
+    ) -> Result<Option<PendingMemoryRevisionPayload>, WenlanError> {
         let mut rows = conn
             .query(
                 "SELECT source_id, supersedes, content, structured_fields, source_text, \
@@ -123,7 +133,7 @@ impl MemoryDB {
                         EXISTS (SELECT 1 FROM memories sibling \
                                 WHERE sibling.source_id = memories.source_id \
                                   AND sibling.source = 'memory' \
-                                  AND sibling.chunk_index > 0) \
+                                  AND sibling.chunk_index > 0), COALESCE(version, 1) \
                  FROM memories \
                  WHERE pending_revision = 1 \
                    AND source = 'memory' \
@@ -144,6 +154,9 @@ impl MemoryDB {
             return Ok(None);
         };
         Ok(Some(PendingMemoryRevisionPayload {
+            revision_version: row
+                .get::<i64>(7)
+                .map_err(|e| WenlanError::VectorDb(format!("revision version: {e}")))?,
             revision_id: row
                 .get::<String>(0)
                 .map_err(|e| WenlanError::VectorDb(format!("revision source_id: {e}")))?,

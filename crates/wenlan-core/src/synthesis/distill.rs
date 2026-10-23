@@ -1740,7 +1740,6 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         .try_get_page_fence(page_id)
         .await?
         .ok_or_else(|| WenlanError::Validation(format!("page '{page_id}' does not exist")))?;
-    let source_revision = page_fence.source_revision;
 
     let page = db
         .get_page(page_id)
@@ -1895,6 +1894,25 @@ pub(crate) async fn refresh_page_with_candidate_sources(
             return Ok(RefreshOutcome::default());
         };
         if staged.gated {
+            if source_ids.iter().collect::<std::collections::HashSet<_>>()
+                == page
+                    .source_memory_ids
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+            {
+                if let Some(card_id) = staged.revision_card_id.as_deref() {
+                    db.record_revision_citations(
+                        card_id,
+                        page_id,
+                        page.version,
+                        &page_fence,
+                        &candidate.content,
+                        &source_ids,
+                        &candidate.citations_json,
+                    )
+                    .await?;
+                }
+            }
             db.clear_page_refresh_blocked_reason_at_fence(page_id, page.version, &page_fence)
                 .await?;
         }
@@ -1929,13 +1947,13 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         )
         .await?
     } else {
-        crate::post_write::update_page_at_source_revision(
+        crate::post_write::update_page_with_review_fence(
             db,
             page_id,
             req,
             reason.edited_by(),
             candidate_sources.is_none(),
-            source_revision,
+            &page_fence,
             knowledge_path,
             citations,
         )
@@ -3613,6 +3631,86 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             after.refresh_blocked_reason.as_deref(),
             Some(reason.as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn approved_real_refresh_preserves_citations_when_source_orders_differ() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        for (id, text) in [
+            ("mem_a_refresh", "The daemon binds to port 7878 by default."),
+            (
+                "mem_z_refresh",
+                "Cedar launch is January 14, 2027 after the data export review.",
+            ),
+        ] {
+            db.upsert_documents(vec![wenlan_types::RawDocument {
+                source: "memory".into(),
+                source_id: id.into(),
+                title: id.into(),
+                content: text.into(),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+        }
+        db.insert_page(
+            "page_ordered_refresh",
+            "Runtime notes",
+            None,
+            "Old setup.",
+            None,
+            None,
+            &["mem_z_refresh", "mem_a_refresh"],
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await
+        .unwrap();
+        db.set_page_review_required("page_ordered_refresh", true)
+            .await
+            .unwrap();
+        db.set_page_stale("page_ordered_refresh", "source_updated")
+            .await
+            .unwrap();
+        let page = db.get_page("page_ordered_refresh").await.unwrap().unwrap();
+        let linked: Vec<_> = db
+            .get_page_sources(&page.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.memory_source_id)
+            .collect();
+        assert_ne!(
+            linked, page.source_memory_ids,
+            "fixture must exercise the real join-vs-JSON ordering difference"
+        );
+        let body = "The daemon binds to port 7878 by default. [1]\n\nCedar launch is January 14, 2027 after the data export review. [2]";
+        let llm: Arc<dyn LlmProvider> = Arc::new(MockProvider::new(body));
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            &page.id,
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+        let card = outcome
+            .revision_card_id
+            .expect("locked refresh needs approval");
+        assert!(
+            db.revision_citations(&card).await.unwrap().is_some(),
+            "real refresh must retain trusted numbering despite source list order"
+        );
+        crate::post_write::accept_pending_revision(&db, &card, "test")
+            .await
+            .unwrap();
+        let accepted = db.get_page(&page.id).await.unwrap().unwrap();
+        assert_eq!(accepted.content, body);
+        assert!(accepted.review_required);
+        assert_eq!(accepted.citations.len(), 2);
+        assert_eq!(accepted.citations[0].locator, "mem_a_refresh");
+        assert_eq!(accepted.citations[1].locator, "mem_z_refresh");
     }
 
     #[tokio::test]

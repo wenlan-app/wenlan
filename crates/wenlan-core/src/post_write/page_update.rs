@@ -871,9 +871,16 @@ async fn update_page_db_impl(
                 .into(),
         ));
     }
-    if !user_forced && page_fence.is_some() {
+    if page_fence.is_some()
+        && (!writer.is_machine()
+            || preserve_sources
+            || page_growth.is_some()
+            || expected_source_revision.is_none()
+            || page_fence.map(|fence| fence.source_revision) != expected_source_revision)
+    {
         return Err(WenlanError::Validation(
-            "a page incarnation fence is only carried by a user-forced page rebuild".into(),
+            "a page incarnation fence requires a machine refresh with its matching source revision"
+                .into(),
         ));
     }
     if preserve_sources && writer.is_machine() {
@@ -1146,6 +1153,35 @@ async fn update_page_db_impl(
                         .await?
                     }
                 };
+                // Only a trusted, pre-generation-fenced refresh can preserve
+                // numbering for approval. Generic card JSON carries no such
+                // authority, and newly attached sources lack this page's
+                // generation fence, so those cards retain the null fallback.
+                if let (Some((json, _)), Some(fence), Some(card_id)) = (
+                    citations.as_ref(),
+                    page_fence,
+                    result.revision_card_id.as_deref(),
+                ) {
+                    if effective_sources
+                        .iter()
+                        .collect::<std::collections::HashSet<_>>()
+                        == current
+                            .source_memory_ids
+                            .iter()
+                            .collect::<std::collections::HashSet<_>>()
+                    {
+                        db.record_revision_citations(
+                            card_id,
+                            page_id,
+                            current.version,
+                            fence,
+                            &card_content,
+                            effective_sources,
+                            json,
+                        )
+                        .await?;
+                    }
+                }
                 // A gated compile still consumed the staleness it was dispatched
                 // for: the work landed as a revision card awaiting review, so the
                 // page must not be re-compiled on the next sweep. Clearing at the

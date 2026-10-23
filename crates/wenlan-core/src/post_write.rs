@@ -23,10 +23,12 @@ pub use self::entity_graph::{
     add_observation, create_entity, create_relation, create_relation_with_span,
 };
 pub use self::page_create::resolve_page_creation_kind;
-pub(crate) use self::page_dispatch::update_page_growth_at_versions;
 pub use self::page_dispatch::{
     create_page, create_page_with_floor, create_page_with_tuning, page_write, steep_update_page,
     update_page, update_page_at_source_revision, update_page_preserving_sources, PageWrite,
+};
+pub(crate) use self::page_dispatch::{
+    update_page_growth_at_versions, update_page_with_review_fence,
 };
 pub use self::page_revision::{
     accept_pending_revision, accept_pending_revision_with_knowledge_path, dismiss_contradiction,
