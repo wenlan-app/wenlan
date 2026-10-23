@@ -178,7 +178,7 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
     fireEvent.click(screen.getByRole("button", { name: "Parser notes" }));
-    fireEvent.click(screen.getByRole("button", { name: "Stop using" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
 
     await waitFor(() => expect(removePageCodeBasis).toHaveBeenCalledWith("note-1", expect.objectContaining({ path: "src/gone.rs" })));
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["code-basis-pending"] }));

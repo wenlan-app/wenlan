@@ -110,7 +110,7 @@ const en = {
     seeCode: "See code",
     confirmNoImpact: "No impact",
     editYourself: "Edit this page yourself",
-    stopRelying: "Stop using",
+    stopRelying: "Stop tracking",
     later: "Later",
     step: "{{index}} / {{total}}",
     notice: {
@@ -132,6 +132,9 @@ const en = {
       noBefore: "The lines as cited were never committed to git, so there is nothing to compare",
       unavailable: "The file cannot be read now",
       loading: "Loading\u2026",
+      unchanged_one: "\u22ef {{count}} unchanged line",
+      unchanged_other: "\u22ef {{count}} unchanged lines",
+      tooLong: "Too long to mark what changed",
     },
     state: {
       ok: "Up to date",
@@ -153,7 +156,7 @@ const en = {
     },
     confirmFailed: "Could not confirm, please try again.",
     changedAgain: "The code changed again, please look once more.",
-    stopFailed: "Could not stop relying on it, please try again.",
+    stopFailed: "Could not stop tracking it, please try again.",
   },
   infoActions: {
     confirmContent: "Confirm content",
@@ -2970,7 +2973,7 @@ const zhHans = {
     seeCode: "查看代码",
     confirmNoImpact: "没有影响",
     editYourself: "自己修改这篇",
-    stopRelying: "不再依靠",
+    stopRelying: "不再追踪",
     later: "稍后",
     step: "{{index}} / {{total}}",
     notice: {
@@ -2992,6 +2995,9 @@ const zhHans = {
       noBefore: "引用时的内容没有进 git，无法对照",
       unavailable: "现在读不到这个文件",
       loading: "读取中\u2026",
+      unchanged_one: "\u22ef {{count}} 行没变",
+      unchanged_other: "\u22ef {{count}} 行没变",
+      tooLong: "这段太长，标不出改了哪里",
     },
     state: {
       ok: "已是最新",
@@ -3013,7 +3019,7 @@ const zhHans = {
     },
     confirmFailed: "未能确认，请再试一次。",
     changedAgain: "代码又改了，请再看一次",
-    stopFailed: "未能取消依靠，请再试一次。",
+    stopFailed: "未能停止追踪，请再试一次。",
   },
   infoActions: {
     confirmContent: "确认内容",
@@ -5768,7 +5774,7 @@ const zhHant = {
     seeCode: "查看代碼",
     confirmNoImpact: "沒有影響",
     editYourself: "自己修改這篇",
-    stopRelying: "不再依靠",
+    stopRelying: "不再追蹤",
     later: "稍後",
     step: "{{index}} / {{total}}",
     notice: {
@@ -5790,6 +5796,9 @@ const zhHant = {
       noBefore: "引用時的內容沒有進 git，無法對照",
       unavailable: "現在讀不到這個檔案",
       loading: "讀取中\u2026",
+      unchanged_one: "\u22ef {{count}} 行沒變",
+      unchanged_other: "\u22ef {{count}} 行沒變",
+      tooLong: "這段太長，標不出改了哪裡",
     },
     state: {
       ok: "已是最新",
@@ -5811,7 +5820,7 @@ const zhHant = {
     },
     confirmFailed: "未能確認，請再試一次。",
     changedAgain: "代碼又改了，請再看一次",
-    stopFailed: "未能取消依靠，請再試一次。",
+    stopFailed: "未能停止追蹤，請再試一次。",
   },
   infoActions: {
     confirmContent: "確認內容",

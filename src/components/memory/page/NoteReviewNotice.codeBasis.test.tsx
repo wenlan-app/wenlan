@@ -98,7 +98,7 @@ describe("NoteReviewNotice with a code basis", () => {
     // A single row has no step count.
     expect(within(dialog).queryByText("1 / 1")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "No impact" })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Stop using" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Stop tracking" })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Edit this page yourself" }));
     expect(onEditToConfirm).toHaveBeenCalledWith(expect.objectContaining({ path: "src/parser.rs", line_start: 10 }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -193,7 +193,7 @@ describe("NoteReviewNotice with a code basis", () => {
     expect(within(dialog).getByText("Code not found: b.rs (the repository is gone)")).toBeInTheDocument();
     expect(removePageCodeBasis).not.toHaveBeenCalled();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Stop using" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop tracking" }));
     await waitFor(() => expect(removePageCodeBasis).toHaveBeenCalledWith("page-1", expect.objectContaining({ path: "b.rs" })));
     dialog = await screen.findByRole("dialog", { name: "c.rs lines 10–24" });
     expect(within(dialog).getByText("Cannot read code: c.rs")).toBeInTheDocument();
@@ -276,8 +276,8 @@ describe("NoteReviewNotice with a code basis", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "No impact" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Could not confirm, please try again.");
 
-    fireEvent.click(within(dialog).getByRole("button", { name: "Stop using" }));
-    await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Could not stop relying on it, please try again."));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop tracking" }));
+    await waitFor(() => expect(within(dialog).getByRole("alert")).toHaveTextContent("Could not stop tracking it, please try again."));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });
