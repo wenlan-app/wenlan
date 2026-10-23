@@ -94,7 +94,7 @@ describe("RepoWikiButton", () => {
     await waitFor(() => expect(publishRepoWiki).toHaveBeenCalledWith("site"));
     expect(bindRepoWiki).toHaveBeenCalledWith("site", ROOT, "wiki", { enabled: false, hour: 9, agent: "claude", runs_on: "computer" });
     expect(await screen.findByRole("button", { name: "GitHub repository settings" })).toHaveTextContent("PR #261");
-    expect(screen.getByText(/opened a PR with 12 pages/)).toBeInTheDocument();
+    expect(screen.getByText(/new PR with 12 pages/)).toBeInTheDocument();
   });
 
   it("shows the open PR, what stayed out, and opens the PR in the browser", async () => {
