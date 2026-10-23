@@ -21,9 +21,10 @@ use wenlan_types::{
     },
     responses::{
         AgentResponse, DefaultSpaceResponse, EntityAliasesResponse, EntityBulkResponse,
-        ExportStats, HealthResponse, ListEntitiesResponse, ListMemoriesResponse,
-        MemoryDetailResponse, MergeEntityResponse, PageReadResponse, PendingRevisionItem,
-        RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
+        ExportStats, HealthResponse, KnowledgePathResponse, ListEntitiesResponse,
+        ListMemoriesResponse, MemoryDetailResponse, MergeEntityResponse, PageReadResponse,
+        PendingRevisionItem, RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse,
+        StoreMemoryResponse,
     },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
@@ -201,6 +202,17 @@ impl WenlanClient {
     /// grounds to queue locally or guess a Space.
     pub fn is_local(&self) -> bool {
         recovery::is_local_daemon_url(&self.base_url)
+    }
+
+    /// The daemon URL this client talks to (from `WENLAN_HOST`, else the default).
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// True when this client talks to the default local daemon, i.e. `WENLAN_HOST`
+    /// does not select another one.
+    pub fn is_default_host(&self) -> bool {
+        self.base_url == DEFAULT_HOST
     }
 
     async fn send(&self, req: reqwest::RequestBuilder, what: &str) -> Result<reqwest::Response> {
@@ -710,6 +722,11 @@ impl WenlanClient {
             dry_run,
         };
         self.post_json("/api/memory/entities/restore", &req).await
+    }
+
+    /// GET /api/knowledge/path — the folder the daemon keeps its page files in.
+    pub async fn knowledge_path(&self) -> Result<KnowledgePathResponse> {
+        self.get_json("/api/knowledge/path", true).await
     }
 
     /// GET /api/pages/{id} — one page with its live-file metadata.
