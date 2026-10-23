@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.20.0](https://github.com/wenlan-app/wenlan/compare/v0.19.3...v0.20.0) (2026-10-23)
+
+
+### Features
+
+* **app,plugin:** draw Mermaid diagrams in pages; wiki adds them, steep keeps them ([#960](https://github.com/wenlan-app/wenlan/issues/960)) ([6a2455f](https://github.com/wenlan-app/wenlan/commit/6a2455f4b36057f74e06e162cb28156b9fd20e44))
+* **app:** one line and one button for code that needs a look ([#964](https://github.com/wenlan-app/wenlan/issues/964)) ([65b4843](https://github.com/wenlan-app/wenlan/commit/65b48439305359df136b2d5c5f196521c0a0a410))
+* **app:** open a small panel from the menu bar icon, with one Quit ([#966](https://github.com/wenlan-app/wenlan/issues/966)) ([9ae5b91](https://github.com/wenlan-app/wenlan/commit/9ae5b911281dbe5b7397433e3e2b9f045ba671b8))
+* **app:** open the workspace at once and say service problems in one sidebar row ([#963](https://github.com/wenlan-app/wenlan/issues/963)) ([d65fc5a](https://github.com/wenlan-app/wenlan/commit/d65fc5aaca09070d06a0286da5cb2425bf116caa))
+* **app:** quiet the changed code basis notice when the AI has judged it ([#932](https://github.com/wenlan-app/wenlan/issues/932)) ([687eb60](https://github.com/wenlan-app/wenlan/commit/687eb603f0213a0b97810b8f15ffc4a448fd993c))
+* **app:** show what the user can ask their AI to do, in the sidebar and at the moment it helps ([#950](https://github.com/wenlan-app/wenlan/issues/950)) ([72cb185](https://github.com/wenlan-app/wenlan/commit/72cb1855a2467eb31ecb2ca2762561ef4fe63147))
+* **app:** steeping is Automatic or On demand, never off ([#931](https://github.com/wenlan-app/wenlan/issues/931)) ([a14f96e](https://github.com/wenlan-app/wenlan/commit/a14f96ed26b669ba69d4003cb79120252ebf87f0))
+* **core,server,mcp,plugin:** steep on demand with claim, snapshot and fenced commit ([#930](https://github.com/wenlan-app/wenlan/issues/930)) ([10fa0b2](https://github.com/wenlan-app/wenlan/commit/10fa0b28672a81ae04da8d2a0367a4bfe12493df))
+* **core,server,mcp,plugin:** steep picks up pages whose code changed ([#942](https://github.com/wenlan-app/wenlan/issues/942)) ([6d62c2c](https://github.com/wenlan-app/wenlan/commit/6d62c2cfd7e2ecda559c504a64aad153a01982c5))
+* **core,server,plugin:** check a page's diagrams on every agent write ([#970](https://github.com/wenlan-app/wenlan/issues/970)) ([1f08a34](https://github.com/wenlan-app/wenlan/commit/1f08a340d82830761ce57e30afac189e2fc3b26d))
+* **core,server:** daily housekeeping in both steep modes, and keyword-only page hits pass the recall floor ([#936](https://github.com/wenlan-app/wenlan/issues/936)) ([b90c5a7](https://github.com/wenlan-app/wenlan/commit/b90c5a716db1df41fef6776d93255c728ca7f351))
+* **core,server:** let the everyday model judge changed code basis rows in the background ([#928](https://github.com/wenlan-app/wenlan/issues/928)) ([cb632c6](https://github.com/wenlan-app/wenlan/commit/cb632c6def5dc5e04ed6e8b778b35b9d07b5582b))
+* **core:** automatic steep rewrites notes whose code changed ([#948](https://github.com/wenlan-app/wenlan/issues/948)) ([e4f60af](https://github.com/wenlan-app/wenlan/commit/e4f60af5466fa85c8c6cb5b0fd28f6e4aaeefc06))
+* fix a repository's own docs in the wiki pull request, and keep edits people make to wiki pages ([#965](https://github.com/wenlan-app/wenlan/issues/965)) ([8c76121](https://github.com/wenlan-app/wenlan/commit/8c761215af4ed75a0b6562b03fdd3e8dc66372fa))
+* link and rely on notes in other Spaces with [[Space/Title]] ([#927](https://github.com/wenlan-app/wenlan/issues/927)) ([03f6615](https://github.com/wenlan-app/wenlan/commit/03f6615e4e46382d964751c681c5893dab607c54))
+* lock pages the user wrote or edited for review ([#956](https://github.com/wenlan-app/wenlan/issues/956)) ([bef41bf](https://github.com/wenlan-app/wenlan/commit/bef41bf728936d247061f5c5e5a478320d02f891))
+* **mcp,server:** check write_page [n] citations against their sources at write time ([#953](https://github.com/wenlan-app/wenlan/issues/953)) ([53278fc](https://github.com/wenlan-app/wenlan/commit/53278fc2901844d163203a63ccbb4936c9895104))
+* **plugin,mcp:** wiki writes new notes only; steep keeps them current ([#949](https://github.com/wenlan-app/wenlan/issues/949)) ([f758029](https://github.com/wenlan-app/wenlan/commit/f758029a65980a2de28a085d0090b094744be766))
+* **plugin:** rename /wenlan map to /wenlan wiki ([#947](https://github.com/wenlan-app/wenlan/issues/947)) ([087a2d8](https://github.com/wenlan-app/wenlan/commit/087a2d812dc118d2ec1578b6fce77f602b7f0233))
+* **plugin:** wiki plans its pages from the repository instead of six fixed notes ([#957](https://github.com/wenlan-app/wenlan/issues/957)) ([58fa9f0](https://github.com/wenlan-app/wenlan/commit/58fa9f040e5d53ff83877ce70e2b7990e69a1a16))
+* **server,cli,app:** put a Space's code pages into its repository as a pull request, from a GitHub button or a daily run ([#958](https://github.com/wenlan-app/wenlan/issues/958)) ([f1d107d](https://github.com/wenlan-app/wenlan/commit/f1d107d22a68131c82c335874a8421716b6bf6c8))
+* **server,mcp:** the saving AI sets type and entity, and capture links or creates the entity ([#926](https://github.com/wenlan-app/wenlan/issues/926)) ([c7d8d6e](https://github.com/wenlan-app/wenlan/commit/c7d8d6ee74a429dcbab0972b9d9872db5006a82f))
+* **sources:** connect a Logseq graph and follow its changes ([#929](https://github.com/wenlan-app/wenlan/issues/929)) ([73a0c7a](https://github.com/wenlan-app/wenlan/commit/73a0c7acfaa446d85be1c4f30112fb67e46d152d))
+* **sources:** let users import a folder once or keep it in sync ([#925](https://github.com/wenlan-app/wenlan/issues/925)) ([9d17d52](https://github.com/wenlan-app/wenlan/commit/9d17d52bcede807a987a000f45600908f8310f69))
+* **steep:** write new pages from imported material, handed to the AI tool from the first-run checklist ([#951](https://github.com/wenlan-app/wenlan/issues/951)) ([6e4dd37](https://github.com/wenlan-app/wenlan/commit/6e4dd37ff8336b34c9d7635bfd287c371218c662))
+
+
+### Bug Fixes
+
+* AI tools connected outside the app see their pages, chat import keeps the last unanswered message, and the Wiki home leads with new pages ([#961](https://github.com/wenlan-app/wenlan/issues/961)) ([cf16fe4](https://github.com/wenlan-app/wenlan/commit/cf16fe468f10b405a14c055c6a6c0e90690d3188))
+* **app:** review revision times follow the Chinese UI ([#935](https://github.com/wenlan-app/wenlan/issues/935)) ([0a1e056](https://github.com/wenlan-app/wenlan/commit/0a1e0567170d9a324157a541b9724344db5cf85a))
+* **app:** say page and Automatic in the UI, and offer other Spaces' pages as sources ([#939](https://github.com/wenlan-app/wenlan/issues/939)) ([c8832eb](https://github.com/wenlan-app/wenlan/commit/c8832ebefaab50c054fb775d171c57a7fb4a4869))
+* **app:** show main-window toasts ([#933](https://github.com/wenlan-app/wenlan/issues/933)) ([af74da7](https://github.com/wenlan-app/wenlan/commit/af74da70f0b83695c06bb36b71bb393848662d4f))
+* **core,server:** a Space-locked reader or capture cannot tell what exists in another Space ([#946](https://github.com/wenlan-app/wenlan/issues/946)) ([a54f17d](https://github.com/wenlan-app/wenlan/commit/a54f17d5d2deb4552563b72773b8952f44e04ede))
+* **core,server:** keep Space-locked marks, orphan links and capture entities inside the Space ([#937](https://github.com/wenlan-app/wenlan/issues/937)) ([061a699](https://github.com/wenlan-app/wenlan/commit/061a699f0b0c548864da0b1e32339cde3f79ee6c))
+* **core:** tie code basis verdicts to the note version and drop the recheck switch ([#938](https://github.com/wenlan-app/wenlan/issues/938)) ([1fe6484](https://github.com/wenlan-app/wenlan/commit/1fe648436f309cf131f5bd4309c2688f8d5df57d))
+* keep added sources, imported short notes and the user's own writing ([#955](https://github.com/wenlan-app/wenlan/issues/955)) ([bd998c0](https://github.com/wenlan-app/wenlan/commit/bd998c0503302d86943098eca5d9b5e68a2332b7))
+* open source previews and reconcile duplicate folder imports ([#959](https://github.com/wenlan-app/wenlan/issues/959)) ([04b8026](https://github.com/wenlan-app/wenlan/commit/04b802671cdeb742fc851a5fd92e97a711166336))
+* **server:** a capture in On demand mode says how to steep instead of "organization is off" ([#941](https://github.com/wenlan-app/wenlan/issues/941)) ([02d4b19](https://github.com/wenlan-app/wenlan/commit/02d4b19b0e8ebaceb0bfa366ccdedba1bbadb5e5))
+
 ## [0.19.3](https://github.com/wenlan-app/wenlan/compare/v0.19.2...v0.19.3) (2026-10-21)
 
 
