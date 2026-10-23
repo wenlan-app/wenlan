@@ -5,9 +5,11 @@ import { useTranslation } from "react-i18next";
 import {
   getBackgroundAiEnabled,
   getExternalLlm,
+  getLockMyPages,
   getOnDeviceModel,
   getResolvedRouting,
   setBackgroundAiEnabled,
+  setLockMyPages,
   setSourcePin,
 } from "../../../../lib/tauri";
 import AnyProviderCard from "../../../intelligence/AnyProviderCard";
@@ -19,7 +21,7 @@ import {
 } from "../../../intelligence/IntelligenceSetup";
 import { presetForEndpoint, type PresetGroup } from "../../../intelligence/providerPresets";
 import { fillUnsetPinsWithRetry } from "../../../../lib/routingPins";
-import { Button, Card, Select, SectionHeader, SegmentedControl } from "../primitives";
+import { Button, Card, Select, SectionHeader, SegmentedControl, SettingRow } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import { SettingsHelp } from "../SettingsHelp";
 
@@ -199,6 +201,51 @@ function SteepModeRow({ automatic, loading, saving, readiness, error, onChoose }
   );
 }
 
+/** "Lock pages I've written": AI changes to pages the user wrote or edited
+ * wait for review. Switching it on also locks the pages they already wrote and
+ * says how many in one grey line; switching it off unlocks nothing. */
+function LockMyPagesRow() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["lockMyPages"], queryFn: getLockMyPages });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(false);
+  const [locked, setLocked] = useState<number | null>(null);
+  return (
+    <div data-testid="lock-my-pages">
+      <SettingRow
+        title={t("intelligence.lockMyPages")}
+        description={t("intelligence.lockMyPagesHint")}
+        enabled={query.data === true}
+        valueUnknown={!query.isSuccess || saving}
+        unknownState={saving ? "saving" : query.isPending ? "loading" : "unavailable"}
+        toggleHitArea
+        error={error ? t("intelligence.backgroundAiSaveError") : null}
+        statusLine={locked !== null
+          ? <p role="status" style={metaLineStyle}>{t("intelligence.lockMyPagesLocked", { count: locked })}</p>
+          : undefined}
+        onToggle={async () => {
+          if (!query.isSuccess || saving) return;
+          const next = !query.data;
+          setSaving(true);
+          setError(false);
+          try {
+            const count = await setLockMyPages(next);
+            setLocked(next ? count ?? 0 : null);
+            queryClient.setQueryData(["lockMyPages"], next);
+            queryClient.invalidateQueries({ queryKey: ["page"] });
+            queryClient.invalidateQueries({ queryKey: ["pages"] });
+          } catch {
+            setError(true);
+          } finally {
+            setSaving(false);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
 export default function IntelligenceSection({ delay }: { delay: number }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -356,6 +403,7 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
               }
             }}
           />
+          <LockMyPagesRow />
           {backgroundAiValue === true && (
             <>
               <TaskRow

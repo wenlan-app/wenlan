@@ -1406,8 +1406,12 @@ pub fn spawn_scheduler(
             // origin_version frontmatter trails the DB (daemon wrote
             // last). Runs every poll so freshness ≈ POLL_INTERVAL.
             let knowledge_path = runtime_config.knowledge_path_or_default();
-            match wenlan_core::sources::page_watcher::sync_filesystem_edits(&db, &knowledge_path)
-                .await
+            match wenlan_core::sources::page_watcher::sync_filesystem_edits_locking(
+                &db,
+                &knowledge_path,
+                runtime_config.lock_my_pages,
+            )
+            .await
             {
                 Ok(stats) if stats.applied > 0 => {
                     tracing::info!(

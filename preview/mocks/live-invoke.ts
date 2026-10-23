@@ -967,6 +967,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   get_profile: () => get("/api/profile"),
   get_profile_narrative: () => get("/api/profile/narrative"),
   list_spaces: () => listPreviewSpaces(),
+  // A Space bound to a git repository. The daemon runs git and gh itself, so
+  // the preview passes these straight through.
+  get_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`),
+  suggest_repo_wiki: (a) => get(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/suggest`),
+  bind_repo_wiki: (a) => put(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`, {
+    repo_root: a?.repoRoot,
+    ...(a?.folder == null ? {} : { folder: a.folder }),
+    ...(a?.daily == null ? {} : { daily: a.daily }),
+  }),
+  unbind_repo_wiki: (a) => del(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/repo`).then(() => null),
+  publish_repo_wiki: (a) => post(`/api/spaces/${enc(String(a?.space ?? ""))}/wiki/publish`),
   update_space: async (a) => {
     const name = normalizedSpace(a?.name);
     const newName = normalizedSpace(a?.newName);
@@ -1167,6 +1178,16 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     if (updated?.background_ai_enabled !== a.enabled) {
       throw new Error("The daemon does not support the background AI setting yet");
     }
+  },
+  get_lock_my_pages: async () => (await get("/api/config")).lock_my_pages === true,
+  set_lock_my_pages: async (a) => {
+    if (typeof a?.enabled !== "boolean") throw new Error("Invalid lock setting");
+    const updated = await put("/api/config", { lock_my_pages: a.enabled });
+    if (updated?.lock_my_pages !== a.enabled) {
+      throw new Error("The daemon does not support locking pages you wrote yet");
+    }
+    if (!a.enabled) return null;
+    return (await post("/api/pages/lock-edited", {})).locked;
   },
 };
 

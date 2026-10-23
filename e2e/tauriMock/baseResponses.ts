@@ -66,6 +66,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
       refinement: { ready_for_review: 0, not_ready: 0, groups: [] },
     };
     case "get_resolved_routing": return resolvedRouting();
+    // No fixture Space is bound to a repository or has code pages to offer.
+    case "get_repo_wiki": return null;
+    case "suggest_repo_wiki": return { candidates: [] };
     // The main shell asks on every launch whether a wenlan://pair link is waiting.
     case "take_remote_pairing_link": return null;
     // Web access stopped on its own: the fixture never stops, so no notice waits.

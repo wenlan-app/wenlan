@@ -10,6 +10,7 @@ import {
 } from "../components/memory/activityCopy";
 
 import { enSessionSource, hansSessionSource, hantSessionSource } from "../components/memory/sessions/sessionCopy";
+import { enRepoWiki, hansRepoWiki, hantRepoWiki } from "../components/memory/space-detail/repoWikiCopy";
 import { enSourceAccess, hansSourceAccess, hantSourceAccess } from "../components/memory/sources/sourceAccessCopy";
 import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../components/memory/sources/sourceContainerCopy";
 
@@ -2590,6 +2591,10 @@ const en = {
     steepModeOnDemand: "On demand",
     steepModeOnDemandHint: "When Claude or Codex saves or writes into Wenlan, it steeps as it goes. No command needed. To finish the rest at once, run /wenlan steep.",
     steepCheckNote: "Checking each sentence against its source only runs in Automatic for now. In On demand, pages show “Not checked”.",
+    lockMyPages: "Lock pages I've written",
+    lockMyPagesHint: "AI changes to pages you wrote or edited wait for your review. Pages AI wrote keep updating.",
+    lockMyPagesLocked_one: "Locked {{count}} page.",
+    lockMyPagesLocked_other: "Locked {{count}} pages.",
     steepTrustLocal: "Everything stays on this computer.",
     steepTrustCloud_one: "{{jobs}} sends its text to {{vendor}}. Everything else stays on this computer.",
     steepTrustCloud_other: "{{jobs}} send their text to {{vendor}}. Everything else stays on this computer.",
@@ -2868,6 +2873,7 @@ const en = {
 },
   activityStatus: enActivityStatus,
   sessionSource: enSessionSource,
+  repoWiki: enRepoWiki,
 };
 
 const zhHans = {
@@ -5394,6 +5400,10 @@ const zhHans = {
     steepModeOnDemand: "随叫",
     steepModeOnDemandHint: "平常在 Claude、Codex 里存东西、写笔记时，它们就会顺手整理，不用另外下指令。想把剩下的一次做完，输入 /wenlan steep。",
     steepCheckNote: "逐句核对来源目前只在自动模式进行。随叫时，笔记标「未验证」。",
+    lockMyPages: "我写过的页面自动上锁",
+    lockMyPagesHint: "你写过或改过的页面，AI 要改会先给你审核。AI 写的页面照常更新。",
+    lockMyPagesLocked_one: "已帮你锁好 {{count}} 页。",
+    lockMyPagesLocked_other: "已帮你锁好 {{count}} 页。",
     steepTrustLocal: "全部留在这台电脑。",
     steepTrustCloud_one: "{{jobs}}会把文字送到 {{vendor}}，其余留在这台电脑。",
     steepTrustCloud_other: "{{jobs}}会把文字送到 {{vendor}}，其余留在这台电脑。",
@@ -5663,6 +5673,7 @@ const zhHans = {
 },
   activityStatus: hansActivityStatus,
   sessionSource: hansSessionSource,
+  repoWiki: hansRepoWiki,
 };
 
 const zhHant = {
@@ -8189,6 +8200,10 @@ const zhHant = {
     steepModeOnDemand: "隨叫",
     steepModeOnDemandHint: "平常在 Claude、Codex 裡存東西、寫筆記時，它們就會順手整理，不用另外下指令。想把剩下的一次做完，輸入 /wenlan steep。",
     steepCheckNote: "逐句核對來源目前只在自動模式進行。隨叫時，筆記標「未驗證」。",
+    lockMyPages: "我寫過的頁面自動上鎖",
+    lockMyPagesHint: "你寫過或改過的頁面，AI 要改會先給你審核。AI 寫的頁面照常更新。",
+    lockMyPagesLocked_one: "已幫你鎖好 {{count}} 頁。",
+    lockMyPagesLocked_other: "已幫你鎖好 {{count}} 頁。",
     steepTrustLocal: "全部留在這台電腦。",
     steepTrustCloud_one: "{{jobs}}會把文字送到 {{vendor}}，其餘留在這台電腦。",
     steepTrustCloud_other: "{{jobs}}會把文字送到 {{vendor}}，其餘留在這台電腦。",
@@ -8458,6 +8473,7 @@ const zhHant = {
 },
   activityStatus: hantActivityStatus,
   sessionSource: hantSessionSource,
+  repoWiki: hantRepoWiki,
 };
 
 export const resources = {

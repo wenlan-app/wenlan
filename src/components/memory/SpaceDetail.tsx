@@ -12,6 +12,7 @@ import {
 } from "../../lib/tauri";
 import { SpaceProjectContent } from "./space-detail/SpaceProjectContent";
 import { SpaceDossierHeader } from "./space-detail/SpaceDossierHeader";
+import { RepoWikiButton } from "./space-detail/RepoWikiButton";
 import { SPACE_DETAIL_KEY_COPY, type SpaceDetailCopy } from "./space-detail/copy";
 import {
   PAGE_FETCH_LIMIT,
@@ -146,6 +147,7 @@ export default function SpaceDetail({
     <SpaceDossierFrame>
       <SpaceDossierHeader
         key={space.id}
+        leadingAction={<RepoWikiButton space={space.name} />}
         onRegisterFlush={registerIdentityFlush}
         actions={{
           onBack,

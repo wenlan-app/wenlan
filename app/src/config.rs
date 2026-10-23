@@ -177,8 +177,12 @@ fn merge_with_existing_json(path: &std::path::Path, next: Value) -> Result<Value
     let mut merged = match std::fs::read_to_string(path) {
         Ok(contents) => serde_json::from_str::<serde_json::Map<String, Value>>(&contents)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // Creating config before the daemon starts is still a new install.
-            serde_json::Map::from_iter([("background_ai_enabled".into(), Value::Bool(false))])
+            // Creating config before the daemon starts is still a new install:
+            // automatic steeping starts off, "Lock pages I've written" on.
+            serde_json::Map::from_iter([
+                ("background_ai_enabled".into(), Value::Bool(false)),
+                ("lock_my_pages".into(), Value::Bool(true)),
+            ])
         }
         Err(error) => return Err(error.into()),
     };
@@ -251,6 +255,10 @@ mod tests {
         save_config_at(&path, &Config::default()).unwrap();
         let saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["background_ai_enabled"], false);
+        assert_eq!(
+            saved["lock_my_pages"], true,
+            "a new install locks pages the user wrote"
+        );
         std::fs::write(&path, "{broken").unwrap();
         assert!(save_config_at(&path, &Config::default()).is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");

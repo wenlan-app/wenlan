@@ -38,6 +38,7 @@ pub mod remote_access;
 mod remote_access_platform;
 pub mod remote_relay;
 mod repair;
+mod repo_wiki;
 mod search;
 mod skills_install;
 pub mod sources;
@@ -1610,6 +1611,11 @@ pub fn run() {
             search::get_space,
             search::create_space,
             search::update_space,
+            repo_wiki::get_repo_wiki,
+            repo_wiki::suggest_repo_wiki,
+            repo_wiki::bind_repo_wiki,
+            repo_wiki::unbind_repo_wiki,
+            repo_wiki::publish_repo_wiki,
             search::delete_space,
             search::move_space,
             search::confirm_space,
@@ -1694,6 +1700,8 @@ pub fn run() {
             search::set_setup_completed,
             search::get_background_ai_enabled,
             search::set_background_ai_enabled,
+            search::get_lock_my_pages,
+            search::set_lock_my_pages,
             search::should_show_wizard,
             search::detect_mcp_clients_cmd,
             search::write_mcp_config,

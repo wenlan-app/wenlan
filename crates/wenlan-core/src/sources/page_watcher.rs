@@ -58,6 +58,16 @@ pub async fn sync_filesystem_edits(
     db: &MemoryDB,
     knowledge_path: &Path,
 ) -> Result<WatcherStats, WenlanError> {
+    sync_filesystem_edits_locking(db, knowledge_path, false).await
+}
+
+/// [`sync_filesystem_edits`], also locking a page for review when a vault
+/// edit is the first human edit it gets (`Config::lock_my_pages`).
+pub async fn sync_filesystem_edits_locking(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    lock_my_pages: bool,
+) -> Result<WatcherStats, WenlanError> {
     let mut stats = WatcherStats::default();
     if !knowledge_path.exists() {
         return Ok(stats);
@@ -68,7 +78,7 @@ pub async fn sync_filesystem_edits(
     for relative in paths {
         let path = knowledge_path.join(&relative);
         stats.scanned += 1;
-        match sync_one_file(db, &relative, knowledge_path, &targets).await {
+        match sync_one_file(db, &relative, knowledge_path, &targets, lock_my_pages).await {
             Ok(Outcome::Applied { page_id }) => {
                 stats.applied += 1;
                 log::info!(
@@ -111,6 +121,7 @@ async fn sync_one_file(
     relative: &str,
     knowledge_path: &Path,
     targets: &HashMap<String, String>,
+    lock_my_pages: bool,
 ) -> Result<Outcome, WenlanError> {
     let (raw, _) = crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?;
     let (fm, body) = obsidian::extract_frontmatter(&raw);
@@ -223,12 +234,18 @@ async fn sync_one_file(
     // trailing the DB and skip as SkippedDaemonAhead.
     // knowledge_path=Some: page_watcher IS the fs writer; update_page
     //   re-projects rather than skipping the write.
-    crate::post_write::update_page_preserving_sources(
+    crate::post_write::page_write(
         db,
-        &page_id,
-        req,
-        "fs_edit",
-        Some(knowledge_path),
+        crate::post_write::PageWrite::UpdatePreservingSources {
+            page_id: &page_id,
+            req,
+            edited_by: "fs_edit",
+            knowledge_path: Some(knowledge_path),
+            basis: crate::db::BasisWrite {
+                lock_on_first_human_edit: lock_my_pages,
+                ..crate::db::BasisWrite::default()
+            },
+        },
     )
     .await?;
 

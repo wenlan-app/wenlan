@@ -7396,6 +7396,176 @@ async fn set_page_review_required_round_trips_without_bumping_version() {
     );
 }
 
+/// "Lock pages I've written": a human save through the editor seam that asks
+/// for it locks the page on its first human edit only.
+async fn human_save(db: &MemoryDB, page_id: &str, content: &str, lock: bool) -> WriteResult {
+    page_write(
+        db,
+        PageWrite::UpdatePreservingSources {
+            page_id,
+            req: UpdatePageRequest {
+                content: content.to_string(),
+                source_memory_ids: vec![],
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            },
+            edited_by: "manual_edit",
+            knowledge_path: None,
+            basis: crate::db::BasisWrite {
+                lock_on_first_human_edit: lock,
+                ..crate::db::BasisWrite::default()
+            },
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn lock_my_pages_locks_a_page_on_its_first_human_edit() {
+    let (db, _dir) = test_db().await;
+    ownership_page(&db, "page_mine", "mem-mine").await;
+    let saved = human_save(
+        &db,
+        "page_mine",
+        "Tokio runtimes schedule async tasks across worker threads, my notes",
+        true,
+    )
+    .await;
+    assert!(saved.wrote);
+    let after = db.get_page("page_mine").await.unwrap().unwrap();
+    assert!(after.user_edited);
+    assert!(after.review_required, "the first human edit locks the page");
+
+    // An agent change now waits for review even with a matching version.
+    let agent = ownership_write(
+        &db,
+        "page_mine",
+        "Tokio runtimes schedule async tasks, agent rewrite",
+        &["mem-mine"],
+        "agent_refresh",
+        Some(after.version),
+    )
+    .await
+    .unwrap();
+    assert!(agent.gated && !agent.wrote);
+}
+
+#[tokio::test]
+async fn lock_my_pages_off_or_machine_writes_never_lock() {
+    let (db, _dir) = test_db().await;
+    ownership_page(&db, "page_off", "mem-off").await;
+    human_save(
+        &db,
+        "page_off",
+        "Tokio runtimes schedule async tasks across worker threads, edited with it off",
+        false,
+    )
+    .await;
+    let off = db.get_page("page_off").await.unwrap().unwrap();
+    assert!(off.user_edited);
+    assert!(!off.review_required, "the switch off locks nothing");
+
+    // A page only an agent ever wrote keeps updating.
+    let before = ownership_page(&db, "page_agent_only", "mem-agent-only").await;
+    let agent = ownership_write(
+        &db,
+        "page_agent_only",
+        "Tokio runtimes schedule async tasks, agent refresh",
+        &["mem-agent-only"],
+        "agent_refresh",
+        Some(before.version),
+    )
+    .await
+    .unwrap();
+    assert!(agent.wrote);
+    let after = db.get_page("page_agent_only").await.unwrap().unwrap();
+    assert!(!after.user_edited);
+    assert!(!after.review_required, "an AI-written page is never locked");
+}
+
+#[tokio::test]
+async fn lock_my_pages_never_relocks_a_page_the_user_unlocked() {
+    let (db, _dir) = test_db().await;
+    ownership_page(&db, "page_unlocked", "mem-unlocked").await;
+    human_save(
+        &db,
+        "page_unlocked",
+        "Tokio runtimes schedule async tasks across worker threads, first edit",
+        true,
+    )
+    .await;
+    assert!(db
+        .set_page_review_required("page_unlocked", false)
+        .await
+        .unwrap());
+    let again = human_save(
+        &db,
+        "page_unlocked",
+        "Tokio runtimes schedule async tasks across worker threads, second edit",
+        true,
+    )
+    .await;
+    assert!(again.wrote);
+    let after = db.get_page("page_unlocked").await.unwrap().unwrap();
+    assert!(
+        !after.review_required,
+        "a page the user unlocked stays unlocked through later edits"
+    );
+}
+
+#[tokio::test]
+async fn lock_user_edited_pages_locks_and_counts_only_unlocked_human_pages() {
+    let (db, _dir) = test_db().await;
+    ownership_user_edited_page(&db, "page_edited_a", "mem-edited-a").await;
+    ownership_user_edited_page(&db, "page_edited_b", "mem-edited-b").await;
+    ownership_user_edited_page(&db, "page_edited_locked", "mem-edited-locked").await;
+    assert!(db
+        .set_page_review_required("page_edited_locked", true)
+        .await
+        .unwrap());
+    ownership_page(&db, "page_ai", "mem-ai").await;
+    let draft = db
+        .create_page_draft_with_id(
+            "page_00000000-0000-4000-8000-0000000000aa",
+            "My draft",
+            "Draft body",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        db.lock_user_edited_pages().await.unwrap(),
+        2,
+        "counts the two edited pages it locked, not the locked one or the draft"
+    );
+    for id in ["page_edited_a", "page_edited_b", "page_edited_locked"] {
+        assert!(
+            db.get_page(id).await.unwrap().unwrap().review_required,
+            "{id}"
+        );
+    }
+    assert!(
+        !db.get_page("page_ai")
+            .await
+            .unwrap()
+            .unwrap()
+            .review_required
+    );
+    assert!(
+        db.get_page(&draft.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .review_required,
+        "an unpublished draft is locked too"
+    );
+    assert_eq!(db.lock_user_edited_pages().await.unwrap(), 0, "idempotent");
+}
+
 // ── PR A fix round: fences that hold when the page moves after the gate ──
 
 /// Park the next write to `page_id` at the pre-write seam. Returns the
