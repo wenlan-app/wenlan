@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 
 interface Page {
@@ -19,11 +19,33 @@ interface Props {
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Whether the first-page dialog is on screen, so the milestone toasts wait
+// for it instead of popping up in the corner at the same moment.
+let openCount = 0;
+const listeners = new Set<() => void>();
+function setOpen(delta: number) {
+  openCount += delta;
+  listeners.forEach((listener) => listener());
+}
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+export function useFirstPageModalOpen(): boolean {
+  return useSyncExternalStore(subscribe, () => openCount > 0);
+}
+
 export function FirstPageModal({ page, onOpen, onDismiss }: Props) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const openRef = useRef<HTMLButtonElement | null>(null);
 
-  // Focus trap: on mount focus the first focusable element inside the dialog,
+  useEffect(() => {
+    setOpen(1);
+    return () => setOpen(-1);
+  }, []);
+
+  // Focus trap: on mount focus "Open page", the one thing the dialog is for,
   // and on Tab/Shift+Tab at the boundaries cycle to the other end so focus
   // never escapes the modal.
   useEffect(() => {
@@ -34,7 +56,7 @@ export function FirstPageModal({ page, onOpen, onDismiss }: Props) {
     const last = focusables[focusables.length - 1];
 
     // Move focus into the dialog on mount so keyboard users land inside.
-    if (first) first.focus();
+    (openRef.current ?? first)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -129,8 +151,8 @@ export function FirstPageModal({ page, onOpen, onDismiss }: Props) {
         )}
         <p
           style={{
-            fontFamily: "var(--mem-font-mono)",
-            fontSize: "11px",
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "13px",
             color: "var(--mem-text-tertiary)",
             margin: "0 0 24px 0",
           }}
@@ -155,6 +177,7 @@ export function FirstPageModal({ page, onOpen, onDismiss }: Props) {
             {t("onboarding.firstPage.dismiss")}
           </button>
           <button
+            ref={openRef}
             onClick={() => onOpen(page.id)}
             style={{
               fontFamily: "var(--mem-font-body)",

@@ -97,21 +97,27 @@ impl<'a> MilestoneEvaluator<'a> {
     /// (≥1 active page exists) and/or `graph-alive` (≥5 entities AND
     /// ≥1 relation). Both checks are independent and idempotent.
     pub async fn check_after_refinery_pass(&self) -> Result<(), WenlanError> {
-        let active_count = self.db.count_active_pages().await?;
-        if active_count >= 1 {
-            if let Some(first) = self.db.oldest_active_page().await? {
-                let payload = serde_json::json!({
-                    "page_id": first.id,
-                    "title": first.title,
-                });
-                self.fire(MilestoneId::FirstPage, Some(payload)).await?;
-            }
-        }
+        self.check_first_page().await?;
 
         let entity_count = self.db.count_entities().await?;
         let relation_count = self.db.count_relations().await?;
         if entity_count >= 5 && relation_count >= 1 {
             self.fire(MilestoneId::GraphAlive, None).await?;
+        }
+        Ok(())
+    }
+
+    /// Fires `first-page` for the oldest page written from the user's
+    /// material (`MemoryDB::oldest_active_page`). Called after a refinery pass
+    /// and after an AI tool writes a new page through steep, which happens
+    /// outside the refinery.
+    pub async fn check_first_page(&self) -> Result<(), WenlanError> {
+        if let Some(first) = self.db.oldest_active_page().await? {
+            let payload = serde_json::json!({
+                "page_id": first.id,
+                "title": first.title,
+            });
+            self.fire(MilestoneId::FirstPage, Some(payload)).await?;
         }
         Ok(())
     }

@@ -6,6 +6,7 @@ import React from "react";
 import { toast } from "sonner";
 import { MilestoneToaster } from "../MilestoneToaster";
 import { AppToaster } from "../../AppToaster";
+import { FirstPageModal } from "../FirstPageModal";
 import type { MilestoneRecord } from "../../../lib/tauri";
 
 const recentRecall: MilestoneRecord = {
@@ -95,6 +96,23 @@ describe("MilestoneToaster", () => {
     await waitFor(() =>
       expect(screen.getByText(/recalled for you/i)).toBeInTheDocument(),
     );
+  });
+
+  it("holds toasts back while the first-page dialog is open", async () => {
+    mockList.mockResolvedValue([recentRecall]);
+    const page = { id: "c1", title: "Trip plan", source_memory_ids: ["m1"] };
+    const view = render(
+      <>
+        <MilestoneToaster />
+        <FirstPageModal page={page} onOpen={vi.fn()} onDismiss={vi.fn()} />
+      </>,
+      { wrapper },
+    );
+    await waitFor(() => expect(mockList).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText(/recalled for you/i)).toBeNull();
+    view.rerender(<MilestoneToaster />);
+    await waitFor(() => expect(screen.getByText(/recalled for you/i)).toBeInTheDocument());
   });
 
   it("does not render a toast for milestones older than 24h", async () => {

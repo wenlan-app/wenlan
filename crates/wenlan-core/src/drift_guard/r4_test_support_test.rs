@@ -3229,7 +3229,7 @@ fn repository_module_graph_matches_r4_25_group_6_census() {
     );
     assert_eq!(
         analysis.support_calls.len(),
-        1189,
+        1193,
         "PR-D integration must expose the frozen 967 support calls, the 6 PR-D test identities, \
          the 5 M5 derivation-marker fixture calls, the 10 M6 shadow-promoter fixture calls, \
          the 7 G6 BindPageLink repair-test calls (G6 Stage 2 PR 2b, item 3: \
@@ -3381,7 +3381,7 @@ fn repository_module_graph_matches_r4_25_group_6_census() {
          contributes test_primary_session/query/next/get once each, rollback contributes \
          two test_primary_session and two execute calls for its failure trigger, and \
          edited/multisource/OKF exclusion contributes one test_primary_session and three \
-         execute calls for its fixture rows; plus the 6 steep-on-demand calls in steep_test.rs: the memory helper seeds each source row through test_primary_session|1 + TestDbSession::execute|1, a_source_edited_after_the_claim_refuses_the_commit edits a source's text in place after the claim the same way, and set_page_space moves a page to another Space with the same pair; plus the 2 steep code-card calls: a_note_the_user_edited_gets_a_code_card_and_leaves_the_list_until_they_decide marks its note user_edited through test_primary_session|1 + TestDbSession::execute|1; plus the 4 steep new-page calls in steep_new_test.rs: the row helper seeds each memory row through test_primary_session|1 + TestDbSession::execute|1, and a_source_edited_after_the_claim_refuses_the_commit edits a source's text in place after the claim the same way."
+         execute calls for its fixture rows; plus the 6 steep-on-demand calls in steep_test.rs: the memory helper seeds each source row through test_primary_session|1 + TestDbSession::execute|1, a_source_edited_after_the_claim_refuses_the_commit edits a source's text in place after the claim the same way, and set_page_space moves a page to another Space with the same pair; plus the 2 steep code-card calls: a_note_the_user_edited_gets_a_code_card_and_leaves_the_list_until_they_decide marks its note user_edited through test_primary_session|1 + TestDbSession::execute|1; plus the 4 steep new-page calls in steep_new_test.rs: the row helper seeds each memory row through test_primary_session|1 + TestDbSession::execute|1, and a_source_edited_after_the_claim_refuses_the_commit edits a source's text in place after the claim the same way; plus four first-sync alias-retirement calls in document_enrichment.rs: the regression reads retained legacy rows through one test_primary_session/query/next/get chain."
     );
 }
 

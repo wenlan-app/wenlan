@@ -6,6 +6,7 @@ import { RecentlyOpened, type RecentSearchItem } from "./RecentlyOpened";
 import { ArrowLeft, ArrowRight, X } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
+import type { TrayPanelTarget } from "../TrayPanel";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import {
@@ -63,7 +64,7 @@ import PairingApprovalDialog from "./PairingApprovalDialog";
 import RemoteAccessNotifier from "./RemoteAccessNotifier";
 import { searchResultTarget } from "../../lib/searchResultTarget";
 import { readRecentPageHistory, recordRecentPageVisit } from "../../lib/recentPages";
-import { readWikiInventoryMode, type WikiInventoryMode } from "../../lib/wikiNotesPreferences";
+import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../lib/wikiNotesPreferences";
 import { deleteRecentSpace, readRecentSpaceHistory, recordRecentSpaceVisit, renameRecentSpace } from "../../lib/recentSpaces";
 import { createSpaceDetailCopy, createSpacesOverviewLabels } from "./navigation/copy";
 import { activeNavigationForView, type View } from "./navigation/viewState";
@@ -922,6 +923,20 @@ export default function Main({
   const openWikiPage = (page: Page) => openWikiNote({
     kind: "page", pageId: page.id, inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
   });
+  // The menu bar panel hands over here once it has shown this window: a page
+  // from its recent list, or the review list for an AI edit waiting on the
+  // user. "Open Wenlan" sends Home, which keeps whatever was open.
+  const trayPanelNavigateRef = useRef<(target: TrayPanelTarget) => void>(() => {});
+  trayPanelNavigateRef.current = (target) => {
+    if (target.kind === "page") navigateTo({ kind: "page", pageId: target.pageId });
+    else if (target.kind === "review") navigateTo({ kind: "distill-review" });
+  };
+  useEffect(() => {
+    const unlisten = listen<TrayPanelTarget>("tray-panel-navigate", ({ payload }) => {
+      trayPanelNavigateRef.current(payload);
+    });
+    return () => { unlisten.then((f) => f()); };
+  }, []);
   const responsiveSidebar = useResponsiveSidebar(!sidebarPreferences.visible, toggleSidebar, sidebarToggleRef);
   useEffect(() => setSidebarPreview(null), [view.kind, responsiveSidebar.isNarrow]);
   const sidebarCollapsed = responsiveSidebar.isNarrow ? responsiveSidebar.collapsed : !effectiveSidebar.visible;
@@ -939,10 +954,12 @@ export default function Main({
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   // The directory has nothing to say to a brand-new library, and it reads as a
   // second sidebar next to the open getting-started checklist, so both give the
-  // Wiki a single column; see WikiWorkspace `directoryHidden`.
+  // Wiki a single column; see WikiWorkspace `directoryHidden`. Once the card is
+  // down to its one-line form the pages are the home again, directory included.
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
-  const liveDirectoryHidden = libraryEmpty || (gettingStarted.visible && !gettingStarted.dismissed);
+  const liveDirectoryHidden = libraryEmpty
+    || (gettingStarted.visible && !gettingStarted.dismissed && !gettingStarted.compact);
   // Until both reads answer (they wait on the daemon at launch), keep the
   // layout of last time so the Wiki does not collapse under the user.
   const layoutKnown = gettingStarted.loaded || libraryEmpty;
@@ -1387,7 +1404,12 @@ export default function Main({
             >
               <PagesOverview
                 inventoryScope={view.kind === "pages" ? view.inventoryScope : undefined}
-                onBrowseAll={() => navigateTo({ kind: "pages" })}
+                onBrowseAll={() => {
+                  // The home lists only the newest pages; every page is in the
+                  // directory beside it, by folder.
+                  writeWikiInventoryMode("folders");
+                  setWikiInventoryMode("folders");
+                }}
                 onBrowseFolder={(inventoryScope) => navigateTo({ kind: "pages", inventoryScope })}
                 onCreatePage={(space, folderPath) => navigateTo({ kind: "page-draft", space, folderPath, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
                 onSelectDraft={openWikiDraft}

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useMilestones } from "./useMilestones";
+import { useFirstPageModalOpen } from "./FirstPageModal";
 import type { MilestoneId, MilestoneRecord } from "../../lib/tauri";
 
 const TOAST_CHANNEL_IDS: Record<MilestoneId, boolean> = {
@@ -133,6 +134,8 @@ export function MilestoneToaster() {
   acknowledgeRef.current = acknowledge;
   // Cards handed to the stack, so a rerender does not raise them again.
   const raised = useRef(new Set<string>());
+  // The first-page dialog has the stage; toasts wait until it closes.
+  const modalOpen = useFirstPageModalOpen();
 
   const visible = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -149,13 +152,15 @@ export function MilestoneToaster() {
   }, [milestones, dismissed]);
 
   useEffect(() => {
-    const keys = new Set(visible.map(toastKey));
+    // Cards already up leave while the dialog is open and come back after.
+    const shown = modalOpen ? [] : visible;
+    const keys = new Set(shown.map(toastKey));
     for (const key of raised.current) {
       if (keys.has(key)) continue;
       raised.current.delete(key);
       toast.dismiss(key);
     }
-    for (const m of visible) {
+    for (const m of shown) {
       const key = toastKey(m);
       if (raised.current.has(key)) continue;
       raised.current.add(key);
@@ -180,7 +185,7 @@ export function MilestoneToaster() {
         { id: key, duration: Infinity, onDismiss: forget },
       );
     }
-  }, [visible]);
+  }, [visible, modalOpen]);
 
   return null;
 }

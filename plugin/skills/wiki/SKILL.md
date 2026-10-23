@@ -6,11 +6,13 @@ description: >
   flow a newcomer needs, each key sentence tied to the code lines it was read
   from, so Wenlan can tell when the code moved on. Writes the pages that are
   missing and leaves the rest alone; a page whose code changed is brought up
-  to date by steep, not here. Use for "build a
+  to date by steep, not here. For a Space connected to the repository, also
+  fixes sentences of the repository's own docs the code no longer agrees
+  with, for the wiki pull request. Use for "build a
   wiki for this repo", "get to know this repository", "幫這個倉庫建 wiki",
   "認識這個倉庫". Invoked as `/wenlan wiki [space:<name>]`.
 argument-hint: "[space:<name>]"
-allowed-tools: ["Bash", "Read", "Glob", "Grep", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__page_code_basis", "mcp__plugin_wenlan_wenlan__recall"]
+allowed-tools: ["Bash", "Read", "Glob", "Grep", "mcp__plugin_wenlan_wenlan__list_pages", "mcp__plugin_wenlan_wenlan__read_page", "mcp__plugin_wenlan_wenlan__write_page", "mcp__plugin_wenlan_wenlan__page_code_basis", "mcp__plugin_wenlan_wenlan__recall", "mcp__plugin_wenlan_wenlan__doc_fix"]
 user-invocable: false
 ---
 
@@ -37,6 +39,9 @@ resolved="$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve-space.sh" --cwd "$PWD" --args
 space="$(printf '%s\n' "$resolved" | cut -f1)"
 repo_root="$(git -C "$PWD" rev-parse --show-toplevel)"
 ```
+
+If the resolver cannot run (a background run may allow only read-only
+commands), take the Space from the `space:<name>` token instead.
 
 If the `git rev-parse` fails, say this folder is not a git repository and stop.
 If `space` is empty, say this folder is not matched to a Space and that
@@ -147,6 +152,36 @@ write_page(space="<space>", title="<page title>", content="<page>",
 
 Whenever a tool offers a `space` field, pass the resolved Space in it; a write without it goes to the connection's default Space, which may not be this repository's. When the connection is locked to one Space the field is absent, and nothing needs passing.
 
+**Diagrams.** Add a Mermaid diagram where a picture says it faster than
+prose: how the parts call each other (module map, overview), a flow from
+entry to effect, what is stored where, how a release goes out. Skip it on
+`How to run it` and `Known pitfalls`, and when it would have fewer than three
+boxes. At most two per page, each right after the paragraph it pictures.
+Every box and arrow is something the page's own sentences say and cite; a
+diagram never carries a fact the text does not. Write it so it draws the same
+in Wenlan, on GitHub and in Obsidian:
+
+- A fenced code block tagged `mermaid`, using only `flowchart LR` (how
+  parts connect), `flowchart TD` (a flow) or `sequenceDiagram` (calls back
+  and forth).
+- At most about 12 boxes, each label a few words in the page's language.
+  Keep about 5 boxes across in `flowchart LR`; for more, use `flowchart TD`
+  so the diagram is not too wide to read. Edge labels are one or two words.
+- File names go in box labels only on the module map; elsewhere a box names
+  its role (`Worker`, not `worker.ts`), so a renamed file does not leave the
+  diagram wrong.
+- In a flowchart, name each box with a short ASCII id and put its label in
+  double quotes, `api["HTTP server"]`, edge labels too, `-- "yes" -->`.
+- Never a bare number in square brackets anywhere in the diagram, such as
+  `step[1]`: Wenlan reads `[1]` as a citation.
+- No styling, `click`, links, HTML or icons.
+
+```mermaid
+flowchart LR
+  cli["CLI"] --> server["HTTP server"]
+  server --> store[("Database")]
+```
+
 Pass no `source_memory_ids`. If the reply says `code_basis is not available
 over remote connections`, say wiki needs local Wenlan and stop. A `warnings`
 entry saying a code basis was not recorded is reported, not hidden.
@@ -171,13 +206,80 @@ One line per planned page with its title: written, left as is, waiting for
 steep, re-pointed, or staged for review. When pages are left over for the next
 run, say how many and that `/wenlan wiki` again writes them. Then one line on
 what happens later: `/brief` names how many pages rely on code that changed,
-and `/wenlan steep` brings them up to date.
+and `/wenlan steep` brings them up to date. When step 7 ran, one more line:
+how many docs were read and how many fixes go into the pull request, each as
+the file name and what changes.
+
+## 7. Check the repository's own docs
+
+When the Space is connected to this repository, Wenlan also keeps the
+repository's own docs honest: a sentence the code no longer agrees with gets a
+fix, and the fix goes into the same pull request as the wiki for the user to
+review. In Wenlan's daily run (`WENLAN_AGENT_NAME` is `wenlan-daily`) the Space
+is connected. Otherwise run the `wiki status` command of step 8 first; when it
+prints `null`, or the command is missing, skip this step.
+
+1. List the docs with `git ls-files '*.md' '*.mdx'`. Leave out the wiki folder
+   (`folder` in the status, `wiki` by default), any changelog and anything
+   under `node_modules`. Read at most 30 per run, in this order: `README.md`,
+   `AGENTS.md`, `CLAUDE.md`, then files under `docs/`, then `SKILL.md` files,
+   then the rest.
+2. In each doc, look at sentences that state something the code decides:
+   commands, scripts, file and folder names, versions, settings and their
+   defaults, flags, routes, function or type names, and the steps to run,
+   build or test. Check each one in the code.
+3. Only when the code clearly says otherwise, call `doc_fix` with
+   `action: "suggest"`, `space`, the doc's `path`, `old_text` copied exactly
+   from the file (the sentence, or the part of it that is wrong; it must occur
+   in the file once), `new_text` that changes only what is wrong, in the same
+   language, tone and formatting, `reason` (one sentence: what the code says
+   instead) and `code` (the lines that show it, as a list:
+   `[{"path": "src/server.ts", "line_start": 4, "line_end": 6}]`).
+4. Never fix opinions, plans, history, style, wording or typos, anything you
+   cannot check in the code, Wenlan's own block between `<!-- WENLAN:START -->`
+   and `<!-- WENLAN:END -->`, or anything in the wiki folder. When unsure,
+   leave the sentence alone.
+5. Suggest at most 10 fixes per run. A refusal saying the user declined it:
+   leave that sentence alone. A refusal saying the text occurs more than once
+   or not at all: copy it again with more of the sentence, once.
+6. Finish with `doc_fix` `action: "checked"`, `space` and `docs` set to how
+   many docs you read, even when you found nothing to fix.
+
+## 8. Put the wiki in the repository
+
+Wenlan can write the pages that rest on this repository's code into a folder of
+the repository and offer them as a pull request. Skip this step when
+`WENLAN_AGENT_NAME` is `wenlan-daily`: that is Wenlan's daily run, and Wenlan
+publishes after it. Otherwise check whether the Space is bound:
+
+```bash
+W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
+"$W" wiki status --space "$space" --format json
+```
+
+- It prints a binding: run `"$W" wiki publish --space "$space"` and add its
+  line to the report (pull request opened or updated, already up to date, or
+  a link to open the pull request by hand).
+- It prints `null`: ask once whether to put the pages in this repository's
+  `wiki/` folder and open a pull request. On yes, run
+  `"$W" wiki bind --space "$space" --repo "$repo_root"`, then `wiki publish`
+  as above, and mention that `wiki bind --daily <hour>` keeps the wiki up to
+  date every day with the user's own AI tool. On no, leave it.
+- The command is missing or has no `wiki` subcommand: skip this step without
+  saying so.
+
+Pages that cite the user's notes or chats never go into the repository; the
+publish line says how many stayed out.
 
 ## Safety
 
 - Reads and writes of pages just happen; no approval is needed.
-- Wiki never deletes a page and never edits the repository.
+- Wiki never deletes a page and never edits the repository's files itself.
+  A doc fix of step 7 is only recorded; it reaches the repository through the
+  pull request of step 8, for the user to review. Step 8 asks Wenlan to write the wiki folder on its own `wenlan/wiki` branch,
+  apart from the working copy, and open a pull request; only with the user's
+  yes or an existing binding.
 - Wiki only reads the repository. Shell commands are read-only ones such as
   `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
-  `ls`, `wc`, `grep` and `sed -n`; nothing that builds, installs, or changes a
-  file.
+  `ls`, `wc`, `grep` and `sed -n`, plus the `wenlan wiki` commands of step 8;
+  nothing that builds, installs, or changes a file.

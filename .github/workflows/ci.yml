@@ -375,6 +375,10 @@ jobs:
               # Shared CLI/server/MCP code stays on the Ubuntu canonical lane;
               # drift_guard fails if a cfg-bearing source lacks an owner here
               # or in the focused MCP platform-compile filter.
+              # Folder alias regressions use real Unix symlinks; prove both platform branches.
+              - 'crates/wenlan-core/src/document_enrichment.rs'
+              - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
+              - 'crates/wenlan-server/src/source_routes.rs'
               - 'scripts/first-run/macos-app.sh'
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
@@ -475,6 +479,10 @@ jobs:
               # Windows owns cfg-bearing CLI/server paths, native ORT/Vulkan,
               # and packaging. Shared Rust stays on Ubuntu; MCP's Unix/non-Unix
               # branches compile in the focused mcp-platform job.
+              # Folder alias regressions use real Unix symlinks; prove both platform branches.
+              - 'crates/wenlan-core/src/document_enrichment.rs'
+              - 'crates/wenlan-server/src/ingest_routes_regression_tests.rs'
+              - 'crates/wenlan-server/src/source_routes.rs'
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/mod.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
@@ -516,6 +524,8 @@ jobs:
               - 'crates/wenlan-core/src/repair.rs'
               - 'crates/wenlan-core/src/repair/**'
               - 'crates/wenlan-core/src/repair_plan/**'
+              # `gh.exe` is looked up by name on Windows.
+              - 'crates/wenlan-core/src/repo_wiki.rs'
               # The repair cases that drive a real repair are gated
               # `cfg_attr(not(unix), ignore)` to match the entry point's own
               # refusal, so they now carry a platform route and must schedule

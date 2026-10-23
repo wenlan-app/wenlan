@@ -105,7 +105,7 @@ test("reading area never duplicates the tree before opening or after closing the
  await expect(reading.getByRole("heading",{name:"Open a page",exact:true})).toBeVisible();
  await tree.getByRole("button",{name:"Work",exact:true}).click();
  await expect(tree.getByRole("button",{name:"Open Fixture architecture",exact:true})).toBeVisible();
- await expect(reading).not.toContainText("Fixture architecture");
+ await expect(reading.getByText("Fixture architecture",{exact:true})).toHaveCount(1);await expect(reading.getByTestId("wiki-new-pages").getByText("Fixture architecture",{exact:true})).toBeVisible();
  expect(runtime.calls().filter(c=>c.command==="get_page_explicit_browse")).toHaveLength(0);
  await tree.getByRole("button",{name:"Open Fixture architecture",exact:true}).click();
  await expect(reading.locator(".page-detail")).toBeVisible();
@@ -114,7 +114,7 @@ test("reading area never duplicates the tree before opening or after closing the
  await expect(reading.getByRole("heading",{name:"Open a page",exact:true})).toBeVisible();
  await expect(reading.getByRole("table")).toHaveCount(0);
  await expect(reading.locator(".asset-card, .wiki-folder-lenses")).toHaveCount(0);
- await expect(reading).not.toContainText("Fixture architecture");
+ await expect(reading.getByText("Fixture architecture",{exact:true})).toHaveCount(1);await expect(reading.getByTestId("wiki-new-pages").getByText("Fixture architecture",{exact:true})).toBeVisible();
  await expect(page.locator(".note-tab-create")).toBeVisible();
  await expect(page.locator(".note-tab-create")).toBeFocused();
  expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);

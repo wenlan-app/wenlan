@@ -49,6 +49,7 @@ mod kg_quality_diagnostics;
 mod kg_quality_duplicate_candidates;
 mod kg_quality_embedding_refresh;
 mod kg_quality_vocabulary;
+mod legacy_directory_copies;
 mod lint_snapshot;
 #[cfg(feature = "eval-harness")]
 mod m5_page_size_snapshot;
@@ -159,6 +160,8 @@ mod kg_quality_duplicate_candidates_test;
 mod kg_quality_embedding_refresh_test;
 #[cfg(test)]
 mod kg_quality_vocabulary_test;
+#[cfg(test)]
+mod legacy_directory_copies_test;
 #[cfg(test)]
 mod lint_snapshot_test;
 #[cfg(test)]
@@ -27976,7 +27979,12 @@ impl MemoryDB {
             "superseder.pending_revision = 0 AND superseder.source = 'memory' \
              AND superseder.supersede_mode = 'hide'",
         );
-        let supersedes_exclusion = format!("AND c.pending_revision = 0 AND {hidden_by_superseder}");
+        // `evicted` is self-state, including on retained legacy-source rows.
+        // Apply the same exclusion to both vector and FTS branches so a
+        // canonicalized duplicate cannot reappear in general search.
+        let supersedes_exclusion = format!(
+            "AND c.pending_revision = 0 AND COALESCE(c.supersede_mode, '') <> 'evicted' AND {hidden_by_superseder}"
+        );
 
         // --- Vector search ---
         let mut vector_results: Vec<SearchResult> = Vec::new();
@@ -33825,31 +33833,55 @@ impl MemoryDB {
         source_id: &str,
         scope: &ReadScope,
     ) -> Result<Option<Vec<MemoryDetail>>, WenlanError> {
-        let mut conditions = vec![
-            "source_id = ?".to_string(),
+        // Folder document pages retain an exact memories.id locator for their
+        // first chunk. Resolve either that row ID or the canonical source_id
+        // inside the same scoped eligible set, preferring the canonical key.
+        let mut canonical_conditions = vec![
             "source IN ('memory', 'file')".to_string(),
+            "source_id = ?".to_string(),
         ];
         let mut values = vec![libsql::Value::Text(source_id.to_string())];
-        push_read_scope_filter_folded(scope, "space", &mut conditions, &mut values);
+        push_read_scope_filter_folded(scope, "space", &mut canonical_conditions, &mut values);
+
+        let mut locator_conditions = vec![
+            "source IN ('memory', 'file')".to_string(),
+            "id = ?".to_string(),
+        ];
+        values.push(libsql::Value::Text(source_id.to_string()));
+        push_read_scope_filter_folded(scope, "space", &mut locator_conditions, &mut values);
+
+        let mut chunk_conditions = vec![
+            "chunks.source IN ('memory', 'file')".to_string(),
+            "chunks.source_id = (SELECT source_id FROM target)".to_string(),
+            "chunks.source = (SELECT source FROM target)".to_string(),
+        ];
+        push_read_scope_filter_folded(scope, "chunks.space", &mut chunk_conditions, &mut values);
         let sql = format!(
-            "WITH scoped AS (
-                SELECT source, id, content, title, source_id, chunk_index, chunk_type,
-                       language, semantic_unit, byte_start, byte_end, summary
+            "WITH target_candidates AS (
+                SELECT source, source_id, 0 AS match_rank
                 FROM memories
                 WHERE {}
+                UNION ALL
+                SELECT source, source_id, 1 AS match_rank
+                FROM memories
+                WHERE {}
+             ), target AS (
+                SELECT source, source_id
+                FROM target_candidates
+                ORDER BY match_rank ASC,
+                         CASE source WHEN 'memory' THEN 0 ELSE 1 END ASC
+                LIMIT 1
              )
-             SELECT id, content, title, source_id, chunk_index, chunk_type, language,
-                    semantic_unit, byte_start, byte_end, summary
-             FROM scoped
-             WHERE source = (
-                 SELECT source
-                 FROM scoped
-                 ORDER BY CASE source WHEN 'memory' THEN 0 ELSE 1 END
-                 LIMIT 1
-             )
-             ORDER BY chunk_index ASC
+             SELECT chunks.id, chunks.content, chunks.title, chunks.source_id,
+                    chunks.chunk_index, chunks.chunk_type, chunks.language,
+                    chunks.semantic_unit, chunks.byte_start, chunks.byte_end, chunks.summary
+             FROM memories AS chunks
+             WHERE {}
+             ORDER BY chunks.chunk_index ASC
              LIMIT 10000",
-            conditions.join(" AND ")
+            canonical_conditions.join(" AND "),
+            locator_conditions.join(" AND "),
+            chunk_conditions.join(" AND ")
         );
 
         let conn = self.conn.lock().await;
@@ -44423,15 +44455,21 @@ impl MemoryDB {
     }
 
     /// Return the genuinely first-compiled active page (ordered by
-    /// `created_at` ascending). Used by `MilestoneEvaluator::check_after_refinery_pass`
+    /// `created_at` ascending). Used by `MilestoneEvaluator::check_first_page`
     /// so the `first-page` milestone payload references the page that
     /// was actually compiled first, not the most recently edited one.
+    ///
+    /// Only a page written from the user's material (`distilled`) counts: a
+    /// copy of a brought-in file or a page the user wrote is not the "first
+    /// page Wenlan put together" the milestone announces.
     pub async fn oldest_active_page(&self) -> Result<Option<crate::pages::Page>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
                 "SELECT id, title, summary, content, entity_id, space, source_memory_ids, version, status, created_at, last_compiled, last_modified, COALESCE(sources_updated_count, 0), stale_reason, COALESCE(user_edited, 0), COALESCE(changelog, '[]'), COALESCE(creation_kind, 'distilled'), COALESCE(review_status, 'confirmed'), workspace, citations, COALESCE(kind, 'concept'), refresh_blocked_reason, COALESCE(review_required, 0)
-                 FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity' ORDER BY created_at ASC LIMIT 1",
+                 FROM pages WHERE status = 'active' AND COALESCE(kind, 'concept') != 'entity'
+                   AND COALESCE(creation_kind, 'distilled') = 'distilled'
+                 ORDER BY created_at ASC LIMIT 1",
                 (),
             )
             .await

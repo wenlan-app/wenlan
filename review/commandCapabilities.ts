@@ -161,6 +161,10 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "confirm_space",
     "toggle_space_starred",
     "reorder_space",
+    // The Space header asks whether the Space has a repository to offer. The
+    // fixture answers with none, so the GitHub button stays hidden.
+    "get_repo_wiki",
+    "suggest_repo_wiki",
   ],
   entityDetail: [
     "get_entity_detail_cmd",

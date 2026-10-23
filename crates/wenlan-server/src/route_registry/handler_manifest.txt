@@ -72,6 +72,8 @@ main|get|/api/snapshots/{id}/captures-with-content|wenlan_server::snapshot_route
 main|get|/api/sources|wenlan_server::source_routes::handle_list_sources
 main|get|/api/spaces|wenlan_server::spaces_routes::handle_list_spaces
 main|get|/api/spaces/default|wenlan_server::spaces_routes::handle_get_default_space
+main|get|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_get_binding
+main|get|/api/spaces/{name}/wiki/suggest|wenlan_server::repo_wiki_routes::handle_suggest
 main|get|/api/status|wenlan_server::routes::handle_status
 main|get|/api/telemetry|wenlan_server::telemetry_routes::handle_get_telemetry
 main|put|/api/telemetry|wenlan_server::telemetry_routes::handle_update_telemetry
@@ -167,6 +169,9 @@ main|post|/api/spaces/{from}/move-to/{to}|wenlan_server::spaces_routes::handle_m
 main|post|/api/spaces/{name}/confirm|wenlan_server::spaces_routes::handle_confirm_space
 main|post|/api/spaces/{name}/pin|wenlan_server::spaces_routes::handle_pin_space
 main|post|/api/spaces/{name}/star|wenlan_server::spaces_routes::handle_toggle_space_starred
+main|post|/api/spaces/{name}/wiki/docs|wenlan_server::repo_wiki_routes::handle_docs
+main|post|/api/spaces/{name}/wiki/publish|wenlan_server::repo_wiki_routes::handle_publish
+main|post|/api/spaces/{name}/wiki/run|wenlan_server::repo_wiki_routes::handle_run_now
 main|post|/api/steep|wenlan_server::routes::handle_steep
 main|post|/api/agents|wenlan_server::profile_agents_routes::handle_register_agent
 main|put|/api/agents/{name}|wenlan_server::profile_agents_routes::handle_update_agent
@@ -188,6 +193,7 @@ main|put|/api/profile|wenlan_server::profile_agents_routes::handle_update_profil
 main|put|/api/setup/anthropic-key|wenlan_server::config_routes::handle_set_anthropic_key
 main|put|/api/spaces/default|wenlan_server::spaces_routes::handle_set_default_space
 main|put|/api/spaces/{name}|wenlan_server::spaces_routes::handle_update_space
+main|put|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_bind
 main|delete|/api/agents/{name}|wenlan_server::profile_agents_routes::handle_delete_agent
 main|delete|/api/chunks/time-range|wenlan_server::indexed_files_routes::handle_delete_by_time_range
 main|delete|/api/documents/{source}/{source_id}|wenlan_server::ingest_routes::handle_delete_document
@@ -205,6 +211,7 @@ main|delete|/api/setup/anthropic-key|wenlan_server::config_routes::handle_clear_
 main|delete|/api/sources/{id}|wenlan_server::source_routes::handle_remove_source
 main|delete|/api/spaces/default|wenlan_server::spaces_routes::handle_clear_default_space
 main|delete|/api/spaces/{name}|wenlan_server::spaces_routes::handle_delete_space
+main|delete|/api/spaces/{name}/wiki/repo|wenlan_server::repo_wiki_routes::handle_unbind
 main|delete|/api/tags/{name}|wenlan_server::activity_tag_routes::handle_delete_tag
 main|patch|/api/brief|wenlan_server::brief_routes::handle_update_brief
 main|patch|/api/sources/{id}|wenlan_server::source_routes::handle_update_source

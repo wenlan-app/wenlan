@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use sha2::{Digest, Sha256};
@@ -62,13 +62,90 @@ pub fn scan_directory(root: &Path) -> Vec<PathBuf> {
         return results;
     }
 
-    walk_recursive(root, &mut results);
+    walk_recursive(root, root, &mut results);
     results.sort();
     results
 }
 
+/// Whether `candidate` is a file the directory walker would admit under a
+/// directory root. This lets callers queue one known file without scanning the
+/// entire tree while keeping hidden-path, symlink, skipped-directory,
+/// extension, and size rules aligned with [`scan_directory`]. A registered
+/// single-file root follows the walker's existing behavior and is admitted as
+/// its sole file.
+pub fn is_directory_file_indexable(root: &Path, candidate: &Path) -> bool {
+    if root.is_file() {
+        return candidate == root;
+    }
+    directory_path_is_allowed(root, candidate, false)
+        && candidate.is_file()
+        && is_indexable(candidate)
+}
+
+/// Whether the directory sync parser supports a file's extension. Callers may
+/// use this to preserve legacy handling for formats that have no canonical
+/// Directory representation.
+pub fn is_directory_format_supported(candidate: &Path) -> bool {
+    matches!(
+        candidate
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("md" | "txt" | "pdf" | "docx")
+    )
+}
+
+/// Whether a file is structurally safe to handle under a Directory root,
+/// independently of extension and size limits. This shares hidden-path,
+/// symlink, and skipped-directory rules with the recursive scanner.
+pub fn is_directory_path_admissible(root: &Path, candidate: &Path) -> bool {
+    if root.is_file() {
+        return candidate == root && candidate.is_file();
+    }
+    directory_path_is_allowed(root, candidate, false) && candidate.is_file()
+}
+
+/// Shared relative-path, symlink, and skipped-directory policy for both the
+/// recursive walker and one-file admission.
+fn directory_path_is_allowed(root: &Path, candidate: &Path, is_directory: bool) -> bool {
+    if !root.is_dir() || candidate == root || !candidate.starts_with(root) {
+        return false;
+    }
+    let Ok(relative) = candidate.strip_prefix(root) else {
+        return false;
+    };
+    let components: Vec<_> = relative.components().collect();
+    if components.is_empty() {
+        return false;
+    }
+
+    let mut current = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return false;
+        };
+        if name.to_string_lossy().starts_with('.')
+            || ((index + 1 < components.len() || is_directory)
+                && name
+                    .to_str()
+                    .is_some_and(|directory| SKIP_DIRS.contains(&directory)))
+        {
+            return false;
+        }
+        current.push(name);
+        if fs::symlink_metadata(&current)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(true)
+        {
+            return false;
+        }
+    }
+    true
+}
+
 /// Recursively walk a directory, collecting indexable files.
-fn walk_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
+fn walk_recursive(root: &Path, dir: &Path, results: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -77,35 +154,16 @@ fn walk_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let path = entry.path();
 
-        // Skip hidden files/directories (leading '.').
-        if let Some(name) = path.file_name() {
-            if let Some(name_str) = name.to_str() {
-                if name_str.starts_with('.') {
-                    continue;
-                }
-            }
-        }
-
-        // Skip symlinks entirely — they don't follow links at all.
-        if fs::symlink_metadata(&path)
-            .map(|m| m.is_symlink())
-            .unwrap_or(false)
-        {
-            continue;
-        }
-
         // If it's a directory, recurse (but skip known non-indexable dirs).
         if path.is_dir() {
-            if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                if SKIP_DIRS.contains(&dir_name) {
-                    continue;
-                }
+            if !directory_path_is_allowed(root, &path, true) {
+                continue;
             }
-            walk_recursive(&path, results);
+            walk_recursive(root, &path, results);
         }
 
         // If it's a file, check if it's indexable.
-        if path.is_file() && is_indexable(&path) {
+        if path.is_file() && is_directory_file_indexable(root, &path) {
             results.push(path);
         }
     }
@@ -118,6 +176,10 @@ fn is_indexable(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+
+    if !is_directory_format_supported(path) {
+        return false;
+    }
 
     let size_limit = match ext.as_str() {
         "md" | "txt" => MAX_TEXT_SIZE,

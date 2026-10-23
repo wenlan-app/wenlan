@@ -205,6 +205,11 @@ pub async fn handle_steep_commit(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    // A tool that rewrites a page is registered like a memory writer, so
+    // its recall sees the pages it wrote. Giving a claim back is not a write.
+    if req.action != wenlan_types::steep::STEEP_ACTION_RELEASE {
+        crate::agent_presence::note_page_writer(&db, agent.as_deref()).await?;
+    }
     let session = crate::session_routes::extract_session_ref(&headers);
     let write_started_at = chrono::Utc::now().timestamp();
     let done = wenlan_core::steep::commit(

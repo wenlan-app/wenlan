@@ -1280,7 +1280,7 @@ try {
     Check-Helper -Name "cli-roundtrip-driver" -Interpreter "pwsh" -InterpreterArgs @("-NoProfile", "-File") -Path (Join-Path $Helpers "cli-roundtrip.ps1") -MustDeclare "^cli-"
     $env:MCP_BIN = Join-Path $InstallDir "wenlan-mcp.exe"
     $env:MCP_ARGS = "[]"
-    $env:EXPECT_TOOL_COUNT = "34"
+    $env:EXPECT_TOOL_COUNT = "35"
     $env:MCP_TOOLS = "capture,recall,brief"
     Check-Helper -Name "mcp-roundtrip-driver" -Interpreter "python" -Path (Join-Path $Helpers "mcp-roundtrip.py") -MustDeclare "^mcp-"
 

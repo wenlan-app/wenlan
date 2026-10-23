@@ -607,6 +607,39 @@ pub(crate) async fn sync_directory_source(
     };
 
     let knowledge_path = config.knowledge_path_or_default();
+    let legacy_paths = db.legacy_directory_copy_paths().await.map_err(|error| {
+        ServerError::Internal(format!("failed to list legacy directory copies: {error}"))
+    })?;
+    let files_for_alias_lookup = files.clone();
+    let legacy_aliases_by_file = tokio::task::spawn_blocking(move || {
+        let mut aliases_by_physical_path: std::collections::HashMap<
+            std::path::PathBuf,
+            Vec<String>,
+        > = std::collections::HashMap::new();
+        for legacy_path in legacy_paths {
+            if let Ok(physical_path) = std::fs::canonicalize(&legacy_path) {
+                aliases_by_physical_path
+                    .entry(physical_path)
+                    .or_default()
+                    .push(legacy_path);
+            }
+        }
+
+        let mut aliases_by_registered_path = std::collections::HashMap::new();
+        for file_path in files_for_alias_lookup {
+            if let Ok(physical_path) = std::fs::canonicalize(&file_path) {
+                if let Some(aliases) = aliases_by_physical_path.get(&physical_path) {
+                    aliases_by_registered_path
+                        .insert(file_path.to_string_lossy().to_string(), aliases.clone());
+                }
+            }
+        }
+        aliases_by_registered_path
+    })
+    .await
+    .map_err(|error| {
+        ServerError::Internal(format!("legacy directory alias scan failed: {error}"))
+    })?;
     let scanned: std::collections::HashSet<String> = files
         .iter()
         .map(|p| p.to_string_lossy().to_string())
@@ -656,6 +689,10 @@ pub(crate) async fn sync_directory_source(
 
     for file_path in &files {
         let file_key = file_path.to_string_lossy().to_string();
+        let legacy_aliases = legacy_aliases_by_file
+            .get(&file_key)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let is_gdrive = is_google_drive_path(file_path);
 
         let metadata_path = file_path.clone();
@@ -690,10 +727,13 @@ pub(crate) async fn sync_directory_source(
 
         let existing = db.get_sync_state(&id, &file_key).await.ok().flatten();
         if let Some(ref ss) = existing {
-            if ss.mtime_ns == mtime_ns {
+            if ss.mtime_ns == mtime_ns && legacy_aliases.is_empty() {
                 skipped += 1;
                 continue;
             }
+            // The stored sync hash may be stale when a same-mtime edit
+            // occurred. A legacy duplicate at this physical path forces a
+            // fresh file hash below before any retirement decision.
         }
 
         // The mtime fast path above keeps unchanged files out of the read/hash phase.
@@ -726,7 +766,51 @@ pub(crate) async fn sync_directory_source(
         };
         if let Some(ref ss) = existing {
             if ss.content_hash == hash {
-                let _ = db.upsert_sync_state(&id, &file_key, mtime_ns, &hash).await;
+                if let Err(error) = db.upsert_sync_state(&id, &file_key, mtime_ns, &hash).await {
+                    tracing::error!(
+                        "[sync] failed to refresh sync state for {}: {error}",
+                        file_path.display()
+                    );
+                    errors += 1;
+                    file_errors += 1;
+                    continue;
+                }
+                let mut retired_chunks = 0usize;
+                let mut retirement_failed = false;
+                for legacy_path in legacy_aliases {
+                    match db
+                        .retire_legacy_directory_copies(
+                            legacy_path,
+                            &id,
+                            file_path,
+                            Some(&knowledge_path),
+                            &hash,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(retired) => retired_chunks += retired,
+                        Err(error) => {
+                            tracing::error!(
+                                "[sync] failed to reconcile legacy duplicate {} for {}: {error}",
+                                legacy_path,
+                                file_path.display()
+                            );
+                            errors += 1;
+                            file_errors += 1;
+                            retirement_failed = true;
+                        }
+                    }
+                }
+                if retired_chunks > 0 {
+                    tracing::info!(
+                        "[sync] retired {retired_chunks} retained legacy duplicate chunk(s) for {}",
+                        file_path.display()
+                    );
+                }
+                if retirement_failed {
+                    continue;
+                }
                 skipped += 1;
                 continue;
             }
@@ -1665,6 +1749,122 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "sync_state must not be written at enqueue time"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn directory_sync_hashes_same_mtime_edit_before_retiring_legacy_copy() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let _env = DataDirGuard::new();
+        let source_root = tempfile::tempdir().unwrap();
+        let legacy_root = tempfile::tempdir().unwrap();
+        let file_path = source_root.path().join("notes.md");
+        let legacy_path = legacy_root.path().join("notes.md");
+        let old_content = "Previously indexed project notes about a specific planning decision.";
+        let new_content =
+            "Updated project notes with a changed decision and a preserved filesystem timestamp.";
+        std::fs::write(&file_path, old_content).unwrap();
+        std::os::unix::fs::symlink(&file_path, &legacy_path).unwrap();
+        let original_mtime = std::fs::metadata(&file_path).unwrap().modified().unwrap();
+        let original_mtime_ns = mtime_ns(&file_path);
+
+        let source_id = "directory-same-mtime";
+        register_directory_source(source_id, source_root.path());
+        let config = wenlan_core::config::load_config();
+        let knowledge_path = config.knowledge_path_or_default();
+        let (db, _db_dir) = new_test_db().await;
+        seed_document(&db, source_id, &file_path, &knowledge_path, old_content).await;
+        db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+            source: "local_files".to_string(),
+            source_id: legacy_path.to_string_lossy().to_string(),
+            title: "notes.md".to_string(),
+            content: old_content.to_string(),
+            url: Some(format!("file://{}", legacy_path.display())),
+            last_modified: 1,
+            metadata: std::collections::HashMap::new(),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+
+        std::fs::write(&file_path, new_content).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&file_path)
+            .unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(original_mtime))
+            .unwrap();
+        assert_eq!(mtime_ns(&file_path), original_mtime_ns);
+
+        let source = config
+            .sources
+            .iter()
+            .find(|source| source.id == source_id)
+            .unwrap();
+        let outcome = sync_directory_source(db.clone(), source, &config)
+            .await
+            .expect("same-mtime edited file should be synced");
+
+        let file_key = file_path.to_string_lossy().to_string();
+        let queued = db
+            .get_queue_entry(source_id, &file_key)
+            .await
+            .unwrap()
+            .expect("changed bytes must enqueue canonical enrichment");
+        let expected_hash = content_hash(new_content);
+        assert_eq!(queued.content_hash.as_deref(), Some(expected_hash.as_str()));
+        assert_eq!(outcome.stats.ingested, 1);
+        assert_eq!(
+            db.get_memories_by_source_id("local_files", &legacy_path.to_string_lossy())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "the legacy copy must remain until the new canonical generation commits"
+        );
+
+        let canonical_id = wenlan_core::sources::directory::document_source_id(
+            source_id,
+            &file_path,
+            Some(&knowledge_path),
+        );
+        db.upsert_documents(vec![wenlan_core::sources::RawDocument {
+            source: "memory".to_string(),
+            source_id: canonical_id,
+            title: "notes".to_string(),
+            content: new_content.to_string(),
+            last_modified: 2,
+            metadata: std::collections::HashMap::new(),
+            source_agent: Some("folder".to_string()),
+            content_hash: Some(expected_hash.clone()),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        db.upsert_sync_state(source_id, &file_key, original_mtime_ns, &expected_hash)
+            .await
+            .unwrap();
+
+        sync_directory_source(db.clone(), source, &config)
+            .await
+            .expect("unchanged refresh should reconcile an aliased legacy copy");
+        assert!(
+            !db.has_legacy_directory_copy(&legacy_path.to_string_lossy())
+                .await
+                .unwrap(),
+            "a committed matching canonical generation should retire the physical alias"
+        );
+        assert_eq!(
+            db.get_memories_by_source_id("local_files", &legacy_path.to_string_lossy())
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "retirement preserves the original row and content"
         );
     }
 

@@ -162,12 +162,12 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
     renderWith(<CodeBasisUpdatesSection entries={[entry()]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Parser notes" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm no impact" }));
+    fireEvent.click(await screen.findByRole("button", { name: "No impact" }));
 
     expect(await screen.findByText("The code changed again, please look once more.")).toBeInTheDocument();
     expect(confirmPageCodeBasis).toHaveBeenCalledWith("note-1", expect.objectContaining({ path: "src/parser.rs", line_start: 10 }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirm no impact" }));
+    fireEvent.click(screen.getByRole("button", { name: "No impact" }));
     await waitFor(() => expect(confirmPageCodeBasis).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByText(/changed again/)).toBeNull());
   });
@@ -178,7 +178,7 @@ describe("CodeBasisUpdatesSection in the review panel", () => {
     const invalidate = vi.spyOn(client, "invalidateQueries");
 
     fireEvent.click(screen.getByRole("button", { name: "Parser notes" }));
-    fireEvent.click(screen.getByRole("button", { name: "Stop relying on this code" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop tracking" }));
 
     await waitFor(() => expect(removePageCodeBasis).toHaveBeenCalledWith("note-1", expect.objectContaining({ path: "src/gone.rs" })));
     await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ["code-basis-pending"] }));

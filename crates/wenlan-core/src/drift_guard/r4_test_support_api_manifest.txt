@@ -636,6 +636,10 @@ crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests:
 crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::edge_spaces|TestDbRows::next|1
 crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::edge_spaces|TestDbSession::query|1
 crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::edge_spaces|test_primary_session|1
+crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::first_canonical_enrichment_retires_physical_path_alias|TestDbRow::get|1
+crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::first_canonical_enrichment_retires_physical_path_alias|TestDbRows::next|1
+crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::first_canonical_enrichment_retires_physical_path_alias|TestDbSession::query|1
+crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::first_canonical_enrichment_retires_physical_path_alias|test_primary_session|1
 crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::folder_space_move_rolls_back_when_page_write_fails|TestDbSession::execute|1
 crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::folder_space_move_rolls_back_when_page_write_fails|TestDbSession::execute|2
 crates/wenlan-core/src/document_enrichment.rs|crate::document_enrichment::tests::folder_space_move_rolls_back_when_page_write_fails|test_primary_session|1
