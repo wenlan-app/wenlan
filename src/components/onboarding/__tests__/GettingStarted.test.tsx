@@ -220,6 +220,14 @@ describe("GettingStarted", () => {
     expect(screen.queryByTestId("getting-started")).toBeNull();
   });
 
+  it("stays for a new library whose pages are mostly copies of brought-in files", async () => {
+    const copies = Array.from({ length: ESTABLISHED_LIBRARY_PAGES * 2 }, (_, i) =>
+      page({ id: `c${i}`, creation_kind: i % 2 ? "source" : "imported" }),
+    );
+    renderCard([...copies, written]);
+    expect(await screen.findByTestId("getting-started")).toBeTruthy();
+  });
+
   it("hides when every step is done", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listRegisteredSources).mockResolvedValue([folder]);

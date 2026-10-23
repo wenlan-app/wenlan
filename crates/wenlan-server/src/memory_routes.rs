@@ -1219,7 +1219,11 @@ pub async fn handle_search_memory(
     view: crate::truth_guard::TruthView,
     Json(req): Json<SearchMemoryRequest>,
 ) -> Result<Json<SearchMemoryResponse>, ServerError> {
-    let telemetry = { state.read().await.telemetry.clone() };
+    let (telemetry, db) = {
+        let s = state.read().await;
+        (s.telemetry.clone(), s.db.clone())
+    };
+    let agent = extract_agent_name(&headers, req.source_agent.as_deref());
     let result = handle_search_memory_inner(
         State(state),
         headers,
@@ -1228,6 +1232,14 @@ pub async fn handle_search_memory(
         Json(req),
     )
     .await;
+    if let (Ok(Json(response)), Some(db)) = (&result, db) {
+        crate::agent_presence::note_agent_recall(
+            db,
+            &agent,
+            &response.results,
+            response.supplemental_pages.as_deref(),
+        );
+    }
     match &result {
         Ok(Json(response)) => telemetry.record(
             if response.results.is_empty()

@@ -133,13 +133,15 @@ pub async fn handle_steep_new_commit(
             wenlan_core::steep_new::release_new(&req.token).map_err(steep_error)?
         }
         STEEP_NEW_ACTION_WRITE => {
-            let agent = headers
+            let named = headers
                 .get("x-agent-name")
                 .and_then(|v| v.to_str().ok())
                 .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .unwrap_or("steep")
-                .to_string();
+                .filter(|s| !s.is_empty());
+            // The tool writing the note is registered like a memory writer,
+            // so its recall sees the notes it wrote.
+            crate::agent_presence::note_page_writer(&db, named).await?;
+            let agent = named.unwrap_or("steep").to_string();
             let session = crate::session_routes::extract_session_ref(&headers);
             let write_started_at = chrono::Utc::now().timestamp();
             let done = wenlan_core::steep_new::commit_new(
@@ -152,6 +154,17 @@ pub async fn handle_steep_new_commit(
             )
             .await
             .map_err(steep_error)?;
+            // The first note an AI tool writes from the user's material is
+            // the first-page moment, as when the local model writes it.
+            if done.outcome == "created" {
+                let evaluator = wenlan_core::onboarding::MilestoneEvaluator::new(
+                    &db,
+                    Arc::new(wenlan_core::events::NoopEmitter),
+                );
+                if let Err(error) = evaluator.check_first_page().await {
+                    tracing::warn!(%error, "onboarding: first page not recorded");
+                }
+            }
             // The conversation behind the note, as for write_page. Best
             // effort: the note is already written.
             if let (Some(session), Some(page_id), "created") =

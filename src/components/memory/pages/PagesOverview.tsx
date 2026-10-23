@@ -10,6 +10,7 @@ import { useGettingStartedState } from "../../onboarding/useGettingStartedState"
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import { useWritePages, WritePagesLine } from "../askAi/WritePages";
+import { NewPagesList } from "./NewPagesList";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
@@ -30,6 +31,7 @@ interface PagesOverviewProps {
 }
 
 export function PagesOverview({
+  onBrowseAll,
   onCreatePage,
   onSelectPage,
   onConnectTool,
@@ -57,6 +59,10 @@ export function PagesOverview({
   // While the open checklist is the screen's content the panel above it shrinks
   // to its title, so the whole home fits the default window.
   const onboarding = gettingStarted !== null && checklist.visible && !checklist.dismissed;
+  // While a run is listing the pages it writes (in the checklist step or the
+  // home line), that list is the one to read; the newest pages wait.
+  const runView = onboarding ? writePages.stepView : writePages.view;
+  const runListsPages = writePages.loaded && (runView.kind === "working" || runView.kind === "done");
 
   return (
     <section
@@ -81,6 +87,9 @@ export function PagesOverview({
         <h1>{t("pages.overview.readingStartTitle")}</h1>
         <p>{t("pages.overview.readingStartDescription")}</p>
       </div>
+      {runListsPages ? null : (
+        <NewPagesList pages={pages} onSelectPage={onSelectPage} onBrowseAll={onBrowseAll} />
+      )}
       {gettingStarted}
       {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
     </section>

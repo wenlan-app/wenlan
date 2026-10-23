@@ -16,8 +16,10 @@ const DISMISSED_KEY = "onboarding:gettingStartedDismissed";
 /** "Skip for now" on the pages step, for someone with nothing to bring in.
  *  Cleared once material arrives, so the step comes back with its button. */
 const PAGES_SKIPPED_KEY = "onboarding:pagesStepSkipped";
-/** A library with this many pages is past first use; existing users upgrading
- *  into this card would read it as noise. */
+/** A library with this many pages written by the user or from their material
+ *  is past first use; existing users upgrading into this card would read it as
+ *  noise. Copies of brought-in files do not count (`libraryPagesForEstablished`),
+ *  or one imported folder would hide the card from a new user. */
 export const ESTABLISHED_LIBRARY_PAGES = 10;
 
 export type GettingStartedStepId = "note" | "tool" | "pages" | "recall";
@@ -60,6 +62,13 @@ export function askablePages(pages: readonly Page[]): Page[] {
     ...writtenPages(published),
   ];
 }
+
+/** Pages that say a library is past first use: every page except copies of
+ *  brought-in files and entity pages. */
+export function libraryPagesForEstablished(pages: readonly Page[]): Page[] {
+  return pages.filter((page) => !COPIED_OR_ENTITY.has(page.creation_kind ?? ""));
+}
+const COPIED_OR_ENTITY = new Set(["source", "imported", "entity"]);
 
 /** The AI tools the daemon knows, Wenlan's own identities excluded.
  *  Connecting a tool from the app registers it (`POST /api/agents`), so a row
@@ -161,7 +170,7 @@ export interface GettingStartedState {
 
 export function useGettingStartedState(): GettingStartedState {
   const { pages, ready } = useLibraryInventory();
-  const established = pages.length >= ESTABLISHED_LIBRARY_PAGES;
+  const established = libraryPagesForEstablished(pages).length >= ESTABLISHED_LIBRARY_PAGES;
   const checking = !established;
   const agentsQuery = useLiveAgents(undefined, checking);
   // Same key as useMilestones, read without its event listener: the card only

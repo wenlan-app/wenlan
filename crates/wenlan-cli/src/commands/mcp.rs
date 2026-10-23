@@ -53,8 +53,26 @@ pub enum McpClient {
     Vscode,
 }
 
-pub fn run_connect(args: ConnectArgs, quiet: bool) -> Result<()> {
-    add(args, quiet)
+pub async fn run_connect(
+    client: &crate::client::WenlanClient,
+    args: ConnectArgs,
+    quiet: bool,
+) -> Result<()> {
+    let agent = agent_name_for_client(args.client);
+    let dry_run = args.dry_run;
+    add(args, quiet)?;
+    if !dry_run {
+        register_connected_tool(client, agent).await;
+    }
+    Ok(())
+}
+
+/// Tell a running daemon the user connected this tool, as connecting it from
+/// the app does (`POST /api/agents`), so its first recall already sees the
+/// user's pages instead of only search results. Best effort, and silent: with
+/// no daemon running the tool is registered by its first write instead.
+async fn register_connected_tool(client: &crate::client::WenlanClient, agent: &str) {
+    let _ = client.register_agent(agent).await;
 }
 
 /// The name a client's Wenlan entry reports to the daemon (`--agent-name`),
