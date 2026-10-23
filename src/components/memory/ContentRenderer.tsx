@@ -61,7 +61,7 @@ function AttachmentMedia({ src, name, alt }: { src: string; name: string; alt: s
   );
 }
 
-const markdownComponents = {
+export const markdownComponents = {
   img: ({ src, alt }: { src?: string; alt?: string }) => <MarkdownImage src={src} alt={alt} />,
   pre: ({ node, children }: { node?: HastNode; children?: React.ReactNode }) => {
     const source = mermaidSource(node);

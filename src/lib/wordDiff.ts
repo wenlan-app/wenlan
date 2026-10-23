@@ -15,9 +15,13 @@ function tokenize(text: string): string[] {
  * Word-level LCS diff between two strings. Whitespace-only changes are treated
  * as equal; segment order at a divergence is deletions first, then insertions.
  */
-export function diffWords(before: string, after: string): DiffSegment[] {
-  const a = tokenize(before);
-  const b = tokenize(after);
+export function diffWords(
+  before: string,
+  after: string,
+  split: (text: string) => string[] = tokenize,
+): DiffSegment[] {
+  const a = split(before);
+  const b = split(after);
   const n = a.length;
   const m = b.length;
   // ponytail: O(n·m) table is fine for memory-sized text; past ~1M cells fall

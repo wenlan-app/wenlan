@@ -1,0 +1,29 @@
+/* A revision shown as the page reads: no outer gap above the first block or
+   below the last, and code keeps its marks visible on its own background. */
+.markdown-diff > :first-child {
+  margin-top: 0;
+}
+
+.markdown-diff > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-diff pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.5em 0 0.75em;
+  padding: 0.6em 0.8em;
+  border-radius: var(--mem-radius-sm);
+  background: var(--mem-hover);
+}
+
+.markdown-diff table {
+  border-collapse: collapse;
+  margin-bottom: 0.75em;
+}
+
+.markdown-diff th,
+.markdown-diff td {
+  padding: 0.25em 0.6em;
+  text-align: left;
+}
