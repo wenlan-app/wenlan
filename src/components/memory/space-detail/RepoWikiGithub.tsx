@@ -84,7 +84,7 @@ export function RepoWikiGithub({
         <Step done={current.workflow === "in_repo"} label={t("repoWiki.github.workflow")} />
         <Step
           done={current.secret === true}
-          label={t(agent === "codex" ? "repoWiki.github.secretCodex" : "repoWiki.github.secretClaude")}
+          label={t("repoWiki.github.secret")}
           action={
             <button
               className="repo-wiki-primary"

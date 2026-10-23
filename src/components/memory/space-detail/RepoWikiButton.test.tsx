@@ -178,7 +178,7 @@ describe("RepoWikiButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open browser" }));
     await waitFor(() => expect(setupRepoWikiGithub).toHaveBeenCalledWith("site", { action: "claude_token" }));
     await waitFor(() =>
-      expect(screen.getByText("Let GitHub use your Claude").closest("[data-done]")).not.toBeNull(),
+      expect(screen.getByText("Let GitHub use your AI tool").closest("[data-done]")).not.toBeNull(),
     );
     expect(screen.queryByText("Wenlan never keeps or shows the key.")).toBeNull();
   });
@@ -210,7 +210,10 @@ describe("RepoWikiButton", () => {
         runs_on: "github",
       }),
     );
-    expect(await screen.findByText("Let GitHub use your OpenAI key")).toBeInTheDocument();
+    // The step names no tool; the box it opens is the chosen tool's.
+    expect(await screen.findByText("Let GitHub use your AI tool")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Set up" }));
+    expect(await screen.findByText("Use your OpenAI key", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("Allow it to open PRs").closest("[data-done]")).not.toBeNull();
   });
 });
