@@ -1492,6 +1492,46 @@ fn build_basis_context_block(bases: &[crate::db::BasisContext]) -> String {
     block
 }
 
+/// Only citation-marker insertion may differ: preserve paragraph boundaries,
+/// indentation and all other bytes. A single space adjoining an inserted
+/// marker may be added, but general whitespace reflow is not annotation.
+fn citation_annotation_preserves_body(original: &str, annotated: &str) -> bool {
+    fn marker_end(bytes: &[u8], start: usize) -> Option<usize> {
+        if bytes.get(start) != Some(&b'[') {
+            return None;
+        }
+        let mut end = start + 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        (end > start + 1 && bytes.get(end) == Some(&b']')).then_some(end + 1)
+    }
+    let original = original.as_bytes();
+    let annotated = annotated.as_bytes();
+    let (mut before, mut after) = (0, 0);
+    while after < annotated.len() {
+        let marker = marker_end(annotated, after);
+        if marker.is_none() && original.get(before) == annotated.get(after) {
+            before += 1;
+            after += 1;
+            continue;
+        }
+        let marker = marker.or_else(|| {
+            (annotated[after] == b' ')
+                .then(|| marker_end(annotated, after + 1))
+                .flatten()
+        });
+        let Some(end) = marker else {
+            return false;
+        };
+        after = end;
+        if annotated.get(after) == Some(&b' ') && original.get(before) != Some(&b' ') {
+            after += 1;
+        }
+    }
+    before == original.len()
+}
+
 /// Synthesize one candidate body from `source_ids` under `system_prompt` and
 /// verify its per-claim `[N]` citations — the shared synthesis/verification
 /// core of [`refresh_page_with_prompt`], factored out so first-time creation
@@ -1582,7 +1622,13 @@ pub(crate) async fn synthesize_candidate_body(
     // them, but do not expose unrelated active-page titles.
     let capped_topic: String = title.chars().take(PAGE_TOPIC_CHAR_CAP).collect();
     let titles_hint = build_refresh_titles_hint(db, title, workspace, &memories_block).await;
-    let user_prompt = format!("{titles_hint}Topic: {capped_topic}\n\n{memories_block}");
+    let citation_priority = if !numbered.is_empty() && !bases.is_empty() {
+        "When numbered sources and linked notes both support a claim, cite the numbered source [N]. A [[Title]] link gives background context; it does not replace the numbered citation for a source-backed claim.\n\n"
+    } else {
+        ""
+    };
+    let user_prompt =
+        format!("{titles_hint}Topic: {capped_topic}\n\n{citation_priority}{memories_block}");
 
     // This is deliberately a byte-based estimate, not a tokenizer: count the
     // complete system and user prompts, then budget one token per three UTF-8
@@ -1632,7 +1678,66 @@ pub(crate) async fn synthesize_candidate_body(
 
     // Verify [N] markers against the numbered sources; out-of-range markers are
     // stripped from the body before it is saved.
-    let (content, cites, stats) = crate::citations::process_citation_output(&body, &numbered);
+    let (mut content, mut cites, mut stats) =
+        crate::citations::process_citation_output(&body, &numbered);
+
+    // Mixed raw-source/basis prompts can yield only wikilinks. Repair missing
+    // annotations once, before any proposal exists; never relax the verifier
+    // or ask the model to rewrite an accepted/locked page. Existing bad markers
+    // are evidence failures, not this narrowly recoverable formatting case.
+    if !numbered.is_empty()
+        && !bases.is_empty()
+        && stats.verified == 0
+        && stats.unverified == 0
+        && stats.stripped == 0
+    {
+        let annotation_prompt = crate::prompts::defaults::ANNOTATE_CITATIONS;
+        let annotation_input = format!(
+            "## Page Body\n{body}\n\n## Numbered Sources\n{}",
+            crate::citations::build_numbered_block_full(&numbered)
+        );
+        if annotation_prompt
+            .len()
+            .saturating_add(annotation_input.len())
+            .div_ceil(3)
+            > input_budget
+        {
+            return Ok(CandidateOutcome::Discarded {
+                discard_reason: "citation annotation exceeds model input budget".into(),
+            });
+        }
+        let annotated = match llm
+            .generate(LlmRequest {
+                system_prompt: Some(annotation_prompt.to_string()),
+                user_prompt: annotation_input,
+                max_tokens: llm.recommended_max_output(),
+                temperature: 0.0,
+                label: Some("refresh_citation_annotate".into()),
+                timeout_secs: None,
+            })
+            .await
+        {
+            Ok(raw) => crate::llm_provider::strip_think_tags(&raw)
+                .trim()
+                .to_string(),
+            // Preserve the page and fail closed without recording candidate
+            // prose or provider text (which may contain private source data).
+            Err(_) => {
+                return Ok(CandidateOutcome::Discarded {
+                    discard_reason: "citation annotation unavailable".into(),
+                });
+            }
+        };
+        let same_prose = citation_annotation_preserves_body(&body, &annotated);
+        let same_links = crate::sources::obsidian::extract_wikilinks(&annotated)
+            == crate::sources::obsidian::extract_wikilinks(&body);
+        if !same_prose || !same_links {
+            return Ok(CandidateOutcome::Discarded {
+                discard_reason: "citation annotation changed prose or linked notes".into(),
+            });
+        }
+        (content, cites, stats) = crate::citations::process_citation_output(&annotated, &numbered);
+    }
 
     // Fail-closed (spec §7): discard when per-claim citation verification
     // verifies zero claims or leaves a majority unverified. The previous
@@ -4974,6 +5079,381 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             after.refresh_blocked_reason, None,
             "the staged successful proposal replaces the old error state"
         );
+    }
+
+    const ANNOTATION_BODY: &str =
+        "Cedar launches on February 4, 2027 after security sign-off. See [[Cedar launch facts]].";
+    const ANNOTATION_FIXED: &str = "Cedar launches on February 4, 2027 after security sign-off. [1] See [[Cedar launch facts]].";
+
+    struct MissingMarkerProvider {
+        db: Arc<MemoryDB>,
+        first: String,
+        annotation: String,
+        calls: Mutex<Vec<LlmRequest>>,
+        mutation: Option<&'static str>,
+        fail_annotation: bool,
+        input_limit: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for MissingMarkerProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            let annotation = request.label.as_deref() == Some("refresh_citation_annotate");
+            self.calls.lock().unwrap().push(request);
+            if !annotation {
+                return Ok(self.first.clone());
+            }
+            match self.mutation {
+                Some("page") => self
+                    .db
+                    .update_page_content(
+                        "annotation_page",
+                        "A concurrent human edit.",
+                        &["annotation_source"],
+                        "manual_edit",
+                    )
+                    .await
+                    .unwrap(),
+                Some("source") => self
+                    .db
+                    .replace_page_sources("annotation_page", &["replacement_source"], "test")
+                    .await
+                    .unwrap(),
+                Some("basis") => self
+                    .db
+                    .update_page_content(
+                        "annotation_basis",
+                        "A changed basis note.",
+                        &[],
+                        "manual_edit",
+                    )
+                    .await
+                    .unwrap(),
+                _ => (),
+            }
+            if self.fail_annotation {
+                return Err(LlmError::Timeout);
+            }
+            Ok(self.annotation.clone())
+        }
+        fn is_available(&self) -> bool {
+            true
+        }
+        fn name(&self) -> &str {
+            "missing-marker"
+        }
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+        fn kind(&self) -> &'static str {
+            "mock"
+        }
+        fn synthesis_token_limit(&self) -> usize {
+            self.input_limit
+        }
+    }
+
+    async fn missing_marker_fixture() -> (Arc<MemoryDB>, TempDir, MissingMarkerProvider) {
+        let (db, dir) = crate::db::tests::test_db().await;
+        let db = Arc::new(db);
+        let source = format!(
+            "{}\nCedar launches on February 4, 2027 after security sign-off.",
+            "Historical project background. ".repeat(40)
+        );
+        upsert_test_sources(&db, &[("annotation_source", &source)], None).await;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            "annotation_basis",
+            "Cedar launch facts",
+            None,
+            ANNOTATION_BODY,
+            None,
+            None,
+            &[],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.insert_page(
+            "annotation_page",
+            "Cedar launch summary",
+            None,
+            "The original accepted summary.",
+            None,
+            None,
+            &["annotation_source"],
+            &now,
+        )
+        .await
+        .unwrap();
+        let basis = db.get_page("annotation_basis").await.unwrap().unwrap();
+        db.mark_page_basis("annotation_page", "annotation_basis", basis.version, "test")
+            .await
+            .unwrap();
+        let provider = MissingMarkerProvider {
+            db: db.clone(),
+            first: ANNOTATION_BODY.into(),
+            annotation: ANNOTATION_FIXED.into(),
+            calls: Mutex::new(Vec::new()),
+            mutation: None,
+            fail_annotation: false,
+            input_limit: 100_000,
+        };
+        (db, dir, provider)
+    }
+
+    async fn annotation_candidate(
+        db: &MemoryDB,
+        provider: Arc<MissingMarkerProvider>,
+        include_sources: bool,
+        include_basis: bool,
+    ) -> CandidateOutcome {
+        let bases = if include_basis {
+            db.list_basis_context("annotation_page").await.unwrap()
+        } else {
+            vec![]
+        };
+        let sources = if include_sources {
+            vec!["annotation_source".to_string()]
+        } else {
+            vec![]
+        };
+        let llm: Arc<dyn LlmProvider> = provider;
+        synthesize_candidate_body(
+            db,
+            &llm,
+            &PromptRegistry::default().distill_page,
+            "Cedar launch summary",
+            None,
+            &sources,
+            &bases,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[test]
+    fn mixed_basis_annotation_preserves_markdown_structure_and_links() {
+        assert!(citation_annotation_preserves_body(
+            "First.\n\n  - Second.",
+            "First. [1]\n\n  - Second. [2]"
+        ));
+        assert!(citation_annotation_preserves_body(
+            "First. Second.",
+            "First.[1] Second.[2]"
+        ));
+        for changed in [
+            "First. [1] Second.",
+            "First. [1]\n  - Second.",
+            "First. [1]\n\n- Second.",
+            "First. [1]\n\n    - Second.",
+        ] {
+            assert!(
+                !citation_annotation_preserves_body("First.\n\n  - Second.", changed),
+                "must reject structural change: {changed:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_basis_annotation_stages_verified_preview_from_full_source() {
+        let (db, _dir, provider) = missing_marker_fixture().await;
+        let provider = Arc::new(provider);
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let before = db.get_page("annotation_page").await.unwrap().unwrap();
+        let result = force_redistill_single(
+            &db,
+            Some(&llm),
+            &PromptRegistry::default(),
+            "annotation_page",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(result.gated && !result.wrote);
+        let card = result
+            .revision_card_id
+            .expect("annotation should recover a reviewable proposal");
+        let after = db.get_page("annotation_page").await.unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert!(pending_revision_card_ids(&db, "annotation_page")
+            .await
+            .contains(&card));
+        let calls = provider.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "one synthesis and one bounded annotation");
+        assert!(calls[0]
+            .user_prompt
+            .contains("A [[Title]] link gives background context"));
+        assert_eq!(
+            calls[1].system_prompt.as_deref(),
+            Some(crate::prompts::defaults::ANNOTATE_CITATIONS)
+        );
+        assert!(calls[1]
+            .user_prompt
+            .contains("February 4, 2027 after security sign-off."));
+        assert!(calls[1].user_prompt.contains("--- BEGIN SOURCE [1] ---"));
+        assert!(
+            calls[1]
+                .user_prompt
+                .contains(&"Historical project background. ".repeat(40)),
+            "annotation must see full evidence, not an 800-character prefix"
+        );
+        drop(calls);
+        let candidate = annotation_candidate(&db, provider.clone(), true, true).await;
+        let CandidateOutcome::Verified(candidate) = candidate else {
+            panic!("repaired candidate should verify")
+        };
+        assert_eq!(candidate.content, ANNOTATION_FIXED);
+        let citations: serde_json::Value = serde_json::from_str(&candidate.citations_json).unwrap();
+        assert_eq!(citations[0]["locator"], "annotation_source");
+        assert_eq!(citations[0]["marker"], 1);
+        assert_eq!(citations[0]["status"], "verified");
+    }
+
+    #[tokio::test]
+    async fn mixed_basis_annotation_rejects_rewrites_and_link_changes() {
+        for annotation in [
+            ANNOTATION_FIXED.replace("February 4", "March 9"),
+            ANNOTATION_FIXED.replace("[[Cedar launch facts]]", "[[Cedar  launch facts]]"),
+            ANNOTATION_FIXED.replace(". [1] See", ". [1]\n\nSee"),
+        ] {
+            let (db, _dir, mut provider) = missing_marker_fixture().await;
+            provider.annotation = annotation;
+            let provider = Arc::new(provider);
+            let result = annotation_candidate(&db, provider.clone(), true, true).await;
+            assert!(matches!(result, CandidateOutcome::Discarded { .. }));
+            assert_eq!(provider.calls.lock().unwrap().len(), 2);
+            assert_eq!(
+                db.get_page("annotation_page")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .content,
+                "The original accepted summary."
+            );
+            assert!(pending_revision_card_ids(&db, "annotation_page")
+                .await
+                .is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_basis_annotation_keeps_strict_evidence_gate_and_one_attempt() {
+        for (first, annotated, calls) in [
+            (ANNOTATION_BODY, ANNOTATION_BODY, 2),
+            (
+                "Penguins migrate across Antarctic ice shelves.",
+                "Penguins migrate across Antarctic ice shelves. [1]",
+                2,
+            ),
+            (
+                "Penguins migrate across Antarctic ice shelves. [1]",
+                ANNOTATION_FIXED,
+                1,
+            ),
+            (
+                "Cedar launches on February 4, 2027 after security sign-off. [99]",
+                ANNOTATION_FIXED,
+                1,
+            ),
+        ] {
+            let (db, _dir, mut provider) = missing_marker_fixture().await;
+            provider.first = first.into();
+            provider.annotation = annotated.into();
+            let provider = Arc::new(provider);
+            assert!(matches!(
+                annotation_candidate(&db, provider.clone(), true, true).await,
+                CandidateOutcome::Discarded { .. }
+            ));
+            assert_eq!(provider.calls.lock().unwrap().len(), calls);
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_basis_annotation_is_not_used_for_basis_only_or_raw_only() {
+        for (raw, basis) in [(false, true), (true, false)] {
+            let (db, _dir, provider) = missing_marker_fixture().await;
+            let provider = Arc::new(provider);
+            let result = annotation_candidate(&db, provider.clone(), raw, basis).await;
+            assert_eq!(matches!(result, CandidateOutcome::Verified(_)), !raw);
+            assert_eq!(provider.calls.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_basis_annotation_budget_and_provider_failure_preserve_page() {
+        for overflow in [false, true] {
+            let (db, _dir, mut provider) = missing_marker_fixture().await;
+            if overflow {
+                provider.input_limit = 1_500;
+                provider.first = "Uncited candidate text. ".repeat(300);
+            } else {
+                provider.fail_annotation = true;
+            }
+            let provider = Arc::new(provider);
+            let result = annotation_candidate(&db, provider.clone(), true, true).await;
+            let CandidateOutcome::Discarded { discard_reason } = result else {
+                panic!("must fail closed")
+            };
+            assert!(
+                discard_reason.starts_with("citation annotation"),
+                "{discard_reason}"
+            );
+            assert_eq!(
+                provider.calls.lock().unwrap().len(),
+                if overflow { 1 } else { 2 }
+            );
+            assert_eq!(
+                db.get_page("annotation_page")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .content,
+                "The original accepted summary."
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mixed_basis_annotation_keeps_original_page_and_source_fences() {
+        for mutation in ["page", "source"] {
+            let (db, _dir, mut provider) = missing_marker_fixture().await;
+            provider.mutation = Some(mutation);
+            let provider = Arc::new(provider);
+            let llm: Arc<dyn LlmProvider> = provider.clone();
+            let result = force_redistill_single(
+                &db,
+                Some(&llm),
+                &PromptRegistry::default(),
+                "annotation_page",
+                None,
+            )
+            .await
+            .unwrap();
+            assert!(
+                !result.wrote && !result.gated,
+                "stale generation must not create a proposal"
+            );
+            assert!(result.revision_card_id.is_none());
+            assert!(pending_revision_card_ids(&db, "annotation_page")
+                .await
+                .is_empty());
+            let expected = if mutation == "page" {
+                "A concurrent human edit."
+            } else {
+                "The original accepted summary."
+            };
+            assert_eq!(
+                db.get_page("annotation_page")
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .content,
+                expected
+            );
+            assert_eq!(provider.calls.lock().unwrap().len(), 2);
+        }
     }
 
     #[tokio::test]
