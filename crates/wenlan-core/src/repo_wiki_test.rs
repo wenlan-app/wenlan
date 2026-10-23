@@ -339,6 +339,8 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
             worktree: worktree.clone(),
             gh: None,
             now: 1,
+            adopt: Vec::new(),
+            keep_remote: Vec::new(),
         })
         .unwrap()
     };
@@ -492,6 +494,8 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
         worktree: dir.path().join("data/repo-wiki/site"),
         gh: None,
         now: 1,
+        adopt: Vec::new(),
+        keep_remote: Vec::new(),
     })
     .unwrap_err();
     assert!(
@@ -522,6 +526,8 @@ fn publish_with_no_selected_pages_does_nothing() {
         worktree: dir.path().join("wt"),
         gh: None,
         now: 7,
+        adopt: Vec::new(),
+        keep_remote: Vec::new(),
     })
     .unwrap();
     assert_eq!(result.status, RepoWikiPublishStatus::NothingToPublish);
@@ -588,4 +594,135 @@ fn daily_agent_args_run_one_skill_non_interactively() {
             "$wenlan steep space:site"
         ]
     );
+}
+
+#[test]
+fn pages_changed_in_the_repository_come_back_and_are_not_undone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    sh(&clone, &["config", "user.name", "Test"]);
+    sh(&clone, &["config", "user.email", "test@example.com"]);
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let root = binding.repo_root.clone();
+    let code_bases = HashMap::from([
+        ("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)]),
+        ("p2".to_string(), vec![locator(&root, "src/lib.rs", 3, 3)]),
+    ]);
+    let (pages, _) = select_pages(
+        vec![
+            page("p1", "Module map", "What each part owns. See [Third](p2)."),
+            page("p2", "Third", "`c` does nothing."),
+        ],
+        &code_bases,
+        &root,
+    );
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let concept_paths = ConceptPathMap::new();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    let publish_with = |pages: Vec<Page>, adopt: Vec<String>, keep_remote: Vec<String>| {
+        publish(PublishInput {
+            binding: &binding,
+            pages,
+            left_out: 0,
+            code_bases: &code_bases,
+            anchors: &anchors,
+            concept_paths: &concept_paths,
+            worktree: worktree.clone(),
+            gh: None,
+            now: 1,
+            adopt,
+            keep_remote,
+        })
+        .unwrap()
+    };
+    assert_eq!(
+        publish_with(pages.clone(), vec![], vec![]).status,
+        RepoWikiPublishStatus::Pushed
+    );
+    assert!(remote_edits(&binding, &worktree).unwrap().is_empty());
+
+    // The pull request is merged, then both pages are edited on GitHub.
+    sh(&clone, &["fetch", "--quiet", "origin"]);
+    sh(
+        &clone,
+        &[
+            "merge",
+            "--quiet",
+            "--ff-only",
+            &format!("origin/{REPO_WIKI_BRANCH}"),
+        ],
+    );
+    let files: Vec<String> = sh(&clone, &["ls-files", "wiki/pages"])
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let file_of = |id: &str| {
+        files
+            .iter()
+            .find(|file| {
+                std::fs::read_to_string(clone.join(file))
+                    .unwrap()
+                    .contains(&format!("origin_id: {id}\n"))
+            })
+            .unwrap()
+            .strip_prefix("wiki/")
+            .unwrap()
+            .to_owned()
+    };
+    let (map, third) = (file_of("p1"), file_of("p2"));
+    let edit = |file: &str, from: &str, to: &str| {
+        let path = clone.join("wiki").join(file);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "{text}");
+        std::fs::write(&path, text.replace(from, to)).unwrap();
+    };
+    edit(
+        &map,
+        "What each part owns.",
+        "What each part owns, and why.",
+    );
+    edit(&third, "`c` does nothing.", "`c` still does nothing.");
+    sh(&clone, &["commit", "--quiet", "-am", "edit on GitHub"]);
+    sh(&clone, &["push", "--quiet", "origin", "main"]);
+
+    let mut edits = remote_edits(&binding, &worktree).unwrap();
+    edits.sort_by(|a, b| a.page_id.cmp(&b.page_id));
+    assert_eq!(edits.len(), 2, "{edits:?}");
+    assert_eq!(edits[0].page_id, "p1");
+    assert_eq!(edits[0].file, map);
+    // Back in the Space's terms: no frontmatter, no code list, page links by id.
+    assert_eq!(
+        edits[0].body,
+        "What each part owns, and why. See [Third](p2)."
+    );
+    assert_eq!(edits[0].spans, vec![("src/lib.rs".to_owned(), 1, 2)]);
+    assert_eq!(edits[1].body, "`c` still does nothing.");
+    assert_ne!(edits[0].digest, edits[1].digest);
+
+    // The Space took p1 in; p2 waits for the user's review.
+    let mut taken = pages.clone();
+    taken[0].content = edits[0].body.clone();
+    let result = publish_with(taken, vec![map.clone()], vec![third.clone()]);
+    assert_eq!(
+        result.status,
+        RepoWikiPublishStatus::NoChanges,
+        "{}",
+        sh(&origin, &["diff", "main", REPO_WIKI_BRANCH])
+    );
+    let tree = sh(&origin, &["ls-tree", "-r", "--name-only", "main"]);
+    assert!(!tree.contains(".wenlan-archive"), "{tree}");
+    assert!(!worktree.join("wiki/.wenlan-archive").exists());
+    // The repository's marker still names the old bytes, so the edits are
+    // reported again, and the next publish again offers nothing.
+    assert_eq!(remote_edits(&binding, &worktree).unwrap().len(), 2);
+    let mut taken = pages.clone();
+    taken[0].content = edits[0].body.clone();
+    let again = publish_with(taken, vec![map.clone()], vec![third.clone()]);
+    assert_eq!(again.status, RepoWikiPublishStatus::NoChanges);
+    let third_now = std::fs::read_to_string(worktree.join("wiki").join(&third)).unwrap();
+    assert!(third_now.contains("`c` still does nothing."), "{third_now}");
 }

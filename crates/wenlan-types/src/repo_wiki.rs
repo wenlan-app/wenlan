@@ -117,6 +117,15 @@ pub struct RepoWikiPublishResult {
     /// may not match it). They go in once that code is pushed.
     #[serde(default)]
     pub waiting: usize,
+    /// Pages changed in the repository (by hand on GitHub, or a merged
+    /// refresh pull request) that this publish brought into the Space.
+    #[serde(default)]
+    pub brought_in: usize,
+    /// Pages changed in the repository that the user edited in Wenlan too:
+    /// the repository's version waits as a revision card, and the repository
+    /// keeps it until the card is decided.
+    #[serde(default)]
+    pub to_review: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

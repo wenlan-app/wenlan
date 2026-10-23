@@ -661,6 +661,55 @@ fn read_old_marker(root: &Path) -> Result<Option<ExportMarker>, WenlanError> {
     Ok(Some(marker))
 }
 
+/// Page files of the bundle in `target` (`pages/...`) whose bytes are no
+/// longer what the last export wrote: someone changed them since. Empty
+/// without a marker, and for files the marker has no digest of.
+pub(crate) fn edited_page_files(target: &Path) -> Result<Vec<String>, WenlanError> {
+    let Some(marker) = read_old_marker(target)? else {
+        return Ok(Vec::new());
+    };
+    Ok(marker
+        .files
+        .iter()
+        .filter(|entry| entry.starts_with(&format!("{PAGES_DIR}/")) && marker_entry_is_safe(entry))
+        .filter(|entry| {
+            match (
+                marker.digests.get(*entry),
+                std::fs::read(target.join(entry)),
+            ) {
+                (Some(digest), Ok(bytes)) => digest_of(&bytes) != *digest,
+                _ => false,
+            }
+        })
+        .cloned()
+        .collect())
+}
+
+/// Take the bytes `entries` hold now as the export's own, so the next export
+/// replaces them instead of moving them to `.wenlan-archive/`, and a later
+/// check no longer reports them as edited. Entries the marker does not list
+/// are ignored.
+pub(crate) fn adopt_current_bytes(target: &Path, entries: &[String]) -> Result<(), WenlanError> {
+    let Some(mut marker) = read_old_marker(target)? else {
+        return Ok(());
+    };
+    for entry in entries {
+        if !marker.files.contains(entry) || !marker_entry_is_safe(entry) {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(target.join(entry)) {
+            marker.digests.insert(entry.clone(), digest_of(&bytes));
+        }
+    }
+    write_file_nofollow(
+        &target.join(MARKER_FILE),
+        serde_json::to_vec_pretty(&marker)
+            .expect("export marker serializes")
+            .as_slice(),
+    )?;
+    Ok(())
+}
+
 /// Write the OKF bundle for `pages` into `target`.
 ///
 /// The directory must not exist (it is created), be empty, or hold a

@@ -929,6 +929,10 @@ export interface RepoWikiPublishResult {
   pages: number;
   left_out: number;
   waiting: number;
+  /** Pages changed in the repository that came back into the Space. */
+  brought_in?: number;
+  /** Pages changed in the repository that wait as a revision card. */
+  to_review?: number;
   branch?: string | null;
   pr_url?: string | null;
   compare_url?: string | null;

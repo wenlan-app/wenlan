@@ -42,6 +42,37 @@ pub fn store_path() -> PathBuf {
     crate::config::data_root().join(STORE_FILE)
 }
 
+/// Changes made in the repository that were offered to the user as a
+/// revision card, by page file: the SHA-256 of the file offered. Kept beside
+/// the worktrees, one file per Space.
+pub fn offered_path(space: &str) -> PathBuf {
+    worktrees_root().join(format!("{}.offered.json", sanitize_space(space)))
+}
+
+pub fn load_offered(path: &Path) -> std::collections::BTreeMap<String, String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_offered(
+    path: &Path,
+    offered: &std::collections::BTreeMap<String, String>,
+) -> Result<(), WenlanError> {
+    if offered.is_empty() {
+        match std::fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => return Ok(()),
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, serde_json::to_string_pretty(offered)?)?;
+    Ok(())
+}
+
 /// Where publishes check out the repository, one folder per Space.
 pub fn worktrees_root() -> PathBuf {
     crate::config::data_root().join(WORKTREES_DIR)
@@ -494,6 +525,126 @@ pub struct PublishInput<'a> {
     pub gh: Option<PathBuf>,
     /// Unix seconds, stamped on the result.
     pub now: i64,
+    /// Page files (relative to the wiki folder) changed in the repository
+    /// that the Space has taken in: replaced by the Space's version without
+    /// a copy being kept aside.
+    pub adopt: Vec<String>,
+    /// Page files changed in the repository that wait for the user's review
+    /// in Wenlan: left as the repository has them.
+    pub keep_remote: Vec<String>,
+}
+
+/// A page someone changed in the repository since Wenlan last wrote it: by
+/// hand on GitHub, or a `wenlan wiki refresh` pull request that was merged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteEdit {
+    pub page_id: String,
+    /// The page file, relative to the wiki folder.
+    pub file: String,
+    /// The body as the Space keeps it: no frontmatter, no `## Code` list,
+    /// links to other pages by page id.
+    pub body: String,
+    /// The code lines its frontmatter names.
+    pub spans: Vec<(String, u32, u32)>,
+    /// SHA-256 of the file's bytes, to tell this change from a later one.
+    pub digest: String,
+}
+
+static PAGE_FILE_LINK_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\[([^\]]*)\]\(((?:\.\./)?(?:pages/)?([^/()\s]+\.md))\)")
+        .expect("valid regex")
+});
+
+/// A page file's text as the Space keeps its body. `id_of` names the page
+/// id of another page file by its file name.
+pub fn page_body_from_file(text: &str, id_of: &HashMap<String, String>) -> String {
+    let body = match text
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.find("\n---\n").map(|end| &rest[end + 5..]))
+    {
+        Some(body) => body,
+        None => text,
+    };
+    let body = body.trim_start_matches('\n');
+    let body = match body.trim_end().rfind("\n## Code\n") {
+        Some(at)
+            if body.trim_end()[at + 9..]
+                .lines()
+                .all(|line| line.trim().is_empty() || line.starts_with("- [`")) =>
+        {
+            &body[..at]
+        }
+        _ => body,
+    };
+    PAGE_FILE_LINK_RE
+        .replace_all(body.trim_end(), |cap: &regex::Captures<'_>| {
+            match id_of.get(&cap[3]) {
+                Some(id) => format!("[{}]({id})", &cap[1]),
+                None => cap[0].to_owned(),
+            }
+        })
+        .into_owned()
+}
+
+/// Fetch, check the default branch out in this Space's worktree, and list
+/// the pages changed there since Wenlan last wrote them.
+pub fn remote_edits(
+    binding: &RepoWikiBinding,
+    worktree: &Path,
+) -> Result<Vec<RemoteEdit>, WenlanError> {
+    let repo = PathBuf::from(&binding.repo_root);
+    let folder = normalize_folder(&binding.folder)?;
+    if origin_url(&repo).is_none() {
+        return Ok(Vec::new());
+    }
+    let mut command = git(&repo);
+    command.args(["fetch", "--quiet", "origin"]);
+    run(command, "git fetch origin")?;
+    let base = remote_default_branch(&repo);
+    prepare_worktree(&repo, worktree, &base)?;
+    let target = worktree.join(&folder);
+    let edited = crate::export::okf::edited_page_files(&target)?;
+    if edited.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut id_of = HashMap::new();
+    if let Ok(entries) = std::fs::read_dir(target.join("pages")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let (Some(name), Ok(text)) = (
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned),
+                std::fs::read_to_string(&path),
+            ) else {
+                continue;
+            };
+            if let Some(id) = frontmatter_origin_id(&text) {
+                id_of.insert(name, id.to_owned());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for file in edited {
+        let Ok(text) = std::fs::read_to_string(target.join(&file)) else {
+            continue;
+        };
+        let Some(page_id) = frontmatter_origin_id(&text) else {
+            continue;
+        };
+        let digest = {
+            use sha2::Digest as _;
+            format!("{:x}", sha2::Sha256::digest(text.as_bytes()))
+        };
+        out.push(RemoteEdit {
+            digest,
+            page_id: page_id.to_owned(),
+            body: page_body_from_file(&text, &id_of),
+            spans: crate::repo_wiki_ci::frontmatter_spans(&text),
+            file,
+        });
+    }
+    Ok(out)
 }
 
 fn remote_default_branch(repo: &Path) -> String {
@@ -577,6 +728,20 @@ fn base_file(repo: &Path, base: &str, path: &str) -> Option<String> {
     String::from_utf8(output.stdout).ok()
 }
 
+/// Whether the file at `path` in the working copy at `repo_root` reads as
+/// it does on the remote's default branch.
+pub fn working_copy_matches_default_branch(repo_root: &str, path: &str) -> bool {
+    let repo = Path::new(repo_root);
+    let base = remote_default_branch(repo);
+    match (
+        base_file(repo, &base, path),
+        std::fs::read_to_string(repo.join(path)),
+    ) {
+        (Some(remote), Ok(local)) => remote == local,
+        _ => false,
+    }
+}
+
 /// Remove this Space's worktree from `repo_root`'s worktree list and from
 /// disk. Best effort: an unbind should not fail over a worktree already gone.
 pub fn remove_worktree(repo_root: &str, worktree: &Path) {
@@ -632,7 +797,9 @@ fn write_code_manifest(
     target: &Path,
     published_bases: &HashMap<String, Vec<CodeBasisLocator>>,
     base_files: &HashMap<String, Option<String>>,
+    keep_remote: &[String],
 ) -> Result<(), WenlanError> {
+    let current = crate::repo_wiki_ci::read_manifest(target).ok();
     let mut command = git(repo);
     command.args(["rev-parse", &format!("origin/{base}")]);
     let commit = run(command, "git rev-parse").ok();
@@ -663,14 +830,18 @@ fn write_code_manifest(
         spans.dedup();
         files.push((format!("pages/{name}"), id.to_owned(), spans));
     }
-    let manifest = crate::repo_wiki_ci::build_manifest(commit, files, |path| {
+    let mut manifest = crate::repo_wiki_ci::build_manifest(commit, files, |path| {
         base_files.get(path).and_then(|text| text.as_deref())
     });
+    // A page kept as the repository has it keeps the code it names there.
+    for file in keep_remote {
+        if let Some(entry) = current.as_ref().and_then(|current| current.pages.get(file)) {
+            manifest.pages.insert(file.clone(), entry.clone());
+        }
+    }
     // Same pages on the same lines: keep the commit it names, so a publish
     // after unrelated commits does not churn the pull request.
-    if crate::repo_wiki_ci::read_manifest(target)
-        .is_ok_and(|current| current.pages == manifest.pages)
-    {
+    if current.is_some_and(|current| current.pages == manifest.pages) {
         return Ok(());
     }
     crate::repo_wiki_ci::write_manifest(target, &manifest)
@@ -697,6 +868,8 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         pages,
         left_out: input.left_out,
         waiting: waiting.get(),
+        brought_in: 0,
+        to_review: 0,
         branch: branch.map(str::to_owned),
         pr_url,
         compare_url,
@@ -804,6 +977,15 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         .collect();
     let target = input.worktree.join(&folder);
     let target_existed = target.exists();
+    // Changed in the repository: taken into the Space, or waiting for the
+    // user's review there. Either way the export must not move them aside.
+    let changed_remotely: Vec<String> = input
+        .adopt
+        .iter()
+        .chain(&input.keep_remote)
+        .map(|file| file.to_owned())
+        .collect();
+    crate::export::okf::adopt_current_bytes(&target, &changed_remotely)?;
     let stats = export_okf_for_repository(&pages, &target, input.concept_paths, &published_bases)
         .map_err(|error| match error {
         WenlanError::Conflict(message) if target_existed => WenlanError::Conflict(format!(
@@ -818,14 +1000,45 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
             stats.failed
         )));
     }
-    write_code_manifest(&repo, &base, &target, &published_bases, &base_files)?;
+    // A change waiting for review stays as the repository has it, so the
+    // pull request does not undo it.
+    for file in &input.keep_remote {
+        let mut command = git(&input.worktree);
+        command.args(["checkout", "HEAD", "--", &format!("{folder}/{file}")]);
+        if let Err(error) = run(command, "git checkout") {
+            log::warn!("[repo_wiki] could not keep {file} as the repository has it: {error}");
+        }
+    }
+    crate::export::okf::adopt_current_bytes(&target, &input.keep_remote)?;
+    write_code_manifest(
+        &repo,
+        &base,
+        &target,
+        &published_bases,
+        &base_files,
+        &input.keep_remote,
+    )?;
     let touched = maintain_agent_files(&input.worktree, &folder)?;
 
     let mut command = git(&input.worktree);
-    command.args(["add", "--all", "--", &folder]).args(&touched);
+    // A page file changed in the repository that no longer has a page in
+    // the Space is moved to `.wenlan-archive/` by the export; that copy is
+    // for the user, not for the pull request.
+    command
+        .args(["add", "--all", "--", &folder])
+        .arg(format!(":(exclude){folder}/.wenlan-archive"))
+        .args(&touched);
     run(command, "git add")?;
+    // The export marker alone changes when the Space took in pages changed
+    // in the repository: the pages already read the same, so there is
+    // nothing to offer.
     let mut command = git(&input.worktree);
-    command.args(["diff", "--cached", "--quiet"]);
+    command
+        .args(["diff", "--cached", "--quiet", "--", "."])
+        .arg(format!(
+            ":(exclude){folder}/{}",
+            crate::export::okf::MARKER_FILE
+        ));
     if command
         .status()
         .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
@@ -1073,7 +1286,12 @@ pub fn mark_daily_started_at(path: &Path, space: &str, date: &str) -> Result<(),
 
 /// A folder name for `space` that is safe on every platform.
 pub fn worktree_for(space: &str) -> PathBuf {
-    let safe: String = space
+    worktrees_root().join(sanitize_space(space))
+}
+
+/// `space` as a file name: letters, digits, `-` and `_`, the rest `_`.
+fn sanitize_space(space: &str) -> String {
+    space
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
@@ -1082,8 +1300,7 @@ pub fn worktree_for(space: &str) -> PathBuf {
                 '_'
             }
         })
-        .collect();
-    worktrees_root().join(safe)
+        .collect()
 }
 
 #[cfg(test)]

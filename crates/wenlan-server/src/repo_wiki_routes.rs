@@ -147,7 +147,8 @@ async fn handle_publish(
 ) -> Result<Json<RepoWikiPublishResult>, ServerError> {
     let db = db_of(&state).await?;
     let space = registered_space(&db, &space).await?;
-    let result = publish_space(&db, &space).await?;
+    let page_root = page_root_of(&state).await;
+    let result = publish_space(&db, page_root.as_deref(), &space).await?;
     Ok(Json(result))
 }
 
@@ -185,9 +186,195 @@ async fn handle_run_now(
     Ok(Json(serde_json::json!({ "started": true })))
 }
 
+/// The folder the Space's page files are mirrored in, for page writes.
+pub(crate) async fn page_root_of(state: &Arc<RwLock<ServerState>>) -> Option<std::path::PathBuf> {
+    let s = state.read().await;
+    s.lint_config.page_root().map(std::path::Path::to_path_buf)
+}
+
+/// What [`bring_back`] did, for the publish that follows.
+#[derive(Debug, Default)]
+pub(crate) struct BroughtBack {
+    /// Page files the Space now matches: the publish may replace them.
+    pub adopt: Vec<String>,
+    /// Page files that wait for the user: the publish leaves them as the
+    /// repository has them.
+    pub keep_remote: Vec<String>,
+    pub brought_in: usize,
+    pub to_review: usize,
+}
+
+/// The name a change from the repository carries on the page's history and
+/// on a revision card.
+const FROM_REPOSITORY: &str = "GitHub";
+
+/// Take into the Space the pages changed in the repository since Wenlan last
+/// wrote them: a merged `wenlan wiki refresh` pull request, or an edit made
+/// on GitHub. A page Wenlan wrote takes the change directly; a page the user
+/// edited or locked gets it as a revision card, once, and the repository
+/// keeps its version until the card is decided. After that the Space's page
+/// is what goes out again, whichever way the card went.
+pub(crate) async fn bring_back(
+    db: &MemoryDB,
+    page_root: Option<&std::path::Path>,
+    binding: &RepoWikiBinding,
+) -> Result<BroughtBack, ServerError> {
+    let lookup = binding.clone();
+    let worktree = repo_wiki::worktree_for(&binding.space);
+    let edits = blocking(move || repo_wiki::remote_edits(&lookup, &worktree)).await?;
+    let mut out = BroughtBack::default();
+    if edits.is_empty() {
+        return Ok(out);
+    }
+    let pending: std::collections::HashSet<String> = db
+        .list_pending_revisions(1000)
+        .await
+        .map_err(|e| ServerError::Internal(e.to_string()))?
+        .into_iter()
+        .filter(|card| card.source_agent.as_deref() == Some(FROM_REPOSITORY))
+        .map(|card| card.target_source_id)
+        .collect();
+    let offered_path = repo_wiki::offered_path(&binding.space);
+    let previously_offered = {
+        let path = offered_path.clone();
+        blocking(move || Ok(repo_wiki::load_offered(&path))).await?
+    };
+    let mut offered = std::collections::BTreeMap::new();
+    for edit in edits {
+        let Some(page) = db
+            .get_page(&edit.page_id)
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?
+        else {
+            continue;
+        };
+        if page.content.trim() == edit.body.trim() {
+            out.adopt.push(edit.file);
+            continue;
+        }
+        if pending.contains(&page.id) {
+            offered.insert(edit.file.clone(), edit.digest.clone());
+            out.keep_remote.push(edit.file);
+            continue;
+        }
+        if previously_offered.get(&edit.file) == Some(&edit.digest) {
+            // Offered before and decided: the Space's page goes out.
+            out.adopt.push(edit.file);
+            continue;
+        }
+        let owned = page.review_required || page.user_edited;
+        let source_revision = db
+            .get_page_source_revision(&page.id)
+            .await
+            .map_err(|e| ServerError::Internal(e.to_string()))?;
+        let written = wenlan_core::post_write::steep_update_page(
+            db,
+            &page.id,
+            wenlan_types::requests::UpdatePageRequest {
+                content: edit.body.clone(),
+                source_memory_ids: page.source_memory_ids.clone(),
+                expected_version: Some(page.version),
+                caller_id: None,
+                operation_id: None,
+            },
+            Some(FROM_REPOSITORY),
+            None,
+            source_revision,
+            Some(owned),
+            page_root,
+            None,
+        )
+        .await;
+        match written {
+            Ok(result) if result.gated => {
+                offered.insert(edit.file.clone(), edit.digest.clone());
+                out.keep_remote.push(edit.file);
+                out.to_review += 1;
+            }
+            Ok(result) if result.wrote => {
+                if let Err(error) = settle_code(db, binding, &page.id, &edit.spans).await {
+                    tracing::warn!(
+                        "[repo_wiki] {} came back from the repository; code lines not settled: {error}",
+                        page.id
+                    );
+                }
+                out.adopt.push(edit.file);
+                out.brought_in += 1;
+            }
+            Ok(_) => out.adopt.push(edit.file),
+            Err(error) => {
+                tracing::warn!(
+                    "[repo_wiki] could not bring {} back from the repository: {error}",
+                    page.id
+                );
+                out.keep_remote.push(edit.file);
+            }
+        }
+    }
+    blocking(move || repo_wiki::save_offered(&offered_path, &offered)).await?;
+    Ok(out)
+}
+
+/// After a page came back from the repository: make its code lines in this
+/// repository the ones the repository's version names, when the working copy
+/// holds those files as the default branch does. Otherwise the rows stay,
+/// and the usual check settles them once the user pulls.
+async fn settle_code(
+    db: &MemoryDB,
+    binding: &RepoWikiBinding,
+    page_id: &str,
+    spans: &[(String, u32, u32)],
+) -> Result<(), String> {
+    use wenlan_types::code_basis::{CodeBasisInput, CodeBasisLocator};
+    let repo_root = binding.repo_root.clone();
+    let paths: Vec<String> = spans.iter().map(|(path, _, _)| path.clone()).collect();
+    let in_step = blocking(move || {
+        Ok(paths
+            .iter()
+            .all(|path| repo_wiki::working_copy_matches_default_branch(&repo_root, path)))
+    })
+    .await
+    .map_err(|e| format!("{e:?}"))?;
+    if !in_step {
+        return Ok(());
+    }
+    let inputs: Vec<CodeBasisInput> = spans
+        .iter()
+        .map(|(path, start, end)| CodeBasisInput {
+            repo_root: binding.repo_root.clone(),
+            path: path.clone(),
+            line_start: *start,
+            line_end: *end,
+        })
+        .collect();
+    let prepared = wenlan_core::code_basis::prepare_code_basis(&inputs)
+        .await
+        .map_err(|e| e.to_string())?;
+    let keep: std::collections::HashSet<(String, u32, u32)> = spans.iter().cloned().collect();
+    for row in db
+        .list_page_code_basis(page_id)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        let locator = CodeBasisLocator::from(&row);
+        if locator.repo_root.trim_end_matches('/') == binding.repo_root.trim_end_matches('/')
+            && !keep.contains(&(locator.path.clone(), locator.line_start, locator.line_end))
+        {
+            db.remove_code_basis(page_id, &locator)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    db.upsert_page_code_basis(page_id, &prepared, FROM_REPOSITORY)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Publish the bound Space `space`: used by the route and by the daily run.
+/// Pages changed in the repository come back into the Space first.
 pub(crate) async fn publish_space(
     db: &MemoryDB,
+    page_root: Option<&std::path::Path>,
     space: &str,
 ) -> Result<RepoWikiPublishResult, ServerError> {
     let store = repo_wiki::store_path();
@@ -201,6 +388,7 @@ pub(crate) async fn publish_space(
             ))
         })?;
 
+    let brought = bring_back(db, page_root, &binding).await?;
     let pages = exportable_pages(db, space).await?;
     let code_bases = db
         .code_basis_locators_by_page()
@@ -224,8 +412,9 @@ pub(crate) async fn publish_space(
     let (pages, left_out) = repo_wiki::select_pages(pages, &code_bases, &binding.repo_root);
     let now = chrono::Utc::now().timestamp();
     let space = space.to_owned();
+    let (brought_in, to_review) = (brought.brought_in, brought.to_review);
     let result = blocking(move || {
-        let result = repo_wiki::publish(repo_wiki::PublishInput {
+        let mut result = repo_wiki::publish(repo_wiki::PublishInput {
             binding: &binding,
             pages,
             left_out,
@@ -235,7 +424,11 @@ pub(crate) async fn publish_space(
             worktree: repo_wiki::worktree_for(&space),
             gh: repo_wiki::find_gh(),
             now,
+            adopt: brought.adopt,
+            keep_remote: brought.keep_remote,
         })?;
+        result.brought_in = brought_in;
+        result.to_review = to_review;
         repo_wiki::record_publish_at(&store, &space, &result)?;
         Ok(result)
     })
