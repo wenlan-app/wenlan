@@ -387,6 +387,9 @@ pub fn rewrite_page_code(text: &str, spans: &[(String, u32, u32)], folder: &str)
                 .map(|(path, start, end)| (path.as_str(), *start, *end)),
             folder,
         ));
+        // The export closes a page file with one more newline after the
+        // body, so a refreshed page reads byte for byte like a published one.
+        out.push('\n');
     }
     if !out.ends_with('\n') {
         out.push('\n');

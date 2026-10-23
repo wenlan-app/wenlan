@@ -127,7 +127,7 @@ fn rewriting_code_keeps_memory_sources_and_other_frontmatter() {
     let out = rewrite_page_code(text, &[("b.rs".to_owned(), 4, 4)], "wiki");
     assert_eq!(
         out,
-        "---\ntitle: \"T\"\nsources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}\n  - {resource: \"repo://b.rs#L4-L4\"}\nstatus: stable\n---\n\nBody.\n\n## Code\n\n- [`b.rs` line 4](../../b.rs#L4)\n"
+        "---\ntitle: \"T\"\nsources:\n  - {id: \"mem_1\", resource: \"wenlan://memory/mem_1\"}\n  - {resource: \"repo://b.rs#L4-L4\"}\nstatus: stable\n---\n\nBody.\n\n## Code\n\n- [`b.rs` line 4](../../b.rs#L4)\n\n"
     );
     assert_eq!(frontmatter_spans(&out), vec![("b.rs".to_owned(), 4, 4)]);
 }

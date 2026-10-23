@@ -847,6 +847,47 @@ fn write_code_manifest(
     crate::repo_wiki_ci::write_manifest(target, &manifest)
 }
 
+/// Whether the staged change in `worktree` touches only what a page's
+/// version records (its version number, dates and the export marker): the
+/// page reads as the default branch has it, as after a page came back from
+/// the repository. Offering that would be a pull request with nothing in it.
+fn only_bookkeeping_changed(worktree: &Path, folder: &str) -> bool {
+    let mut command = git(worktree);
+    command.args(["diff", "--cached", "--name-only"]);
+    let Ok(names) = run(command, "git diff --cached") else {
+        return false;
+    };
+    let marker = format!("{folder}/{}", crate::export::okf::MARKER_FILE);
+    let pages = format!("{folder}/pages/");
+    let show = |spec: String| {
+        let mut command = git(worktree);
+        command.args(["show", &spec]);
+        run(command, "git show").ok()
+    };
+    let content = |text: String| -> Vec<String> {
+        text.lines()
+            .filter(|line| {
+                !["origin_version: ", "modified: ", "generated: "]
+                    .iter()
+                    .any(|prefix| line.starts_with(prefix))
+            })
+            .map(|line| line.trim_end().to_owned())
+            .collect()
+    };
+    names.lines().all(|name| {
+        if name == marker {
+            return true;
+        }
+        if !(name.starts_with(&pages) && name.ends_with(".md")) {
+            return false;
+        }
+        match (show(format!("HEAD:{name}")), show(format!(":{name}"))) {
+            (Some(before), Some(after)) => content(before) == content(after),
+            _ => false,
+        }
+    })
+}
+
 /// The `origin_id:` of a page file's frontmatter.
 pub fn frontmatter_origin_id(text: &str) -> Option<&str> {
     let frontmatter = text.strip_prefix("---\n")?;
@@ -1044,6 +1085,15 @@ pub fn publish(input: PublishInput<'_>) -> Result<RepoWikiPublishResult, WenlanE
         .map_err(|error| WenlanError::Generic(format!("git diff: {error}")))?
         .success()
     {
+        return Ok(result(
+            RepoWikiPublishStatus::NoChanges,
+            pages.len(),
+            None,
+            None,
+            None,
+        ));
+    }
+    if only_bookkeeping_changed(&input.worktree, &folder) {
         return Ok(result(
             RepoWikiPublishStatus::NoChanges,
             pages.len(),

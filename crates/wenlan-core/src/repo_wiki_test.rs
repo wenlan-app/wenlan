@@ -405,6 +405,15 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
             .collect::<Vec<_>>(),
         [("src/lib.rs", 1, 2)]
     );
+    // A refresh rewrites a page byte for byte as the export does.
+    assert_eq!(
+        crate::repo_wiki_ci::rewrite_page_code(
+            &body,
+            &crate::repo_wiki_ci::frontmatter_spans(&body),
+            "wiki"
+        ),
+        std::fs::read_to_string(worktree.join(page_file)).unwrap()
+    );
     let checked = crate::repo_wiki_ci::check(&worktree, "wiki").unwrap();
     assert_eq!((checked.unchanged, checked.pages.len()), (1, 0));
 
@@ -706,6 +715,9 @@ fn pages_changed_in_the_repository_come_back_and_are_not_undone() {
     // The Space took p1 in; p2 waits for the user's review.
     let mut taken = pages.clone();
     taken[0].content = edits[0].body.clone();
+    // Taking it in made a new version of the page.
+    taken[0].version = 2;
+    taken[0].last_modified = "2026-10-23T09:00:00+00:00".to_string();
     let result = publish_with(taken, vec![map.clone()], vec![third.clone()]);
     assert_eq!(
         result.status,
