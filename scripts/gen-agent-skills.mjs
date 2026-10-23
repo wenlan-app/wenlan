@@ -276,9 +276,26 @@ export function renderBundle(files) {
 
 // --- driver ----------------------------------------------------------------
 
+// The Claude setup skill pins `npx -y wenlan@X.Y.Z setup`, and the release bump
+// rewrites that pin without knowing this overlay. An overlay `from` run writes
+// the pin as VERSION_TOKEN, read from the Claude plugin manifest, so a release
+// needs no edit here.
+export const VERSION_TOKEN = "{{plugin_version}}";
+
+function withPluginVersion(root, claudeRoot, overlayText) {
+  if (!overlayText.includes(VERSION_TOKEN)) return overlayText;
+  const manifest = `${claudeRoot}/.claude-plugin/plugin.json`;
+  const { version } = JSON.parse(readFileSync(resolve(root, manifest), "utf8"));
+  if (typeof version !== "string" || !/^[0-9A-Za-z.+-]+$/.test(version)) {
+    throw new GenError(`${manifest}: version must be a plain version string`);
+  }
+  return overlayText.replaceAll(VERSION_TOKEN, version);
+}
+
 export function generateAll(root) {
   const contract = JSON.parse(readFileSync(resolve(root, CONTRACT_PATH), "utf8"));
-  const overlayAll = JSON.parse(readFileSync(resolve(root, OVERLAY_PATH), "utf8"));
+  const claudeRoot = contract.surfaces.claude.plugin_root;
+  const overlayAll = JSON.parse(withPluginVersion(root, claudeRoot, readFileSync(resolve(root, OVERLAY_PATH), "utf8")));
   const shared = contract.skills.filter((s) => s.status === "shared_now").map((s) => s.name);
   const hidden = contract.skills.filter((s) => s.status === "hidden_routed").map((s) => s.name);
   if (!shared.includes(FRONT_DOOR)) throw new GenError(`${CONTRACT_PATH}: the ${FRONT_DOOR} front door must be a shared_now skill`);
@@ -286,7 +303,6 @@ export function generateAll(root) {
   const unknown = Object.keys(overlayAll.skills ?? {}).filter((s) => !known.includes(s));
   if (unknown.length) throw new GenError(`${OVERLAY_PATH} names skills not generated from ${CONTRACT_PATH}: ${unknown.join(", ")}`);
 
-  const claudeRoot = contract.surfaces.claude.plugin_root;
   const source = (skill) => readFileSync(resolve(root, claudeRoot, "skills", skill, "SKILL.md"), "utf8");
   const files = [];
   for (const skill of shared) {

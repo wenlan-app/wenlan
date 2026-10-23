@@ -392,6 +392,21 @@ test("real tree: no release version is baked in, so a release bump needs no rege
   }
 });
 
+test("a release bump of the Claude setup pin and plugin manifest needs no overlay edit", () => {
+  withTree((root) => {
+    const bump = (rel, from, to) => {
+      const file = join(root, rel);
+      const text = readFileSync(file, "utf8");
+      assert.ok(text.includes(from), `${rel} has ${from}`);
+      writeFileSync(file, text.replaceAll(from, to));
+    };
+    const version = JSON.parse(readFileSync(join(root, "plugin/.claude-plugin/plugin.json"), "utf8")).version;
+    bump("plugin/skills/setup/SKILL.md", `wenlan@${version} setup`, "wenlan@99.1.2 setup");
+    bump("plugin/.claude-plugin/plugin.json", `"version": "${version}"`, '"version": "99.1.2"');
+    assert.equal(run(root, "--check").status, 0);
+  });
+});
+
 test("real tree: curate and pages ask for typed replies, not native pickers", () => {
   const curate = read(`${SKILLS}/wenlan/references/curate.md`);
   for (const needle of ["Perform no mutation until the user replies", "Ambiguous replies do not mutate", "revision_source_id"]) {
