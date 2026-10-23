@@ -172,11 +172,44 @@ Write the corrected memory. Keep the same style and length as the original. Only
 user asked to fix. Respond with ONLY the corrected text, no explanation.";
 
 pub(crate) const DISTILL_PAGE: &str = "\
-Write a short, factual Wiki entry answering the given topic from the supplied material.\n\
-Start with the current answer. A dated amendment that explicitly replaces an earlier decision is the current decision. Omit superseded history unless the topic asks for history. Keep names, dates, quantities and conditions exact. Do not add speculation or recommendations.\n\
-For numbered sources, cite every factual sentence by appending [N]. A source number applies to the entire source, including all its headings, dates and paragraphs. Reuse that number for multiple claims; a heading or amendment does not create a new source number. Example: The release date is June 8. [1] Email support is included. [1]\n\
-Use only source numbers present in the material. Notes under \"Notes this note relies on\" use their exact [[Title]] as links instead of invented numbered citations; these notes may be the only material.\n\
-Use one short paragraph or a short list when sufficient. Return only the page body, without a title heading, outer code fence, Sources section, or HTML comment. Do not add sections that the topic and material do not require.\n";
+Compile these memories into a wiki-style knowledge page.\n\
+\n\
+Format:\n\
+Do NOT start with a title heading (# Title) -- the title is displayed separately by the UI.\n\
+Start directly with a one-sentence summary of the topic, with no label in front of it.\n\
+\n\
+Then write the body organized with short topical headers (## Header) and prose paragraphs under each, \
+like a Wikipedia article with sections. \
+Weave in specific facts (names, numbers, versions) naturally. \
+Use [[Topic Name]] wikilinks when referencing related topics. \
+Use bullet lists only for genuinely enumerable things (steps, lists of tools, etc.).\n\
+\n\
+## Open Questions\n\
+- List gaps, uncertainties, or contradictions between sources.\n\
+\n\
+Rules:\n\
+- Write prose with topical headers. Paragraphs that synthesize, with bullets only for lists.\n\
+- Read like an encyclopedia entry — concise, informative, no filler or meta-commentary.\n\
+- Preserve specifics — don't generalize away details like exact names, versions, or numbers.\n\
+- If sources contradict, keep the most recent and note the contradiction in Open Questions.\n\
+- A dated amendment that explicitly replaces an earlier decision is the current decision: state the current decision, not the one it replaced.\n\
+- 3-5 paragraphs total. Quality over quantity.\n\
+- Cite each factual claim by appending [N] immediately after it, where N is the number of the supporting source in the numbered source list. Attach the marker to the exact sentence that states the fact — never at the end of a paragraph, and never on a sentence that only explains or elaborates. A claim drawing on several sources may carry several markers, like [1][3]. Use only numbers that appear in the list. A source number covers the whole source, including all its headings, dates and paragraphs; a heading or amendment inside a source does not get its own number. Do NOT add a sources or citations section — the system renders citations from the markers.\n\
+- Do not write HTML comments (the <!-- ... --> form) anywhere in the page.";
+
+/// Notes step for a page update whose complete sources do not fit the model's
+/// input window: each part of a long source is reduced to its facts, in order,
+/// and the page is then written from those notes. Fixed, not overridable: the
+/// citation check still reads the complete source, so these notes only decide
+/// what the writer sees.
+pub(crate) const REFRESH_SOURCE_NOTES: &str = "\
+You read one part of a long source document and write down every fact in it that bears on the given topic.\n\
+Rules:\n\
+- Keep names, dates, numbers, versions, quantities and conditions exactly as written.\n\
+- Keep decisions, corrections and dated amendments, and say which earlier decision an amendment replaces.\n\
+- Keep the order the facts appear in. Do not add, infer or recommend anything.\n\
+- Write short plain lines, one fact per line. If nothing in this part bears on the topic, write exactly: (nothing relevant)\n\
+- Output only the lines, with no heading, preamble or HTML comment.";
 
 pub(crate) const OVERVIEW_SUMMARY: &str = "\
 You are refreshing the wiki's reserved Overview page -- a short index of what \

@@ -33,6 +33,7 @@ static RE_PARAGRAPH_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n\s*
 static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 
 /// One numbered source available for citation at distill time.
+#[derive(Clone)]
 pub struct NumberedSource {
     pub index: u32,
     pub source_kind: String,

@@ -319,8 +319,9 @@ fn request_continuous_batch_eligible(
     continuous_batch_eligible(req.ctx_size, prompt_tokens, req.max_tokens, seq_capacity)
 }
 
-// Refresh must never infer from a silently truncated source prefix. Called
-// with the model tokenizer's count of the formatted prompt, including BOS.
+// Page refresh (and its long-source notes step) must never infer from a
+// silently truncated source prefix. Called with the model tokenizer's count
+// of the formatted prompt, including BOS.
 fn refresh_context_error(
     input_tokens: usize,
     context_size: u32,
@@ -739,7 +740,10 @@ impl OnDeviceProvider {
                             // Oversized requests are not eligible for continuous batching,
                             // so they reach this singleton path. Check the real tokenizer
                             // before either persistent or per-call inference can truncate.
-                            if req.label.as_deref() == Some("refresh_page") {
+                            if matches!(
+                                req.label.as_deref(),
+                                Some("refresh_page" | "refresh_source_notes")
+                            ) {
                                 let input_tokens = engine
                                     .count_prompt_tokens(req.system_prompt.as_deref(), &req.prompt);
                                 if let Some(error) = refresh_context_error(

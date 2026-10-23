@@ -1492,6 +1492,178 @@ fn build_basis_context_block(bases: &[crate::db::BasisContext]) -> String {
     block
 }
 
+/// Input tokens one page-update request may use. On-device models also keep
+/// room for the reply inside their fixed context window.
+fn refresh_input_budget(llm: &dyn LlmProvider) -> usize {
+    if llm.backend() == LlmBackend::OnDevice {
+        llm.synthesis_token_limit().min(
+            (llm.context_size() as usize).saturating_sub(llm.recommended_max_output() as usize),
+        )
+    } else {
+        llm.synthesis_token_limit()
+    }
+}
+
+/// One token per three UTF-8 bytes over the complete system and user prompts.
+fn estimate_prompt_tokens(system_prompt: &str, user_prompt: &str) -> usize {
+    system_prompt
+        .len()
+        .saturating_add(user_prompt.len())
+        .div_ceil(3)
+}
+
+fn refresh_memories_block(
+    numbered: &[crate::citations::NumberedSource],
+    basis_block: &str,
+) -> String {
+    [
+        crate::citations::build_numbered_block_full(numbered),
+        basis_block.to_string(),
+    ]
+    .into_iter()
+    .filter(|block| !block.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+/// Most model calls one page update may spend reading long sources in parts.
+/// A local model takes tens of seconds per call, so past this the update is
+/// reported as blocked rather than tying up the model for many minutes.
+pub(crate) const REFRESH_SOURCE_PART_CALL_CAP: usize = 24;
+
+/// Reply cap for one part's notes.
+const REFRESH_SOURCE_NOTES_MAX_TOKENS: u32 = 512;
+
+const REFRESH_SOURCE_NOTHING_RELEVANT: &str = "(nothing relevant)";
+
+/// Replace the longest sources in `sources` with in-order notes of their facts
+/// until the writer's prompt fits `input_budget`. `fixed_bytes` is every prompt
+/// byte that is not source text. Returns `Ok(Err(reason))` when the sources
+/// cannot be made to fit; model errors other than an oversized input propagate.
+async fn read_long_sources_in_parts(
+    llm: &dyn LlmProvider,
+    topic: &str,
+    sources: &mut [crate::citations::NumberedSource],
+    fixed_bytes: usize,
+    input_budget: usize,
+) -> Result<Result<(), String>, WenlanError> {
+    let notes_prompt = crate::prompts::defaults::REFRESH_SOURCE_NOTES;
+    // A part, its framing and the notes prompt must fit the same budget; keep
+    // a quarter spare because the byte estimate is not the model's tokenizer.
+    let framing_bytes = notes_prompt.len() + topic.len() + 96;
+    let part_bytes = input_budget.saturating_mul(3).saturating_sub(framing_bytes) / 4 * 3;
+    if part_bytes < 1_024 {
+        return Ok(Err(format!(
+            "source context exceeds model input budget (limit {input_budget} tokens is too small to read long sources in parts)"
+        )));
+    }
+    let fits = |sources: &[crate::citations::NumberedSource]| {
+        let source_bytes: usize = sources.iter().map(|source| source.text.len()).sum();
+        (fixed_bytes + source_bytes).div_ceil(3) <= input_budget
+    };
+    let mut longest_first: Vec<usize> = (0..sources.len()).collect();
+    longest_first.sort_by_key(|&i| std::cmp::Reverse(sources[i].text.len()));
+    let mut calls = 0usize;
+    for i in longest_first {
+        if fits(sources) {
+            break;
+        }
+        let parts = split_source_parts(&sources[i].text, part_bytes);
+        if calls + parts.len() > REFRESH_SOURCE_PART_CALL_CAP {
+            return Ok(Err(format!(
+                "source context exceeds model input budget and is too long to read in parts (more than {REFRESH_SOURCE_PART_CALL_CAP} parts; limit {input_budget} tokens)"
+            )));
+        }
+        let mut notes = Vec::with_capacity(parts.len());
+        for (k, part) in parts.iter().enumerate() {
+            calls += 1;
+            let user_prompt = format!(
+                "Topic: {topic}\n\nPart {} of {} of source [{}]:\n{part}",
+                k + 1,
+                parts.len(),
+                sources[i].index
+            );
+            let raw = match llm
+                .generate(LlmRequest {
+                    system_prompt: Some(notes_prompt.to_string()),
+                    user_prompt,
+                    max_tokens: llm
+                        .recommended_max_output()
+                        .min(REFRESH_SOURCE_NOTES_MAX_TOKENS),
+                    temperature: 0.1,
+                    label: Some("refresh_source_notes".into()),
+                    timeout_secs: None,
+                })
+                .await
+            {
+                Ok(raw) => raw,
+                Err(error @ LlmError::InputContextTooLarge { .. }) => {
+                    return Ok(Err(format!(
+                        "source context exceeds model input budget ({error})"
+                    )));
+                }
+                Err(error) => {
+                    return Err(WenlanError::Llm(format!(
+                        "refresh_source_notes LLM: {error}"
+                    )))
+                }
+            };
+            let part_notes = crate::llm_provider::strip_think_tags(&raw)
+                .trim()
+                .to_string();
+            if !part_notes.is_empty() && part_notes != REFRESH_SOURCE_NOTHING_RELEVANT {
+                notes.push(part_notes);
+            }
+        }
+        log::info!(
+            "[refresh] read source [{}] in {} parts for '{topic}'",
+            sources[i].index,
+            parts.len()
+        );
+        sources[i].text = if notes.is_empty() {
+            "(This long source has nothing on this topic.)".to_string()
+        } else {
+            format!(
+                "(Facts noted from this long source, read in {} parts, in order.)\n{}",
+                parts.len(),
+                notes.join("\n")
+            )
+        };
+    }
+    if fits(sources) {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(format!(
+            "source context exceeds model input budget even after reading long sources in parts (limit {input_budget} tokens)"
+        )))
+    }
+}
+
+/// Split `text` into parts of at most `max_bytes`, at line ends where possible
+/// and always on a character boundary.
+fn split_source_parts(text: &str, max_bytes: usize) -> Vec<&str> {
+    let max_bytes = max_bytes.max(4);
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while rest.len() > max_bytes {
+        let mut cut = max_bytes;
+        while !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        if let Some(line_end) = rest[..cut].rfind('\n') {
+            if line_end + 1 >= cut / 2 {
+                cut = line_end + 1;
+            }
+        }
+        parts.push(&rest[..cut]);
+        rest = &rest[cut..];
+    }
+    if !rest.trim().is_empty() || parts.is_empty() {
+        parts.push(rest);
+    }
+    parts
+}
+
 /// Synthesize one candidate body from `source_ids` under `system_prompt` and
 /// verify its per-claim `[N]` citations — the shared synthesis/verification
 /// core of [`refresh_page_with_prompt`], factored out so first-time creation
@@ -1520,30 +1692,7 @@ pub(crate) async fn synthesize_candidate_body(
         return Ok(CandidateOutcome::Unavailable);
     }
 
-    // Reject an obviously over-budget source set before cloning large source
-    // bodies into numbered synthesis/citation entries. This is an early
-    // estimate before formatting overhead; the final formatted-prompt check
-    // below also counts topic, basis, citation labels, and title hints.
-    let input_budget = if llm.backend() == LlmBackend::OnDevice {
-        llm.synthesis_token_limit().min(
-            (llm.context_size() as usize).saturating_sub(llm.recommended_max_output() as usize),
-        )
-    } else {
-        llm.synthesis_token_limit()
-    };
-    let estimated_source_tokens = system_prompt
-        .len()
-        .saturating_add(memories.iter().fold(0usize, |total, (_, content)| {
-            total.saturating_add(content.len())
-        }))
-        .div_ceil(3);
-    if estimated_source_tokens > input_budget {
-        return Ok(CandidateOutcome::Discarded {
-            discard_reason: format!(
-                "source context exceeds model input budget (estimated {estimated_source_tokens} tokens from UTF-8 bytes; limit {input_budget})"
-            ),
-        });
-    }
+    let input_budget = refresh_input_budget(llm.as_ref());
 
     // Resolve each source's typed kind (spec §5.1) so a folder-doc or webpage
     // source cited here carries external_file / external_url, not the
@@ -1560,46 +1709,55 @@ pub(crate) async fn synthesize_candidate_body(
                 .cloned()
                 .unwrap_or_else(|| "memory".to_string()),
             locator: id.clone(),
-            // Keep full source text here: the same numbered entries feed both
-            // the model prompt and citation verification, so truncating this
-            // silently hides later amendments from both.
+            // Keep full source text here: citation verification reads these
+            // entries, so truncating them would hide later amendments.
             text: content.clone(),
         })
         .collect();
     // The notes this note relies on are context, never evidence: they are not
     // numbered, never enter the citation store, and the gate below does not
     // count them.
-    let memories_block = [
-        crate::citations::build_numbered_block_full(&numbered),
-        build_basis_context_block(bases),
-    ]
-    .into_iter()
-    .filter(|block| !block.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n\n");
+    let basis_block = build_basis_context_block(bases);
+    let memories_block = refresh_memories_block(&numbered, &basis_block);
     // Refresh only from this page's numbered sources and explicitly linked
     // basis notes. Preserve exact wikilink labels when those contexts mention
     // them, but do not expose unrelated active-page titles.
     let capped_topic: String = title.chars().take(PAGE_TOPIC_CHAR_CAP).collect();
     let titles_hint = build_refresh_titles_hint(db, title, workspace, &memories_block).await;
-    let user_prompt = format!("{titles_hint}Topic: {capped_topic}\n\n{memories_block}");
+    let mut user_prompt = format!("{titles_hint}Topic: {capped_topic}\n\n{memories_block}");
 
     // This is deliberately a byte-based estimate, not a tokenizer: count the
     // complete system and user prompts, then budget one token per three UTF-8
-    // bytes. The preflight above avoids unnecessary body copies; this final
-    // check also includes all formatting overhead. The on-device provider adds
-    // an exact tokenizer check as a final guard. Do not silently omit or
-    // reorder sources when the complete context does not fit.
-    let estimated_input_tokens = system_prompt
-        .len()
-        .saturating_add(user_prompt.len())
-        .div_ceil(3);
-    if estimated_input_tokens > input_budget {
-        return Ok(CandidateOutcome::Discarded {
-            discard_reason: format!(
-                "source context exceeds model input budget (estimated {estimated_input_tokens} tokens from UTF-8 bytes; limit {input_budget})"
-            ),
-        });
+    // bytes. The on-device provider adds an exact tokenizer check as a final
+    // guard. When the complete sources do not fit, the longest ones are read
+    // in parts and the writer gets their facts in order; the citation check
+    // still reads every source in full. Never silently drop a source's tail.
+    if estimate_prompt_tokens(system_prompt, &user_prompt) > input_budget {
+        let source_bytes: usize = numbered.iter().map(|source| source.text.len()).sum();
+        let fixed_bytes = system_prompt.len() + user_prompt.len() - source_bytes;
+        let mut prompt_sources = numbered.clone();
+        if let Err(discard_reason) = read_long_sources_in_parts(
+            llm.as_ref(),
+            &capped_topic,
+            &mut prompt_sources,
+            fixed_bytes,
+            input_budget,
+        )
+        .await?
+        {
+            log::warn!("[refresh] page '{title}': {discard_reason}");
+            return Ok(CandidateOutcome::Discarded { discard_reason });
+        }
+        let memories_block = refresh_memories_block(&prompt_sources, &basis_block);
+        user_prompt = format!("{titles_hint}Topic: {capped_topic}\n\n{memories_block}");
+        let estimated_input_tokens = estimate_prompt_tokens(system_prompt, &user_prompt);
+        if estimated_input_tokens > input_budget {
+            return Ok(CandidateOutcome::Discarded {
+                discard_reason: format!(
+                    "source context exceeds model input budget even after reading long sources in parts (estimated {estimated_input_tokens} tokens from UTF-8 bytes; limit {input_budget})"
+                ),
+            });
+        }
     }
 
     let raw = match llm
@@ -3480,6 +3638,259 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             }),
             "the tail claim's citation must be verified and persisted against the full source"
         );
+    }
+
+    /// Answers the long-source notes step from each part's own text and the
+    /// final page write with a fixed body, recording every call by label.
+    struct PartsReadingProvider {
+        fact: String,
+        page_body: String,
+        input_limit: usize,
+        calls: Mutex<Vec<(String, String)>>,
+    }
+
+    impl PartsReadingProvider {
+        fn new(fact: &str, page_body: impl Into<String>, input_limit: usize) -> Self {
+            Self {
+                fact: fact.to_string(),
+                page_body: page_body.into(),
+                input_limit,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls_labelled(&self, label: &str) -> Vec<String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(l, _)| l == label)
+                .map(|(_, prompt)| prompt.clone())
+                .collect()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for PartsReadingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            let label = request.label.clone().unwrap_or_default();
+            let estimated = request
+                .system_prompt
+                .as_deref()
+                .unwrap_or_default()
+                .len()
+                .saturating_add(request.user_prompt.len())
+                .div_ceil(3);
+            assert!(
+                estimated <= self.input_limit,
+                "{label} request of ~{estimated} tokens exceeds the {} token budget",
+                self.input_limit
+            );
+            let answer = if label == "refresh_source_notes" {
+                if request.user_prompt.contains(&self.fact) {
+                    self.fact.clone()
+                } else {
+                    "(nothing relevant)".to_string()
+                }
+            } else {
+                self.page_body.clone()
+            };
+            self.calls
+                .lock()
+                .unwrap()
+                .push((label, request.user_prompt));
+            Ok(answer)
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "parts-reading"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "mock"
+        }
+
+        fn synthesis_token_limit(&self) -> usize {
+            self.input_limit
+        }
+    }
+
+    async fn insert_long_folder_source_page(
+        db: &MemoryDB,
+        page_id: &str,
+        source_id: &str,
+        content: String,
+    ) {
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: source_id.to_string(),
+            title: "Cedar Atlas project notes".to_string(),
+            content,
+            last_modified: chrono::Utc::now().timestamp(),
+            memory_type: Some("fact".to_string()),
+            space: Some("test".to_string()),
+            source_agent: Some("folder".to_string()),
+            confirmed: Some(true),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            page_id,
+            "Cedar Atlas migration review",
+            None,
+            "The earlier review is still current.",
+            None,
+            None,
+            &[source_id],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.set_page_stale(page_id, "source_updated").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn refresh_page_reads_a_source_over_budget_in_parts_and_cites_it_in_full() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let amended_fact =
+            "The latest migration review on October 22 confirms Cedar Atlas remains in Seattle.";
+        let background = "Background notes retain the project setup record.\n".repeat(240);
+        let source = format!("{background}{amended_fact}\n");
+        insert_long_folder_source_page(
+            &db,
+            "page_parts",
+            "folder-docs::cedar-parts.md",
+            source.clone(),
+        )
+        .await;
+
+        let provider = Arc::new(PartsReadingProvider::new(
+            amended_fact,
+            format!("{amended_fact} [1]"),
+            1_500,
+        ));
+        assert!(
+            estimate_prompt_tokens(&PromptRegistry::default().distill_page, &source) > 1_500,
+            "the complete source must not fit the budget"
+        );
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            "page_parts",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let notes_calls = provider.calls_labelled("refresh_source_notes");
+        assert!(
+            notes_calls.len() > 1,
+            "the long source is read in several parts"
+        );
+        assert!(
+            notes_calls
+                .iter()
+                .any(|prompt| prompt.contains(amended_fact)),
+            "the part holding the amendment is read"
+        );
+        let page_calls = provider.calls_labelled("refresh_page");
+        assert_eq!(page_calls.len(), 1);
+        assert!(
+            page_calls[0].contains(amended_fact),
+            "the writer sees the noted amendment"
+        );
+        assert!(
+            !page_calls[0].contains(&background),
+            "the writer gets notes, not the complete long source"
+        );
+        assert!(
+            outcome.wrote,
+            "the noted amendment should update the page: {outcome:?}"
+        );
+        let page = db.get_page("page_parts").await.unwrap().unwrap();
+        assert!(page.content.contains(amended_fact));
+        assert_eq!(page.refresh_blocked_reason, None);
+        assert!(
+            page.citations.iter().any(|citation| {
+                citation.locator == "folder-docs::cedar-parts.md" && citation.status == "verified"
+            }),
+            "the citation is still checked against the complete source"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_page_blocks_a_source_needing_too_many_parts_without_writing() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let source = "Background notes retain the project setup record.\n".repeat(2_000);
+        insert_long_folder_source_page(&db, "page_too_long", "folder-docs::cedar-long.md", source)
+            .await;
+        let provider = Arc::new(PartsReadingProvider::new(
+            "never present",
+            "unexpected generation [1]",
+            1_500,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let before = db.get_page("page_too_long").await.unwrap().unwrap();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            "page_too_long",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.wrote);
+        assert!(
+            provider.calls.lock().unwrap().is_empty(),
+            "no model time is spent on a source past the part cap"
+        );
+        let reason = outcome
+            .discard_reason
+            .expect("the block reason is reported");
+        assert!(reason.contains("too long to read in parts"), "{reason}");
+        let after = db.get_page("page_too_long").await.unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(
+            after.refresh_blocked_reason.as_deref(),
+            Some(reason.as_str())
+        );
+    }
+
+    #[test]
+    fn split_source_parts_prefers_line_ends_and_keeps_characters_whole() {
+        let text = "第一行說明。\n".repeat(50) + &"長".repeat(400);
+        let parts = split_source_parts(&text, 200);
+        assert!(parts.len() > 1);
+        assert_eq!(parts.concat(), text, "parts rejoin to the exact source");
+        for part in &parts {
+            assert!(
+                part.len() <= 200,
+                "part of {} bytes exceeds the cap",
+                part.len()
+            );
+        }
+        assert!(
+            parts[0].ends_with('\n'),
+            "a part ends at a line end when one is near"
+        );
+        assert_eq!(split_source_parts("short", 200), vec!["short"]);
     }
 
     #[tokio::test]
