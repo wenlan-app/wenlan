@@ -5,8 +5,9 @@
 //! OS default `.md` app via `open`/`xdg-open`/`start`. The folder comes from
 //! the daemon the CLI talks to (`GET /api/knowledge/path`, so `WENLAN_HOST`
 //! selects whose pages are shown; the default is `~/.wenlan/pages/`), and the
-//! files are then read from disk. Like every other read command, it errors
-//! when that daemon is unreachable instead of guessing from the local config.
+//! files are then read from disk. A stopped default daemon falls back to the
+//! local config's folder, which is the one it uses; another daemon that cannot
+//! be reached is an error, like every other read command.
 //! `--print` additionally fetches the page body and its sources over HTTP.
 
 use std::collections::HashMap;
@@ -248,6 +249,14 @@ fn collapse_by_title(pages: &[PageEntry]) -> Vec<(String, usize)> {
         .collect()
 }
 
+fn is_connect_failure(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_connect)
+    })
+}
+
 pub async fn run(
     client: &WenlanClient,
     format: ResolvedFormat,
@@ -259,7 +268,15 @@ pub async fn run(
 ) -> Result<()> {
     // An empty/whitespace query (e.g. a skill passing "" for no-arg) means "list".
     let query = query.filter(|q| !q.trim().is_empty());
-    let dir = PathBuf::from(client.knowledge_path().await?.path);
+    let dir = match client.knowledge_path().await {
+        Ok(response) => PathBuf::from(response.path),
+        // The default daemon keeps its pages where the local config says, so
+        // its pages stay listable while it is stopped, as before.
+        Err(error) if client.is_default_host() && is_connect_failure(&error) => {
+            wenlan_core::config::load_config().knowledge_path_or_default()
+        }
+        Err(error) => return Err(error),
+    };
     if !client.is_local() && !dir.is_dir() {
         anyhow::bail!(
             "the daemon at {} keeps its pages in {}, which this machine cannot read",
