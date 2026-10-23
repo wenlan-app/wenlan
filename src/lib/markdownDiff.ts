@@ -264,10 +264,15 @@ type Side = "unified" | "before" | "after";
 
 function segmentsText(segments: DiffSegment[], side: Side): string {
   return segments
-    .map((segment) => {
+    .map((segment, index) => {
       if (segment.kind === "same") return segment.text;
-      if (segment.kind === "ins")
-        return side === "before" ? "" : mark(segment.text, INS_OPEN, INS_CLOSE);
+      if (segment.kind === "ins") {
+        if (side === "before") return "";
+        // Shown together, a removed word and its replacement need a space
+        // between them, or "5" and "2" read as "52".
+        const gap = side === "unified" && segments[index - 1]?.kind === "del" && !/^\s/.test(segment.text) ? " " : "";
+        return gap + mark(segment.text, INS_OPEN, INS_CLOSE);
+      }
       return side === "after" ? "" : mark(segment.text, DEL_OPEN, DEL_CLOSE);
     })
     .join("");
@@ -324,6 +329,21 @@ function markRow(row: string, open: string, close: string): string {
   );
 }
 
+const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|");
+
+/** One edited row with only its changed cells marked, or null when the rows
+ * have different cells and are shown as removed and added instead. */
+function cellDiff(before: string, after: string, side: Side): string | null {
+  const a = cells(before);
+  const b = cells(after);
+  if (a.length !== b.length) return null;
+  const row = b.map((cell, k) => {
+    if (cell.trim() === a[k].trim()) return side === "before" ? a[k] : cell;
+    return ` ${segmentsText(diffMarkdownWords(a[k].trim(), cell.trim()), side)} `;
+  });
+  return `|${row.join("|")}|`;
+}
+
 function tableDiff(before: Block | null, after: Block | null, side: Side): string {
   const oldRows = before ? before.body.split("\n") : [];
   const newRows = after ? after.body.split("\n") : [];
@@ -341,6 +361,19 @@ function tableDiff(before: Block | null, after: Block | null, side: Side): strin
   let i = 0;
   let j = 0;
   const flush = (iEnd: number, jEnd: number) => {
+    // As many rows out as in: the same rows edited, so mark only their changed cells.
+    if (iEnd - i === jEnd - j) {
+      while (i < iEnd) {
+        const was = oldBody[i++];
+        const now = newBody[j++];
+        const row = cellDiff(was, now, side);
+        if (row) out.push(row);
+        else {
+          if (side !== "after") out.push(markRow(was, DEL_OPEN, DEL_CLOSE));
+          if (side !== "before") out.push(markRow(now, INS_OPEN, INS_CLOSE));
+        }
+      }
+    }
     if (side !== "after") while (i < iEnd) out.push(markRow(oldBody[i++], DEL_OPEN, DEL_CLOSE));
     if (side !== "before") while (j < jEnd) out.push(markRow(newBody[j++], INS_OPEN, INS_CLOSE));
     i = iEnd;
@@ -348,7 +381,7 @@ function tableDiff(before: Block | null, after: Block | null, side: Side): strin
   };
   for (const [bi, aj] of pairs) {
     flush(bi, aj);
-    out.push(newBody[aj]);
+    out.push(side === "before" ? oldBody[bi] : newBody[aj]);
     i = bi + 1;
     j = aj + 1;
   }
@@ -398,14 +431,18 @@ export function markdownDiff(before: string, after: string, side: Side): string 
     out.push(markdown);
     previous = block;
   };
-  for (const step of blockSteps(before, after)) {
+  blockSteps(before, after).forEach((step, index) => {
+    // An unchanged leading `# Title` repeats the title the dialog already
+    // shows above the diff; a renamed one stays, marked.
+    if (index === 0 && step.op === "same" && step.block.kind === "heading" && step.block.prefix.trim() === "#")
+      return;
     if (step.op === "same") emit(step.block, step.block.raw);
     else if (step.op === "del") {
       if (side !== "after") emit(step.block, renderWhole(step.block, DEL_OPEN, DEL_CLOSE, side));
     } else if (step.op === "ins") {
       if (side !== "before") emit(step.block, renderWhole(step.block, INS_OPEN, INS_CLOSE, side));
     } else emit(side === "before" ? step.before : step.after, renderChange(step.before, step.after, side));
-  }
+  });
   return out.join("");
 }
 

@@ -61,6 +61,17 @@ describe("markdownDiff", () => {
     );
   });
 
+  it("marks only the changed cell of an edited row", () => {
+    const before = "| Setting | Default |\n| --- | --- |\n| Save interval | 5 seconds |";
+    const after = "| Setting | Default |\n| --- | --- |\n| Save interval | 2 seconds |";
+    expect(readable(markdownDiff(before, after, "unified"))).toBe(
+      "| Setting | Default |\n| --- | --- |\n| Save interval | [-5-] {+2+} seconds |",
+    );
+    expect(readable(markdownDiff(before, after, "before"))).toBe(
+      "| Setting | Default |\n| --- | --- |\n| Save interval | [-5-] seconds |",
+    );
+  });
+
   it("reads a setext heading as a heading", () => {
     const [block] = splitBlocks("Title\n=====\n\ntext");
     expect(block.kind).toBe("heading");
@@ -68,7 +79,12 @@ describe("markdownDiff", () => {
   });
 
   it("returns the page itself when nothing changed", () => {
-    const page = "# T\n\nA [link](https://x.y) and `code`.\n\n> quote\n> more\n\n1. one\n2. two";
+    const page = "## T\n\nA [link](https://x.y) and `code`.\n\n> quote\n> more\n\n1. one\n2. two";
     expect(markdownDiff(page, page, "unified")).toBe(page);
+  });
+
+  it("leaves out an unchanged leading # title, which the dialog already shows", () => {
+    expect(markdownDiff("# Title\n\nold", "# Title\n\nnew", "after")).toBe(`${INS_OPEN}new${INS_CLOSE}`);
+    expect(readable(markdownDiff("# Title a\n\nx", "# Title b\n\nx", "unified"))).toBe("# Title [-a-] {+b+}\n\nx");
   });
 });

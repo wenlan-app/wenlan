@@ -429,8 +429,10 @@ export function useReviewItemSummary(item: ReviewItem | null): {
   return { title: title ?? reviewKindLabel(t, item), reason, delta };
 }
 
+// A clear green, like the danger red beside it: the sage accent read as grey
+// behind rendered page text.
 const INS_STYLE: React.CSSProperties = {
-  backgroundColor: "color-mix(in srgb, var(--mem-accent-sage) 24%, transparent)",
+  backgroundColor: "rgba(76, 175, 106, 0.26)",
   textDecoration: "none",
   borderRadius: 3,
   padding: "0 2px",
