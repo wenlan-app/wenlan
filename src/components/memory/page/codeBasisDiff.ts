@@ -67,6 +67,39 @@ export function diffCodeLines(before: readonly string[], after: readonly string[
   return { removed, added };
 }
 
+/** Lines read past the cited span on the current side, so lines pushed down by an insertion can still be found. */
+export const CURRENT_LINES_EXTRA = 50;
+
+/**
+ * The current lines that stand for the cited span. The current side is read
+ * a little past the span's end; an insertion inside the span pushes its last
+ * lines down, and a deletion pulls later lines up. The span ends where the
+ * last cited line that still reads the same now sits, plus the cited lines
+ * after it. Without anything to compare, or when nothing still matches, it is
+ * as long as the cited span.
+ */
+export function fitCurrentLines(
+  cited: readonly string[] | null,
+  current: readonly string[],
+  spanLength: number,
+): readonly string[] {
+  if (!cited || cited.length === 0) return current.slice(0, spanLength);
+  const diff = diffCodeLines(cited, current);
+  if (diff.tooLarge) return current.slice(0, spanLength);
+  let lastCited = -1;
+  for (let i = cited.length - 1; i >= 0; i -= 1) {
+    if (!diff.removed[i]) { lastCited = i; break; }
+  }
+  if (lastCited < 0) return current.slice(0, spanLength);
+  // Equal lines pair up in order: the last equal cited line faces the last equal current line.
+  let lastCurrent = -1;
+  for (let j = current.length - 1; j >= 0; j -= 1) {
+    if (!diff.added[j]) { lastCurrent = j; break; }
+  }
+  const end = lastCurrent + 1 + (cited.length - 1 - lastCited);
+  return current.slice(0, Math.min(current.length, end));
+}
+
 /** One side of an aligned row: a line (index into its side, changed or not), or a blank filler. */
 export type CodeCell = { index: number; changed: boolean } | null;
 

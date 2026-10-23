@@ -60,7 +60,7 @@ describe("CodeBasisDialog", () => {
       .toEqual(["10", "11", "12"]);
     expect(getPageCodeBasisCited).toHaveBeenCalledWith("page-1", expect.objectContaining({ line_start: 10, line_end: 12 }));
     expect(readGitBlobLines).toHaveBeenCalledWith("/repo", BLOB, 10, 12);
-    expect(readCodeLines).toHaveBeenCalledWith("/repo/src/parser.rs", 10, 12);
+    expect(readCodeLines).toHaveBeenCalledWith("/repo/src/parser.rs", 10, 62);
     // The rows sit in one sideways scroller, which is the box's only focus target.
     for (const box of [before, after]) {
       expect(box.querySelectorAll("[tabindex]")).toHaveLength(1);

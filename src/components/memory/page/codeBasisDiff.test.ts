@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { alignCodeLines, diffCodeLines, type CodeRow } from "./codeBasisDiff";
+import { alignCodeLines, diffCodeLines, fitCurrentLines, type CodeRow } from "./codeBasisDiff";
 
 describe("diffCodeLines", () => {
   it("marks nothing when both sides read the same", () => {
@@ -97,5 +97,26 @@ describe("alignCodeLines", () => {
     const rows = alignCodeLines(diffCodeLines(big, other));
     expect(rows).toHaveLength(601);
     expect(rows.every((row) => row.kind === "pair")).toBe(true);
+  });
+});
+
+describe("fitCurrentLines", () => {
+  const cited = ["a", "b", "c", "d"];
+
+  it("keeps the last cited line that an insertion pushed past the span", () => {
+    expect(fitCurrentLines(cited, ["a", "new", "b", "c", "d", "e", "f"], 4)).toEqual(["a", "new", "b", "c", "d"]);
+  });
+
+  it("stops at the span's end when a deletion pulled later lines up", () => {
+    expect(fitCurrentLines(cited, ["a", "c", "d", "e", "f"], 4)).toEqual(["a", "c", "d"]);
+  });
+
+  it("keeps a changed last line after the last equal one", () => {
+    expect(fitCurrentLines(cited, ["a", "b", "c", "D", "e"], 4)).toEqual(["a", "b", "c", "D"]);
+  });
+
+  it("is as long as the span with nothing to compare or nothing in common", () => {
+    expect(fitCurrentLines(null, ["a", "b", "c", "d", "e"], 4)).toEqual(["a", "b", "c", "d"]);
+    expect(fitCurrentLines(cited, ["w", "x", "y", "z", "q"], 4)).toEqual(["w", "x", "y", "z"]);
   });
 });

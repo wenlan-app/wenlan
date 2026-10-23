@@ -12,7 +12,7 @@ import {
   codeBasisSpanVars,
   useCopyLocation,
 } from "./codeBasisShared";
-import { alignCodeLines, diffCodeLines, type CodeRow } from "./codeBasisDiff";
+import { alignCodeLines, CURRENT_LINES_EXTRA, diffCodeLines, fitCurrentLines, type CodeRow } from "./codeBasisDiff";
 import { codeBasisKeyOf } from "./useCodeBasisActions";
 import "./BasisDiffDialog.css";
 import "./CodeBasisDialog.css";
@@ -140,7 +140,8 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
   });
   const now = useQuery({
     queryKey: ["code-basis-now", rowKey],
-    queryFn: () => readCodeLines(codeBasisAbsolutePath(row), row.line_start, row.line_end),
+    // A little past the span: an insertion inside it pushes its last lines down.
+    queryFn: () => readCodeLines(codeBasisAbsolutePath(row), row.line_start, row.line_end + CURRENT_LINES_EXTRA),
     staleTime: 0,
     gcTime: 0,
     retry: false,
@@ -161,7 +162,11 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
 
   const citedLines = cited.isError || cited.data == null ? null : cited.data;
   const noBefore = !cited.isPending && citedLines == null;
-  const nowLines = now.data;
+  const spanLength = row.line_end - row.line_start + 1;
+  const nowLines = useMemo(
+    () => (now.data && !cited.isPending ? fitCurrentLines(citedLines, now.data, spanLength) : null),
+    [now.data, cited.isPending, citedLines, spanLength],
+  );
   const diff = useMemo(
     () => (citedLines && nowLines ? diffCodeLines(citedLines, nowLines) : null),
     [citedLines, nowLines],
@@ -199,13 +204,13 @@ export function CodeBasisDialog({ pageId, row, onConfirm, onClose, confirming = 
   }
 
   let after;
-  if (now.isPending) {
+  if (now.isPending || (!now.isError && nowLines === null)) {
     after = <p className="basis-diff__status" role="status">{t("codeBasis.dialog.loading")}</p>;
   } else if (now.isError) {
     after = <p className="basis-diff__status" role="alert">{t("codeBasis.dialog.unavailable")}</p>;
   } else {
     after = <Code
-      lines={now.data}
+      lines={nowLines ?? []}
       firstLine={row.line_start}
       testId="code-basis-after"
       rows={shown}

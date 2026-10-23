@@ -233,7 +233,7 @@ for (const locale of LOCALES) {
         { repoRoot: REPO, blob: CITED_BLOB, lineStart: 10, lineEnd: 13 },
       ]);
       expect(callsOf(controller, "read_code_lines")).toEqual([
-        { path: `${REPO}/${FILE}`, lineStart: 10, lineEnd: 13 },
+        { path: `${REPO}/${FILE}`, lineStart: 10, lineEnd: 63 },
       ]);
       await page.screenshot({ path: testInfo.outputPath(`code-dialog-${locale}.png`) });
 
@@ -288,6 +288,37 @@ for (const locale of LOCALES) {
       await page.keyboard.press("Shift+Tab");
       await expect(after.locator(".code-basis__scroll")).toBeFocused();
       expect(await measure()).toEqual(resting);
+      expect(errors.pageErrors).toEqual([]);
+    });
+
+    test("follows lines an insertion pushed past the cited span, and folds the unchanged ones", async ({ page }) => {
+      const errors = collectBrowserErrors(page);
+      const cited = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`);
+      const now = [...cited.slice(0, 5), "inserted();", ...cited.slice(5), "after the span"];
+      await install(page, locale, {
+        codeBasis: {
+          rows: [row("page-architecture", { lineStart: 1, lineEnd: 30 })],
+          files: { [`${REPO}/${FILE}`]: `${now.join("\n")}\n` },
+          blobs: { [CITED_BLOB]: `${cited.join("\n")}\n` },
+        },
+      });
+      await openNote(page);
+      await openReview(page, t);
+      const dialog = page.getByRole("dialog");
+      const before = dialog.getByTestId("code-basis-before");
+      const after = dialog.getByTestId("code-basis-after");
+      // Only the inserted line is marked: line 30, now line 31, is not taken for removed.
+      await expect(after.locator("[data-change]")).toHaveCount(1);
+      await expect(after.locator("[data-change]")).toContainText("inserted();");
+      await expect(before.locator("[data-change]")).toHaveCount(0);
+      await expect(after).not.toContainText("after the span");
+      // The 22 equal lines after the change fold to three of context and one row.
+      const fold = before.getByRole("button", { name: t("codeBasis.dialog.unchanged", { count: 22 }) });
+      await expect(fold).toBeVisible();
+      await expect(after.locator(".code-basis__line")).toHaveCount(5 + 1 + 3);
+      await fold.click();
+      await expect(after.locator(".code-basis__line")).toHaveCount(31);
+      await expect(before.locator(".code-basis__line")).toHaveCount(30);
       expect(errors.pageErrors).toEqual([]);
     });
 
