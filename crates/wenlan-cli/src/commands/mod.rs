@@ -13,7 +13,6 @@ pub mod mcp;
 pub mod outbox;
 pub mod pages;
 pub mod recall;
-pub mod search;
 pub mod service;
 pub mod setup;
 pub mod space;
@@ -27,7 +26,7 @@ pub mod wiki_refresh;
 pub use service::service_unit_path;
 pub use service::{install, is_installed, restart, SERVICE_LABEL};
 
-/// Render the `Compiled pages:` section that `search` and `recall` share.
+/// Render the `Compiled pages:` section that `recall` renders.
 /// Empty or absent pages render nothing.
 pub(crate) fn format_supplemental_pages(
     pages: Option<&[wenlan_types::memory::SearchResult]>,

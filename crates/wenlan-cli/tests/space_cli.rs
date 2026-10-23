@@ -43,7 +43,7 @@ fn spaces_default_clear_conflicts_with_name() {
 #[test]
 fn global_space_and_all_spaces_conflict() {
     cli()
-        .args(["--space", "work", "--all-spaces", "search", "canary"])
+        .args(["--space", "work", "--all-spaces", "recall", "canary"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("cannot be used with"));

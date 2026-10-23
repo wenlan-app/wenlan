@@ -192,7 +192,7 @@ wenlan steep disable
 `configure` shows what each job does and discloses cloud cost/data transfer or
 on-device CPU/GPU/RAM use before confirmation. An unavailable hard pin pauses;
 Wenlan never substitutes another provider. Deterministic storage, indexing, and
-sync continue when Steep is off. `wenlan enrichment` still works as a hidden alias; its removal, together with the hidden `search` subcommand, is tracked in [wenlan-app/wenlan#859](https://github.com/wenlan-app/wenlan/issues/859).
+sync continue when Steep is off.
 
 **`wenlan doctor`**
 

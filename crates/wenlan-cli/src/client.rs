@@ -16,15 +16,14 @@ use wenlan_types::{
     requests::{
         AddEntityAliasRequest, ArchiveEntitiesRequest, EntitySelection, ExportFormat,
         ExportPagesRequest, ListEntitiesRequest, ListMemoriesRequest, MergeEntityRequest,
-        RestoreEntitiesRequest, SearchMemoryRequest, SearchRequest, SetDefaultSpaceRequest,
-        StoreMemoryRequest, UpdateAgentRequest,
+        RestoreEntitiesRequest, SearchMemoryRequest, SetDefaultSpaceRequest, StoreMemoryRequest,
+        UpdateAgentRequest,
     },
     responses::{
         AgentResponse, DefaultSpaceResponse, EntityAliasesResponse, EntityBulkResponse,
         ExportStats, HealthResponse, ListEntitiesResponse, ListMemoriesResponse,
         MemoryDetailResponse, MergeEntityResponse, PageReadResponse, PendingRevisionItem,
-        RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse, SearchResponse,
-        StoreMemoryResponse,
+        RevisionAcceptResponse, RevisionDismissResponse, SearchMemoryResponse, StoreMemoryResponse,
     },
     sources::Source,
     BriefHistoryResponse, BriefReadRequest, BriefReadResponse, BriefUpdateReceipt,
@@ -376,18 +375,6 @@ impl WenlanClient {
     /// GET /api/health — daemon liveness + version.
     pub async fn health(&self) -> Result<HealthResponse> {
         self.get_json("/api/health", true).await
-    }
-
-    /// POST /api/search — hybrid memory search.
-    pub async fn search(&self, query: String, limit: usize) -> Result<SearchResponse> {
-        let req = SearchRequest {
-            query,
-            limit,
-            source_filter: None,
-            space: None,
-        };
-        self.announce_session().await;
-        self.post_json("/api/search", &req).await
     }
 
     /// POST /api/memory/search — semantic recall for one query.
