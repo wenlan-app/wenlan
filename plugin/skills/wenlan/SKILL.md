@@ -35,11 +35,16 @@ the three checks in order; only a failed connection check stops early.
    ```
 
 2. Connection: call `brief` with `space` when non-empty. Success means Wenlan
-   is running and this AI tool reaches it; there is nothing else to check. If
-   it fails, say Wenlan is not running or this AI tool cannot reach it, and run
-   the **setup** workflow (step 3). Setup asks before it installs anything; do
-   not skip its consent. If it says the Space is not resolved, the connection
-   still works: this folder is not linked to a project yet. Do not guess one.
+   is running and this AI tool reaches it; there is nothing else to check.
+   - It says the Space is not resolved: the connection works, and this folder
+     is not linked to a project yet. Do not guess one.
+   - Any other answer from Wenlan, including an error about the Space or the
+     request: the connection still works. Say Wenlan is connected but could
+     not find this folder's project, and do not run setup.
+   - Only when Wenlan cannot be reached at all (the call fails to connect or
+     the tool is missing): say Wenlan is not running or this AI tool cannot
+     reach it, and run the **setup** workflow (step 3). Setup asks before it
+     installs anything; do not skip its consent.
 3. Waiting items: call `list_pending_revisions(limit=10)`. If exactly 10 come
    back, say "at least 10".
 
@@ -50,7 +55,7 @@ that it is not linked to one yet), and how many changes wait for their OK
 This folder is not linked to a project yet." No label
 lines such as "Runtime:" or "Project:", nothing about a check that was
 skipped or could not run, and no internal words such as runtime, daemon,
-Space, MCP or tool names. Then give two concrete examples of what to type
+Space, MCP, tool names or HTTP status codes. Then give two concrete examples of what to type
 next, one of them about notes or waiting items, for example
 `/wenlan open my note on the release plan` and `/wenlan review what's
 waiting`. Do not print the Brief body here; that is `/brief`.
