@@ -10,6 +10,7 @@ pub use review::run_review;
 
 // ── App-specific modules (Tauri, sensors, UI) ──
 pub mod activity;
+mod agent_skills_bundle;
 pub mod api;
 mod ask_tool;
 pub mod config;
@@ -39,6 +40,7 @@ pub mod remote_relay;
 mod repair;
 mod repo_wiki;
 mod search;
+mod skills_install;
 pub mod sources;
 pub mod state;
 pub mod system_info;
@@ -1728,6 +1730,7 @@ pub fn run() {
             search::remove_legacy_mcp_entry,
             search::get_wenlan_mcp_entry,
             search::install_client_plugin,
+            search::install_client_skills,
             search::register_connected_agent,
             search::wire_state,
             // Remote access commands

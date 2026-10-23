@@ -2646,9 +2646,13 @@ fn ci_routing_contract_violations(
     let expected_plugin = BTreeSet::from([
         ".agents/plugins/**".to_string(),
         ".claude-plugin/**".to_string(),
+        "app/src/agent_skills_bundle.rs".to_string(),
+        "plugin-agents/**".to_string(),
         "plugin-contract.json".to_string(),
         "plugin-codex/**".to_string(),
         "plugin/**".to_string(),
+        "scripts/gen-agent-skills.mjs".to_string(),
+        "scripts/gen-agent-skills.test.mjs".to_string(),
         "scripts/gen-codex-plugin.mjs".to_string(),
         "scripts/gen-codex-plugin.test.mjs".to_string(),
         "scripts/gen-plugin-verbs.mjs".to_string(),

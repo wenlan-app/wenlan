@@ -1207,15 +1207,20 @@ export const FACET_COLORS: Record<string, string> = {
 
 // One agent-slug prettifier for every surface (list row, card, detail).
 export const AGENT_DISPLAY: Record<string, string> = {
+  antigravity: "Antigravity",
   "claude-code": "Claude Code",
   "claude-desktop": "Claude Desktop",
   claude: "Claude",
   chatgpt: "ChatGPT",
   "chatgpt-mcp": "ChatGPT",
   codex: "Codex",
+  "copilot-cli": "GitHub Copilot",
   cursor: "Cursor",
   "gemini-cli": "Gemini CLI",
+  kiro: "Kiro",
   "muse-code": "Muse Code",
+  opencode: "OpenCode",
+  vscode: "VS Code",
   windsurf: "Windsurf",
   zed: "Zed",
   wenlan: "Wenlan",
@@ -3530,6 +3535,9 @@ export interface McpClient {
   install_state?: McpInstallState;
   /** Optional until every mock supplies it; the app always sends it. */
   entry_health?: McpEntryHealth;
+  /** Whether Wenlan's skills are in this tool's skills folder. `null` for a
+   *  tool without one (the plugin clients, Claude Desktop, Muse Code). */
+  has_skills?: Reading | null;
 }
 
 export async function shouldShowWizard(): Promise<boolean> {
@@ -3618,6 +3626,15 @@ export type PluginInstallClientType = "claude_code" | "codex_cli";
  *  wizard on that rejection. */
 export async function installClientPlugin(clientType: PluginInstallClientType): Promise<void> {
   return invoke("install_client_plugin", { clientType });
+}
+
+/** Copies Wenlan's skills (the `wenlan` front door plus brief, capture,
+ *  recall and handoff) into `clientType`'s own skills folder. Only for a tool
+ *  whose `has_skills` is not null. Refuses, writing nothing, when a skill
+ *  folder of the same name exists that Wenlan did not put there. Resolves with
+ *  the skills folder it wrote to. */
+export async function installClientSkills(clientType: string): Promise<string> {
+  return invoke("install_client_skills", { clientType });
 }
 
 /** Tell the daemon the user connected `clientType` when setup found it already

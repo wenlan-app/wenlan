@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("./onboarding/MilestoneToaster", () => ({
   MilestoneToaster: () => <div>milestone runtime</div>,
 }));
-vi.mock("./UpdaterDialog", () => ({
+vi.mock("./UpdateWatcher", () => ({
   default: () => <div>updater runtime</div>,
 }));
 vi.mock("./DaemonVersionWatcher", () => ({

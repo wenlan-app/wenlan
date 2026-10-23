@@ -47,7 +47,11 @@ export function PagesOverview({
   const writePages = useWritePages(pages);
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
-  const daemonReady = useDaemonStartupPhase() === "ready";
+  // When it never answers, the page area says so in place of the start panel
+  // (a page-sized empty state, not a banner) and points at the sidebar row,
+  // which holds the one action.
+  const daemonPhase = useDaemonStartupPhase();
+  const daemonReady = daemonPhase === "ready";
   const gettingStarted = onConnectTool && onSeeExample ? (
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
@@ -105,6 +109,13 @@ export function PagesOverview({
           <PageIcon className="wiki-reading-start-icon" size={32} />
           <h1>{t("pages.overview.readingStartTitle")}</h1>
           <p>{t("pages.overview.readingStartDescription")}</p>
+        </div>
+      )}
+      {daemonPhase === "failed" && (
+        <div className="wiki-reading-start-panel wiki-reading-start-panel--unavailable" data-testid="pages-unavailable">
+          <PageIcon className="wiki-reading-start-icon" size={32} />
+          <h1>{t("pages.overview.unavailableTitle")}</h1>
+          <p>{t("pages.overview.unavailableDescription")}</p>
         </div>
       )}
       {/* The one-line card says what is left above the pages; otherwise the

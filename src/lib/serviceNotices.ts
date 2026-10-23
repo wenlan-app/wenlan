@@ -2,13 +2,17 @@
 /**
  * What the background service needs the user to know, said in one place.
  *
- * The sidebar's service row (`src/components/memory/ServiceStatus.tsx`) is the
- * only surface that speaks about the service in the workspace: while it
+ * The sidebar's Activity slot (`src/components/memory/ServiceStatus.tsx`) is
+ * the only surface that speaks about the service in the workspace: while it
  * starts, when it does not answer, when it runs an older version than the
- * app, and when Rust could not put it under launchd. The sources stay where
- * the events arrive (`src/App.tsx` for the fallback event,
- * `src/components/DaemonVersionWatcher.tsx` for version reports) and write
- * here, so a report that lands before the sidebar mounts is not lost.
+ * app, and when Rust could not put it under launchd. An app update, from the
+ * offer through installing to a failure, is on the account entry
+ * (`src/components/memory/IdentityCard.tsx`), which reads it from here too.
+ * The sources stay where the events arrive
+ * (`src/App.tsx` for the fallback event,
+ * `src/components/DaemonVersionWatcher.tsx` for version reports,
+ * `src/components/UpdateWatcher.tsx` for the updater) and write here, so a
+ * report that lands before the sidebar mounts is not lost.
  */
 import { useSyncExternalStore } from "react";
 import type { DaemonVersionEvent, DaemonVersionStatus } from "./tauri";
@@ -21,12 +25,22 @@ export interface ServiceNotices {
   readonly version: VersionReport | null;
   /** Rust runs without a managed service (`origin-fallback-mode`). */
   readonly fallback: boolean;
+  /** A newer app version the updater offered, from the offer until it is
+   *  installed, put off, or found to be current after all. */
+  readonly update: UpdateNotice | null;
 }
 
-let notices: ServiceNotices = { version: null, fallback: false };
+export interface UpdateNotice {
+  readonly phase: "available" | "installing" | "failed";
+  readonly version: string;
+  /** Download progress while installing, when the size is known. */
+  readonly pct: number | null;
+}
+
+let notices: ServiceNotices = { version: null, fallback: false, update: null };
 const listeners = new Set<() => void>();
 
-function update(next: Partial<ServiceNotices>): void {
+function publish(next: Partial<ServiceNotices>): void {
   notices = { ...notices, ...next };
   for (const listener of listeners) listener();
 }
@@ -35,11 +49,15 @@ function update(next: Partial<ServiceNotices>): void {
  *  nothing answered (a restart pressed with the daemon down) has no daemon
  *  version and says nothing about which version will answer. */
 export function setVersionReport(report: VersionReport | null): void {
-  update({ version: report && !report.matched && report.daemon ? report : null });
+  publish({ version: report && !report.matched && report.daemon ? report : null });
 }
 
 export function setServiceFallback(fallback: boolean): void {
-  update({ fallback });
+  publish({ fallback });
+}
+
+export function setUpdateNotice(update: UpdateNotice | null): void {
+  publish({ update });
 }
 
 export function getServiceNotices(): ServiceNotices {
@@ -55,9 +73,14 @@ export function useServiceNotices(): ServiceNotices {
   return useSyncExternalStore(subscribe, getServiceNotices, getServiceNotices);
 }
 
-export type ServiceStatusKind = "starting" | "notAnswering" | "outOfDate" | "notRunning";
+export type ServiceStatusKind =
+  | "starting"
+  | "notAnswering"
+  | "outOfDate"
+  | "notRunning";
 
-/** One thing at a time, the one that matters most first. */
+/** One thing at a time, the one that matters most first. Null leaves the
+ *  slot to Activity. */
 export function serviceStatusKind(
   phase: DaemonStartupPhase,
   { version, fallback }: ServiceNotices,

@@ -11,6 +11,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { PagesOverview } from "./PagesOverview";
+import { setDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { DISTILL_REVIEW_SESSION_QUERY_KEY } from "./pageReviewSignals";
 import type { WikiInventoryScope } from "./pageInventory";
 
@@ -118,6 +119,31 @@ describe("PagesOverview reading workspace", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(distillReview).not.toHaveBeenCalled();
     expect(listRefinements).not.toHaveBeenCalled();
+  });
+
+  it("says in place why pages cannot load when the service never answers", async () => {
+    setDaemonStartupPhase("failed");
+    try {
+      renderOverview({});
+      const panel = await screen.findByTestId("pages-unavailable");
+      expect(panel).toHaveTextContent("Pages can’t load yet");
+      expect(panel).toHaveTextContent("Restart it at the bottom left.");
+      // Not the reading start panel's advice, which cannot be followed yet.
+      expect(screen.queryByRole("heading", { level: 1, name: "Open a page" })).not.toBeInTheDocument();
+    } finally {
+      setDaemonStartupPhase("ready");
+    }
+  });
+
+  it("shows neither panel while the service is still starting", () => {
+    setDaemonStartupPhase("starting");
+    try {
+      renderOverview({});
+      expect(screen.queryByTestId("pages-unavailable")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { level: 1, name: "Open a page" })).not.toBeInTheDocument();
+    } finally {
+      setDaemonStartupPhase("ready");
+    }
   });
 
   it("marks the start section empty only once both lists loaded with no pages", async () => {

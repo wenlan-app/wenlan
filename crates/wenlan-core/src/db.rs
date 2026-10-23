@@ -2027,17 +2027,21 @@ pub(crate) fn embedder_init_error(
 ///
 /// Keep this sorted by canonical ID.
 pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
+    ("antigravity", "Antigravity"),
     ("chatgpt", "ChatGPT"),
     ("claude-code", "Claude Code"),
     ("claude-desktop", "Claude Desktop"),
     ("codex", "Codex"),
     ("continue", "Continue"),
+    ("copilot-cli", "GitHub Copilot"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
+    ("kiro", "Kiro"),
     ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
     ("obsidian", "Obsidian"),
     ("openai-mcp", "ChatGPT"),
+    ("opencode", "OpenCode"),
     ("raycast", "Raycast"),
     ("vscode", "VS Code"),
     ("windsurf", "Windsurf"),
@@ -2140,6 +2144,18 @@ mod agent_id_tests {
             Some("Claude Code")
         );
         assert_eq!(known_client_display_name("muse-code"), Some("Muse Code"));
+        assert_eq!(
+            known_client_display_name("antigravity"),
+            Some("Antigravity")
+        );
+        assert_eq!(
+            known_client_display_name("copilot-cli"),
+            Some("GitHub Copilot")
+        );
+        assert_eq!(known_client_display_name("kiro"), Some("Kiro"));
+        assert_eq!(known_client_display_name("opencode"), Some("OpenCode"));
+        assert_eq!(known_client_display_name("vscode"), Some("VS Code"));
+        assert_eq!(known_client_display_name("windsurf"), Some("Windsurf"));
         assert_eq!(known_client_display_name("unknown-tool"), None);
     }
 }

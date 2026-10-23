@@ -95,6 +95,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "import_memories_cmd",
   "ingest_webpage",
   "install_client_plugin",
+  "install_client_skills",
   "is_run_at_login_enabled",
   "list_activities",
   "list_decision_domains_cmd",

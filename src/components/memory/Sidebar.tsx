@@ -8,7 +8,6 @@ import { ReviewEnvironmentBadge } from "./navigation/ReviewEnvironmentBadge";
 import { SearchEntry } from "./SearchEntry";
 import ActivityStatus from "./activity/ActivityStatus";
 import ServiceStatus from "./ServiceStatus";
-import { AskAiEntry } from "./askAi/AskAiEntry";
 import type { GlobalNavigation } from "./navigation/viewState";
 import { ICONS_SIDEBAR_WIDTH, type SidebarMode } from "./navigation/navigationPreferences";
 import "./navigation/notes-sidebar.css";
@@ -174,20 +173,17 @@ export default function Sidebar({
           />
         </div>
         <div className={`notes-rail-utilities${compact ? " notes-rail-utilities--icons" : ""}`}>
-          {/* First in the group, so the AI and Activity entries keep their places. */}
-          {sidebarVisible && <ServiceStatus compact={compact} />}
+          {/* The service speaks in Activity's place, so the footer keeps its rows. */}
           {sidebarVisible && (
-            <AskAiEntry
-              compact={compact}
-              onConnectTool={closeAfterNavigation(onConnectTool, closeOverlay)}
-            />
-          )}
-          {sidebarVisible && onNavigateActivity && (
-            <ActivityStatus
-              compact={compact}
-              current={activityCurrent}
-              onOpenActivity={closeAfterNavigation(onNavigateActivity, closeOverlay)}
-            />
+            <ServiceStatus compact={compact}>
+              {onNavigateActivity && (
+                <ActivityStatus
+                  compact={compact}
+                  current={activityCurrent}
+                  onOpenActivity={closeAfterNavigation(onNavigateActivity, closeOverlay)}
+                />
+              )}
+            </ServiceStatus>
           )}
           <ReviewEnvironmentBadge compact />
           <IdentityCard
@@ -195,6 +191,7 @@ export default function Sidebar({
             onOpenDetail={closeAfterNavigation(onEntityClick, closeOverlay)}
             onOpenSettings={closeAfterNavigation(onNavigateSettings, closeOverlay)}
             onOpenAbout={closeAfterNavigation(onOpenAbout, closeOverlay)}
+            onConnectTool={closeAfterNavigation(onConnectTool, closeOverlay)}
           />
         </div>
       </aside>

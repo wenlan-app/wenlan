@@ -296,6 +296,10 @@ jobs:
             plugin:
               - 'plugin/**'
               - 'plugin-codex/**'
+              # Host-neutral Agent Skills for other AI tools, generated from
+              # plugin/skills; the Rust bundle embeds them for the app.
+              - 'plugin-agents/**'
+              - 'app/src/agent_skills_bundle.rs'
               - '.agents/plugins/**'
               # The Claude marketplace is contract-checked too; without this
               # glob a PR touching only the storefront skips the guard.
@@ -308,6 +312,8 @@ jobs:
               - 'scripts/gen-plugin-verbs.test.mjs'
               - 'scripts/gen-codex-plugin.mjs'
               - 'scripts/gen-codex-plugin.test.mjs'
+              - 'scripts/gen-agent-skills.mjs'
+              - 'scripts/gen-agent-skills.test.mjs'
             # Required Rust-side distribution contracts for plugin artifacts.
             # Validator implementation changes remain owned by the fast plugin
             # job above and are deliberately excluded from this compile lane.
@@ -2595,6 +2601,10 @@ jobs:
         run: |
           node scripts/gen-codex-plugin.mjs --check
           node --test scripts/gen-codex-plugin.test.mjs
+      - name: Agent Skills for other AI tools are generated from the Claude skills
+        run: |
+          node scripts/gen-agent-skills.mjs --check
+          node --test scripts/gen-agent-skills.test.mjs
       - name: Validate skill frontmatter
         run: |
           for f in plugin/skills/*/SKILL.md; do

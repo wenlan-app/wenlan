@@ -3,7 +3,9 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
+import { toast } from "sonner";
 import { MilestoneToaster } from "../MilestoneToaster";
+import { AppToaster } from "../../AppToaster";
 import { FirstPageModal } from "../FirstPageModal";
 import type { MilestoneRecord } from "../../../lib/tauri";
 
@@ -34,6 +36,7 @@ const { acknowledgeOnboardingMilestone } = await import("../../../lib/tauri");
 const mockAcknowledge = vi.mocked(acknowledgeOnboardingMilestone);
 
 afterEach(() => {
+  act(() => { toast.dismiss(); });
   vi.useRealTimers();
   Reflect.deleteProperty(document, "hidden");
   mockList.mockReset();
@@ -46,15 +49,44 @@ function renderWithSeededMilestones(records: MilestoneRecord[]) {
   queryClient.setQueryData(["onboarding-milestones"], records);
   const view = render(
     <QueryClientProvider client={queryClient}>
+      <AppToaster />
       <MilestoneToaster />
     </QueryClientProvider>,
   );
   return { queryClient, view };
 }
 
+// Sonner marks a dismissed toast on an animation frame, so frames are faked too.
+function useFakeTimers() {
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "requestAnimationFrame", "cancelAnimationFrame"],
+  });
+}
+
+// Sonner adds a toast on a timer and removes it after a short exit animation.
+const SONNER_EXIT_MS = 1_000;
+
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+const settle = () => advance(0);
+async function settleExit() {
+  // Marked removed on one turn, unmounted after its exit timer on the next.
+  await advance(SONNER_EXIT_MS);
+  await advance(SONNER_EXIT_MS);
+}
+
 function wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={qc}>
+      <AppToaster />
+      {children}
+    </QueryClientProvider>
+  );
 }
 
 describe("MilestoneToaster", () => {
@@ -218,7 +250,7 @@ describe("MilestoneToaster", () => {
 
   it("provides a localized keyboard close button and keeps body-click dismissal", async () => {
     mockList.mockResolvedValue([recentRecall]);
-    render(<MilestoneToaster />, { wrapper });
+    const first = render(<MilestoneToaster />, { wrapper });
 
     await screen.findByText(/wenlan just recalled for you/i);
     const close = screen.getByRole("button", { name: "Close" });
@@ -228,7 +260,10 @@ describe("MilestoneToaster", () => {
 
     fireEvent.click(close);
     await waitFor(() => expect(mockAcknowledge).toHaveBeenCalledWith("first-recall"));
-    expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument(),
+    );
+    first.unmount();
 
     mockAcknowledge.mockClear();
     mockList.mockResolvedValue([recentRecall]);
@@ -238,20 +273,30 @@ describe("MilestoneToaster", () => {
     await waitFor(() => expect(mockAcknowledge).toHaveBeenCalledWith("first-recall"));
   });
 
+  it("raises the card in the app's one toast stack", async () => {
+    mockList.mockResolvedValue([recentRecall]);
+    render(<MilestoneToaster />, { wrapper });
+
+    const card = await screen.findByTestId("milestone-toast");
+    expect(card.closest("[data-sonner-toast]")?.className).toContain("mem-toast");
+  });
+
   it("hides each toast after eight seconds without acknowledging it", async () => {
-    vi.useFakeTimers();
+    useFakeTimers();
     renderWithSeededMilestones([recentRecall]);
+    await settle();
 
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(7_999));
+    await advance(7_999);
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(1));
+    await advance(1);
+    await settleExit();
     expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument();
     expect(mockAcknowledge).not.toHaveBeenCalled();
   });
 
   it("times stacked toasts independently while hover pauses one toast", async () => {
-    vi.useFakeTimers();
+    useFakeTimers();
     const firstMemory: MilestoneRecord = {
       id: "first-memory",
       first_triggered_at: Math.floor(Date.now() / 1000) - 5,
@@ -265,78 +310,80 @@ describe("MilestoneToaster", () => {
       payload: { agent: "cursor" },
     };
     renderWithSeededMilestones([firstMemory, secondAgent]);
-    expect(screen.getByText(/first memory saved/i)).toBeInTheDocument();
+    await settle();
+    const memoryCard = screen.getByText(/first memory saved/i).closest("[data-testid='milestone-toast']")!;
 
-    const toasts = screen.getAllByTestId("milestone-toast");
-    fireEvent.mouseEnter(toasts[0]);
-    act(() => vi.advanceTimersByTime(8_000));
+    fireEvent.mouseEnter(memoryCard);
+    await advance(8_000);
+    await settleExit();
 
     expect(screen.getByText(/first memory saved/i)).toBeInTheDocument();
     expect(screen.queryByText(/A second AI/i)).not.toBeInTheDocument();
-    fireEvent.mouseLeave(toasts[0]);
-    act(() => vi.advanceTimersByTime(8_000));
+    fireEvent.mouseLeave(memoryCard);
+    await advance(8_000);
+    await settleExit();
     expect(screen.queryByText(/first memory saved/i)).not.toBeInTheDocument();
   });
 
   it("pauses while focused and resumes after focus leaves", async () => {
-    vi.useFakeTimers();
+    useFakeTimers();
     renderWithSeededMilestones([recentRecall]);
+    await settle();
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
 
     const close = screen.getByRole("button", { name: "Close" });
     fireEvent.focus(close);
-    act(() => vi.advanceTimersByTime(8_000));
+    await advance(8_000);
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
     fireEvent.blur(close);
-    act(() => vi.advanceTimersByTime(7_999));
+    await advance(7_999);
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(1));
+    await advance(1);
+    await settleExit();
     expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument();
   });
 
   it("pauses while the document is hidden and resumes remaining time", async () => {
-    vi.useFakeTimers();
+    useFakeTimers();
     renderWithSeededMilestones([recentRecall]);
+    await settle();
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
 
-    act(() => vi.advanceTimersByTime(3_000));
+    await advance(3_000);
     Object.defineProperty(document, "hidden", { configurable: true, value: true });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
-    act(() => vi.advanceTimersByTime(20_000));
+    await advance(20_000);
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
 
     Object.defineProperty(document, "hidden", { configurable: true, value: false });
     act(() => document.dispatchEvent(new Event("visibilitychange")));
-    act(() => vi.advanceTimersByTime(4_999));
+    await advance(4_999);
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
-    act(() => vi.advanceTimersByTime(1));
+    await advance(1);
+    await settleExit();
     expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument();
   });
 
   it("does not reset a timer on rerender and treats a new trigger time as fresh", async () => {
-    vi.useFakeTimers();
+    useFakeTimers();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let currentRecords = [recentRecall];
     mockList.mockImplementation(() => Promise.resolve(currentRecords));
     queryClient.setQueryData(["onboarding-milestones"], [recentRecall]);
-    const view = render(
+    const tree = () => (
       <QueryClientProvider client={queryClient}>
+        <AppToaster />
         <MilestoneToaster />
-      </QueryClientProvider>,
+      </QueryClientProvider>
     );
+    const view = render(tree());
+    await settle();
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4_000);
-    });
-    view.rerender(
-      <QueryClientProvider client={queryClient}>
-        <MilestoneToaster />
-      </QueryClientProvider>,
-    );
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4_000);
-    });
+    await advance(4_000);
+    view.rerender(tree());
+    await advance(4_000);
+    await settleExit();
     expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument();
 
     const refired: MilestoneRecord = {
@@ -347,26 +394,18 @@ describe("MilestoneToaster", () => {
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: ["onboarding-milestones"] });
     });
-    view.rerender(
-      <QueryClientProvider client={queryClient}>
-        <MilestoneToaster />
-      </QueryClientProvider>,
-    );
+    view.rerender(tree());
+    await settle();
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(7_999);
-    });
+    await advance(7_999);
     expect(screen.getByText(/wenlan just recalled for you/i)).toBeInTheDocument();
 
     currentRecords = [recentRecall];
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: ["onboarding-milestones"] });
     });
-    view.rerender(
-      <QueryClientProvider client={queryClient}>
-        <MilestoneToaster />
-      </QueryClientProvider>,
-    );
+    view.rerender(tree());
+    await settleExit();
     expect(screen.queryByText(/wenlan just recalled for you/i)).not.toBeInTheDocument();
     expect(mockAcknowledge).not.toHaveBeenCalled();
   });

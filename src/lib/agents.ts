@@ -18,17 +18,21 @@
 import type { AgentConnection } from "./tauri";
 
 export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
+  "antigravity": "Antigravity",
   "chatgpt": "ChatGPT",
   "claude-code": "Claude Code",
   "claude-desktop": "Claude Desktop",
   "codex": "Codex",
   "continue": "Continue",
+  "copilot-cli": "GitHub Copilot",
   "cursor": "Cursor",
   "gemini-cli": "Gemini CLI",
+  "kiro": "Kiro",
   "logseq": "Logseq",
   "muse-code": "Muse Code",
   "obsidian": "Obsidian",
   "openai-mcp": "ChatGPT",
+  "opencode": "OpenCode",
   "raycast": "Raycast",
   "vscode": "VS Code",
   "windsurf": "Windsurf",
@@ -120,6 +124,18 @@ export function clientTypeFamily(clientType: string): string {
       return "gemini-cli";
     case "muse_code":
       return "muse-code";
+    case "antigravity":
+      return "antigravity";
+    case "copilot_cli":
+      return "copilot-cli";
+    case "vscode":
+      return "vscode";
+    case "windsurf":
+      return "windsurf";
+    case "kiro":
+      return "kiro";
+    case "opencode":
+      return "opencode";
     default:
       return "";
   }

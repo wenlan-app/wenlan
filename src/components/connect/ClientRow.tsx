@@ -50,6 +50,9 @@ interface ClientRowProps {
    *  side is done. It replaces the config-derived chip, because the config
    *  alone can never say `connected`. */
   status?: ConnectionStatus | null;
+  /** No card of its own: the row sits in a list that already has one
+   *  (Settings' Add a tool). */
+  bare?: boolean;
   /** Highlights the card border — wizard rows use this when their checkbox
    *  is checked. */
   selected?: boolean;
@@ -78,6 +81,7 @@ export default function ClientRow({
   configured,
   status,
   selected,
+  bare = false,
 }: ClientRowProps) {
   const { t } = useTranslation();
   // Deterministic (not useId-generated) so the caller's `leading` checkbox —
@@ -151,6 +155,135 @@ export default function ClientRow({
     </div>
   );
 
+  const bodyBlock = hasBody ? (
+    <div
+      id={descId}
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        paddingLeft: leading ? "28px" : 0,
+      }}
+    >
+      {showConfigPath && client.config_path && (
+        <p
+          className="truncate"
+          style={{
+            fontFamily: "var(--mem-font-mono)",
+            fontSize: "var(--mem-text-2xs)",
+            color: "var(--mem-text-tertiary)",
+            margin: 0,
+          }}
+        >
+          {client.config_path}
+        </p>
+      )}
+      {detectionFailed && (
+        <p
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-status-warning-text)",
+            margin: 0,
+          }}
+        >
+          {t("connectMatrix.detectionUnknown", { error: detectionFailed })}
+        </p>
+      )}
+      {configOnly && (
+        // Not a claim that the app is installed: only its settings were found.
+        <p
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-text-tertiary)",
+            margin: 0,
+          }}
+        >
+          {t("connectMatrix.configOnly")}
+        </p>
+      )}
+      {repairReason && (
+        <p
+          data-testid={`client-row-repair-${client.client_type}`}
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-status-warning-text)",
+            margin: 0,
+          }}
+        >
+          {t(REPAIR_REASON_KEYS[repairReason], { name: client.name })}
+        </p>
+      )}
+      {entryCannotBeRead && (
+        <p
+          data-testid={`client-row-entry-unreadable-${client.client_type}`}
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-status-warning-text)",
+            margin: 0,
+          }}
+        >
+          {t("connectMatrix.entryUnreadable")}
+        </p>
+      )}
+      {warning && (
+        <p
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-status-warning-text)",
+            margin: 0,
+          }}
+        >
+          {warning}
+        </p>
+      )}
+      {children}
+      {error && (
+        <div
+          role="alert"
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-status-danger-text)",
+            margin: 0,
+          }}
+        >
+          <p style={{ margin: 0 }}>{error}</p>
+          {errorDetail && (
+            <p
+              data-testid={`client-row-error-detail-${client.client_type}`}
+              style={{
+                color: "var(--mem-text-tertiary)",
+                margin: "2px 0 0",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {errorDetail}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  // In a list that already has its card, the control sits centred against the
+  // whole row (name and the lines under it), the way a settings list reads.
+  if (bare) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3">
+        <div className="flex flex-col gap-1 min-w-0">
+          {nameBadges}
+          {bodyBlock}
+        </div>
+        {trailing && <div className="shrink-0">{trailing}</div>}
+      </div>
+    );
+  }
+
   return (
     <div
       className="flex flex-col gap-2 rounded-xl px-4 py-3"
@@ -171,120 +304,7 @@ export default function ClientRow({
         {trailing && <div className="shrink-0">{trailing}</div>}
       </div>
 
-      {hasBody && (
-        <div
-          id={descId}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "6px",
-            paddingLeft: leading ? "28px" : 0,
-          }}
-        >
-          {showConfigPath && client.config_path && (
-            <p
-              className="truncate"
-              style={{
-                fontFamily: "var(--mem-font-mono)",
-                fontSize: "var(--mem-text-2xs)",
-                color: "var(--mem-text-tertiary)",
-                margin: 0,
-              }}
-            >
-              {client.config_path}
-            </p>
-          )}
-          {detectionFailed && (
-            <p
-              style={{
-                fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-xs)",
-                color: "var(--mem-status-warning-text)",
-                margin: 0,
-              }}
-            >
-              {t("connectMatrix.detectionUnknown", { error: detectionFailed })}
-            </p>
-          )}
-          {configOnly && (
-            // Not a claim that the app is installed: only its settings were found.
-            <p
-              style={{
-                fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-xs)",
-                color: "var(--mem-text-tertiary)",
-                margin: 0,
-              }}
-            >
-              {t("connectMatrix.configOnly")}
-            </p>
-          )}
-          {repairReason && (
-            <p
-              data-testid={`client-row-repair-${client.client_type}`}
-              style={{
-                fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-xs)",
-                color: "var(--mem-status-warning-text)",
-                margin: 0,
-              }}
-            >
-              {t(REPAIR_REASON_KEYS[repairReason], { name: client.name })}
-            </p>
-          )}
-          {entryCannotBeRead && (
-            <p
-              data-testid={`client-row-entry-unreadable-${client.client_type}`}
-              style={{
-                fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-xs)",
-                color: "var(--mem-status-warning-text)",
-                margin: 0,
-              }}
-            >
-              {t("connectMatrix.entryUnreadable")}
-            </p>
-          )}
-          {warning && (
-            <p
-              style={{
-                fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-xs)",
-                color: "var(--mem-status-warning-text)",
-                margin: 0,
-              }}
-            >
-              {warning}
-            </p>
-          )}
-          {children}
-          {error && (
-            <div
-              role="alert"
-              style={{
-                fontFamily: "var(--mem-font-body)",
-                fontSize: "var(--mem-text-xs)",
-                color: "var(--mem-status-danger-text)",
-                margin: 0,
-              }}
-            >
-              <p style={{ margin: 0 }}>{error}</p>
-              {errorDetail && (
-                <p
-                  data-testid={`client-row-error-detail-${client.client_type}`}
-                  style={{
-                    color: "var(--mem-text-tertiary)",
-                    margin: "2px 0 0",
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  {errorDetail}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {bodyBlock}
     </div>
   );
 }

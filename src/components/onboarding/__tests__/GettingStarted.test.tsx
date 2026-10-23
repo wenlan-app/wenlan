@@ -204,6 +204,15 @@ describe("GettingStarted", () => {
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
 
+  it("opens what your AI can do from under the steps", async () => {
+    renderCard();
+    expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-ask-ai")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.line"));
+
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.askAi.action") }));
+    expect(screen.getByRole("dialog", { name: i18n.t("askAi.title") })).toBeInTheDocument();
+  });
+
   it("stays away when a read fails rather than claim a step is undone", async () => {
     vi.mocked(listAgents).mockRejectedValue(new Error("daemon down"));
     renderCard();

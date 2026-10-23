@@ -18,7 +18,7 @@ vi.mock("../../lib/tauri", () => ({
 import "../../i18n";
 import { resources } from "../../i18n/resources";
 import { setDaemonStartupPhase } from "../../lib/daemonStartup";
-import { getServiceNotices, setServiceFallback, setVersionReport } from "../../lib/serviceNotices";
+import { getServiceNotices, setServiceFallback, setUpdateNotice, setVersionReport } from "../../lib/serviceNotices";
 import ServiceStatus from "./ServiceStatus";
 
 const BOOT = resources.en.translation.boot;
@@ -46,6 +46,7 @@ describe("ServiceStatus", () => {
       setDaemonStartupPhase("ready");
       setVersionReport(null);
       setServiceFallback(false);
+      setUpdateNotice(null);
     });
   });
 
@@ -199,5 +200,40 @@ describe("ServiceStatus", () => {
 
     expect(startDaemonSidecarMock).toHaveBeenCalledTimes(1);
     await act(async () => { release(); });
+  });
+
+  describe("in Activity's place", () => {
+    const activity = <button type="button" data-testid="activity-status">Activity</button>;
+
+    it("leaves the slot to Activity when the service is fine", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      expect(screen.getByTestId("activity-status")).toBeInTheDocument();
+    });
+
+    it("takes the slot while the service starts, then gives it back", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      act(() => setDaemonStartupPhase("starting"));
+      expect(screen.queryByTestId("activity-status")).not.toBeInTheDocument();
+      expect(screen.getByTestId("service-status-starting")).toHaveTextContent(BOOT.startingInBackground);
+
+      act(() => setDaemonStartupPhase("ready"));
+      expect(screen.getByTestId("activity-status")).toBeInTheDocument();
+    });
+
+    it("takes the slot while something needs the user", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      act(() => setVersionReport(OUT_OF_DATE));
+      expect(screen.queryByTestId("activity-status")).not.toBeInTheDocument();
+      expect(row()).toHaveAttribute("data-kind", "outOfDate");
+    });
+
+    it("never speaks about an app update, which lives on the account entry", () => {
+      renderStatus(<ServiceStatus>{activity}</ServiceStatus>);
+      for (const phase of ["available", "installing", "failed"] as const) {
+        act(() => setUpdateNotice({ phase, version: "0.20.1", pct: 42 }));
+        expect(screen.queryByTestId("service-status")).not.toBeInTheDocument();
+        expect(screen.getByTestId("activity-status")).toBeInTheDocument();
+      }
+    });
   });
 });
