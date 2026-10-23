@@ -44,7 +44,9 @@
 .wiki-reading-start[data-onboarding="true"] .wiki-reading-start-panel,
 /* With pages listed, "open a page" would contradict the list under it; the
    list leads and the heading stays for navigation only. */
-.wiki-reading-start[data-lists-pages="true"] .wiki-reading-start-panel { clip-path:inset(50%);height:1px;overflow:hidden;padding:0;position:absolute;white-space:nowrap;width:1px; }
+/* Hidden in place rather than lifted out of the flow, so the heading keeps
+   its spot under any notice at the top of the pane. */
+.wiki-reading-start[data-lists-pages="true"] .wiki-reading-start-panel { clip-path:inset(50%);flex:none;height:1px;margin:-1px 0 0;min-height:0;overflow:hidden;padding:0;white-space:nowrap;width:1px; }
 @media (max-width:639px) { .wiki-reading-start-panel { flex-basis:clamp(240px,42vh,420px);padding:24px 8px; }.wiki-reading-start-panel h1 { font-size:19px; } }
 /* Same width and left edge as the write-pages line and the one-line card, so
    the home reads as one column. */
