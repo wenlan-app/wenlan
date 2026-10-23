@@ -40,7 +40,9 @@ fn fake_claude(bin: &Path) {
 set -e
 prompt="$2"
 case "$prompt" in *"wiki/pages/b.md"*) ;; *) echo "unexpected prompt" >&2; exit 3 ;; esac
-sed -i 's/`b` returns one./`b` returns two./; s/#L3-L5"/#L3-L4"/' wiki/pages/b.md
+# `-i.bak` works with both GNU and BSD sed.
+sed -i.bak 's/`b` returns one./`b` returns two./; s/#L3-L5"/#L3-L4"/' wiki/pages/b.md
+rm wiki/pages/b.md.bak
 echo "oops" >> src/main.rs
 echo "stray" > notes.txt
 "#;
