@@ -604,6 +604,17 @@ export async function setBackgroundAiEnabled(enabled: boolean): Promise<void> {
   return invoke("set_background_ai_enabled", { enabled });
 }
 
+/** "Lock pages I've written". An older daemon without the setting reads off. */
+export async function getLockMyPages(): Promise<boolean> {
+  return invoke("get_lock_my_pages");
+}
+
+/** Turning it on also locks the pages the user already wrote or edited and
+ * resolves to how many; turning it off resolves to null and unlocks nothing. */
+export async function setLockMyPages(enabled: boolean): Promise<number | null> {
+  return invoke("set_lock_my_pages", { enabled });
+}
+
 export interface SystemInfo {
   total_ram_gb: number;
   available_ram_gb: number;

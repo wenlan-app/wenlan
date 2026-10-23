@@ -1698,6 +1698,8 @@ pub fn run() {
             search::set_setup_completed,
             search::get_background_ai_enabled,
             search::set_background_ai_enabled,
+            search::get_lock_my_pages,
+            search::set_lock_my_pages,
             search::should_show_wizard,
             search::detect_mcp_clients_cmd,
             search::write_mcp_config,

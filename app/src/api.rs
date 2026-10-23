@@ -2027,6 +2027,30 @@ impl WenlanClient {
         Ok(())
     }
 
+    /// "Lock pages I've written". An older daemon without the field reads off.
+    pub async fn lock_my_pages(&self) -> Result<bool, String> {
+        Ok(self.get_config().await?.lock_my_pages)
+    }
+
+    pub async fn set_lock_my_pages(&self, enabled: bool) -> Result<(), String> {
+        let mut req = empty_update();
+        req.lock_my_pages = Some(enabled);
+        let updated = self.update_config(req).await?;
+        if updated.lock_my_pages != enabled {
+            return Err("The daemon does not support locking pages you wrote yet".into());
+        }
+        Ok(())
+    }
+
+    /// POST /api/pages/lock-edited — lock every page the user wrote or
+    /// edited; returns how many were newly locked.
+    pub async fn lock_edited_pages(
+        &self,
+    ) -> Result<wenlan_types::responses::LockEditedPagesResponse, String> {
+        self.post_json("/api/pages/lock-edited", &serde_json::json!({}))
+            .await
+    }
+
     /// GET /api/setup/status — return daemon-owned setup/model/key state.
     ///
     /// Bounded by [`HEALTH_TIMEOUT`], not the ingest-sized [`REQUEST_TIMEOUT`]:
@@ -2244,6 +2268,7 @@ fn empty_update() -> wenlan_types::requests::UpdateConfigRequest {
         synthesis_source: None,
         background_ai_enabled: None,
         page_map_auto_suggest: None,
+        lock_my_pages: None,
         only_if_unset: None,
         // Tri-state (Option<Option<_>>): outer None = omit from JSON =
         // preserve the stored key. Note sparse_update_config strips nulls,

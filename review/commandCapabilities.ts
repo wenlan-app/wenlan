@@ -60,6 +60,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
   backgroundAi: [
     // Fixture-only preference state; this never starts a background service.
     "set_background_ai_enabled",
+    // Fixture-only too: the switch locks fixture pages in memory.
+    "get_lock_my_pages",
+    "set_lock_my_pages",
   ],
   wikiAndPages: [
     // Isolated in-memory folders; these never touch a native knowledge root.

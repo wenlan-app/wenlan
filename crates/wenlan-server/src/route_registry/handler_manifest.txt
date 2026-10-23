@@ -127,6 +127,7 @@ main|post|/api/pages|wenlan_server::page_routes::handle_create_page
 main|post|/api/pages/drafts|wenlan_server::page_routes::handle_create_page_draft
 main|post|/api/pages/drafts/{id}/publish|wenlan_server::page_routes::handle_publish_page_draft
 main|post|/api/pages/export|wenlan_server::page_routes::handle_export_pages
+main|post|/api/pages/lock-edited|wenlan_server::page_routes::handle_lock_edited_pages
 main|post|/api/pages/code-basis/recheck|wenlan_server::code_basis_routes::handle_code_basis_recheck
 main|post|/api/pages/search|wenlan_server::page_routes::handle_search_pages
 main|post|/api/pages/{id}/archive|wenlan_server::page_routes::handle_archive_page

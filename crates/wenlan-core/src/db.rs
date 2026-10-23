@@ -58215,6 +58215,34 @@ impl MemoryDB {
         Ok(changed > 0)
     }
 
+    /// Turn on the review lock for every page a person wrote or edited
+    /// (`user_edited = 1`, which also covers a page made in the app), for
+    /// "Lock pages I've written" being switched on. Unpublished drafts are
+    /// locked too, so they keep the lock once published. Entity shadow rows
+    /// and archived pages are skipped. Returns how many published pages this
+    /// call locked; pages already locked and drafts are not counted. Like a
+    /// single lock toggle, it does not bump any page's version.
+    pub async fn lock_user_edited_pages(&self) -> Result<u64, WenlanError> {
+        let conn = self.conn.lock().await;
+        let lock = |status: &'static str| {
+            format!(
+                "UPDATE pages SET review_required = 1 \
+                 WHERE COALESCE(user_edited, 0) = 1 \
+                   AND COALESCE(review_required, 0) = 0 \
+                   AND status = '{status}' \
+                   AND COALESCE(kind, 'concept') != 'entity'"
+            )
+        };
+        let locked = conn
+            .execute(&lock("active"), ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages: {e}")))?;
+        conn.execute(&lock("draft"), ())
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("lock_user_edited_pages drafts: {e}")))?;
+        Ok(locked)
+    }
+
     /// [`Self::set_page_refresh_blocked_reason`] fenced to the compile input
     /// the discarded refresh started from: the marker lands only while the
     /// page is still active at the captured `fence`. Every canonical page

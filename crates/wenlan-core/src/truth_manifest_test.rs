@@ -224,12 +224,13 @@ fn manifest_counts_match_the_spec() {
     // after both those and the three code basis routes landed together.
     // Then 217 after PATCH `/api/sources/{id}` (sync or import-once switch).
     // Then 220 after the three steep-on-demand routes, and 223 after the
-    // three steep new-page routes. Then 228 after the five routes of a Space
-    // bound to a repository, and 229 after the route suggesting which
-    // repository to bind.
+    // three steep new-page routes. Then 224 after POST `/api/pages/lock-edited`
+    // (lock my pages backfill; a count receipt, not page-bearing). Then 229
+    // after the five routes of a Space bound to a repository, and 230 after
+    // the route suggesting which repository to bind.
     assert_eq!(
         HTTP_READERS.len(),
-        229,
+        230,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 34, "#[tool( declarations");
@@ -240,7 +241,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        241,
+        242,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -248,7 +249,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        224,
+        225,
         "main builder entries"
     );
     assert_eq!(
@@ -424,7 +425,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::None)
             .count(),
-        222 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +6: repo wiki)
+        223 // all remaining handlers carry no page markers (+1: review-required, +1: agents, +5: page basis, +4: code basis, +3: sessions, +1: source follow switch, +3: steep, +3: steep new pages, +1: lock-edited, +6: repo wiki)
     );
 }
 

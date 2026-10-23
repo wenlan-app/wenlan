@@ -659,6 +659,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `PUT` | `/api/pages/drafts/{id}` | main | yes | automatic | `none` | `handle_update_page_draft` | PageDraftResponse.page — filter_page on the echoed page |
 | `POST` | `/api/pages/drafts/{id}/publish` | main | yes | automatic | `none` | `handle_publish_page_draft` | PageDraftResponse.page — filter_page on the echoed page |
 | `POST` | `/api/pages/export` | main | yes | automatic | `none` | `handle_export_pages` | EFFECT: writes page prose to the requested vault |
+| `POST` | `/api/pages/lock-edited` | main | no | not_applicable | `none` | — | count receipt only: number of pages locked — no prose |
 | `GET` | `/api/pages/orphan-links` | main | yes | automatic | `none` | `handle_list_orphan_links` | OrphanLink.label, OrphanLinksResponse.orphan_labels |
 | `GET` | `/api/pages/recent` | main | yes | automatic | `none` | `handle_recent_pages` | RecentActivityItem.snippet, RecentActivityItem.title; NOT Collection — carries prose and no axes |
 | `GET` | `/api/pages/recent-changes` | main | yes | automatic | `none` | `handle_recent_page_changes` | PageChange.title; NOT Collection — carries no axes |
@@ -1452,7 +1453,7 @@ carrying the authority of agreement.
 | `core/repair.rs::capture_page_projection_on_connection` | `pub(crate)` | no | no | — | `core/repair.rs::projection_page_row_on_connection` |
 | `core/repair.rs::validate_deterministic_target_resolved` | `pub(crate)` | no | no | — | `core/repair_plan.rs::deterministic_target_still_actionable` |
 | `core/repair_plan/deterministic.rs::resolve_page_projections` | `private` | no | no | — | `core/repair.rs::capture_page_projection_rollback` |
-| `core/sources/page_watcher.rs::sync_filesystem_edits` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/sources/page_watcher.rs::sync_one_file` |
+| `core/sources/page_watcher.rs::sync_filesystem_edits_locking` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
 | `core/synthesis/distill.rs::distill_one_cluster` | `pub` | no | no | — | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` |
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |

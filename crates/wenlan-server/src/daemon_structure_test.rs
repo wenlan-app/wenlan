@@ -200,7 +200,7 @@ const SCHEDULER_POLL_ORDER: &[&str] = &[
     "let coordinator = {",
     "try_begin_background()",
     "let snapshot = {",
-    "sync_filesystem_edits(",
+    "sync_filesystem_edits_locking(",
     "sync_directory_sources_in_scope(",
     "fire_steep_phase_safe(",
     "run_derived_receipt_sweep_if_due(",
