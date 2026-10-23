@@ -767,10 +767,15 @@ pub struct PublishInput<'a> {
     /// What [`prepare`] found, when the caller ran it first to take edits
     /// back into Wenlan; `None` runs it here.
     pub prepared: Option<Prepared>,
-    /// Paths of the edits in `prepared` that were taken back into Wenlan:
-    /// their files are written from the page again. Every other edit stays
-    /// in the repository as the person wrote it.
+    /// Paths of the edits in `prepared` that Wenlan holds, because they were
+    /// taken back now or already match the page: their files are written
+    /// from the page again. Every other edit stays in the repository as the
+    /// person wrote it.
     pub taken_back: BTreeSet<String>,
+    /// How many of `taken_back` changed a page this time. An edit on the
+    /// default branch is found again on every publish until the wiki pull
+    /// request merges, and is counted only the first time.
+    pub took_back: usize,
 }
 
 /// A wiki page file someone changed in the repository since Wenlan wrote it.
@@ -1251,7 +1256,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     let waiting = std::cell::Cell::new(0);
     let kept = std::cell::Cell::new(0);
     let fix_count = std::cell::Cell::new(0);
-    let taken_back = input.taken_back.len();
+    let taken_back = input.took_back;
     let result = |status, pages, branch: Option<&str>, pr_url, compare_url| RepoWikiPublishResult {
         status,
         pages,

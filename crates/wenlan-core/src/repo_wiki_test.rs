@@ -341,6 +341,7 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
             now: 1,
             prepared: None,
             taken_back: BTreeSet::new(),
+            took_back: 0,
         })
         .unwrap()
         .result
@@ -471,6 +472,7 @@ fn publish_refuses_a_folder_holding_files_wenlan_did_not_write() {
         now: 1,
         prepared: None,
         taken_back: BTreeSet::new(),
+        took_back: 0,
     })
     .unwrap_err();
     assert!(
@@ -505,6 +507,7 @@ fn publish_with_no_selected_pages_does_nothing() {
         now: 7,
         prepared: None,
         taken_back: BTreeSet::new(),
+        took_back: 0,
     })
     .unwrap()
     .result;
@@ -625,6 +628,7 @@ fn publish_input<'a>(
         now: 1,
         prepared: None,
         taken_back: BTreeSet::new(),
+        took_back: 0,
     }
 }
 
@@ -886,6 +890,7 @@ fn a_page_file_edited_in_the_repository_is_found_and_kept() {
     taken[0].version = 2;
     let back = publish(PublishInput {
         taken_back: BTreeSet::from([page_file.clone()]),
+        took_back: 1,
         prepared: Some(prepared),
         ..publish_input(
             &binding,

@@ -317,17 +317,19 @@ async fn gather(
 
 /// Take wiki page files people edited in the repository back into Wenlan,
 /// as an edit of the page by a person (so a review lock applies as for any
-/// edit of theirs). Returns the paths taken back, whose files the publish
-/// then writes from the page again. An edit of a page Wenlan changed since
-/// that file was written stays only in the repository.
+/// edit of theirs). Returns the paths Wenlan now holds (taken back, or
+/// already matching the page), whose files the publish then writes from the
+/// page again, and how many pages changed. An edit of a page Wenlan changed
+/// since that file was written stays only in the repository.
 async fn take_back_edits(
     db: &MemoryDB,
     edits: &[repo_wiki::WikiFileEdit],
     pages: &[wenlan_core::pages::Page],
     page_root: Option<&std::path::Path>,
-) -> std::collections::BTreeSet<String> {
+) -> (std::collections::BTreeSet<String>, usize) {
     let lock = wenlan_core::config::load_config().lock_my_pages;
     let mut taken = std::collections::BTreeSet::new();
+    let mut wrote = 0;
     for edit in edits {
         let Some(page) = pages.iter().find(|page| page.id == edit.page_id) else {
             continue;
@@ -368,6 +370,7 @@ async fn take_back_edits(
                     edit.path
                 );
                 taken.insert(edit.path.clone());
+                wrote += 1;
             }
             Ok(outcome) => tracing::info!(
                 "[repo_wiki] kept the repository edit of {} as it is: {outcome:?}",
@@ -379,7 +382,7 @@ async fn take_back_edits(
             ),
         }
     }
-    taken
+    (taken, wrote)
 }
 
 /// Publish the bound Space `space`: used by the route and by the daily run.
@@ -409,12 +412,14 @@ pub(crate) async fn publish_space(
     let worktree = repo_wiki::worktree_for(space);
     let mut prepared = None;
     let mut taken_back = std::collections::BTreeSet::new();
+    let mut took_back = 0;
     if !gathered.pages.is_empty() || open_fix {
         let for_prepare = binding.clone();
         let at = worktree.clone();
         let found = blocking(move || repo_wiki::prepare(&for_prepare, &at)).await?;
-        taken_back = take_back_edits(db, &found.edits, &gathered.pages, page_root).await;
-        if !taken_back.is_empty() {
+        (taken_back, took_back) =
+            take_back_edits(db, &found.edits, &gathered.pages, page_root).await;
+        if took_back > 0 {
             gathered = gather(db, space, &binding).await?;
         }
         prepared = Some(found);
@@ -441,6 +446,7 @@ pub(crate) async fn publish_space(
             now,
             prepared,
             taken_back,
+            took_back,
         })?;
         repo_wiki::settle_doc_fixes_at(&store, &space, &published.applied, &published.gone)?;
         repo_wiki::record_publish_at(&store, &space, &published.result)?;
