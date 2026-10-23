@@ -38,7 +38,7 @@ export type ReviewItem =
       revisionSourceId: string;
       content: string;
       agent: string | null;
-      /** Why a page revision needs review ("locked", "background", "owned"). */
+      /** Why a page revision needs review ("authored", "locked", "background", "owned"). */
       reviewReason?: string | null;
       timestampMs: number | null;
     }

@@ -1269,8 +1269,8 @@ export interface PendingRevisionItem {
   source_agent: string | null;
   last_modified: number;
   target_kind: RevisionTargetKind;
-  /** Why a page revision card needs review: "locked", "background" or
-   * "owned". Absent when the daemon cannot say (memory revisions, old cards). */
+  /** Why a page revision card needs review: "authored", "locked",
+   * "background" or "owned". Absent when the daemon cannot say (memory revisions, old cards). */
   review_reason?: string | null;
 }
 

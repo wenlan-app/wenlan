@@ -7852,9 +7852,16 @@ async fn staged_page_card_records_review_reason() {
     let unlocked = db.get_page(&page_id).await.unwrap().unwrap();
     assert!(db.set_page_review_required(&page_id, true).await.unwrap());
     let locked = db.get_page(&page_id).await.unwrap().unwrap();
+    // The lock "Lock pages I've written" sets: the person wrote the page.
+    let authored = crate::pages::Page {
+        user_edited: true,
+        ..locked.clone()
+    };
 
     let mut cases = Vec::new();
     for (page, edited_by, expected) in [
+        (&authored, "agent_refresh", Some("authored")),
+        (&authored, "re_distill", Some("authored")),
         (&locked, "agent_refresh", Some("locked")),
         // The lock wins over the writer: a background write to a locked page
         // waits on the lock, not on upkeep.

@@ -1516,8 +1516,9 @@ pub struct PendingRevisionItem {
     /// other revision producers. Read from structured_fields.grounded_in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounded_in: Option<String>,
-    /// Why a page revision card needs review: `locked` (the page's review
-    /// lock), `background` (Wenlan's own upkeep wrote to a page with your
+    /// Why a page revision card needs review: `authored` (the review lock on
+    /// a page the person wrote), `locked` (the page's review lock),
+    /// `background` (Wenlan's own upkeep wrote to a page with your
     /// edits), or `owned` (the page turned user-owned mid-write). Read from
     /// structured_fields.review_reason; derived for older cards. None for
     /// memory-target revisions.
