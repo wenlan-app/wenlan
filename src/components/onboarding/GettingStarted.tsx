@@ -12,6 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import { clipboardWrite, getBackgroundAiEnabled, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
 import type { WritePagesState } from "../memory/askAi/WritePages";
+import { AskAiDialog } from "../memory/askAi/AskAiDialog";
 import { resolveAgentDisplayName } from "../../lib/agents";
 import {
   askablePages,
@@ -70,6 +71,7 @@ export function GettingStarted({
 }: GettingStartedProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
   // "opened": the tool has the question typed in. "copied": it could not be
   // opened, so the question is on the clipboard to paste there instead.
   const [handedOver, setHandedOver] = useState<"opened" | "copied" | null>(null);
@@ -83,6 +85,7 @@ export function GettingStarted({
     setPagesSkipped,
     pages,
     agents,
+    compact,
   } = useGettingStartedState();
   // Same key as the Intelligence settings, so turning it on there hides the line here.
   const backgroundAi = useQuery({
@@ -123,6 +126,38 @@ export function GettingStarted({
       >
         {t("firstUse.checklist.reopen")}
       </button>
+    );
+  }
+
+  // Only writing a page by hand is left: the card steps back to one line and
+  // the pages are the home.
+  if (compact && !writing) {
+    return (
+      <section
+        className="getting-started getting-started--compact"
+        data-testid="getting-started"
+        aria-label={t("firstUse.checklist.title")}
+      >
+        <p className="getting-started-compact-text">
+          {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
+          {" · "}
+          {t("firstUse.checklist.steps.note.title")}
+        </p>
+        <div className="getting-started-compact-actions">
+          <button type="button" className="getting-started-action" onClick={onWriteNote}>
+            {t("firstUse.checklist.steps.note.action")}
+          </button>
+          <button
+            type="button"
+            className="getting-started-hide"
+            aria-label={t("firstUse.checklist.hide")}
+            title={t("firstUse.checklist.hide")}
+            onClick={() => setDismissed(true)}
+          >
+            <X aria-hidden="true" weight="regular" />
+          </button>
+        </div>
+      </section>
     );
   }
 
@@ -279,6 +314,23 @@ export function GettingStarted({
           );
         })}
       </ol>
+      {/* The full list of what to ask the AI tool. After the checklist is
+          gone it stays in the account menu. */}
+      <p className="getting-started-extra" data-testid="getting-started-ask-ai">
+        {t("firstUse.checklist.askAi.line")}{" "}
+        <button type="button" className="getting-started-link" onClick={() => setAskAiOpen(true)}>
+          {t("firstUse.checklist.askAi.action")}
+        </button>
+      </p>
+      {askAiOpen ? (
+        <AskAiDialog
+          onClose={() => setAskAiOpen(false)}
+          onConnectTool={() => {
+            setAskAiOpen(false);
+            onConnectTool();
+          }}
+        />
+      ) : null}
       {/* Optional, so it sits under the steps instead of being one of them.
           Shown only when the setting is known to be off. */}
       {onTurnOnSteeping && backgroundAi.data === false ? (

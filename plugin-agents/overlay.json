@@ -1,0 +1,571 @@
+{
+  "$comment": "Input to scripts/gen-agent-skills.mjs. Each host-neutral skill is generated from plugin/skills/<skill>/SKILL.md; this file holds only what the Agent Skills set does differently from the Claude plugin. `description` replaces the frontmatter description. `sections` maps an exact heading line to replacement lines (null drops the section through the line before the next heading). `replace` entries swap one exact contiguous run of Claude lines (`from`, must match once) for `to` (null deletes). MCP tool names, the resolver path and the /wenlan-<skill> command names are rewritten by the script afterwards; write `to` text in its final host-neutral form (`brief(...)`, the Wenlan `brief` tool, `{{WENLAN_SKILLS_DIR}}`). Frontmatter keeps only name and description; allowed-tools, argument-hint and user-invocable are not part of the open Agent Skills format.",
+  "skills": {
+    "wenlan": {
+      "replace": [
+        {
+          "from": [
+            "One entry for everything Wenlan does. The user types `/wenlan` and, optionally,",
+            "what they want in their own words. Pick the workflow, then run it exactly as",
+            "that workflow says. Reply in the user's language."
+          ],
+          "to": [
+            "One entry for everything Wenlan does. The user types `/wenlan` (in a tool",
+            "without slash commands, they ask for Wenlan by name) and, optionally, what",
+            "they want in their own words. Pick the workflow, then run it exactly as that",
+            "workflow says. Reply in the user's language."
+          ]
+        },
+        {
+          "from": [
+            "Invoke the chosen workflow's skill with the Skill tool (`wenlan:<workflow>`),",
+            "then follow that skill to the end. Its arguments:"
+          ],
+          "to": [
+            "For setup, distill, steep, pages, lint, curate, forget and wiki, read",
+            "`references/<workflow>.md` beside this SKILL.md and follow it to the end,",
+            "treating the arguments below as what the user typed after that workflow word.",
+            "For brief, capture, recall and handoff, use the `wenlan-<workflow>` skill.",
+            "Arguments:"
+          ]
+        },
+        {
+          "from": [
+            "- The menu shows `/wenlan`, `/brief`, `/recall`, `/capture` and `/handoff`.",
+            "  Everything else is reached by saying it after `/wenlan`."
+          ],
+          "to": [
+            "- The skills list shows `/wenlan`, `/wenlan-brief`, `/wenlan-recall`,",
+            "  `/wenlan-capture` and `/wenlan-handoff`. Everything else is reached by",
+            "  saying it after `/wenlan`."
+          ]
+        }
+      ]
+    },
+    "capture": {
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on `capture` and `write_page`.",
+            ""
+          ],
+          "to": null
+        }
+      ]
+    },
+    "distill": {
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on `write_page`.",
+            ""
+          ],
+          "to": null
+        }
+      ]
+    },
+    "handoff": {
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on `capture`, `write_page` and `update_brief`.",
+            ""
+          ],
+          "to": null
+        },
+        {
+          "from": [
+            "  \"caller_id\": \"claude-code\","
+          ],
+          "to": [
+            "  \"caller_id\": \"<this AI tool's name in lowercase, such as cursor>\","
+          ]
+        }
+      ]
+    },
+    "steep": {
+      "replace": [
+        {
+          "from": [
+            "When the session start printed a `Wenlan session:` line, pass its value as",
+            "`session` on every `steep` commit and write.",
+            ""
+          ],
+          "to": null
+        },
+        {
+          "from": [
+            "   judgment, so give it to a helper on a small model: in Claude Code, start an",
+            "   `Agent` with `model: \"haiku\"`, hand it the page and the numbered sources,",
+            "   and ask one question: does every sentence of the page still match the",
+            "   sources, yes or no. When it says yes, call `steep` with"
+          ],
+          "to": [
+            "   judgment, so give it to a helper on a small model when you can start one",
+            "   (a subagent on a smaller model), hand it the page and the numbered sources,",
+            "   and ask one question: does every sentence of the page still match the",
+            "   sources, yes or no. When it says yes, call `steep` with"
+          ]
+        },
+        {
+          "from": [
+            "   judged whether that matters. Give each entry of `code_checks` to a helper",
+            "   on a small model (in Claude Code, an `Agent` with `model: \"haiku\"`):"
+          ],
+          "to": [
+            "   judged whether that matters. Give each entry of `code_checks` to a helper",
+            "   on a small model when you can start one (a subagent on a smaller model):"
+          ]
+        },
+        {
+          "from": [
+            "   on a small model: in Claude Code, start an `Agent` with `model: \"haiku\"`,",
+            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+          ],
+          "to": [
+            "   on a small model when you can start one (a subagent on a smaller model):",
+            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+          ]
+        }
+      ]
+    },
+    "lint": {
+      "replace": [
+        {
+          "from": [
+            "scope, run the resolver once and use a non-empty `space`, otherwise omit",
+            "`space`. Bash is allowed only for this resolver block:"
+          ],
+          "to": [
+            "scope, run the resolver once and use a non-empty `space`, otherwise omit",
+            "`space`. The shell is allowed only for this resolver block:"
+          ]
+        },
+        {
+          "from": [
+            "`apply repair ...` approval may mutate canonical memory. Although this skill",
+            "statically lists repair tools, plain and deep modes may call only",
+            "`mcp__plugin_wenlan_wenlan__lint`."
+          ],
+          "to": [
+            "`apply repair ...` approval may mutate canonical memory. Although the repair",
+            "tools exist, plain and deep modes may call only the Wenlan `lint` tool."
+          ]
+        }
+      ]
+    },
+    "wiki": {
+      "replace": [
+        {
+          "from": [
+            "Read the repository with Read, Glob, Grep and `git ls-files`; for a file too",
+            "large to read whole, read the part you need. Never read a file"
+          ],
+          "to": [
+            "Read the repository with your file-read and search tools and `git ls-files`;",
+            "for a file too large to read whole, read the part you need. Never read a file"
+          ]
+        }
+      ]
+    },
+    "pages": {
+      "sections": {
+        "## `/wenlan pages <query>` — open, or pick when ambiguous": [
+          "## `/wenlan pages <query>` — open, or print the matches",
+          "",
+          "Run ONE shell block:",
+          "",
+          "```bash",
+          "W=\"$(command -v wenlan || echo \"$HOME/.wenlan/bin/wenlan\")\"",
+          "\"$W\" pages \"<query>\"",
+          "```",
+          "",
+          "Act on its output — do NOT re-fetch, list again, or read bodies:",
+          "",
+          "- **`Opened <path>`** → one page matched and is now open. Print that line. Done.",
+          "- **A bare path** → print it and say the OS launcher did not open it automatically.",
+          "- **`no page matches: …`** → print it; suggest `/wenlan distill <query>`.",
+          "- **`N matches for … `** followed by `title · filename` lines → several matched.",
+          "  If several pages match, print the CLI output verbatim and ask the user to rerun",
+          "  `/wenlan pages` with one of the filenames or a narrower query (titles can repeat, so",
+          "  the filename is the real handle).",
+          "",
+          "Do not use a picker. Do not re-fetch, list again, or read any page file.",
+          ""
+        ]
+      },
+      "replace": [
+        {
+          "from": [
+            "Open a distilled page fast. The **`wenlan pages`** CLI does the open (one local",
+            "command on your PATH — nothing to register, source, or install). This skill only",
+            "adds a small native picker for the ambiguous case."
+          ],
+          "to": [
+            "Open a distilled page fast. The **`wenlan pages`** CLI does the open (one local",
+            "command on your PATH — nothing to register, source, or install). This skill is",
+            "only the slash workflow wrapper."
+          ]
+        },
+        {
+          "from": [
+            "no editor or GUI at hand, print instead of opening. Sandbox can stay on; nothing",
+            "launches:"
+          ],
+          "to": [
+            "no editor or GUI at hand, print instead of opening. Nothing launches:"
+          ]
+        },
+        {
+          "from": [
+            "tell the user to `/wenlan pages <query>` to open one. No picker over the whole set —",
+            "that's the lossy, 4-cap case the CLI list avoids."
+          ],
+          "to": [
+            "tell the user to `/wenlan pages <query>` to open one."
+          ]
+        },
+        {
+          "from": [
+            "If several pages match, use the same picker/narrowing flow above and rerun with",
+            "the selected filename. Then call `get_page_revisions(page_id=\"<resolved-id>\")`."
+          ],
+          "to": [
+            "If several pages match, ask the user to narrow by filename and rerun the",
+            "resolver. Then call `get_page_revisions(page_id=\"<resolved-id>\")`."
+          ]
+        }
+      ]
+    },
+    "curate": {
+      "sections": {
+        "## Decide in native cards, not prose": [
+          "## Safety protocol",
+          "",
+          "Perform no mutation until the user replies. Ambiguous replies do not mutate.",
+          "Cancellation, no reply, or unclear syntax is a no-op.",
+          "",
+          "Render at most four items at a time. Number every item. Ask for explicit action",
+          "syntax:",
+          "",
+          "```text",
+          "1 accept",
+          "2 dismiss",
+          "3 skip",
+          "4 edit: <replacement text>",
+          "```",
+          "",
+          "Do not rely on hidden pagination state across turns. After applying a batch,",
+          "re-list before showing another batch.",
+          ""
+        ],
+        "## Cost": null
+      },
+      "replace": [
+        {
+          "from": [
+            "Revisions go through the **CLI**, not MCP — no deferred-tool round-trip, so the",
+            "picker comes up fast. Resolve the binary once, then list:"
+          ],
+          "to": [
+            "Revisions go through the **CLI**, not MCP, because revision actions must key on",
+            "the exact `revision_source_id`. Resolve the binary once, then list:"
+          ]
+        },
+        {
+          "from": [
+            "- `diff` — a card-ready, length-bounded `OLD:` / `NEW:` preview of what the"
+          ],
+          "to": [
+            "- `diff` — a ready-to-print, length-bounded `OLD:` / `NEW:` preview of what the"
+          ]
+        },
+        {
+          "from": [
+            "**Read the JSON straight into the card — in one step, no shell tooling.** Each",
+            "element's `content` is the card question (trim to ~1–2 lines inline as you write",
+            "it); `revision_source_id` is the action key. Parse the array yourself — do not pipe",
+            "it through `jq`/`python`/`awk` to reshape first. That extra round-trip is what",
+            "makes the picker feel slow (each retry is a model turn) and is failure-prone",
+            "(quoting, sandboxed temp paths); the model reads JSON natively, so go from CLI",
+            "output to card directly."
+          ],
+          "to": [
+            "**Read the JSON directly.** Parse the array yourself; do not pipe it through",
+            "`jq`/`python`/`awk` to reshape first. That extra round-trip is slow (each retry",
+            "is a model turn) and failure-prone (quoting, sandboxed temp paths)."
+          ]
+        },
+        {
+          "from": [
+            "**Show the diff so the user isn't approving blind.** Put `diff` verbatim into the",
+            "`preview` field of the **Accept** option — `AskUserQuestion` renders `preview` in a",
+            "monospace box and switches to a side-by-side layout, so it reads like a git diff.",
+            "If `diff` is `null`, omit the preview and keep `content` as the question. Don't",
+            "reformat the diff — it's already card-ready and length-bounded for the picker."
+          ],
+          "to": [
+            "**Show the diff so the user isn't approving blind.** Print `diff` verbatim under",
+            "each item. If `diff` is `null`, print `content` and say the original is",
+            "unavailable. Don't reformat the diff; it's already length-bounded."
+          ]
+        },
+        {
+          "from": [
+            "Walk it as native cards (≤4 per card). Per revision, options:",
+            "",
+            "- **Accept** → the revision replaces the original memory. (carries the `diff` preview)",
+            "- **Dismiss** → it was NOT an edit: unstage the false revision link and keep BOTH",
+            "  memories as independent rows. (Non-destructive — nothing is deleted. To delete a",
+            "  genuinely unwanted capture, use `/wenlan curate captures` → Reject.)",
+            "- **Skip** → nothing.",
+            "",
+            "After the card returns, apply the picks in ONE Bash call (skips run nothing):"
+          ],
+          "to": [
+            "Render up to four revisions, numbered:",
+            "",
+            "```text",
+            "Pending revisions:",
+            "",
+            "1. revision_source_id: <rev_id>",
+            "   target: <target_source_id>",
+            "   proposed: \"<content>\"",
+            "   diff:",
+            "   <diff or \"(original unavailable)\">",
+            "",
+            "Reply with: 1 accept, 1 dismiss, 1 skip",
+            "```",
+            "",
+            "- `accept` → the revision replaces the original memory.",
+            "- `dismiss` → it was NOT an edit: unstage the false revision link and keep BOTH",
+            "  memories as independent rows. (Non-destructive — nothing is deleted. To delete a",
+            "  genuinely unwanted capture, use `/wenlan curate captures` → reject.)",
+            "- `skip` → nothing.",
+            "",
+            "Apply only explicit actions, in ONE shell call (skips run nothing):"
+          ]
+        },
+        {
+          "from": [
+            "`source_id`. Per item, options:",
+            "",
+            "- **Accept** → `confirm_memory(memory_id=<source_id>)`",
+            "- **Reject** → `forget(memory_id=<source_id>)`",
+            "- **Skip** → nothing",
+            "- *Other (typed text)* → edit: `capture(content=<text>, supersedes=<source_id>)`,",
+            "  then `forget(memory_id=<source_id>)`. If the capture response says",
+            "  `gated: true`, the edit was staged for review instead of applied — skip the",
+            "  `forget` call (the original is still the live version) and tell the user",
+            "  their correction is waiting on approval in the review queue."
+          ],
+          "to": [
+            "`source_id`. Render up to four, numbered, and ask for `accept`, `reject`, `skip`,",
+            "or `edit: <replacement text>`. Per item:",
+            "",
+            "- `accept` → `confirm_memory(memory_id=<source_id>)`",
+            "- `reject` → `forget(memory_id=<source_id>)`",
+            "- `skip` → nothing",
+            "- `edit: <replacement>` → `capture(content=<replacement>, supersedes=<source_id>)`,",
+            "  then `forget(memory_id=<source_id>)`. If the capture response says",
+            "  `gated: true`, the edit was staged for review instead of applied — skip the",
+            "  `forget` call (the original is still the live version) and tell the user",
+            "  their correction is waiting on approval in the review queue.",
+            "",
+            "Reject and edit delete the original pending capture, so require the numbered",
+            "item and action verb in the same reply."
+          ]
+        },
+        {
+          "from": [
+            "reject decision. Use native cards with one question per proposal:"
+          ],
+          "to": [
+            "reject decision. Apply only numbered item decisions:"
+          ]
+        },
+        {
+          "from": [
+            "- **Accept** → `mcp__plugin_wenlan_wenlan__accept_refinement(id=\"<proposal-id>\")`",
+            "  (also pass `space` when accepting `cross_space_discovery`).",
+            "- **Reject** → `mcp__plugin_wenlan_wenlan__reject_refinement(id=\"<proposal-id>\")`.",
+            "- **Skip** → nothing."
+          ],
+          "to": [
+            "- `accept` → `accept_refinement(id=\"<proposal-id>\")`",
+            "  (also pass `space` when accepting `cross_space_discovery`).",
+            "- `reject` → `reject_refinement(id=\"<proposal-id>\")`.",
+            "- `skip` → nothing."
+          ]
+        }
+      ]
+    },
+    "setup": {
+      "sections": {
+        "### 2. Version drift probe": null
+      },
+      "replace": [
+        {
+          "from": [
+            "Self-healing setup. Goal: two user actions max: install plugin, type `/wenlan`.",
+            "Default backend is local memory: no local model, no API key, no prompts."
+          ],
+          "to": [
+            "Self-healing setup. Goal: the user only types `/wenlan`.",
+            "Default backend is local memory: no local model, no API key, no prompts."
+          ]
+        },
+        {
+          "from": [
+            "- 200 OK: continue to version drift probe."
+          ],
+          "to": [
+            "- 200 OK: continue to doctor."
+          ]
+        },
+        {
+          "from": [
+            "### 3. Bootstrap"
+          ],
+          "to": [
+            "### 2. Bootstrap"
+          ]
+        },
+        {
+          "from": [
+            "command -v wenlan >/dev/null 2>&1 && echo present || echo absent"
+          ],
+          "to": [
+            "{ command -v wenlan >/dev/null 2>&1 || [ -x \"$HOME/.wenlan/bin/wenlan\" ]; } && echo present || echo absent"
+          ]
+        },
+        {
+          "from": [
+            "If absent, install and configure local memory with the `wenlan` npm package,",
+            "pinned to this plugin's exact version. It installs the runtime into",
+            "`~/.wenlan/bin`, runs `wenlan setup --basic` and `wenlan background on`, and",
+            "prints the status:",
+            "",
+            "```bash",
+            "npx -y wenlan@{{plugin_version}} setup",
+            "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
+            "```",
+            "",
+            "The package supports macOS Apple Silicon and needs Node.js. On any other",
+            "platform, or when `npx` is missing or the command fails, do not fetch or run an",
+            "installer yourself. Stop and tell the user to install the runtime by following",
+            "<https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,",
+            "then run `/wenlan` again."
+          ],
+          "to": [
+            "If absent, the runtime is not installed. Do not fetch or run an installer",
+            "yourself. Stop and tell the user to install the runtime by following",
+            "<https://github.com/wenlan-app/wenlan/blob/main/docs/setup-with-ai.md#install-the-runtime>,",
+            "then run `/wenlan` again."
+          ]
+        },
+        {
+          "from": [
+            "```bash",
+            "wenlan setup --basic 2>/dev/null || true",
+            "wenlan background on",
+            "```"
+          ],
+          "to": [
+            "```bash",
+            "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
+            "wenlan setup --basic 2>/dev/null || true",
+            "wenlan background on",
+            "```"
+          ]
+        },
+        {
+          "from": [
+            "### 4. Re-probe health and version"
+          ],
+          "to": [
+            "### 3. Re-probe health"
+          ]
+        },
+        {
+          "from": [
+            "Once healthy, rerun the step 2 command. If `result` is still `older` or",
+            "`newer`, stop instead of claiming setup succeeded:",
+            "",
+            "```text",
+            "Runtime and plugin versions still differ after repair; update the Wenlan plugin,",
+            "restart Claude Code, then run /wenlan again.",
+            "```",
+            "",
+            "This usually means the runtime is newer than the plugin cached by the current",
+            "Claude Code process. Updating the plugin is safer than silently downgrading the",
+            "runtime, and the restart is required before this session can load new plugin",
+            "code.",
+            ""
+          ],
+          "to": null
+        },
+        {
+          "from": [
+            "### 5. Doctor"
+          ],
+          "to": [
+            "### 4. Doctor"
+          ]
+        },
+        {
+          "from": [
+            "### 6. MCP round-trip"
+          ],
+          "to": [
+            "### 5. MCP round-trip"
+          ]
+        },
+        {
+          "from": [
+            "\"wenlan-mcp did not respond. Restart Claude Code so the plugin's `.mcp.json`",
+            "respawns the server.\""
+          ],
+          "to": [
+            "\"The Wenlan MCP server did not respond. Check that the `wenlan` server is listed",
+            "and enabled in this tool's MCP settings (the Wenlan app's Set up button adds it),",
+            "then restart this tool so it starts the server.\""
+          ]
+        },
+        {
+          "from": [
+            "### 7. Ready report"
+          ],
+          "to": [
+            "### 6. Ready report"
+          ]
+        },
+        {
+          "from": [
+            "- Right after `/plugin install wenlan@7xuanlu-wenlan`.",
+            "- The plugin reported \"Wenlan is not running\" or a version mismatch and named",
+            "  `/wenlan` as the fix."
+          ],
+          "to": [
+            "- Right after the Wenlan app set this tool up.",
+            "- A Wenlan skill reported \"Wenlan is not running\" and named `/wenlan` as the",
+            "  fix."
+          ]
+        },
+        {
+          "from": [
+            "- Editing one config field: rerun the CLI doctor command from Step 5 or edit the",
+            "  settings file directly."
+          ],
+          "to": [
+            "- Editing one config field: rerun the CLI doctor command from Step 4 or edit the",
+            "  settings file directly."
+          ]
+        }
+      ]
+    }
+  }
+}

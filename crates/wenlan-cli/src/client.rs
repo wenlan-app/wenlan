@@ -598,6 +598,17 @@ impl WenlanClient {
         .await
     }
 
+    /// POST /api/agents — register a tool the user just connected.
+    pub async fn register_agent(&self, name: &str) -> Result<AgentResponse> {
+        self.post_json(
+            "/api/agents",
+            &wenlan_types::requests::RegisterAgentRequest {
+                name: name.to_string(),
+            },
+        )
+        .await
+    }
+
     /// PUT /api/agents/{name} — update an agent's metadata.
     pub async fn update_agent(&self, name: &str, req: UpdateAgentRequest) -> Result<AgentResponse> {
         self.put_json(&format!("/api/agents/{}", name), &req).await

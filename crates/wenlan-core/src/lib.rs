@@ -26,6 +26,7 @@ pub mod contradiction;
 pub mod db;
 pub mod decay;
 mod derived_artifact_state;
+pub mod diagrams;
 pub mod document_enrichment;
 #[cfg(test)]
 mod drift_guard;
@@ -69,6 +70,8 @@ pub mod refinery;
 pub mod repair;
 pub mod repair_plan;
 pub mod repo_wiki;
+pub mod repo_wiki_ci;
+pub mod repo_wiki_github;
 pub mod reranker;
 pub(crate) mod retrieval;
 pub mod router;

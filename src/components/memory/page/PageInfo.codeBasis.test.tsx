@@ -141,7 +141,7 @@ describe("PageInfo code section", () => {
     const { onUnmarkCodeBasis } = setup({ codeBasis: [code({ state: "pending" })] });
 
     fireEvent.click(screen.getByRole("button", { name: "More actions" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Stop relying on this code" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Stop tracking" }));
 
     expect(onUnmarkCodeBasis).toHaveBeenCalledWith(expect.objectContaining({ path: "src/parser.rs", line_start: 10 }));
   });

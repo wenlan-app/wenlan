@@ -1098,9 +1098,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_skips_conversation_with_no_paired_messages() {
-        // A conversation with only a single user message (no assistant response)
-        // should yield 0 pairs after pairing, and thus be skipped entirely.
+    fn parse_keeps_a_user_message_with_no_reply() {
+        // A conversation with only a single user message (no assistant
+        // response) keeps that message: it is the user's own words.
         let json = serde_json::json!([{
             "id": "conv-unpaired",
             "title": "Unpaired",
@@ -1124,11 +1124,13 @@ mod tests {
             ("message_feedback.json", b"[]"),
         ]);
         let conversations = parse_zip(&zip_bytes).expect("parse should succeed");
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(conversations[0].messages.len(), 1);
         assert_eq!(
-            conversations.len(),
-            0,
-            "lone user message with no assistant response should be skipped after pairing"
+            conversations[0].messages[0].content,
+            "User: lone user message"
         );
+        assert_eq!(conversations[0].messages[0].role, MessageRole::User);
     }
 
     #[test]
@@ -1262,7 +1264,8 @@ mod tests {
         ]);
         let conversations = parse_zip(&zip_bytes).expect("parse should succeed on null parts");
         // The code-node is dropped (non-text content), leaving only the user
-        // message; pair_messages drops lone user-only chains.
-        assert_eq!(conversations.len(), 0);
+        // message, which pair_messages keeps on its own.
+        assert_eq!(conversations.len(), 1);
+        assert_eq!(conversations[0].messages[0].content, "User: hi");
     }
 }

@@ -193,6 +193,7 @@ class MeasurementPlanTests(unittest.TestCase):
             "README.md",
             "plugin/skills/recall/SKILL.md",
             "plugin-codex/README.txt",
+            "plugin-agents/skills/wenlan/SKILL.md",
             "crates/wenlan-mcp/src/main.rs",
             ".github/workflows/release.yml",
             "crates/wenlan-core/AGENTS.md",

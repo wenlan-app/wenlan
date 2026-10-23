@@ -152,9 +152,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// the `code_basis` sentence on `write_page` (the 31-tool surface sat 4
 /// characters under the old ceiling, so any new tool needs room), then by the
 /// length of `save_source`'s description when that tool was added, then by
-/// the length of `steep`'s.
+/// the length of `steep`'s, then by the length of `doc_fix`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 16_640;
+const DESCRIPTION_BUDGET_CHARS: usize = 16_984;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1159,6 +1159,57 @@ pub struct SteepParams {
     )]
     #[serde(default)]
     pub session: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DocFixAction {
+    /// Record one fix for the repository's wiki pull request.
+    Suggest,
+    /// Say how many docs were read against the code.
+    Checked,
+}
+
+/// Code lines a doc fix rests on.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct DocFixCodeParam {
+    #[schemars(description = "File relative to the repository root.")]
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DocFixParams {
+    #[schemars(description = "suggest | checked.")]
+    pub action: DocFixAction,
+    #[schemars(description = "suggest: the doc, relative to the repository root.")]
+    #[serde(default)]
+    pub path: Option<String>,
+    #[schemars(
+        description = "suggest: the exact text to replace, copied from the file; it must occur there once."
+    )]
+    #[serde(default)]
+    pub old_text: Option<String>,
+    #[schemars(
+        description = "suggest: what it should say. Change only what the code contradicts."
+    )]
+    #[serde(default)]
+    pub new_text: Option<String>,
+    #[schemars(description = "suggest: one sentence on what the code says instead.")]
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[schemars(
+        description = "suggest: the code lines that show it, a list of {path, line_start, line_end}."
+    )]
+    #[serde(default)]
+    pub code: Option<Vec<DocFixCodeParam>>,
+    #[schemars(description = "checked: how many docs you read.")]
+    #[serde(default)]
+    pub docs: Option<u32>,
+    #[schemars(description = "The Space connected to the repository.")]
+    #[serde(default)]
+    pub space: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -3663,6 +3714,77 @@ impl WenlanMcpServer {
         }
     }
 
+    pub async fn doc_fix_impl(&self, params: DocFixParams) -> Result<CallToolResult, McpError> {
+        // The fix is checked against a file on the machine running Wenlan.
+        if self.transport == TransportMode::Http {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Fixing a repository's docs is not available over remote connections. \
+                 Use local MCP on the machine running Wenlan."
+                    .to_string(),
+            )]));
+        }
+        let Some(space) = effective_space(&params.space) else {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Name the Space connected to this repository in `space`.".to_string(),
+            )]));
+        };
+        let missing = |field: &str| {
+            Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "doc_fix {field} is required for this action; nothing was recorded."
+            ))]))
+        };
+        let request = match params.action {
+            DocFixAction::Suggest => {
+                let (Some(path), Some(old_text), Some(new_text), Some(reason)) =
+                    (params.path, params.old_text, params.new_text, params.reason)
+                else {
+                    return missing("path, old_text, new_text and reason");
+                };
+                wenlan_types::repo_wiki::RepoDocsRequest::Suggest {
+                    path,
+                    old_text,
+                    new_text,
+                    reason,
+                    code: params
+                        .code
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|code| wenlan_types::repo_wiki::RepoDocCode {
+                            path: code.path,
+                            line_start: code.line_start,
+                            line_end: code.line_end,
+                        })
+                        .collect(),
+                }
+            }
+            DocFixAction::Checked => {
+                let Some(docs) = params.docs else {
+                    return missing("docs");
+                };
+                wenlan_types::repo_wiki::RepoDocsRequest::Checked { docs }
+            }
+        };
+        let path = format!("/api/spaces/{}/wiki/docs", url_encode_simple(&space));
+        match self
+            .client
+            .post::<_, wenlan_types::repo_wiki::RepoDocsReply>(&path, &request)
+            .await
+        {
+            Ok(reply) => Ok(CallToolResult::structured(
+                serde_json::to_value(&reply).map_err(|error| {
+                    McpError::internal_error(format!("doc_fix encode: {error}"), None)
+                })?,
+            )),
+            Err(WenlanError::Api {
+                status: 400 | 404 | 409,
+                reason: Some(reason),
+            }) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "doc_fix refused, nothing recorded: {reason}"
+            ))])),
+            Err(error) => Ok(tool_error(error, "doc_fix")),
+        }
+    }
+
     pub async fn rename_page_impl(
         &self,
         params: RenamePageParams,
@@ -4632,6 +4754,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<PageCodeBasisParams>,
     ) -> Result<CallToolResult, McpError> {
         self.page_code_basis_impl(params).await
+    }
+
+    #[tool(
+        description = "For a Space connected to a repository: fix a sentence in the repository's own docs (README, docs/, AGENTS.md, CLAUDE.md, SKILL.md) that the code contradicts. `suggest` (path, old_text found once, new_text, reason, code): goes into the wiki pull request for review. `checked` (docs): how many docs you read. Not for wiki pages. Local stdio only.",
+        annotations(
+            title = "Doc fix",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn doc_fix(
+        &self,
+        Parameters(params): Parameters<DocFixParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.doc_fix_impl(params).await
     }
 
     #[tool(
@@ -10957,6 +11096,7 @@ mod tests {
             ("delete_page", (false, true, false)),
             ("dismiss_revision", (false, true, false)),
             ("distill", (false, true, true)),
+            ("doc_fix", (false, false, false)),
             ("forget", (false, true, false)),
             ("get_memory_revisions", (true, false, false)),
             ("get_page_revisions", (true, false, false)),
@@ -11354,6 +11494,7 @@ mod tests {
             "delete_page",
             "dismiss_revision",
             "distill",
+            "doc_fix",
             "forget",
             "get_memory_revisions",
             "get_page_revisions",

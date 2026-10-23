@@ -421,11 +421,14 @@ fn client_command(bin: &Path) -> Command {
     let mut command = Command::new(bin);
     if crate::identity_paths::isolated_dev_state_dir().is_some() {
         if let (Some(home), _) = crate::identity_paths::ai_tool_dirs() {
-            let _ = std::fs::create_dir_all(&home);
+            // Codex refuses a CODEX_HOME that does not exist, and in a fresh
+            // isolated state dir nothing has created it yet.
+            let codex_home = home.join(".codex");
+            let _ = std::fs::create_dir_all(&codex_home);
             command
                 .env("HOME", &home)
                 .env("USERPROFILE", &home)
-                .env("CODEX_HOME", home.join(".codex"));
+                .env("CODEX_HOME", codex_home);
         }
     }
     command

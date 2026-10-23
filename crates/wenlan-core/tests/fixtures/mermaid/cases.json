@@ -1,0 +1,427 @@
+[
+ {
+  "source": "flowchart LR\n  a[\"A\"] --> b[\"B\"]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[foo: bar] --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[\"foo (bar)\"] --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a --> End",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[\"say \"hi\"\"] --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -- \"yes\" --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -- yes --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -->|yes| b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -->|\"yes (maybe)\"| b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -->|POST /jobs, GET /jobs/:id| b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[(db)] --> b((c)) --> d{q} --> e>flag] --> f[[sub]] --> g([st]) --> h{{hex}}",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a(((dbl))) --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a & b --> c",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a --> b & c --> d",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart\n  a --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "graph TD\n  a --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "graph LR;\n  a-->b;",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart TB\n  a-->b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  subgraph S[\"Server\"]\n    direction TB\n    a --> b\n  end\n  b --> c",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  subgraph one\n    a --> b\n  end\n  subgraph two\n    c --> d\n  end\n  one --> two",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[\"wenlan-server (daemon)\"] --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[wenlan-server] --> b[worker.ts]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[a/b] --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[/in/] --> b[\\out\\]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a --> b;\n  b --> c;",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a ==> b -.-> c --- d ~~~ e --x f --o g <--> h",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -.text.-> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -. \"text\" .-> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a == text ==> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -.->|later| b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  A:::warn --> B\n  classDef warn fill:#f00",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a --> b\n  style a fill:#f9f",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a --> b\n  click a \"https://example.com\"",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a{\"Cited code still there?\"} -- \"no\" --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[\"#quot;hi#quot;\"] --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[中文標籤] --> b[資料庫]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart TD\n  ask[\"AI 工具呼叫 write_page\"] --> check{\"引用的程式碼還在嗎？\"}\n  check -- \"在\" --> save[\"存下頁面和程式依據\"]\n  check -- \"不在\" --> refuse[\"拒絕，並指出哪幾行\"]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a(foo) --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a -- yes (maybe) --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[\"x\"] --> b[\"y\"]\n  %% a comment",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "%% leading comment\nflowchart LR\n  a --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a@{ shape: rect, label: \"x\" } --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a.b --> c-d",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  x --> o",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "---\ntitle: Jobs\n---\nflowchart LR\n  a --> b",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  cli[\"CLI (cli.ts)\"] -- \"POST /jobs, GET /jobs/:id\" --> server[\"HTTP server (server.ts)\"]\n  server -- \"enqueue\" --> queue[\"In-memory queue (queue.ts)\"]\n  queue -- \"dequeue\" --> consumer[\"Consumer (consumer.ts)\"]\n  consumer -- \"runHandler\" --> handlers[\"Handlers (handlers.ts)\"]\n  consumer -- \"saveJob\" --> store[(\"SQLite store (store.ts)\")]\n  server -- \"getJob\" --> store",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  cli[\"wenlan CLI\"] --> server\n  mcp[\"wenlan-mcp\"] --> server\n  app[\"Desktop app\"] --> server\n  server[\"wenlan-server (daemon)\"] --> core[\"wenlan-core\"]\n  core --> db[(\"libSQL database\")]\n  core --> pages[\"Pages folder\"]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[5\" screen] --> b",
+  "mermaid": "error",
+  "wenlan": "open_quote"
+ },
+ {
+  "source": "sequenceDiagram\n  A->>B: hi\n  B-->>A: ok",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "sequenceDiagram\n  participant A as Alice\n  loop every\n  A->>A: x\n  end",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "sequenceDiagram\n  alt ok\n  A->>B: a\n  else no\n  A->>B: b\n  end",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "sequenceDiagram\n  Note right of A: hi\n  A-xB: lost\n  A-)B: async",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "sequenceDiagram\n  autonumber\n  actor U as User\n  U->>+S: POST /jobs\n  S-->>-U: 202\n  rect rgb(240, 240, 240)\n  S->>W: run\n  end",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "sequenceDiagram\n  par first\n  A->>B: a\n  and second\n  A->>C: b\n  end",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "sequenceDiagram\n  A->>B: re-check -> done",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "pie\n  \"a\" : 1",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "classDiagram\n  class List~int~\n  Animal <|-- Duck",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "stateDiagram-v2\n  [*] --> Still\n  Still --> [*]",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "gantt\n  title Plan\n  section A\n  Task :a1, 2026-01-01, 3d",
+  "mermaid": "ok",
+  "wenlan": null
+ },
+ {
+  "source": "flowchart LR\n  a[1] --> b",
+  "mermaid": "ok",
+  "wenlan": "citation"
+ },
+ {
+  "source": "sequenceDiagram\n  A->>B: [1] hi",
+  "mermaid": "ok",
+  "wenlan": "citation"
+ },
+ {
+  "source": "flowchart LR\n  a -->",
+  "mermaid": "error",
+  "wenlan": "loose_arrow"
+ },
+ {
+  "source": "flowchart LR\n  --> b",
+  "mermaid": "error",
+  "wenlan": "loose_arrow"
+ },
+ {
+  "source": "flowchart LR\n  a --> b --> ",
+  "mermaid": "error",
+  "wenlan": "loose_arrow"
+ },
+ {
+  "source": "flowchart LR\n  a & --> b",
+  "mermaid": "error",
+  "wenlan": "loose_arrow"
+ },
+ {
+  "source": "flowchart LR\n  a[foo (bar)] --> b",
+  "mermaid": "error",
+  "wenlan": "label_brackets"
+ },
+ {
+  "source": "flowchart LR\n  a[foo{bar}] --> b",
+  "mermaid": "error",
+  "wenlan": "label_brackets"
+ },
+ {
+  "source": "flowchart LR\n  a[foo [bar]] --> b",
+  "mermaid": "error",
+  "wenlan": "label_brackets"
+ },
+ {
+  "source": "flowchart LR\n  a(foo (x)) --> b",
+  "mermaid": "error",
+  "wenlan": "label_brackets"
+ },
+ {
+  "source": "flowchart LR\n  a -->|yes (maybe)| b",
+  "mermaid": "error",
+  "wenlan": "label_brackets"
+ },
+ {
+  "source": "flowchart LR\n  a --> end",
+  "mermaid": "error",
+  "wenlan": "end_as_box"
+ },
+ {
+  "source": "flowchart LR\n  end --> a",
+  "mermaid": "error",
+  "wenlan": "end_as_box"
+ },
+ {
+  "source": "flowchart LR\n  a[\"x] --> b",
+  "mermaid": "error",
+  "wenlan": "open_quote"
+ },
+ {
+  "source": "flowchart LR\n  a[x --> b",
+  "mermaid": "error",
+  "wenlan": "open_box"
+ },
+ {
+  "source": "flowchart LR\n  a -->|yes b",
+  "mermaid": "error",
+  "wenlan": "open_box"
+ },
+ {
+  "source": "flowchart XY\n  a --> b",
+  "mermaid": "error",
+  "wenlan": "bad_direction"
+ },
+ {
+  "source": "flowchat LR\n  a --> b",
+  "mermaid": "error",
+  "wenlan": "unknown_type"
+ },
+ {
+  "source": "flowchart LR\n  subgraph S\n  a --> b",
+  "mermaid": "error",
+  "wenlan": "open_block"
+ },
+ {
+  "source": "flowchart LR\n  a --> b\n  end",
+  "mermaid": "error",
+  "wenlan": "extra_end"
+ },
+ {
+  "source": "",
+  "mermaid": "error",
+  "wenlan": "empty"
+ },
+ {
+  "source": "%% only a comment",
+  "mermaid": "error",
+  "wenlan": "empty"
+ },
+ {
+  "source": "sequenceDiagram\n  A->>B",
+  "mermaid": "error",
+  "wenlan": "message_text"
+ },
+ {
+  "source": "sequenceDiagram\n  A->>: hi",
+  "mermaid": "error",
+  "wenlan": "message_party"
+ },
+ {
+  "source": "sequenceDiagram\n  loop every\n  A->>A: x",
+  "mermaid": "error",
+  "wenlan": "open_block"
+ },
+ {
+  "source": "sequenceDiagram\n  A->>B: hi\n  end",
+  "mermaid": "error",
+  "wenlan": "extra_end"
+ }
+]

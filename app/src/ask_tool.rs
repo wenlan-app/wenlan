@@ -78,6 +78,18 @@ mod tests {
     fn has_no_link_for_tools_without_one() {
         assert_eq!(prompt_link("gemini-cli", "hi"), None);
         assert_eq!(prompt_link("muse-code", "hi"), None);
+        // No documented prompt link for these yet, so the question is copied
+        // for the user to paste instead.
+        for family in [
+            "antigravity",
+            "copilot-cli",
+            "vscode",
+            "windsurf",
+            "kiro",
+            "opencode",
+        ] {
+            assert_eq!(prompt_link(family, "hi"), None, "{family}");
+        }
         assert_eq!(prompt_link("https://example.com", "hi"), None);
     }
 

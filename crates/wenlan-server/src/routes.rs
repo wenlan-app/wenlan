@@ -188,8 +188,20 @@ pub async fn handle_search(
     view: crate::truth_guard::TruthView,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, ServerError> {
-    let telemetry = { state.read().await.telemetry.clone() };
+    let (telemetry, db) = {
+        let s = state.read().await;
+        (s.telemetry.clone(), s.db.clone())
+    };
+    let agent = crate::memory_routes::extract_agent_name(&headers, None);
     let result = handle_search_inner(state, headers, header_space, view, req).await;
+    if let (Ok(Json(response)), Some(db)) = (&result, db) {
+        crate::agent_presence::note_agent_recall(
+            db,
+            &agent,
+            &response.results,
+            response.supplemental_pages.as_deref(),
+        );
+    }
     match &result {
         Ok(Json(response)) => telemetry.record(
             if response.results.is_empty()

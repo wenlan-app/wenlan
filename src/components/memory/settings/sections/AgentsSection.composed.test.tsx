@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import AgentsSection from "./AgentsSection";
-import type { RemoteAccessStatus } from "../../../../lib/tauri";
+import { detectMcpClients, writeMcpConfig, type McpClient, type RemoteAccessStatus } from "../../../../lib/tauri";
 
 // Unlike AgentsSection.test.tsx, this file does NOT stub out
 // RemoteAccessPanel/ClientSetupList — it renders the real composition so the
@@ -17,6 +18,8 @@ vi.mock("../../../../lib/tauri", () => ({
   detectMcpClients: vi.fn().mockResolvedValue([]),
   writeMcpConfig: vi.fn().mockResolvedValue([]),
   installClientPlugin: vi.fn().mockResolvedValue(undefined),
+  installClientSkills: vi.fn().mockResolvedValue("/home/u/.config/opencode/skills"),
+  removeRawMcpEntry: vi.fn().mockResolvedValue(undefined),
   clipboardWrite: vi.fn().mockResolvedValue(undefined),
   getRemoteAccessProfile: vi.fn().mockResolvedValue(null),
   configureRemoteAccess: vi.fn(),
@@ -41,11 +44,12 @@ vi.mock("../../../../lib/tauri", () => ({
 
 function renderAgentsSection() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <AgentsSection />
     </QueryClientProvider>,
   );
+  return queryClient;
 }
 
 describe("AgentsSection composed - remote consent boundary", () => {
@@ -59,5 +63,40 @@ describe("AgentsSection composed - remote consent boundary", () => {
     expect(screen.getAllByText(/reach it through wenlan-relay/)).toHaveLength(1);
     expect(screen.getAllByRole("heading", { name: "Web access" })).toHaveLength(1);
     expect(screen.queryByText(/no authentication for Claude\.ai and ChatGPT/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentsSection composed - a tool added from the list", () => {
+  it("shows it once, in the list with its switch, not again as pending above", async () => {
+    const yes = { kind: "yes" } as const;
+    const no = { kind: "no" } as const;
+    const opencode = (configured: boolean): McpClient => ({
+      name: "OpenCode",
+      client_type: "opencode",
+      config_path: "/home/u/.config/opencode/opencode.json",
+      detected: yes,
+      already_configured: configured ? yes : no,
+      has_raw_entry: configured ? yes : no,
+      has_raw_duplicate: no,
+      has_plugin: no,
+      has_skills: configured ? yes : no,
+    });
+    let written = false;
+    vi.mocked(detectMcpClients).mockImplementation(async () => [opencode(written)]);
+    vi.mocked(writeMcpConfig).mockImplementationOnce(async () => {
+      written = true;
+      return [];
+    });
+    const queryClient = renderAgentsSection();
+
+    await userEvent.click(await screen.findByRole("button", { name: /^Connect OpenCode/ }));
+
+    // Both sections now read the written config.
+    await waitFor(() => {
+      const clients = queryClient.getQueryData<McpClient[]>(["mcp-clients"]);
+      expect(clients?.[0]?.already_configured).toEqual(yes);
+    });
+    await screen.findByText(/Restart OpenCode/);
+    expect(screen.getAllByText("OpenCode")).toHaveLength(1);
   });
 });

@@ -11,6 +11,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { PagesOverview } from "./PagesOverview";
+import { setDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { DISTILL_REVIEW_SESSION_QUERY_KEY } from "./pageReviewSignals";
 import type { WikiInventoryScope } from "./pageInventory";
 
@@ -49,6 +50,7 @@ function renderOverview({
   onSelectDraft = vi.fn(),
   onSelectPage = vi.fn(),
   onSelectSpace = vi.fn(),
+  onBrowseAll = undefined as (() => void) | undefined,
   inventoryScope = "all" as WikiInventoryScope,
   checklist = false,
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -57,6 +59,7 @@ function renderOverview({
     <QueryClientProvider client={queryClient}>
       <PagesOverview
         inventoryScope={inventoryScope}
+        onBrowseAll={onBrowseAll}
         onCreatePage={onCreatePage}
         onSelectDraft={onSelectDraft}
         onSelectPage={onSelectPage}
@@ -87,7 +90,7 @@ describe("PagesOverview reading workspace", () => {
   it("shows localized reading guidance while creation lives beside the tabs", async () => {
     vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "draft"
       ? [page({ id: "draft", title: "Cached draft name", status: "draft" })]
-      : [page({ id: "active", title: "Cached active name" })]);
+      : [page({ id: "active", title: "Cached active name", creation_kind: "source" })]);
     const discovery: DistillReviewResponse = {
       pages_created: 0,
       scoped: false,
@@ -118,6 +121,31 @@ describe("PagesOverview reading workspace", () => {
     expect(listRefinements).not.toHaveBeenCalled();
   });
 
+  it("says in place why pages cannot load when the service never answers", async () => {
+    setDaemonStartupPhase("failed");
+    try {
+      renderOverview({});
+      const panel = await screen.findByTestId("pages-unavailable");
+      expect(panel).toHaveTextContent("Pages can’t load yet");
+      expect(panel).toHaveTextContent("Restart it at the bottom left.");
+      // Not the reading start panel's advice, which cannot be followed yet.
+      expect(screen.queryByRole("heading", { level: 1, name: "Open a page" })).not.toBeInTheDocument();
+    } finally {
+      setDaemonStartupPhase("ready");
+    }
+  });
+
+  it("shows neither panel while the service is still starting", () => {
+    setDaemonStartupPhase("starting");
+    try {
+      renderOverview({});
+      expect(screen.queryByTestId("pages-unavailable")).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { level: 1, name: "Open a page" })).not.toBeInTheDocument();
+    } finally {
+      setDaemonStartupPhase("ready");
+    }
+  });
+
   it("marks the start section empty only once both lists loaded with no pages", async () => {
     const { container } = renderOverview();
     const section = container.querySelector(".wiki-reading-start");
@@ -134,6 +162,30 @@ describe("PagesOverview reading workspace", () => {
     await waitFor(() => expect(listPagesExplicitBrowse).toHaveBeenCalledTimes(2));
     await screen.findByRole("heading", { level: 1, name: "Open a page" });
     expect(container.querySelector(".wiki-reading-start")).not.toHaveAttribute("data-library-empty");
+  });
+
+  it("lists the newest pages written from material or by the user, one click each", async () => {
+    vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "draft"
+      ? [page({ id: "draft", title: "Unfinished draft", status: "draft" })]
+      : [
+        page({ id: "copy", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" }),
+        page({ id: "old", title: "Older launch notes", creation_kind: "distilled", created_at: "2026-07-01T00:00:00Z", source_memory_ids: ["a", "b", "c"] }),
+        page({ id: "new", title: "v2 launch plan", creation_kind: "distilled", created_at: "2026-07-02T00:00:00Z", source_memory_ids: ["a", "b"] }),
+      ]);
+    const onBrowseAll = vi.fn();
+    const { onSelectPage } = renderOverview({ onBrowseAll });
+
+    const list = await screen.findByTestId("wiki-new-pages");
+    expect(screen.getByRole("heading", { level: 2, name: "New pages" })).toBeInTheDocument();
+    const titles = [...list.querySelectorAll(".wiki-new-pages-title")].map(node => node.textContent);
+    expect(titles).toEqual(["v2 launch plan", "Older launch notes"]);
+    expect(screen.queryByText("ISP Outage Runbook (section_h1)")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unfinished draft")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /v2 launch plan/ }));
+    expect(onSelectPage).toHaveBeenCalledWith("new");
+    fireEvent.click(screen.getByRole("button", { name: "See all pages" }));
+    expect(onBrowseAll).toHaveBeenCalled();
   });
 
   describe("getting started", () => {
