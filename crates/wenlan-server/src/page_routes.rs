@@ -2861,6 +2861,17 @@ mod create_page_endpoint_tests {
         let _env = DataDirGuard::new();
         let (db, app, _tmp) = state_db_app().await;
         let broken = format!("{REFRESH_BODY}\n\n```mermaid\nflowchart LR\n  a[\"CLI\"] -->\n```\n");
+        // Other checks (self-retrieval when search is up) may warn as well.
+        let diagram_warnings = |body: &serde_json::Value| -> Vec<String> {
+            body["warnings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|w| w.as_str())
+                .filter(|w| w.starts_with("diagram "))
+                .map(str::to_string)
+                .collect()
+        };
 
         let (status, body) = send_json(
             &app,
@@ -2879,11 +2890,12 @@ mod create_page_endpoint_tests {
             .expect("create returns an id")
             .to_string();
         assert_eq!(
-            body["warnings"],
-            json!([
+            diagram_warnings(&body),
+            vec![
                 "diagram 1 line 2: an arrow is missing the box at one end. Fix it and write the \
                  page again, or remove the diagram."
-            ]),
+                    .to_string()
+            ],
             "{body}"
         );
 
@@ -2903,7 +2915,7 @@ mod create_page_endpoint_tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        assert!(body.get("warnings").is_none(), "{body}");
+        assert!(diagram_warnings(&body).is_empty(), "{body}");
 
         let page = db.get_page(&id).await.unwrap().unwrap();
         let (status, body) = send_json(
@@ -2919,8 +2931,8 @@ mod create_page_endpoint_tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(
-            body["warnings"][0]
-                .as_str()
+            diagram_warnings(&body)
+                .first()
                 .is_some_and(|w| w.starts_with("diagram 1 line 2:")),
             "{body}"
         );
