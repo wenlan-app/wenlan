@@ -68,7 +68,7 @@ describe("app code", () => {
       if (file.endsWith(path.join("lib", "confirmAction.ts"))) return [];
       const text = fs.readFileSync(file, "utf8");
       const declaresConfirm = /\b(const|let|function)\s+confirm\b/.test(text);
-      const calls = text.match(/\bwindow\.(confirm|alert|prompt)\s*\(|(?<![.\w])(alert|prompt)\s*\(/g) ?? [];
+      const calls: string[] = [...text.matchAll(/\bwindow\.(confirm|alert|prompt)\s*\(|(?<![.\w])(alert|prompt)\s*\(/g)].map(match => match[0]);
       if (!declaresConfirm && /(?<![.\w])confirm\s*\(/.test(text)) calls.push("confirm(");
       return calls.map(call => `${path.relative(process.cwd(), file)}: ${call}`);
     });
