@@ -1,7 +1,7 @@
 {
   "name": "wenlan",
   "version": "0.20.0",
-  "description": "Wenlan CLI and daemon: a living knowledge base your agents build as they work.",
+  "description": "Wenlan CLI and daemon: a living wiki your AI tools write, keep current, and cite.",
   "keywords": [
     "ai-memory",
     "llm-wiki",

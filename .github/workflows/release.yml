@@ -2127,7 +2127,7 @@ jobs:
 
           cat > tap/Formula/wenlan-mcp.rb << 'FORMULA'
           class WenlanMcp < Formula
-            desc "MCP server for Wenlan, a living knowledge base your agents build as they work"
+            desc "MCP server for Wenlan, a living wiki your AI tools write, keep current, and cite"
             homepage "https://github.com/wenlan-app/wenlan"
             version "VERSION_PLACEHOLDER"
             url "https://github.com/wenlan-app/wenlan/releases/download/vVERSION_PLACEHOLDER/wenlan-mcp-darwin-arm64.tar.gz"
@@ -2167,7 +2167,7 @@ jobs:
           # (first-run gauntlet finding F7). wenlan-mcp stays in its own formula.
           cat > tap/Formula/wenlan.rb << 'FORMULA'
           class Wenlan < Formula
-            desc "Wenlan CLI and daemon, a living knowledge base your agents build as they work"
+            desc "Wenlan CLI and daemon, a living wiki your AI tools write, keep current, and cite"
             homepage "https://github.com/wenlan-app/wenlan"
             version "VERSION_PLACEHOLDER"
             url "https://github.com/wenlan-app/wenlan/releases/download/vVERSION_PLACEHOLDER/wenlan-darwin-arm64.tar.gz"

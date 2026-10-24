@@ -77,6 +77,8 @@ wenlan connect <client>
 
 Use `claude-code` or `codex` when the user wants MCP without the plugin. Supported values are `claude-code`, `codex`, `cursor`, `claude-desktop`, `vscode`, and `gemini`. The CLI makes a backup before replacing an existing JSON configuration. Full command reference: [CLI and MCP setup](../crates/wenlan-cli/README.md).
 
+The desktop App connects more tools than the CLI: **Add a tool** in its Settings also sets up GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, and Muse Code, and copies Wenlan's skills to the tools that read them. If the user has the App, point them there for those tools instead of editing their configuration by hand.
+
 ## Verify
 
 First confirm the local runtime:

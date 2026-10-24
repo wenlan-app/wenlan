@@ -1,6 +1,6 @@
 # Wenlan
 
-A living knowledge base your agents build as they work. What they learn becomes source-cited wiki pages that refresh between sessions, so each new thread starts from your latest work.
+A living wiki your AI tools write, keep current, and cite. Pages link to their sources and update when those change.
 
 Wenlan is local-first. Memories, pages, and session notes live on your machine under `~/.wenlan`, served by a small local daemon. Nothing in this plugin is stored by Anthropic or by the plugin itself.
 
