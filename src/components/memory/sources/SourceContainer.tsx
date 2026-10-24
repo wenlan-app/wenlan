@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CaretRight, ArrowLeft, ArrowClockwise } from "@phosphor-icons/react";
 import { toast } from "sonner";
@@ -39,6 +39,8 @@ import "./SourceContainer.css";
 export interface SourceContainerLocation {
   sourceId: string;
   path: string;
+  /** A note in that folder to open right away, by file name. */
+  file?: string;
 }
 
 interface Props {
@@ -118,7 +120,10 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading, children 
 export default function SourceContainer({ location, search, filter, lens, onSearchChange, onFilterChange, onLensChange, onClearFilters, onNavigate, onAdd, onOpenDocument }: Props) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [selectedFile, setSelectedFile] = useState<SourceDirEntry | null>(null);
+  const [selectedFile, setSelectedFile] = useState<SourceDirEntry | null>(location.file ? { name: location.file, isDirectory: false } : null);
+  useEffect(() => {
+    if (location.file) setSelectedFile({ name: location.file, isDirectory: false });
+  }, [location.sourceId, location.path, location.file]);
   const sourcesQuery = useQuery({ queryKey: ["registeredSources"], queryFn: listRegisteredSources });
   const filesQuery = useQuery({ queryKey: ["indexedFiles"], queryFn: () => listIndexedFiles(), refetchInterval: 5000 });
   const source = sourcesQuery.data?.find((item) => item.id === location.sourceId);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import {
   getNoteAiChanges,
   getNoteProposal,
   listNoteProposals,
+  listRegisteredSources,
   setNoteAiChanges,
   type AiChanges,
   type NoteAiChanges,
@@ -19,6 +20,8 @@ import {
 import { diffWords, type DiffSegment } from "../../../lib/wordDiff";
 import { AiChangesOptions } from "../AiChangesOptions";
 import { DiffText } from "../ReviewDialog";
+import "../page/NoteReviewNotice.css";
+import "../page/BasisUpdates.css";
 import type { enSourceContainer } from "./sourceContainerCopy";
 
 type CopyKey = `sourceContainer.${keyof typeof enSourceContainer}`;
@@ -147,7 +150,8 @@ export function NoteProposalNotice({ source, path, onAccepted }: { source: Regis
   const legend = removes && !adds ? "sourceContainer.suggestLegendRemoved"
     : adds && !removes ? "sourceContainer.suggestLegendAdded" : "sourceContainer.suggestLegend";
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["noteProposals", source.id] });
+    // Every list of suggestions, the home one included.
+    await queryClient.invalidateQueries({ queryKey: ["noteProposals"] });
     await queryClient.invalidateQueries({ queryKey: ["fileText"] });
     await queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
   };
@@ -183,6 +187,49 @@ export function NoteProposalNotice({ source, path, onAccepted }: { source: Regis
     {view.data && <p className="note-proposal-diff"><DiffText segments={segments} /></p>}
     <p className="note-proposal-legend">{t(legend)}</p>
   </section>;
+}
+
+/** Every waiting suggestion, across all vaults: the home and the menu bar count these. */
+export function useAllNoteProposals(enabled = true) {
+  return useQuery({ queryKey: ["noteProposals", "all"], queryFn: () => listNoteProposals(), refetchInterval: 30_000, refetchOnWindowFocus: true, enabled });
+}
+
+/** A note's name as people see it: no folders, no Markdown extension. */
+export function noteName(path: string): string {
+  return (path.split("/").pop() ?? path).replace(/\.(md|markdown)$/i, "");
+}
+
+/**
+ * Home: one line per note an AI wants to change, in the same notice as the
+ * other things that need the person, each opening that note where Accept and
+ * Decline are. Nothing at all when no suggestion waits.
+ */
+export function NoteSuggestionsSummary({ onOpen }: { onOpen: (location: { sourceId: string; path: string; file: string }) => void }) {
+  const { t } = useTranslation();
+  const proposals = useAllNoteProposals();
+  const sources = useQuery({ queryKey: ["registeredSources"], queryFn: listRegisteredSources });
+  const idPrefix = useId();
+  const items = (proposals.data ?? []).flatMap((proposal) => {
+    const source = sources.data?.find((item) => item.id === proposal.source_id);
+    return source ? [{ proposal, source }] : [];
+  });
+  if (items.length === 0) return null;
+  return <div className="note-review-notice basis-updates-home">
+    <ul className="note-review-notice__basis-list" aria-label={t("sourceContainer.suggestionsHeading")}>
+      {items.map(({ proposal, source }) => {
+        const textId = `${idPrefix}-${proposal.id}`;
+        const parts = proposal.path.split("/");
+        const file = parts.pop() ?? proposal.path;
+        return <li key={proposal.id} className="note-review-notice__basis">
+          <span id={textId} className="note-review-notice__basis-text">{t("sourceContainer.homeSuggestion", { name: noteName(proposal.path) })}</span>
+          <button type="button" className="note-review-notice__button" aria-describedby={textId}
+            onClick={() => onOpen({ sourceId: source.id, path: [normalized(source.path), ...parts].join("/"), file })}>
+            {t("sourceContainer.homeSuggestionAction")}
+          </button>
+        </li>;
+      })}
+    </ul>
+  </div>;
 }
 
 /** The vault's waiting suggestions, each opening its note. */

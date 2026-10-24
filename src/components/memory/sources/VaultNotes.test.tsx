@@ -10,11 +10,12 @@ import {
   getNoteAiChanges,
   getNoteProposal,
   listNoteProposals,
+  listRegisteredSources,
   setNoteAiChanges,
   type NoteProposal,
   type RegisteredSource,
 } from "../../../lib/tauri";
-import { NoteAiChangesSection, NoteProposalNotice, VaultSuggestions, inPagesFolder, trimUnchanged, vaultKey } from "./VaultNotes";
+import { NoteAiChangesSection, NoteProposalNotice, NoteSuggestionsSummary, VaultSuggestions, inPagesFolder, noteName, trimUnchanged, vaultKey } from "./VaultNotes";
 
 vi.mock("../../../lib/tauri", () => ({
   acceptNoteProposal: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../../../lib/tauri", () => ({
   getNoteAiChanges: vi.fn(),
   getNoteProposal: vi.fn(),
   listNoteProposals: vi.fn(),
+  listRegisteredSources: vi.fn(),
   setNoteAiChanges: vi.fn(),
 }));
 vi.mock("sonner", () => ({ toast: vi.fn() }));
@@ -55,6 +57,7 @@ beforeEach(() => {
     return read(path);
   });
   vi.mocked(listNoteProposals).mockResolvedValue([]);
+  vi.mocked(listRegisteredSources).mockResolvedValue([vault]);
 });
 
 describe("vault note paths", () => {
@@ -170,5 +173,33 @@ describe("VaultSuggestions", () => {
     wrap(<VaultSuggestions source={vault} onOpen={onOpen} />);
     fireEvent.click(await screen.findByRole("button", { name: /plan\.md/ }));
     expect(onOpen).toHaveBeenCalledWith(proposal);
+  });
+});
+
+describe("NoteSuggestionsSummary", () => {
+  it("names each note an AI wants to change and opens it in its folder", async () => {
+    vi.mocked(listNoteProposals).mockResolvedValue([proposal]);
+    const onOpen = vi.fn();
+    wrap(<NoteSuggestionsSummary onOpen={onOpen} />);
+    expect(await screen.findByText("AI wants to change plan")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(onOpen).toHaveBeenCalledWith({ sourceId: "notes", path: "/Users/me/My notes/Work", file: "plan.md" });
+  });
+
+  it("shows nothing when no suggestion waits, or its vault is gone", async () => {
+    const { container } = wrap(<NoteSuggestionsSummary onOpen={vi.fn()} />);
+    await waitFor(() => expect(listNoteProposals).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+
+    vi.mocked(listNoteProposals).mockResolvedValue([{ ...proposal, source_id: "removed" }]);
+    const second = wrap(<NoteSuggestionsSummary onOpen={vi.fn()} />);
+    await waitFor(() => expect(listRegisteredSources).toHaveBeenCalled());
+    expect(second.container).toBeEmptyDOMElement();
+  });
+
+  it("drops folders and the Markdown extension from a note's name", () => {
+    expect(noteName("Work/Plans.md")).toBe("Plans");
+    expect(noteName("Notes.markdown")).toBe("Notes");
+    expect(noteName("diagram.canvas")).toBe("diagram.canvas");
   });
 });
