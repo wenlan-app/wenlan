@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getMemoryDetail, updateMemory, type MemoryItem } from "../../../lib/tauri";
+import { confirmAction } from "../../../lib/confirmAction";
 import { useReferenceNavigation } from "../links/ReferenceNavigationContext";
 import { ReferencePreview } from "../links/ReferencePreview";
 import type { ReferencePreviewRequest, ReferenceTarget } from "../links/referenceTypes";
@@ -117,13 +118,13 @@ export function MemoryDocumentEditor({ memory, canonical, disabled, onRegisterFl
       {t(snapshot?.validation === "empty" ? "memoryAutosave.empty" : conflict ? "memoryAutosave.conflict" : "memoryAutosave.failed")}
       {failed ? <button type="button" onClick={() => void controller.current?.retry()}>{t("memoryAutosave.retry")}</button> : null}
       {conflict && snapshot?.latest ? <button type="button" onClick={() => setShowLatest(value => !value)} aria-expanded={showLatest}>{t("memoryAutosave.compare")}</button> : null}
-      {conflict && snapshot?.latest ? <button type="button" onClick={() => {
-        if (!window.confirm(t("memoryAutosave.discard"))) return;
+      {conflict && snapshot?.latest ? <button type="button" onClick={async () => {
+        if (!await confirmAction(t("memoryAutosave.discard"), { confirm: t("memoryAutosave.loadLatest"), cancel: t("common.cancel") })) return;
         const current = controller.current?.snapshot.latest;
         if (current) { controller.current?.reset(current); setShowLatest(false); }
       }}>{t("memoryAutosave.loadLatest")}</button> : null}
-      {conflict && !snapshot?.latest ? <button type="button" onClick={() => {
-        if (window.confirm(t("memoryAutosave.discardDeleted"))) controller.current?.reset(null);
+      {conflict && !snapshot?.latest ? <button type="button" onClick={async () => {
+        if (await confirmAction(t("memoryAutosave.discardDeleted"), { confirm: t("memoryAutosave.discardDraft"), cancel: t("common.cancel") })) controller.current?.reset(null);
       }}>{t("memoryAutosave.discardDraft")}</button> : null}
       {showLatest && conflict && snapshot?.latest ? <div className="memory-save-conflict"><strong>{t("memoryAutosave.latest")}</strong><pre>{snapshot.latest.content}</pre></div> : null}
     </div> : <span className="sr-only" role="status">{snapshot?.phase === "saving" ? t("memoryAutosave.saving") : ""}</span>}

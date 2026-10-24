@@ -77,6 +77,16 @@ export async function installTauriMock(
           if (typeof event === "string") emitEvent(event, payload);
           return null;
         }
+        if (command === "plugin:dialog|message") {
+          // Hand native confirm dialogs to the page's own confirm, so a test
+          // answers them with page.once("dialog", ...) as before.
+          const read = (key: string) => typeof args === "object" && args !== null ? Reflect.get(args, key) : undefined;
+          const buttons = read("buttons");
+          const custom = typeof buttons === "object" && buttons !== null ? Reflect.get(buttons, "OkCancelCustom") : undefined;
+          const [ok, cancel] = Array.isArray(custom) ? custom : ["Ok", "Cancel"];
+          const question = [read("title"), read("message")].filter(part => typeof part === "string" && part).join("\n");
+          return window.confirm(question) ? ok : cancel;
+        }
         return window.__wenlanTauriInvoke(command, args);
       },
       transformCallback: (callback: (...args: unknown[]) => unknown) => {

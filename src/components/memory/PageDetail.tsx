@@ -43,6 +43,7 @@ import {
 // Imported from its own module, not the lib/tauri barrel: tests mock that
 // barrel, and a mocked module would shadow the value this must stay bound to.
 import { PAGE_EDIT_DAEMON_FLOOR } from "../../lib/daemonVersion";
+import { confirmAction } from "../../lib/confirmAction";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer from "./ContentRenderer";
@@ -1450,14 +1451,21 @@ export default function PageDetail({
 
   const handleReloadLatest = async () => {
     if (saveStateRef.current.phase !== "conflict") return;
+    const operationId = saveStateRef.current.pending.operationId;
     if (
       editBaseline &&
       currentDraftSource() !== editBaseline.content &&
-      !confirm(t("pageDetail.editor.reloadConfirm"))
+      !await confirmAction(t("pageDetail.editor.reloadConfirm"), {
+        confirm: t("pageDetail.editor.reloadLatest"),
+        cancel: t("common.cancel"),
+      })
     ) {
       return;
     }
-    const operationId = saveStateRef.current.pending.operationId;
+    // The dialog waits for the person; the conflict may have settled meanwhile.
+    const asked = saveStateRef.current;
+    if (activePageIdRef.current !== pageId || asked.phase !== "conflict" ||
+        asked.pending.operationId !== operationId) return;
     if (!autosave.snapshot().latest) await fetchConflictLatest(operationId);
     const current = autosave.snapshot();
     if (
@@ -1477,12 +1485,15 @@ export default function PageDetail({
     openPageSourceForEditing(latest);
   };
 
-  const handleDiscardDeletedDraft = () => {
-    if (
-      canonicalPage !== null ||
-      autosave.snapshot().state.phase !== "conflict" ||
-      !confirm(t("pageDetail.editor.discardConfirm"))
-    ) return;
+  const handleDiscardDeletedDraft = async () => {
+    if (canonicalPage !== null || autosave.snapshot().state.phase !== "conflict") return;
+    const originPageId = pageId;
+    if (!await confirmAction(t("pageDetail.editor.discardConfirm"), {
+      confirm: t("pageDetail.editor.discard"),
+      cancel: t("common.cancel"),
+    })) return;
+    // The dialog waits for the person; the page may have moved on meanwhile.
+    if (activePageIdRef.current !== originPageId || autosave.snapshot().state.phase !== "conflict") return;
     closeEditor();
   };
 
@@ -1537,12 +1548,18 @@ export default function PageDetail({
         setReviewNotice(null);
         await reviewMutation.mutateAsync({ id: originPageId, content });
       } else if (kind === "delete") {
-        if (!confirm(t("pageDetail.deleteConfirm")) || !ownsAction()) return;
+        if (!await confirmAction(t("pageDetail.deleteConfirm"), {
+          confirm: t("pageDetail.deletePage"),
+          cancel: t("common.cancel"),
+        }) || !ownsAction()) return;
         setActionErrorMessage(null);
         await deleteMutation.mutateAsync(originPageId);
       } else {
         if ((saved.user_edited || pageRevisions?.user_edited) &&
-            !confirm(t("pageDetail.redistillEditedConfirm"))) return;
+            !await confirmAction(t("pageDetail.redistillEditedConfirm"), {
+              confirm: t("pageDetail.redistillPage"),
+              cancel: t("common.cancel"),
+            })) return;
         if (!ownsAction()) return;
         setReviewNotice(null);
         setRedistillNotice(null);
