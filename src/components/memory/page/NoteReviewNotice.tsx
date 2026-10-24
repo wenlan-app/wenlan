@@ -113,11 +113,14 @@ function isBlockingRefreshReason(reason: string | null | undefined): boolean {
 export function NoteReviewNotice({ page, onReview, onShowSources, disabled = false, basis, codeBasis }: NoteReviewNoticeProps) {
   const { t } = useTranslation();
   const modelAvailable = useEverydayModelAvailable();
+  // On an Ask me first page an AI change waits here instead of landing, so look
+  // often enough that the notice shows while the person is still on the page.
+  const revisionPoll = page.review_required === true ? 5_000 : 30_000;
   const revisions = useQuery({
     queryKey: revisionQueryKey,
     queryFn: () => listPendingRevisions(NOTICE_LIMIT),
-    staleTime: 30_000,
-    refetchInterval: 30_000,
+    staleTime: revisionPoll,
+    refetchInterval: revisionPoll,
     retry: false,
   });
   const refinements = useQuery({
