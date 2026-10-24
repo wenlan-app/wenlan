@@ -31,6 +31,10 @@ import {
   pageReviewSupported,
   parseEntityGuardError,
   markPageBasis,
+  fetchWebpage,
+  ingestWebpage,
+  deleteFileChunks,
+  listIndexedFiles,
   type Entity,
   type BasisConfirmOutcome,
   type BasisRef,
@@ -81,6 +85,9 @@ import {
   type MarkdownEditorSelection,
 } from "./editor/MarkdownEditor";
 import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
+import type { PastedSourceSaved } from "./editor/sourcePaste";
+import { mountSourceLinkIcon } from "./editor/sourceLinkIcon";
+import { getSourceAppFromUrl, sourceAppName, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
@@ -235,6 +242,9 @@ function handleMenuKeyDown(
   items[nextIndex]?.focus();
 }
 
+/** Sites that show the daemon a sign-in page instead of the post or document. */
+const SIGN_IN_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack", "x", "threads", "instagram", "xiaohongshu"]);
+
 export default function PageDetail({
   pageId,
   projectionIssue,
@@ -257,7 +267,7 @@ export default function PageDetail({
   onRegisterFlush,
   showAttachedPageNotice = false,
 }: PageDetailProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
   const wikiLinkPreviewLeaveTimerRef = useRef<number | null>(null);
@@ -595,6 +605,12 @@ export default function PageDetail({
     // A save can clear or replace the evidence map. Never keep a stale citation open.
     setWikiLinkPreview((current) => current?.target.kind === "citation" ? null : current);
   }, [page?.citations]);
+
+  // Links saved as sources; the editor shows their site's icon.
+  const { data: indexedFiles } = useQuery({ queryKey: ["indexedFiles"], queryFn: () => listIndexedFiles() });
+  const sourceLinks = useMemo(() => new Set((indexedFiles ?? [])
+    .filter((file) => file.source === "webpage")
+    .map((file) => file.source_id)), [indexedFiles]);
 
   // Entities on this page = the page's own anchor entity plus the anchor
   // entities of its source memories. These are enrichment links, not search.
@@ -1771,6 +1787,45 @@ export default function PageDetail({
       if (!ok && mountedRef.current && activePageIdRef.current === originPageId) setActionErrorMessage(t("noteBasis.markFailed"));
     });
   };
+  // A pasted link saved as a source, into this page's Space. Sites that need
+  // a sign-in show the daemon a login screen, so only their link and a name
+  // are kept.
+  const savePastedSource = async (url: string): Promise<PastedSourceSaved> => {
+    const app = getSourceAppFromUrl(url);
+    const linkOnly = app !== null && SIGN_IN_APPS.has(app);
+    let title = "";
+    let content = "";
+    if (!linkOnly) {
+      try {
+        const fetched = await fetchWebpage(url);
+        title = fetched.title.trim();
+        content = fetched.content.trim();
+      } catch {
+        // Saved as a link below.
+      }
+    }
+    const fallbackTitle = app
+      ? t("sourcePaste.linkTitle", { app: sourceAppName(app, i18n.language) })
+      : (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } })();
+    let created = true;
+    try {
+      await ingestWebpage({ url, title: title || fallbackTitle, content: content || url, create_only: true, space: page.space ?? null });
+    } catch (error) {
+      // Saved before: that copy is the source, and stays when the link goes.
+      if ((error instanceof Error ? error.message : error) !== "WEBPAGE_ALREADY_EXISTS") throw error;
+      created = false;
+    }
+    void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
+    return {
+      title: title || fallbackTitle,
+      linkOnly: linkOnly || !content,
+      // Deleting the link deletes the source, unless it was saved before.
+      remove: created ? async () => {
+        await deleteFileChunks("webpage", url);
+        void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
+      } : undefined,
+    };
+  };
   // An entity's own page cannot rely on, or be, a note.
   const basisEditable = page.creation_kind !== "entity";
 
@@ -2543,6 +2598,9 @@ export default function PageDetail({
                   wikiLinkTargets={editorWikiLinkTargets}
                   linkNotes={linkNotes}
                   onLinkPick={pickLink}
+                  sourceLinks={sourceLinks}
+                  onSavePastedSource={savePastedSource}
+                  mountSourceIcon={mountSourceLinkIcon}
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }

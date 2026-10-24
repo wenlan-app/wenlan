@@ -66,6 +66,7 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "download_on_device_model",
   "export_page_to_obsidian",
   "export_pages_to_obsidian",
+  "fetch_webpage",
   "get_agent",
   "get_api_key",
   "get_avatar_data_url",

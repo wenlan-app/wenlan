@@ -520,6 +520,8 @@ export interface IngestWebpageRequest {
   content: string;
   metadata?: Record<string, string> | null;
   create_only?: boolean;
+  /** Destination Space; omitted uses the default Space. */
+  space?: string | null;
 }
 
 export interface IngestResponse {
@@ -529,6 +531,21 @@ export interface IngestResponse {
 
 export async function ingestWebpage(req: IngestWebpageRequest): Promise<IngestResponse> {
   return invoke("ingest_webpage", { req });
+}
+
+/** A public page's title and text, read by the daemon and not saved. */
+export interface FetchWebpageResponse {
+  url: string;
+  final_url: string;
+  title: string;
+  content: string;
+  content_type: string;
+  extraction: "html_semantic" | "html_body" | "plain_text";
+  untrusted: boolean;
+}
+
+export async function fetchWebpage(url: string): Promise<FetchWebpageResponse> {
+  return invoke("fetch_webpage", { url });
 }
 
 export async function getApiKey(): Promise<string | null> {
