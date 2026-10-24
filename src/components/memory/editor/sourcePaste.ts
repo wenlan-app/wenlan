@@ -29,7 +29,8 @@ export interface SourcePasteOptions {
   /** Whether a pasted link may be saved as a source right now. */
   enabled(): boolean;
   labels(): SourcePasteLabels;
-  save(url: string): Promise<PastedSourceSaved>;
+  /** `label` is the text the link was pasted over, the writer's own name for it. */
+  save(url: string, label?: string): Promise<PastedSourceSaved>;
 }
 
 /** The links already saved as sources, with their titles; they show their site icon. */
@@ -143,6 +144,7 @@ interface Prompt {
   from: number;
   to: number;
   url: string;
+  label?: string;
   phase: PromptPhase;
   linkOnly?: PastedSourceSaved["linkOnly"];
 }
@@ -237,7 +239,7 @@ function save(view: EditorView, id: number): void {
   const prompt = currentPrompt(view.state, id);
   if (!options || !prompt || options.blocked(view)) return;
   if (prompt.phase !== "saving") update(view, id, "saving");
-  void options.save(prompt.url).then(
+  void options.save(prompt.url, prompt.label).then(
     (saved) => {
       if (!view.dom.isConnected) return;
       const current = currentPrompt(view.state, id);
@@ -471,7 +473,8 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         return true;
       },
     }])),
-    EditorView.domEventHandlers({
+    // Ahead of Markdown's own paste, which wraps a selection in a plain link.
+    Prec.high(EditorView.domEventHandlers({
       paste(event, view) {
         const data = event.clipboardData;
         if (!data || (data.files?.length ?? 0) > 0) return false;
@@ -481,10 +484,14 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         const known = sourceLinkTitle(view.state.field(sourceLinkUrls, false), url);
         const { from, to } = view.state.selection.main;
         if (!pasteTargetsProse(view.state, from)) return false;
+        // Pasted over a few words, the link takes them as its name.
+        const selected = view.state.sliceDoc(from, to).trim();
+        const label = selected && !selected.includes("\n") && selected.length <= 140 && !pastedSourceUrl(selected)
+          && pasteTargetsProse(view.state, to) ? selected : undefined;
         if (known !== undefined) {
           // Saved before: it reads as that source here too, saved once.
           event.preventDefault();
-          const markdown = sourceLinkMarkdown(known, url);
+          const markdown = sourceLinkMarkdown(label ?? known, url);
           view.dispatch({
             changes: { from, to, insert: markdown },
             selection: { anchor: from + markdown.length },
@@ -497,16 +504,22 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         if (offered.has(url)) return false;
         event.preventDefault();
         const id = nextPromptId++;
+        // Named by the writer, it is a link at once and keeps that name.
+        const insert = label ? sourceLinkMarkdown(label, url) : url;
+        const end = from + insert.length;
         view.dispatch({
-          changes: { from, to, insert: url },
-          selection: { anchor: from + url.length },
-          effects: setPrompt.of({ id, from, to: from + url.length, url, phase: "saving" }),
+          changes: { from, to, insert },
+          selection: { anchor: end },
+          effects: [
+            setPrompt.of({ id, from, to: end, url, label, phase: "saving" }),
+            ...(label ? [setFreshLink.of({ from, to: end })] : []),
+          ],
           userEvent: "input.paste",
           scrollIntoView: true,
         });
         save(view, id);
         return true;
       },
-    }),
+    })),
   ];
 }

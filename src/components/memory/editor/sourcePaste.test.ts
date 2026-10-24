@@ -80,7 +80,7 @@ describe("pasted links as sources", () => {
     const view = editor("Reactions: ", 11, { save });
     const event = pasteText(view.contentDOM, X_URL);
     expect(event.defaultPrevented).toBe(true);
-    expect(save).toHaveBeenCalledWith(X_URL);
+    expect(save).toHaveBeenCalledWith(X_URL, undefined);
     // Saving turns a small ring beside the link instead of adding a line.
     expect(note(view)).toBeNull();
     expect(spinner(view)?.getAttribute("aria-label")).toBe("Saving…");
@@ -191,6 +191,19 @@ describe("pasted links as sources", () => {
     finish(saved("Post"));
     await flush();
     expect(view.state.doc.toString()).toBe(`[Post](${X_URL}) nice`);
+  });
+
+  it("pasted over a few words, the link keeps them as its name", async () => {
+    const save = vi.fn(async () => saved("Instagram post", "signIn"));
+    const view = editor("Look at this sunset today", 8, { save });
+    view.dispatch({ selection: { anchor: 8, head: 19 } });
+    pasteText(view.contentDOM, "https://www.instagram.com/p/C1abc/");
+    await flush();
+    expect(save).toHaveBeenCalledWith("https://www.instagram.com/p/C1abc/", "this sunset");
+    expect(view.state.doc.toString()).toBe("Look at [this sunset](https://www.instagram.com/p/C1abc/) today");
+    await vi.waitFor(() => expect(note(view)?.textContent).toBe(labels.savedLinkOnly));
+    // Saving does not rename what the writer named.
+    expect(view.state.doc.toString()).toBe("Look at [this sunset](https://www.instagram.com/p/C1abc/) today");
   });
 
   it("a link saved before reads as that source at once, saved only once", () => {

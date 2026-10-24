@@ -315,9 +315,9 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               blocked: actionsBlocked,
               enabled: () => Boolean(callbacksRef.current.onSavePastedSource),
               labels: () => sourcePasteLabelsRef.current,
-              save: (url) => {
+              save: (url, label) => {
                 const save = callbacksRef.current.onSavePastedSource;
-                return save ? save(url) : Promise.reject(new Error("unavailable"));
+                return save ? save(url, label) : Promise.reject(new Error("unavailable"));
               },
             }),
             props.linkNotes ? createLinkCompletion({

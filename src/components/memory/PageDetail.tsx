@@ -1789,7 +1789,7 @@ export default function PageDetail({
   // A pasted link saved as a source, into this page's Space. Sites that need
   // a sign-in show the daemon a login screen, so only their link and a name
   // are kept; so is a page that could not be read.
-  const savePastedSource = async (url: string): Promise<PastedSourceSaved> => {
+  const savePastedSource = async (url: string, label?: string): Promise<PastedSourceSaved> => {
     const app = getSourceAppFromUrl(url);
     const linkOnly = app !== null && SIGN_IN_APPS.has(app);
     let title = "";
@@ -1821,7 +1821,7 @@ export default function PageDetail({
       })();
     let created = true;
     try {
-      await ingestWebpage({ url, title: title || fallbackTitle, content: content || url, create_only: true, space: page.space ?? null });
+      await ingestWebpage({ url, title: title || label || fallbackTitle, content: content || url, create_only: true, space: page.space ?? null });
     } catch (error) {
       // Saved before: that copy is the source, and stays when the link goes.
       if ((error instanceof Error ? error.message : error) !== "WEBPAGE_ALREADY_EXISTS") throw error;
@@ -1829,7 +1829,7 @@ export default function PageDetail({
     }
     void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
     return {
-      title: title || fallbackTitle,
+      title: title || label || fallbackTitle,
       linkOnly: linkOnly ? "signIn" : content ? undefined : "unreadable",
       // Deleting the link deletes the source, unless it was saved before.
       remove: created ? async () => {

@@ -80,7 +80,7 @@ export interface MarkdownEditorProps {
   /** Links saved as this page's sources; they show their site's icon. */
   sourceLinks?: ReadonlyMap<string, string>;
   /** Save a pasted link as a source. Leave unset to paste links as plain text. */
-  onSavePastedSource?(url: string): Promise<PastedSourceSaved>;
+  onSavePastedSource?(url: string, label?: string): Promise<PastedSourceSaved>;
   /** Draws a site icon; passed in so the editor chunk stays free of the icon set. */
   mountSourceIcon?: SourceIconMount;
 }
