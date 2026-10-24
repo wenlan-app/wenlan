@@ -94,7 +94,11 @@ export class PageAutosave {
     else this.schedule();
   }
 
-  observeCanonical(page: Page | null): void {
+  /**
+   * Returns "adopt" when the page changed elsewhere and nothing was typed
+   * here since: the caller then opens the newer page instead of a conflict.
+   */
+  observeCanonical(page: Page | null): "adopt" | void {
     const baseline = this.baseline;
     if (!baseline) return;
     if (page === null) {
@@ -129,6 +133,10 @@ export class PageAutosave {
       }
       return;
     }
+    if (
+      this.source === baseline.content && !this.composing && this.timer === null &&
+      this.running === null && this.awaitingCanonical === null
+    ) return "adopt";
     this.cancelTimer();
     this.latest = page;
     this.state = {

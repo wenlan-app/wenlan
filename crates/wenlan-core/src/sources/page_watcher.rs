@@ -68,13 +68,81 @@ pub async fn sync_filesystem_edits_locking(
     knowledge_path: &Path,
     lock_my_pages: bool,
 ) -> Result<WatcherStats, WenlanError> {
+    sync_pass(db, knowledge_path, lock_my_pages, None).await
+}
+
+/// [`sync_filesystem_edits_locking`] for only the files in `changed`, for a
+/// watcher that already knows which files were saved since its last look.
+pub async fn sync_filesystem_edits_in(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    lock_my_pages: bool,
+    changed: &[String],
+) -> Result<WatcherStats, WenlanError> {
+    sync_pass(db, knowledge_path, lock_my_pages, Some(changed)).await
+}
+
+/// When each page file was last seen by [`sync_page_file_if_changed`].
+static SEEN: std::sync::LazyLock<std::sync::Mutex<HashMap<String, std::time::SystemTime>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Reads one page's file back into the DB when it was saved since the last
+/// look, so a page open in the app shows an Obsidian edit within seconds
+/// instead of waiting for the scheduler's pass. Returns whether it applied.
+pub async fn sync_page_file_if_changed(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    page_id: &str,
+) -> Result<bool, WenlanError> {
+    let writer = crate::export::knowledge::KnowledgeWriter::new(knowledge_path.to_path_buf(), db);
+    let Some(file) = writer.page_filename(page_id) else {
+        return Ok(false);
+    };
+    let modified = match crate::export::knowledge::read_knowledge_markdown(knowledge_path, &file) {
+        Ok((_, modified)) => modified,
+        Err(WenlanError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(false)
+        }
+        Err(error) => return Err(error),
+    };
+    let key = knowledge_path.join(&file).to_string_lossy().into_owned();
+    let unchanged = SEEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+        == Some(&modified);
+    if unchanged {
+        return Ok(false);
+    }
+    let lock_my_pages = crate::config::load_config().lock_my_pages;
+    let stats = sync_filesystem_edits_in(db, knowledge_path, lock_my_pages, &[file]).await?;
+    SEEN.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key, modified);
+    Ok(stats.applied > 0)
+}
+
+/// One pass at a time: the scheduler's full pass and the quick watcher
+/// would otherwise apply the same edit twice.
+static PASS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn sync_pass(
+    db: &MemoryDB,
+    knowledge_path: &Path,
+    lock_my_pages: bool,
+    only: Option<&[String]>,
+) -> Result<WatcherStats, WenlanError> {
+    let _pass = PASS.lock().await;
     let mut stats = WatcherStats::default();
     if !knowledge_path.exists() {
         return Ok(stats);
     }
     // Recovery precedes discovery, so a pending move cannot resurrect its old path.
     let targets = crate::export::knowledge::knowledge_edit_targets(knowledge_path)?;
-    let paths = crate::export::knowledge::knowledge_markdown_paths(knowledge_path)?;
+    let mut paths = crate::export::knowledge::knowledge_markdown_paths(knowledge_path)?;
+    if let Some(only) = only {
+        paths.retain(|path| only.contains(path));
+    }
     for relative in paths {
         let path = knowledge_path.join(&relative);
         stats.scanned += 1;
@@ -683,6 +751,62 @@ mod tests {
         assert_eq!(s2.applied, 1, "edit two must apply; got {:?}", s2);
         let p = db.get_page("page_x").await.unwrap().unwrap();
         assert_eq!(p.content, "edit two — second pass");
+    }
+
+    #[tokio::test]
+    async fn reads_back_one_open_page_only_when_its_file_was_saved() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let page = sample_page("page_open", "Open page", "every Friday");
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            &page.id,
+            &page.title,
+            None,
+            &page.content,
+            None,
+            None,
+            &["mem_seed"],
+            &now,
+        )
+        .await
+        .unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        project_page(&db, &writer, &page);
+        let md_path = knowledge_dir
+            .path()
+            .join(writer.page_filename(&page.id).expect("state has file"));
+
+        // First look records the file; nothing to apply.
+        assert!(
+            !sync_page_file_if_changed(&db, knowledge_dir.path(), &page.id)
+                .await
+                .unwrap()
+        );
+
+        let projected = std::fs::read_to_string(&md_path).unwrap();
+        let header_end = projected.find("\n---\n\n").expect("frontmatter present");
+        let head = &projected[..header_end + "\n---\n\n".len()];
+        std::fs::write(&md_path, format!("{head}every Thursday\n")).unwrap();
+        let file = std::fs::File::options().write(true).open(&md_path).unwrap();
+        file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(2))
+            .unwrap();
+
+        assert!(
+            sync_page_file_if_changed(&db, knowledge_dir.path(), &page.id)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            db.get_page("page_open").await.unwrap().unwrap().content,
+            "every Thursday"
+        );
+        // An unknown page and an unchanged file are both no-ops.
+        assert!(
+            !sync_page_file_if_changed(&db, knowledge_dir.path(), "page_missing")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
