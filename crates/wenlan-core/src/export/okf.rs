@@ -451,22 +451,86 @@ fn replace_outside_code(
     out
 }
 
-/// An absolute bundle path (`/concepts/b.md`) mapped to the page Wenlan
-/// imported it as. Built from `okf_concepts`; see [`concept_path_map`].
-pub type ConceptPathMap = HashMap<String, String>;
+/// What the exporter knows about the concepts Wenlan imported, so a link an
+/// imported concept still spells in its ORIGINAL bundle's terms can be
+/// repaired to wherever the target is exported now. Built from
+/// `okf_concepts`; see [`concept_path_map`].
+///
+/// Two lookups, because two questions are asked:
+///
+/// - **From an imported page** (`/pages/b.md`, `./b.md`, `../x/b.md`): the
+///   link was written inside one bundle, so it is resolved against that
+///   bundle's concept ids, from the linking concept's own folder, exactly as
+///   the importer resolved it. Another bundle holding the same path cannot
+///   capture it.
+/// - **From any other page** (`/concepts/b.md`): no bundle is known, so the
+///   absolute path is looked up across every imported bundle, and a path two
+///   bundles share resolves to nothing.
+#[derive(Debug, Clone, Default)]
+pub struct ConceptPathMap {
+    /// `/<concept id>.md` -> page id, across all bundles; ambiguous paths absent.
+    by_path: HashMap<String, String>,
+    /// Imported page id -> `(source id, concept id)`.
+    origins: HashMap<String, (String, String)>,
+    /// Source id -> lowercased concept id -> page id (`None` when two concept
+    /// ids of the bundle differ only by case, which the importer's link graph
+    /// folds together).
+    by_source: HashMap<String, HashMap<String, Option<String>>>,
+}
+
+/// What an imported page's link resolves to.
+enum ImportedLink<'a> {
+    /// The linking page is not an imported concept; its bundle is unknown.
+    NotImported,
+    /// Imported linker, but the target is no concept of its bundle.
+    Unidentified,
+    /// The imported concept the link points at, as a page id.
+    Page(&'a str),
+}
+
+impl ConceptPathMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The page an absolute bundle path (`/concepts/b.md`) was imported as,
+    /// across all bundles.
+    pub fn get(&self, path: &str) -> Option<&String> {
+        self.by_path.get(path)
+    }
+
+    /// Resolve `target`, a link written in the body of page `linker`, to the
+    /// imported concept it names, using the importer's own normalization with
+    /// the folder of the linker's original path.
+    fn resolve_from_imported(&self, linker: &str, target: &str) -> ImportedLink<'_> {
+        let Some((source_id, concept_id)) = self.origins.get(linker) else {
+            return ImportedLink::NotImported;
+        };
+        let from_dir = concept_id.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let found = crate::sources::okf::normalize_link_target(from_dir, target)
+            .and_then(|id| self.by_source.get(source_id)?.get(&id.to_lowercase()))
+            .and_then(|page| page.as_deref());
+        match found {
+            Some(page) => ImportedLink::Page(page),
+            None => ImportedLink::Unidentified,
+        }
+    }
+}
 
 /// Build the lookup the exporter uses for links an imported concept still
 /// spells in its original bundle's terms.
 ///
-/// `rows` are `(page id, source id, concept id)` from `okf_concepts`. The key
-/// is the absolute bundle path the concept had, `/<concept id>.md`. Two
-/// bundles can both hold `concepts/b.md`, and a body link carries no source,
-/// so an ambiguous path resolves to nothing rather than to a guess: the link
-/// is then handled as unresolvable, which loses a relationship but never
-/// points a reader at the wrong page.
+/// `rows` are `(page id, source id, concept id)` from `okf_concepts`. The
+/// global key is the absolute bundle path the concept had,
+/// `/<concept id>.md`. Two bundles can both hold `concepts/b.md`, and a page
+/// that was not itself imported carries no source, so an ambiguous path
+/// resolves to nothing rather than to a guess: the link is then handled as
+/// unresolvable, which loses a relationship but never points a reader at the
+/// wrong page.
 pub fn concept_path_map(rows: &[(String, String, String)]) -> ConceptPathMap {
     let mut seen: HashMap<String, Option<String>> = HashMap::new();
-    for (page_id, _source_id, concept_id) in rows {
+    let mut map = ConceptPathMap::default();
+    for (page_id, source_id, concept_id) in rows {
         let key = format!("/{}.md", concept_id.trim_start_matches('/'));
         match seen.get(&key) {
             Some(Some(existing)) if existing == page_id => {}
@@ -477,66 +541,119 @@ pub fn concept_path_map(rows: &[(String, String, String)]) -> ConceptPathMap {
                 seen.insert(key, Some(page_id.clone()));
             }
         }
+        map.origins
+            .insert(page_id.clone(), (source_id.clone(), concept_id.clone()));
+        let in_source = map.by_source.entry(source_id.clone()).or_default();
+        let folded = concept_id.trim_start_matches('/').to_lowercase();
+        match in_source.get(&folded) {
+            Some(Some(existing)) if existing == page_id => {}
+            Some(_) => {
+                in_source.insert(folded, None);
+            }
+            None => {
+                in_source.insert(folded, Some(page_id.clone()));
+            }
+        }
     }
-    seen.into_iter()
+    map.by_path = seen
+        .into_iter()
         .filter_map(|(key, page)| page.map(|page| (key, page)))
-        .collect()
+        .collect();
+    map
 }
 
-/// What an absolute markdown link becomes in the exported bundle.
+/// Split a link target into its path and the `#fragment` / `?query` tail
+/// (delimiter included), after one pair of surrounding `<` `>`. This is the
+/// cut the importer makes before resolving the path.
+fn split_link_suffix(target: &str) -> (&str, &str) {
+    let inner = target
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(target);
+    match inner.find(['#', '?']) {
+        Some(at) => inner.split_at(at),
+        None => (inner, ""),
+    }
+}
+
+/// What a markdown link to something other than an exported page id becomes
+/// in the exported bundle. `linker` is the page whose body holds the link.
 ///
-/// The exporter writes exactly `index.md`, `pages/*.md` and `sources/*.md`, so
-/// those three prefixes are the only absolute targets a bundle can satisfy and
-/// they pass through untouched (pass 1 writes `/pages/...` itself). Any other
-/// absolute `.md` target came in with an imported concept and names a path
-/// this bundle does not contain:
+/// The exporter writes exactly `index.md`, `pages/*.md` and `sources/*.md`, but
+/// a link in an imported concept names a path of its ORIGINAL bundle, which
+/// can be the same spelling as one of those and mean a different file. So when
+/// the linking page was imported, its link is resolved by identity first
+/// (see [`ConceptPathMap`]), for absolute and relative spellings alike:
 ///
-/// - resolvable through `concept_paths` to a page being exported: rewritten to
-///   that page, which is the same relationship at its new address;
-/// - otherwise: collapsed to its link text, the same way an unknown page id is
-///   handled in pass 1. A bundle that promises a document it does not carry is
-///   worse than prose that lost a link.
+/// - identified, and the target is being exported: rewritten to that page,
+///   fragment kept, which is the same relationship at its new address;
+/// - identified, but its page is not being exported: collapsed to its link
+///   text, the same way an unknown page id is handled. A bundle that promises
+///   a document it does not carry is worse than prose that lost a link, and a
+///   path left behind could be taken over by another page;
+/// - not identified: left exactly as written (OKF 6.1 tolerates a broken
+///   link), except that an absolute `.md` path outside `index.md`, `pages/`
+///   and `sources/` names a document this bundle cannot contain and collapses
+///   like an unidentified `/concepts/` link always did.
 ///
-/// A non-`.md` absolute target (an image, an asset) is left alone.
-fn convert_absolute_link(
+/// A page that was not imported has no bundle to resolve against. Its
+/// absolute `/concepts/...` paths are looked up across all imported bundles
+/// (a path two bundles share resolves to nothing), and everything else,
+/// including its `/pages/` and `/sources/` links, passes through untouched.
+/// A non-`.md` target (an image, an asset) is always left alone.
+fn convert_markdown_link(
     text: &str,
     target: &str,
+    linker: &str,
     id_to_file: &HashMap<String, String>,
     concept_paths: &ConceptPathMap,
 ) -> String {
     use crate::export::knowledge::escape_index_link_text;
-    let (path, suffix) = match target.split_once('#') {
-        Some((path, fragment)) => (path, Some(fragment)),
-        None => (target, None),
-    };
-    if path == "/index.md"
-        || path.starts_with("/pages/")
-        || path.starts_with("/sources/")
-        || !path.to_ascii_lowercase().ends_with(".md")
+    let unchanged = || format!("[{text}]({target})");
+    let (path, suffix) = split_link_suffix(target);
+    if path == "/index.md" || path.starts_with("//") || !path.to_ascii_lowercase().ends_with(".md")
     {
-        return format!("[{text}]({target})");
+        return unchanged();
     }
-    match concept_paths.get(path).and_then(|id| id_to_file.get(id)) {
-        Some(file) => {
-            let label = escape_index_link_text(text);
-            match suffix {
-                Some(fragment) => format!("[{label}](/pages/{file}#{fragment})"),
-                None => format!("[{label}](/pages/{file})"),
-            }
+    let page = match concept_paths.resolve_from_imported(linker, target) {
+        ImportedLink::Page(page) => Some(page),
+        ImportedLink::Unidentified | ImportedLink::NotImported
+            if path.starts_with("/pages/") || path.starts_with("/sources/") =>
+        {
+            return unchanged();
         }
+        ImportedLink::Unidentified => None,
+        ImportedLink::NotImported => concept_paths.get(path).map(String::as_str),
+    };
+    let absolute = path.starts_with('/');
+    match page {
+        Some(page) => match id_to_file.get(page) {
+            Some(file) => {
+                let label = escape_index_link_text(text);
+                format!("[{label}](/pages/{file}{suffix})")
+            }
+            None => text.to_string(),
+        },
+        // A relative link nobody can place stays; so does an absolute one
+        // that only an unidentified imported page could have meant.
+        None if !absolute => unchanged(),
         None => text.to_string(),
     }
 }
 
-/// Convert one page body to bundle links. `page_space` is the linking page's
-/// Space: `[[Target]]` resolves only against exported pages in the same Space
-/// (see [`title_owner_map`]). `id_to_file` maps exported page ids to bundle
-/// files, and `source_ids` is this page's cited memory ids.
+/// Convert one page body to bundle links. `page_id` and `page_space` are the
+/// linking page's id and Space: `[[Target]]` resolves only against exported
+/// pages in the same Space (see [`title_owner_map`]), and an imported page's
+/// own links resolve against its original bundle (see [`ConceptPathMap`]).
+/// `id_to_file` maps exported page ids to bundle files, and `source_ids` is
+/// this page's cited memory ids.
 ///
 /// - `[Text](concept_<id>)` / `[Text](page_<id>)`: exported page ->
 ///   `[Text](/pages/<file>)`, unknown id -> plain `Text`. Other
 ///   `[t](target)` links are already standard markdown: kept when `target`
-///   is not an exported page id, rewritten when it is.
+///   is not an exported page id, rewritten when it is, and repaired to the
+///   target's exported file when they name an imported concept (see
+///   [`convert_markdown_link`]).
 /// - `[[Target]]`, `[[Target|Display]]`, `[[Target#Heading]]`, `![[Target]]`:
 ///   resolved titles -> `[Display or Target](/pages/<file>)` with
 ///   `#<slugify(heading)>` when a heading is present; unresolved -> plain
@@ -549,6 +666,7 @@ fn convert_absolute_link(
 /// - Anything inside fenced code blocks or inline code spans is untouched.
 pub(crate) fn convert_body(
     content: &str,
+    page_id: &str,
     page_space: Option<&str>,
     source_ids: &[String],
     id_to_file: &HashMap<String, String>,
@@ -557,10 +675,22 @@ pub(crate) fn convert_body(
 ) -> String {
     use crate::export::knowledge::escape_index_link_text;
     let cited: HashSet<&str> = source_ids.iter().map(String::as_str).collect();
-    // Pass 1: page-id links. The dedicated shape first (unknown ids collapse
-    // to plain text), then any remaining `[t](target)` whose target is an
-    // exported page id.
-    let pass = replace_outside_code(content, &ID_LINK_RE, |cap| {
+    // Pass 1: markdown links, read from the page as written. Runs before the
+    // page-id shape below because that shape emits `/pages/<file>` links of
+    // this bundle, which a second look would take for an imported concept's
+    // original path.
+    let pass = replace_outside_code(content, &MD_LINK_RE, |cap| {
+        let (text, target) = (&cap[1], &cap[2]);
+        match id_to_file.get(target) {
+            Some(file) => {
+                let label = escape_index_link_text(text);
+                format!("[{label}](/pages/{file})")
+            }
+            None => convert_markdown_link(text, target, page_id, id_to_file, concept_paths),
+        }
+    });
+    // Page-id links left over are not exported pages: collapse to plain text.
+    let pass = replace_outside_code(&pass, &ID_LINK_RE, |cap| {
         let (text, id) = (&cap[1], &cap[2]);
         match id_to_file.get(id) {
             Some(file) => {
@@ -568,19 +698,6 @@ pub(crate) fn convert_body(
                 format!("[{label}](/pages/{file})")
             }
             None => text.to_string(),
-        }
-    });
-    let pass = replace_outside_code(&pass, &MD_LINK_RE, |cap| {
-        let (text, target) = (&cap[1], &cap[2]);
-        if target.starts_with('/') {
-            return convert_absolute_link(text, target, id_to_file, concept_paths);
-        }
-        match id_to_file.get(target) {
-            Some(file) => {
-                let label = escape_index_link_text(text);
-                format!("[{label}](/pages/{file})")
-            }
-            None => cap[0].to_string(),
         }
     });
     // Pass 2: wikilinks (code ranges recomputed on the rewritten text).
@@ -634,6 +751,7 @@ pub(crate) fn render_page_file(
     out.push_str("---\n\n");
     out.push_str(&convert_body(
         &page.content,
+        &page.id,
         page.space.as_deref(),
         &page.source_memory_ids,
         id_to_file,
@@ -1169,6 +1287,7 @@ mod tests {
         let (id_to_file, title_owner) = link_context(pages);
         convert_body(
             &page.content,
+            &page.id,
             page.space.as_deref(),
             &page.source_memory_ids,
             &id_to_file,
@@ -1878,6 +1997,216 @@ mod tests {
         let alpha = test_page("concept_a", "Alpha", "See [Gamma](/concepts/gamma.md).");
         let body = convert(std::slice::from_ref(&alpha), &alpha);
         assert_eq!(body.trim(), "See Gamma.", "{body}");
+    }
+
+    fn imported(page: &str, source: &str, concept: &str) -> (String, String, String) {
+        (page.to_string(), source.to_string(), concept.to_string())
+    }
+
+    /// Astra finding 4. An imported bundle holds `pages/b.md` ("Beta") and
+    /// `sources/x.md`; a concept links to both in the bundle's terms. The
+    /// export names Beta `beta.md` and the other concept `x-notes.md`, so the
+    /// verbatim `/pages/` and `/sources/` paths dangled. The link follows the
+    /// target's identity to its export file and keeps the fragment.
+    #[test]
+    fn an_imported_pages_and_sources_link_follows_a_renamed_target() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "See [Beta](/pages/b.md), its [setup](/pages/b.md#setup) and [X](/sources/x.md#top).",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let notes = test_page("concept_x", "X Notes", "z");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+            imported("concept_x", "src_1", "sources/x"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta, notes], &alpha, &concept_paths);
+
+        assert!(body.contains("[Beta](/pages/beta.md)"), "{body}");
+        assert!(body.contains("[setup](/pages/beta.md#setup)"), "{body}");
+        assert!(body.contains("[X](/pages/x-notes.md#top)"), "{body}");
+    }
+
+    /// The dangerous half: after the rename a DIFFERENT page owns `b.md`. The
+    /// old spelling would silently retarget the link at it; the target's
+    /// identity must win, and the link written for the other page by name is
+    /// not disturbed.
+    #[test]
+    fn a_different_page_now_holding_the_old_filename_does_not_capture_the_link() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+        ]);
+        let pages = [alpha.clone(), beta, other];
+        let (id_to_file, _) = link_context(&pages);
+        assert_eq!(id_to_file["concept_o"], "b.md", "the old filename is taken");
+
+        let body = convert_with_concepts(&pages, &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "[Beta](/pages/beta.md)", "{body}");
+    }
+
+    /// Relative links resolve from the importing concept's original folder,
+    /// the way the importer resolved them, then follow the target's identity.
+    #[test]
+    fn an_imported_relative_link_resolves_from_the_original_folder() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "[Beta](./b.md#why) [Up](../x/b.md) [Bare](b.md) [Gamma](../c.md)",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let xbeta = test_page("concept_xb", "Xbeta", "y");
+        let gamma = test_page("concept_c", "Gamma", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "concepts/b"),
+            imported("concept_xb", "src_1", "x/b"),
+            imported("concept_c", "src_1", "c"),
+        ]);
+
+        let body = convert_with_concepts(
+            &[alpha.clone(), beta, xbeta, gamma, other],
+            &alpha,
+            &concept_paths,
+        );
+
+        assert_eq!(
+            body.trim(),
+            "[Beta](/pages/beta.md#why) [Up](/pages/xbeta.md) [Bare](/pages/beta.md) \
+             [Gamma](/pages/gamma.md)",
+            "{body}"
+        );
+    }
+
+    /// A link whose target cannot be identified stays as written (OKF 6.1
+    /// tolerates a broken link) rather than being guessed, and another
+    /// bundle's concept of the same path is not the target.
+    #[test]
+    fn an_unidentifiable_imported_link_is_left_as_written() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "[Z](/pages/zzz.md) [N](./nope.md) [S](/sources/nothing.md) [B](/pages/b.md)",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_2", "pages/b"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), alpha.content, "{body}");
+    }
+
+    /// Identified but not exported: the path is not left behind for another
+    /// page to take over, so the link degrades to its text like an
+    /// unresolvable `/concepts/` link does.
+    #[test]
+    fn an_imported_link_to_a_page_that_is_not_exported_degrades_to_text() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md) [Rel](./b.md)");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+            imported("concept_b", "src_1", "concepts/b"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), other], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "Beta Rel", "{body}");
+    }
+
+    /// A page that was not imported has no bundle to read its paths in, so
+    /// its own `/pages/` and relative links are not reinterpreted.
+    #[test]
+    fn a_page_that_was_not_imported_keeps_its_pages_and_relative_links() {
+        let alpha = test_page("concept_a", "Alpha", "[B](/pages/b.md) [R](./b.md)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let concept_paths = concept_path_map(&[imported("concept_b", "src_1", "pages/b")]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), alpha.content, "{body}");
+    }
+
+    /// The `/pages/<file>` link written for a `concept_<id>` link is this
+    /// bundle's own address, not an imported concept's original path.
+    #[test]
+    fn a_page_id_link_is_not_reread_as_an_imported_path() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](concept_b)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let gamma = test_page("concept_c", "Gamma", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_c", "src_1", "pages/beta"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta, gamma], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "[Beta](/pages/beta.md)", "{body}");
+    }
+
+    /// A bundle's `/pages/b.md` is its own: two bundles holding the same path
+    /// each resolve to their own concept, where a page of neither would find
+    /// the path ambiguous.
+    #[test]
+    fn two_bundles_sharing_a_path_each_resolve_their_own() {
+        let one = test_page("concept_1", "One", "[B](/pages/b.md)");
+        let two = test_page("concept_2", "Two", "[B](/pages/b.md)");
+        let b1 = test_page("concept_b1", "Beta One", "y");
+        let b2 = test_page("concept_b2", "Beta Two", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_1", "src_1", "one"),
+            imported("concept_b1", "src_1", "pages/b"),
+            imported("concept_2", "src_2", "two"),
+            imported("concept_b2", "src_2", "pages/b"),
+        ]);
+        let pages = [one.clone(), two.clone(), b1, b2];
+
+        assert_eq!(
+            convert_with_concepts(&pages, &one, &concept_paths).trim(),
+            "[B](/pages/beta-one.md)"
+        );
+        assert_eq!(
+            convert_with_concepts(&pages, &two, &concept_paths).trim(),
+            "[B](/pages/beta-two.md)"
+        );
+    }
+
+    /// End to end through the exporter: the written page carries the repaired
+    /// link, and a repository bundle makes it relative to the linking file.
+    #[test]
+    fn export_writes_the_repaired_link_in_both_bundle_shapes() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md#setup)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+        ]);
+        let pages = [alpha, beta, other];
+
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf_with_concept_paths(&pages, dir.path(), &concept_paths, &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(dir.path().join("pages/alpha.md")).unwrap();
+        assert!(
+            written.contains("[Beta](/pages/beta.md#setup)"),
+            "{written}"
+        );
+
+        let repo = tempfile::TempDir::new().unwrap();
+        export_okf_for_repository(&pages, repo.path(), &concept_paths, &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(repo.path().join("pages/alpha.md")).unwrap();
+        assert!(written.contains("[Beta](beta.md#setup)"), "{written}");
     }
 
     /// The exporter's own absolute links, and non-markdown targets, pass
