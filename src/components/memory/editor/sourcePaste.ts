@@ -15,8 +15,6 @@ export interface PastedSourceSaved {
 }
 
 export interface SourcePasteLabels {
-  save: string;
-  dismiss: string;
   saving: string;
   saved: string;
   savedLinkOnly: string;
@@ -27,10 +25,8 @@ export interface SourcePasteLabels {
 
 export interface SourcePasteOptions {
   blocked(view: EditorView): boolean;
-  /** Whether a pasted link may be offered as a source right now. */
+  /** Whether a pasted link may be saved as a source right now. */
   enabled(): boolean;
-  /** "auto" saves a pasted link at once, with an undo; "ask" offers a button first. */
-  mode: "auto" | "ask";
   labels(): SourcePasteLabels;
   save(url: string): Promise<PastedSourceSaved>;
 }
@@ -103,7 +99,7 @@ export function sourceLinkMarkdown(title: string, url: string): string {
   return text ? `[${text}](${url})` : url;
 }
 
-type PromptPhase = "ask" | "saving" | "saved" | "linkOnly" | "failed";
+type PromptPhase = "saving" | "saved" | "linkOnly" | "failed";
 
 interface Prompt {
   id: number;
@@ -115,7 +111,7 @@ interface Prompt {
 
 interface PromptState {
   prompt: Prompt | null;
-  /** Links already offered in this editing session; each is offered once. */
+  /** Links already saved in this editing session; each is saved once. */
   offered: ReadonlySet<string>;
 }
 
@@ -130,14 +126,9 @@ const promptState: StateField<PromptState> = StateField.define<PromptState>({
   update(value, transaction) {
     let { prompt, offered } = value;
     if (prompt && transaction.docChanged) {
-      // Typing anything else is the answer "no": the link stays as it is.
+      // Writing on puts the note away; only a save in flight keeps it.
       if (prompt.phase !== "saving" && !transaction.annotation(ownChange)) prompt = null;
-      else if (prompt) prompt = { ...prompt, from: transaction.changes.mapPos(prompt.from, 1), to: transaction.changes.mapPos(prompt.to, -1) };
-    }
-    if (prompt?.phase === "ask" && transaction.selection && !transaction.effects.some((effect) => effect.is(setPrompt))) {
-      const line = transaction.state.doc.lineAt(prompt.to);
-      const head = transaction.state.selection.main.head;
-      if (head < line.from || head > line.to) prompt = null;
+      else prompt = { ...prompt, from: transaction.changes.mapPos(prompt.from, 1), to: transaction.changes.mapPos(prompt.to, -1) };
     }
     for (const effect of transaction.effects) {
       if (!effect.is(setPrompt)) continue;
@@ -195,8 +186,8 @@ function undo(view: EditorView, id: number): void {
 function save(view: EditorView, id: number): void {
   const options = view.state.facet(promptOptions);
   const prompt = currentPrompt(view.state, id);
-  if (!options || !prompt || prompt.phase === "saving" || options.blocked(view)) return;
-  update(view, id, "saving");
+  if (!options || !prompt || options.blocked(view)) return;
+  if (prompt.phase !== "saving") update(view, id, "saving");
   void options.save(prompt.url).then(
     (saved) => {
       if (!view.dom.isConnected) return;
@@ -244,19 +235,11 @@ class PromptWidget extends WidgetType {
     row.className = "cm-source-paste";
     row.dataset.phase = this.prompt.phase;
     if (!labels) return row;
-    const { id, phase, url } = this.prompt;
-    const button = (text: string, className: string, onClick: () => void, icon = false): HTMLButtonElement => {
+    const { id, phase } = this.prompt;
+    const button = (text: string, onClick: () => void): HTMLButtonElement => {
       const element = document.createElement("button");
       element.type = "button";
-      element.className = className;
-      if (icon) {
-        const holder = document.createElement("span");
-        holder.className = "cm-source-paste-icon";
-        holder.setAttribute("aria-hidden", "true");
-        mountIcon(view, holder, url);
-        element.append(holder);
-      }
-      element.append(text);
+      element.textContent = text;
       // Keep the caret where it is: the click is not a move into the widget.
       element.addEventListener("mousedown", (event) => event.preventDefault());
       element.addEventListener("click", (event) => {
@@ -272,26 +255,15 @@ class PromptWidget extends WidgetType {
       element.textContent = text;
       return element;
     };
-    if (phase === "ask") {
-      row.append(button(labels.save, "cm-source-paste-save", () => save(view, id), true));
-      const dismiss = button("", "cm-source-paste-dismiss", () => update(view, id, null));
-      dismiss.setAttribute("aria-label", labels.dismiss);
-      dismiss.title = labels.dismiss;
-      dismiss.textContent = "×";
-      row.append(dismiss);
-    } else if (phase === "saving") {
+    if (phase === "saving") {
       row.append(status(labels.saving));
     } else if (phase === "failed") {
-      row.append(status(labels.failed), button(labels.retry, "cm-source-paste-save", () => save(view, id)));
+      row.append(status(labels.failed), button(labels.retry, () => save(view, id)));
     } else {
       row.append(status(phase === "linkOnly" ? labels.savedLinkOnly : labels.saved));
-      if (savedLinks.has(id)) row.append(button(labels.undo, "cm-source-paste-undo", () => undo(view, id)));
+      if (savedLinks.has(id)) row.append(button(labels.undo, () => undo(view, id)));
     }
     return row;
-  }
-
-  destroy(dom: HTMLElement): void {
-    for (const holder of dom.querySelectorAll<HTMLElement>(".cm-source-paste-icon")) unmountIcon(holder);
   }
 
   ignoreEvent(): boolean {
@@ -299,7 +271,7 @@ class PromptWidget extends WidgetType {
   }
 }
 
-/** Code and link destinations are not places to offer a source. */
+/** Code and link destinations are not places to save a source from. */
 function pasteTargetsProse(state: EditorState, at: number): boolean {
   const before = state.sliceDoc(Math.max(0, at - 1), at);
   if (before === "(" || before === "<" || before === "[") return false;
@@ -324,33 +296,16 @@ const theme = EditorView.theme({
     whiteSpace: "nowrap",
   },
   ".cm-source-paste button": {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "6px",
+    marginLeft: "6px",
+    padding: "3px 6px",
     border: "0",
     borderRadius: "6px",
     font: "inherit",
+    color: "var(--mem-link)",
+    backgroundColor: "transparent",
     cursor: "pointer",
   },
-  ".cm-source-paste-save": {
-    padding: "3px 8px",
-    color: "var(--mem-text)",
-    backgroundColor: "var(--mem-hover)",
-  },
-  ".cm-source-paste-save:hover": {
-    backgroundColor: "color-mix(in srgb, var(--mem-text) 10%, transparent)",
-  },
-  ".cm-source-paste-dismiss": {
-    justifyContent: "center",
-    width: "24px",
-    height: "24px",
-    padding: "0",
-    fontSize: "16px",
-    color: "var(--mem-text-tertiary)",
-    backgroundColor: "transparent",
-  },
-  ".cm-source-paste-dismiss:hover": {
-    color: "var(--mem-text)",
+  ".cm-source-paste button:hover": {
     backgroundColor: "var(--mem-hover)",
   },
   ".cm-source-paste button:focus-visible": {
@@ -360,25 +315,14 @@ const theme = EditorView.theme({
   ".cm-source-paste-status": {
     padding: "3px 0",
   },
-  ".cm-source-paste-undo": {
-    marginLeft: "6px",
-    padding: "3px 6px",
-    color: "var(--mem-link)",
-    backgroundColor: "transparent",
-  },
-  ".cm-source-paste-undo:hover": {
-    backgroundColor: "var(--mem-hover)",
-  },
   ".cm-source-paste[data-phase=saved] .cm-source-paste-status, .cm-source-paste[data-phase=linkOnly] .cm-source-paste-status": {
     color: "var(--mem-accent-sage)",
   },
-  ".cm-source-paste-icon, .cm-source-link-icon": {
+  ".cm-source-link-icon": {
     display: "inline-flex",
     alignItems: "center",
     width: "14px",
     height: "14px",
-  },
-  ".cm-source-link-icon": {
     marginLeft: "0.2em",
     verticalAlign: "-0.12em",
     color: "var(--mem-text-tertiary)",
@@ -386,9 +330,8 @@ const theme = EditorView.theme({
 });
 
 /**
- * Pasting one link saves it as a source of the page, or offers to. The note
- * sits under the line. In "ask" mode, ignoring it (typing on, Escape, ×)
- * leaves a plain link; in "auto" mode the note offers an undo for a moment.
+ * Pasting one link saves it as a source at once. A note under the line says
+ * so and offers an undo for a moment; writing on or Escape puts it away.
  */
 export function sourcePaste(options: SourcePasteOptions): Extension {
   return [
@@ -420,11 +363,11 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         view.dispatch({
           changes: { from, to, insert: url },
           selection: { anchor: from + url.length },
-          effects: setPrompt.of({ id, from, to: from + url.length, url, phase: "ask" }),
+          effects: setPrompt.of({ id, from, to: from + url.length, url, phase: "saving" }),
           userEvent: "input.paste",
           scrollIntoView: true,
         });
-        if (options.mode === "auto") save(view, id);
+        save(view, id);
         return true;
       },
     }),

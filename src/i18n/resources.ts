@@ -757,8 +757,6 @@ const en = {
     empty: "No matching pages",
   },
   sourcePaste: {
-    save: "Save as source",
-    dismiss: "Dismiss",
     saving: "Saving…",
     saved: "Saved as source",
     savedLinkOnly: "Saved as source, link only",
@@ -3665,8 +3663,6 @@ const zhHans = {
     empty: "没有匹配的笔记",
   },
   sourcePaste: {
-    save: "存为来源",
-    dismiss: "关闭",
     saving: "正在保存…",
     saved: "已存为来源",
     savedLinkOnly: "已存为来源，只存了网址",
@@ -6528,8 +6524,6 @@ const zhHant = {
     empty: "沒有相符的筆記",
   },
   sourcePaste: {
-    save: "存成來源",
-    dismiss: "關閉",
     saving: "儲存中…",
     saved: "已存成來源",
     savedLinkOnly: "已存成來源，只存了網址",

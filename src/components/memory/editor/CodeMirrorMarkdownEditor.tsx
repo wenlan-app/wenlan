@@ -314,7 +314,6 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             sourcePaste({
               blocked: actionsBlocked,
               enabled: () => Boolean(callbacksRef.current.onSavePastedSource),
-              mode: props.pastedSourceMode ?? "auto",
               labels: () => sourcePasteLabelsRef.current,
               save: (url) => {
                 const save = callbacksRef.current.onSavePastedSource;
@@ -499,8 +498,6 @@ function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
 
 function sourcePasteLabels(t: TFunction): SourcePasteLabels {
   return {
-    save: t("sourcePaste.save"),
-    dismiss: t("sourcePaste.dismiss"),
     saving: t("sourcePaste.saving"),
     saved: t("sourcePaste.saved"),
     savedLinkOnly: t("sourcePaste.savedLinkOnly"),

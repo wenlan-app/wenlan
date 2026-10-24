@@ -79,10 +79,8 @@ export interface MarkdownEditorProps {
   onLinkPick?(note: LinkCompletionNote, asSource: boolean): void;
   /** Links saved as this page's sources; they show their site's icon. */
   sourceLinks?: ReadonlySet<string>;
-  /** Save a pasted link as a source of the page. Leave unset to never offer it. */
+  /** Save a pasted link as a source. Leave unset to paste links as plain text. */
   onSavePastedSource?(url: string): Promise<PastedSourceSaved>;
-  /** "auto" saves a pasted link at once with an undo; "ask" offers a button. */
-  pastedSourceMode?: "auto" | "ask";
   /** Draws a site icon; passed in so the editor chunk stays free of the icon set. */
   mountSourceIcon?: SourceIconMount;
 }

@@ -241,8 +241,6 @@ function handleMenuKeyDown(
   items[nextIndex]?.focus();
 }
 
-/** A pasted link becomes a source at once, with an undo, rather than on request. */
-const PASTED_SOURCE_MODE = "auto";
 /** Sites that show the daemon a sign-in page instead of the post or document. */
 const SIGN_IN_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack", "x", "threads", "instagram", "xiaohongshu"]);
 
@@ -2584,7 +2582,6 @@ export default function PageDetail({
                   onLinkPick={pickLink}
                   sourceLinks={sourceLinks}
                   onSavePastedSource={savePastedSource}
-                  pastedSourceMode={PASTED_SOURCE_MODE}
                   mountSourceIcon={mountSourceLinkIcon}
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {

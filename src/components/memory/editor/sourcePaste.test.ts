@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 const labels = {
-  save: "Save as source", dismiss: "Dismiss", saving: "Saving…", saved: "Saved as source",
+  saving: "Saving…", saved: "Saved as source",
   savedLinkOnly: "Saved as source, link only", failed: "Couldn't save this link.", retry: "Try again", undo: "Undo",
 };
 
@@ -42,7 +42,7 @@ function editor(doc: string, at: number, options: Partial<SourcePasteOptions> = 
       extensions: [
         markdown({ base: markdownLanguage }),
         sourceLinkUrls,
-        sourcePaste({ blocked: () => false, enabled: () => true, labels: () => labels, mode: "auto", save: vi.fn(), ...options }),
+        sourcePaste({ blocked: () => false, enabled: () => true, labels: () => labels, save: vi.fn(), ...options }),
       ],
     }),
   });
@@ -57,7 +57,7 @@ function saved(title: string, linkOnly = false, undo = vi.fn(async () => undefin
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const note = (view: EditorView) => view.dom.querySelector<HTMLElement>(".cm-source-paste");
 const buttonNamed = (view: EditorView, name: string) =>
-  [...view.dom.querySelectorAll<HTMLButtonElement>(".cm-source-paste button")].find((b) => b.textContent === name || b.getAttribute("aria-label") === name);
+  [...view.dom.querySelectorAll<HTMLButtonElement>(".cm-source-paste button")].find((b) => b.textContent === name);
 
 describe("pasted links as sources", () => {
   it("only takes one public http(s) address", () => {
@@ -115,22 +115,32 @@ describe("pasted links as sources", () => {
     expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`);
   });
 
-  it("asks first in ask mode, and typing on leaves a plain link", () => {
-    const save = vi.fn(async () => saved("Post"));
-    const view = editor("", 0, { save, mode: "ask" });
+  it("puts the note away when the writer goes on, keeping the saved link", async () => {
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post")) });
     pasteText(view.contentDOM, X_URL);
-    expect(save).not.toHaveBeenCalled();
-    expect(buttonNamed(view, "Save as source")).toBeDefined();
-    view.dispatch({ changes: { from: view.state.doc.length, insert: " nice" }, selection: { anchor: view.state.doc.length + 5 } });
+    await flush();
+    view.dispatch({ changes: { from: view.state.doc.length, insert: " nice" } });
     expect(note(view)).toBeNull();
-    expect(view.state.doc.toString()).toBe(`${X_URL} nice`);
+    expect(view.state.doc.toString()).toBe(`[Post](${X_URL}) nice`);
   });
 
-  it("Escape dismisses the offer", () => {
-    const view = editor("", 0, { mode: "ask" });
+  it("Escape puts the note away", async () => {
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post")) });
     pasteText(view.contentDOM, X_URL);
+    await flush();
     pressKey(view.contentDOM, "Escape");
     expect(note(view)).toBeNull();
+  });
+
+  it("keeps the note through typing while the save is still running", async () => {
+    let finish: (value: PastedSourceSaved) => void = () => undefined;
+    const view = editor("", 0, { save: vi.fn(() => new Promise<PastedSourceSaved>((resolve) => { finish = resolve; })) });
+    pasteText(view.contentDOM, X_URL);
+    view.dispatch({ changes: { from: view.state.doc.length, insert: " nice" } });
+    expect(note(view)?.textContent).toBe("Saving…");
+    finish(saved("Post"));
+    await flush();
+    expect(view.state.doc.toString()).toBe(`[Post](${X_URL}) nice`);
   });
 
   it("leaves code, link targets and repeated links to the normal paste", async () => {
