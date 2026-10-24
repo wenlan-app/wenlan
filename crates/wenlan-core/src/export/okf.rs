@@ -10,11 +10,14 @@
 //! `index.md` / `pages/` / `sources/` layout with no Obsidian-only syntax.
 
 use crate::error::WenlanError;
+use crate::export::vault_fs::{self, Disposal, Replacement};
 use crate::export::ExportStats;
 use crate::pages::Page;
+use cap_fs_ext::DirExt as _;
+use cap_std::fs::Dir;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use wenlan_types::CodeBasisLocator;
 
@@ -30,6 +33,10 @@ const SOURCES_DIR: &str = "sources";
 /// importer and to any OKF consumer walking the bundle, while still sitting
 /// where a person can find it.
 const ARCHIVE_DIR: &str = ".wenlan-archive";
+
+/// Largest bundle file a re-export reads to classify it. A file too big to read
+/// whole is one it cannot classify, and an unclassified file is kept.
+const CLASSIFY_SCAN_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Root marker proving a directory holds a Wenlan OKF export (and listing
 /// exactly the bundle files the last export wrote, so a re-export can remove
@@ -119,11 +126,69 @@ fn bundle_file_state(
     let Ok(bytes) = std::fs::read(&path) else {
         return BundleFileState::Changed;
     };
+    classify_bundle_bytes(&bytes, entry, digests, planned)
+}
+
+/// The byte half of [`bundle_file_state`]. The sweep and the planned writes
+/// call it again on the bytes they hold AFTER taking a file aside, so the
+/// answer they act on is about the file they are about to unlink or replace,
+/// not the one the preservation pass read earlier.
+fn classify_bundle_bytes(
+    bytes: &[u8],
+    entry: &str,
+    digests: &BTreeMap<String, String>,
+    planned: Option<&[u8]>,
+) -> BundleFileState {
     match digests.get(entry) {
-        Some(recorded) if &digest_of(&bytes) == recorded => BundleFileState::Ours,
+        Some(recorded) if &digest_of(bytes) == recorded => BundleFileState::Ours,
         Some(_) => BundleFileState::Changed,
-        None if planned == Some(bytes.as_slice()) => BundleFileState::Ours,
+        None if planned == Some(bytes) => BundleFileState::Ours,
         None => BundleFileState::Changed,
+    }
+}
+
+/// The bundle directory, held as capabilities. The actions that follow a
+/// classification (move to the archive, unlink, install) go through these
+/// handles so they stay inside the bundle, never follow a symlink swapped in
+/// at `pages/` or `sources/`, and can use the non-replacing renames in
+/// [`vault_fs`].
+struct BundleDirs {
+    path: PathBuf,
+    root: Dir,
+    pages: Dir,
+    sources: Dir,
+}
+
+impl BundleDirs {
+    fn open(target: &Path) -> std::io::Result<Self> {
+        let root = Dir::open_ambient_dir(target, cap_std::ambient_authority())?;
+        let pages = root.open_dir_nofollow(PAGES_DIR)?;
+        let sources = root.open_dir_nofollow(SOURCES_DIR)?;
+        Ok(Self {
+            path: target.to_path_buf(),
+            root,
+            pages,
+            sources,
+        })
+    }
+
+    /// The directory holding a validated marker entry, and its file name.
+    fn locate<'a>(&self, entry: &'a str) -> std::io::Result<(&Dir, &'a str)> {
+        if entry == INDEX_FILE {
+            return Ok((&self.root, entry));
+        }
+        for (dir, handle) in [(PAGES_DIR, &self.pages), (SOURCES_DIR, &self.sources)] {
+            if let Some(name) = entry
+                .strip_prefix(dir)
+                .and_then(|rest| rest.strip_prefix('/'))
+            {
+                return Ok((handle, name));
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{entry} is not a bundle file"),
+        ))
     }
 }
 
@@ -132,13 +197,40 @@ fn bundle_file_state(
 /// two files of the same name from different directories cannot collide.
 /// Suffixes past an occupied destination rather than replacing it: an older
 /// preserved copy is the one thing here the database cannot reproduce.
-fn preserve_edited_bundle_file(target: &Path, entry: &str) -> Result<(), WenlanError> {
-    let source = target.join(entry);
-    let destination_dir = match Path::new(entry).parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => target.join(ARCHIVE_DIR).join(parent),
-        _ => target.join(ARCHIVE_DIR),
+fn preserve_edited_bundle_file(dirs: &BundleDirs, entry: &str) -> Result<(), WenlanError> {
+    let (source_dir, name) = dirs.locate(entry).map_err(WenlanError::Io)?;
+    preserve_into_archive(dirs, entry, source_dir, name)
+}
+
+/// Move the file `from` in `source_dir` -- the bundle file itself, or the
+/// private name it was taken aside under -- into the archive slot for `entry`.
+///
+/// The file is renamed into the archive directory under a private name first,
+/// which atomically takes whatever is there, and only then given its final
+/// name by a rename that cannot replace. Probing for a free name and renaming
+/// afterwards would replace an older preserved copy that a sync client put
+/// there in between.
+fn preserve_into_archive(
+    dirs: &BundleDirs,
+    entry: &str,
+    source_dir: &Dir,
+    from: &str,
+) -> Result<(), WenlanError> {
+    let relative = match Path::new(entry).parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Path::new(ARCHIVE_DIR).join(parent),
+        _ => PathBuf::from(ARCHIVE_DIR),
     };
-    std::fs::create_dir_all(&destination_dir).map_err(WenlanError::Io)?;
+    dirs.root
+        .create_dir_all(&relative)
+        .map_err(WenlanError::Io)?;
+    let archive = dirs.root.open_dir(&relative).map_err(WenlanError::Io)?;
+    let held = vault_fs::private_name("aside");
+    match source_dir.rename(from, &archive, &held) {
+        Ok(()) => {}
+        // Already gone: nothing left to preserve.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(WenlanError::Io(e)),
+    }
     let name = Path::new(entry)
         .file_name()
         .and_then(|n| n.to_str())
@@ -147,23 +239,21 @@ fn preserve_edited_bundle_file(target: &Path, entry: &str) -> Result<(), WenlanE
         Some(stem) => (stem, ".md"),
         None => (name, ""),
     };
-    let mut destination = destination_dir.join(name);
-    let mut attempt = 1;
-    while destination.symlink_metadata().is_ok() {
-        attempt += 1;
-        if attempt > 100 {
-            return Err(WenlanError::Conflict(format!(
-                "cannot preserve {entry}: {ARCHIVE_DIR} has no free name for it"
-            )));
+    match crate::export::archive::place_suffixed(&archive, &held, stem, extension, &mut |_| {})
+        .map_err(WenlanError::Io)?
+    {
+        Some(placed) => {
+            log::warn!(
+                "[okf] {entry} was edited since the last export; preserved at {}",
+                dirs.path.join(&relative).join(placed).display()
+            );
+            Ok(())
         }
-        destination = destination_dir.join(format!("{stem}-{attempt}{extension}"));
+        // The bytes stay in the archive directory under the private name.
+        None => Err(WenlanError::Conflict(format!(
+            "cannot preserve {entry}: {ARCHIVE_DIR} has no free name for it"
+        ))),
     }
-    std::fs::rename(&source, &destination).map_err(WenlanError::Io)?;
-    log::warn!(
-        "[okf] {entry} was edited since the last export; preserved at {}",
-        destination.display()
-    );
-    Ok(())
 }
 
 // Dedicated page-id links: `[Title](concept_<id>)` (the shape
@@ -217,39 +307,59 @@ fn is_symlink(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Write `bytes` to `path`, refusing anything that is not already a plain
-/// file.
+/// What [`write_bundle_file`] did.
+enum BundleWrite {
+    /// The planned bytes are at the path (or were already).
+    Written,
+    /// The path holds a file that is not one this run may replace -- it was
+    /// edited, or a file appeared there, after it was classified. Left exactly
+    /// as it is; the planned bytes were not written.
+    Kept,
+}
+
+/// Write `bytes` to the bundle file `entry`, replacing only the exact bytes the
+/// last export (or this run's plan) accounts for.
 ///
-/// This used to unlink a symlink standing in the way, so the write could not
-/// clobber whatever the link pointed at. That protected the target and
-/// destroyed the link, which is somebody's file too: a person who points
-/// `pages/alpha.md` at a note they keep elsewhere gets it silently removed on
-/// the next export. Refusing protects both. The caller reports the page as
-/// failed, exactly as it does for a directory in the way.
-fn write_file_nofollow(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
-        Ok(_) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "{} is not a plain file; refusing to replace it",
-                    path.display()
-                ),
-            ))
+/// The preservation pass classified the file earlier. An editor can save
+/// between that and now, so the file is taken aside, re-read, and re-classified
+/// with [`classify_bundle_bytes`] before anything of it is discarded; the new
+/// bytes then go in with a rename that cannot replace. Anything else that has
+/// appeared at the path is kept and the write is skipped, to be dealt with by
+/// the next run's preservation pass.
+///
+/// A path that is not a plain file is refused with `AlreadyExists`, as the
+/// in-place writer this replaced did: the caller reports it as failed. A
+/// symlink there is somebody's link, and unlinking it would destroy it.
+fn write_bundle_file(
+    dirs: &BundleDirs,
+    entry: &str,
+    bytes: &[u8],
+    digests: &BTreeMap<String, String>,
+    before_act: &mut dyn FnMut(&str),
+) -> Result<BundleWrite, WenlanError> {
+    let (dir, name) = dirs.locate(entry).map_err(WenlanError::Io)?;
+    before_act(entry);
+    let replaced =
+        vault_fs::replace_if_unchanged(dir, name, bytes, CLASSIFY_SCAN_BYTES, |current| {
+            classify_bundle_bytes(current, entry, digests, Some(bytes)) == BundleFileState::Ours
+        })
+        .map_err(WenlanError::Io)?;
+    match replaced {
+        Replacement::Written | Replacement::Unchanged => Ok(BundleWrite::Written),
+        Replacement::Kept => Ok(BundleWrite::Kept),
+        Replacement::Displaced(aside) => {
+            preserve_into_archive(dirs, entry, dir, &aside)?;
+            Ok(BundleWrite::Kept)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
     }
-    std::fs::write(path, bytes)
 }
 
 /// Replace the root marker atomically: a temp file in the same directory,
 /// fsync, rename over the marker, then fsync the directory.
 ///
-/// `write_file_nofollow` truncates and rewrites in place, so a kill partway
-/// through left malformed JSON and the next export refused at the marker
-/// parse, stuck until somebody hand-edited the file and lost its ownership and
+/// An in-place truncate-and-rewrite of the marker, killed partway through,
+/// left malformed JSON and the next export refused at the marker parse, stuck
+/// until somebody hand-edited the file and lost its ownership and
 /// digest records. A rename within one directory leaves the previous marker or
 /// the new one, never a torn file. The projection's atomic writer is reused for
 /// that, so the symlink guarantee comes with it: the temp is created
@@ -874,7 +984,7 @@ pub fn export_okf_with_concept_paths(
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
 ) -> Result<ExportStats, WenlanError> {
-    export_okf_inner(pages, target, concept_paths, code_bases, false)
+    export_okf_inner(pages, target, concept_paths, code_bases, false, &mut |_| {})
 }
 
 /// [`export_okf_with_concept_paths`] for a bundle that lives in a folder of a
@@ -888,7 +998,7 @@ pub fn export_okf_for_repository(
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
 ) -> Result<ExportStats, WenlanError> {
-    export_okf_inner(pages, target, concept_paths, code_bases, true)
+    export_okf_inner(pages, target, concept_paths, code_bases, true, &mut |_| {})
 }
 
 /// The body of a page file in a repository bundle (`pages/<file>`) as page
@@ -938,12 +1048,17 @@ fn relative_bundle_links(path: &str, body: &str) -> String {
     out.replace(&format!("](/{INDEX_FILE}"), &format!("]({up}{INDEX_FILE}"))
 }
 
+/// `before_act` is a test seam: it runs with a bundle entry's path immediately
+/// before the stale sweep unlinks it or a planned write replaces it, which is
+/// where an editor's save can land after the preservation pass classified the
+/// file. Production passes a no-op.
 fn export_okf_inner(
     pages: &[Page],
     target: &Path,
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
     relative_links: bool,
+    before_act: &mut dyn FnMut(&str),
 ) -> Result<ExportStats, WenlanError> {
     let mut stats = ExportStats::default();
     for dir in [target, &target.join(PAGES_DIR), &target.join(SOURCES_DIR)] {
@@ -1015,6 +1130,7 @@ fn export_okf_inner(
 
     std::fs::create_dir_all(target.join(PAGES_DIR))?;
     std::fs::create_dir_all(target.join(SOURCES_DIR))?;
+    let dirs = BundleDirs::open(target).map_err(WenlanError::Io)?;
 
     // Render every planned file before touching the tree, so the preservation
     // pass below can compare what is on disk against what this run would put
@@ -1069,7 +1185,7 @@ fn export_okf_inner(
         let planned_here = planned_bytes.get(entry.as_str()).map(Vec::as_slice);
         if bundle_file_state(target, entry, &old_digests, planned_here) == BundleFileState::Changed
         {
-            preserve_edited_bundle_file(target, entry)?;
+            preserve_edited_bundle_file(&dirs, entry)?;
         }
     }
 
@@ -1104,12 +1220,14 @@ fn export_okf_inner(
         if !marker_entry_is_safe(entry) {
             continue;
         }
-        let path = target.join(entry);
+        let Ok((dir, name)) = dirs.locate(entry) else {
+            continue;
+        };
         // Only a plain file is ours to remove. A directory or a symlink
         // standing where a bundle file was is somebody else's, and its
         // presence must not abort an export that has already written the
         // union marker: every retry would fail at the same entry.
-        match std::fs::symlink_metadata(&path) {
+        match dir.symlink_metadata(name) {
             Ok(m) if m.is_file() && !m.file_type().is_symlink() => {}
             Ok(_) => {
                 log::warn!("[okf] leaving {entry} alone: not a plain file");
@@ -1129,8 +1247,32 @@ fn export_okf_inner(
                 continue;
             }
         }
-        if let Err(e) = std::fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
+        before_act(entry);
+        // The preservation pass read this file some time ago. Unlinking by
+        // name now would delete a save that landed since, so the file is taken
+        // aside and its bytes classified again; only bytes that are still
+        // what the last export wrote are unlinked.
+        let still_ours = |bytes: &[u8]| {
+            classify_bundle_bytes(bytes, entry, &old_digests, None) == BundleFileState::Ours
+        };
+        match vault_fs::remove_if_unchanged(dir, name, CLASSIFY_SCAN_BYTES, still_ours) {
+            Ok(Disposal::Absent | Disposal::Removed) => {}
+            // Edited since it was classified, and put back. It stays listed
+            // with its digest, so the next run preserves it like any edit.
+            Ok(Disposal::Kept) => {
+                log::warn!("[okf] kept stale {entry}: it changed while it was being swept");
+                unswept.push(entry.clone());
+            }
+            Ok(Disposal::Displaced(aside)) => {
+                if let Err(e) = preserve_into_archive(&dirs, entry, dir, &aside) {
+                    log::warn!(
+                        "[okf] could not preserve edited stale {entry} (left as {aside}): {e}"
+                    );
+                    stats.failed += 1;
+                }
+                unswept.push(entry.clone());
+            }
+            Err(e) => {
                 log::warn!("[okf] could not remove stale {entry}: {e}");
                 unswept.push(entry.clone());
                 stats.failed += 1;
@@ -1148,11 +1290,18 @@ fn export_okf_inner(
         };
         let entry = format!("{PAGES_DIR}/{file}");
         let body = planned_bytes.get(&entry).expect("page rendered above");
-        match write_file_nofollow(&target.join(PAGES_DIR).join(file), body) {
-            Ok(()) => {
+        match write_bundle_file(&dirs, &entry, body, &old_digests, before_act) {
+            Ok(BundleWrite::Written) => {
                 stats.exported += 1;
                 written_ids.insert(id.as_str());
                 new_digests.insert(entry, digest_of(body));
+            }
+            Ok(BundleWrite::Kept) => {
+                log::warn!(
+                    "[okf] export skipped '{}': {entry} changed after it was checked and was kept",
+                    page.title
+                );
+                stats.failed += 1;
             }
             Err(e) => {
                 log::warn!("[okf] export failed for '{}': {}", page.title, e);
@@ -1164,11 +1313,18 @@ fn export_okf_inner(
         let name = crate::export::provenance::stub_filename(id);
         let entry = format!("{SOURCES_DIR}/{name}");
         let stub = planned_bytes.get(&entry).expect("stub rendered above");
-        if let Err(e) = write_file_nofollow(&target.join(SOURCES_DIR).join(&name), stub) {
-            log::warn!("[okf] source stub failed for '{id}': {e}");
-            stats.failed += 1;
-        } else {
-            new_digests.insert(entry, digest_of(stub));
+        match write_bundle_file(&dirs, &entry, stub, &old_digests, before_act) {
+            Ok(BundleWrite::Written) => {
+                new_digests.insert(entry, digest_of(stub));
+            }
+            Ok(BundleWrite::Kept) => {
+                log::warn!("[okf] source stub for '{id}' skipped: {entry} changed after it was checked and was kept");
+                stats.failed += 1;
+            }
+            Err(e) => {
+                log::warn!("[okf] source stub failed for '{id}': {e}");
+                stats.failed += 1;
+            }
         }
     }
     // The index lists only pages actually written: a failed page file must
@@ -1183,8 +1339,22 @@ fn export_okf_inner(
     if relative_links {
         index = relative_bundle_links(INDEX_FILE, &index);
     }
-    write_file_nofollow(&target.join(INDEX_FILE), index.as_bytes())?;
-    new_digests.insert(INDEX_FILE.to_string(), digest_of(index.as_bytes()));
+    match write_bundle_file(
+        &dirs,
+        INDEX_FILE,
+        index.as_bytes(),
+        &old_digests,
+        before_act,
+    )? {
+        BundleWrite::Written => {
+            new_digests.insert(INDEX_FILE.to_string(), digest_of(index.as_bytes()));
+        }
+        // Left as the person has it; the digest the last export recorded
+        // carries over below, and the next run preserves the edit.
+        BundleWrite::Kept => {
+            log::warn!("[okf] {INDEX_FILE} changed after it was checked and was kept");
+        }
+    }
     // A planned file that failed to write keeps whatever digest the previous
     // export recorded for it, so the next run can still tell an edit from the
     // bytes we left there. Digests for files this run removed are dropped:
@@ -2860,5 +3030,273 @@ mod tests {
         assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
         assert!(!missing.exists());
         assert!(marker_temps(dir.path()).is_empty());
+    }
+
+    // The tests below put an editor's save between the preservation pass that
+    // classified a bundle file and the sweep or write that acts on it.
+
+    fn export_with_hook(
+        pages: &[Page],
+        target: &Path,
+        before_act: &mut dyn FnMut(&str),
+    ) -> Result<ExportStats, WenlanError> {
+        export_okf_inner(
+            pages,
+            target,
+            &ConceptPathMap::new(),
+            &HashMap::new(),
+            false,
+            before_act,
+        )
+    }
+
+    /// Save the way an editor or sync client does: a new file renamed over the
+    /// name, so the exporter's open handle and inode are not involved.
+    fn save_by_replacing(path: &Path, text: &str) {
+        let scratch = path.with_extension("editor-tmp");
+        std::fs::write(&scratch, text).unwrap();
+        std::fs::rename(&scratch, path).unwrap();
+    }
+
+    fn private_names_in_bundle(root: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        for dir in [root.to_path_buf(), root.join("pages"), root.join("sources")] {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with(".wenlan-") && name.ends_with(".tmp") {
+                    found.push(name);
+                }
+            }
+        }
+        found
+    }
+
+    fn two_pages() -> Vec<Page> {
+        vec![
+            test_page("concept_a", "Alpha", "x"),
+            test_page("concept_b", "Beta", "y"),
+        ]
+    }
+
+    /// The stale sweep classified `pages/beta.md` as ours-unchanged, then an
+    /// editor saved over it. The unlink by name used to delete the save.
+    #[test]
+    fn stale_sweep_keeps_an_edit_saved_by_replacing_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = two_pages();
+        export_okf(&both, dir.path()).unwrap();
+        let ours = std::fs::read(dir.path().join("pages/beta.md")).unwrap();
+        let mine = "---\ntype: page\n---\n\nNotes I added to Beta, saved mid-export.\n";
+        let beta = dir.path().join("pages/beta.md");
+        let mut acted_on = Vec::new();
+
+        let stats = export_with_hook(&both[..1], dir.path(), &mut |entry| {
+            if entry == "pages/beta.md" {
+                acted_on.push(entry.to_string());
+                save_by_replacing(&beta, mine);
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            acted_on,
+            ["pages/beta.md"],
+            "the hook ran before the unlink"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&beta).unwrap(),
+            mine,
+            "the edit survives"
+        );
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+
+        // It stays listed with the digest of OUR bytes, so the next run
+        // recognizes it as an edit and preserves it.
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join(MARKER_FILE)).unwrap()).unwrap();
+        assert_eq!(
+            marker["digests"]["pages/beta.md"].as_str().unwrap(),
+            digest_of(&ours)
+        );
+        export_okf(&both[..1], dir.path()).unwrap();
+        assert!(!beta.exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md")).unwrap(),
+            mine
+        );
+    }
+
+    /// Same, for an editor that writes into the existing file.
+    #[test]
+    fn stale_sweep_keeps_an_edit_written_in_place_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = two_pages();
+        export_okf(&both, dir.path()).unwrap();
+        let beta = dir.path().join("pages/beta.md");
+
+        export_with_hook(&both[..1], dir.path(), &mut |entry| {
+            if entry == "pages/beta.md" {
+                std::fs::write(&beta, "typed in place\n").unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&beta).unwrap(), "typed in place\n");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// An untouched stale file is still removed by the new path.
+    #[test]
+    fn stale_sweep_still_removes_what_it_wrote() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = two_pages();
+        export_okf(&both, dir.path()).unwrap();
+        let mut acted_on = 0;
+        export_with_hook(&both[..1], dir.path(), &mut |entry| {
+            if entry == "pages/beta.md" {
+                acted_on += 1;
+            }
+        })
+        .unwrap();
+        assert_eq!(acted_on, 1);
+        assert!(!dir.path().join("pages/beta.md").exists());
+        assert!(!dir.path().join(".wenlan-archive").exists());
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// The planned write classified `pages/alpha.md` as safe to overwrite, then
+    /// an editor saved over it. The write used to truncate the save.
+    #[test]
+    fn planned_overwrite_keeps_an_edit_saved_by_replacing_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf(&[test_page("concept_a", "Alpha", "first body")], dir.path()).unwrap();
+        let later = vec![test_page("concept_a", "Alpha", "second body")];
+        let alpha = dir.path().join("pages/alpha.md");
+        let mine = "---\ntype: page\n---\n\nMy rewrite of Alpha, saved mid-export.\n";
+
+        let stats = export_with_hook(&later, dir.path(), &mut |entry| {
+            if entry == "pages/alpha.md" {
+                save_by_replacing(&alpha, mine);
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&alpha).unwrap(),
+            mine,
+            "not replaced"
+        );
+        assert_eq!((stats.exported, stats.failed), (0, 1), "reported, not done");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+        let index = std::fs::read_to_string(dir.path().join("index.md")).unwrap();
+        assert!(
+            !index.contains("alpha.md"),
+            "the index lists only written pages"
+        );
+
+        // The next run sees an edit, preserves it, and writes the page.
+        let stats = export_okf(&later, dir.path()).unwrap();
+        assert_eq!((stats.exported, stats.failed), (1, 0), "{stats:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md")).unwrap(),
+            mine
+        );
+        assert!(std::fs::read_to_string(&alpha)
+            .unwrap()
+            .contains("second body"));
+    }
+
+    #[test]
+    fn planned_overwrite_keeps_an_edit_written_in_place_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf(&[test_page("concept_a", "Alpha", "first body")], dir.path()).unwrap();
+        let later = vec![test_page("concept_a", "Alpha", "second body")];
+        let alpha = dir.path().join("pages/alpha.md");
+
+        let stats = export_with_hook(&later, dir.path(), &mut |entry| {
+            if entry == "pages/alpha.md" {
+                std::fs::write(&alpha, "typed in place\n").unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&alpha).unwrap(), "typed in place\n");
+        assert_eq!((stats.exported, stats.failed), (0, 1), "{stats:?}");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// A page whose file vanished (first export, or deleted by hand) is
+    /// written with a rename that cannot replace: a save that creates the name
+    /// first is kept.
+    #[test]
+    fn planned_write_does_not_replace_a_file_created_after_the_path_was_found_free() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        let alpha = dir.path().join("pages/alpha.md");
+        std::fs::remove_file(&alpha).unwrap();
+
+        let stats = export_with_hook(&pages, dir.path(), &mut |entry| {
+            if entry == "pages/alpha.md" {
+                std::fs::write(&alpha, "created by a sync client\n").unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&alpha).unwrap(),
+            "created by a sync client\n"
+        );
+        assert_eq!(stats.failed, 1, "{stats:?}");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// The index is classified like any other planned file.
+    #[test]
+    fn index_edit_saved_after_classification_is_kept_and_does_not_abort_the_export() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        let index = dir.path().join("index.md");
+
+        let stats = export_with_hook(&pages, dir.path(), &mut |entry| {
+            if entry == "index.md" {
+                save_by_replacing(&index, "my home note\n");
+            }
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&index).unwrap(), "my home note\n");
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        // A later run preserves it and writes a fresh index.
+        export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/index.md")).unwrap(),
+            "my home note\n"
+        );
+        assert!(std::fs::read_to_string(&index)
+            .unwrap()
+            .contains("alpha.md"));
+    }
+
+    /// Unedited re-exports do not churn the vault: an identical file is left
+    /// alone, so no delete-and-recreate for a watcher to see.
+    #[cfg(unix)]
+    #[test]
+    fn reexport_of_unchanged_pages_does_not_recreate_their_files() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        let before = std::fs::metadata(dir.path().join("pages/alpha.md"))
+            .unwrap()
+            .ino();
+        export_okf(&pages, dir.path()).unwrap();
+        let after = std::fs::metadata(dir.path().join("pages/alpha.md"))
+            .unwrap()
+            .ino();
+        assert_eq!(before, after);
+        assert!(private_names_in_bundle(dir.path()).is_empty());
     }
 }

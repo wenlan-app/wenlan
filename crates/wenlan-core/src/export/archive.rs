@@ -12,6 +12,7 @@
 
 use crate::error::WenlanError;
 use crate::export::knowledge::page_stem_clear_of_reserved;
+use crate::export::vault_fs;
 use cap_fs_ext::DirExt as _;
 use cap_std::fs::Dir;
 
@@ -71,10 +72,28 @@ fn archive_basename(filename: &str) -> (String, &'static str) {
 /// no symlink is followed. Already-absent is success -- the invariant is that
 /// the file is gone from `source`, not that this pass is the one that moved
 /// it.
+///
+/// The file is renamed into `archive/` under a private name FIRST, which
+/// atomically takes whatever is at `filename` at that instant, and only then
+/// given its final name with a rename that cannot replace. Probing for a free
+/// name and renaming afterwards left a window in which a sync client could
+/// create the destination, and `rename` replaces without a word.
 pub(crate) fn archive_file_from(
     root: &Dir,
     source: &Dir,
     filename: &str,
+) -> Result<(), WenlanError> {
+    archive_file_from_with_hook(root, source, filename, &mut |_| {})
+}
+
+/// [`archive_file_from`] with a seam before each attempt at a final name.
+/// `before_place` receives the candidate name in `archive/`. Production passes
+/// a no-op.
+fn archive_file_from_with_hook(
+    root: &Dir,
+    source: &Dir,
+    filename: &str,
+    before_place: &mut dyn FnMut(&str),
 ) -> Result<(), WenlanError> {
     match source.symlink_metadata(filename) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
@@ -87,24 +106,91 @@ pub(crate) fn archive_file_from(
         Err(error) => return Err(WenlanError::Io(error)),
     }
     let archive = open_archive_dir(root)?;
-    // `rename` replaces its destination without a word, and the destination
-    // here is an older archived copy -- the one thing under this root that the
-    // database cannot reproduce. Suffix until free.
-    let (stem, extension) = archive_basename(filename);
-    let mut target = format!("{stem}{extension}");
-    let mut attempt = 1;
-    while archive.symlink_metadata(&target).is_ok() {
-        attempt += 1;
-        if attempt > MAX_ARCHIVE_ATTEMPTS {
-            return Err(WenlanError::Conflict(
-                "page_archive_target_exhausted".to_string(),
-            ));
-        }
-        target = format!("{stem}-{attempt}{extension}");
+    let held = vault_fs::private_name("aside");
+    match source.rename(filename, &archive, &held) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(WenlanError::Io(error)),
     }
+    // The pre-check above and the rename are two steps; what was moved is
+    // whatever sat at the name at the second. Anything that is not a plain
+    // file goes back rather than being filed as an archived page.
+    let plain = archive
+        .symlink_metadata(&held)
+        .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink());
+    if !plain {
+        if let Err(error) = vault_fs::rename_noreplace(&archive, &held, source, filename) {
+            log::warn!("[archive] could not put {filename} back from {held}: {error}");
+        }
+        return Err(WenlanError::Conflict(
+            "page_projection_target_invalid".to_string(),
+        ));
+    }
+    place_held(&archive, &held, filename, before_place)
+}
+
+/// Archive a file that was already taken aside in `source` under the private
+/// name `aside` (see [`vault_fs::take_aside`]) and turned out to be an edit.
+/// `filename` is the name it had, which decides its name in `archive/`.
+pub(crate) fn archive_aside_from(
+    root: &Dir,
+    source: &Dir,
+    aside: &str,
+    filename: &str,
+) -> Result<(), WenlanError> {
+    let archive = open_archive_dir(root)?;
+    let held = vault_fs::private_name("aside");
     source
-        .rename(filename, &archive, &target)
-        .map_err(WenlanError::Io)
+        .rename(aside, &archive, &held)
+        .map_err(WenlanError::Io)?;
+    place_held(&archive, &held, filename, &mut |_| {})
+}
+
+fn place_held(
+    archive: &Dir,
+    held: &str,
+    filename: &str,
+    before_place: &mut dyn FnMut(&str),
+) -> Result<(), WenlanError> {
+    let (stem, extension) = archive_basename(filename);
+    // The destination can be an older archived copy -- the one thing under
+    // this root that the database cannot reproduce -- so it is never replaced:
+    // suffix until a rename that refuses to replace succeeds.
+    match place_suffixed(archive, held, &stem, extension, before_place).map_err(WenlanError::Io)? {
+        Some(_) => Ok(()),
+        // The bytes stay in `archive/` under the private name, so nothing is
+        // lost; the caller sees the same refusal as before.
+        None => Err(WenlanError::Conflict(
+            "page_archive_target_exhausted".to_string(),
+        )),
+    }
+}
+
+/// Give the file at `held` in `dir` the first free name among `stem`,
+/// `stem-2`, ... `stem-100`, each with `extension`. A name that turns out to be
+/// taken at the moment of the rename is skipped, not replaced. Returns the name
+/// used, or `None` when every candidate was taken.
+pub(crate) fn place_suffixed(
+    dir: &Dir,
+    held: &str,
+    stem: &str,
+    extension: &str,
+    before_place: &mut dyn FnMut(&str),
+) -> std::io::Result<Option<String>> {
+    for attempt in 1..=MAX_ARCHIVE_ATTEMPTS {
+        let target = if attempt == 1 {
+            format!("{stem}{extension}")
+        } else {
+            format!("{stem}-{attempt}{extension}")
+        };
+        before_place(&target);
+        match vault_fs::rename_noreplace(dir, held, dir, &target) {
+            Ok(()) => return Ok(Some(target)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -190,5 +276,101 @@ mod tests {
     fn missing_file_is_success() {
         let (_dir, root) = temp_root();
         archive_file_from(&root, &root, "gone.md").unwrap();
+    }
+
+    /// A destination created after the name was settled on -- a sync client
+    /// restoring an older archived copy, say -- is not replaced. The file
+    /// lands under the next suffix instead.
+    #[test]
+    fn a_destination_created_after_the_name_is_chosen_is_not_replaced() {
+        let (dir, root) = temp_root();
+        std::fs::write(dir.path().join("alpha.md"), b"the page").unwrap();
+        let archive_path = dir.path().join("archive");
+        let mut created = false;
+        archive_file_from_with_hook(&root, &root, "alpha.md", &mut |candidate| {
+            if !created {
+                assert_eq!(
+                    candidate, "alpha.md",
+                    "the first candidate is the plain name"
+                );
+                std::fs::write(archive_path.join(candidate), b"arrived meanwhile").unwrap();
+                created = true;
+            }
+        })
+        .unwrap();
+        assert!(created, "the hook ran before the first placement");
+        assert_eq!(
+            std::fs::read(dir.path().join("archive/alpha.md")).unwrap(),
+            b"arrived meanwhile",
+            "the destination that appeared is untouched"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("archive/alpha-2.md")).unwrap(),
+            b"the page",
+            "the archived file took the next suffix"
+        );
+        assert!(!dir.path().join("alpha.md").exists());
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("archive"))
+                .unwrap()
+                .count(),
+            2,
+            "no private name is left behind"
+        );
+    }
+
+    /// Every suffix taken: the same refusal as before, and the file is still
+    /// in `archive/` (under a private name) rather than lost.
+    #[test]
+    fn exhausted_suffixes_refuse_without_losing_the_file() {
+        let (dir, root) = temp_root();
+        std::fs::create_dir(dir.path().join("archive")).unwrap();
+        std::fs::write(dir.path().join("archive/alpha.md"), b"1").unwrap();
+        for n in 2..=MAX_ARCHIVE_ATTEMPTS {
+            std::fs::write(dir.path().join(format!("archive/alpha-{n}.md")), b"n").unwrap();
+        }
+        std::fs::write(dir.path().join("alpha.md"), b"the page").unwrap();
+        let error = archive_file_from(&root, &root, "alpha.md").unwrap_err();
+        assert!(
+            matches!(&error, WenlanError::Conflict(m) if m == "page_archive_target_exhausted"),
+            "{error:?}"
+        );
+        assert!(!dir.path().join("alpha.md").exists());
+        let kept: Vec<_> = std::fs::read_dir(dir.path().join("archive"))
+            .unwrap()
+            .map(|e| e.unwrap())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(".wenlan-aside-")
+            })
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(kept[0].path()).unwrap(), b"the page");
+    }
+
+    /// A directory where a file was expected is still a conflict, untouched.
+    #[test]
+    fn a_directory_is_a_conflict_and_stays_put() {
+        let (dir, root) = temp_root();
+        std::fs::create_dir(dir.path().join("alpha.md")).unwrap();
+        let error = archive_file_from(&root, &root, "alpha.md").unwrap_err();
+        assert!(matches!(error, WenlanError::Conflict(_)), "{error:?}");
+        assert!(dir.path().join("alpha.md").is_dir());
+    }
+
+    /// An edit set aside by the stub GC archives under the name it had.
+    #[test]
+    fn an_aside_archives_under_its_original_name() {
+        let (dir, root) = temp_root();
+        std::fs::create_dir(dir.path().join("_sources")).unwrap();
+        let sources = root.open_dir("_sources").unwrap();
+        std::fs::write(dir.path().join("_sources/.wenlan-aside-x.tmp"), b"edit").unwrap();
+        archive_aside_from(&root, &sources, ".wenlan-aside-x.tmp", "mem_1.md").unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("archive/mem_1.md")).unwrap(),
+            b"edit"
+        );
+        assert!(!dir.path().join("_sources/.wenlan-aside-x.tmp").exists());
     }
 }
