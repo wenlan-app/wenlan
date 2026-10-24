@@ -100,3 +100,9 @@ An `AGENTS.md` instruction must change agent behavior in that directory. Module 
 environment-flag wiring, experimental receipts, benchmark statistics, and long-form
 rationale go in the closest `REFERENCE.md` or existing `docs/` page. Link to them from
 the short instruction file; do not copy them back into always-loaded context.
+
+<!-- WENLAN:START -->
+## Wiki
+
+This repository has a wiki written by Wenlan in `wiki/`. Start at `wiki/index.md`. Each page ends with the code lines it relies on. Read the page for an unfamiliar part before changing it, and check the cited lines: when a page and the code disagree, the code wins.
+<!-- WENLAN:END -->

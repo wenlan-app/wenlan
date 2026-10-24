@@ -57,7 +57,7 @@ A bare port (`17917`) or `host:port` is completed to `http://127.0.0.1:17917` /
 When a request to a loopback daemon cannot connect, the CLI automatically starts
 the registered background service (`com.wenlan.server`) and waits for its health
 endpoint. Remote or invalid `WENLAN_HOST` values keep the original connection
-error. `status`, `background`, and `restart` skip autostart; set
+error. `status`, `background`, `restart`, and `connect` skip autostart; set
 `WENLAN_NO_AUTOSTART=1` to opt out for other commands.
 
 ## Common tasks
