@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { installCodeMirrorDomPolyfills, pasteText, pressKey } from "./editorTestUtils";
+import {
+  pastedSourceUrl,
+  setSourceLinkUrls,
+  sourceLinkMarkdown,
+  sourceLinkUrls,
+  sourcePaste,
+  type PastedSourceSaved,
+  type SourcePasteOptions,
+} from "./sourcePaste";
+import { writingPresentation } from "./writingPresentation";
+
+beforeAll(() => installCodeMirrorDomPolyfills());
+
+const views: EditorView[] = [];
+afterEach(() => {
+  for (const view of views.splice(0)) view.destroy();
+  document.body.replaceChildren();
+  vi.useRealTimers();
+});
+
+const labels = {
+  save: "Save as source", dismiss: "Dismiss", saving: "Saving…", saved: "Saved as source",
+  savedLinkOnly: "Saved as source, link only", failed: "Couldn't save this link.", retry: "Try again", undo: "Undo",
+};
+
+const X_URL = "https://x.com/simonw/status/1849";
+
+function editor(doc: string, at: number, options: Partial<SourcePasteOptions> = {}): EditorView {
+  const parent = document.createElement("div");
+  document.body.append(parent);
+  const view = new EditorView({
+    parent,
+    state: EditorState.create({
+      doc,
+      selection: EditorSelection.single(at),
+      extensions: [
+        markdown({ base: markdownLanguage }),
+        sourceLinkUrls,
+        sourcePaste({ blocked: () => false, enabled: () => true, labels: () => labels, mode: "auto", save: vi.fn(), ...options }),
+      ],
+    }),
+  });
+  views.push(view);
+  return view;
+}
+
+function saved(title: string, linkOnly = false, undo = vi.fn(async () => undefined)): PastedSourceSaved {
+  return { title, linkOnly, undo };
+}
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const note = (view: EditorView) => view.dom.querySelector<HTMLElement>(".cm-source-paste");
+const buttonNamed = (view: EditorView, name: string) =>
+  [...view.dom.querySelectorAll<HTMLButtonElement>(".cm-source-paste button")].find((b) => b.textContent === name || b.getAttribute("aria-label") === name);
+
+describe("pasted links as sources", () => {
+  it("only takes one public http(s) address", () => {
+    expect(pastedSourceUrl(`  ${X_URL}\n`)).toBe(X_URL);
+    expect(pastedSourceUrl("see https://x.com/a")).toBeNull();
+    expect(pastedSourceUrl("ftp://example.com/a")).toBeNull();
+    expect(pastedSourceUrl("https://me:pw@example.com/a")).toBeNull();
+    expect(pastedSourceUrl("http://localhost:3000")).toBeNull();
+  });
+
+  it("writes the link with its title, escaping brackets", () => {
+    expect(sourceLinkMarkdown("A [draft]  post", "https://a.com/x")).toBe("[A \\[draft\\] post](https://a.com/x)");
+    expect(sourceLinkMarkdown("  ", "https://a.com/x")).toBe("https://a.com/x");
+  });
+
+  it("saves a pasted link at once and shows it under its title", async () => {
+    const save = vi.fn(async () => saved("Simon on local-first"));
+    const view = editor("Reactions: ", 11, { save });
+    const event = pasteText(view.contentDOM, X_URL);
+    expect(event.defaultPrevented).toBe(true);
+    expect(save).toHaveBeenCalledWith(X_URL);
+    expect(note(view)?.textContent).toBe("Saving…");
+    await flush();
+    expect(view.state.doc.toString()).toBe(`Reactions: [Simon on local-first](${X_URL})`);
+    expect(note(view)?.textContent).toBe("Saved as sourceUndo");
+  });
+
+  it("undo turns it back into the plain link and takes the save back", async () => {
+    const undo = vi.fn(async () => undefined);
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post", false, undo)) });
+    pasteText(view.contentDOM, X_URL);
+    await flush();
+    buttonNamed(view, "Undo")!.click();
+    expect(view.state.doc.toString()).toBe(X_URL);
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(note(view)).toBeNull();
+  });
+
+  it("says when only the link was kept", async () => {
+    const view = editor("", 0, { save: vi.fn(async () => saved("X link", true)) });
+    pasteText(view.contentDOM, X_URL);
+    await flush();
+    expect(note(view)?.textContent).toBe("Saved as source, link onlyUndo");
+  });
+
+  it("offers a retry when saving fails, and keeps the link", async () => {
+    const save = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(saved("Post"));
+    const view = editor("", 0, { save });
+    pasteText(view.contentDOM, X_URL);
+    await flush();
+    expect(view.state.doc.toString()).toBe(X_URL);
+    expect(note(view)?.textContent).toBe("Couldn't save this link.Try again");
+    buttonNamed(view, "Try again")!.click();
+    await flush();
+    expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`);
+  });
+
+  it("asks first in ask mode, and typing on leaves a plain link", () => {
+    const save = vi.fn(async () => saved("Post"));
+    const view = editor("", 0, { save, mode: "ask" });
+    pasteText(view.contentDOM, X_URL);
+    expect(save).not.toHaveBeenCalled();
+    expect(buttonNamed(view, "Save as source")).toBeDefined();
+    view.dispatch({ changes: { from: view.state.doc.length, insert: " nice" }, selection: { anchor: view.state.doc.length + 5 } });
+    expect(note(view)).toBeNull();
+    expect(view.state.doc.toString()).toBe(`${X_URL} nice`);
+  });
+
+  it("Escape dismisses the offer", () => {
+    const view = editor("", 0, { mode: "ask" });
+    pasteText(view.contentDOM, X_URL);
+    pressKey(view.contentDOM, "Escape");
+    expect(note(view)).toBeNull();
+  });
+
+  it("leaves code, link targets and repeated links to the normal paste", async () => {
+    const save = vi.fn(async () => saved("Post"));
+    const inCode = editor("```\n\n```", 4, { save });
+    pasteText(inCode.contentDOM, X_URL);
+    const inTarget = editor("[read](", 7, { save });
+    pasteText(inTarget.contentDOM, X_URL);
+    const known = editor("", 0, { save });
+    known.dispatch({ effects: setSourceLinkUrls.of(new Set([X_URL])) });
+    pasteText(known.contentDOM, X_URL);
+    expect(save).not.toHaveBeenCalled();
+    expect([inCode, inTarget, known].map(note)).toEqual([null, null, null]);
+    const twice = editor("", 0, { save });
+    pasteText(twice.contentDOM, X_URL);
+    await flush();
+    twice.dispatch({ changes: { from: twice.state.doc.length, insert: "\n" }, selection: { anchor: twice.state.doc.length + 1 } });
+    pasteText(twice.contentDOM, X_URL);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when saving is off for this editor", () => {
+    const save = vi.fn(async () => saved("Post"));
+    const view = editor("", 0, { enabled: () => false, save });
+    pasteText(view.contentDOM, X_URL);
+    expect(save).not.toHaveBeenCalled();
+    expect(note(view)).toBeNull();
+  });
+});
+
+describe("links saved as sources", () => {
+  it("show the site icon in place of the outside-link arrow", () => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: `[Post](${X_URL}) and [Other](https://example.com/a)\n\nend`,
+        selection: EditorSelection.single(60),
+        extensions: [markdown({ base: markdownLanguage }), sourceLinkUrls, writingPresentation()],
+      }),
+    });
+    views.push(view);
+    view.dispatch({ effects: setSourceLinkUrls.of(new Set([X_URL])) });
+    expect(view.dom.querySelectorAll(".cm-source-link-icon")).toHaveLength(1);
+    expect(view.dom.querySelectorAll(".cm-writing-link-external")).toHaveLength(1);
+  });
+});

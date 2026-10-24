@@ -756,6 +756,17 @@ const en = {
     label: "Link a page",
     empty: "No matching pages",
   },
+  sourcePaste: {
+    save: "Save as source",
+    dismiss: "Dismiss",
+    saving: "Saving…",
+    saved: "Saved as source",
+    savedLinkOnly: "Saved as source, link only",
+    failed: "Couldn't save this link.",
+    retry: "Try again",
+    undo: "Undo",
+    linkTitle: "{{app}} link",
+  },
   pageAttachments: {
     failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
     adding: "Adding {{name}}…",
@@ -3653,6 +3664,17 @@ const zhHans = {
     label: "链接笔记",
     empty: "没有匹配的笔记",
   },
+  sourcePaste: {
+    save: "存为来源",
+    dismiss: "关闭",
+    saving: "正在保存…",
+    saved: "已存为来源",
+    savedLinkOnly: "已存为来源，只存了网址",
+    failed: "无法保存这个网址。",
+    retry: "再试一次",
+    undo: "撤销",
+    linkTitle: "{{app}} 链接",
+  },
   pageAttachments: {
     failed: "无法加入 {{name}}。页面里只能放图片和视频。",
     adding: "正在加入 {{name}}…",
@@ -6504,6 +6526,17 @@ const zhHant = {
   linkCompletion: {
     label: "連結筆記",
     empty: "沒有相符的筆記",
+  },
+  sourcePaste: {
+    save: "存成來源",
+    dismiss: "關閉",
+    saving: "儲存中…",
+    saved: "已存成來源",
+    savedLinkOnly: "已存成來源，只存了網址",
+    failed: "無法儲存這個網址。",
+    retry: "再試一次",
+    undo: "撤銷",
+    linkTitle: "{{app}} 連結",
   },
   pageAttachments: {
     failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",

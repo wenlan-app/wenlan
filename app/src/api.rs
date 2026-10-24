@@ -1004,6 +1004,20 @@ impl WenlanClient {
             .map_err(|e| format!("Parse {}: {}", path, e))
     }
 
+    /// Read a public page's title and text through the daemon, without saving it.
+    pub async fn fetch_webpage(
+        &self,
+        url: &str,
+    ) -> Result<wenlan_types::responses::FetchWebpageResponse, String> {
+        self.post_json(
+            "/api/webpage/fetch",
+            &wenlan_types::requests::FetchWebpageRequest {
+                url: url.to_string(),
+            },
+        )
+        .await
+    }
+
     pub async fn distill_review(&self) -> Result<DistillReviewResponse, String> {
         self.post_json("/api/distill", &DistillReviewRequest {})
             .await

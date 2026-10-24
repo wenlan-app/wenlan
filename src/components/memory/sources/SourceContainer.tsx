@@ -111,7 +111,7 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
 }
 
 export default function SourceContainer({ location, search, filter, lens, onSearchChange, onFilterChange, onLensChange, onClearFilters, onNavigate, onAdd, onOpenDocument }: Props) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [selectedFile, setSelectedFile] = useState<SourceDirEntry | null>(null);
   const sourcesQuery = useQuery({ queryKey: ["registeredSources"], queryFn: listRegisteredSources });
@@ -166,7 +166,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
   }).map((entry) => {
     const path = childPath(location.path, entry.name);
     const indexed = indexedByPath.get(`${location.sourceId}::${path}`);
-    const presentation = getSourcePresentation(indexed ?? { source: "file", source_id: path, title: entry.name }, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt") });
+    const presentation = getSourcePresentation(indexed ?? { source: "file", source_id: path, title: entry.name }, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt"), language: i18n.language });
     const kind = entry.isDirectory ? "folder" : presentation.iconKind;
     return {
       id: path,

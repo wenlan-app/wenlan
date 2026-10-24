@@ -11,7 +11,7 @@ import { SourceTypeIcon } from "../sources/SourceTypeIcon";
 import "../sources/SourceLibrary.css";
 
 export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegisterPreviewFlush }: { spaceId: string; spaceName: string; lens: AssetLens; onOpenSource?: (file: IndexedFileInfo) => void; onRegisterPreviewFlush?: (flush: (() => Promise<boolean>) | null) => void }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [selected, setSelected] = useState<IndexedFileInfo | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
   const closePreview = () => {
@@ -34,6 +34,7 @@ export function SpaceSources({ spaceId, spaceName, lens, onOpenSource, onRegiste
         const presentation = getSourcePresentation(file, {
           document: t("sourceLibrary.document"),
           webExcerpt: t("sourceLibrary.webExcerpt"),
+          language: i18n.language,
         });
         return <li key={`${file.source}:${file.source_id}`}><button type="button" className="source-library-row" onClick={(event) => { triggerRef.current = event.currentTarget; setSelected(file); }}>
           <span className="source-library-icon"><SourceTypeIcon kind={presentation.iconKind} /></span>
