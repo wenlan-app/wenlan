@@ -923,6 +923,9 @@ pub enum WebpageExtraction {
     HtmlSemantic,
     HtmlBody,
     PlainText,
+    /// Only the page's link preview text (`og:description` or similar): the
+    /// body had none, as on a sign-in shell.
+    HtmlMetadata,
 }
 
 /// Untrusted external text, not a saved source or an instruction to an agent.
@@ -936,6 +939,9 @@ pub struct FetchWebpageResponse {
     pub content: String,
     pub content_type: String,
     pub extraction: WebpageExtraction,
+    /// The text the page gives link previews, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub untrusted: bool,
 }
 

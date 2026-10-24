@@ -88,7 +88,7 @@ import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import type { PastedSourceSaved } from "./editor/sourcePaste";
 import { sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
 import { sourceLinkKey } from "./editor/sourceLinkKey";
-import { SHARE_PREVIEW_APPS, sharePreviewText } from "./sources/sharePreview";
+import { SHARE_PREVIEW_APPS, sharePreview as readSharePreview, sharePreviewTitle } from "./sources/sharePreview";
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
@@ -1828,10 +1828,14 @@ export default function PageDetail({
     if (!signIn || sharePreview) {
       try {
         const fetched = await fetchWebpage(url);
-        if (sharePreview) {
-          // Only the words the site gives link previews; the rest is its sign-in wall.
-          title = sharePreviewText(fetched.title) ?? "";
-          content = title;
+        if (sharePreview && app) {
+          // Only what the site gives link previews; the rest is its sign-in wall.
+          const preview = readSharePreview(app, fetched);
+          if (preview) {
+            const short = sharePreviewTitle(preview.text);
+            title = preview.who ? t("sourcePaste.previewTitle", { who: preview.who, text: short }) : short;
+            content = preview.who ? t("sourcePaste.previewTitle", { who: preview.who, text: preview.text }) : preview.text;
+          }
         } else {
           title = fetched.title.trim();
           content = fetched.content.trim();
