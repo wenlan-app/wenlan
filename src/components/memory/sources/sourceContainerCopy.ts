@@ -46,7 +46,7 @@ export const enSourceContainer = {
   "aiVaultHeading": "AI changes to your notes",
   "aiFolderHeading": "AI changes in this folder",
   "aiAskFirst": "Ask me first",
-  "aiAskFirstHint": "AI can suggest a change. Your file changes only when you accept it.",
+  "aiAskFirstHint": "AI changes wait until you accept them.",
   "aiNever": "Never",
   "aiNeverHint": "AI only cites it.",
   "aiFromFile": "Set on this note.",

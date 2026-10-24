@@ -201,7 +201,7 @@ function SteepModeRow({ automatic, loading, saving, readiness, error, onChoose }
   );
 }
 
-/** "Lock pages I've written": AI changes to pages the user wrote or edited
+/** "Ask me first on pages I wrote": AI changes to pages the user wrote or edited
  * wait for review. Switching it on also locks the pages they already wrote and
  * says how many in one grey line; switching it off unlocks nothing. */
 function LockMyPagesRow() {
