@@ -13,6 +13,7 @@ import type {
 } from "../../../lib/tauri";
 import type { CitationState } from "../../../lib/pageCitations";
 import { basisCountLabel, prettyAgent, relativeMs, revisionSummary, revisionWriterLabel } from "./format";
+import { sourceLocatorLabel } from "../sources/sourcePresentation";
 import PageInfoCode from "./PageInfoCode";
 import PageInfoNotes from "./PageInfoNotes";
 import "./NoteInfo.css";
@@ -335,7 +336,7 @@ export default function PageInfo({
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {locator}
+                        {sourceLocatorLabel(locator)}
                       </span>
                       {mem.title && (
                         <span

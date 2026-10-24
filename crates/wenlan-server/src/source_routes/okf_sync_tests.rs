@@ -415,6 +415,174 @@ async fn okf_links_resolve_when_the_target_arrives_and_retire_when_it_vanishes()
     );
 }
 
+/// A typed `INSTRUCTIONS.md` that is momentarily malformed mid-save is still on
+/// disk. The scan cannot tell whether it is typed, so sync keeps what it
+/// imported, reports the file as an error, and re-imports it once it parses.
+#[tokio::test]
+async fn okf_sync_keeps_a_typed_instructions_file_while_it_is_malformed() {
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let pages = tempfile::tempdir().unwrap();
+    let bundle = tempfile::tempdir().unwrap();
+    let root = bundle.path();
+    let instructions = write(root, "INSTRUCTIONS.md", &concept("Runbook", "", ""));
+    write(root, "concepts/alpha.md", &concept("Alpha", "", ""));
+    register_okf_source(root, None, pages.path());
+    let (db, _db_dir) = new_test_db().await;
+    let page = source_page_id(SOURCE_ID, &key(&instructions));
+
+    let stats = sync(&db).await;
+    assert_eq!((stats.files_found, stats.ingested, stats.errors), (2, 2, 0));
+    assert_eq!(drain(&db).await, 2);
+    let imported = db
+        .get_memories_by_source_id("memory", &doc_id(&instructions))
+        .await
+        .unwrap();
+    assert!(!imported.is_empty());
+    assert!(db.get_okf_concept(&page).await.unwrap().is_some());
+    assert!(db
+        .get_sync_state(SOURCE_ID, &key(&instructions))
+        .await
+        .unwrap()
+        .is_some());
+
+    // Mid-save: the frontmatter no longer parses.
+    let valid = std::fs::read_to_string(&instructions).unwrap();
+    std::fs::write(
+        &instructions,
+        valid.replacen("type: concept", "type: [concept", 1),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        let stats = sync(&db).await;
+        assert_eq!(stats.errors, 1, "the failure is reported: {stats:?}");
+        assert_eq!(stats.error_detail.as_deref(), Some("file_read_errors"));
+        assert_eq!(stats.files_found, 1, "only the alpha concept is scanned");
+        assert_eq!(loaded_source().last_sync_errors, 1);
+        assert_eq!(
+            db.get_memories_by_source_id("memory", &doc_id(&instructions))
+                .await
+                .unwrap()
+                .len(),
+            imported.len(),
+            "the last good import is kept"
+        );
+        assert!(db.get_okf_concept(&page).await.unwrap().is_some());
+        assert!(db
+            .get_sync_state(SOURCE_ID, &key(&instructions))
+            .await
+            .unwrap()
+            .is_some());
+        assert!(
+            db.get_page(&page)
+                .await
+                .unwrap()
+                .is_some_and(|row| row.stale_reason.as_deref() != Some("source_removed")),
+            "the page is not flagged as removed"
+        );
+    }
+
+    // Saved again, with new content: re-imported normally, no error left.
+    std::fs::write(&instructions, concept("Runbook Revised", "", "")).unwrap();
+    let stats = sync(&db).await;
+    assert_eq!((stats.errors, stats.error_detail), (0, None));
+    assert_eq!(stats.ingested, 1, "the revised file is handed over");
+    assert!(queued(&db, &instructions).await);
+    drain(&db).await;
+    let revised = db
+        .get_memories_by_source_id("memory", &doc_id(&instructions))
+        .await
+        .unwrap();
+    assert!(revised
+        .iter()
+        .any(|chunk| chunk.content.contains("Runbook Revised")));
+    assert_eq!(loaded_source().last_sync_errors, 0);
+}
+
+/// Keeping an unclassifiable file is not a blanket exemption: deleting the
+/// file, or removing its `type` so that it is confirmed untyped, still removes
+/// what it imported.
+#[tokio::test]
+async fn okf_sync_still_removes_an_instructions_file_that_is_deleted_or_becomes_untyped() {
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let pages = tempfile::tempdir().unwrap();
+    let bundle = tempfile::tempdir().unwrap();
+    let root = bundle.path();
+    let top = write(root, "INSTRUCTIONS.md", &concept("Runbook", "", ""));
+    let nested = write(root, "ops/INSTRUCTIONS.md", &concept("Ops", "", ""));
+    register_okf_source(root, None, pages.path());
+    let (db, _db_dir) = new_test_db().await;
+    sync(&db).await;
+    assert_eq!(drain(&db).await, 2);
+    for path in [&top, &nested] {
+        assert!(db
+            .get_okf_concept(&source_page_id(SOURCE_ID, &key(path)))
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    std::fs::remove_file(&top).unwrap();
+    std::fs::write(&nested, "# How to edit this folder\n").unwrap();
+    let stats = sync(&db).await;
+
+    assert_eq!(stats.errors, 0, "{stats:?}");
+    for path in [&top, &nested] {
+        assert!(db
+            .get_memories_by_source_id("memory", &doc_id(path))
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(db
+            .get_okf_concept(&source_page_id(SOURCE_ID, &key(path)))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(db
+            .get_sync_state(SOURCE_ID, &key(path))
+            .await
+            .unwrap()
+            .is_none());
+    }
+}
+
+/// Only a file that imported before has state to keep, so only it is a file
+/// error. A malformed `INSTRUCTIONS.md` that never imported is skipped quietly,
+/// as it was before, and imports once it parses.
+#[tokio::test]
+async fn okf_sync_skips_a_never_imported_malformed_instructions_file_quietly() {
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let pages = tempfile::tempdir().unwrap();
+    let bundle = tempfile::tempdir().unwrap();
+    let root = bundle.path();
+    let valid = concept("Runbook", "", "");
+    let instructions = write(
+        root,
+        "INSTRUCTIONS.md",
+        &valid.replacen("type: concept", "type: [concept", 1),
+    );
+    write(root, "concepts/alpha.md", &concept("Alpha", "", ""));
+    register_okf_source(root, None, pages.path());
+    let (db, _db_dir) = new_test_db().await;
+
+    let stats = sync(&db).await;
+    assert_eq!((stats.files_found, stats.errors), (1, 0), "{stats:?}");
+    assert_eq!(loaded_source().last_sync_errors, 0);
+    assert!(db
+        .get_sync_state(SOURCE_ID, &key(&instructions))
+        .await
+        .unwrap()
+        .is_none());
+    drain(&db).await;
+
+    std::fs::write(&instructions, &valid).unwrap();
+    let stats = sync(&db).await;
+    assert_eq!((stats.ingested, stats.errors), (1, 0), "{stats:?}");
+    assert!(queued(&db, &instructions).await);
+}
+
 #[tokio::test]
 async fn okf_same_bytes_rename_rekeys_the_concept_and_its_linkers_re_resolve() {
     let _lock = data_dir_lock().await;

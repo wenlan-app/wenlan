@@ -488,42 +488,348 @@ pub(crate) fn modified_unix_seconds(metadata: &fs::Metadata) -> i64 {
 /// in `catch_unwind` upholds the "one bad file never aborts" contract. This is
 /// a sync CPU function — callers on async paths wrap it in `spawn_blocking`.
 ///
-/// That guard covers panics, and only panics. It does NOT make arbitrary PDF
-/// input safe, and one live advisory proves it: RUSTSEC-2026-0187 is a stack
-/// overflow in `lopdf` (a ~21 KB PDF holding a 10,000-deep nested array), and a
-/// stack overflow aborts the process instead of unwinding, so `catch_unwind`
-/// never sees it. Folder ingestion feeds untrusted PDFs through here, so a
-/// crafted file in a watched folder can still take the daemon down.
+/// That guard covers panics, and only panics: a stack overflow aborts the
+/// process instead of unwinding. `lopdf` 0.42 (pulled in by `pdf-extract`
+/// 0.12.1) bounds the nesting depth that RUSTSEC-2026-0187 exploited, but any
+/// future overflow in the parser would still bypass this guard.
 ///
-/// Worse, the abort repeats. Startup requeues rows left `in_progress` by a
-/// crash (`MemoryDB::reset_in_progress_documents`) and clears their retry
-/// schedule, and the macOS service is installed with launchd `KeepAlive` on
-/// failure, so the same file is re-read after each restart until someone
-/// removes it. `app/src/sources/local_files.rs` parses PDFs with no guard at
-/// all.
-///
-/// We are knowingly still exposed, because no *published* `pdf-extract` gives
-/// both properties. 0.12 is the first to require `lopdf ^0.42` (there is no
-/// 0.11), and 0.12 is exactly what `tests/pdf_per_page_font_decoding.rs` exists
-/// to keep out: it caches fonts by local resource name for the whole document,
-/// so a later `/F1` decodes with an earlier font and extraction returns wrong
-/// text as `Ok`. Corrupt memories are silent; this crash is at least loud.
-///
-/// The open path is a pinned `pdf-extract` 0.10.0 whose only change is its
-/// `lopdf` requirement raised to 0.42. That combination has been verified to
-/// compile unmodified and to keep both font tests passing, but it needs a
-/// vendored or forked source, so it is a dependency-policy call rather than a
-/// version bump. Otherwise, wait for the per-page font fix upstream
-/// (jrmuizel/pdf-extract#157).
+/// Before extraction the document goes through [`plan_form_font_scoping`]:
+/// `pdf-extract` 0.12 caches fonts by local resource name (`/F1`) for a whole
+/// page, Form XObjects drawn on it included, so a form whose own resources
+/// rebind `/F1` would otherwise decode with the page's font and return wrong
+/// text as `Ok` (issue #617, `tests/pdf_per_page_font_decoding.rs`). That step
+/// is best-effort: if it fails, or the rewritten document fails to extract,
+/// the untouched document is extracted exactly as `pdf-extract` would.
 pub fn extract_pdf_text(bytes: &[u8]) -> Result<String, String> {
     let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pdf_extract::extract_text_from_mem(bytes)
+        extract_pdf_text_scoped(bytes)
     }));
     match parsed {
         Ok(Ok(text)) => Ok(normalize_extracted_text(&text)),
         Ok(Err(err)) => Err(format!("pdf parse failed: {err}")),
         Err(_) => Err("pdf parse failed: parser panicked on malformed input".to_string()),
     }
+}
+
+/// `pdf_extract::extract_text_from_mem`, with form font names scoped first.
+fn extract_pdf_text_scoped(bytes: &[u8]) -> Result<String, pdf_extract::OutputError> {
+    let mut doc = load_pdf_for_extraction(bytes)?;
+    let rewritten = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        plan_form_font_scoping(&doc)
+    }))
+    .unwrap_or_default();
+    if rewritten.is_empty() {
+        return output_pdf_text(&doc);
+    }
+    apply_form_font_scoping(&mut doc, rewritten);
+    let scoped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| output_pdf_text(&doc)));
+    match scoped {
+        Ok(Ok(text)) => Ok(text),
+        // Never let the rewrite turn a document that extracted before into a
+        // failure: retry on a fresh, untransformed copy.
+        _ => output_pdf_text(&load_pdf_for_extraction(bytes)?),
+    }
+}
+
+/// Load and, like `pdf-extract`'s private `maybe_decrypt`, open an encrypted
+/// document with the empty user password (an error otherwise).
+fn load_pdf_for_extraction(bytes: &[u8]) -> Result<lopdf::Document, pdf_extract::OutputError> {
+    let mut doc = lopdf::Document::load_mem(bytes)?;
+    if doc.is_encrypted() {
+        doc.decrypt("")?;
+    }
+    Ok(doc)
+}
+
+fn output_pdf_text(doc: &lopdf::Document) -> Result<String, pdf_extract::OutputError> {
+    let mut text = String::new();
+    {
+        let mut output = pdf_extract::PlainTextOutput::new(&mut text);
+        pdf_extract::output_doc(doc, &mut output)?;
+    }
+    Ok(text)
+}
+
+/// Upper bound on Form XObject visits while mapping which pages draw which
+/// forms. Past it the walk stops; forms already found are still rewritten, but
+/// without the "shares the page's font dictionary" shortcut (renaming is always
+/// safe, only slower), and forms not yet reached keep their names.
+const MAX_FORM_VISITS: usize = 100_000;
+/// Upper bound on `/Parent` hops when resolving a page's inherited resources.
+const MAX_PAGE_TREE_DEPTH: usize = 64;
+
+/// Identity of a `/Font` resource dictionary: either its own indirect object,
+/// or the indirect object (resources dictionary, page, or form) it sits in
+/// directly. Two resource scopes share font names only when this is equal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum FontDictId {
+    Indirect(lopdf::ObjectId),
+    DirectIn(lopdf::ObjectId),
+}
+
+/// Which page-level font dictionaries a form is drawn under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PageFonts {
+    Uniform(Option<FontDictId>),
+    Mixed,
+}
+
+impl PageFonts {
+    fn observe(&mut self, page_fonts: Option<FontDictId>) {
+        if let PageFonts::Uniform(seen) = *self {
+            if seen != page_fonts {
+                *self = PageFonts::Mixed;
+            }
+        }
+    }
+}
+
+/// One form's rewrite: its new private `/Resources` and decoded content.
+#[derive(Debug)]
+struct FormFontRewrite {
+    form_id: lopdf::ObjectId,
+    resources: lopdf::Dictionary,
+    content: Vec<u8>,
+}
+
+/// Plan the rewrite that gives every Form XObject with its own
+/// `/Resources /Font` dictionary font resource names no other scope in the
+/// document uses, and its `Tf` operands to match. Read-only: any lopdf error
+/// skips the affected page or form, so the plan holds only complete rewrites,
+/// which [`apply_form_font_scoping`] installs.
+///
+/// `pdf-extract` 0.12.1 keys its font cache by local name for a whole page,
+/// recursing into forms through the same cache, so a page's `/F1` and a
+/// form's `/F1` decode with whichever was set first. Renaming the form's fonts
+/// to `/F1_wl<form obj>_<gen>` makes the cache key unique per scope without
+/// patching `pdf-extract` (a fork was ruled out in #617).
+///
+/// Shape of the rewrite, chosen so it can only remove a collision:
+/// - Each rewritten form gets a new *direct* `/Resources` dictionary (a copy
+///   with the renamed `/Font`), so shared resource and font objects are never
+///   mutated. The original keys stay alongside the aliases, so a nested form
+///   that inherits these resources still resolves its own `Tf` names.
+/// - A form is left untouched when every page that draws it uses the very
+///   same font dictionary object (names then mean the same fonts), when its
+///   content does not decode, or when it never selects one of its own fonts.
+/// - Shared forms are rewritten once, whichever pages draw them.
+///
+/// Not covered: Type3 glyph procedures, annotation appearance streams, and
+/// patterns (none of which `pdf-extract` reads text from), and a form without
+/// its own `/Resources`, which inherits its parent's names as before.
+fn plan_form_font_scoping(doc: &lopdf::Document) -> Vec<FormFontRewrite> {
+    use std::collections::{BTreeMap, HashSet};
+
+    // Every font resource name in use, so aliases cannot collide with one.
+    let mut used_names: HashSet<Vec<u8>> = HashSet::new();
+    // form id -> (own resources, own font dict identity, own font dict).
+    #[allow(clippy::type_complexity)]
+    let mut forms: BTreeMap<
+        lopdf::ObjectId,
+        (&lopdf::Dictionary, FontDictId, &lopdf::Dictionary),
+    > = BTreeMap::new();
+    let mut reached: HashMap<lopdf::ObjectId, PageFonts> = HashMap::new();
+    let mut visits = 0usize;
+    let mut exhaustive = true;
+
+    for page_id in doc.get_pages().into_values() {
+        let Some((page_host, page_resources)) = inherited_page_resources(doc, page_id) else {
+            continue;
+        };
+        let page_fonts = font_dict_of(doc, page_host, page_resources);
+        if let Some((_, fonts)) = page_fonts {
+            used_names.extend(fonts.iter().map(|(name, _)| name.clone()));
+        }
+        let page_fonts = page_fonts.map(|(id, _)| id);
+
+        let mut seen_on_page: HashSet<lopdf::ObjectId> = HashSet::new();
+        let mut pending = vec![page_resources];
+        while let Some(resources) = pending.pop() {
+            let Some(xobjects) = resources
+                .get(b"XObject")
+                .ok()
+                .and_then(|obj| doc.dereference(obj).ok())
+                .and_then(|(_, obj)| obj.as_dict().ok())
+            else {
+                continue;
+            };
+            for (_, entry) in xobjects.iter() {
+                let Ok((Some(form_id), lopdf::Object::Stream(form))) = doc.dereference(entry)
+                else {
+                    continue;
+                };
+                if form
+                    .dict
+                    .get(b"Subtype")
+                    .and_then(lopdf::Object::as_name)
+                    .ok()
+                    != Some(b"Form".as_slice())
+                {
+                    continue;
+                }
+                if !seen_on_page.insert(form_id) {
+                    continue;
+                }
+                visits += 1;
+                if visits > MAX_FORM_VISITS {
+                    exhaustive = false;
+                    break;
+                }
+                reached
+                    .entry(form_id)
+                    .or_insert(PageFonts::Uniform(page_fonts))
+                    .observe(page_fonts);
+                let Some((form_host, form_resources)) = form
+                    .dict
+                    .get(b"Resources")
+                    .ok()
+                    .and_then(|obj| doc.dereference(obj).ok())
+                    .and_then(|(id, obj)| obj.as_dict().ok().map(|d| (id.unwrap_or(form_id), d)))
+                else {
+                    // Inherits the parent's resources, whose XObjects are
+                    // already being walked.
+                    continue;
+                };
+                if let Some((font_id, fonts)) = font_dict_of(doc, form_host, form_resources) {
+                    used_names.extend(fonts.iter().map(|(name, _)| name.clone()));
+                    forms
+                        .entry(form_id)
+                        .or_insert((form_resources, font_id, fonts));
+                }
+                pending.push(form_resources);
+            }
+            if !exhaustive {
+                break;
+            }
+        }
+        if !exhaustive {
+            break;
+        }
+    }
+
+    let mut rewrites = Vec::new();
+    for (form_id, (resources, font_id, fonts)) in forms {
+        let shares_page_fonts = reached.get(&form_id) == Some(&PageFonts::Uniform(Some(font_id)));
+        if exhaustive && shares_page_fonts {
+            continue;
+        }
+        if let Some(rewrite) = rewrite_form_fonts(doc, form_id, resources, fonts, &mut used_names) {
+            rewrites.push(rewrite);
+        }
+    }
+    rewrites
+}
+
+/// Install a plan from [`plan_form_font_scoping`]. Each rewrite is
+/// self-contained, so applying any subset leaves a consistent document.
+fn apply_form_font_scoping(doc: &mut lopdf::Document, rewrites: Vec<FormFontRewrite>) {
+    for rewrite in rewrites {
+        if let Ok(lopdf::Object::Stream(stream)) = doc.get_object_mut(rewrite.form_id) {
+            stream
+                .dict
+                .set("Resources", lopdf::Object::Dictionary(rewrite.resources));
+            stream.set_plain_content(rewrite.content);
+        }
+    }
+}
+
+/// A page's `/Resources`, inherited through `/Parent` the way `pdf-extract`
+/// resolves it, with the indirect object that directly holds them.
+fn inherited_page_resources(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+) -> Option<(lopdf::ObjectId, &lopdf::Dictionary)> {
+    let mut node_id = page_id;
+    for _ in 0..MAX_PAGE_TREE_DEPTH {
+        let node = doc.get_dictionary(node_id).ok()?;
+        if let Ok(obj) = node.get(b"Resources") {
+            let (res_id, res) = doc.dereference(obj).ok()?;
+            return res.as_dict().ok().map(|d| (res_id.unwrap_or(node_id), d));
+        }
+        node_id = node
+            .get(b"Parent")
+            .and_then(lopdf::Object::as_reference)
+            .ok()?;
+    }
+    None
+}
+
+/// The `/Font` dictionary of a resources dictionary held by `host`, with its
+/// identity.
+fn font_dict_of<'a>(
+    doc: &'a lopdf::Document,
+    host: lopdf::ObjectId,
+    resources: &'a lopdf::Dictionary,
+) -> Option<(FontDictId, &'a lopdf::Dictionary)> {
+    let (font_ref, fonts) = doc.dereference(resources.get(b"Font").ok()?).ok()?;
+    let fonts = fonts.as_dict().ok()?;
+    let id = match font_ref {
+        Some(id) => FontDictId::Indirect(id),
+        None => FontDictId::DirectIn(host),
+    };
+    Some((id, fonts))
+}
+
+/// Build one form's rewrite, or `None` when it cannot or need not change.
+fn rewrite_form_fonts(
+    doc: &lopdf::Document,
+    form_id: lopdf::ObjectId,
+    resources: &lopdf::Dictionary,
+    fonts: &lopdf::Dictionary,
+    used_names: &mut std::collections::HashSet<Vec<u8>>,
+) -> Option<FormFontRewrite> {
+    use lopdf::content::Content;
+    use lopdf::Object;
+
+    let Object::Stream(form) = doc.get_object(form_id).ok()? else {
+        return None;
+    };
+
+    let mut aliases: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+    let mut scoped_fonts = fonts.clone();
+    for (name, font) in fonts.iter() {
+        let mut alias = name.clone();
+        alias.extend_from_slice(format!("_wl{}_{}", form_id.0, form_id.1).as_bytes());
+        while used_names.contains(&alias) {
+            alias.push(b'_');
+        }
+        used_names.insert(alias.clone());
+        scoped_fonts.set(alias.clone(), font.clone());
+        aliases.insert(name.clone(), alias);
+    }
+
+    // Same bytes `pdf-extract` would decode (its private `get_contents`).
+    let plain = if form.filters().is_ok() {
+        form.decompressed_content()
+            .unwrap_or_else(|_| form.content.clone())
+    } else {
+        form.content.clone()
+    };
+    let mut content = Content::decode(&plain).ok()?;
+    let mut renamed = 0usize;
+    for operation in &mut content.operations {
+        if operation.operator != "Tf" {
+            continue;
+        }
+        if let Some(Object::Name(name)) = operation.operands.first_mut() {
+            if let Some(alias) = aliases.get(name.as_slice()) {
+                *name = alias.clone();
+                renamed += 1;
+            }
+        }
+    }
+    if renamed == 0 {
+        return None;
+    }
+    let content = content.encode().ok()?;
+
+    let mut scoped_resources = resources.clone();
+    scoped_resources.set("Font", Object::Dictionary(scoped_fonts));
+    Some(FormFontRewrite {
+        form_id,
+        resources: scoped_resources,
+        content,
+    })
 }
 
 /// Decode raw file bytes to a `String`, tolerating non-UTF-8 encodings.
@@ -1135,5 +1441,143 @@ mod tests {
         let mut f = fs::File::create(&path).unwrap();
         f.write_all(content).unwrap();
         path
+    }
+
+    /// Plan and apply [`plan_form_font_scoping`]; returns the forms rewritten.
+    fn scope_form_font_names(doc: &mut lopdf::Document) -> usize {
+        let rewrites = plan_form_font_scoping(doc);
+        let count = rewrites.len();
+        apply_form_font_scoping(doc, rewrites);
+        count
+    }
+
+    /// The `Tf` font-name operands of a form's content stream, in order.
+    fn form_tf_names(doc: &lopdf::Document, form: lopdf::ObjectId) -> Vec<Vec<u8>> {
+        let stream = doc.get_object(form).unwrap().as_stream().unwrap();
+        let content =
+            lopdf::content::Content::decode(&stream.get_plain_content().unwrap()).unwrap();
+        content
+            .operations
+            .iter()
+            .filter(|op| op.operator == "Tf")
+            .map(|op| op.operands[0].as_name().unwrap().to_vec())
+            .collect()
+    }
+
+    /// The font keys of a form's own `/Resources /Font` dictionary.
+    fn form_font_keys(doc: &lopdf::Document, form: lopdf::ObjectId) -> Vec<Vec<u8>> {
+        let stream = doc.get_object(form).unwrap().as_stream().unwrap();
+        let (_, resources) = doc
+            .dereference(stream.dict.get(b"Resources").unwrap())
+            .unwrap();
+        let (_, fonts) = doc
+            .dereference(resources.as_dict().unwrap().get(b"Font").unwrap())
+            .unwrap();
+        fonts
+            .as_dict()
+            .unwrap()
+            .iter()
+            .map(|(k, _)| k.clone())
+            .collect()
+    }
+
+    /// A page whose `/F1` is Helvetica draws two forms: one binds its own `/F1`
+    /// to Symbol (must be renamed), the other reuses the page's very font
+    /// dictionary object (must be left byte-for-byte alone).
+    #[test]
+    fn scope_form_font_names_renames_only_forms_with_their_own_fonts() {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let draw_f1 = || {
+            Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Tj", vec![Object::string_literal("abg")]),
+                    Operation::new("ET", vec![]),
+                ],
+            }
+            .encode()
+            .unwrap()
+        };
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let helvetica = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+        });
+        let symbol = doc.add_object(dictionary! {
+            "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Symbol",
+        });
+        let page_fonts = doc.add_object(dictionary! { "F1" => helvetica });
+        let form_dict = |fonts: Object| {
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+                "Resources" => dictionary! { "Font" => fonts },
+            }
+        };
+        let own = doc.add_object(Stream::new(
+            form_dict(Object::Dictionary(dictionary! { "F1" => symbol })),
+            draw_f1(),
+        ));
+        let shared = doc.add_object(Stream::new(
+            form_dict(Object::Reference(page_fonts)),
+            draw_f1(),
+        ));
+        let content = doc.add_object(Stream::new(dictionary! {}, draw_f1()));
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => content,
+            "Resources" => dictionary! {
+                "Font" => page_fonts,
+                "XObject" => dictionary! { "Own" => own, "Shared" => shared },
+            },
+            "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog);
+        let shared_before = doc.get_object(shared).unwrap().clone();
+
+        assert_eq!(scope_form_font_names(&mut doc), 1);
+
+        let alias = format!("F1_wl{}_{}", own.0, own.1).into_bytes();
+        assert_eq!(form_tf_names(&doc, own), vec![alias.clone()]);
+        let own_keys = form_font_keys(&doc, own);
+        assert!(own_keys.contains(&alias), "alias missing: {own_keys:?}");
+        let own_stream = doc.get_object(own).unwrap().as_stream().unwrap();
+        let own_fonts = own_stream
+            .dict
+            .get(b"Resources")
+            .and_then(Object::as_dict)
+            .and_then(|r| r.get(b"Font"))
+            .and_then(Object::as_dict)
+            .unwrap();
+        assert_eq!(
+            own_fonts.get(&alias).unwrap().as_reference().unwrap(),
+            symbol,
+            "the alias must point at the form's own font"
+        );
+
+        assert_eq!(
+            format!("{:?}", doc.get_object(shared).unwrap()),
+            format!("{shared_before:?}"),
+            "a form sharing the page's font dictionary must be left untouched"
+        );
+        assert_eq!(form_tf_names(&doc, shared), vec![b"F1".to_vec()]);
+        assert_eq!(
+            doc.get_dictionary(page_fonts).unwrap().iter().count(),
+            1,
+            "the shared page font dictionary must not be mutated"
+        );
     }
 }

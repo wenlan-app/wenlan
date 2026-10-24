@@ -596,7 +596,6 @@ fn version_flag() {
 fn each_subcommand_has_help() {
     for sub in [
         "status",
-        "search",
         "recall",
         "brief",
         "capture",
@@ -1140,10 +1139,6 @@ fn setup_subcommands_have_help() {
         &["steep", "status", "--help"][..],
         &["steep", "configure", "--help"][..],
         &["steep", "disable", "--help"][..],
-        // `enrichment` stays as a hidden alias for one release.
-        &["enrichment", "status", "--help"][..],
-        &["enrichment", "configure", "--help"][..],
-        &["enrichment", "disable", "--help"][..],
     ] {
         cli().args(args).assert().success();
     }

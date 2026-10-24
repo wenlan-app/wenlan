@@ -511,14 +511,9 @@ pub(super) async fn create_page_impl(
     // Post-write enrichment
     let mut warnings: Vec<String> = Vec::new();
 
-    if creation_kind == "distilled" {
-        if let Err(e) =
-            crate::maintenance::emit_keep_or_archive_card(db, &id, distinct_source_count).await
-        {
-            log::warn!("[create_page] keep/archive card failed for {id}: {e}");
-            warnings.push(format!("keep/archive card failed: {e}"));
-        }
-    }
+    // A new page does not ask whether to keep it: the AI tool wrote it on the
+    // person's behalf, and a keep/archive card on every birth reads as "needs
+    // review" when nothing does. Thin pages are left to the maintenance lanes.
 
     // 1. Orphan-link resolution (best-effort)
     if let Err(e) = db.resolve_orphan_page_links().await {

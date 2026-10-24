@@ -247,6 +247,64 @@ fn write_file_nofollow(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, bytes)
 }
 
+/// Replace the root marker atomically: a temp file in the same directory,
+/// fsync, rename over the marker, then fsync the directory.
+///
+/// `write_file_nofollow` truncates and rewrites in place, so a kill partway
+/// through left malformed JSON and the next export refused at the marker
+/// parse, stuck until somebody hand-edited the file and lost its ownership and
+/// digest records. A rename within one directory leaves the previous marker or
+/// the new one, never a torn file. The projection's atomic writer is reused for
+/// that, so the symlink guarantee comes with it: the temp is created
+/// `create_new` + nofollow, and a marker that is a symlink or a directory is
+/// refused rather than replaced.
+fn write_marker_atomically(root: &Path, bytes: &[u8]) -> Result<(), WenlanError> {
+    write_marker_atomically_with_hook(root, bytes, || Ok(()))
+}
+
+fn write_marker_atomically_with_hook(
+    root: &Path,
+    bytes: &[u8],
+    after_temp_write: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), WenlanError> {
+    let directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // Unique per write: a temp left by a killed run (or by a recycled pid) can
+    // never collide with this one under `create_new`.
+    let temporary = format!("{MARKER_FILE}.{}.tmp", uuid::Uuid::new_v4().simple());
+    crate::export::knowledge::write_page_atomically_nofollow_with_hook(
+        &directory,
+        MARKER_FILE,
+        &temporary,
+        bytes,
+        after_temp_write,
+    )?;
+    crate::export::knowledge::sync_dir_capability(&directory)
+}
+
+/// Remove marker temps that a killed run left behind. Best effort: a temp is
+/// only ever a copy of a marker that was never installed, so keeping one costs
+/// nothing but clutter. Plain files only; anything else by that name is not
+/// ours to touch.
+fn remove_stale_marker_temps(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let prefix = format!("{MARKER_FILE}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.ends_with(".tmp") {
+            continue;
+        }
+        let path = entry.path();
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// Plan stable bundle filenames: pages sorted by `(created_at, id)`, slug
 /// via `obsidian::slugify`, empty slug falling back to
 /// `sanitize_stub_id(page.id)`, collisions suffixed `-2`, `-3`, ...
@@ -396,22 +454,86 @@ fn replace_outside_code(
     out
 }
 
-/// An absolute bundle path (`/concepts/b.md`) mapped to the page Wenlan
-/// imported it as. Built from `okf_concepts`; see [`concept_path_map`].
-pub type ConceptPathMap = HashMap<String, String>;
+/// What the exporter knows about the concepts Wenlan imported, so a link an
+/// imported concept still spells in its ORIGINAL bundle's terms can be
+/// repaired to wherever the target is exported now. Built from
+/// `okf_concepts`; see [`concept_path_map`].
+///
+/// Two lookups, because two questions are asked:
+///
+/// - **From an imported page** (`/pages/b.md`, `./b.md`, `../x/b.md`): the
+///   link was written inside one bundle, so it is resolved against that
+///   bundle's concept ids, from the linking concept's own folder, exactly as
+///   the importer resolved it. Another bundle holding the same path cannot
+///   capture it.
+/// - **From any other page** (`/concepts/b.md`): no bundle is known, so the
+///   absolute path is looked up across every imported bundle, and a path two
+///   bundles share resolves to nothing.
+#[derive(Debug, Clone, Default)]
+pub struct ConceptPathMap {
+    /// `/<concept id>.md` -> page id, across all bundles; ambiguous paths absent.
+    by_path: HashMap<String, String>,
+    /// Imported page id -> `(source id, concept id)`.
+    origins: HashMap<String, (String, String)>,
+    /// Source id -> lowercased concept id -> page id (`None` when two concept
+    /// ids of the bundle differ only by case, which the importer's link graph
+    /// folds together).
+    by_source: HashMap<String, HashMap<String, Option<String>>>,
+}
+
+/// What an imported page's link resolves to.
+enum ImportedLink<'a> {
+    /// The linking page is not an imported concept; its bundle is unknown.
+    NotImported,
+    /// Imported linker, but the target is no concept of its bundle.
+    Unidentified,
+    /// The imported concept the link points at, as a page id.
+    Page(&'a str),
+}
+
+impl ConceptPathMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The page an absolute bundle path (`/concepts/b.md`) was imported as,
+    /// across all bundles.
+    pub fn get(&self, path: &str) -> Option<&String> {
+        self.by_path.get(path)
+    }
+
+    /// Resolve `target`, a link written in the body of page `linker`, to the
+    /// imported concept it names, using the importer's own normalization with
+    /// the folder of the linker's original path.
+    fn resolve_from_imported(&self, linker: &str, target: &str) -> ImportedLink<'_> {
+        let Some((source_id, concept_id)) = self.origins.get(linker) else {
+            return ImportedLink::NotImported;
+        };
+        let from_dir = concept_id.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let found = crate::sources::okf::normalize_link_target(from_dir, target)
+            .and_then(|id| self.by_source.get(source_id)?.get(&id.to_lowercase()))
+            .and_then(|page| page.as_deref());
+        match found {
+            Some(page) => ImportedLink::Page(page),
+            None => ImportedLink::Unidentified,
+        }
+    }
+}
 
 /// Build the lookup the exporter uses for links an imported concept still
 /// spells in its original bundle's terms.
 ///
-/// `rows` are `(page id, source id, concept id)` from `okf_concepts`. The key
-/// is the absolute bundle path the concept had, `/<concept id>.md`. Two
-/// bundles can both hold `concepts/b.md`, and a body link carries no source,
-/// so an ambiguous path resolves to nothing rather than to a guess: the link
-/// is then handled as unresolvable, which loses a relationship but never
-/// points a reader at the wrong page.
+/// `rows` are `(page id, source id, concept id)` from `okf_concepts`. The
+/// global key is the absolute bundle path the concept had,
+/// `/<concept id>.md`. Two bundles can both hold `concepts/b.md`, and a page
+/// that was not itself imported carries no source, so an ambiguous path
+/// resolves to nothing rather than to a guess: the link is then handled as
+/// unresolvable, which loses a relationship but never points a reader at the
+/// wrong page.
 pub fn concept_path_map(rows: &[(String, String, String)]) -> ConceptPathMap {
     let mut seen: HashMap<String, Option<String>> = HashMap::new();
-    for (page_id, _source_id, concept_id) in rows {
+    let mut map = ConceptPathMap::default();
+    for (page_id, source_id, concept_id) in rows {
         let key = format!("/{}.md", concept_id.trim_start_matches('/'));
         match seen.get(&key) {
             Some(Some(existing)) if existing == page_id => {}
@@ -422,66 +544,119 @@ pub fn concept_path_map(rows: &[(String, String, String)]) -> ConceptPathMap {
                 seen.insert(key, Some(page_id.clone()));
             }
         }
+        map.origins
+            .insert(page_id.clone(), (source_id.clone(), concept_id.clone()));
+        let in_source = map.by_source.entry(source_id.clone()).or_default();
+        let folded = concept_id.trim_start_matches('/').to_lowercase();
+        match in_source.get(&folded) {
+            Some(Some(existing)) if existing == page_id => {}
+            Some(_) => {
+                in_source.insert(folded, None);
+            }
+            None => {
+                in_source.insert(folded, Some(page_id.clone()));
+            }
+        }
     }
-    seen.into_iter()
+    map.by_path = seen
+        .into_iter()
         .filter_map(|(key, page)| page.map(|page| (key, page)))
-        .collect()
+        .collect();
+    map
 }
 
-/// What an absolute markdown link becomes in the exported bundle.
+/// Split a link target into its path and the `#fragment` / `?query` tail
+/// (delimiter included), after one pair of surrounding `<` `>`. This is the
+/// cut the importer makes before resolving the path.
+fn split_link_suffix(target: &str) -> (&str, &str) {
+    let inner = target
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(target);
+    match inner.find(['#', '?']) {
+        Some(at) => inner.split_at(at),
+        None => (inner, ""),
+    }
+}
+
+/// What a markdown link to something other than an exported page id becomes
+/// in the exported bundle. `linker` is the page whose body holds the link.
 ///
-/// The exporter writes exactly `index.md`, `pages/*.md` and `sources/*.md`, so
-/// those three prefixes are the only absolute targets a bundle can satisfy and
-/// they pass through untouched (pass 1 writes `/pages/...` itself). Any other
-/// absolute `.md` target came in with an imported concept and names a path
-/// this bundle does not contain:
+/// The exporter writes exactly `index.md`, `pages/*.md` and `sources/*.md`, but
+/// a link in an imported concept names a path of its ORIGINAL bundle, which
+/// can be the same spelling as one of those and mean a different file. So when
+/// the linking page was imported, its link is resolved by identity first
+/// (see [`ConceptPathMap`]), for absolute and relative spellings alike:
 ///
-/// - resolvable through `concept_paths` to a page being exported: rewritten to
-///   that page, which is the same relationship at its new address;
-/// - otherwise: collapsed to its link text, the same way an unknown page id is
-///   handled in pass 1. A bundle that promises a document it does not carry is
-///   worse than prose that lost a link.
+/// - identified, and the target is being exported: rewritten to that page,
+///   fragment kept, which is the same relationship at its new address;
+/// - identified, but its page is not being exported: collapsed to its link
+///   text, the same way an unknown page id is handled. A bundle that promises
+///   a document it does not carry is worse than prose that lost a link, and a
+///   path left behind could be taken over by another page;
+/// - not identified: left exactly as written (OKF 6.1 tolerates a broken
+///   link), except that an absolute `.md` path outside `index.md`, `pages/`
+///   and `sources/` names a document this bundle cannot contain and collapses
+///   like an unidentified `/concepts/` link always did.
 ///
-/// A non-`.md` absolute target (an image, an asset) is left alone.
-fn convert_absolute_link(
+/// A page that was not imported has no bundle to resolve against. Its
+/// absolute `/concepts/...` paths are looked up across all imported bundles
+/// (a path two bundles share resolves to nothing), and everything else,
+/// including its `/pages/` and `/sources/` links, passes through untouched.
+/// A non-`.md` target (an image, an asset) is always left alone.
+fn convert_markdown_link(
     text: &str,
     target: &str,
+    linker: &str,
     id_to_file: &HashMap<String, String>,
     concept_paths: &ConceptPathMap,
 ) -> String {
     use crate::export::knowledge::escape_index_link_text;
-    let (path, suffix) = match target.split_once('#') {
-        Some((path, fragment)) => (path, Some(fragment)),
-        None => (target, None),
-    };
-    if path == "/index.md"
-        || path.starts_with("/pages/")
-        || path.starts_with("/sources/")
-        || !path.to_ascii_lowercase().ends_with(".md")
+    let unchanged = || format!("[{text}]({target})");
+    let (path, suffix) = split_link_suffix(target);
+    if path == "/index.md" || path.starts_with("//") || !path.to_ascii_lowercase().ends_with(".md")
     {
-        return format!("[{text}]({target})");
+        return unchanged();
     }
-    match concept_paths.get(path).and_then(|id| id_to_file.get(id)) {
-        Some(file) => {
-            let label = escape_index_link_text(text);
-            match suffix {
-                Some(fragment) => format!("[{label}](/pages/{file}#{fragment})"),
-                None => format!("[{label}](/pages/{file})"),
-            }
+    let page = match concept_paths.resolve_from_imported(linker, target) {
+        ImportedLink::Page(page) => Some(page),
+        ImportedLink::Unidentified | ImportedLink::NotImported
+            if path.starts_with("/pages/") || path.starts_with("/sources/") =>
+        {
+            return unchanged();
         }
+        ImportedLink::Unidentified => None,
+        ImportedLink::NotImported => concept_paths.get(path).map(String::as_str),
+    };
+    let absolute = path.starts_with('/');
+    match page {
+        Some(page) => match id_to_file.get(page) {
+            Some(file) => {
+                let label = escape_index_link_text(text);
+                format!("[{label}](/pages/{file}{suffix})")
+            }
+            None => text.to_string(),
+        },
+        // A relative link nobody can place stays; so does an absolute one
+        // that only an unidentified imported page could have meant.
+        None if !absolute => unchanged(),
         None => text.to_string(),
     }
 }
 
-/// Convert one page body to bundle links. `page_space` is the linking page's
-/// Space: `[[Target]]` resolves only against exported pages in the same Space
-/// (see [`title_owner_map`]). `id_to_file` maps exported page ids to bundle
-/// files, and `source_ids` is this page's cited memory ids.
+/// Convert one page body to bundle links. `page_id` and `page_space` are the
+/// linking page's id and Space: `[[Target]]` resolves only against exported
+/// pages in the same Space (see [`title_owner_map`]), and an imported page's
+/// own links resolve against its original bundle (see [`ConceptPathMap`]).
+/// `id_to_file` maps exported page ids to bundle files, and `source_ids` is
+/// this page's cited memory ids.
 ///
 /// - `[Text](concept_<id>)` / `[Text](page_<id>)`: exported page ->
 ///   `[Text](/pages/<file>)`, unknown id -> plain `Text`. Other
 ///   `[t](target)` links are already standard markdown: kept when `target`
-///   is not an exported page id, rewritten when it is.
+///   is not an exported page id, rewritten when it is, and repaired to the
+///   target's exported file when they name an imported concept (see
+///   [`convert_markdown_link`]).
 /// - `[[Target]]`, `[[Target|Display]]`, `[[Target#Heading]]`, `![[Target]]`:
 ///   resolved titles -> `[Display or Target](/pages/<file>)` with
 ///   `#<slugify(heading)>` when a heading is present; unresolved -> plain
@@ -494,6 +669,7 @@ fn convert_absolute_link(
 /// - Anything inside fenced code blocks or inline code spans is untouched.
 pub(crate) fn convert_body(
     content: &str,
+    page_id: &str,
     page_space: Option<&str>,
     source_ids: &[String],
     id_to_file: &HashMap<String, String>,
@@ -502,10 +678,22 @@ pub(crate) fn convert_body(
 ) -> String {
     use crate::export::knowledge::escape_index_link_text;
     let cited: HashSet<&str> = source_ids.iter().map(String::as_str).collect();
-    // Pass 1: page-id links. The dedicated shape first (unknown ids collapse
-    // to plain text), then any remaining `[t](target)` whose target is an
-    // exported page id.
-    let pass = replace_outside_code(content, &ID_LINK_RE, |cap| {
+    // Pass 1: markdown links, read from the page as written. Runs before the
+    // page-id shape below because that shape emits `/pages/<file>` links of
+    // this bundle, which a second look would take for an imported concept's
+    // original path.
+    let pass = replace_outside_code(content, &MD_LINK_RE, |cap| {
+        let (text, target) = (&cap[1], &cap[2]);
+        match id_to_file.get(target) {
+            Some(file) => {
+                let label = escape_index_link_text(text);
+                format!("[{label}](/pages/{file})")
+            }
+            None => convert_markdown_link(text, target, page_id, id_to_file, concept_paths),
+        }
+    });
+    // Page-id links left over are not exported pages: collapse to plain text.
+    let pass = replace_outside_code(&pass, &ID_LINK_RE, |cap| {
         let (text, id) = (&cap[1], &cap[2]);
         match id_to_file.get(id) {
             Some(file) => {
@@ -513,19 +701,6 @@ pub(crate) fn convert_body(
                 format!("[{label}](/pages/{file})")
             }
             None => text.to_string(),
-        }
-    });
-    let pass = replace_outside_code(&pass, &MD_LINK_RE, |cap| {
-        let (text, target) = (&cap[1], &cap[2]);
-        if target.starts_with('/') {
-            return convert_absolute_link(text, target, id_to_file, concept_paths);
-        }
-        match id_to_file.get(target) {
-            Some(file) => {
-                let label = escape_index_link_text(text);
-                format!("[{label}](/pages/{file})")
-            }
-            None => cap[0].to_string(),
         }
     });
     // Pass 2: wikilinks (code ranges recomputed on the rewritten text).
@@ -579,6 +754,7 @@ pub(crate) fn render_page_file(
     out.push_str("---\n\n");
     out.push_str(&convert_body(
         &page.content,
+        &page.id,
         page.space.as_deref(),
         &page.source_memory_ids,
         id_to_file,
@@ -1053,8 +1229,9 @@ fn export_okf_inner(
     // unrecognized bytes were ours.
     let union: HashSet<String> = old_files.union(&planned).cloned().collect();
     let carried_digests: BTreeMap<String, String> = old_digests.clone();
-    write_file_nofollow(
-        &target.join(MARKER_FILE),
+    remove_stale_marker_temps(target);
+    write_marker_atomically(
+        target,
         serde_json::to_vec_pretty(&marker_for(&union, carried_digests.clone()))
             .expect("export marker serializes")
             .as_slice(),
@@ -1180,8 +1357,8 @@ fn export_okf_inner(
             new_digests.entry(entry).or_insert(digest);
         }
     }
-    write_file_nofollow(
-        &target.join(MARKER_FILE),
+    write_marker_atomically(
+        target,
         serde_json::to_vec_pretty(&marker_for(&still_listed, new_digests))
             .expect("export marker serializes")
             .as_slice(),
@@ -1387,6 +1564,7 @@ mod tests {
         let (id_to_file, title_owner) = link_context(pages);
         convert_body(
             &page.content,
+            &page.id,
             page.space.as_deref(),
             &page.source_memory_ids,
             &id_to_file,
@@ -2098,6 +2276,216 @@ mod tests {
         assert_eq!(body.trim(), "See Gamma.", "{body}");
     }
 
+    fn imported(page: &str, source: &str, concept: &str) -> (String, String, String) {
+        (page.to_string(), source.to_string(), concept.to_string())
+    }
+
+    /// Astra finding 4. An imported bundle holds `pages/b.md` ("Beta") and
+    /// `sources/x.md`; a concept links to both in the bundle's terms. The
+    /// export names Beta `beta.md` and the other concept `x-notes.md`, so the
+    /// verbatim `/pages/` and `/sources/` paths dangled. The link follows the
+    /// target's identity to its export file and keeps the fragment.
+    #[test]
+    fn an_imported_pages_and_sources_link_follows_a_renamed_target() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "See [Beta](/pages/b.md), its [setup](/pages/b.md#setup) and [X](/sources/x.md#top).",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let notes = test_page("concept_x", "X Notes", "z");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+            imported("concept_x", "src_1", "sources/x"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta, notes], &alpha, &concept_paths);
+
+        assert!(body.contains("[Beta](/pages/beta.md)"), "{body}");
+        assert!(body.contains("[setup](/pages/beta.md#setup)"), "{body}");
+        assert!(body.contains("[X](/pages/x-notes.md#top)"), "{body}");
+    }
+
+    /// The dangerous half: after the rename a DIFFERENT page owns `b.md`. The
+    /// old spelling would silently retarget the link at it; the target's
+    /// identity must win, and the link written for the other page by name is
+    /// not disturbed.
+    #[test]
+    fn a_different_page_now_holding_the_old_filename_does_not_capture_the_link() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+        ]);
+        let pages = [alpha.clone(), beta, other];
+        let (id_to_file, _) = link_context(&pages);
+        assert_eq!(id_to_file["concept_o"], "b.md", "the old filename is taken");
+
+        let body = convert_with_concepts(&pages, &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "[Beta](/pages/beta.md)", "{body}");
+    }
+
+    /// Relative links resolve from the importing concept's original folder,
+    /// the way the importer resolved them, then follow the target's identity.
+    #[test]
+    fn an_imported_relative_link_resolves_from_the_original_folder() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "[Beta](./b.md#why) [Up](../x/b.md) [Bare](b.md) [Gamma](../c.md)",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let xbeta = test_page("concept_xb", "Xbeta", "y");
+        let gamma = test_page("concept_c", "Gamma", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "concepts/b"),
+            imported("concept_xb", "src_1", "x/b"),
+            imported("concept_c", "src_1", "c"),
+        ]);
+
+        let body = convert_with_concepts(
+            &[alpha.clone(), beta, xbeta, gamma, other],
+            &alpha,
+            &concept_paths,
+        );
+
+        assert_eq!(
+            body.trim(),
+            "[Beta](/pages/beta.md#why) [Up](/pages/xbeta.md) [Bare](/pages/beta.md) \
+             [Gamma](/pages/gamma.md)",
+            "{body}"
+        );
+    }
+
+    /// A link whose target cannot be identified stays as written (OKF 6.1
+    /// tolerates a broken link) rather than being guessed, and another
+    /// bundle's concept of the same path is not the target.
+    #[test]
+    fn an_unidentifiable_imported_link_is_left_as_written() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "[Z](/pages/zzz.md) [N](./nope.md) [S](/sources/nothing.md) [B](/pages/b.md)",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_2", "pages/b"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), alpha.content, "{body}");
+    }
+
+    /// Identified but not exported: the path is not left behind for another
+    /// page to take over, so the link degrades to its text like an
+    /// unresolvable `/concepts/` link does.
+    #[test]
+    fn an_imported_link_to_a_page_that_is_not_exported_degrades_to_text() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md) [Rel](./b.md)");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+            imported("concept_b", "src_1", "concepts/b"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), other], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "Beta Rel", "{body}");
+    }
+
+    /// A page that was not imported has no bundle to read its paths in, so
+    /// its own `/pages/` and relative links are not reinterpreted.
+    #[test]
+    fn a_page_that_was_not_imported_keeps_its_pages_and_relative_links() {
+        let alpha = test_page("concept_a", "Alpha", "[B](/pages/b.md) [R](./b.md)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let concept_paths = concept_path_map(&[imported("concept_b", "src_1", "pages/b")]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), alpha.content, "{body}");
+    }
+
+    /// The `/pages/<file>` link written for a `concept_<id>` link is this
+    /// bundle's own address, not an imported concept's original path.
+    #[test]
+    fn a_page_id_link_is_not_reread_as_an_imported_path() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](concept_b)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let gamma = test_page("concept_c", "Gamma", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_c", "src_1", "pages/beta"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta, gamma], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "[Beta](/pages/beta.md)", "{body}");
+    }
+
+    /// A bundle's `/pages/b.md` is its own: two bundles holding the same path
+    /// each resolve to their own concept, where a page of neither would find
+    /// the path ambiguous.
+    #[test]
+    fn two_bundles_sharing_a_path_each_resolve_their_own() {
+        let one = test_page("concept_1", "One", "[B](/pages/b.md)");
+        let two = test_page("concept_2", "Two", "[B](/pages/b.md)");
+        let b1 = test_page("concept_b1", "Beta One", "y");
+        let b2 = test_page("concept_b2", "Beta Two", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_1", "src_1", "one"),
+            imported("concept_b1", "src_1", "pages/b"),
+            imported("concept_2", "src_2", "two"),
+            imported("concept_b2", "src_2", "pages/b"),
+        ]);
+        let pages = [one.clone(), two.clone(), b1, b2];
+
+        assert_eq!(
+            convert_with_concepts(&pages, &one, &concept_paths).trim(),
+            "[B](/pages/beta-one.md)"
+        );
+        assert_eq!(
+            convert_with_concepts(&pages, &two, &concept_paths).trim(),
+            "[B](/pages/beta-two.md)"
+        );
+    }
+
+    /// End to end through the exporter: the written page carries the repaired
+    /// link, and a repository bundle makes it relative to the linking file.
+    #[test]
+    fn export_writes_the_repaired_link_in_both_bundle_shapes() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md#setup)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+        ]);
+        let pages = [alpha, beta, other];
+
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf_with_concept_paths(&pages, dir.path(), &concept_paths, &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(dir.path().join("pages/alpha.md")).unwrap();
+        assert!(
+            written.contains("[Beta](/pages/beta.md#setup)"),
+            "{written}"
+        );
+
+        let repo = tempfile::TempDir::new().unwrap();
+        export_okf_for_repository(&pages, repo.path(), &concept_paths, &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(repo.path().join("pages/alpha.md")).unwrap();
+        assert!(written.contains("[Beta](beta.md#setup)"), "{written}");
+    }
+
     /// The exporter's own absolute links, and non-markdown targets, pass
     /// through untouched.
     #[test]
@@ -2616,5 +3004,138 @@ mod tests {
         }
         visible.push_str(&content[last..]);
         visible.contains(needle)
+    }
+
+    fn marker_temps(root: &Path) -> Vec<String> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.starts_with(&format!("{MARKER_FILE}.")))
+            .collect()
+    }
+
+    /// A kill between writing the temp and the rename must leave the previous
+    /// marker byte-for-byte: it used to be truncated in place, and the next
+    /// export refused at the malformed-marker parse.
+    #[test]
+    fn an_interrupted_marker_update_keeps_the_previous_marker_and_the_next_export_works() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = vec![
+            test_page("concept_a", "Alpha", "x"),
+            test_page("concept_b", "Beta", "y"),
+        ];
+        export_okf(&both, dir.path()).unwrap();
+        let marker_path = dir.path().join(MARKER_FILE);
+        let before = std::fs::read(&marker_path).unwrap();
+
+        let replacement =
+            serde_json::to_vec_pretty(&marker_for(&HashSet::new(), BTreeMap::new())).unwrap();
+        let temp_seen = std::cell::Cell::new(false);
+        let result = write_marker_atomically_with_hook(dir.path(), &replacement, || {
+            // The replacement is complete on disk beside the marker, which is
+            // still the old one: the window the in-place write left torn.
+            temp_seen.set(!marker_temps(dir.path()).is_empty());
+            assert_eq!(std::fs::read(&marker_path).unwrap(), before);
+            Err(std::io::Error::other("injected after temp write"))
+        });
+        assert!(result.is_err());
+        assert!(temp_seen.get(), "hook ran after the temp was written");
+        assert_eq!(std::fs::read(&marker_path).unwrap(), before);
+        assert!(
+            marker_temps(dir.path()).is_empty(),
+            "failed temp cleaned up"
+        );
+
+        // The previous ownership record is intact, so the re-export still
+        // knows `beta.md` is its own to remove.
+        let stats = export_okf(&both[..1], dir.path()).unwrap();
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert!(!dir.path().join("pages/beta.md").exists());
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(marker_path).unwrap()).unwrap();
+        assert!(marker["digests"]["pages/alpha.md"].is_string());
+        assert!(marker["digests"].get("pages/beta.md").is_none());
+    }
+
+    /// A process killed mid-update leaves its temp behind (a half-written one
+    /// here). It is not the marker, so it blocks nothing, and the next export
+    /// keeps the ownership and digests of the marker still in place.
+    #[test]
+    fn a_stale_marker_temp_neither_blocks_nor_corrupts_the_next_export() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "x")];
+        export_okf(&pages, dir.path()).unwrap();
+        let before = std::fs::read(dir.path().join(MARKER_FILE)).unwrap();
+
+        let stale = dir.path().join(format!("{MARKER_FILE}.deadbeef.tmp"));
+        std::fs::write(&stale, b"{\"okf_version\": \"0.2\", \"fil").unwrap();
+        std::fs::create_dir(dir.path().join(format!("{MARKER_FILE}.dir.tmp"))).unwrap();
+
+        let stats = export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert_eq!(std::fs::read(dir.path().join(MARKER_FILE)).unwrap(), before);
+        assert!(!stale.exists(), "stale temp swept");
+        assert!(
+            dir.path().join(format!("{MARKER_FILE}.dir.tmp")).is_dir(),
+            "only plain files are swept"
+        );
+        assert!(
+            !dir.path().join(ARCHIVE_DIR).exists(),
+            "no page was mistaken for an edit"
+        );
+    }
+
+    #[test]
+    fn the_marker_is_swapped_in_as_a_new_file_not_truncated_in_place() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_marker_atomically(dir.path(), b"one").unwrap();
+        let marker_path = dir.path().join(MARKER_FILE);
+        let first = std::fs::read(&marker_path).unwrap();
+        assert_eq!(first, b"one");
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&marker_path).unwrap().ino()
+        };
+        write_marker_atomically(dir.path(), b"two").unwrap();
+        assert_eq!(std::fs::read(&marker_path).unwrap(), b"two");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_ne!(std::fs::metadata(&marker_path).unwrap().ino(), inode);
+        }
+        assert!(marker_temps(dir.path()).is_empty());
+    }
+
+    /// The marker is not exempt from the symlink rule the atomic swap must not
+    /// weaken: a link standing at the marker is refused, not replaced, and
+    /// nothing is written through it.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_marker_is_refused_and_left_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "x")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        let elsewhere = tempfile::TempDir::new().unwrap();
+        let real = elsewhere.path().join("marker.json");
+        std::fs::rename(dir.path().join(MARKER_FILE), &real).unwrap();
+        let before = std::fs::read(&real).unwrap();
+        let link = dir.path().join(MARKER_FILE);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(export_okf(&pages, dir.path()).is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), before);
+        assert!(marker_temps(dir.path()).is_empty());
+
+        // A dangling link is refused too, and nothing appears at its target.
+        std::fs::remove_file(&link).unwrap();
+        let missing = elsewhere.path().join("missing.json");
+        std::os::unix::fs::symlink(&missing, &link).unwrap();
+        assert!(write_marker_atomically(dir.path(), b"{}").is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert!(!missing.exists());
+        assert!(marker_temps(dir.path()).is_empty());
     }
 }

@@ -849,7 +849,6 @@ the projection-directory reader.
 | `wenlan keys` | yes | automatic | `none` | subcommand renderer |
 | `wenlan steep` | yes | automatic | `none` | subcommand renderer |
 | `wenlan connect` | yes | automatic | `none` | subcommand renderer |
-| `wenlan search` | yes | automatic | `none` | subcommand renderer |
 | `wenlan recall` | yes | automatic | `none` | subcommand renderer |
 | `wenlan brief` | yes | automatic | `none` | subcommand renderer |
 | `wenlan pages` | yes | automatic | **`collection` + `named_page`** | enforce_projection_directory_invariant |

@@ -3,10 +3,13 @@
 //! same-bytes rename rebind, vanished-file deletion) with an OKF bundle's
 //! rules on top.
 //!
-//! - Only concept files count: reserved names (`index.md`, `log.md`,
-//!   `INSTRUCTIONS.md`) and folders holding Wenlan's own export marker are
-//!   pruned before anything else, and a root that is itself a Wenlan export
-//!   is refused.
+//! - Only concept files count: reserved names (`index.md`, `log.md`, an
+//!   untyped `INSTRUCTIONS.md`) and folders holding Wenlan's own export marker
+//!   are pruned before anything else, and a root that is itself a Wenlan
+//!   export is refused.
+//! - An `INSTRUCTIONS.md` that cannot be read or parsed right now is neither
+//!   a concept nor confirmed untyped. It keeps whatever it last imported and
+//!   counts as a file error until it reads again.
 //! - A deprecated concept is removed like a vanished file and its hash is
 //!   recorded, so it is not read again until it changes.
 //! - New and changed concepts go to the document queue in batches: nothing
@@ -17,7 +20,7 @@
 //!   re-resolve their links, so no edge points at a removed page.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use wenlan_core::db::MemoryDB;
@@ -39,7 +42,7 @@ pub(crate) const OKF_BATCH_LIMIT: usize = 1_000;
 enum BundleScan {
     Unavailable,
     WenlanExport,
-    Concepts(Vec<(String, PathBuf)>),
+    Concepts(okf::ConceptScan),
 }
 
 /// Sync an `okf` source. The caller guarantees `source.source_type` is
@@ -72,7 +75,7 @@ pub(super) async fn sync_okf_source_in_batches(
         } else if okf::is_wenlan_export(&scan_root) {
             BundleScan::WenlanExport
         } else {
-            BundleScan::Concepts(okf::scan_concepts(&scan_root))
+            BundleScan::Concepts(okf::scan_bundle(&scan_root))
         }
     })
     .await
@@ -81,7 +84,10 @@ pub(super) async fn sync_okf_source_in_batches(
             "OKF bundle scan task failed for source {id} at {root_display}: {error}"
         ))
     })?;
-    let concepts = match scan {
+    let okf::ConceptScan {
+        concepts,
+        unresolved,
+    } = match scan {
         BundleScan::Unavailable => {
             mark_source_unavailable(&id, "bundle folder is missing or unreadable");
             return Ok(blocked_outcome());
@@ -93,7 +99,7 @@ pub(super) async fn sync_okf_source_in_batches(
             );
             return Ok(blocked_outcome());
         }
-        BundleScan::Concepts(concepts) => concepts,
+        BundleScan::Concepts(scan) => scan,
     };
     if let Some(space) = source.space.as_deref() {
         if db.get_space(space).await?.is_none() {
@@ -107,14 +113,25 @@ pub(super) async fn sync_okf_source_in_batches(
         .iter()
         .map(|(_, path)| path.to_string_lossy().to_string())
         .collect();
+    // Tracked files that could not be classified are not missing: the file is
+    // on disk, so what it imported stays until it reads again.
+    let unresolved_keys: HashSet<String> = unresolved
+        .iter()
+        .map(|(path, _)| path.to_string_lossy().to_string())
+        .collect();
 
     // Tracked files missing from the pruned scan vanished. Their hashes let a
     // same-bytes file at a new path rebind instead of re-importing.
     let mut vanished_by_hash: HashMap<String, (String, String)> = HashMap::new();
     let mut files_to_delete: Vec<(String, String)> = Vec::new();
+    let mut tracked_unresolved: HashSet<String> = HashSet::new();
     if let Ok(tracked) = db.list_sync_state_paths(&id).await {
         for tracked_path in tracked {
             if scanned.contains(&tracked_path) {
+                continue;
+            }
+            if unresolved_keys.contains(&tracked_path) {
+                tracked_unresolved.insert(tracked_path);
                 continue;
             }
             if let Ok(Some(sync_state)) = db.get_sync_state(&id, &tracked_path).await {
@@ -144,6 +161,29 @@ pub(super) async fn sync_okf_source_in_batches(
     let mut gdrive_errors: usize = 0;
     let mut waiting: usize = 0;
     let mut renamed_files: HashSet<String> = HashSet::new();
+
+    // Only a file that imported before has state to protect, so only it is a
+    // file error. One never imported stays skipped quietly, as before.
+    for (file_path, detail) in &unresolved {
+        if !tracked_unresolved.contains(file_path.to_string_lossy().as_ref()) {
+            tracing::debug!(
+                "[sync] skipping {} until it reads: {}",
+                file_path.display(),
+                detail
+            );
+            continue;
+        }
+        tracing::warn!(
+            "[sync] cannot classify {}: {}; keeping what it last imported",
+            file_path.display(),
+            detail
+        );
+        errors += 1;
+        file_errors += 1;
+        if is_google_drive_path(file_path) {
+            gdrive_errors += 1;
+        }
+    }
     // Concept ids that arrived at a new path, left, or were deprecated, and
     // pages that moved: their linkers re-resolve after the diff.
     let mut moved_concepts: BTreeSet<String> = BTreeSet::new();

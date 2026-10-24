@@ -124,7 +124,7 @@ fn configure_discloses_and_writes_the_exact_confirmed_mapping() {
 
     cli(&base)
         .args([
-            "enrichment",
+            "steep",
             "configure",
             "--everyday",
             "anthropic",
@@ -203,7 +203,7 @@ fn disable_surfaces_live_daemon_rejection_without_overwriting_disk() {
 
     cli(&base)
         .env("WENLAN_DATA_DIR", data.path())
-        .args(["enrichment", "disable"])
+        .args(["steep", "disable"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("HTTP 500"));
@@ -256,7 +256,7 @@ fn status_reports_on_demand_with_preserved_ready_pins() {
         r#"{"background_ai_enabled":false,"everyday_source":"anthropic","synthesis_source":"on_device"}"#,
     )]);
     cli(&base)
-        .args(["enrichment", "status"])
+        .args(["steep", "status"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Steep: On demand"))
@@ -289,7 +289,7 @@ fn status_preserves_legacy_enabled_preference_exposed_as_null() {
         response(&routing("pinned", "unconfigured")),
     ]);
     cli(&base)
-        .args(["enrichment", "status"])
+        .args(["steep", "status"])
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -337,7 +337,7 @@ fn configure_does_not_claim_success_when_consent_write_is_ignored() {
     ]);
     cli(&base)
         .args([
-            "enrichment",
+            "steep",
             "configure",
             "--everyday",
             "anthropic",
@@ -398,7 +398,7 @@ fn disable_does_not_claim_success_when_current_or_legacy_daemon_keeps_work_enabl
     ] {
         let (base, _requests) = spawn_stub(replies);
         cli(&base)
-            .args(["enrichment", "disable"])
+            .args(["steep", "disable"])
             .assert()
             .failure()
             .stdout(predicate::str::contains("Steep disabled").not());
@@ -469,7 +469,7 @@ fn disable_verification_connection_failure_does_not_fall_back_to_disk() {
     ]);
     cli(&base)
         .env("WENLAN_DATA_DIR", data.path())
-        .args(["enrichment", "disable"])
+        .args(["steep", "disable"])
         .assert()
         .failure()
         .stdout(predicate::str::contains("Steep disabled").not());

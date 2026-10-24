@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, type SourcePresentationInput } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, sourceLocatorLabel, type SourcePresentationInput } from "./sourcePresentation";
 
 const labels = { document: "Document", webExcerpt: "Web excerpt" };
 const source = (patch: Partial<SourcePresentationInput> = {}): SourcePresentationInput => ({
@@ -12,6 +12,18 @@ const source = (patch: Partial<SourcePresentationInput> = {}): SourcePresentatio
 });
 
 describe("source presentation", () => {
+  it("labels a stored source id by its file name, never the internal id", () => {
+    expect(sourceLocatorLabel("obsidian-vault::/Users/me/vault/Books/Reading.md::2")).toBe("Reading.md");
+    expect(sourceLocatorLabel("obsidian-vault::C:\\Users\\me\\vault\\Reading.md::0")).toBe("Reading.md");
+    expect(sourceLocatorLabel("folder::/Users/me/Research/")).toBe("Research");
+    expect(sourceLocatorLabel("obsidian-vault::/Users/me/vault/Note.md::0")).not.toContain("obsidian-vault");
+  });
+
+  it("leaves ids without a namespace as they are", () => {
+    expect(sourceLocatorLabel("mem_abc123")).toBe("mem_abc123");
+    expect(sourceLocatorLabel("https://example.com/a")).toBe("https://example.com/a");
+  });
+
   it("classifies indexed Obsidian sections by the underlying file without changing their identity", () => {
     const file = source({ source: "memory", source_agent: "obsidian", source_id: "vault::/notes/Books/Reading.md::2" });
     expect(getSourcePresentation(file, labels).metadata).toBe("Markdown · Books");

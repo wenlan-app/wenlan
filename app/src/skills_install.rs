@@ -324,11 +324,20 @@ fn stage_skill(
 /// one removed. A rename onto an existing folder is not portable (Windows
 /// refuses it), hence the aside step; if the second rename fails the old
 /// folder is put back.
+///
+/// Installs run one at a time. Setup connects several tools at once, and tools
+/// that share a folder (VS Code and Copilot, Antigravity and Gemini CLI) would
+/// otherwise both see a skill absent and the second rename into place would
+/// fail with "Directory not empty".
 pub(crate) fn install_skills_into(
     dir: &Path,
     files: &[(&str, &str)],
     version: &str,
 ) -> Result<(), SkillsInstallError> {
+    static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _serial = INSTALL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let placeholder = placeholder_text(dir)?;
     let mut by_skill: Vec<(String, Vec<(PathBuf, &str)>)> = Vec::new();
     for (path, contents) in files {
@@ -659,6 +668,34 @@ mod tests {
             skills_reading_for("claude_desktop", None, &refused, BUNDLE),
             None
         );
+    }
+
+    /// Tools that share a skills folder are set up at the same moment; both
+    /// installs must succeed rather than one failing on "Directory not empty".
+    #[test]
+    fn concurrent_installs_into_a_shared_folder_both_succeed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join(".copilot").join("skills");
+        for _ in 0..20 {
+            let _ = std::fs::remove_dir_all(&dir);
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+            let handles: Vec<_> = (0..4)
+                .map(|_| {
+                    let dir = dir.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        install_skills_into(&dir, BUNDLE, "v1")
+                    })
+                })
+                .collect();
+            for handle in handles {
+                assert_eq!(handle.join().unwrap(), Ok(()));
+            }
+            for (path, _) in BUNDLE {
+                assert!(dir.join(path).is_file(), "{path}");
+            }
+        }
     }
 
     /// The real entry point honors the dev-state redirect, like the MCP writer.

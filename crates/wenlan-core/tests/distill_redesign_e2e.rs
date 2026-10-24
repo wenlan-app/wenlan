@@ -157,7 +157,7 @@ fn maintenance_config() -> MaintenanceTickConfig {
 }
 
 #[tokio::test]
-async fn full_flow_capture_staging_detect_compile_creates_unconfirmed_page_and_keep_card() {
+async fn full_flow_capture_staging_detect_compile_creates_unconfirmed_page_without_keep_card() {
     let (_dir, db) = temp_db().await;
     let now = chrono::Utc::now().timestamp();
     let memories = [
@@ -237,10 +237,9 @@ async fn full_flow_capture_staging_detect_compile_creates_unconfirmed_page_and_k
                 && proposal.source_ids.iter().any(|id| id == &page.id)
         })
         .collect();
-    assert_eq!(
-        keep_cards.len(),
-        1,
-        "new unconfirmed distilled page must have a keep/archive card"
+    assert!(
+        keep_cards.is_empty(),
+        "a new page does not ask whether to keep it"
     );
 }
 

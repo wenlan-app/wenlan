@@ -193,6 +193,7 @@ export function truncateReviewText(value: string, max: number): string {
 /** Why a page revision card needs review; nothing for a reason we do not know. */
 function revisionReasonText(t: TFunction, reason: string | null | undefined): string | null {
   switch (reason) {
+    case "authored": return t("review.reasonAuthored");
     case "locked": return t("review.reasonLocked");
     case "background": return t("review.reasonBackground");
     case "owned": return t("review.reasonOwned");
