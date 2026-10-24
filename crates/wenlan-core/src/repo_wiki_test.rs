@@ -413,7 +413,8 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
         &origin,
         &["show", &format!("{REPO_WIKI_BRANCH}:wiki/README.md")],
     );
-    assert!(readme.starts_with("* [Module map](pages/"), "{readme}");
+    assert!(readme.starts_with("Kept by [Wenlan]"), "{readme}");
+    assert!(readme.contains("\n\n* [Module map](pages/"), "{readme}");
     assert!(!files.contains("entry-point"), "{files}");
     let attributes = sh(
         &origin,

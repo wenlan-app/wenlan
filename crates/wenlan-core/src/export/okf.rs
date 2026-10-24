@@ -628,8 +628,8 @@ pub(crate) fn render_bundle_index(pages: &[Page], files: &HashMap<String, String
     crate::export::knowledge::render_index_for_entries(rows, "/pages/")
 }
 
-/// The repository bundle's `README.md`: the pages in reading order, overview
-/// first, then the pages in the order the overview lists them, then the rest
+/// The repository bundle's `README.md`: a line saying Wenlan keeps the folder,
+/// in the pages' language, then the pages in reading order, overview first, then the pages in the order the overview lists them, then the rest
 /// by title. `index.md` stays the OKF index, sorted by title. The overview is
 /// the page whose `## Pages` section (`## 頁面`, `## 页面`) links the most
 /// other pages; without such a section, the page with the section linking the
@@ -665,7 +665,7 @@ fn render_repository_readme(pages: &[Page], files: &HashMap<String, String>) -> 
             order.push(&page.id);
         }
     }
-    let mut out = String::new();
+    let mut out = format!("{}\n\n", readme_credit(&exported));
     for id in order {
         let Some(page) = exported.iter().find(|p| p.id == id) else {
             continue;
@@ -678,6 +678,39 @@ fn render_repository_readme(pages: &[Page], files: &HashMap<String, String>) -> 
         ));
     }
     out
+}
+
+/// The README's opening line, in the language most of the pages are written
+/// in: Traditional or Simplified Chinese when their titles and summaries are,
+/// English otherwise.
+fn readme_credit(pages: &[&Page]) -> &'static str {
+    // Common characters whose two forms differ, paired by position.
+    const TRADITIONAL: &str = "麼來個這們為時說會碼頁開關發對沒還進過實現應從後專檔資庫夾試測檢設圖讀寫據變數與運執錯單處務機認樣點門問題體長東話語學經間動瀾舊";
+    const SIMPLIFIED: &str = "么来个这们为时说会码页开关发对没还进过实现应从后专档资库夹试测检设图读写据变数与运执错单处务机认样点门问题体长东话语学经间动澜旧";
+    let text: String = pages
+        .iter()
+        .flat_map(|page| {
+            [
+                page.title.as_str(),
+                page.summary.as_deref().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    let han = text
+        .chars()
+        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+        .count();
+    let latin = text.chars().filter(char::is_ascii_alphabetic).count();
+    if han == 0 || han * 3 < latin {
+        return "Kept by [Wenlan](https://wenlan.app) from this repository's code. \
+                Each page ends with the code lines it relies on.";
+    }
+    let count = |set: &str| text.chars().filter(|c| set.contains(*c)).count();
+    if count(SIMPLIFIED) > count(TRADITIONAL) {
+        "这个文件夹由 [Wenlan](https://wenlan.app) 依据代码维护，每页结尾列出它依据的代码行。"
+    } else {
+        "這個資料夾由 [Wenlan](https://wenlan.app) 依程式碼維護，每頁結尾列出它依據的程式碼行。"
+    }
 }
 
 /// Each `## ` section of `page`: whether its heading names the page list, and
@@ -1247,6 +1280,10 @@ mod tests {
         );
         assert!(readme.contains("](pages/"), "{readme}");
         assert!(
+            readme.starts_with("Kept by [Wenlan](https://wenlan.app) "),
+            "{readme}"
+        );
+        assert!(
             !readme.starts_with("---"),
             "no frontmatter on GitHub: {readme}"
         );
@@ -1272,6 +1309,23 @@ mod tests {
             readme_titles(&render_repository_readme(&pages, &files)),
             ["Alpha", "Beta"]
         );
+    }
+
+    #[test]
+    fn repository_readme_credit_follows_the_pages_language() {
+        let files = |pages: &[Page]| -> HashMap<String, String> {
+            plan_page_filenames(pages).into_iter().collect()
+        };
+        let hant = vec![
+            test_page("a", "文瀾是什麼", "內容"),
+            test_page("b", "怎麼跑起來", "內容"),
+        ];
+        assert!(render_repository_readme(&hant, &files(&hant)).starts_with("這個資料夾由"));
+        let hans = vec![
+            test_page("a", "文澜是什么", "内容"),
+            test_page("b", "怎么跑起来", "内容"),
+        ];
+        assert!(render_repository_readme(&hans, &files(&hans)).starts_with("这个文件夹由"));
     }
 
     #[test]
