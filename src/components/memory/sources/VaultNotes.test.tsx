@@ -126,7 +126,7 @@ describe("NoteProposalNotice", () => {
     wrap(<NoteProposalNotice source={vault} path="/Users/me/My notes/Work/plan.md" onAccepted={onAccepted} />);
     expect(await screen.findByText("AI wants to change this note")).toBeInTheDocument();
     expect(screen.getByText("The planning call moved it.")).toBeInTheDocument();
-    expect(screen.getByText("Suggested by claude-code")).toBeInTheDocument();
+    expect(screen.getByText("Suggested by Claude Code")).toBeInTheDocument();
     expect((await screen.findByText(/September/)).tagName).toBe("DEL");
     expect(screen.getByText(/October/).tagName).toBe("INS");
     expect(screen.getByText(/^Red is removed, green is added\./)).toBeInTheDocument();

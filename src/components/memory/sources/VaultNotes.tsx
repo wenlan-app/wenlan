@@ -17,6 +17,7 @@ import {
   type NoteProposal,
   type RegisteredSource,
 } from "../../../lib/tauri";
+import { resolveAgentDisplayName } from "../../../lib/agents";
 import { diffWords, type DiffSegment } from "../../../lib/wordDiff";
 import { AiChangesOptions } from "../AiChangesOptions";
 import { DiffText } from "../ReviewDialog";
@@ -177,7 +178,7 @@ export function NoteProposalNotice({ source, path, onAccepted }: { source: Regis
       <div>
         <p className="note-proposal-title">{t("sourceContainer.suggestTitle")}</p>
         {proposal.reason && <p className="note-proposal-reason">{proposal.reason}</p>}
-        <p className="note-proposal-by">{t("sourceContainer.suggestBy", { agent: proposal.agent })}</p>
+        <p className="note-proposal-by">{t("sourceContainer.suggestBy", { agent: resolveAgentDisplayName(proposal.agent) })}</p>
       </div>
       <div className="note-proposal-actions">
         <button type="button" className="collection-control note-proposal-accept" disabled={busy} onClick={() => accept.mutate(proposal.id)}>{t("sourceContainer.suggestAccept")}</button>
