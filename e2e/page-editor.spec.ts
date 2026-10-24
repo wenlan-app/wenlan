@@ -764,11 +764,13 @@ test("confirms a remotely deleted page before offering guarded local draft disca
   await expect.poll(() => editorSource(editor)).toBe(draft);
   await expect(page.getByRole("button", { name: "Discard draft", exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("editor-deleted-before-recovery.png"), fullPage: true });
-  page.once("dialog", dialog => dialog.dismiss());
+  const question = page.getByRole("alertdialog", { name: "Discard your unsaved draft?" });
   await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+  await question.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(question).toHaveCount(0);
   await expect.poll(() => editorSource(editor)).toBe(draft);
-  page.once("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+  await question.getByRole("button", { name: "Discard draft", exact: true }).click();
   await expect(page.locator(".page-detail")).toHaveCount(0);
   expect(updateCalls(controller)).toHaveLength(1);
 });

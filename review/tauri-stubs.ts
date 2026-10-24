@@ -132,10 +132,6 @@ export async function open(): Promise<null> {
 
 export const save = open;
 
-export async function ask(message: string, options?: { title?: string }): Promise<boolean> {
-  return window.confirm(options?.title || message);
-}
-
 export async function readDir(): Promise<unknown[]> {
   return [];
 }

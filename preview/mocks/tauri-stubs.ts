@@ -131,9 +131,6 @@ export async function open(_opts?: unknown): Promise<null> {
   return null;
 }
 export const save = open;
-export async function ask(message: string, options?: { title?: string }): Promise<boolean> {
-  return window.confirm(options?.title || message);
-}
 
 // @tauri-apps/plugin-fs
 export async function readDir(_path: string): Promise<unknown[]> {

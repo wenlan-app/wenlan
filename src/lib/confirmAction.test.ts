@@ -1,55 +1,61 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, screen } from "@testing-library/react";
 import fs from "node:fs";
 import path from "node:path";
-import { ask } from "@tauri-apps/plugin-dialog";
-import { confirmAction } from "./confirmAction";
+import { confirmAction, setConfirmPresenter } from "./confirmAction";
 
 const labels = { confirm: "Delete page", cancel: "Cancel" };
-const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
-const WINDOWS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)";
+
+async function ask(): Promise<{ answer: Promise<boolean> }> {
+  let answer!: Promise<boolean>;
+  await act(async () => { answer = confirmAction("Delete this page?", labels); });
+  return { answer };
+}
 
 describe("confirmAction", () => {
-  beforeEach(() => {
-    vi.mocked(ask).mockReset();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
+  beforeEach(() => setConfirmPresenter());
+  afterEach(() => setConfirmPresenter((message) => Promise.resolve(window.confirm(message))));
+
+  it("asks in the app's own dialog with the action's button focused", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const { answer } = await ask();
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete this page?" });
+    expect(screen.getByRole("button", { name: "Delete page" })).toHaveFocus();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Delete page" })); });
+    await expect(answer).resolves.toBe(true);
+    expect(dialog).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
   });
-  afterEach(() => {
-    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
+
+  it("answers no to Cancel, Escape and the backdrop", async () => {
+    let { answer } = await ask();
+    await act(async () => { fireEvent.click(await screen.findByRole("button", { name: "Cancel" })); });
+    await expect(answer).resolves.toBe(false);
+
+    ({ answer } = await ask());
+    await screen.findByRole("alertdialog");
+    await act(async () => { fireEvent.keyDown(document, { key: "Escape" }); });
+    await expect(answer).resolves.toBe(false);
+
+    ({ answer } = await ask());
+    const overlay = (await screen.findByRole("alertdialog")).parentElement!;
+    await act(async () => { fireEvent.click(overlay); });
+    await expect(answer).resolves.toBe(false);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
-  it("uses the browser confirm outside the app", async () => {
-    vi.mocked(window.confirm).mockReturnValue(true);
-    await expect(confirmAction("Delete this page?", labels)).resolves.toBe(true);
-    expect(window.confirm).toHaveBeenCalledWith("Delete this page?");
-    expect(ask).not.toHaveBeenCalled();
-  });
-
-  describe("inside the app", () => {
-    beforeEach(() => { Reflect.set(window, "__TAURI_INTERNALS__", {}); });
-
-    it("asks through the native dialog, never window.confirm", async () => {
-      vi.stubGlobal("navigator", { ...navigator, userAgent: WINDOWS_UA });
-      vi.mocked(ask).mockResolvedValue(true);
-      await expect(confirmAction("Delete this page?", labels)).resolves.toBe(true);
-      expect(ask).toHaveBeenCalledWith("Delete this page?", { okLabel: "Delete page", cancelLabel: "Cancel" });
-      expect(window.confirm).not.toHaveBeenCalled();
-    });
-
-    it("puts the question in the bold line on macOS", async () => {
-      vi.stubGlobal("navigator", { ...navigator, userAgent: MAC_UA });
-      vi.mocked(ask).mockResolvedValue(false);
-      await expect(confirmAction("Delete this page?", labels)).resolves.toBe(false);
-      expect(ask).toHaveBeenCalledWith("", { okLabel: "Delete page", cancelLabel: "Cancel", title: "Delete this page?" });
-    });
-
-    it("treats a dialog that fails to open as no", async () => {
-      vi.spyOn(console, "warn").mockImplementation(() => {});
-      vi.mocked(ask).mockRejectedValue(new Error("not allowed"));
-      await expect(confirmAction("Delete this page?", labels)).resolves.toBe(false);
-    });
+  it("keeps one question open: a newer one answers the older with no", async () => {
+    const { answer: first } = await ask();
+    await screen.findByRole("alertdialog");
+    const { answer: second } = await ask();
+    await expect(first).resolves.toBe(false);
+    expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Delete page" })); });
+    await expect(second).resolves.toBe(true);
   });
 });
 
@@ -65,7 +71,6 @@ function listSourceFiles(dir: string): string[] {
 describe("app code", () => {
   it("never opens a browser dialog, which the macOS app answers with no", () => {
     const offenders = listSourceFiles(path.resolve("src")).flatMap((file) => {
-      if (file.endsWith(path.join("lib", "confirmAction.ts"))) return [];
       const text = fs.readFileSync(file, "utf8");
       const declaresConfirm = /\b(const|let|function)\s+confirm\b/.test(text);
       const calls: string[] = [...text.matchAll(/\bwindow\.(confirm|alert|prompt)\s*\(|(?<![.\w])(alert|prompt)\s*\(/g)].map(match => match[0]);
