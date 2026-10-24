@@ -1681,7 +1681,12 @@ fn index_line_is_entry(line: &str) -> bool {
 /// description: a page with an empty summary otherwise rendered as
 /// `* [Title](/page.md) - `, a separator pointing at nothing, in every
 /// projection index and every exported bundle.
-fn index_entry_line(title: &str, link_prefix: &str, filename: &str, description: &str) -> String {
+pub(crate) fn index_entry_line(
+    title: &str,
+    link_prefix: &str,
+    filename: &str,
+    description: &str,
+) -> String {
     let title = escape_index_link_text(title);
     let filename = filename
         .split('/')
