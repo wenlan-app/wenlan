@@ -56,6 +56,47 @@ pub fn fts_recall_hardening_enabled() -> bool {
     }
 }
 
+/// True unless `WENLAN_SELECTIVE_FTS_WEIGHT` is a falsy token (`0`, `false`,
+/// `no`, `off`, case-insensitive). OPT-OUT, default ON. OFF restores the flat
+/// keyword weight on every query, byte-identical to before this gate existed.
+pub fn selective_fts_weight_enabled() -> bool {
+    match std::env::var("WENLAN_SELECTIVE_FTS_WEIGHT") {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "no" | "off"
+        ),
+        Err(_) => true,
+    }
+}
+
+/// Keyword-channel weight for one hybrid memory search.
+///
+/// `base` is the tuned keyword weight (0.2 on the live path), which keeps
+/// keyword-heavy near misses from crowding out meaning matches. But the
+/// fusion only adds `base / (rrf_k + rank)` for a row the vector pool missed,
+/// and the pool holds `3 * limit` rows, so once a library is larger than that
+/// pool a row found only by its words can never reach the top `limit`. That
+/// hides exactly the rows a rare name, code or term points at.
+///
+/// When every query word matched together (`all_words_matched`, not the
+/// relaxed-OR fallback) in at most `limit` rows, the match is selective: it
+/// names those rows. They get at least the vector channel's full weight
+/// (1.0), the same weight the app's quick search gives keywords. Common words
+/// match more than `limit` rows and keep `base`.
+pub fn selective_fts_weight(
+    base: f32,
+    all_words_matched: bool,
+    hits: usize,
+    limit: usize,
+    enabled: bool,
+) -> f32 {
+    if enabled && all_words_matched && hits > 0 && hits <= limit {
+        base.max(1.0)
+    } else {
+        base
+    }
+}
+
 /// Sanitize a raw user query for safe use in an FTS5 `MATCH` expression.
 ///
 /// Each whitespace-delimited token is examined. A token is "unsafe" when it
@@ -132,6 +173,22 @@ pub fn build_relaxed_or(raw: &str, stopwords: &HashSet<&str>) -> Option<String> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn selective_fts_weight_lifts_only_a_few_all_word_hits() {
+        // A rare word matched in 1 row of a 10-row request: full weight.
+        assert_eq!(selective_fts_weight(0.2, true, 1, 10, true), 1.0);
+        assert_eq!(selective_fts_weight(0.2, true, 10, 10, true), 1.0);
+        // Common words fill more than the request: tuned weight stays.
+        assert_eq!(selective_fts_weight(0.2, true, 11, 10, true), 0.2);
+        // Only the relaxed-OR fallback matched: tuned weight stays.
+        assert_eq!(selective_fts_weight(0.2, false, 1, 10, true), 0.2);
+        // Nothing matched, or the gate is off: tuned weight stays.
+        assert_eq!(selective_fts_weight(0.2, true, 0, 10, true), 0.2);
+        assert_eq!(selective_fts_weight(0.2, true, 1, 10, false), 0.2);
+        // A caller already weighting keywords above 1.0 is never lowered.
+        assert_eq!(selective_fts_weight(1.5, true, 1, 10, true), 1.5);
+    }
+
     use super::*;
 
     // ── sanitize_fts_query ──────────────────────────────────────────────────
