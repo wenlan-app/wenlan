@@ -430,8 +430,9 @@ export function useReviewItemSummary(item: ReviewItem | null): {
   return { title: title ?? reviewKindLabel(t, item), reason, delta };
 }
 
-// A clear green, like the danger red beside it: the sage accent read as grey
-// behind rendered page text.
+// A clear green and red, the same strength in both themes: the sage accent
+// read as grey behind rendered page text, and the light theme's danger tint
+// almost vanished behind struck-through words.
 const INS_STYLE: React.CSSProperties = {
   backgroundColor: "rgba(76, 175, 106, 0.26)",
   textDecoration: "none",
@@ -440,7 +441,7 @@ const INS_STYLE: React.CSSProperties = {
 };
 
 const DEL_STYLE: React.CSSProperties = {
-  backgroundColor: "var(--mem-status-danger-bg)",
+  backgroundColor: "rgba(205, 92, 74, 0.24)",
   borderRadius: 3,
   padding: "0 2px",
 };
