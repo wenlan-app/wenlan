@@ -418,6 +418,9 @@ jobs:
               # replace a symlinked source stub is proved against a real
               # symlink, which is `cfg(unix)`.
               - 'crates/wenlan-core/src/export/provenance.rs'
+              # The no-replace rename is renameat2 on Linux and renameatx_np on
+              # macOS (`cfg(unix)` / `cfg(target_os = "macos")`).
+              - 'crates/wenlan-core/src/export/vault_fs.rs'
               - 'crates/wenlan-core/src/lint/**'
               - 'crates/wenlan-core/src/llm_provider.rs'
               - 'crates/wenlan-core/src/presence.rs'
@@ -532,6 +535,9 @@ jobs:
               # replace a symlinked source stub is proved against a real
               # symlink, which is `cfg(unix)`.
               - 'crates/wenlan-core/src/export/provenance.rs'
+              # Windows has no no-replace rename: vault_fs.rs falls back to a
+              # hard link outside `cfg(unix)`.
+              - 'crates/wenlan-core/src/export/vault_fs.rs'
               - 'crates/wenlan-core/src/presence.rs'
               - 'crates/wenlan-core/src/presence_test.rs'
               - 'crates/wenlan-core/src/repair.rs'
