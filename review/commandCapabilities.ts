@@ -48,6 +48,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     // The same shell listens for "Web access stopped on its own" and asks for
     // the one pending notice. Shared chrome, so it belongs in the contract.
     "take_remote_access_notice",
+    // The home lists vault notes an AI wants to change. Fixtures have no
+    // vault, so it answers with an empty list.
+    "list_note_proposals",
   ],
   // Web access (the relay) requests. The fixture shows no live connection, so
   // these answer from baseResponses with the quietest shape; they exist so the
