@@ -474,7 +474,7 @@ describe("IntelligenceSection", () => {
       expect(within(row).getByRole("button", { name: "Ask me first on pages I wrote" })).toHaveAttribute("aria-pressed", "true");
     });
 
-    it("switching it off unlocks nothing and shows no count", async () => {
+    it("switching it off unlocks nothing, and says so instead of a count", async () => {
       mocks.getBackgroundAiEnabled.mockResolvedValue(false);
       mocks.getLockMyPages.mockResolvedValue(true);
       renderSection();
@@ -485,6 +485,16 @@ describe("IntelligenceSection", () => {
       expect(mocks.setLockMyPages).toHaveBeenCalledWith(false);
       await waitFor(() => expect(within(row).getByRole("button", { name: "Ask me first on pages I wrote" })).toHaveAttribute("aria-pressed", "false"));
       expect(within(row).queryByText(/Set \d+ pages? to Ask me first/)).toBeNull();
+      expect(within(row).getByText("Pages already set stay on Ask me first.")).toBeInTheDocument();
+    });
+
+    it("says nothing needed changing when no page was set", async () => {
+      mocks.getBackgroundAiEnabled.mockResolvedValue(false);
+      mocks.setLockMyPages.mockResolvedValue(0);
+      renderSection();
+      const row = await screen.findByTestId("lock-my-pages");
+      await userEvent.click(await within(row).findByRole("button", { name: "Ask me first on pages I wrote" }));
+      expect(await within(row).findByText("No pages needed changing.")).toBeInTheDocument();
     });
 
     it("a failed save says so and keeps the switch where it was", async () => {

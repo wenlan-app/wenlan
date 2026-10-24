@@ -12,9 +12,9 @@ const recentChanges = [{
 }];
 
 const COPY: Record<AppLocale, { actions: string; sidebar: string; heading: string; allowed: string; askFirst: string; fromAi: string; fromPage: string }> = {
-  en: { actions: "Page actions", sidebar: "Open page sidebar", heading: "AI changes", allowed: "Allowed", askFirst: "Ask me first", fromAi: "AI wrote this page.", fromPage: "Set on this page." },
-  "zh-Hant": { actions: "筆記操作", sidebar: "開啟筆記側欄", heading: "AI 修改", allowed: "直接改", askFirst: "先問我", fromAi: "這頁是 AI 寫的。", fromPage: "這頁自己的設定。" },
-  "zh-Hans": { actions: "笔记操作", sidebar: "打开笔记侧栏", heading: "AI 修改", allowed: "直接改", askFirst: "先问我", fromAi: "这页是 AI 写的。", fromPage: "这页自己的设置。" },
+  en: { actions: "Page actions", sidebar: "Open page sidebar", heading: "AI changes", allowed: "Allowed", askFirst: "Ask me first", fromAi: "AI wrote this page.", fromPage: "You chose this for this page." },
+  "zh-Hant": { actions: "筆記操作", sidebar: "開啟筆記側欄", heading: "AI 修改", allowed: "直接改", askFirst: "先問我", fromAi: "這篇筆記是 AI 寫的。", fromPage: "這是你為這篇筆記選的。" },
+  "zh-Hans": { actions: "笔记操作", sidebar: "打开笔记侧栏", heading: "AI 修改", allowed: "直接改", askFirst: "先问我", fromAi: "这篇笔记是 AI 写的。", fromPage: "这是你为这篇笔记选的。" },
 };
 
 async function openFixturePage(page: Page, actionsLabel: string): Promise<void> {
