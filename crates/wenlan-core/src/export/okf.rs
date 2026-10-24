@@ -28,11 +28,17 @@ const PAGES_DIR: &str = "pages";
 const SOURCES_DIR: &str = "sources";
 
 /// Where a bundle file somebody edited is moved before the export replaces
-/// it. Dot-prefixed on purpose: `sources::directory::scan_directory` skips
-/// hidden entries, so the preserved copy is invisible to Wenlan's own
-/// importer and to any OKF consumer walking the bundle, while still sitting
-/// where a person can find it.
+/// it. Dot-prefixed so `sources::directory::scan_directory` skips it and the
+/// preserved copy never re-enters Wenlan's own importer. That is Wenlan's
+/// exclusion only: OKF applies §11 to every non-reserved `.md` file in the
+/// tree, hidden directories included, and forbids a nested `index.md` (§8).
+/// So every preserved file also carries [`ARCHIVE_SUFFIX`] and is not
+/// markdown to anything that walks the bundle.
 const ARCHIVE_DIR: &str = ".wenlan-archive";
+
+/// Appended to a preserved file's name (`alpha.md` -> `alpha.md.bak`). The
+/// bytes are unchanged; the name just stops being an OKF document.
+const ARCHIVE_SUFFIX: &str = ".bak";
 
 /// Largest bundle file a re-export reads to classify it. A file too big to read
 /// whole is one it cannot classify, and an unclassified file is kept.
@@ -193,8 +199,8 @@ impl BundleDirs {
 }
 
 /// Move an edited bundle file into `.wenlan-archive/`, keeping its position in
-/// the bundle (`pages/alpha.md` becomes `.wenlan-archive/pages/alpha.md`) so
-/// two files of the same name from different directories cannot collide.
+/// the bundle (`pages/alpha.md` becomes `.wenlan-archive/pages/alpha.md.bak`)
+/// so two files of the same name from different directories cannot collide.
 /// Suffixes past an occupied destination rather than replacing it: an older
 /// preserved copy is the one thing here the database cannot reproduce.
 fn preserve_edited_bundle_file(dirs: &BundleDirs, entry: &str) -> Result<(), WenlanError> {
@@ -235,24 +241,137 @@ fn preserve_into_archive(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(entry);
+    place_as_backup(&archive, &held, name)
+        .map_err(WenlanError::Io)?
+        .map_or_else(
+            // The bytes stay in the archive directory under the private name.
+            || {
+                Err(WenlanError::Conflict(format!(
+                    "cannot preserve {entry}: {ARCHIVE_DIR} has no free name for it"
+                )))
+            },
+            |placed| {
+                log::warn!(
+                    "[okf] {entry} was edited since the last export; preserved at {}",
+                    dirs.path.join(&relative).join(placed).display()
+                );
+                Ok(())
+            },
+        )
+}
+
+/// Give the file held at `held` in `dir` the first free backup name for
+/// `name`: `alpha.md` becomes `alpha.md.bak`, then `alpha-2.md.bak`, ... A
+/// taken name is skipped, never replaced. `None` when every candidate is taken.
+fn place_as_backup(dir: &Dir, held: &str, name: &str) -> std::io::Result<Option<String>> {
     let (stem, extension) = match name.strip_suffix(".md") {
         Some(stem) => (stem, ".md"),
         None => (name, ""),
     };
-    match crate::export::archive::place_suffixed(&archive, &held, stem, extension, &mut |_| {})
-        .map_err(WenlanError::Io)?
-    {
-        Some(placed) => {
-            log::warn!(
-                "[okf] {entry} was edited since the last export; preserved at {}",
-                dirs.path.join(&relative).join(placed).display()
-            );
-            Ok(())
+    let extension = format!("{extension}{ARCHIVE_SUFFIX}");
+    crate::export::archive::place_suffixed(dir, held, stem, &extension, &mut |_| {})
+}
+
+/// Deepest directory nesting the legacy-archive migration descends. The
+/// archive mirrors the bundle's own layout (two levels at most); the cap only
+/// keeps a hostile or looping tree from running the walk away.
+const LEGACY_ARCHIVE_MAX_DEPTH: usize = 8;
+
+/// Rename the `.md` files an older build left under `.wenlan-archive/` to
+/// `<name>.md.bak`. Those copies were markdown inside the bundle -- a preserved
+/// root `index.md` even carried `okf_version` -- which OKF §8/§11 reads as a
+/// nested index and as concept documents without a `type`.
+///
+/// Plain files only; a symlink or directory symlink is never followed. Each
+/// file goes to a private name first and then to a name that cannot replace
+/// an existing one, so a clash with an existing `.bak` suffixes instead. A
+/// failure is logged and skipped: the migration never fails the export.
+fn migrate_legacy_archive(dirs: &BundleDirs) {
+    let archive = match dirs.root.open_dir_nofollow(ARCHIVE_DIR) {
+        Ok(archive) => archive,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            log::warn!("[okf] cannot open {ARCHIVE_DIR} to migrate older copies: {e}");
+            return;
         }
-        // The bytes stay in the archive directory under the private name.
-        None => Err(WenlanError::Conflict(format!(
-            "cannot preserve {entry}: {ARCHIVE_DIR} has no free name for it"
-        ))),
+    };
+    let mut renamed = 0usize;
+    migrate_legacy_dir(&archive, Path::new(ARCHIVE_DIR), 0, &mut renamed);
+    if renamed > 0 {
+        log::info!(
+            "[okf] renamed {renamed} markdown file(s) under {ARCHIVE_DIR} to {ARCHIVE_SUFFIX} \
+             so the bundle stays OKF-conformant"
+        );
+    }
+}
+
+fn migrate_legacy_dir(dir: &Dir, shown: &Path, depth: usize, renamed: &mut usize) {
+    let entries = match dir.entries() {
+        Ok(entries) => entries,
+        Err(e) => {
+            log::warn!("[okf] cannot list {}: {e}", shown.display());
+            return;
+        }
+    };
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    for entry in entries.flatten() {
+        let (Ok(kind), Some(name)) = (
+            entry.file_type(),
+            entry.file_name().to_str().map(String::from),
+        ) else {
+            continue;
+        };
+        // `DirEntry::file_type` does not follow a symlink, so a link reports
+        // as neither a file nor a directory and is left alone.
+        if kind.is_dir() {
+            dirs.push(name);
+        } else if kind.is_file() && name.ends_with(".md") {
+            files.push(name);
+        }
+    }
+    for name in files {
+        let held = vault_fs::private_name("legacy");
+        if let Err(e) = dir.rename(&name, dir, &held) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[okf] cannot rename {}: {e}", shown.join(&name).display());
+            }
+            continue;
+        }
+        match place_as_backup(dir, &held, &name) {
+            Ok(Some(placed)) => {
+                *renamed += 1;
+                log::debug!("[okf] {} -> {placed}", shown.join(&name).display());
+            }
+            // Out of free names or a failed rename: put the file back under its
+            // own name rather than leave it under a private one.
+            outcome => {
+                match outcome {
+                    Err(e) => {
+                        log::warn!("[okf] cannot rename {}: {e}", shown.join(&name).display())
+                    }
+                    _ => log::warn!(
+                        "[okf] no free backup name for {}; left as it was",
+                        shown.join(&name).display()
+                    ),
+                }
+                if let Err(e) = vault_fs::rename_noreplace(dir, &held, dir, &name) {
+                    log::warn!(
+                        "[okf] {} stays under the private name {held}: {e}",
+                        shown.join(&name).display()
+                    );
+                }
+            }
+        }
+    }
+    if depth >= LEGACY_ARCHIVE_MAX_DEPTH {
+        return;
+    }
+    for name in dirs {
+        match dir.open_dir_nofollow(&name) {
+            Ok(child) => migrate_legacy_dir(&child, &shown.join(&name), depth + 1, renamed),
+            Err(e) => log::warn!("[okf] cannot open {}: {e}", shown.join(&name).display()),
+        }
     }
 }
 
@@ -1132,6 +1251,9 @@ fn export_okf_inner(
     std::fs::create_dir_all(target.join(SOURCES_DIR))?;
     let dirs = BundleDirs::open(target).map_err(WenlanError::Io)?;
 
+    // Bundles exported by older builds hold preserved copies named `*.md`.
+    migrate_legacy_archive(&dirs);
+
     // Render every planned file before touching the tree, so the preservation
     // pass below can compare what is on disk against what this run would put
     // there. The index is rendered as if every page succeeds; a page that
@@ -1889,7 +2011,7 @@ mod tests {
         assert_eq!(stats.exported, 1, "{stats:?}");
 
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md.bak")).unwrap(),
             mine,
             "the edit is preserved, byte for byte"
         );
@@ -1918,7 +2040,7 @@ mod tests {
             "the stale file still leaves the bundle"
         );
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md.bak")).unwrap(),
             mine,
             "but its bytes are preserved, not unlinked"
         );
@@ -1985,7 +2107,7 @@ mod tests {
         std::fs::write(dir.path().join("pages/alpha.md"), "edited before upgrade").unwrap();
         export_okf(&pages, dir.path()).unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md.bak")).unwrap(),
             "edited before upgrade",
             "Muse: the one-time upgrade overwrite is gone"
         );
@@ -1994,7 +2116,8 @@ mod tests {
         std::fs::write(dir.path().join("pages/alpha.md"), "edited after upgrade").unwrap();
         export_okf(&pages, dir.path()).unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha-2.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha-2.md.bak"))
+                .unwrap(),
             "edited after upgrade"
         );
     }
@@ -3122,7 +3245,7 @@ mod tests {
         export_okf(&both[..1], dir.path()).unwrap();
         assert!(!beta.exists());
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md.bak")).unwrap(),
             mine
         );
     }
@@ -3199,7 +3322,7 @@ mod tests {
         let stats = export_okf(&later, dir.path()).unwrap();
         assert_eq!((stats.exported, stats.failed), (1, 0), "{stats:?}");
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md.bak")).unwrap(),
             mine
         );
         assert!(std::fs::read_to_string(&alpha)
@@ -3272,12 +3395,178 @@ mod tests {
         // A later run preserves it and writes a fresh index.
         export_okf(&pages, dir.path()).unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/index.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/index.md.bak")).unwrap(),
             "my home note\n"
         );
         assert!(std::fs::read_to_string(&index)
             .unwrap()
             .contains("alpha.md"));
+    }
+
+    /// Every `.md` file under `dir`, hidden directories included. This is what
+    /// an OKF consumer sees: it has no idea `.wenlan-archive/` is Wenlan's.
+    fn collect_md_including_hidden(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                collect_md_including_hidden(&path, out);
+            } else if kind.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+
+    fn private_names_in_archive(dir: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type().unwrap().is_dir() {
+                found.extend(private_names_in_archive(&entry.path()));
+            } else if name.starts_with(".wenlan-") && name.ends_with(".tmp") {
+                found.push(name);
+            }
+        }
+        found
+    }
+
+    /// OKF §8: `index.md` appears at the bundle root only, and carries
+    /// `okf_version`. §11: every other non-reserved `.md` file anywhere in the
+    /// tree is a concept document with a `type`.
+    fn assert_whole_tree_conforms(root: &Path) {
+        let mut md_files = Vec::new();
+        collect_md_including_hidden(root, &mut md_files);
+        assert!(!md_files.is_empty());
+        for path in &md_files {
+            let rel = path.strip_prefix(root).unwrap();
+            let content = std::fs::read_to_string(path).unwrap();
+            let (fm, _body) = crate::sources::obsidian::extract_frontmatter(&content);
+            match rel.file_name().and_then(|n| n.to_str()).unwrap() {
+                "index.md" => {
+                    assert_eq!(rel, Path::new("index.md"), "nested index: {rel:?}");
+                    assert!(fm.get_str("okf_version").is_some(), "{content}");
+                }
+                "log.md" => {}
+                _ => {
+                    let ty = fm.get_str("type").unwrap_or("");
+                    assert!(!ty.is_empty(), "{rel:?} needs a type:\n{content}");
+                }
+            }
+        }
+        // Frontmatter-bearing indexes are the nested-index symptom itself.
+        let with_version: Vec<_> = md_files
+            .iter()
+            .filter(|p| {
+                let c = std::fs::read_to_string(p).unwrap();
+                crate::sources::obsidian::extract_frontmatter(&c)
+                    .0
+                    .get_str("okf_version")
+                    .is_some()
+            })
+            .collect();
+        assert_eq!(with_version, [&root.join("index.md")]);
+    }
+
+    /// An edited root `index.md` used to be preserved as
+    /// `.wenlan-archive/index.md` (a nested index with `okf_version`) and
+    /// `index-2.md` (a concept with no `type`), which breaks OKF §8/§11 for any
+    /// consumer that does not share Wenlan's exclusion of the archive.
+    #[test]
+    fn preserved_edits_leave_the_whole_bundle_tree_conformant() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        assert_whole_tree_conforms(dir.path());
+
+        let edited_index = "---\nokf_version: \"0.2\"\n---\n\nmy home note\n";
+        let edited_page = "---\ntype: page\n---\n\nMy rewrite of Alpha.\n";
+        std::fs::write(dir.path().join("index.md"), edited_index).unwrap();
+        std::fs::write(dir.path().join("pages/alpha.md"), edited_page).unwrap();
+        export_okf(&pages, dir.path()).unwrap();
+
+        // A second round of edits takes the next suffix, still not markdown.
+        std::fs::write(dir.path().join("index.md"), "second note\n").unwrap();
+        std::fs::write(dir.path().join("pages/alpha.md"), "second rewrite\n").unwrap();
+        export_okf(&pages, dir.path()).unwrap();
+
+        let archived = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+        assert_eq!(archived(".wenlan-archive/index.md.bak"), edited_index);
+        assert_eq!(archived(".wenlan-archive/index-2.md.bak"), "second note\n");
+        assert_eq!(archived(".wenlan-archive/pages/alpha.md.bak"), edited_page);
+        assert_eq!(
+            archived(".wenlan-archive/pages/alpha-2.md.bak"),
+            "second rewrite\n"
+        );
+
+        let mut archived_md = Vec::new();
+        collect_md_including_hidden(&dir.path().join(ARCHIVE_DIR), &mut archived_md);
+        assert!(archived_md.is_empty(), "{archived_md:?}");
+        assert_whole_tree_conforms(dir.path());
+        assert!(private_names_in_archive(&dir.path().join(ARCHIVE_DIR)).is_empty());
+    }
+
+    /// A bundle exported by an older build holds `.md` copies in the archive.
+    /// The next export renames them to `.md.bak` without touching a `.bak`
+    /// that is already there.
+    #[test]
+    fn export_migrates_markdown_copies_an_older_build_left_in_the_archive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        let archive = dir.path().join(".wenlan-archive");
+        std::fs::create_dir_all(archive.join("pages")).unwrap();
+        std::fs::write(archive.join("pages/alpha.md"), "old copy").unwrap();
+        std::fs::write(archive.join("pages/alpha.md.bak"), "already a backup").unwrap();
+        std::fs::write(archive.join("index.md"), "---\nokf_version: \"0.2\"\n---\n").unwrap();
+        std::fs::write(archive.join("index-2.md"), "second index").unwrap();
+        std::fs::write(archive.join("notes.txt"), "not markdown").unwrap();
+
+        export_okf(&pages, dir.path()).unwrap();
+
+        let read = |name: &str| std::fs::read_to_string(archive.join(name)).unwrap();
+        assert_eq!(read("pages/alpha.md.bak"), "already a backup");
+        assert_eq!(read("pages/alpha-2.md.bak"), "old copy");
+        assert!(!archive.join("pages/alpha.md").exists());
+        assert!(read("index.md.bak").contains("okf_version"));
+        assert_eq!(read("index-2.md.bak"), "second index");
+        assert!(!archive.join("index.md").exists());
+        assert!(!archive.join("index-2.md").exists());
+        assert_eq!(read("notes.txt"), "not markdown");
+        assert!(private_names_in_archive(&archive).is_empty());
+        assert_whole_tree_conforms(dir.path());
+
+        // Nothing left to migrate: a further export changes nothing there.
+        export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(read("pages/alpha-2.md.bak"), "old copy");
+    }
+
+    /// The migration touches plain files only and never follows a link.
+    #[cfg(unix)]
+    #[test]
+    fn migration_does_not_follow_symlinks_out_of_the_archive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let elsewhere = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        std::fs::write(elsewhere.path().join("theirs.md"), "not ours").unwrap();
+        let archive = dir.path().join(".wenlan-archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), archive.join("linked")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path().join("theirs.md"), archive.join("t.md"))
+            .unwrap();
+
+        export_okf(&pages, dir.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(elsewhere.path().join("theirs.md")).unwrap(),
+            "not ours"
+        );
+        assert!(std::fs::symlink_metadata(archive.join("t.md"))
+            .unwrap()
+            .is_symlink());
+        assert!(!archive.join("t.md.bak").exists());
     }
 
     /// Unedited re-exports do not churn the vault: an identical file is left
