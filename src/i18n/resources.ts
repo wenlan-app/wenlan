@@ -759,7 +759,7 @@ const en = {
   sourcePaste: {
     saving: "Saving…",
     saved: "Saved as source",
-    savedLinkOnly: "Saved as source, link only",
+    savedLinkOnly: "This site needs a sign-in, so only the link was saved",
     failed: "Couldn't save this link.",
     retry: "Try again",
     undo: "Undo",
@@ -3665,7 +3665,7 @@ const zhHans = {
   sourcePaste: {
     saving: "正在保存…",
     saved: "已存为来源",
-    savedLinkOnly: "已存为来源，只存了网址",
+    savedLinkOnly: "这个网站要登录，只存了链接",
     failed: "无法保存这个网址。",
     retry: "再试一次",
     undo: "撤销",
@@ -6526,7 +6526,7 @@ const zhHant = {
   sourcePaste: {
     saving: "儲存中…",
     saved: "已存成來源",
-    savedLinkOnly: "已存成來源，只存了網址",
+    savedLinkOnly: "這個網站要登入，只存了連結",
     failed: "無法儲存這個網址。",
     retry: "再試一次",
     undo: "撤銷",
