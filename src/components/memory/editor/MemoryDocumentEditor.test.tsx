@@ -162,7 +162,7 @@ describe("MemoryDocumentEditor", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Discard draft" }));
     expect(confirm).toHaveBeenCalledWith("Discard this unsaved draft? Copy any text you want to keep first.");
-    expect(screen.getByRole("textbox", { name: "Mock markdown editor" })).toBeDisabled();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Mock markdown editor" })).toBeDisabled());
     let cleared = false;
     await act(async () => { cleared = await flush()!(); });
     expect(cleared).toBe(true);

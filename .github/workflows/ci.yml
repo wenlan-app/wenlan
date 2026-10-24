@@ -418,6 +418,9 @@ jobs:
               # replace a symlinked source stub is proved against a real
               # symlink, which is `cfg(unix)`.
               - 'crates/wenlan-core/src/export/provenance.rs'
+              # The no-replace rename is renameat2 on Linux and renameatx_np on
+              # macOS (`cfg(unix)` / `cfg(target_os = "macos")`).
+              - 'crates/wenlan-core/src/export/vault_fs.rs'
               - 'crates/wenlan-core/src/lint/**'
               - 'crates/wenlan-core/src/llm_provider.rs'
               - 'crates/wenlan-core/src/presence.rs'
@@ -532,6 +535,9 @@ jobs:
               # replace a symlinked source stub is proved against a real
               # symlink, which is `cfg(unix)`.
               - 'crates/wenlan-core/src/export/provenance.rs'
+              # Windows has no no-replace rename: vault_fs.rs falls back to a
+              # hard link outside `cfg(unix)`.
+              - 'crates/wenlan-core/src/export/vault_fs.rs'
               - 'crates/wenlan-core/src/presence.rs'
               - 'crates/wenlan-core/src/presence_test.rs'
               - 'crates/wenlan-core/src/repair.rs'
@@ -1497,18 +1503,31 @@ jobs:
             & schtasks.exe /query /tn WenlanServer | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "schtasks did not register WenlanServer" }
 
-            # /run launched the daemon as a separate process. Poll /api/health.
+            # /run launched the daemon as a separate process. Poll /api/health
+            # against a deadline sized for a cold first start of a debug build
+            # (model fetch and load); a fixed 30-try loop timed out on busy
+            # runners while the task was still Running (#969).
             $healthy = $false
-            for ($i = 0; $i -lt 30; $i++) {
+            $deadline = (Get-Date).AddSeconds(180)
+            while ((Get-Date) -lt $deadline) {
               try {
-                $r = Invoke-WebRequest -Uri "http://127.0.0.1:7878/api/health" -UseBasicParsing -TimeoutSec 1
+                $r = Invoke-WebRequest -Uri "http://127.0.0.1:7878/api/health" -UseBasicParsing -TimeoutSec 2
                 if ($r.StatusCode -eq 200) { $healthy = $true; break }
               } catch { }
-              Start-Sleep -Seconds 1
+              Start-Sleep -Seconds 2
             }
             if (-not $healthy) {
               & schtasks.exe /query /tn WenlanServer /fo LIST /v
-              throw "daemon did not respond on /api/health after schtasks /run"
+              # Tell a real startup failure from a slow one.
+              $dataRoot = if ($env:WENLAN_DATA_DIR) { $env:WENLAN_DATA_DIR } else { Join-Path $env:LOCALAPPDATA "wenlan" }
+              $daemonLog = Join-Path $dataRoot "logs\wenlan-server.log"
+              if (Test-Path $daemonLog) {
+                Write-Host "--- last 80 lines of $daemonLog"
+                Get-Content $daemonLog -Tail 80 | ForEach-Object { Write-Host $_ }
+              } else {
+                Write-Host "no daemon log at $daemonLog"
+              }
+              throw "daemon did not respond on /api/health within 180s after schtasks /run"
             }
             Write-Host "    daemon healthy under scheduled task"
 

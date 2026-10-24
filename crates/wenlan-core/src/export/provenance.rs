@@ -3,6 +3,7 @@
 //! storage validation, and `_sources/` stub projection + GC.
 
 use crate::error::WenlanError;
+use crate::export::vault_fs::{self, Disposal, Replacement};
 use wenlan_types::CodeBasisLocator;
 
 /// Opening delimiter for the export-only `## Sources` block. The block is
@@ -346,6 +347,20 @@ pub fn gc_orphan_stubs(knowledge_path: &Path, manifest: &StubManifest) -> std::i
 }
 
 pub(crate) fn gc_orphan_stubs_in(root: &Dir, manifest: &StubManifest) -> std::io::Result<()> {
+    gc_orphan_stubs_in_with_hooks(root, manifest, &mut |_| {}, &mut |_| {})
+}
+
+/// [`gc_orphan_stubs_in`] with two seams for the interleavings an editor can
+/// produce. `after_classify` runs once a stub has been classified and before
+/// the pass acts on it, with the stub's name. `after_aside` runs once a
+/// classified-pristine stub has been taken aside and before its bytes are
+/// re-read, with the private name it now has. Production passes no-ops.
+fn gc_orphan_stubs_in_with_hooks(
+    root: &Dir,
+    manifest: &StubManifest,
+    after_classify: &mut dyn FnMut(&str),
+    after_aside: &mut dyn FnMut(&str),
+) -> std::io::Result<()> {
     let Some(dir) = open_or_create_sources_dir(root, false)? else {
         return Ok(());
     };
@@ -386,9 +401,52 @@ pub(crate) fn gc_orphan_stubs_in(root: &Dir, manifest: &StubManifest) -> std::io
         match classify_stub(&content, name_text) {
             StubDisposition::NotOurs => {}
             StubDisposition::Pristine => {
-                let _ = dir.remove_file(Path::new(&name));
+                after_classify(name_text);
+                // The read above decided about the bytes that were there THEN.
+                // An editor can save between that read and an unlink by name,
+                // and the unlink would take the save with it. So the file
+                // moves to a private name first, which captures whatever is at
+                // the name now, and only bytes that still classify as pristine
+                // are unlinked.
+                let outcome = vault_fs::remove_if_unchanged_with_hook(
+                    &dir,
+                    name_text,
+                    STUB_CLASSIFY_SCAN_BYTES,
+                    |bytes| {
+                        std::str::from_utf8(bytes).is_ok_and(|current| {
+                            classify_stub(current, name_text) == StubDisposition::Pristine
+                        })
+                    },
+                    |aside| after_aside(aside),
+                );
+                match outcome {
+                    Ok(Disposal::Absent | Disposal::Removed) => {}
+                    // Edited after it was classified, and put back. The next
+                    // pass sees an edited stub and archives it.
+                    Ok(Disposal::Kept) => {
+                        log::info!(
+                            "[provenance] kept {name_text}: edited while it was being reaped"
+                        );
+                    }
+                    // Edited, and a newer file already holds the name, so the
+                    // edit is still under its private name. Archive that.
+                    Ok(Disposal::Displaced(aside)) => {
+                        if let Err(e) = crate::export::archive::archive_aside_from(
+                            root, &dir, &aside, name_text,
+                        ) {
+                            log::warn!(
+                                "[provenance] could not archive edited stub {name_text} \
+                                 (left as {aside} in {SOURCES_STUB_DIR}): {e}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[provenance] could not reap orphan stub {name_text}: {e}");
+                    }
+                }
             }
             StubDisposition::Edited => {
+                after_classify(name_text);
                 if let Err(e) = crate::export::archive::archive_file_from(root, &dir, name_text) {
                     log::warn!("[provenance] could not archive edited stub {name_text}: {e}");
                 }
@@ -449,8 +507,20 @@ pub fn project_stubs_for_page(
 
 pub(crate) fn project_stubs_for_page_in(
     root: &Dir,
+    page_id: &str,
+    source_memory_ids: &[String],
+) -> std::io::Result<()> {
+    project_stubs_for_page_in_with_hook(root, page_id, source_memory_ids, &mut |_| {})
+}
+
+/// [`project_stubs_for_page_in`] with a seam between classifying a stub (and
+/// archiving it, when it was edited) and writing it. `before_write` receives
+/// the stub's name. Production passes a no-op.
+fn project_stubs_for_page_in_with_hook(
+    root: &Dir,
     _page_id: &str,
     source_memory_ids: &[String],
+    before_write: &mut dyn FnMut(&str),
 ) -> std::io::Result<()> {
     if source_memory_ids.is_empty() {
         return Ok(());
@@ -483,7 +553,36 @@ pub(crate) fn project_stubs_for_page_in(
                 continue;
             }
         }
-        write_regular_nofollow(&dir, &name, body.as_bytes())?;
+        before_write(&name);
+        // The classification above is a read of the bytes that were there
+        // then. Truncating the name afterwards would destroy a save that
+        // landed in between, so the stub is installed without replacing
+        // anything but the exact bytes this pass classified as its own.
+        match vault_fs::replace_if_unchanged(
+            &dir,
+            &name,
+            body.as_bytes(),
+            STUB_CLASSIFY_SCAN_BYTES,
+            |bytes| bytes == body.as_bytes(),
+        )? {
+            Replacement::Written | Replacement::Unchanged => {}
+            // Somebody typed into it after it was classified. Left where it
+            // is; the next write of a page citing it archives the edit and
+            // rewrites the stub.
+            Replacement::Kept => {
+                log::warn!("[provenance] leaving {name} alone: it changed while it was written");
+            }
+            Replacement::Displaced(aside) => {
+                if let Err(e) =
+                    crate::export::archive::archive_aside_from(root, &dir, &aside, &name)
+                {
+                    log::warn!(
+                        "[provenance] could not archive edited stub {name} \
+                         (left as {aside} in {SOURCES_STUB_DIR}): {e}"
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -1187,6 +1286,237 @@ mod tests {
         assert!(
             !sources.join("import_9_9.md").exists(),
             "orphan import_ stub must be reaped (the leak this fix closes)"
+        );
+    }
+
+    // The tests below interleave an editor's save with the exporter at the
+    // point the issue names: after a file was classified, before the pass
+    // acts on its pathname.
+
+    fn private_names(dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|name| name.starts_with(".wenlan-"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// An editor that saves by writing a new file and renaming it over the
+    /// name (Obsidian on some platforms, most sync clients) lands after the
+    /// pass read the pristine bytes. The unlink used to take the save with it.
+    #[test]
+    fn gc_keeps_an_edit_saved_by_replacing_the_file_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        project_stubs_for_page(dir.path(), "page_a", &["mem_race".to_string()]).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+        let mut classified = Vec::new();
+
+        gc_orphan_stubs_in_with_hooks(
+            &root,
+            &StubManifest::default(),
+            &mut |name| {
+                classified.push(name.to_string());
+                std::fs::write(sources.join(".editor.tmp"), "my edit, saved by replacing\n")
+                    .unwrap();
+                std::fs::rename(sources.join(".editor.tmp"), sources.join(name)).unwrap();
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(
+            classified,
+            ["mem_race.md"],
+            "the hook ran at the race point"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_race.md")).unwrap(),
+            "my edit, saved by replacing\n",
+            "the edit is still where the person saved it"
+        );
+        assert!(private_names(&sources).is_empty(), "no private name left");
+    }
+
+    /// The same, for an editor that writes into the existing file.
+    #[test]
+    fn gc_keeps_an_edit_written_in_place_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        project_stubs_for_page(dir.path(), "page_a", &["mem_race".to_string()]).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+
+        gc_orphan_stubs_in_with_hooks(
+            &root,
+            &StubManifest::default(),
+            &mut |name| std::fs::write(sources.join(name), "typed in place\n").unwrap(),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_race.md")).unwrap(),
+            "typed in place\n"
+        );
+        assert!(private_names(&sources).is_empty());
+    }
+
+    /// An editor still holding the file open writes into it after the pass has
+    /// moved it aside but before the pass re-reads it. The re-read sees the
+    /// edit, and the file goes back.
+    #[test]
+    fn gc_keeps_an_edit_written_through_an_open_handle_after_the_take() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        project_stubs_for_page(dir.path(), "page_a", &["mem_race".to_string()]).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+
+        gc_orphan_stubs_in_with_hooks(&root, &StubManifest::default(), &mut |_| {}, &mut |aside| {
+            std::fs::write(sources.join(aside), "late edit\n").unwrap()
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_race.md")).unwrap(),
+            "late edit\n"
+        );
+        assert!(private_names(&sources).is_empty());
+    }
+
+    /// While the pass held the edited bytes aside, a newer save took the name.
+    /// Neither is lost: the newer file stays, and the edit is archived.
+    #[test]
+    fn gc_archives_the_edit_when_a_newer_file_took_the_name_meanwhile() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        project_stubs_for_page(dir.path(), "page_a", &["mem_race".to_string()]).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+
+        gc_orphan_stubs_in_with_hooks(&root, &StubManifest::default(), &mut |_| {}, &mut |aside| {
+            std::fs::write(sources.join(aside), "the first edit\n").unwrap();
+            std::fs::write(sources.join("mem_race.md"), "a newer save\n").unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_race.md")).unwrap(),
+            "a newer save\n",
+            "the file that took the name is not replaced"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/mem_race.md")).unwrap(),
+            "the first edit\n",
+            "the bytes that were set aside are archived, not dropped"
+        );
+        assert!(private_names(&sources).is_empty());
+    }
+
+    /// A stub classified as edited is archived by taking the file, so an even
+    /// later save is what lands in `archive/`; nothing is dropped.
+    #[test]
+    fn gc_archives_whatever_is_at_an_edited_stub_when_it_acts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        project_stubs_for_page(dir.path(), "page_a", &["mem_race".to_string()]).unwrap();
+        // Still carries the marker, so it classifies as edited, not foreign.
+        let edit = |n: &str| format!("{}\n{n} edit\n", stub_body("mem_race"));
+        std::fs::write(sources.join("mem_race.md"), edit("first")).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+
+        gc_orphan_stubs_in_with_hooks(
+            &root,
+            &StubManifest::default(),
+            &mut |name| std::fs::write(sources.join(name), edit("second")).unwrap(),
+            &mut |_| {},
+        )
+        .unwrap();
+
+        assert!(!sources.join("mem_race.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/mem_race.md")).unwrap(),
+            edit("second")
+        );
+    }
+
+    /// An untouched stub is still reaped with no hook interference: the new
+    /// path removes exactly what it used to.
+    #[test]
+    fn gc_still_removes_a_pristine_stub_it_took_aside() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        project_stubs_for_page(dir.path(), "page_a", &["mem_quiet".to_string()]).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+        gc_orphan_stubs_in_with_hooks(&root, &StubManifest::default(), &mut |_| {}, &mut |_| {})
+            .unwrap();
+        assert!(!sources.join("mem_quiet.md").exists());
+        assert!(private_names(&sources).is_empty());
+        assert!(!dir.path().join("archive").exists());
+    }
+
+    /// The projection side of the same race: a cited stub that was identical to
+    /// what is about to be written is edited between the check and the write.
+    /// It used to be truncated in place.
+    #[test]
+    fn projection_keeps_an_edit_made_after_the_stub_was_classified() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        let ids = ["mem_note".to_string()];
+        project_stubs_for_page(dir.path(), "page_a", &ids).unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+
+        project_stubs_for_page_in_with_hook(&root, "page_b", &ids, &mut |name| {
+            std::fs::write(sources.join(".editor.tmp"), "typed meanwhile\n").unwrap();
+            std::fs::rename(sources.join(".editor.tmp"), sources.join(name)).unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_note.md")).unwrap(),
+            "typed meanwhile\n",
+            "the edit was not overwritten"
+        );
+        assert!(private_names(&sources).is_empty());
+
+        // The next write sees an edited stub, archives it and refreshes.
+        project_stubs_for_page(dir.path(), "page_c", &ids).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/mem_note.md")).unwrap(),
+            "typed meanwhile\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_note.md")).unwrap(),
+            stub_body("mem_note")
+        );
+    }
+
+    /// After an edited stub is archived the name is free. A save that takes it
+    /// before the refreshed stub lands is kept, not replaced.
+    #[test]
+    fn projection_does_not_replace_a_file_that_took_the_name_after_archiving() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources = dir.path().join("_sources");
+        let ids = ["mem_note".to_string()];
+        project_stubs_for_page(dir.path(), "page_a", &ids).unwrap();
+        std::fs::write(sources.join("mem_note.md"), "first edit\n").unwrap();
+        let root = Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).unwrap();
+
+        project_stubs_for_page_in_with_hook(&root, "page_b", &ids, &mut |name| {
+            assert!(!sources.join(name).exists(), "archived before the hook");
+            std::fs::write(sources.join(name), "second edit\n").unwrap();
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(sources.join("mem_note.md")).unwrap(),
+            "second edit\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/mem_note.md")).unwrap(),
+            "first edit\n"
         );
     }
 }

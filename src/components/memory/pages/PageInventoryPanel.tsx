@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { deletePage, discardPageDraft, getPage, knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
+import { confirmAction } from "../../../lib/confirmAction";
 import { listAllActivePages, listAllDraftPages, listAllActivePagesExplicitBrowse, listAllDraftPagesExplicitBrowse, EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { pageSpaceContext } from "./pagePresentation";
 import { collectPageInventory, filterPageInventory, folderScope, inventoryFolderPath, pageFolderPath, pageMatchesInventoryScope, type WikiInventoryScope } from "./pageInventory";
@@ -153,8 +154,12 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   const deleteNote = async (noteId: string) => {
     const note = pages.find(candidate => candidate.id === noteId);
     if (!note || deletingRef.current) return;
-    if (!confirm(t("pageDetail.deleteConfirm"))) return;
     deletingRef.current = true;
+    const confirmed = await confirmAction(t("pageDetail.deleteConfirm"), {
+      confirm: t("pageDetail.deletePage"),
+      cancel: t("common.cancel"),
+    });
+    if (!confirmed) { deletingRef.current = false; return; }
     try {
       if (note.status === "draft") {
         // delete_page rejects drafts; a draft is discarded at its latest version.

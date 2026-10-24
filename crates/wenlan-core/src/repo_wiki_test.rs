@@ -408,6 +408,13 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     );
     assert!(index.contains("](pages/"), "{index}");
     assert!(!index.contains("](/pages/"), "{index}");
+    // GitHub shows the folder's README.md: the pages in reading order.
+    let readme = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:wiki/README.md")],
+    );
+    assert!(readme.starts_with("Kept by [Wenlan]"), "{readme}");
+    assert!(readme.contains("\n\n* [Module map](pages/"), "{readme}");
     assert!(!files.contains("entry-point"), "{files}");
     let attributes = sh(
         &origin,

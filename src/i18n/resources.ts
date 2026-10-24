@@ -251,6 +251,7 @@ const en = {
   },
   common: {
     close: "Close",
+    cancel: "Cancel",
     startingRuntime: "Starting Wenlan…",
   },
   boot: {
@@ -3165,6 +3166,7 @@ const zhHans = {
   },
   common: {
     close: "关闭",
+    cancel: "取消",
     startingRuntime: "正在启动文澜…",
   },
   boot: {
@@ -6017,6 +6019,7 @@ const zhHant = {
   },
   common: {
     close: "關閉",
+    cancel: "取消",
     startingRuntime: "正在啟動文瀾…",
   },
   boot: {
