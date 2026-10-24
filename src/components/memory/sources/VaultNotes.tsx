@@ -130,8 +130,9 @@ export function trimUnchanged(segments: DiffSegment[], keep = 160): DiffSegment[
   });
 }
 
+// The interval pauses while the window is hidden, so coming back checks at once.
 function useNoteProposals(sourceId: string) {
-  return useQuery({ queryKey: ["noteProposals", sourceId], queryFn: () => listNoteProposals(sourceId), refetchInterval: 10_000 });
+  return useQuery({ queryKey: ["noteProposals", sourceId], queryFn: () => listNoteProposals(sourceId), refetchInterval: 10_000, refetchOnWindowFocus: true });
 }
 
 /**
@@ -150,9 +151,14 @@ export function NoteProposalNotice({ source, path, onAccepted }: { source: Regis
     enabled: !!proposal,
   });
   const segments = useMemo(() => view.data ? trimUnchanged(diffWords(view.data.current, view.data.proposal.content)) : [], [view.data]);
+  const removes = segments.some((segment) => segment.kind === "del");
+  const adds = segments.some((segment) => segment.kind === "ins");
+  const legend = removes && !adds ? "sourceContainer.suggestLegendRemoved"
+    : adds && !removes ? "sourceContainer.suggestLegendAdded" : "sourceContainer.suggestLegend";
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["noteProposals", source.id] });
     await queryClient.invalidateQueries({ queryKey: ["fileText"] });
+    await queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
   };
   const accept = useMutation({
     mutationFn: (id: string) => acceptNoteProposal(id),
@@ -184,7 +190,7 @@ export function NoteProposalNotice({ source, path, onAccepted }: { source: Regis
       </div>
     </div>
     {view.data && <p className="note-proposal-diff"><DiffText segments={segments} /></p>}
-    <p className="note-proposal-legend">{t("sourceContainer.suggestLegend")}</p>
+    <p className="note-proposal-legend">{t(legend)}</p>
   </section>;
 }
 

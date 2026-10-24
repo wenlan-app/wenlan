@@ -54,3 +54,5 @@
 .vault-suggestion:hover { background: color-mix(in srgb, var(--mem-accent-indigo) 9%, transparent); }
 .vault-suggestion-name { display: block; font-size: 13px; }
 .vault-suggestion-reason { color: var(--mem-text-secondary); display: block; font-size: 12px; line-height: 1.5; margin-top: 2px; }
+/* Short hints: keep the last line from holding a single word or character. */
+.source-container-info > p, .vault-pages-folder p:not(.vault-pages-folder-path), .note-ai-from, .note-ai-option-hint, .note-proposal-legend { text-wrap: balance; }

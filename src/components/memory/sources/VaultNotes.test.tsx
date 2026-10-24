@@ -126,11 +126,19 @@ describe("NoteProposalNotice", () => {
     expect(screen.getByText("Suggested by claude-code")).toBeInTheDocument();
     expect((await screen.findByText(/September/)).tagName).toBe("DEL");
     expect(screen.getByText(/October/).tagName).toBe("INS");
+    expect(screen.getByText(/^Red is removed, green is added\./)).toBeInTheDocument();
     expect(acceptNoteProposal).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Accept" }));
     await waitFor(() => expect(acceptNoteProposal).toHaveBeenCalledWith(proposal.id));
     await waitFor(() => expect(onAccepted).toHaveBeenCalled());
     expect(toast).toHaveBeenCalledWith("Changed. Your note has the new text.");
+  });
+
+  it("explains only green when the change only adds text", async () => {
+    vi.mocked(getNoteProposal).mockResolvedValue({ proposal, current: "Launch in\n" });
+    wrap(<NoteProposalNotice source={vault} path="/Users/me/My notes/Work/plan.md" />);
+    expect(await screen.findByText(/^Green is added\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Red is removed/)).toBeNull();
   });
 
   it("says so when the note changed after the suggestion", async () => {

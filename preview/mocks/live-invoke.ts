@@ -965,6 +965,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   restart_daemon_to_move_pages: async (): Promise<never> => {
     throw "daemon-restart:isolated";
   },
+  get_note_ai_changes: (a) =>
+    get(`/api/sources/${enc(a.sourceId)}/ai-changes?path=${enc(a.path)}`),
+  set_note_ai_changes: (a) =>
+    put(`/api/sources/${enc(a.sourceId)}/ai-changes`, { path: a.path, value: a.value ?? null }),
+  list_note_proposals: async (a) =>
+    (await get(a?.sourceId ? `/api/notes/proposals?source_id=${enc(a.sourceId)}` : "/api/notes/proposals")).proposals,
+  get_note_proposal: (a) => get(`/api/notes/proposals/${enc(a.id)}`),
+  accept_note_proposal: (a) => post(`/api/notes/proposals/${enc(a.id)}/accept`),
+  dismiss_note_proposal: async (a) => {
+    await del(`/api/notes/proposals/${enc(a.id)}`);
+  },
   count_knowledge_files: () => get("/api/knowledge/count").then((r) => r.total ?? r.count ?? 0),
   // Images and videos in pages. The daemon copies a file it can read by path;
   // pasted bytes go through a temp file only the native app can write.
