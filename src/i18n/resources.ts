@@ -763,6 +763,8 @@ const en = {
     failed: "Couldn't save this link.",
     retry: "Try again",
     linkTitle: "{{app}} link",
+    accountTitle: "@{{handle}} on {{app}}",
+    iconTitle: "Saved in Sources",
   },
   pageAttachments: {
     failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
@@ -3668,6 +3670,8 @@ const zhHans = {
     failed: "无法保存这个链接。",
     retry: "再试一次",
     linkTitle: "{{app}}链接",
+    accountTitle: "{{app}} 上的 @{{handle}}",
+    iconTitle: "已存到来源",
   },
   pageAttachments: {
     failed: "无法加入 {{name}}。页面里只能放图片和视频。",
@@ -6528,6 +6532,8 @@ const zhHant = {
     failed: "無法儲存這個連結。",
     retry: "再試一次",
     linkTitle: "{{app}}連結",
+    accountTitle: "{{app}} 上的 @{{handle}}",
+    iconTitle: "已存到來源",
   },
   pageAttachments: {
     failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",

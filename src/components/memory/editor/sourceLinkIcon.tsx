@@ -4,10 +4,36 @@ import { SourceTypeIcon } from "../sources/SourceTypeIcon";
 import { getSourceAppFromUrl } from "../sources/sourcePresentation";
 import type { SourceIconMount } from "./sourcePaste";
 
-/** The editor's site icons are the same ones Sources shows. */
-export const mountSourceLinkIcon: SourceIconMount = (container, url) => {
-  const root = createRoot(container);
-  root.render(<SourceTypeIcon kind={getSourceAppFromUrl(url) ?? "webpage"} size={14} />);
-  // CodeMirror can drop a widget while React is rendering; unmount after it.
-  return () => queueMicrotask(() => root.unmount());
-};
+export interface SourceLinkIconActions {
+  /** Says what the icon means, such as "Saved in Sources". */
+  label: string;
+  open(url: string): void;
+}
+
+/** The editor's site icons are the same ones Sources shows; a click opens the source. */
+export function sourceLinkIconMount(actions?: () => SourceLinkIconActions): SourceIconMount {
+  return (container, url) => {
+    const root = createRoot(container);
+    const icon = <SourceTypeIcon kind={getSourceAppFromUrl(url) ?? "webpage"} size={14} />;
+    const current = actions?.();
+    root.render(current ? (
+      <button
+        type="button"
+        title={current.label}
+        aria-label={current.label}
+        // Keep the caret where it is: the click is not a move into the link.
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          actions?.().open(url);
+        }}
+      >
+        {icon}
+      </button>
+    ) : <span aria-hidden="true">{icon}</span>);
+    // CodeMirror can drop a widget while React is rendering; unmount after it.
+    return () => queueMicrotask(() => root.unmount());
+  };
+}
+
+export const mountSourceLinkIcon: SourceIconMount = sourceLinkIconMount();

@@ -23,7 +23,7 @@ import {
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { hiddenUrlPrefixLength } from "../../../lib/displayUrl";
-import { SourceLinkIconWidget, sourceLinkUrls } from "./sourcePaste";
+import { SourceLinkIconWidget, sourceLinkIsFresh, sourceLinkUrls } from "./sourcePaste";
 import {
   attachmentKind,
   attachmentName,
@@ -563,7 +563,8 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           if (url && /^#(?:concept|memory):[^\s#]+$/.test(state.sliceDoc(url.from, url.to))) return;
           if (url && marks.length >= 4 && opening && closingLabel && closing) {
             addMarkClass(opening.to, closingLabel.from, "cm-writing-link");
-            if (!constructIsRevealed(state, node.from, node.to, contentFocused)) {
+            // A link that just took its title stays a link beside the caret.
+            if (!constructIsRevealed(state, node.from, node.to, contentFocused) || sourceLinkIsFresh(state, node.from, node.to)) {
               addConcealment(opening.from, opening.to);
               addConcealment(closingLabel.from, closing.to);
               // The arrow stands in for the hidden URL, so it only shows

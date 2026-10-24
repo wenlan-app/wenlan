@@ -57,6 +57,7 @@ function saved(title: string, linkOnly?: PastedSourceSaved["linkOnly"], remove?:
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 const note = (view: EditorView) => view.dom.querySelector<HTMLElement>(".cm-source-paste");
+const spinner = (view: EditorView) => view.dom.querySelector<HTMLElement>(".cm-source-saving");
 const buttonNamed = (view: EditorView, name: string) =>
   [...view.dom.querySelectorAll<HTMLButtonElement>(".cm-source-paste button")].find((b) => b.textContent === name);
 
@@ -80,10 +81,13 @@ describe("pasted links as sources", () => {
     const event = pasteText(view.contentDOM, X_URL);
     expect(event.defaultPrevented).toBe(true);
     expect(save).toHaveBeenCalledWith(X_URL);
-    expect(note(view)?.textContent).toBe("Saving…");
+    // Saving turns a small ring beside the link instead of adding a line.
+    expect(note(view)).toBeNull();
+    expect(spinner(view)?.getAttribute("aria-label")).toBe("Saving…");
     await flush();
     expect(view.state.doc.toString()).toBe(`Reactions: [Simon on local-first](${X_URL})`);
     expect(note(view)).toBeNull();
+    expect(spinner(view)).toBeNull();
   });
 
   it("says when only the link was kept, then puts the note away", async () => {
@@ -178,15 +182,25 @@ describe("pasted links as sources", () => {
     expect(note(view)).toBeNull();
   });
 
-  it("keeps the note through typing while the save is still running", async () => {
+  it("keeps the saving ring through typing while the save is still running", async () => {
     let finish: (value: PastedSourceSaved) => void = () => undefined;
     const view = editor("", 0, { save: vi.fn(() => new Promise<PastedSourceSaved>((resolve) => { finish = resolve; })) });
     pasteText(view.contentDOM, X_URL);
     view.dispatch({ changes: { from: view.state.doc.length, insert: " nice" } });
-    expect(note(view)?.textContent).toBe("Saving…");
+    expect(spinner(view)).not.toBeNull();
     finish(saved("Post"));
     await flush();
     expect(view.state.doc.toString()).toBe(`[Post](${X_URL}) nice`);
+  });
+
+  it("a link saved before reads as that source at once, saved only once", () => {
+    const save = vi.fn(async () => saved("Post"));
+    const known = editor("See ", 4, { save });
+    known.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, "@simonw on X"]])) });
+    pasteText(known.contentDOM, X_URL);
+    expect(save).not.toHaveBeenCalled();
+    expect(known.state.doc.toString()).toBe(`See [@simonw on X](${X_URL})`);
+    expect(note(known)).toBeNull();
   });
 
   it("leaves code, link targets and repeated links to the normal paste", async () => {
@@ -195,11 +209,8 @@ describe("pasted links as sources", () => {
     pasteText(inCode.contentDOM, X_URL);
     const inTarget = editor("[read](", 7, { save });
     pasteText(inTarget.contentDOM, X_URL);
-    const known = editor("", 0, { save });
-    known.dispatch({ effects: setSourceLinkUrls.of(new Set([X_URL])) });
-    pasteText(known.contentDOM, X_URL);
     expect(save).not.toHaveBeenCalled();
-    expect([inCode, inTarget, known].map(note)).toEqual([null, null, null]);
+    expect([inCode, inTarget].map(note)).toEqual([null, null]);
     const twice = editor("", 0, { save });
     pasteText(twice.contentDOM, X_URL);
     await flush();
@@ -230,8 +241,37 @@ describe("links saved as sources", () => {
       }),
     });
     views.push(view);
-    view.dispatch({ effects: setSourceLinkUrls.of(new Set([X_URL])) });
+    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, "Post"]])) });
     expect(view.dom.querySelectorAll(".cm-source-link-icon")).toHaveLength(1);
     expect(view.dom.querySelectorAll(".cm-writing-link-external")).toHaveLength(1);
+  });
+
+  it("a link that just took its title stays a link while the caret sits beside it", async () => {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: "Read ",
+        selection: EditorSelection.single(5),
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          sourceLinkUrls,
+          sourcePaste({ blocked: () => false, enabled: () => true, labels: () => labels, save: vi.fn(async () => saved("Post")) }),
+          writingPresentation(),
+        ],
+      }),
+    });
+    views.push(view);
+    view.focus();
+    pasteText(view.contentDOM, X_URL);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`Read [Post](${X_URL})`));
+    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, "Post"]])) });
+    // The caret is right after the link, yet its address stays hidden.
+    expect(view.state.selection.main.head).toBe(view.state.doc.length);
+    expect(view.contentDOM.textContent).toBe("Read Post");
+    // Into the link, it opens like any other.
+    view.dispatch({ selection: { anchor: 7 } });
+    expect(view.contentDOM.textContent).toContain(X_URL);
   });
 });

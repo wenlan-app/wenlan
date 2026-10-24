@@ -85,8 +85,8 @@ import {
 } from "./editor/MarkdownEditor";
 import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import type { PastedSourceSaved } from "./editor/sourcePaste";
-import { mountSourceLinkIcon } from "./editor/sourceLinkIcon";
-import { getSourceAppFromUrl, sourceAppName, type SourceApp } from "./sources/sourcePresentation";
+import { sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
+import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
@@ -607,9 +607,22 @@ export default function PageDetail({
 
   // Links saved as sources; the editor shows their site's icon.
   const { data: indexedFiles } = useQuery({ queryKey: ["indexedFiles"], queryFn: () => listIndexedFiles() });
-  const sourceLinks = useMemo(() => new Set((indexedFiles ?? [])
+  const sourceLinks = useMemo(() => new Map((indexedFiles ?? [])
     .filter((file) => file.source === "webpage")
-    .map((file) => file.source_id)), [indexedFiles]);
+    .map((file) => [file.source_id, file.title] as const)), [indexedFiles]);
+  // A saved link's icon opens its source beside the page, as Sources does.
+  const sourceIconActionsRef = useRef<SourceLinkIconActions | null>(null);
+  sourceIconActionsRef.current = {
+    label: t("sourcePaste.iconTitle"),
+    open: (url) => {
+      const file = indexedFiles?.find((row) => row.source === "webpage" && row.source_id === url);
+      if (!file) return;
+      if (showCanvas) void requestToggleCanvas();
+      changeCanvasWorkspaceExpanded(false);
+      setSourcePreview(file);
+    },
+  };
+  const [mountSourceIcon] = useState(() => sourceLinkIconMount(() => sourceIconActionsRef.current ?? { label: "", open: () => undefined }));
 
   // Entities on this page = the page's own anchor entity plus the anchor
   // entities of its source memories. These are enrichment links, not search.
@@ -1787,8 +1800,11 @@ export default function PageDetail({
         // Saved as a link below.
       }
     }
+    const handle = sourceHandleFromUrl(url);
     const fallbackTitle = app
-      ? t("sourcePaste.linkTitle", { app: sourceAppName(app, i18n.language) })
+      ? handle
+        ? t("sourcePaste.accountTitle", { app: sourceAppName(app, i18n.language), handle })
+        : t("sourcePaste.linkTitle", { app: sourceAppName(app, i18n.language) })
       : (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } })();
     let created = true;
     try {
@@ -2583,7 +2599,7 @@ export default function PageDetail({
                   onLinkPick={pickLink}
                   sourceLinks={sourceLinks}
                   onSavePastedSource={savePastedSource}
-                  mountSourceIcon={mountSourceLinkIcon}
+                  mountSourceIcon={mountSourceIcon}
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }

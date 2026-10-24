@@ -31,15 +31,40 @@ export interface SourcePasteOptions {
   save(url: string): Promise<PastedSourceSaved>;
 }
 
-/** The links already saved as this page's sources; they show their site icon. */
-export const setSourceLinkUrls = StateEffect.define<ReadonlySet<string>>();
-export const sourceLinkUrls = StateField.define<ReadonlySet<string>>({
-  create: () => new Set(),
+/** The links already saved as sources, with their titles; they show their site icon. */
+export const setSourceLinkUrls = StateEffect.define<ReadonlyMap<string, string>>();
+export const sourceLinkUrls = StateField.define<ReadonlyMap<string, string>>({
+  create: () => new Map(),
   update(value, transaction) {
     for (const effect of transaction.effects) if (effect.is(setSourceLinkUrls)) value = effect.value;
     return value;
   },
 });
+
+/** A link that just took its title. It reads as a link while the caret stays
+ *  beside it, instead of opening into Markdown at once. */
+const setFreshLink = StateEffect.define<{ from: number; to: number } | null>();
+const freshLink = StateField.define<{ from: number; to: number } | null>({
+  create: () => null,
+  update(value, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setFreshLink)) return effect.value;
+    if (!value) return value;
+    const from = transaction.changes.mapPos(value.from, 1);
+    const to = transaction.changes.mapPos(value.to, -1);
+    if (from >= to) return null;
+    const head = transaction.state.selection.main.head;
+    const doc = transaction.state.doc;
+    // Into the link, or off its line: from then on it opens like any link.
+    if ((head > from && head < to) || doc.lineAt(head).number !== doc.lineAt(from).number) return null;
+    return from === value.from && to === value.to ? value : { from, to };
+  },
+});
+
+/** Whether the link at `from`..`to` just took its title and stays closed. */
+export function sourceLinkIsFresh(state: EditorState, from: number, to: number): boolean {
+  const fresh = state.field(freshLink, false);
+  return Boolean(fresh && fresh.from === from && fresh.to === to);
+}
 
 export const sourceIconMount = Facet.define<SourceIconMount, SourceIconMount | null>({
   combine: (values) => values[0] ?? null,
@@ -70,7 +95,7 @@ export class SourceLinkIconWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const icon = document.createElement("span");
     icon.className = "cm-source-link-icon";
-    icon.setAttribute("aria-hidden", "true");
+    // The mount draws the icon, and a button to open the source when it can.
     mountIcon(view, icon, this.url);
     return icon;
   }
@@ -153,11 +178,31 @@ function promptDecorations(): Extension {
   return EditorView.decorations.compute([promptState], (state) => {
     const { prompt } = state.field(promptState);
     if (!prompt || prompt.to > state.doc.length) return Decoration.none;
+    // Saving turns where the icon will be, so nothing moves.
+    if (prompt.phase === "saving") {
+      return Decoration.set([Decoration.widget({ widget: new SavingWidget(), side: 1 }).range(prompt.to)]);
+    }
     const at = state.doc.lineAt(prompt.to).to;
     return Decoration.set([
       Decoration.widget({ widget: new PromptWidget(prompt), block: true, side: 1 }).range(at),
     ]);
   });
+}
+
+class SavingWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const spinner = document.createElement("span");
+    spinner.className = "cm-source-saving";
+    spinner.setAttribute("role", "status");
+    const label = view.state.facet(promptOptions)?.labels().saving ?? "";
+    spinner.setAttribute("aria-label", label);
+    spinner.title = label;
+    return spinner;
+  }
 }
 
 const promptOptions = Facet.define<SourcePasteOptions, SourcePasteOptions | null>({
@@ -196,9 +241,10 @@ function save(view: EditorView, id: number): void {
       const markdown = sourceLinkMarkdown(saved.title, current.url);
       // The link reads as its title once saved, unless the writer changed it meanwhile.
       if (view.state.sliceDoc(current.from, current.to) === current.url && markdown !== current.url && !view.state.readOnly) {
+        const to = current.from + markdown.length;
         view.dispatch({
           changes: { from: current.from, to: current.to, insert: markdown },
-          effects: setPrompt.of(next && { ...next, to: current.from + markdown.length }),
+          effects: [setPrompt.of(next && { ...next, to }), setFreshLink.of({ from: current.from, to })],
           annotations: ownChange.of(true),
           userEvent: "input.paste",
         });
@@ -365,17 +411,52 @@ const theme = EditorView.theme({
     verticalAlign: "-0.12em",
     color: "var(--mem-text-tertiary)",
   },
+  ".cm-source-link-icon button": {
+    display: "inline-flex",
+    padding: "0",
+    border: "0",
+    borderRadius: "3px",
+    color: "inherit",
+    backgroundColor: "transparent",
+    cursor: "pointer",
+  },
+  ".cm-source-link-icon button:hover": {
+    color: "var(--mem-link)",
+  },
+  ".cm-source-link-icon button:focus-visible": {
+    outline: "2px solid var(--mem-accent-indigo)",
+    outlineOffset: "1px",
+  },
+  ".cm-source-saving": {
+    display: "inline-block",
+    width: "11px",
+    height: "11px",
+    marginLeft: "0.35em",
+    verticalAlign: "-0.05em",
+    border: "1.5px solid var(--mem-text-tertiary)",
+    borderTopColor: "transparent",
+    borderRadius: "50%",
+    animation: "cm-source-saving-turn 0.8s linear infinite",
+  },
+  "@keyframes cm-source-saving-turn": {
+    to: { transform: "rotate(360deg)" },
+  },
+  "@media (prefers-reduced-motion: reduce)": {
+    ".cm-source-saving": { animation: "none", borderTopColor: "var(--mem-text-tertiary)", opacity: "0.6" },
+  },
 });
 
 /**
  * Pasting one link saves it as a source at once; its site icon shows it was
- * saved. A note under the line shows only while saving, when the site needs
- * a sign-in, or when saving failed. Deleting the link deletes that source.
+ * saved, and a small turning ring beside it while saving. A note under the
+ * line shows only when just the link was kept or saving failed. Deleting the
+ * link deletes that source.
  */
 export function sourcePaste(options: SourcePasteOptions): Extension {
   return [
     promptOptions.of(options),
     promptState,
+    freshLink,
     promptDecorations(),
     removeWithLink,
     theme,
@@ -395,9 +476,23 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         const url = pastedSourceUrl(data.getData("text/plain"));
         if (!url || options.blocked(view) || !options.enabled()) return false;
         const { offered } = view.state.field(promptState);
-        const known = view.state.field(sourceLinkUrls, false);
+        const known = view.state.field(sourceLinkUrls, false)?.get(url);
         const { from, to } = view.state.selection.main;
-        if (offered.has(url) || known?.has(url) || !pasteTargetsProse(view.state, from)) return false;
+        if (!pasteTargetsProse(view.state, from)) return false;
+        if (known !== undefined) {
+          // Saved before: it reads as that source here too, saved once.
+          event.preventDefault();
+          const markdown = sourceLinkMarkdown(known, url);
+          view.dispatch({
+            changes: { from, to, insert: markdown },
+            selection: { anchor: from + markdown.length },
+            effects: setFreshLink.of({ from, to: from + markdown.length }),
+            userEvent: "input.paste",
+            scrollIntoView: true,
+          });
+          return true;
+        }
+        if (offered.has(url)) return false;
         event.preventDefault();
         const id = nextPromptId++;
         view.dispatch({

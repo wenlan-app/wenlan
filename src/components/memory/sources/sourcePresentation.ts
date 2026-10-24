@@ -86,6 +86,25 @@ export function getSourceAppFromUrl(value: string | URL | null | undefined): Sou
   return null;
 }
 
+const NOT_HANDLES: Partial<Record<SourceApp, ReadonlySet<string>>> = {
+  x: new Set(["home", "explore", "search", "i", "settings", "hashtag", "intent", "share", "messages", "notifications", "compose", "login", "signup", "tos", "privacy"]),
+  instagram: new Set(["p", "reel", "reels", "stories", "explore", "tv", "accounts", "direct", "about", "developer", "legal"]),
+};
+
+/** The account a social link belongs to, such as `simonw` for an X post, so
+ *  saved links are told apart by who wrote them. */
+export function sourceHandleFromUrl(value: string): string | null {
+  const url = httpUrl(value);
+  const app = getSourceAppFromUrl(url);
+  if (!url || !app) return null;
+  const first = url.pathname.split("/").filter(Boolean)[0] ?? "";
+  let handle: string | null = null;
+  if (app === "threads") handle = /^@([A-Za-z0-9._]{1,30})$/.exec(first)?.[1] ?? null;
+  else if (app === "x") handle = /^[A-Za-z0-9_]{1,15}$/.test(first) ? first : null;
+  else if (app === "instagram") handle = /^[A-Za-z0-9._]{1,30}$/.test(first) ? first : null;
+  return handle && !NOT_HANDLES[app]?.has(handle.toLowerCase()) ? handle : null;
+}
+
 function httpUrl(value: string | null | undefined): URL | null {
   if (!value) return null;
   try {

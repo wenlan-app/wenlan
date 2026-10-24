@@ -309,7 +309,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               onError: (file) => toast.error(t("pageAttachments.failed", { name: file.name || "file" })),
               pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
             }),
-            sourceLinkUrls.init(() => props.sourceLinks ?? new Set()),
+            sourceLinkUrls.init(() => props.sourceLinks ?? new Map()),
             sourceIconMount.of((container, url) => callbacksRef.current.mountSourceIcon?.(container, url) ?? (() => undefined)),
             sourcePaste({
               blocked: actionsBlocked,
