@@ -88,6 +88,7 @@ import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import type { PastedSourceSaved } from "./editor/sourcePaste";
 import { sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
 import { sourceLinkKey } from "./editor/sourceLinkKey";
+import { SHARE_PREVIEW_APPS, sharePreviewText } from "./sources/sharePreview";
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
@@ -1820,18 +1821,26 @@ export default function PageDetail({
   // are kept; so is a page that could not be read.
   const savePastedSource = async (url: string, label?: string): Promise<PastedSourceSaved> => {
     const app = getSourceAppFromUrl(url);
-    const linkOnly = app !== null && SIGN_IN_APPS.has(app);
+    const signIn = app !== null && SIGN_IN_APPS.has(app);
+    const sharePreview = app !== null && SHARE_PREVIEW_APPS.has(app);
     let title = "";
     let content = "";
-    if (!linkOnly) {
+    if (!signIn || sharePreview) {
       try {
         const fetched = await fetchWebpage(url);
-        title = fetched.title.trim();
-        content = fetched.content.trim();
+        if (sharePreview) {
+          // Only the words the site gives link previews; the rest is its sign-in wall.
+          title = sharePreviewText(fetched.title) ?? "";
+          content = title;
+        } else {
+          title = fetched.title.trim();
+          content = fetched.content.trim();
+        }
       } catch {
         // Saved as a link below.
       }
     }
+    const linkOnly = signIn && !content;
     const handle = sourceHandleFromUrl(url);
     const kind = sourceLinkKind(url);
     const appName = app ? sourceAppName(app, i18n.language) : "";
