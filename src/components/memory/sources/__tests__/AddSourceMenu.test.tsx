@@ -43,7 +43,7 @@ describe("AddSourceMenu", () => {
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     await screen.findByText("Connect a folder");
     expect(screen.getByText("Add files")).toBeInTheDocument();
-    expect(screen.getByText("Add a web excerpt")).toBeInTheDocument();
+    expect(screen.getByText("Add a link with text")).toBeInTheDocument();
     expect(screen.queryByText("Your daemon needs an update to index files.")).toBeNull();
   });
 
