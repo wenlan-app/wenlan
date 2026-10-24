@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The one "AI changes" choice shared by Wenlan's pages and the person's notes. */
+.note-ai-changes { margin: 22px 0 0; }
+.note-ai-options { display: flex; flex-direction: column; gap: 2px; }
+.note-ai-option { align-items: flex-start; border-radius: 8px; cursor: pointer; display: flex; gap: 10px; padding: 9px 10px; }
+.note-ai-option:hover { background: color-mix(in srgb, var(--mem-accent-indigo) 9%, transparent); }
+.note-ai-option.is-on { background: color-mix(in srgb, var(--mem-accent-indigo) 15%, transparent); }
+.note-ai-option:has(input:focus-visible) { outline: 2px solid var(--mem-focus-ring); outline-offset: 2px; }
+/* Drawn by hand like the steeping and pairing choices: a native radio in the
+   dark theme fills the empty circle white, so it reads as picked. */
+.note-ai-option input { appearance: none; -webkit-appearance: none; box-sizing: border-box; flex: none; width: 16px; height: 16px; margin: 2px 0 0; border: 1.5px solid var(--mem-text-secondary); border-radius: 50%; background: transparent; display: grid; place-content: center; cursor: inherit; }
+.note-ai-option input::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--mem-accent-indigo); transform: scale(0); }
+.note-ai-option input:checked { border-color: var(--mem-accent-indigo); }
+.note-ai-option input:checked::after { transform: scale(1); }
+.note-ai-option:has(input:disabled) { cursor: default; opacity: 0.7; }
+.note-ai-option-label { color: var(--mem-text); display: block; font-size: 13px; }
+.note-ai-option-hint { color: var(--mem-text-secondary); display: block; font-size: 12px; line-height: 1.5; margin-top: 2px; }
+.note-ai-from { color: var(--mem-text-secondary); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
+.note-ai-reset { background: transparent; border: 0; color: var(--mem-accent-indigo); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+/* Short hints: keep the last line from holding a single word or character. */
+.note-ai-from, .note-ai-option-hint { text-wrap: balance; }

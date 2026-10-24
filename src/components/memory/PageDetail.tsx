@@ -55,7 +55,8 @@ import { InfoAction } from "./page/InfoAction";
 import "./page/pageDocumentTools.css";
 import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
-import { LockIcon, RailPanelTitle } from "./MemoryDetailPrimitives";
+import { RailPanelTitle } from "./MemoryDetailPrimitives";
+import { AiChangesOptions } from "./AiChangesOptions";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
@@ -1002,7 +1003,7 @@ export default function PageDetail({
     },
     onError: (_error, { id }) => {
       if (activePageIdRef.current !== id) return;
-      setActionErrorMessage(t("pageDetail.requireReviewFailed"));
+      setActionErrorMessage(t("pageDetail.aiSaveFailed"));
     },
   });
 
@@ -1868,6 +1869,7 @@ export default function PageDetail({
   // PageDetail is reused across pages; a slow request for another page must
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
+  const humanOwned = page.user_edited === true || page.creation_kind === "authored";
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
   const canRenamePage = page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
@@ -2029,21 +2031,6 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
-                    {/* The daemon refuses to lock an entity shadow page. */}
-                    {page.creation_kind !== "entity" ? <button
-                      aria-checked={page.review_required === true}
-                      disabled={storedActionBlocked || reviewLockPending}
-                      onClick={() => {
-                        closeActionMenu();
-                        setActionErrorMessage(null);
-                        reviewRequiredMutation.mutate({ id: page.id, required: page.review_required !== true });
-                      }}
-                      role="menuitemcheckbox"
-                      type="button"
-                    >
-                      <LockIcon filled={page.review_required === true} size={12} />
-                      {t("pageDetail.requireReview")}
-                    </button> : null}
                     {obsidianSources.length === 0 ? (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -2162,12 +2149,6 @@ export default function PageDetail({
           }}
           codeBasis={{ actions: codeBasisActions, onEditToConfirm: startCodeConfirmEdit }}
         />}
-
-        {page.review_required === true && (
-          <div className="note-review-notice" data-testid="page-review-lock-notice" role="status">
-            <p className="note-review-notice__message">{t("pageDetail.reviewLockedNotice")}</p>
-          </div>
-        )}
 
         {projectionIssue && !inventoryPageFilename(page) && <PageProjectionNotice key={`${pageId}:${projectionIssue.expectedVersion}`} pageId={pageId} issue={projectionIssue} disabled={editDirty || saveState.phase !== "idle" || !!editorStatus?.compositionActive} onResolved={onProjectionResolved} />}
 
@@ -2680,6 +2661,29 @@ export default function PageDetail({
             <PageTruthBadges cutoverLive={cutoverLive} truth={page.truth} />
           </div>
           </div>
+          {/* The daemon refuses to lock an entity shadow page. "Ask me first"
+              is the page's review lock; a locked page someone edited is the
+              one "Ask me first on pages I wrote" locks. */}
+          {page.creation_kind !== "entity" && <AiChangesOptions
+            heading={t("pageDetail.aiChanges")}
+            name={`page-ai-${page.id}`}
+            options={[
+              { value: "allowed", label: t("pageDetail.aiAllowed"), hint: t("pageDetail.aiAllowedHint") },
+              { value: "ask_first", label: t("pageDetail.aiAskFirst"), hint: t("pageDetail.aiAskFirstHint") },
+            ]}
+            value={page.review_required === true ? "ask_first" : "allowed"}
+            disabled={storedActionBlocked || reviewLockPending}
+            onChange={(value) => {
+              setActionErrorMessage(null);
+              reviewRequiredMutation.mutate({ id: page.id, required: value === "ask_first" });
+            }}
+          >
+            {/* "Wrote" follows the daemon's own ownership rule
+                (page_is_human_owned): edited by hand, or written here. */}
+            {page.review_required === true
+              ? <p className="note-ai-from">{t(humanOwned ? "pageDetail.aiFromWrote" : "pageDetail.aiFromPage")}</p>
+              : !humanOwned && <p className="note-ai-from">{t("pageDetail.aiFromAi")}</p>}
+          </AiChangesOptions>}
           <div className="note-info-sections">
             <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
               onOpenGraph={onOpenGraph ? () => onOpenGraph(pageId) : undefined}

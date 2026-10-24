@@ -17,6 +17,7 @@ import {
   type RegisteredSource,
 } from "../../../lib/tauri";
 import { diffWords, type DiffSegment } from "../../../lib/wordDiff";
+import { AiChangesOptions } from "../AiChangesOptions";
 import { DiffText } from "../ReviewDialog";
 import type { enSourceContainer } from "./sourceContainerCopy";
 
@@ -95,29 +96,19 @@ export function NoteAiChangesSection({ source, path, kind }: { source: Registere
   const own = kind === "vault" ? current.from === "vault" : kind === "folder" ? current.from === "folder" && current.path === key : current.from === "file";
   const heading = kind === "vault" ? "sourceContainer.aiVaultHeading" : kind === "folder" ? "sourceContainer.aiFolderHeading" : "sourceContainer.aiChanges";
 
-  return <section className="note-ai-changes" aria-label={t(heading)}>
+  if (pdf) return <section className="note-ai-changes" aria-label={t(heading)}>
     <h3 className="note-info-section-heading">{t(heading)}</h3>
-    {pdf ? <p>{t("sourceContainer.aiFromPdf")}</p> : <>
-      <div className="note-ai-options" role="radiogroup" aria-label={t(heading)}>
-        {OPTIONS.map((option) => {
-          const on = current.value === option.value;
-          return <label key={option.value} className={`note-ai-option${on ? " is-on" : ""}`}>
-            <input type="radio" name={`note-ai-${source.id}-${key}`} checked={on} disabled={save.isPending}
-              onChange={() => save.mutate(option.value)} />
-            <span>
-              <span className="note-ai-option-label">{t(option.label)}</span>
-              <span className="note-ai-option-hint">{t(option.hint)}</span>
-            </span>
-          </label>;
-        })}
-      </div>
-      <p className="note-ai-from">
-        {t(kind === "vault" && current.from === "default" ? "sourceContainer.aiVaultDefault" : FROM_KEY[current.from])}
-        {own && kind !== "vault" && <> <button type="button" className="note-ai-reset" onClick={() => save.mutate(null)}>{t("sourceContainer.aiReset")}</button></>}
-      </p>
-      {kind === "vault" && <p className="note-ai-from">{t("sourceContainer.aiPdfNote")}</p>}
-    </>}
+    <p>{t("sourceContainer.aiFromPdf")}</p>
   </section>;
+  return <AiChangesOptions heading={t(heading)} name={`note-ai-${source.id}-${key}`}
+    options={OPTIONS.map((option) => ({ value: option.value, label: t(option.label), hint: t(option.hint) }))}
+    value={current.value} disabled={save.isPending} onChange={(value) => save.mutate(value)}>
+    <p className="note-ai-from">
+      {t(kind === "vault" && current.from === "default" ? "sourceContainer.aiVaultDefault" : FROM_KEY[current.from])}
+      {own && kind !== "vault" && <> <button type="button" className="note-ai-reset" onClick={() => save.mutate(null)}>{t("sourceContainer.aiReset")}</button></>}
+    </p>
+    {kind === "vault" && <p className="note-ai-from">{t("sourceContainer.aiPdfNote")}</p>}
+  </AiChangesOptions>;
 }
 
 /** Long unchanged runs shrink to their ends, so the change is what you see. */
