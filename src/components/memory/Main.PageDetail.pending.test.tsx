@@ -769,7 +769,7 @@ describe("Main published PageDetail navigation guards", () => {
 
     confirmSpy.mockReturnValue(true);
     fireEvent.change(search, { target: { value: "accepted" } });
-    expect(search).toHaveValue("accepted");
+    await waitFor(() => expect(search).toHaveValue("accepted"));
     expect(confirmSpy).toHaveBeenCalledTimes(3);
   });
 

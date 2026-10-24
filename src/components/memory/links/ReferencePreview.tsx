@@ -68,7 +68,10 @@ export function ReferencePreview({
   copyPrefix = "reference",
   externalOpenFailure = null,
 }: ReferencePreviewProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // Same rule as the page's info panel: English keeps the short "15h ago",
+  // Chinese gets its own locale so English never leaks into the card.
+  const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
   const boxRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const [openFailure, setOpenFailure] = useState<{ key: string; anchor: HTMLElement | null; message: string } | null>(null);
@@ -235,7 +238,7 @@ export function ReferencePreview({
         <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>
       </details>}
       {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
-      {citationTarget?.sourceMemory?.last_modified && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{relativeMs(citationTarget.sourceMemory.last_modified * 1000)}</p>}
+      {citationTarget?.sourceMemory?.last_modified && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{relativeMs(citationTarget.sourceMemory.last_modified * 1000, relativeLocale)}</p>}
       {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}
       {canOpen && <div data-reference-preview-actions="true" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "6px 12px 12px", background: "var(--mem-surface)" }}>
         <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>
