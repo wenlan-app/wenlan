@@ -45,6 +45,20 @@ I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, and other MCP clients search and cite the same pages.
 - **Checked against the source:** Wenlan checks the cited source supports each sentence, and does not save a page when too many citations fail. Pages are local Markdown, and AI edits to pages you wrote wait for your review.
 
+<a id="whats-new"></a>
+
+<br>
+
+## What's new
+
+- **Steep, your way:** keep pages current On demand with your own AI tool, or Automatic with a local or cloud model you pick.
+- **A wiki for your code:** `/wenlan wiki` writes pages tied to the code lines they rely on and offers them to your repository as a pull request, updated daily on your computer or on GitHub Actions.
+- **More AI tools:** GitHub Copilot, Antigravity, Windsurf, Kiro, and OpenCode connect from **Add a tool** in Settings.
+- **Images and videos in pages**, and Logseq graphs as a new import.
+- **Pages you wrote stay yours:** AI edits to them wait for your review.
+
+Every release is in the [changelog](CHANGELOG.md).
+
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
 <a id="start-with-the-app"></a>
@@ -93,6 +107,54 @@ In Codex, use `$recall`. With an MCP-only tool, just ask: “Check Wenlan for my
 To turn imported material into cited pages, run `/wenlan steep` (`$wenlan steep` in Codex). New installs [steep](#steep-keep-knowledge-useful-as-it-changes) On demand, with your AI tool; switch to Automatic with a [model](docs/steep.md#enable-steep) to organize memories and update pages in the background.
 
 Not sure what to ask? Open **What your AI can do** in the App for the exact text to type in your AI tool.
+
+<a id="what-makes-wenlan-distinct"></a>
+<a id="why-is-wenlan-different"></a>
+<a id="two-lifecycles"></a>
+<a id="two-lifecycles-one-maintained-knowledge-system"></a>
+<a id="local-markdown"></a>
+<a id="atomic-memory"></a>
+<a id="maintained-page"></a>
+<a id="local-markdown-that-works-with-obsidian"></a>
+
+<a id="keep-knowledge-current-and-preserve-history"></a>
+
+<br>
+
+## Steep: keep knowledge useful as it changes
+
+Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
+
+Choose one of two modes in Settings:
+
+- **On demand** (new installs start here): when your AI tool saves or writes into Wenlan, it steeps as it goes, with no command needed. To finish the rest at once, run `/wenlan steep`: it writes new pages from imported material and brings out-of-date pages up to date.
+- **Automatic:** Wenlan steeps in the background with the model you assign.
+
+What steep does:
+
+- **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
+- **Follow the evidence:** Changed sources, memories, or cited code flag dependent pages for refresh; new memories can enrich eligible pages. Refresh keeps the saved page if a draft fails citation checks. Passing these checks does not establish factual correctness.
+- **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
+- **Review lock:** With **Lock pages I've written** on, as it is for new installs, AI changes to pages you wrote or edited wait for your review. Pages AI wrote keep updating.
+
+[Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
+
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
+</p>
+<p>Illustration based on current update behavior; not an App screenshot.</p>
+
+<a id="code-repository-wiki"></a>
+
+<br>
+
+## A wiki for your code repository
+
+Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing. `/wenlan wiki` replaces `/wenlan map`, with no alias for the old name.
+
+- **Tied to the code:** Each page records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
+- **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update: it runs your own AI tool on your computer, or runs on GitHub Actions with your AI tool's key saved as a repository secret, so your computer can stay off. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
+- **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -184,54 +246,6 @@ Once your material is in Wenlan, your AI tools can build on it: retrieve earlier
 - **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
 
 Turn on **Web access** in Settings to let supported web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. This feature is experimental; queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
-
-<a id="code-repository-wiki"></a>
-
-<br>
-
-## A wiki for your code repository
-
-Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing. `/wenlan wiki` replaces `/wenlan map`, with no alias for the old name.
-
-- **Tied to the code:** Each page records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
-- **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update: it runs your own AI tool on your computer, or runs on GitHub Actions with your AI tool's key saved as a repository secret, so your computer can stay off. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
-- **Your edits stay:** A wiki page someone edited in the repository keeps that edit. Pages that cite your memories or chats stay out of the repository.
-
-<a id="what-makes-wenlan-distinct"></a>
-<a id="why-is-wenlan-different"></a>
-<a id="two-lifecycles"></a>
-<a id="two-lifecycles-one-maintained-knowledge-system"></a>
-<a id="local-markdown"></a>
-<a id="atomic-memory"></a>
-<a id="maintained-page"></a>
-<a id="local-markdown-that-works-with-obsidian"></a>
-
-<a id="keep-knowledge-current-and-preserve-history"></a>
-
-<br>
-
-## Steep: keep knowledge useful as it changes
-
-Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
-
-Choose one of two modes in Settings:
-
-- **On demand** (new installs start here): when your AI tool saves or writes into Wenlan, it steeps as it goes, with no command needed. To finish the rest at once, run `/wenlan steep`: it writes new pages from imported material and brings out-of-date pages up to date.
-- **Automatic:** Wenlan steeps in the background with the model you assign.
-
-What steep does:
-
-- **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
-- **Follow the evidence:** Changed sources, memories, or cited code flag dependent pages for refresh; new memories can enrich eligible pages. Refresh keeps the saved page if a draft fails citation checks. Passing these checks does not establish factual correctness.
-- **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
-- **Review lock:** With **Lock pages I've written** on, as it is for new installs, AI changes to pages you wrote or edited wait for your review. Pages AI wrote keep updating.
-
-[Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
-</p>
-<p>Illustration based on current update behavior; not an App screenshot.</p>
 
 <a id="architecture"></a>
 

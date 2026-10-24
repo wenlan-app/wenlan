@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=26279e5d809356d37577cc055502f5aecd857dea2eb7e2d0875a8d36ea46ad4f -->
+<!-- README_SYNC: source=README.md sha256=7c8153b9d8eed3dcf5171f3074e6a7df0473e36e367032733e8ba2eab0037af6 -->
 
 <p align="center">
   <picture>
@@ -34,6 +34,20 @@
 https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
 
 <p>Portada: composición de vistas reales con datos de ejemplo; el grafo es ilustrativo, no una vista nativa de tres columnas.</p>
+
+<a id="whats-new"></a>
+
+<br>
+
+## Novedades
+
+- **Steep a tu manera:** mantén las páginas al día en modo **On demand** con tu propia herramienta de IA, o en **Automatic** con un modelo local o en la nube que elijas.
+- **Una wiki para tu código:** `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan y las propone a tu repositorio como pull request, actualizadas cada día en tu ordenador o en GitHub Actions.
+- **Más herramientas de IA:** GitHub Copilot, Antigravity, Windsurf, Kiro y OpenCode se conectan desde **Add a tool** en los ajustes.
+- **Imágenes y vídeos en las páginas**, y los grafos de Logseq como nueva importación.
+- **Las páginas que escribes siguen siendo tuyas:** los cambios de la IA esperan tu revisión.
+
+Todas las versiones están en el [registro de cambios](CHANGELOG.md).
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -81,6 +95,55 @@ El material importado ya está listo para usar; no hace falta crear una página 
 Para convertir el material importado en páginas con citas, ejecuta `/wenlan steep` (`$wenlan steep` en Codex). Las instalaciones nuevas hacen Steep en modo **On demand**, con tu herramienta de IA; cambia a **Automatic** con un [modelo](docs/steep.md#enable-steep) para organizar memorias y actualizar páginas en segundo plano.
 
 ¿No sabes qué pedir? Abre **What your AI can do** en la aplicación para ver el texto exacto que debes escribir en tu herramienta de IA.
+
+<a id="what-makes-wenlan-distinct"></a>
+<a id="why-is-wenlan-different"></a>
+<a id="two-lifecycles"></a>
+<a id="two-lifecycles-one-maintained-knowledge-system"></a>
+<a id="dos-ciclos-de-vida-un-sistema-de-conocimiento-mantenido"></a>
+<a id="local-markdown"></a>
+<a id="memoria-atómica"></a>
+<a id="página-mantenida"></a>
+<a id="markdown-local-que-funciona-con-obsidian"></a>
+
+<a id="mantén-el-conocimiento-al-día-y-conserva-su-historial"></a>
+
+<br>
+
+## Steep: mantén útil el conocimiento cuando cambia
+
+Guardar material es solo el comienzo. **Steep lo prepara para reutilizarlo y mantiene al día las páginas compatibles**, para que tú y tu IA podáis continuar a partir de hallazgos anteriores sin volver a procesar los originales.
+
+Elige uno de dos modos en Settings:
+
+- **On demand** (las instalaciones nuevas empiezan aquí): cuando tu herramienta de IA guarda o escribe en Wenlan, hace Steep sobre la marcha, sin ningún comando. Para terminar el resto de una vez, ejecuta `/wenlan steep`: escribe páginas nuevas a partir del material importado y pone al día las páginas desactualizadas.
+- **Automatic:** Wenlan hace Steep en segundo plano con el modelo que asignes.
+
+Qué hace Steep:
+
+- **Enriquece las memorias:** Añade tipos, detalles estructurados, pistas de búsqueda y enlaces al grafo para facilitar la recuperación contextual de cada hallazgo.
+- **Sigue la evidencia:** Los cambios en fuentes, memorias o código citado marcan las páginas dependientes para actualizarlas; las memorias nuevas también pueden enriquecer páginas compatibles. Si un borrador no supera las comprobaciones de citas, se conserva la página guardada. Superarlas no demuestra que los datos sean correctos.
+- **Conserva el control y el historial:** La actualización en segundo plano modifica las páginas compatibles mantenidas por IA; las páginas que hayas escrito o editado reciben propuestas de revisión. Las sustituciones explícitas ocultan o archivan las memorias anteriores y conservan sus enlaces. Las revisiones de páginas se pueden inspeccionar.
+- **Bloqueo de revisión:** Con **Lock pages I've written** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu revisión. Las páginas que escribió la IA siguen actualizándose.
+
+[Guía de Steep: activadores, reglas de revisión y modelos (en inglés)](docs/steep.md). Elige un modelo en el dispositivo, un servidor local o un proveedor en la nube; el trabajo en segundo plano con modelos es opcional.
+
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Flujo ilustrativo: un hallazgo en un documento actualiza la memoria de V1 a V2 y después influye en una nota, que se actualiza automáticamente o queda pendiente de revisión." width="100%">
+</p>
+<p>Ilustración basada en el comportamiento actual de actualización; no es una captura de la app.</p>
+
+<a id="code-repository-wiki"></a>
+
+<br>
+
+## Una wiki para tu repositorio de código
+
+Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA planifica la wiki a partir del propio repositorio: una página de resumen que enumera todas las páginas y, después, una página para cada parte o flujo que necesita conocer alguien nuevo. Una herramienta pequeña tiene pocas páginas; un monorepo grande, muchas más. Al volver a ejecutarlo solo escribe las páginas que faltan. `/wenlan wiki` sustituye a `/wenlan map`, sin alias para el nombre anterior.
+
+- **Ligada al código:** Cada página registra las líneas de código de las que se extrajo. Cuando ese código cambia, la página muestra qué cambió con un solo botón Review, y Steep pone la página al día.
+- **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria: usa tu propia herramienta de IA en tu ordenador, o se ejecuta en GitHub Actions con la clave de tu herramienta de IA guardada como secret del repositorio, así tu ordenador puede estar apagado. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
+- **Tus ediciones se conservan:** Una página de la wiki que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats no entran en el repositorio.
 
 <a id="daily-workflow"></a>
 
@@ -174,55 +237,6 @@ Un agente puede leer archivos y escribir texto. Wenlan añade una **base de cono
 - **Recuperación limitada a un Espacio:** Selecciona un Espacio para limitar el conocimiento devuelto al proyecto o colección personal pertinente.
 
 Activa el interruptor **Web access** en Settings para que clientes web de IA compatibles, como Claude, ChatGPT o Muse, puedan buscar en toda la biblioteca o en un Espacio elegido mientras el ordenador con Wenlan esté conectado. Al permitir una app eliges solo búsqueda o búsqueda y escritura; una app con escritura también puede añadir, editar y borrar, y las apps de IA pueden pedirte confirmación antes de cada cambio. Esta función es experimental; las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
-
-<a id="code-repository-wiki"></a>
-
-<br>
-
-## Una wiki para tu repositorio de código
-
-Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA planifica la wiki a partir del propio repositorio: una página de resumen que enumera todas las páginas y, después, una página para cada parte o flujo que necesita conocer alguien nuevo. Una herramienta pequeña tiene pocas páginas; un monorepo grande, muchas más. Al volver a ejecutarlo solo escribe las páginas que faltan. `/wenlan wiki` sustituye a `/wenlan map`, sin alias para el nombre anterior.
-
-- **Ligada al código:** Cada página registra las líneas de código de las que se extrajo. Cuando ese código cambia, la página muestra qué cambió con un solo botón Review, y Steep pone la página al día.
-- **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria: usa tu propia herramienta de IA en tu ordenador, o se ejecuta en GitHub Actions con la clave de tu herramienta de IA guardada como secret del repositorio, así tu ordenador puede estar apagado. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
-- **Tus ediciones se conservan:** Una página de la wiki que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats no entran en el repositorio.
-
-<a id="what-makes-wenlan-distinct"></a>
-<a id="why-is-wenlan-different"></a>
-<a id="two-lifecycles"></a>
-<a id="two-lifecycles-one-maintained-knowledge-system"></a>
-<a id="dos-ciclos-de-vida-un-sistema-de-conocimiento-mantenido"></a>
-<a id="local-markdown"></a>
-<a id="memoria-atómica"></a>
-<a id="página-mantenida"></a>
-<a id="markdown-local-que-funciona-con-obsidian"></a>
-
-<a id="mantén-el-conocimiento-al-día-y-conserva-su-historial"></a>
-
-<br>
-
-## Steep: mantén útil el conocimiento cuando cambia
-
-Guardar material es solo el comienzo. **Steep lo prepara para reutilizarlo y mantiene al día las páginas compatibles**, para que tú y tu IA podáis continuar a partir de hallazgos anteriores sin volver a procesar los originales.
-
-Elige uno de dos modos en Settings:
-
-- **On demand** (las instalaciones nuevas empiezan aquí): cuando tu herramienta de IA guarda o escribe en Wenlan, hace Steep sobre la marcha, sin ningún comando. Para terminar el resto de una vez, ejecuta `/wenlan steep`: escribe páginas nuevas a partir del material importado y pone al día las páginas desactualizadas.
-- **Automatic:** Wenlan hace Steep en segundo plano con el modelo que asignes.
-
-Qué hace Steep:
-
-- **Enriquece las memorias:** Añade tipos, detalles estructurados, pistas de búsqueda y enlaces al grafo para facilitar la recuperación contextual de cada hallazgo.
-- **Sigue la evidencia:** Los cambios en fuentes, memorias o código citado marcan las páginas dependientes para actualizarlas; las memorias nuevas también pueden enriquecer páginas compatibles. Si un borrador no supera las comprobaciones de citas, se conserva la página guardada. Superarlas no demuestra que los datos sean correctos.
-- **Conserva el control y el historial:** La actualización en segundo plano modifica las páginas compatibles mantenidas por IA; las páginas que hayas escrito o editado reciben propuestas de revisión. Las sustituciones explícitas ocultan o archivan las memorias anteriores y conservan sus enlaces. Las revisiones de páginas se pueden inspeccionar.
-- **Bloqueo de revisión:** Con **Lock pages I've written** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu revisión. Las páginas que escribió la IA siguen actualizándose.
-
-[Guía de Steep: activadores, reglas de revisión y modelos (en inglés)](docs/steep.md). Elige un modelo en el dispositivo, un servidor local o un proveedor en la nube; el trabajo en segundo plano con modelos es opcional.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Flujo ilustrativo: un hallazgo en un documento actualiza la memoria de V1 a V2 y después influye en una nota, que se actualiza automáticamente o queda pendiente de revisión." width="100%">
-</p>
-<p>Ilustración basada en el comportamiento actual de actualización; no es una captura de la app.</p>
 
 <a id="architecture"></a>
 

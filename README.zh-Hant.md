@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=26279e5d809356d37577cc055502f5aecd857dea2eb7e2d0875a8d36ea46ad4f -->
+<!-- README_SYNC: source=README.md sha256=7c8153b9d8eed3dcf5171f3074e6a7df0473e36e367032733e8ba2eab0037af6 -->
 
 <p align="center">
   <picture>
@@ -46,6 +46,20 @@ https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
 - **AI 幫你持續更新：** 文件、Markdown、Obsidian vault、Logseq 圖譜、網頁連結和 AI 對話都變成筆記，保留來源，來源變了就跟著更新。全部內建，不用拼裝一堆外掛。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor、GitHub Copilot 等 MCP 工具都查得到、引用得到同一批筆記。
 - **對照過來源：** 文瀾會檢查所引來源是否支持每個句子，未通過的引用太多時，不會儲存該筆記。筆記是本地 Markdown，AI 要改你寫的筆記，會先等你審核。
+
+<a id="whats-new"></a>
+
+<br>
+
+## 最近新增
+
+- **沉澱有兩種方式：**「隨叫」用你自己的 AI 工具更新筆記，「自動」用你選的本地或雲端模型在背景更新。
+- **為程式碼建 wiki：**`/wenlan wiki` 寫出對應到程式碼行數的筆記，用 pull request 放進你的倉庫，也能每天在你的電腦或 GitHub Actions 上更新。
+- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro 和 OpenCode 都能從設定裡的「新增工具」連上。
+- **筆記可以放圖片和影片**，也能匯入 Logseq 圖譜。
+- **你寫的筆記由你把關：**AI 要改，會先等你審核。
+
+每次發佈的完整紀錄見[更新日誌](CHANGELOG.md)。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -95,6 +109,55 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 想把匯入的資料整理成帶引用的筆記，執行 `/wenlan steep`（Codex 中為 `$wenlan steep`）。新安裝預設以「隨叫」方式[沉澱](#steep沉澱讓知識持續更新)，由你的 AI 工具完成；也可以改成「自動」，用[模型](docs/steep.zh-Hant.md#enable-steep)在背景整理記憶、更新筆記。
 
 不知道該問什麼？在 App 中打開「AI 能做什麼」，查看要在 AI 工具裡輸入的確切文字。
+
+<a id="what-makes-wenlan-distinct"></a>
+<a id="why-is-wenlan-different"></a>
+<a id="two-lifecycles"></a>
+<a id="two-lifecycles-one-maintained-knowledge-system"></a>
+<a id="兩套生命週期一個持續維護的知識系統"></a>
+<a id="local-markdown"></a>
+<a id="原子記憶"></a>
+<a id="持續維護的頁面"></a>
+<a id="與-obsidian-共存的本地-markdown"></a>
+
+<a id="持續更新知識並保留歷史"></a>
+
+<br>
+
+## Steep（沉澱）：讓知識持續更新
+
+保存資料只是開始。**沉澱讓資料更容易重用，也讓引用它的筆記跟上新發現**，讓你和 AI 延續已有的理解，不必每次重新翻閱原始內容。
+
+在「設定」中選擇兩種方式之一：
+
+- **隨叫**（新安裝預設）：AI 工具在文瀾裡儲存或寫入時，會順手沉澱，不用另外下指令。想把剩下的一次做完，執行 `/wenlan steep`：它會用匯入的資料寫出新筆記，並把過期的筆記更新到最新。
+- **自動**：文瀾用你指定的模型在背景沉澱。
+
+沉澱會做這些事：
+
+- **整理記憶**：補上類型、結構化資訊、搜尋線索與圖譜連結，讓單筆發現更容易連同脈絡被找回。
+- **讓依據帶動更新**：來源、記憶或引用的程式碼變動時，標記相關筆記待更新；新記憶也可補進符合條件的筆記。草稿未通過引用檢查就保留原筆記；通過也不代表內容已證實正確。
+- **保留控制與歷史**：背景刷新可更新符合條件、由 AI 維護的筆記；你建立或編輯過的筆記則提出待審修訂。明確取代記憶時，會隱藏或封存舊記憶並保留取代關係；筆記版本紀錄仍可查閱。
+- **審核鎖定**：開啟「我寫過的頁面自動上鎖」（新安裝預設開啟）後，AI 對你寫過或改過的筆記所做的修改會先等你審核。AI 寫的筆記照常更新。
+
+[沉澱指南：觸發條件、審核規則與模型設定](docs/steep.zh-Hant.md)。可選裝置端模型、本地服務或雲端供應商；模型驅動的背景處理為選配。
+
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
+</p>
+<p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
+
+<a id="code-repository-wiki"></a>
+
+<br>
+
+## 為程式碼儲存庫建 wiki
+
+在程式碼儲存庫中執行 `/wenlan wiki`（Codex 中為 `$wenlan wiki`）。AI 工具會依據儲存庫本身規劃 wiki：先寫一篇列出所有筆記的總覽，再為新人需要了解的每個部分或流程各寫一篇。小工具只需幾篇，大型 monorepo 會多得多。再次執行時只補寫缺少的筆記。`/wenlan wiki` 取代了 `/wenlan map`，舊名稱沒有保留別名。
+
+- **與程式碼綁定**：每篇筆記都會記錄它所依據的程式碼行。程式碼變動時，筆記會顯示改了什麼，並提供一個審核按鈕；沉澱會把筆記更新到最新。
+- **以 pull request 放進儲存庫**：Space 上的 GitHub 按鈕會把 Space 連接到對應的儲存庫，並把依據這些程式碼的筆記以 pull request 放進儲存庫的 `wiki/` 資料夾。可以從按鈕執行，也可以開啟每日更新：在你的電腦上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的金鑰存成儲存庫 secret），電腦關著也行。同一個 pull request 還會修正儲存庫自身文件中與程式碼不再相符的句子，供你審核。
+- **保留你的修改**：有人在儲存庫中修改過的 wiki 筆記會保留那次修改。引用你的記憶或對話的筆記不會放進儲存庫。
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -190,55 +253,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 - **Spaces 範圍檢索**：選定 Space，將回傳的知識限制在相關專案或個人資料集合內。
 
 在「設定」中開啟「網頁存取」開關，即可讓 Claude、ChatGPT 或 Muse 等支援的網頁 AI 用戶端，在你的電腦保持連線時搜尋整個資料庫或指定空間。允許應用程式時可以選「只能搜尋」或「搜尋和寫入」；可以寫入的應用程式還能新增、修改和刪除內容，AI 應用程式可以在每次改動前先問你。此功能仍在實驗階段；查詢與結果會經過中繼服務，詳見[隱私界限](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
-
-<a id="code-repository-wiki"></a>
-
-<br>
-
-## 為程式碼儲存庫建 wiki
-
-在程式碼儲存庫中執行 `/wenlan wiki`（Codex 中為 `$wenlan wiki`）。AI 工具會依據儲存庫本身規劃 wiki：先寫一篇列出所有筆記的總覽，再為新人需要了解的每個部分或流程各寫一篇。小工具只需幾篇，大型 monorepo 會多得多。再次執行時只補寫缺少的筆記。`/wenlan wiki` 取代了 `/wenlan map`，舊名稱沒有保留別名。
-
-- **與程式碼綁定**：每篇筆記都會記錄它所依據的程式碼行。程式碼變動時，筆記會顯示改了什麼，並提供一個審核按鈕；沉澱會把筆記更新到最新。
-- **以 pull request 放進儲存庫**：Space 上的 GitHub 按鈕會把 Space 連接到對應的儲存庫，並把依據這些程式碼的筆記以 pull request 放進儲存庫的 `wiki/` 資料夾。可以從按鈕執行，也可以開啟每日更新：在你的電腦上用你自己的 AI 工具跑，或在 GitHub Actions 上跑（AI 工具的金鑰存成儲存庫 secret），電腦關著也行。同一個 pull request 還會修正儲存庫自身文件中與程式碼不再相符的句子，供你審核。
-- **保留你的修改**：有人在儲存庫中修改過的 wiki 筆記會保留那次修改。引用你的記憶或對話的筆記不會放進儲存庫。
-
-<a id="what-makes-wenlan-distinct"></a>
-<a id="why-is-wenlan-different"></a>
-<a id="two-lifecycles"></a>
-<a id="two-lifecycles-one-maintained-knowledge-system"></a>
-<a id="兩套生命週期一個持續維護的知識系統"></a>
-<a id="local-markdown"></a>
-<a id="原子記憶"></a>
-<a id="持續維護的頁面"></a>
-<a id="與-obsidian-共存的本地-markdown"></a>
-
-<a id="持續更新知識並保留歷史"></a>
-
-<br>
-
-## Steep（沉澱）：讓知識持續更新
-
-保存資料只是開始。**沉澱讓資料更容易重用，也讓引用它的筆記跟上新發現**，讓你和 AI 延續已有的理解，不必每次重新翻閱原始內容。
-
-在「設定」中選擇兩種方式之一：
-
-- **隨叫**（新安裝預設）：AI 工具在文瀾裡儲存或寫入時，會順手沉澱，不用另外下指令。想把剩下的一次做完，執行 `/wenlan steep`：它會用匯入的資料寫出新筆記，並把過期的筆記更新到最新。
-- **自動**：文瀾用你指定的模型在背景沉澱。
-
-沉澱會做這些事：
-
-- **整理記憶**：補上類型、結構化資訊、搜尋線索與圖譜連結，讓單筆發現更容易連同脈絡被找回。
-- **讓依據帶動更新**：來源、記憶或引用的程式碼變動時，標記相關筆記待更新；新記憶也可補進符合條件的筆記。草稿未通過引用檢查就保留原筆記；通過也不代表內容已證實正確。
-- **保留控制與歷史**：背景刷新可更新符合條件、由 AI 維護的筆記；你建立或編輯過的筆記則提出待審修訂。明確取代記憶時，會隱藏或封存舊記憶並保留取代關係；筆記版本紀錄仍可查閱。
-- **審核鎖定**：開啟「我寫過的頁面自動上鎖」（新安裝預設開啟）後，AI 對你寫過或改過的筆記所做的修改會先等你審核。AI 寫的筆記照常更新。
-
-[沉澱指南：觸發條件、審核規則與模型設定](docs/steep.zh-Hant.md)。可選裝置端模型、本地服務或雲端供應商；模型驅動的背景處理為選配。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
-</p>
-<p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
 
 <a id="architecture"></a>
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=26279e5d809356d37577cc055502f5aecd857dea2eb7e2d0875a8d36ea46ad4f -->
+<!-- README_SYNC: source=README.md sha256=7c8153b9d8eed3dcf5171f3074e6a7df0473e36e367032733e8ba2eab0037af6 -->
 
 <p align="center">
   <picture>
@@ -46,6 +46,20 @@ https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d
 - **AI 帮你持续更新：** 文档、Markdown、Obsidian 仓库、Logseq 图谱、网页链接和 AI 对话都变成笔记，保留来源，来源变了就跟着更新。全部内置，不用拼装一堆插件。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor、GitHub Copilot 等 MCP 工具都查得到、引用得到同一批笔记。
 - **对照过来源：** 文澜会检查所引来源是否支持每个句子，未通过的引用太多时，不会保存该笔记。笔记是本地 Markdown，AI 要改你写的笔记，会先等你审核。
+
+<a id="whats-new"></a>
+
+<br>
+
+## 最近新增
+
+- **沉淀有两种方式：**“随叫”用你自己的 AI 工具更新笔记，“自动”用你选的本地或云端模型在后台更新。
+- **为代码建 wiki：**`/wenlan wiki` 写出对应到代码行数的笔记，用 pull request 放进你的仓库，也能每天在你的电脑或 GitHub Actions 上更新。
+- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro 和 OpenCode 都能从设置里的“添加工具”连上。
+- **笔记可以放图片和视频**，也能导入 Logseq 图谱。
+- **你写的笔记由你把关：**AI 要改，会先等你审核。
+
+每次发布的完整记录见[更新日志](CHANGELOG.md)。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -95,6 +109,55 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 想把导入的资料整理成带引用的笔记，运行 `/wenlan steep`（Codex 中为 `$wenlan steep`）。新安装默认以“随叫”方式[沉淀](#steep沉淀让知识跟上新发现)，由你的 AI 工具完成；也可以改成“自动”，用[模型](docs/steep.md#enable-steep)在后台整理记忆、更新笔记。
 
 不知道该问什么？在 App 中打开“AI 能做什么”，查看要在 AI 工具里输入的确切文字。
+
+<a id="what-makes-wenlan-distinct"></a>
+<a id="why-is-wenlan-different"></a>
+<a id="two-lifecycles"></a>
+<a id="two-lifecycles-one-maintained-knowledge-system"></a>
+<a id="两套生命周期一个持续维护的知识系统"></a>
+<a id="local-markdown"></a>
+<a id="原子记忆"></a>
+<a id="持续维护的页面"></a>
+<a id="与-obsidian-共存的本地-markdown"></a>
+
+<a id="持续更新知识并保留历史"></a>
+
+<br>
+
+## Steep（沉淀）：让知识跟上新发现
+
+保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的笔记保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
+
+在“设置”中选择两种方式之一：
+
+- **随叫**（新安装默认）：AI 工具在文澜里保存或写入时，会顺手沉淀，不用另外下指令。想把剩下的一次做完，运行 `/wenlan steep`：它会用导入的资料写出新笔记，并把过期的笔记更新到最新。
+- **自动：** 文澜用你指定的模型在后台沉淀。
+
+沉淀会做这些事：
+
+- **整理记忆：** 添加类型、结构化细节、搜索线索和图谱链接，让单条发现更容易在上下文中检索。
+- **让依据带动更新：** 来源、记忆或引用的代码变化时，依赖它们的笔记会标记待刷新；新记忆也可以丰富符合条件的笔记。如果草稿未通过引用检查，刷新会保留已保存笔记。通过检查并不代表事实正确。
+- **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护笔记；你撰写或编辑的笔记会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。笔记修订可供检查。
+- **审核锁定：** 开启“我写过的页面自动上锁”（新安装默认开启）后，AI 对你写过或改过的笔记所做的修改会先等你审核。AI 写的笔记照常更新。
+
+[Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
+
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
+</p>
+<p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
+
+<a id="code-repository-wiki"></a>
+
+<br>
+
+## 为代码仓库建 wiki
+
+在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。AI 工具会依据仓库本身规划 wiki：先写一篇列出所有笔记的总览，再为新人需要了解的每个部分或流程各写一篇。小工具只需几篇，大型 monorepo 会多得多。再次运行时只补写缺少的笔记。`/wenlan wiki` 取代了 `/wenlan map`，旧名称没有保留别名。
+
+- **与代码绑定：** 每篇笔记都会记录它所依据的代码行。代码改动时，笔记会显示改了什么，并提供一个审核按钮；沉淀会把笔记更新到最新。
+- **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把 Space 连接到对应的仓库，并把依据这些代码的笔记以 pull request 放进仓库的 `wiki/` 文件夹。可以从按钮运行，也可以开启每日更新：在你的电脑上用你自己的 AI 工具运行，或在 GitHub Actions 上运行（AI 工具的密钥存为仓库 secret），电脑关着也可以。同一个 pull request 还会修正仓库自身文档中与代码不再相符的句子，供你审核。
+- **保留你的修改：** 有人在仓库中修改过的 wiki 笔记会保留那次修改。引用你的记忆或对话的笔记不会放进仓库。
 
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
@@ -190,55 +253,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
 
 在“设置”中开启“网页访问”开关，即可让 Claude、ChatGPT 或 Muse 等受支持的网页 AI 客户端，在你的电脑保持联网时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。此功能仍处于实验阶段；查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
-
-<a id="code-repository-wiki"></a>
-
-<br>
-
-## 为代码仓库建 wiki
-
-在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。AI 工具会依据仓库本身规划 wiki：先写一篇列出所有笔记的总览，再为新人需要了解的每个部分或流程各写一篇。小工具只需几篇，大型 monorepo 会多得多。再次运行时只补写缺少的笔记。`/wenlan wiki` 取代了 `/wenlan map`，旧名称没有保留别名。
-
-- **与代码绑定：** 每篇笔记都会记录它所依据的代码行。代码改动时，笔记会显示改了什么，并提供一个审核按钮；沉淀会把笔记更新到最新。
-- **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把 Space 连接到对应的仓库，并把依据这些代码的笔记以 pull request 放进仓库的 `wiki/` 文件夹。可以从按钮运行，也可以开启每日更新：在你的电脑上用你自己的 AI 工具运行，或在 GitHub Actions 上运行（AI 工具的密钥存为仓库 secret），电脑关着也可以。同一个 pull request 还会修正仓库自身文档中与代码不再相符的句子，供你审核。
-- **保留你的修改：** 有人在仓库中修改过的 wiki 笔记会保留那次修改。引用你的记忆或对话的笔记不会放进仓库。
-
-<a id="what-makes-wenlan-distinct"></a>
-<a id="why-is-wenlan-different"></a>
-<a id="two-lifecycles"></a>
-<a id="two-lifecycles-one-maintained-knowledge-system"></a>
-<a id="两套生命周期一个持续维护的知识系统"></a>
-<a id="local-markdown"></a>
-<a id="原子记忆"></a>
-<a id="持续维护的页面"></a>
-<a id="与-obsidian-共存的本地-markdown"></a>
-
-<a id="持续更新知识并保留历史"></a>
-
-<br>
-
-## Steep（沉淀）：让知识跟上新发现
-
-保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的笔记保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
-
-在“设置”中选择两种方式之一：
-
-- **随叫**（新安装默认）：AI 工具在文澜里保存或写入时，会顺手沉淀，不用另外下指令。想把剩下的一次做完，运行 `/wenlan steep`：它会用导入的资料写出新笔记，并把过期的笔记更新到最新。
-- **自动：** 文澜用你指定的模型在后台沉淀。
-
-沉淀会做这些事：
-
-- **整理记忆：** 添加类型、结构化细节、搜索线索和图谱链接，让单条发现更容易在上下文中检索。
-- **让依据带动更新：** 来源、记忆或引用的代码变化时，依赖它们的笔记会标记待刷新；新记忆也可以丰富符合条件的笔记。如果草稿未通过引用检查，刷新会保留已保存笔记。通过检查并不代表事实正确。
-- **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护笔记；你撰写或编辑的笔记会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。笔记修订可供检查。
-- **审核锁定：** 开启“我写过的页面自动上锁”（新安装默认开启）后，AI 对你写过或改过的笔记所做的修改会先等你审核。AI 写的笔记照常更新。
-
-[Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
-</p>
-<p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
 <a id="architecture"></a>
 
