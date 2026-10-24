@@ -2,6 +2,7 @@
 import { syntaxTree } from "@codemirror/language";
 import { Annotation, Facet, Prec, StateEffect, StateField, type EditorState, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, keymap, ViewPlugin, WidgetType } from "@codemirror/view";
+import { sourceLinkKey } from "./sourceLinkKey";
 
 /** Draws a link's site icon into `container`; returns its cleanup. */
 export type SourceIconMount = (container: HTMLElement, url: string) => () => void;
@@ -59,6 +60,17 @@ const freshLink = StateField.define<{ from: number; to: number } | null>({
     return from === value.from && to === value.to ? value : { from, to };
   },
 });
+
+/** The title of the source a link points at, also when only its tracking
+ *  parameters, fragment or trailing slash differ. */
+export function sourceLinkTitle(links: ReadonlyMap<string, string> | undefined, url: string): string | undefined {
+  if (!links) return undefined;
+  const exact = links.get(url);
+  if (exact !== undefined) return exact;
+  const key = sourceLinkKey(url);
+  for (const [link, title] of links) if (sourceLinkKey(link) === key) return title;
+  return undefined;
+}
 
 /** Whether the link at `from`..`to` just took its title and stays closed. */
 export function sourceLinkIsFresh(state: EditorState, from: number, to: number): boolean {
@@ -337,26 +349,16 @@ const removeWithLink = ViewPlugin.fromClass(class {
     const created = createdSources.get(this.view);
     if (!created) return;
     const text = this.view.state.doc.toString();
-    const kept = new Set([...text.matchAll(/https?:\/\/[^\s<>()[\]]+/g)].map((match) => linkKey(match[0])));
+    const kept = new Set([...text.matchAll(/https?:\/\/[^\s<>()[\]]+/g)].map((match) => sourceLinkKey(match[0])));
     for (const [url, remove] of [...created]) {
       // Trimming tracking parameters or a trailing slash still links the same page.
-      if (text.includes(url) || kept.has(linkKey(url))) continue;
+      if (text.includes(url) || kept.has(sourceLinkKey(url))) continue;
       created.delete(url);
       void remove().catch(() => undefined);
       if (live) this.view.dispatch({ effects: forgetLink.of(url) });
     }
   }
 });
-
-/** A link's site and path, so an edited query, fragment or trailing slash is the same page. */
-function linkKey(link: string): string {
-  try {
-    const url = new URL(link);
-    return `${url.hostname.replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "")}`;
-  } catch {
-    return link;
-  }
-}
 
 /** Code and link destinations are not places to save a source from. */
 function pasteTargetsProse(state: EditorState, at: number): boolean {
@@ -476,7 +478,7 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         const url = pastedSourceUrl(data.getData("text/plain"));
         if (!url || options.blocked(view) || !options.enabled()) return false;
         const { offered } = view.state.field(promptState);
-        const known = view.state.field(sourceLinkUrls, false)?.get(url);
+        const known = sourceLinkTitle(view.state.field(sourceLinkUrls, false), url);
         const { from, to } = view.state.selection.main;
         if (!pasteTargetsProse(view.state, from)) return false;
         if (known !== undefined) {

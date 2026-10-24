@@ -86,6 +86,7 @@ import {
 import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import type { PastedSourceSaved } from "./editor/sourcePaste";
 import { sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
+import { sourceLinkKey } from "./editor/sourceLinkKey";
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
@@ -615,7 +616,9 @@ export default function PageDetail({
   sourceIconActionsRef.current = {
     label: t("sourcePaste.iconTitle"),
     open: (url) => {
-      const file = indexedFiles?.find((row) => row.source === "webpage" && row.source_id === url);
+      const webpages = (indexedFiles ?? []).filter((row) => row.source === "webpage");
+      const file = webpages.find((row) => row.source_id === url)
+        ?? webpages.find((row) => sourceLinkKey(row.source_id) === sourceLinkKey(url));
       if (!file) return;
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
@@ -1805,7 +1808,15 @@ export default function PageDetail({
       ? handle
         ? t("sourcePaste.accountTitle", { app: sourceAppName(app, i18n.language), handle })
         : t("sourcePaste.linkTitle", { app: sourceAppName(app, i18n.language) })
-      : (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } })();
+      // Site and path, so two unreadable pages of one site are told apart.
+      : (() => {
+        try {
+          const parsed = new URL(url);
+          return `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname.replace(/\/+$/, "")}`.slice(0, 80);
+        } catch {
+          return url;
+        }
+      })();
     let created = true;
     try {
       await ingestWebpage({ url, title: title || fallbackTitle, content: content || url, create_only: true, space: page.space ?? null });

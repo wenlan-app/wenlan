@@ -201,6 +201,12 @@ describe("pasted links as sources", () => {
     expect(save).not.toHaveBeenCalled();
     expect(known.state.doc.toString()).toBe(`See [@simonw on X](${X_URL})`);
     expect(note(known)).toBeNull();
+    // The same page without its tracking parameters is that source too.
+    const trimmed = editor("", 0, { save });
+    trimmed.dispatch({ effects: setSourceLinkUrls.of(new Map([["https://example.com/post?utm_source=x", "Post"]])) });
+    pasteText(trimmed.contentDOM, "https://example.com/post/");
+    expect(save).not.toHaveBeenCalled();
+    expect(trimmed.state.doc.toString()).toBe("[Post](https://example.com/post/)");
   });
 
   it("leaves code, link targets and repeated links to the normal paste", async () => {
