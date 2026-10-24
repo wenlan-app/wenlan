@@ -1590,7 +1590,14 @@ impl KnowledgeWriter {
         if !readable {
             return false;
         }
-        let head = String::from_utf8_lossy(&head);
+        Self::index_bytes_are_replaceable(&head)
+    }
+
+    /// The byte half of [`Self::index_file_is_replaceable`], so the rewrite can
+    /// ask it again about the bytes it actually holds after taking the file
+    /// aside, not only about the ones read before.
+    fn index_bytes_are_replaceable(head: &[u8]) -> bool {
+        let head = String::from_utf8_lossy(head);
         let (fm, body) = crate::sources::obsidian::extract_frontmatter(&head);
         fm.fields.len() == 1 && fm.has("okf_version") && index_body_is_generated(body)
     }
@@ -1609,6 +1616,16 @@ impl KnowledgeWriter {
     fn regenerate_index_cap(
         capabilities: &ProjectionCapabilities,
         state: &KnowledgeState,
+    ) -> Result<(), WenlanError> {
+        Self::regenerate_index_cap_with_hook(capabilities, state, || {})
+    }
+
+    /// [`Self::regenerate_index_cap`] with a seam between deciding the existing
+    /// index is replaceable and replacing it. Production passes a no-op.
+    fn regenerate_index_cap_with_hook(
+        capabilities: &ProjectionCapabilities,
+        state: &KnowledgeState,
+        after_classify: impl FnOnce(),
     ) -> Result<(), WenlanError> {
         // De-duped and sorted by filename: nothing on disk enforces one state
         // entry per file (a sync conflict can leave two ids pointing at one
@@ -1659,17 +1676,36 @@ impl KnowledgeWriter {
             return Ok(());
         }
 
-        let temp_filename = format!(
-            ".index.{}.{}.tmp",
-            std::process::id(),
-            TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed)
-        );
-        write_page_atomically_nofollow(
+        after_classify();
+        // The check above read the index as it was. An edit saved since then
+        // must not be replaced, so the replacement moves the file aside, asks
+        // again about the bytes it holds, and installs the new index only over
+        // bytes that are still the generated ones.
+        match crate::export::vault_fs::replace_private_if_unchanged(
             &capabilities.root,
             INDEX_FILE,
-            &temp_filename,
             bytes.as_bytes(),
-        )
+            INDEX_OWNERSHIP_SCAN_BYTES,
+            Self::index_bytes_are_replaceable,
+        )? {
+            crate::export::vault_fs::Replacement::Written
+            | crate::export::vault_fs::Replacement::Unchanged => {}
+            crate::export::vault_fs::Replacement::Kept => {
+                log::info!(
+                    "[knowledge] left {INDEX_FILE} alone: it changed while it was rewritten"
+                );
+            }
+            // Edited, and a newer file already holds the name: neither is lost.
+            crate::export::vault_fs::Replacement::Displaced(aside) => {
+                crate::export::archive::archive_aside_from(
+                    &capabilities.root,
+                    &capabilities.root,
+                    &aside,
+                    INDEX_FILE,
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1745,7 +1781,12 @@ fn index_line_is_entry(line: &str) -> bool {
 /// description: a page with an empty summary otherwise rendered as
 /// `* [Title](/page.md) - `, a separator pointing at nothing, in every
 /// projection index and every exported bundle.
-fn index_entry_line(title: &str, link_prefix: &str, filename: &str, description: &str) -> String {
+pub(crate) fn index_entry_line(
+    title: &str,
+    link_prefix: &str,
+    filename: &str,
+    description: &str,
+) -> String {
     let title = escape_index_link_text(title);
     let filename = filename
         .split('/')
@@ -7124,6 +7165,45 @@ mod tests {
             edited,
             "the index is left exactly as the user left it"
         );
+    }
+
+    /// The check reads the index; the rewrite acts on a name. A note saved over
+    /// `index.md` between the two was replaced by the regenerated index.
+    #[test]
+    fn an_index_edit_saved_after_the_replaceable_check_is_not_overwritten() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let mut page_a = test_concept();
+        page_a.id = "page_a".to_string();
+        page_a.title = "Alpha".to_string();
+        writer.write_page_for_test(&page_a).unwrap();
+        let index_path = dir.path().join(INDEX_FILE);
+        assert!(std::fs::read_to_string(&index_path)
+            .unwrap()
+            .contains("Alpha"));
+
+        let mine = "My home note, saved while the index was being rewritten.\n";
+        let mut ran = false;
+        KnowledgeProjectionWrite::with_projection_capabilities(dir.path(), |capabilities| {
+            let state = folders::read_state_strict(&capabilities.wenlan)?;
+            KnowledgeWriter::regenerate_index_cap_with_hook(capabilities, &state, || {
+                ran = true;
+                let scratch = dir.path().join(".editor.tmp");
+                std::fs::write(&scratch, mine).unwrap();
+                std::fs::rename(&scratch, &index_path).unwrap();
+            })
+        })
+        .unwrap();
+
+        assert!(ran, "the hook ran between the check and the rewrite");
+        assert_eq!(std::fs::read_to_string(&index_path).unwrap(), mine);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(".wenlan-"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     /// An OKF root index somebody hand-wrote is not Wenlan's. `okf_version`
