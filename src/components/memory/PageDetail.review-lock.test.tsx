@@ -115,6 +115,17 @@ describe("PageDetail review lock", () => {
     expect(screen.getByText(i18n.t("pageDetail.aiFromWrote"))).toBeInTheDocument();
   });
 
+  it("never calls a page written here AI-written, even before anyone edits it", async () => {
+    current = { ...PAGE, creation_kind: "authored" } as typeof current;
+    const { user } = renderPage();
+    await openInfo(user);
+    expect(allowed()).toBeChecked();
+    expect(screen.queryByText(i18n.t("pageDetail.aiFromAi"))).toBeNull();
+    await user.click(askFirst());
+    await waitFor(() => expect(askFirst()).toBeChecked());
+    expect(screen.getByText(i18n.t("pageDetail.aiFromWrote"))).toBeInTheDocument();
+  });
+
   it("locks the page on Ask me first, then unlocks it on Allowed", async () => {
     const { user } = renderPage();
     await openInfo(user);

@@ -1869,6 +1869,7 @@ export default function PageDetail({
   // PageDetail is reused across pages; a slow request for another page must
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
+  const humanOwned = page.user_edited === true || page.creation_kind === "authored";
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
   const canRenamePage = page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
@@ -2677,9 +2678,11 @@ export default function PageDetail({
               reviewRequiredMutation.mutate({ id: page.id, required: value === "ask_first" });
             }}
           >
+            {/* "Wrote" follows the daemon's own ownership rule
+                (page_is_human_owned): edited by hand, or written here. */}
             {page.review_required === true
-              ? <p className="note-ai-from">{t(page.user_edited ? "pageDetail.aiFromWrote" : "pageDetail.aiFromPage")}</p>
-              : !page.user_edited && <p className="note-ai-from">{t("pageDetail.aiFromAi")}</p>}
+              ? <p className="note-ai-from">{t(humanOwned ? "pageDetail.aiFromWrote" : "pageDetail.aiFromPage")}</p>
+              : !humanOwned && <p className="note-ai-from">{t("pageDetail.aiFromAi")}</p>}
           </AiChangesOptions>}
           <div className="note-info-sections">
             <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
