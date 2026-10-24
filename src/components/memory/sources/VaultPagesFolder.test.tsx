@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getKnowledgePathInfo, restartDaemonToMovePages, setKnowledgePath, type RegisteredSource } from "../../../lib/tauri";
-import { VaultPagesFolder, refusalKey, shownFromVault } from "./VaultPagesFolder";
+import { VaultPagesFolder, refusalKey, shortPath, shownFromVault } from "./VaultPagesFolder";
 
 vi.mock("../../../lib/tauri", () => ({
   getKnowledgePathInfo: vi.fn(),
@@ -23,6 +23,11 @@ function renderFolder() {
   return render(<QueryClientProvider client={client}><VaultPagesFolder source={vault} /></QueryClientProvider>);
 }
 
+/** The folder shown in the panel, read across its wrap points. */
+function shownPaths() {
+  return Array.from(document.querySelectorAll(".vault-pages-path")).map((node) => node.textContent);
+}
+
 beforeEach(() => {
   vi.resetAllMocks();
 });
@@ -32,6 +37,13 @@ describe("VaultPagesFolder", () => {
     expect(shownFromVault("/Users/me/My notes/Wenlan", "/Users/me/My notes/")).toBe("My notes/Wenlan");
     expect(shownFromVault("/Users/me/My notes-2/Wenlan", "/Users/me/My notes")).toBeNull();
     expect(shownFromVault("C:\\Vault\\Wenlan", "C:\\Vault")).toBe("Vault/Wenlan");
+  });
+
+  it("shortens a home folder to ~", () => {
+    expect(shortPath("/Users/me/.wenlan/pages")).toBe("~/.wenlan/pages");
+    expect(shortPath("/home/me/notes/")).toBe("~/notes");
+    expect(shortPath("C:\\Users\\me\\Wenlan")).toBe("~/Wenlan");
+    expect(shortPath("/Volumes/Notes/Wenlan")).toBe("/Volumes/Notes/Wenlan");
   });
 
   it("turns refusal codes into words", () => {
@@ -47,15 +59,17 @@ describe("VaultPagesFolder", () => {
     vi.mocked(restartDaemonToMovePages).mockImplementation(async () => { path = "/Users/me/My notes/Wenlan"; return "0.20.1"; });
     renderFolder();
 
-    expect(await screen.findByText("/Users/me/.wenlan/pages")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Move into this vault" }));
-    expect(screen.getByText(/Move Wenlan's pages into My notes\/Wenlan\?/)).toBeInTheDocument();
+    expect(await screen.findByText("Move them into this vault to read and edit them in Obsidian.")).toBeInTheDocument();
+    expect(shownPaths()).toEqual(["~/.wenlan/pages"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Move into this vault" }));
+    expect(screen.getByText("Move Wenlan's pages to this folder?")).toBeInTheDocument();
+    expect(shownPaths()).toEqual(["My notes/Wenlan"]);
     expect(setKnowledgePath).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Move" }));
-    expect(await screen.findByText("Pages moved to My notes/Wenlan.")).toBeInTheDocument();
+    expect(await screen.findByText("Pages moved.")).toBeInTheDocument();
     expect(setKnowledgePath).toHaveBeenCalledWith("/Users/me/My notes/Wenlan");
-    expect(await screen.findByText("My notes/Wenlan")).toBeInTheDocument();
+    expect(shownPaths()).toEqual(["My notes/Wenlan"]);
     expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
   });
 
@@ -69,13 +83,17 @@ describe("VaultPagesFolder", () => {
   });
 
   it("asks for a restart by hand when the app cannot restart the service", async () => {
-    vi.mocked(getKnowledgePathInfo).mockResolvedValue({ path: "/Users/me/.wenlan/pages" });
-    vi.mocked(setKnowledgePath).mockResolvedValue({ path: "/Users/me/.wenlan/pages", pending_path: "/Users/me/My notes/Wenlan" });
+    let pending: string | undefined;
+    vi.mocked(getKnowledgePathInfo).mockImplementation(async () => ({ path: "/Users/me/.wenlan/pages", pending_path: pending }));
+    vi.mocked(setKnowledgePath).mockImplementation(async (folder) => { pending = folder; return { path: "/Users/me/.wenlan/pages", pending_path: folder }; });
     vi.mocked(restartDaemonToMovePages).mockRejectedValue("daemon-restart:isolated");
     renderFolder();
     fireEvent.click(await screen.findByRole("button", { name: "Move into this vault" }));
     fireEvent.click(screen.getByRole("button", { name: "Move" }));
-    expect(await screen.findByText("Quit and reopen Wenlan to finish moving the pages.")).toBeInTheDocument();
+    expect(await screen.findByText("Reopen Wenlan to finish the move.")).toBeInTheDocument();
+    // Waiting: the new folder shows and there is nothing to press again.
+    expect(shownPaths()).toEqual(["My notes/Wenlan"]);
+    expect(screen.queryByRole("button", { name: "Move into this vault" })).toBeNull();
   });
 
   it("explains a refused folder and lets the person pick another", async () => {
@@ -88,13 +106,16 @@ describe("VaultPagesFolder", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("That folder already has files.");
     expect(restartDaemonToMovePages).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
-    expect(await screen.findByText(/Move Wenlan's pages into My notes\/Wenlan pages\?/)).toBeInTheDocument();
+    expect(await screen.findByText("Move Wenlan's pages to this folder?")).toBeInTheDocument();
+    expect(shownPaths()).toEqual(["My notes/Wenlan pages"]);
     expect(openDialog).toHaveBeenCalledWith(expect.objectContaining({ directory: true, defaultPath: "/Users/me/My notes" }));
   });
 
   it("says a move is waiting for a restart", async () => {
     vi.mocked(getKnowledgePathInfo).mockResolvedValue({ path: "/Users/me/.wenlan/pages", pending_path: "/Users/me/My notes/Wenlan" });
     renderFolder();
-    expect(await screen.findByText("They move to My notes/Wenlan when Wenlan restarts.")).toBeInTheDocument();
+    expect(await screen.findByText("Reopen Wenlan to finish the move.")).toBeInTheDocument();
+    expect(shownPaths()).toEqual(["My notes/Wenlan"]);
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

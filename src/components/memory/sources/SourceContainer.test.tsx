@@ -87,16 +87,16 @@ describe("Sources containers", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
     expect(await screen.findByText("Projects")).toBeInTheDocument();
-    const info = await screen.findByText(/sourceContainer\.oneWay|Wenlan reads files/);
+    const info = await screen.findByText(/sourceContainer\.vaultReads|Wenlan reads your notes here/);
     expect(info).toBeInTheDocument();
     expect(screen.getByText("12")).toBeInTheDocument();
     expect(screen.getByText("8")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Refresh|refresh/ }));
     await waitFor(() => expect(syncRegisteredSource).toHaveBeenCalledWith(source.id));
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
-    expect(screen.queryByText(/Wenlan reads files/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Wenlan reads your notes here/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /memoryPanel|Information|info/i }));
-    expect(await screen.findByText(/sourceContainer\.oneWay|Wenlan reads files/)).toBeInTheDocument();
+    expect(await screen.findByText(/sourceContainer\.vaultReads|Wenlan reads your notes here/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Projects/ }));
     expect(await screen.findByText("Nested")).toBeInTheDocument();

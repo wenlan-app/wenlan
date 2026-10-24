@@ -105,7 +105,7 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
         aria-label={t("sourceContainer.followChanges")} />
     </div>
     <p>{t(following ? "sourceContainer.folderChecks" : "sourceContainer.importedOnce")}</p>
-    <p>{t("sourceContainer.oneWay")}</p>
+    <p>{t(source.source_type === "obsidian" ? "sourceContainer.vaultReads" : "sourceContainer.oneWay")}</p>
     <button className="collection-control source-container-refresh" type="button" disabled={refreshing} onClick={onRefresh}>
       <ArrowClockwise size={16} aria-hidden="true" />{refreshing ? t("sourceContainer.refreshing") : t("sourceContainer.refresh")}
     </button>
