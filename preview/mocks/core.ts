@@ -24,6 +24,7 @@ import {
   GRAPH_MEMORIES,
   GRAPH_PAGES,
   SOURCE_LIBRARY_FILES,
+  REPEAT_CITED_SOURCES,
 } from "../fixtures";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
 import { createReviewDecisionFixture } from "../../e2e/fixtures/reviewDecisions";
@@ -127,7 +128,7 @@ export async function invoke(
       // Merge-dossier pages get their own source lists (deriveMergeLedger
       // needs keep/retire to differ); every other page falls back to the
       // shared citation-preview SOURCES array as before.
-      return MERGE_SOURCES[pageId] ?? SOURCES;
+      return MERGE_SOURCES[pageId] ?? REPEAT_CITED_SOURCES[pageId] ?? SOURCES;
     }
     case "get_page_links":
       return LINKS;

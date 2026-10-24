@@ -1834,7 +1834,7 @@ export default function PageDetail({
     if (!c) return null;
     return (
       <CitationChip
-        occurrence={k}
+        number={processed.sourceNumberByOccurrence.get(k) ?? k}
         citation={c}
         sourceMemory={sourceMemoryByLocator.get(c.locator) ?? null}
         sourcesLoading={pageSourcesLoading}
