@@ -764,6 +764,9 @@ const en = {
     retry: "Try again",
     linkTitle: "{{app}} link",
     accountTitle: "@{{handle}} on {{app}}",
+    postTitle: "{{app}} post",
+    noteTitle: "{{app}} note",
+    messageTitle: "{{app}} message",
     iconTitle: "Saved in Sources",
   },
   pageAttachments: {
@@ -3671,6 +3674,9 @@ const zhHans = {
     retry: "再试一次",
     linkTitle: "{{app}}链接",
     accountTitle: "{{app}} 上的 @{{handle}}",
+    postTitle: "{{app}} 帖子",
+    noteTitle: "{{app}}笔记",
+    messageTitle: "{{app}} 消息",
     iconTitle: "已存到来源",
   },
   pageAttachments: {
@@ -6533,6 +6539,9 @@ const zhHant = {
     retry: "再試一次",
     linkTitle: "{{app}}連結",
     accountTitle: "{{app}} 上的 @{{handle}}",
+    postTitle: "{{app}} 貼文",
+    noteTitle: "{{app}}筆記",
+    messageTitle: "{{app}} 訊息",
     iconTitle: "已存到來源",
   },
   pageAttachments: {

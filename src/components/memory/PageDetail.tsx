@@ -87,7 +87,7 @@ import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import type { PastedSourceSaved } from "./editor/sourcePaste";
 import { sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
 import { sourceLinkKey } from "./editor/sourceLinkKey";
-import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, type SourceApp } from "./sources/sourcePresentation";
+import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
@@ -1804,10 +1804,12 @@ export default function PageDetail({
       }
     }
     const handle = sourceHandleFromUrl(url);
+    const kind = sourceLinkKind(url);
+    const appName = app ? sourceAppName(app, i18n.language) : "";
     const fallbackTitle = app
       ? handle
-        ? t("sourcePaste.accountTitle", { app: sourceAppName(app, i18n.language), handle })
-        : t("sourcePaste.linkTitle", { app: sourceAppName(app, i18n.language) })
+        ? t("sourcePaste.accountTitle", { app: appName, handle })
+        : t(kind ? `sourcePaste.${kind}Title` : "sourcePaste.linkTitle", { app: appName })
       // Site and path, so two unreadable pages of one site are told apart.
       : (() => {
         try {

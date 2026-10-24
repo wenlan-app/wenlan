@@ -105,6 +105,23 @@ export function sourceHandleFromUrl(value: string): string | null {
   return handle && !NOT_HANDLES[app]?.has(handle.toLowerCase()) ? handle : null;
 }
 
+/** What a social or mail link points at, so a link saved without its page
+ *  can be named "Instagram post" rather than only by its site. */
+export function sourceLinkKind(value: string): "post" | "note" | "message" | null {
+  const url = httpUrl(value);
+  const app = getSourceAppFromUrl(url);
+  if (!url || !app) return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (app === "x") return parts.includes("status") ? "post" : null;
+  if (app === "threads") return parts.includes("post") ? "post" : null;
+  if (app === "instagram") return ["p", "reel", "reels", "tv"].includes(parts[0] ?? "") ? "post" : null;
+  if (app === "xiaohongshu") {
+    return url.hostname.endsWith("xhslink.com") || ["explore", "discovery"].includes(parts[0] ?? "") ? "note" : null;
+  }
+  if (app === "gmail" || app === "slack") return "message";
+  return null;
+}
+
 function httpUrl(value: string | null | undefined): URL | null {
   if (!value) return null;
   try {

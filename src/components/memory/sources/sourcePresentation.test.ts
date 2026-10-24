@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, sourceAppName, sourceAppSearchNames, sourceHandleFromUrl, sourceLocatorLabel, type SourcePresentationInput } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, sourceAppName, sourceAppSearchNames, sourceHandleFromUrl, sourceLinkKind, sourceLocatorLabel, type SourcePresentationInput } from "./sourcePresentation";
 
 const labels = { document: "Document", webExcerpt: "Web excerpt" };
 const source = (patch: Partial<SourcePresentationInput> = {}): SourcePresentationInput => ({
@@ -133,6 +133,20 @@ describe("source presentation", () => {
       ["https://example.com/simonw", null],
     ])("finds the account in %s", (url, handle) => {
       expect(sourceHandleFromUrl(url)).toBe(handle);
+    });
+
+    it.each([
+      ["https://x.com/i/web/status/1849", "post"],
+      ["https://www.instagram.com/p/C1abc/", "post"],
+      ["https://www.instagram.com/reel/C1abc/", "post"],
+      ["https://www.threads.net/@zuck/post/C1", "post"],
+      ["https://www.xiaohongshu.com/explore/64ab", "note"],
+      ["http://xhslink.com/a/Ab12", "note"],
+      ["https://mail.google.com/mail/u/0/#inbox/1", "message"],
+      ["https://www.instagram.com/natgeo/", null],
+      ["https://example.com/p/1", null],
+    ])("names what %s points at", (url, kind) => {
+      expect(sourceLinkKind(url)).toBe(kind);
     });
 
     it.each([
