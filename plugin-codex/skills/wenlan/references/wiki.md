@@ -80,9 +80,9 @@ a folder that only holds glue, and do not split a topic that fits on one
 screen.
 
 **Existing docs come first.** When the repository already has a doc that
-covers a planned topic (an `ARCHITECTURE.md` or `docs/architecture.md`, a
-package's README or REFERENCE, a contributing guide that says how to build and
-run it), do not plan a page that retells it. Drop the topic from the plan and
+covers a planned topic (an architecture doc, a package's README or
+REFERENCE, a contributing guide that says how to build and run it), do not
+plan a page that retells it. Drop the topic from the plan and
 list the doc in the overview under `## Existing docs` (`## 現有文件` in
 Chinese) as `` - `<path>`: <what it covers, one line> ``. Plan a page on that
 topic only for what the doc leaves out, and open it with which doc to read
