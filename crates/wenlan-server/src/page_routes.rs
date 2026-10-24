@@ -219,6 +219,17 @@ pub async fn handle_get_page(
             s.lint_config.page_root().map(std::path::Path::to_path_buf),
         )
     };
+    // A page saved in Obsidian or another editor is read back first, so an
+    // open page shows the edit within seconds. Best effort: the scheduler's
+    // pass catches up on anything this misses.
+    let edit_root = page_root
+        .clone()
+        .unwrap_or_else(|| wenlan_core::config::load_config().knowledge_path_or_default());
+    if let Err(error) =
+        wenlan_core::sources::page_watcher::sync_page_file_if_changed(&db, &edit_root, &id).await
+    {
+        tracing::debug!("[pages] reading back {id} from its file failed: {error}");
+    }
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     // Q1 browse surface: a shadow id resolves 200 here, so read the unfenced
     // `_browse` twin (mutation/export by-id reads keep fenced `get_page_scoped`).
