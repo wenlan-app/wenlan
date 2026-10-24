@@ -3665,7 +3665,7 @@ const zhHans = {
     savedLinkOnly: "这个网站要登录，只存了链接",
     failed: "无法保存这个链接。",
     retry: "再试一次",
-    linkTitle: "{{app}} 链接",
+    linkTitle: "{{app}}链接",
   },
   pageAttachments: {
     failed: "无法加入 {{name}}。页面里只能放图片和视频。",
@@ -6524,7 +6524,7 @@ const zhHant = {
     savedLinkOnly: "這個網站要登入，只存了連結",
     failed: "無法儲存這個連結。",
     retry: "再試一次",
-    linkTitle: "{{app}} 連結",
+    linkTitle: "{{app}}連結",
   },
   pageAttachments: {
     failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",
