@@ -156,6 +156,32 @@ fn github_slug_reads_https_and_ssh_remotes() {
 }
 
 #[test]
+fn generated_attributes_are_added_once_beside_other_lines() {
+    let first = upsert_generated_attributes("*.png binary", "wiki");
+    assert_eq!(
+        first,
+        "*.png binary\n\
+         wiki/.wenlan-code.json linguist-generated=true\n\
+         wiki/.wenlan-okf-export.json linguist-generated=true\n"
+    );
+    assert_eq!(upsert_generated_attributes(&first, "wiki"), first);
+    // A line already there, even unmarked by us, is not added twice.
+    let partial = "wiki/.wenlan-okf-export.json linguist-generated=true\n";
+    assert_eq!(
+        upsert_generated_attributes(partial, "wiki")
+            .matches("okf-export")
+            .count(),
+        1
+    );
+    assert_eq!(
+        upsert_generated_attributes("", "docs/wiki"),
+        "docs/wiki/.wenlan-code.json linguist-generated=true\n\
+         docs/wiki/.wenlan-okf-export.json linguist-generated=true\n"
+    );
+    assert_eq!(upsert_generated_attributes("x\n", "my wiki"), "x\n");
+}
+
+#[test]
 fn agents_block_is_appended_then_replaced_in_place() {
     let first = upsert_agents_block("# Rules\n\nBe kind.\n", "wiki");
     assert!(first.starts_with("# Rules\n\nBe kind.\n\n<!-- WENLAN:START -->"));
@@ -382,7 +408,22 @@ fn publish_pushes_the_wiki_branch_without_touching_the_working_copy() {
     );
     assert!(index.contains("](pages/"), "{index}");
     assert!(!index.contains("](/pages/"), "{index}");
+    // GitHub shows the folder's README.md: the pages in reading order.
+    let readme = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:wiki/README.md")],
+    );
+    assert!(readme.starts_with("Kept by [Wenlan]"), "{readme}");
+    assert!(readme.contains("\n\n* [Module map](pages/"), "{readme}");
     assert!(!files.contains("entry-point"), "{files}");
+    let attributes = sh(
+        &origin,
+        &["show", &format!("{REPO_WIKI_BRANCH}:.gitattributes")],
+    );
+    assert!(
+        attributes.contains("wiki/.wenlan-code.json linguist-generated=true"),
+        "{attributes}"
+    );
     let claude = sh(&origin, &["show", &format!("{REPO_WIKI_BRANCH}:CLAUDE.md")]);
     assert!(claude.starts_with("# Notes\n\nKeep it small.\n\n<!-- WENLAN:START -->"));
     // Beside the pages: the code each relies on, anchored in the default
@@ -620,6 +661,34 @@ fn daily_agent_args_run_one_skill_non_interactively() {
             "read-only",
             "$wenlan steep space:site"
         ]
+    );
+    // The other tools write only through Wenlan: no --force, no write tool,
+    // no approval beyond Wenlan's own tools.
+    let skill = "Use the wenlan skill to run Wenlan: /wenlan wiki space:site";
+    let cursor = daily_agent_args(RepoWikiAgent::Cursor, "site", "wiki");
+    assert_eq!(&cursor[..2], ["-p", skill]);
+    assert!(!cursor.iter().any(|arg| arg == "--force" || arg == "--yolo"));
+    let copilot = daily_agent_args(RepoWikiAgent::Copilot, "site", "wiki");
+    assert_eq!(&copilot[..2], ["-p", skill]);
+    assert!(copilot.contains(&"--no-ask-user".to_owned()));
+    let allowed = copilot
+        .iter()
+        .find(|arg| arg.starts_with("--allow-tool="))
+        .unwrap();
+    assert!(
+        allowed.contains("wenlan") && !allowed.contains("write"),
+        "{allowed}"
+    );
+}
+
+#[test]
+fn only_tools_that_read_agent_skills_need_wenlans_skill_folder() {
+    let home = Path::new("/home/someone");
+    assert!(wenlan_skill_paths(RepoWikiAgent::Claude, home).is_empty());
+    assert!(wenlan_skill_paths(RepoWikiAgent::Codex, home).is_empty());
+    assert_eq!(
+        wenlan_skill_paths(RepoWikiAgent::Copilot, home),
+        [home.join(".copilot/skills/wenlan/SKILL.md")]
     );
 }
 

@@ -151,7 +151,39 @@ fn the_workflow_runs_refresh_daily_with_the_chosen_tool() {
     assert!(codex.contains("CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}"));
     assert!(codex.contains("npm install --global @openai/codex"));
     assert!(!codex.contains("ANTHROPIC"));
+    let cursor = workflow("wiki", RepoWikiAgent::Cursor, 3);
+    assert!(cursor.contains(
+        "          curl -fsS https://cursor.com/install | bash\n          echo \"$HOME/.cursor/bin\" >> \"$GITHUB_PATH\"\n"
+    ), "{cursor}");
+    assert!(cursor.contains("CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}"));
+    assert!(cursor.contains("--agent cursor --pull-request"));
+    let copilot = workflow("wiki", RepoWikiAgent::Copilot, 3);
+    assert!(copilot.contains("npm install --global @github/copilot"));
+    assert!(copilot.contains("COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}"));
+    assert!(
+        copilot.contains("#   \"Copilot Requests\" permission)."),
+        "{copilot}"
+    );
     if std::env::var_os("PRINT_WORKFLOW").is_some() {
         println!("{claude}");
     }
+}
+
+#[test]
+fn every_tool_may_edit_pages_and_read_history_in_a_refresh() {
+    use wenlan_types::repo_wiki::RepoWikiAgent;
+    assert_eq!(
+        refresh_agent_args(RepoWikiAgent::Cursor, "fix"),
+        ["-p", "fix", "--force", "--output-format", "text"]
+    );
+    assert_eq!(
+        refresh_agent_args(RepoWikiAgent::Copilot, "fix"),
+        [
+            "-p",
+            "fix",
+            "--allow-tool=read, write, shell(git diff:*), shell(git log:*), shell(git show:*)",
+            "--no-ask-user",
+            "-s"
+        ]
+    );
 }

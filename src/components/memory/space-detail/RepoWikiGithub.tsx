@@ -50,7 +50,7 @@ export function RepoWikiGithub({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [sheet, setSheet] = useState(false);
-  const [openaiKey, setOpenaiKey] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const status = useQuery({
     queryKey: githubKey(space),
     queryFn: () => getRepoWikiGithub(space),
@@ -62,9 +62,12 @@ export function RepoWikiGithub({
     onSuccess: (next: RepoWikiGithubStatus) => {
       queryClient.setQueryData(githubKey(space), next);
       setSheet(false);
-      setOpenaiKey("");
+      setApiKey("");
     },
   });
+  // Claude Code signs in through the browser; every other tool takes a key.
+  const keyAgent = agent === "claude" ? null : agent;
+  const pastesKey = keyAgent !== null;
   const current = status.data;
   if (!current) return null;
   if (!current.repo) return <p className="repo-wiki-note">{t("repoWiki.github.notGithub")}</p>;
@@ -117,24 +120,24 @@ export function RepoWikiGithub({
           onSubmit={(event) => {
             event.preventDefault();
             if (setup.isPending) return;
-            setup.mutate(agent === "codex" ? { action: "openai_key", key: openaiKey } : { action: "claude_token" });
+            setup.mutate(pastesKey ? { action: "api_key", key: apiKey } : { action: "claude_token" });
           }}
         >
           <span className="repo-wiki-sheet-title">
-            {t(agent === "codex" ? "repoWiki.github.codexTitle" : "repoWiki.github.claudeTitle")}
+            {t(keyAgent ? `repoWiki.github.keyTitle.${keyAgent}` : "repoWiki.github.claudeTitle")}
           </span>
           <p className="repo-wiki-note">
-            {t(agent === "codex" ? "repoWiki.github.codexBody" : "repoWiki.github.claudeBody")}
+            {t(keyAgent ? `repoWiki.github.keyBody.${keyAgent}` : "repoWiki.github.claudeBody")}
           </p>
-          {agent === "codex" && (
+          {pastesKey && (
             <Input
-              aria-label={t("repoWiki.github.codexTitle")}
+              aria-label={keyAgent ? t(`repoWiki.github.keyTitle.${keyAgent}`) : undefined}
               autoComplete="off"
               mono
-              onChange={(event) => setOpenaiKey(event.target.value)}
+              onChange={(event) => setApiKey(event.target.value)}
               spellCheck={false}
               type="password"
-              value={openaiKey}
+              value={apiKey}
             />
           )}
           <p className="repo-wiki-note">{t("repoWiki.github.safe")}</p>
@@ -149,10 +152,10 @@ export function RepoWikiGithub({
             </button>
             <button
               className="repo-wiki-primary"
-              disabled={setup.isPending || (agent === "codex" && !openaiKey.trim())}
+              disabled={setup.isPending || (pastesKey && !apiKey.trim())}
               type="submit"
             >
-              {agent === "codex"
+              {pastesKey
                 ? t("repoWiki.github.save")
                 : setup.isPending
                   ? t("repoWiki.github.confirming")

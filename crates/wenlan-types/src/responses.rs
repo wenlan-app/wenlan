@@ -962,6 +962,28 @@ pub struct ExportPageResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KnowledgePathResponse {
     pub path: String,
+    /// A folder the person picked; the pages move there when the background
+    /// service next starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_path: Option<String>,
+    /// Why the last move stopped. The pages stayed at `path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_error: Option<String>,
+}
+
+/// A file copied into the pages folder's `_attachments/` so pages can show it.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AttachFileResponse {
+    /// Root-relative link target, `_attachments/<name>`.
+    pub path: String,
+    pub absolute_path: String,
+    /// `image` or `video`.
+    pub kind: String,
+    pub bytes: u64,
+    /// The Markdown line that shows the file in a page.
+    pub markdown: String,
+    /// False when an identical file was already stored.
+    pub created: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1501,8 +1523,9 @@ pub struct PendingRevisionItem {
     /// other revision producers. Read from structured_fields.grounded_in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounded_in: Option<String>,
-    /// Why a page revision card needs review: `locked` (the page's review
-    /// lock), `background` (Wenlan's own upkeep wrote to a page with your
+    /// Why a page revision card needs review: `authored` (the review lock on
+    /// a page the person wrote), `locked` (the page's review lock),
+    /// `background` (Wenlan's own upkeep wrote to a page with your
     /// edits), or `owned` (the page turned user-owned mid-write). Read from
     /// structured_fields.review_reason; derived for older cards. None for
     /// memory-target revisions.

@@ -99,22 +99,12 @@ enum Commands {
         command: commands::setup::KeyCommand,
     },
     /// Configure, inspect, or disable Steep, the optional background upkeep (model-backed).
-    #[command(alias = "enrichment")]
     Steep {
         #[command(subcommand)]
         command: commands::setup::EnrichmentCommand,
     },
     /// Connect Wenlan to a supported agent or editor.
     Connect(commands::mcp::ConnectArgs),
-    /// Search memories and pages by query (hybrid vector + keyword); --limit caps the primary results, plus up to 3 supplemental pages.
-    #[command(hide = true)]
-    Search {
-        /// Search query.
-        query: String,
-        /// Max results (default 10).
-        #[arg(short, long, default_value_t = 10)]
-        limit: usize,
-    },
     /// Recall scored memories for a query, plus the compiled pages that match it.
     Recall {
         /// Query to recall memories for.
@@ -216,7 +206,7 @@ enum Commands {
 
 /// Help groups for `wenlan --help`, in display order. Only names live here;
 /// each description stays on its `Commands` doc comment. Hidden subcommands
-/// (`search`, `sweep`, `agents`) are deliberately absent.
+/// (`sweep`, `agents`) are deliberately absent.
 const HELP_GROUPS: &[(&str, &[&str])] = &[
     (
         "Daily",
@@ -327,9 +317,7 @@ async fn main() -> anyhow::Result<ExitCode> {
     );
     let is_outbox = matches!(&cli.command, Commands::Outbox { .. });
     let operation = match &cli.command {
-        Commands::Search { .. } | Commands::Recall { .. } | Commands::Memories { .. } => {
-            Some(CliSpaceOperation::Read)
-        }
+        Commands::Recall { .. } | Commands::Memories { .. } => Some(CliSpaceOperation::Read),
         Commands::Brief(args) if !args.is_update() => Some(CliSpaceOperation::Read),
         Commands::Capture { .. } | Commands::Wiki { .. } => Some(CliSpaceOperation::Write),
         _ => None,
@@ -491,9 +479,6 @@ async fn main() -> anyhow::Result<ExitCode> {
         Commands::Keys { command } => commands::setup::run_key(command).await?,
         Commands::Steep { command } => commands::setup::run_enrichment(command).await?,
         Commands::Connect(args) => commands::mcp::run_connect(&client, args, cli.quiet).await?,
-        Commands::Search { query, limit } => {
-            commands::search::run(&client, format, cli.quiet, query, limit).await?
-        }
         Commands::Recall { query, limit } => {
             commands::recall::run(&client, format, cli.quiet, query, limit).await?
         }

@@ -69,3 +69,78 @@ fn the_token_is_read_whole_through_terminal_codes() {
     assert_eq!(token_in("Your token: sk-ant-oat01-Abc"), None);
     assert_eq!(token_in("Opening the browser..."), None);
 }
+
+#[test]
+fn a_pasted_key_goes_to_the_secret_its_tool_reads() {
+    assert_eq!(key_secret(RepoWikiAgent::Claude), None);
+    for agent in RepoWikiAgent::ALL {
+        if let Some(secret) = key_secret(agent) {
+            assert!(secrets_for(agent).contains(&secret), "{agent:?}");
+            let workflow = crate::repo_wiki_ci::workflow("wiki", agent, 9);
+            assert!(
+                workflow.contains(&format!("${{{{ secrets.{secret} }}}}")),
+                "{agent:?}: {workflow}"
+            );
+        }
+    }
+}
+
+fn git_in(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn a_workflow_for_another_tool_counts_as_not_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let origin = dir.path().join("origin.git");
+    let seed = dir.path().join("seed");
+    let clone = dir.path().join("work");
+    std::fs::create_dir_all(&origin).unwrap();
+    std::fs::create_dir_all(&seed).unwrap();
+    git_in(
+        &origin,
+        &["init", "--quiet", "--bare", "--initial-branch=main"],
+    );
+    git_in(&seed, &["init", "--quiet", "--initial-branch=main"]);
+    git_in(&seed, &["config", "user.name", "Test"]);
+    git_in(&seed, &["config", "user.email", "test@example.com"]);
+    git_in(&seed, &["config", "commit.gpgsign", "false"]);
+    let claude = repo_wiki_ci::workflow("wiki", RepoWikiAgent::Claude, 9);
+    let path = seed.join(WORKFLOW_PATH);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, &claude).unwrap();
+    git_in(&seed, &["add", "."]);
+    git_in(&seed, &["commit", "--quiet", "-m", "seed"]);
+    git_in(
+        &seed,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git_in(&seed, &["push", "--quiet", "origin", "main"]);
+    git_in(
+        dir.path(),
+        &[
+            "clone",
+            "--quiet",
+            origin.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(
+        workflow_state(&clone, Some(&claude)),
+        RepoWikiWorkflowState::InRepo
+    );
+    assert_eq!(workflow_state(&clone, None), RepoWikiWorkflowState::InRepo);
+    let copilot = repo_wiki_ci::workflow("wiki", RepoWikiAgent::Copilot, 9);
+    assert_eq!(
+        workflow_state(&clone, Some(&copilot)),
+        RepoWikiWorkflowState::Missing
+    );
+}

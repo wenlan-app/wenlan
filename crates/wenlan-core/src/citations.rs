@@ -33,6 +33,7 @@ static RE_PARAGRAPH_BREAK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n\s*
 static RE_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").unwrap());
 
 /// One numbered source available for citation at distill time.
+#[derive(Clone)]
 pub struct NumberedSource {
     pub index: u32,
     pub source_kind: String,
@@ -95,6 +96,30 @@ pub fn build_numbered_block(sources: &[NumberedSource]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// Render full numbered source text for candidate page synthesis. Callers must
+/// enforce the provider's complete input budget before sending this block.
+pub(crate) fn build_numbered_block_full(sources: &[NumberedSource]) -> String {
+    let allowed_ids = if sources.is_empty() {
+        "none".to_string()
+    } else {
+        sources
+            .iter()
+            .map(|source| format!("[{}]", source.index))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut block = format!("Available citation IDs: {allowed_ids}.\n\n");
+    for (position, source) in sources.iter().enumerate() {
+        if position > 0 {
+            block.push_str("\n\n");
+        }
+        block.push_str(&format!("--- BEGIN SOURCE [{}] ---\n", source.index));
+        block.push_str(&source.text);
+        block.push_str(&format!("\n--- END SOURCE [{}] ---", source.index));
+    }
+    block
 }
 
 /// Remove every `[N]` marker from body prose, collapsing the resulting
@@ -910,6 +935,24 @@ mod tests {
         let b = build_numbered_block(&srcs());
         assert!(b.starts_with("[1] The daemon"));
         assert!(b.contains("\n\n[2] FastEmbed"));
+    }
+
+    #[test]
+    fn full_numbered_block_delimits_complete_sources_and_allowed_ids() {
+        let numbered = srcs();
+        let b = build_numbered_block_full(&numbered);
+        assert!(b.starts_with("Available citation IDs: [1], [2]."));
+        for source in &numbered {
+            let start = format!("--- BEGIN SOURCE [{}] ---\n", source.index);
+            let end = format!("\n--- END SOURCE [{}] ---", source.index);
+            assert!(b.contains(&start));
+            assert!(b.contains(&source.text));
+            assert!(b.contains(&end));
+        }
+        assert!(
+            b.find("--- BEGIN SOURCE [1] ---").unwrap()
+                < b.find("--- BEGIN SOURCE [2] ---").unwrap()
+        );
     }
 
     #[test]

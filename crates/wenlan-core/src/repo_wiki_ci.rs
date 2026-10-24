@@ -634,8 +634,33 @@ pub fn refresh_agent_args(
             "workspace-write".into(),
             prompt.to_owned(),
         ],
+        // `--force` lets Cursor write files and run commands; in print mode
+        // it would otherwise only propose the edits.
+        RepoWikiAgent::Cursor => vec![
+            "-p".into(),
+            prompt.to_owned(),
+            "--force".into(),
+            "--output-format".into(),
+            "text".into(),
+        ],
+        RepoWikiAgent::Copilot => vec![
+            "-p".into(),
+            prompt.to_owned(),
+            format!("--allow-tool={}", COPILOT_REFRESH_TOOLS.join(", ")),
+            "--no-ask-user".into(),
+            "-s".into(),
+        ],
     }
 }
+
+/// What a refresh's Copilot may do without asking, as for Claude Code above.
+const COPILOT_REFRESH_TOOLS: &[&str] = &[
+    "read",
+    "write",
+    "shell(git diff:*)",
+    "shell(git log:*)",
+    "shell(git show:*)",
+];
 
 /// The GitHub Actions workflow that refreshes the wiki in `folder` every day
 /// at `utc_hour` with `agent`, and opens a pull request when a page changed.
@@ -645,9 +670,8 @@ pub fn workflow(
     utc_hour: u8,
 ) -> String {
     use wenlan_types::repo_wiki::RepoWikiAgent;
-    let (tool, name, install, key_help, env) = match agent {
+    let (name, install, key_help, env) = match agent {
         RepoWikiAgent::Claude => (
-            "claude",
             "Claude Code",
             "npm install --global @anthropic-ai/claude-code",
             "CLAUDE_CODE_OAUTH_TOKEN (run `claude setup-token` to use your Claude plan)\n\
@@ -656,11 +680,24 @@ pub fn workflow(
              \x20         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}\n",
         ),
         RepoWikiAgent::Codex => (
-            "codex",
             "Codex",
             "npm install --global @openai/codex",
             "OPENAI_API_KEY (an OpenAI API key).",
             "          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+        ),
+        RepoWikiAgent::Cursor => (
+            "Cursor",
+            "curl -fsS https://cursor.com/install | bash\n\
+             \x20         echo \"$HOME/.cursor/bin\" >> \"$GITHUB_PATH\"",
+            "CURSOR_API_KEY (a Cursor API key, from the Cursor dashboard).",
+            "          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}\n",
+        ),
+        RepoWikiAgent::Copilot => (
+            "GitHub Copilot",
+            "npm install --global @github/copilot",
+            "COPILOT_GITHUB_TOKEN (a fine-grained personal access token with the\n\
+             #   \"Copilot Requests\" permission).",
+            "          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}\n",
         ),
     };
     format!(
@@ -701,7 +738,7 @@ pub fn workflow(
          \x20         GH_TOKEN: ${{{{ github.token }}}}\n\
          \x20         WENLAN_NO_AUTOSTART: \"1\"\n\
          \x20       run: wenlan wiki refresh --folder {folder} --agent {agent_arg} --pull-request\n",
-        agent_arg = tool,
+        agent_arg = agent.slug(),
     )
 }
 

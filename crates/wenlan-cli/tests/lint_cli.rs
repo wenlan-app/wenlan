@@ -430,9 +430,13 @@ fn lint_does_not_create_wiki_check_command_or_change_pages_doctor_query() {
         .stderr(predicates::str::contains("unrecognized subcommand 'check'"));
 
     let home = tempfile::tempdir().expect("isolated home");
+    let (host, _requests) = support::spawn_value(&json!({
+        "path": home.path().join("pages").to_string_lossy(),
+    }));
     cli()
         .env("HOME", home.path())
         .env("WENLAN_DATA_DIR", home.path())
+        .env("WENLAN_HOST", &host)
         .args(["pages", "doctor", "--format", "table"])
         .assert()
         .code(0)

@@ -8,11 +8,13 @@ import QuickCaptureWindow from "./components/QuickCaptureWindow";
 import TrayPanelWindow from "./components/TrayPanelWindow";
 import { initializeI18n } from "./i18n";
 import { applyTheme } from "./lib/theme";
+import { refuseStrayFileDrops } from "./lib/fileDropGuard";
 import "./devTools";
 import "./index.css";
 
 // Apply theme before first render to prevent flash
 applyTheme();
+refuseStrayFileDrops();
 
 void bootstrap().catch((error: unknown) => {
   console.error("[bootstrap] failed to initialize the Wenlan UI", error);

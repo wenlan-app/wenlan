@@ -26,6 +26,8 @@ use crate::output::{print_json, ResolvedFormat};
 pub enum RefreshAgentArg {
     Claude,
     Codex,
+    Cursor,
+    Copilot,
     /// Only fix line numbers and list the pages that need rewriting.
     None,
 }
@@ -180,6 +182,8 @@ pub fn refresh(args: RefreshArgs, format: ResolvedFormat, quiet: bool) -> Result
     let agent = match args.agent {
         RefreshAgentArg::Claude => Some(RepoWikiAgent::Claude),
         RefreshAgentArg::Codex => Some(RepoWikiAgent::Codex),
+        RefreshAgentArg::Cursor => Some(RepoWikiAgent::Cursor),
+        RefreshAgentArg::Copilot => Some(RepoWikiAgent::Copilot),
         RefreshAgentArg::None => None,
     };
     let to_rewrite: Vec<String> = found.to_rewrite().map(|page| page.file.clone()).collect();
@@ -229,13 +233,7 @@ fn rewrite(
     let before = changed_paths(top)?;
     match find_agent(agent) {
         None => {
-            report.agent_error = Some(format!(
-                "{} was not found on PATH",
-                match agent {
-                    RepoWikiAgent::Claude => "claude",
-                    RepoWikiAgent::Codex => "codex",
-                }
-            ));
+            report.agent_error = Some(format!("{} was not found on PATH", agent.programs()[0]));
         }
         Some(program) => {
             let prompt = repo_wiki_ci::rewrite_prompt(folder, found);
@@ -250,6 +248,8 @@ fn rewrite(
                 "ANTHROPIC_API_KEY",
                 "CLAUDE_CODE_OAUTH_TOKEN",
                 "CODEX_API_KEY",
+                "CURSOR_API_KEY",
+                "COPILOT_GITHUB_TOKEN",
             ] {
                 if std::env::var_os(key).is_some_and(|value| value.is_empty()) {
                     command.env_remove(key);

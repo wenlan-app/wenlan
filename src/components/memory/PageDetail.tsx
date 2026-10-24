@@ -43,6 +43,7 @@ import {
 // Imported from its own module, not the lib/tauri barrel: tests mock that
 // barrel, and a mocked module would shadow the value this must stay bound to.
 import { PAGE_EDIT_DAEMON_FLOOR } from "../../lib/daemonVersion";
+import { confirmAction } from "../../lib/confirmAction";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer from "./ContentRenderer";
@@ -115,6 +116,9 @@ interface PageDetailProps {
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   showAttachedPageNotice?: boolean;
 }
+
+/** How often an open page checks for edits made outside Wenlan. */
+const PAGE_REFRESH_MS = 5_000;
 
 function relativeTimeFromISO(iso: string, t: TFunction): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -437,6 +441,8 @@ export default function PageDetail({
     queryKey: ["page", pageId],
     queryFn: () => getPage(pageId, "explicit"),
     ...EXPLICIT_BROWSE_QUERY_POLICY,
+    // An open page follows edits made in Obsidian or another editor.
+    refetchInterval: PAGE_REFRESH_MS,
   });
   // A remote deletion must not unmount the only copy of the local document.
   const page = canonicalPage ?? (
@@ -1275,8 +1281,13 @@ export default function PageDetail({
 
   useLayoutEffect(() => {
     if (editing && editGate.kind === "editor" && canonicalPage !== undefined) {
-      autosave.observeCanonical(canonicalPage);
+      // Changed in Obsidian or another editor with nothing typed here: show it.
+      if (autosave.observeCanonical(canonicalPage) === "adopt" && canonicalPage) {
+        openPageSourceForEditing(canonicalPage, true);
+      }
     }
+    // The opener reads only refs and setters; the canonical page drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autosave, editing, editGate.kind, canonicalPage]);
 
   const requestCloseEditor = async () => {
@@ -1450,15 +1461,24 @@ export default function PageDetail({
 
   const handleReloadLatest = async () => {
     if (saveStateRef.current.phase !== "conflict") return;
+    const operationId = saveStateRef.current.pending.operationId;
     if (
       editBaseline &&
       currentDraftSource() !== editBaseline.content &&
-      !confirm(t("pageDetail.editor.reloadConfirm"))
+      !await confirmAction(t("pageDetail.editor.reloadConfirm"), {
+        confirm: t("pageDetail.editor.reloadLatest"),
+        cancel: t("common.cancel"),
+      })
     ) {
       return;
     }
-    const operationId = saveStateRef.current.pending.operationId;
-    if (!autosave.snapshot().latest) await fetchConflictLatest(operationId);
+    // The dialog waits for the person; the conflict may have settled meanwhile.
+    const asked = saveStateRef.current;
+    if (activePageIdRef.current !== pageId || asked.phase !== "conflict" ||
+        asked.pending.operationId !== operationId) return;
+    // Always ask again: the page may have changed more than once since the
+    // notice first appeared.
+    await fetchConflictLatest(operationId);
     const current = autosave.snapshot();
     if (
       activePageIdRef.current !== pageId ||
@@ -1477,12 +1497,15 @@ export default function PageDetail({
     openPageSourceForEditing(latest);
   };
 
-  const handleDiscardDeletedDraft = () => {
-    if (
-      canonicalPage !== null ||
-      autosave.snapshot().state.phase !== "conflict" ||
-      !confirm(t("pageDetail.editor.discardConfirm"))
-    ) return;
+  const handleDiscardDeletedDraft = async () => {
+    if (canonicalPage !== null || autosave.snapshot().state.phase !== "conflict") return;
+    const originPageId = pageId;
+    if (!await confirmAction(t("pageDetail.editor.discardConfirm"), {
+      confirm: t("pageDetail.editor.discard"),
+      cancel: t("common.cancel"),
+    })) return;
+    // The dialog waits for the person; the page may have moved on meanwhile.
+    if (activePageIdRef.current !== originPageId || autosave.snapshot().state.phase !== "conflict") return;
     closeEditor();
   };
 
@@ -1537,12 +1560,18 @@ export default function PageDetail({
         setReviewNotice(null);
         await reviewMutation.mutateAsync({ id: originPageId, content });
       } else if (kind === "delete") {
-        if (!confirm(t("pageDetail.deleteConfirm")) || !ownsAction()) return;
+        if (!await confirmAction(t("pageDetail.deleteConfirm"), {
+          confirm: t("pageDetail.deletePage"),
+          cancel: t("common.cancel"),
+        }) || !ownsAction()) return;
         setActionErrorMessage(null);
         await deleteMutation.mutateAsync(originPageId);
       } else {
         if ((saved.user_edited || pageRevisions?.user_edited) &&
-            !confirm(t("pageDetail.redistillEditedConfirm"))) return;
+            !await confirmAction(t("pageDetail.redistillEditedConfirm"), {
+              confirm: t("pageDetail.redistillPage"),
+              cancel: t("common.cancel"),
+            })) return;
         if (!ownsAction()) return;
         setReviewNotice(null);
         setRedistillNotice(null);
@@ -1834,7 +1863,7 @@ export default function PageDetail({
     if (!c) return null;
     return (
       <CitationChip
-        occurrence={k}
+        number={processed.sourceNumberByOccurrence.get(k) ?? k}
         citation={c}
         sourceMemory={sourceMemoryByLocator.get(c.locator) ?? null}
         sourcesLoading={pageSourcesLoading}

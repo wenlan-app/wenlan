@@ -22,6 +22,24 @@ pub(super) async fn prepare_startup_state(
     startup_repair_claim: &Option<StartupRepairClaim>,
     startup_repair_claimed: bool,
 ) -> anyhow::Result<PreparedStartupState> {
+    // A pages folder the person picked moves now, while nothing has the
+    // folder open. A repair-only start leaves it for a normal one.
+    if !startup_repair_claimed {
+        match wenlan_core::pages_folder::apply_pending_move() {
+            wenlan_core::pages_folder::MoveOutcome::None => {}
+            wenlan_core::pages_folder::MoveOutcome::Moved { from, to, entries } => {
+                tracing::info!(
+                    "moved the pages folder from {} to {} ({entries} entries)",
+                    from.display(),
+                    to.display()
+                );
+            }
+            wenlan_core::pages_folder::MoveOutcome::Failed { error } => {
+                tracing::warn!("the pages folder did not move: {error}");
+            }
+        }
+    }
+
     // Before anything below can write the projection: startup reconcile
     // repairs this folder against the database it is about to open.
     let page_root = wenlan_core::config::load_config().knowledge_path_or_default();

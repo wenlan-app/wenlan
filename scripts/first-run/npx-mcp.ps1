@@ -82,7 +82,7 @@ try {
 
     $env:MCP_BIN = "npx.cmd"
     $env:MCP_ARGS = (@("-y", $Spec, "--origin-url", $Origin) | ConvertTo-Json -Compress)
-    $env:EXPECT_TOOL_COUNT = "35"
+    $env:EXPECT_TOOL_COUNT = "36"
     $env:MCP_TOOLS = "capture,recall,brief"
     Info "mcp-command" "npx.cmd $($env:MCP_ARGS)"
     Check-Helper -Name "mcp-roundtrip-driver" -Interpreter "python" -Path (Join-Path $Helpers "mcp-roundtrip.py") -MustDeclare "^mcp-"

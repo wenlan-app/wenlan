@@ -18,6 +18,36 @@ export interface ProcessedCitations {
   state: CitationState;
   /** 1-based occurrence -> citation; empty unless state === "cited". */
   byOccurrence: Map<number, PageCitation>;
+  /** 1-based occurrence -> the number its chip shows: the source's place
+   *  among the page's distinct cited sources, so a source cited again
+   *  reuses the number of its first citation. Empty unless cited. */
+  sourceNumberByOccurrence: Map<number, number>;
+}
+
+/** One cited source, whatever marker or occurrence cites it. */
+export function citationSourceKey(c: Pick<PageCitation, "source_kind" | "locator">): string {
+  return `${c.source_kind}\u0000${c.locator}`;
+}
+
+/** Footnote numbering: walk the citations in reading order and give each
+ *  distinct source the next number the first time it is cited; a later
+ *  citation of the same source reuses that number. The Nth distinct source
+ *  is number N, whatever marker the writer used. */
+export function citationSourceNumbers(
+  citations: Iterable<PageCitation>,
+): Map<number, number> {
+  const bySource = new Map<string, number>();
+  const byOccurrence = new Map<number, number>();
+  for (const c of [...citations].sort((a, b) => a.occurrence - b.occurrence)) {
+    const key = citationSourceKey(c);
+    let n = bySource.get(key);
+    if (n === undefined) {
+      n = bySource.size + 1;
+      bySource.set(key, n);
+    }
+    byOccurrence.set(c.occurrence, n);
+  }
+  return byOccurrence;
 }
 
 const MARKER_RE = /\[(\d+)\]/g;
@@ -73,13 +103,13 @@ export function processCitations(
 ): ProcessedCitations {
   const matches = [...content.matchAll(MARKER_RE)];
   if (matches.length === 0 && (!citations || citations.length === 0)) {
-    return { content, state: "none", byOccurrence: new Map() };
+    return { content, state: "none", byOccurrence: new Map(), sourceNumberByOccurrence: new Map() };
   }
   if (!citations || citations.length === 0) {
     // Verified backend behavior: a user content edit resets citations to []
     // but stores the markers verbatim — without this strip every edited page
     // renders permanent [N] noise.
-    return { content: stripMarkers(content), state: "stripped-empty", byOccurrence: new Map() };
+    return { content: stripMarkers(content), state: "stripped-empty", byOccurrence: new Map(), sourceNumberByOccurrence: new Map() };
   }
   const byOccurrence = new Map<number, PageCitation>();
   for (const c of citations) byOccurrence.set(c.occurrence, c);
@@ -89,21 +119,26 @@ export function processCitations(
     matches.length !== citations.length ||
     matches.some((m, i) => byOccurrence.get(i + 1)?.marker !== Number(m[1]));
   if (mismatch) {
-    return { content: stripMarkers(content), state: "stripped-mismatch", byOccurrence: new Map() };
+    return { content: stripMarkers(content), state: "stripped-mismatch", byOccurrence: new Map(), sourceNumberByOccurrence: new Map() };
   }
   const ranges = codeRanges(content);
   const inCode = (idx: number) => ranges.some(([s, e]) => idx >= s && idx < e);
   let out = "";
   let last = 0;
+  const shown: PageCitation[] = [];
   matches.forEach((m, i) => {
     const at = m.index ?? 0;
     if (inCode(at)) return; // counted, but displayed raw
     const k = i + 1;
+    const c = byOccurrence.get(k);
+    if (c) shown.push(c);
     out += content.slice(last, at) + `[${k}](${CITATION_ANCHOR_PREFIX}${k})`;
     last = at + m[0].length;
   });
   out += content.slice(last);
-  return { content: out, state: "cited", byOccurrence };
+  // Numbered over the chips a reader sees: a marker left raw in code takes no
+  // number, so the visible chips run 1, 2, 3 without a gap.
+  return { content: out, state: "cited", byOccurrence, sourceNumberByOccurrence: citationSourceNumbers(shown) };
 }
 
 export type CitationKindLabels = Readonly<

@@ -535,7 +535,7 @@ A surface that transmits anyway is a failing test on that surface. That gate is
 soft, and saying so plainly is what cooperative-tier means. It is also no longer
 load-bearing: the shape gate holds even when this one is bypassed.
 
-## HTTP — all 197 registered `(method, path, handler)` triples
+## HTTP — all 198 registered `(method, path, handler)` triples
 
 73 page-bearing, 124 not.
 
@@ -592,7 +592,9 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `POST` | `/api/knowledge/folders` | main | no | not_applicable | `none` | — | creates a physical directory without page prose |
 | `POST` | `/api/pages/{id}/move` | main | yes | automatic | `none` | `handle_move_page` | EFFECT: moves an authorized live page projection |
 | `GET` | `/api/knowledge/count` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/attachments` | main | no | not_applicable | `none` | — | copies one media file; returns its path and a Markdown line |
 | `GET` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | asks to move the pages folder; returns folder paths only |
 | `GET` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint_submission` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/llm/test` | main | no | not_applicable | `none` | — | no prose fields |
@@ -775,7 +777,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/tags/{name}` | main | no | not_applicable | `none` | — | no prose fields |
 | `GET` | `/ws/updates` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 
-## MCP — all 33 `#[tool(` declarations
+## MCP — all 36 `#[tool(` declarations
 
 From `crates/wenlan-mcp/src/tools.rs` **in this tree**. An earlier draft listed
 `search_pages`, `get_page`, `get_page_links`, `list_pages_recent`, and
@@ -792,6 +794,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 |---|---|---|---|---|
 | `accept_refinement` | yes | automatic | `none` | tool handler |
 | `accept_revision` | yes | automatic | `none` | tool handler |
+| `attach_file` | yes | automatic | `none` | tool handler |
 | `brief` | yes | automatic | `none` | tool handler |
 | `capture` | yes | automatic | `none` | tool handler |
 | `confirm_memory` | yes | automatic | `none` | tool handler |
@@ -847,7 +850,6 @@ the projection-directory reader.
 | `wenlan keys` | yes | automatic | `none` | subcommand renderer |
 | `wenlan steep` | yes | automatic | `none` | subcommand renderer |
 | `wenlan connect` | yes | automatic | `none` | subcommand renderer |
-| `wenlan search` | yes | automatic | `none` | subcommand renderer |
 | `wenlan recall` | yes | automatic | `none` | subcommand renderer |
 | `wenlan brief` | yes | automatic | `none` | subcommand renderer |
 | `wenlan pages` | yes | automatic | **`collection` + `named_page`** | enforce_projection_directory_invariant |
@@ -1182,6 +1184,7 @@ carrying the authority of agreement.
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
+| `core/synthesis/distill.rs::build_refresh_titles_hint` | `private` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::list_basis_context` |
 | `core/synthesis/distill.rs::resolve_distill_target` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/db.rs::resolve_entity_by_name` |
 | `core/synthesis/overview.rs::refresh_overview_page` | `pub` | no | no | — | `core/db.rs::find_active_machine_overview_id` |
@@ -1310,7 +1313,6 @@ carrying the authority of agreement.
 | `core/ingest.rs::run_canonical_enrichment` | `pub` | no | no | — | `core/post_ingest.rs::run_post_ingest_enrichment` |
 | `core/kg_quality.rs::run_rethink` | `pub` | no | no | — | `core/kg_quality.rs::find_merge_candidates`, `core/kg_quality.rs::refresh_stale_entity_embeddings`, `core/kg_quality.rs::scan_contradictions` |
 | `core/kg_quality.rs::verify_entity` | `pub` | no | no | — | `core/kg_quality.rs::entity_self_retrieval` |
-| `core/kg_quality.rs::verify_page` | `pub` | no | no | — | `core/db.rs::search_memory` |
 | `core/m6/oracle.rs::recompute_full` | `pub` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/m6/shadow.rs::admitted_proposals` | `private` | no | no | — | `core/m6/signals.rs::community_overview`, `core/m6/signals.rs::evidence_cluster`, `core/m6/signals.rs::orphan_wikilink`, `core/m6/signals.rs::space_overview` |
 | `core/maintenance/page_merge_order.rs::load_candidate` | `private` | no | no | — | `core/db.rs::get_page` |
@@ -1349,6 +1351,7 @@ carrying the authority of agreement.
 | `core/synthesis/distill.rs::distill_pages_scoped_gated` | `pub(crate)` | no | no | — | `core/db.rs::find_distillation_clusters_scoped` |
 | `core/synthesis/distill.rs::formation_sweep` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/db.rs::find_distillation_clusters_scoped` |
 | `core/synthesis/distill.rs::refresh_page_with_prompt` | `pub(crate)` | no | no | — | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` |
+| `core/synthesis/distill.rs::synthesize_candidate_body` | `pub(crate)` | no | no | — | `core/synthesis/distill.rs::build_refresh_titles_hint` |
 | `core/synthesis/overview.rs::qualifying_top_evidence` | `private` | no | no | — | `core/db.rs::list_pages` |
 | `core/synthesis/overview.rs::refresh_existing_overview_page` | `private` | no | no | — | `core/db.rs::get_page`, `core/synthesis/distill.rs::refresh_page_with_candidate_sources` |
 | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` | `pub` | no | **yes** | `server/refinery_routes.rs::handle_accept_refinement` | `core/db.rs::accept_page_merge`, `core/db.rs::merge_entities` |
@@ -1458,12 +1461,11 @@ carrying the authority of agreement.
 | `core/repair.rs::capture_page_projection_on_connection` | `pub(crate)` | no | no | — | `core/repair.rs::projection_page_row_on_connection` |
 | `core/repair.rs::validate_deterministic_target_resolved` | `pub(crate)` | no | no | — | `core/repair_plan.rs::deterministic_target_still_actionable` |
 | `core/repair_plan/deterministic.rs::resolve_page_projections` | `private` | no | no | — | `core/repair.rs::capture_page_projection_rollback` |
-| `core/sources/page_watcher.rs::sync_filesystem_edits_locking` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/sources/page_watcher.rs::sync_one_file` |
+| `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
 | `core/synthesis/distill.rs::distill_one_cluster` | `pub` | no | no | — | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` |
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
 | `core/synthesis/distill.rs::refresh_page` | `pub` | no | no | — | `core/synthesis/distill.rs::refresh_page_with_prompt` |
-| `core/synthesis/distill.rs::synthesize_candidate_body` | `pub(crate)` | no | no | — | `core/synthesis/distill.rs::build_page_compile_user_prompt` |
 | `core/synthesis/refinement_queue.rs::apply_refinement` | `pub` | no | no | — | `core/synthesis/refinement_queue.rs::apply_refinement_with_decision` |
 | `core/truth_adapter.rs::filter_page_refs` | `pub` | no | **yes** | `server/brief_routes.rs::handle_read_brief`, `server/entity_graph_routes.rs::handle_get_knowledge_graph`, `server/memory_routes.rs::handle_search_memory_inner`, `server/page_basis_routes.rs::visible_ids`, `server/page_routes.rs::handle_get_page_links`, `server/page_routes.rs::handle_get_page_revisions`, `server/page_routes.rs::handle_get_page_sources`, `server/page_routes.rs::handle_list_orphan_links`, `server/routes.rs::handle_distill_inner`, `server/routes.rs::handle_recent_page_changes`, `server/routes.rs::handle_recent_pages`, `server/routes.rs::handle_recent_retrievals`, `server/routes.rs::handle_search_inner`, `server/session_routes.rs::handle_get_session` | `core/db/truth_exposure.rs::page_visibility` |
 | `core/truth_adapter.rs::filter_pages` | `pub` | no | **yes** | `server/knowledge_routes.rs::handle_list_knowledge_folders`, `server/page_routes.rs::handle_search_pages`, `server/page_routes.rs::list_visible_browse_pages`, `server/routes.rs::handle_distill_inner` | `core/truth_adapter.rs::verdicts` |

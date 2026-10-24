@@ -254,8 +254,8 @@ async fn handle_github_setup(
                 })?;
                 github::store_claude_token(&binding, &gh, &claude)?;
             }
-            RepoWikiGithubRequest::OpenaiKey { key } => {
-                github::store_openai_key(&binding, &gh, &key)?;
+            RepoWikiGithubRequest::ApiKey { key } => {
+                github::store_api_key(&binding, &gh, &key)?;
             }
             RepoWikiGithubRequest::AllowPullRequests => {
                 github::allow_pull_requests(&binding, &gh)?;

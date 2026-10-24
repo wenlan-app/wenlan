@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import type { PageCitation } from "./tauri";
 import {
   processCitations,
+  citationSourceNumbers,
   stripCitationLinks,
   citationDisplayLabel,
 } from "./pageCitations";
@@ -100,6 +101,52 @@ describe("processCitations", () => {
     const r = processCitations("Stores all data in one file [5][13]. Run `rm -rf .` first [2].", []);
     expect(r.state).toBe("stripped-empty");
     expect(r.content).toBe("Stores all data in one file. Run `rm -rf .` first.");
+  });
+});
+
+describe("citation source numbers", () => {
+  it("reuses a source's first number when it is cited again", () => {
+    const content = "A.[1] B.[2] C.[3] D.[4] E.[5] F.[1]";
+    const r = processCitations(content, [cite(1, 1), cite(2, 2), cite(3, 3), cite(4, 4), cite(5, 5), cite(6, 1)]);
+    expect(r.state).toBe("cited");
+    expect([...r.sourceNumberByOccurrence]).toEqual([[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 1]]);
+    // The link still points at its own occurrence, so each chip opens its own claim.
+    expect(r.content).toContain("F.[6](#citation:6)");
+  });
+
+  it("gives the Nth distinct source number N whatever marker the writer used", () => {
+    const r = processCitations("A.[3] B.[1] C.[3] D.[2]", [cite(1, 3), cite(2, 1), cite(3, 3), cite(4, 2)]);
+    expect([...r.sourceNumberByOccurrence]).toEqual([[1, 1], [2, 2], [3, 1], [4, 3]]);
+  });
+
+  it("keys a source by kind and locator, not by marker", () => {
+    const url = { source_kind: "external_url" as const, locator: "https://example.com/a" };
+    const numbers = citationSourceNumbers([
+      cite(1, 1, url),
+      cite(2, 2),
+      cite(3, 3, url),
+      cite(4, 4, { source_kind: "external_file", locator: "https://example.com/a" }),
+    ]);
+    expect([...numbers]).toEqual([[1, 1], [2, 2], [3, 1], [4, 3]]);
+  });
+
+  it("numbers in reading order even when the wire order differs", () => {
+    const numbers = citationSourceNumbers([cite(3, 1), cite(1, 2), cite(2, 1)]);
+    expect(numbers.get(1)).toBe(1);
+    expect(numbers.get(2)).toBe(2);
+    expect(numbers.get(3)).toBe(2);
+  });
+
+  it("does not spend a number on a marker shown raw inside code", () => {
+    const r = processCitations("Use `x[1]` here.[2] Then.[1]", [cite(1, 1), cite(2, 2), cite(3, 1)]);
+    expect(r.sourceNumberByOccurrence.has(1)).toBe(false);
+    expect(r.sourceNumberByOccurrence.get(2)).toBe(1);
+    expect(r.sourceNumberByOccurrence.get(3)).toBe(2);
+  });
+
+  it("is empty when the citations are not shown", () => {
+    expect(processCitations("A.[1]", []).sourceNumberByOccurrence.size).toBe(0);
+    expect(processCitations("A.[1] B.[2]", [cite(1, 1)]).sourceNumberByOccurrence.size).toBe(0);
   });
 });
 

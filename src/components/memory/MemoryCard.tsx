@@ -45,7 +45,9 @@ export default function MemoryCard({
   const [showChangelog, setShowChangelog] = useState(false);
 
   const facetType = memory.memory_type ?? "fact";
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  // English keeps the compact "3h ago"; Chinese gets its own relative time.
+  const relativeLocale = i18n.language?.startsWith("zh") ? i18n.language : undefined;
   const isRecap = memory.is_recap === true;
   const tier = STABILITY_TIERS[facetType] ?? "ephemeral";
   const confidence = memory.confidence ?? 0;
@@ -162,7 +164,7 @@ export default function MemoryCard({
                 color: "var(--mem-text-tertiary)",
               }}
             >
-              {formatTimeAgo(memory.last_modified)}
+              {formatTimeAgo(memory.last_modified, relativeLocale)}
             </span>
           </div>
 
@@ -355,7 +357,7 @@ export default function MemoryCard({
                   </>
                 )}
                 <span style={{ opacity: 0.4 }}>&middot;</span>
-                <span>{formatTimeAgo(memory.last_modified)}</span>
+                <span>{formatTimeAgo(memory.last_modified, relativeLocale)}</span>
               </div>
             ) : (
               <div
@@ -395,7 +397,7 @@ export default function MemoryCard({
                   </>
                 )}
                 <span style={{ opacity: 0.4 }}>&middot;</span>
-                <span>{isNew ? "new" : formatTimeAgo(memory.last_modified)}</span>
+                <span>{isNew ? "new" : formatTimeAgo(memory.last_modified, relativeLocale)}</span>
                 {(memory.version ?? 1) > 1 && (
                   <>
                     <span style={{ opacity: 0.4 }}>&middot;</span>
@@ -413,7 +415,7 @@ export default function MemoryCard({
                       <div key={i} className="text-xs text-zinc-500">
                         <span className="text-zinc-400">v{entry.version}</span>
                         {' '}{entry.delta || 'updated'}
-                        <span className="text-zinc-600 ml-1">{formatTimeAgo(entry.at)}</span>
+                        <span className="text-zinc-600 ml-1">{formatTimeAgo(entry.at, relativeLocale)}</span>
                       </div>
                     ))}
                   </div>

@@ -893,6 +893,38 @@ describe("SetupWizard", () => {
     ]);
   });
 
+  it("a failed row says only that it failed while a row above it is still running", async () => {
+    (detectMcpClients as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        name: "Codex CLI",
+        client_type: "codex_cli",
+        config_path: "/path/to/config.toml",
+        detected: YES,
+        already_configured: NO,
+        has_raw_entry: NO,
+        has_raw_duplicate: NO,
+        has_plugin: NO,
+      },
+    ]);
+    (installClientPlugin as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("failed to resolve CODEX_HOME"));
+    // The runtime row above Codex never answers, so it stays running.
+    (getWireState as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+
+    renderWizard({ initialStep: "connect" });
+
+    const codexCheckbox = await screen.findByRole("checkbox", { name: "Codex CLI" });
+    await waitFor(() => expect(codexCheckbox).toBeChecked());
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-status-codex_cli")).toHaveTextContent("Couldn't set up");
+    });
+    expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Setting up…");
+    expect(screen.getByTestId("task-status-codex_cli")).not.toHaveTextContent("Setting up…");
+    expect(screen.getByTestId("task-error-detail-codex_cli")).toHaveTextContent("failed to resolve CODEX_HOME");
+    expect(screen.getByTestId("task-retry-codex_cli")).toBeInTheDocument();
+  });
+
   // (c) Same invariant for Codex — and one row covering both surfaces that
   // share ~/.codex/config.toml. It must not read as "ChatGPT connected":
   // ChatGPT's chat assistant only speaks remote HTTPS MCP and is NOT covered.
@@ -2880,6 +2912,15 @@ describe("displayedStatuses", () => {
     expect(displayedStatuses(rows, statuses)).toEqual({
       a: "failed",
       b: "done",
+      c: "running",
+    });
+  });
+
+  it("a failed row below a still-running row shows as failed, never as running", () => {
+    const statuses = { a: "running", b: "failed", c: "done" } as const;
+    expect(displayedStatuses(rows, statuses)).toEqual({
+      a: "running",
+      b: "failed",
       c: "running",
     });
   });

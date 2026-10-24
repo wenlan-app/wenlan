@@ -79,6 +79,13 @@ pub enum LlmError {
     NotAvailable,
     #[error("Inference failed: {0}")]
     InferenceFailed(String),
+    #[error(
+        "source context exceeds physical input window ({input_tokens} tokens; limit {input_limit})"
+    )]
+    InputContextTooLarge {
+        input_tokens: usize,
+        input_limit: usize,
+    },
     #[error("Timeout")]
     Timeout,
     #[error("Pro plan required")]
@@ -310,6 +317,22 @@ fn request_continuous_batch_eligible(
     }
     let prompt_tokens = engine.count_prompt_tokens(req.system_prompt.as_deref(), &req.prompt);
     continuous_batch_eligible(req.ctx_size, prompt_tokens, req.max_tokens, seq_capacity)
+}
+
+// Page refresh (and its long-source notes step) must never infer from a
+// silently truncated source prefix. Called with the model tokenizer's count
+// of the formatted prompt, including BOS.
+fn refresh_context_error(
+    input_tokens: usize,
+    context_size: u32,
+    max_output_tokens: i32,
+) -> Option<LlmError> {
+    let input_limit = (context_size as usize)
+        .saturating_sub(usize::try_from(max_output_tokens).unwrap_or(usize::MAX));
+    (input_limit == 0 || input_tokens > input_limit).then_some(LlmError::InputContextTooLarge {
+        input_tokens,
+        input_limit,
+    })
 }
 
 fn context_seq_max_for_batch(batch_len: usize, parallel_seqs: usize) -> u32 {
@@ -714,6 +737,24 @@ impl OnDeviceProvider {
                         if m == 1 || batch_reqs.len() == 1 {
                             let batch_n_seqs = batch_reqs.len();
                             let req = batch_reqs.pop().expect("batch has at least 1 req");
+                            // Oversized requests are not eligible for continuous batching,
+                            // so they reach this singleton path. Check the real tokenizer
+                            // before either persistent or per-call inference can truncate.
+                            if matches!(
+                                req.label.as_deref(),
+                                Some("refresh_page" | "refresh_source_notes")
+                            ) {
+                                let input_tokens = engine
+                                    .count_prompt_tokens(req.system_prompt.as_deref(), &req.prompt);
+                                if let Some(error) = refresh_context_error(
+                                    input_tokens,
+                                    req.ctx_size,
+                                    req.max_tokens,
+                                ) {
+                                    let _ = req.response_tx.send(Err(error));
+                                    continue;
+                                }
+                            }
                             let full_prompt =
                                 engine.format_prompt(req.system_prompt.as_deref(), &req.prompt);
                             let (timeout_secs, strip_think) = match req.timeout_secs {
@@ -1742,6 +1783,26 @@ impl LlmProvider for CannedLlmProvider {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refresh_context_guard_reserves_output_in_real_window() {
+        for model in crate::on_device_models::MODELS {
+            let limit = (model.context_size - model.max_output_tokens) as usize;
+            assert!(super::refresh_context_error(
+                limit,
+                model.context_size,
+                model.max_output_tokens as i32
+            )
+            .is_none());
+            assert!(matches!(
+                super::refresh_context_error(limit + 1, model.context_size, model.max_output_tokens as i32),
+                Some(super::LlmError::InputContextTooLarge { input_limit, .. }) if input_limit == limit
+            ));
+        }
+        assert!(super::refresh_context_error(usize::MAX, 8192, 2048).is_some());
+        assert!(super::refresh_context_error(1, 1024, 1024).is_some());
+        assert!(super::refresh_context_error(1, 8192, -1).is_some());
+    }
+
     use super::*;
 
     #[test]

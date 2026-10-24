@@ -22,6 +22,7 @@ import { reviewItemId, type ReviewItem } from "./useReviewQueue";
 import { PageMergeStripOff, usePageMergeEvidence } from "./ReviewPageMerge";
 import { MemoryRevisionChain, PageRevisionChain } from "./ReviewHistory";
 import SourceRepairReview from "./SourceRepairReview";
+import MarkdownDiff from "./MarkdownDiff";
 import { useActivity } from "../../lib/useActivity";
 import { STEEP_COMMAND, SteepNeedsAiToolError } from "../../lib/steepMode";
 
@@ -192,6 +193,7 @@ export function truncateReviewText(value: string, max: number): string {
 /** Why a page revision card needs review; nothing for a reason we do not know. */
 function revisionReasonText(t: TFunction, reason: string | null | undefined): string | null {
   switch (reason) {
+    case "authored": return t("review.reasonAuthored");
     case "locked": return t("review.reasonLocked");
     case "background": return t("review.reasonBackground");
     case "owned": return t("review.reasonOwned");
@@ -428,15 +430,18 @@ export function useReviewItemSummary(item: ReviewItem | null): {
   return { title: title ?? reviewKindLabel(t, item), reason, delta };
 }
 
+// A clear green and red, the same strength in both themes: the sage accent
+// read as grey behind rendered page text, and the light theme's danger tint
+// almost vanished behind struck-through words.
 const INS_STYLE: React.CSSProperties = {
-  backgroundColor: "color-mix(in srgb, var(--mem-accent-sage) 24%, transparent)",
+  backgroundColor: "rgba(76, 175, 106, 0.26)",
   textDecoration: "none",
   borderRadius: 3,
   padding: "0 2px",
 };
 
 const DEL_STYLE: React.CSSProperties = {
-  backgroundColor: "var(--mem-status-danger-bg)",
+  backgroundColor: "rgba(205, 92, 74, 0.24)",
   borderRadius: 3,
   padding: "0 2px",
 };
@@ -452,6 +457,12 @@ const paneStyle: React.CSSProperties = {
   color: "var(--mem-text)",
   whiteSpace: "pre-wrap",
   overflowWrap: "anywhere",
+};
+
+/** A revision pane renders Markdown, so its own line breaks are not kept. */
+const markdownPaneStyle: React.CSSProperties = {
+  ...paneStyle,
+  whiteSpace: "normal",
 };
 
 const paneLabelStyle: React.CSSProperties = {
@@ -1417,28 +1428,38 @@ export default function ReviewDialog({
                     >
                       <div>
                         <p style={paneLabelStyle}>{t("review.current")}</p>
-                        <div style={paneStyle}>
-                          <DiffText
-                            segments={segments.filter(
-                              (segment) => segment.kind !== "ins",
-                            )}
+                        <div style={markdownPaneStyle}>
+                          <MarkdownDiff
+                            before={beforeContent}
+                            after={item.content}
+                            side="before"
+                            insStyle={INS_STYLE}
+                            delStyle={DEL_STYLE}
                           />
                         </div>
                       </div>
                       <div>
                         <p style={paneLabelStyle}>{t("review.proposed")}</p>
-                        <div style={paneStyle}>
-                          <DiffText
-                            segments={segments.filter(
-                              (segment) => segment.kind !== "del",
-                            )}
+                        <div style={markdownPaneStyle}>
+                          <MarkdownDiff
+                            before={beforeContent}
+                            after={item.content}
+                            side="after"
+                            insStyle={INS_STYLE}
+                            delStyle={DEL_STYLE}
                           />
                         </div>
                       </div>
                     </div>
                   ) : (
-                    <div style={paneStyle}>
-                      <DiffText segments={segments} />
+                    <div style={markdownPaneStyle}>
+                      <MarkdownDiff
+                        before={beforeContent}
+                        after={item.content}
+                        side="unified"
+                        insStyle={INS_STYLE}
+                        delStyle={DEL_STYLE}
+                      />
                     </div>
                   )}
 

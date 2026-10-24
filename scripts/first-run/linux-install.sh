@@ -77,7 +77,7 @@ assert_version "$HEALTH" "$VERSION"
 check status -- wenlan status
 
 WENLAN_BIN="$W" bash "$HELPERS/cli-roundtrip.sh"
-MCP_BIN="$BIN_DIR/wenlan-mcp" MCP_ARGS='[]' EXPECT_TOOL_COUNT=35 MCP_TOOLS=capture,recall,brief \
+MCP_BIN="$BIN_DIR/wenlan-mcp" MCP_ARGS='[]' EXPECT_TOOL_COUNT=36 MCP_TOOLS=capture,recall,brief \
     python3 "$HELPERS/mcp-roundtrip.py"
 check_output doctor "Daemon: running on" -- wenlan doctor
 

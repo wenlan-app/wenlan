@@ -42,6 +42,10 @@ pub const CODE_BASIS_STATE_MOVED: &str = "moved";
 pub const CODE_BASIS_STATE_PENDING: &str = "pending";
 pub const CODE_BASIS_STATE_UNAVAILABLE: &str = "unavailable";
 
+/// `reason` of a `pending` row whose lines cannot be found in the file any
+/// more: no model can say what they became, so a person looks.
+pub const LINES_NOT_FOUND: &str = "lines_not_found";
+
 /// What a file looked like to `stat` when it was last read: length and
 /// modification time. A check whose file still shows the same stamp skips
 /// reading and hashing it.
@@ -537,7 +541,9 @@ pub async fn recheck_code_basis(db: &MemoryDB, space: Option<&str>) -> Result<us
     let checked = rows.len();
     // The verdicts are applied together, so a row can move into a place
     // another row of the note is leaving.
-    let verdicts = classify_code_basis_rows(&rows).await;
+    let mut verdicts = classify_code_basis_rows(&rows).await;
+    // A file that is gone may only have been renamed, or deleted on purpose.
+    crate::code_basis_follow::follow_missing_files(db, &rows, &mut verdicts).await;
     db.apply_code_basis_verdicts(&verdicts, chrono::Utc::now().timestamp())
         .await?;
     Ok(checked)

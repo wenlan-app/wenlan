@@ -34,7 +34,10 @@ If `space` is empty, say this folder is not matched to a Space and that
 
 ## 2. Plan the pages
 
-Call `list_pages` with `space="<space>"` once.
+Call `list_pages` with `space="<space>"` once. If it answers that the Space is
+unknown, this repository has no pages yet: register the Space once with
+`"$W" spaces add "$space"` (`W` as in step 8), then plan from the repository as
+below. Do not stop to ask.
 
 Find the overview page by exact title (below). If it exists, call `read_page`
 on it: its `## Pages` section (`## 頁面` in Chinese) is the plan. Then look
@@ -76,6 +79,15 @@ Let the repository decide the count. As a rough guide, a small repository
 a folder that only holds glue, and do not split a topic that fits on one
 screen.
 
+**Existing docs come first.** When the repository already has a doc that
+covers a planned topic (an architecture doc, a package's README or
+REFERENCE, a contributing guide that says how to build and run it), do not
+plan a page that retells it. Drop the topic from the plan and
+list the doc in the overview under `## Existing docs` (`## 現有文件` in
+Chinese) as `` - `<path>`: <what it covers, one line> ``. Plan a page on that
+topic only for what the doc leaves out, and open it with which doc to read
+first. Step 7 still checks those docs against the code.
+
 Titles are short noun phrases in the user's language, taken from how they typed
 the request. When a page already in the Space covers a planned topic (for
 example an earlier wiki's `Module map`), use that page's exact title in the
@@ -90,9 +102,14 @@ never fuzzy.
 - Present, and listed with a `code_basis` entry in state `pending` whose
   `repo_root` is this repository: leave it. It is already on steep's list;
   say in the report that it waits for steep.
-- Present, and listed with a `code_basis` entry in state `unavailable` whose
-  `repo_root` is this repository: the file or repository it cited is gone.
-  Re-point it (step 5).
+- Present, and listed with a `code_basis` entry in state `unavailable` with
+  reason `file_deleted`: the file was deleted, and steep updates the page.
+  Leave it, like a `pending` one. Wenlan follows a renamed file by itself, so
+  a rename never shows up here.
+- Present, and listed with a `code_basis` entry in state `unavailable` with
+  another reason (`file_missing`, `repo_missing`), whose `repo_root` is this
+  repository: Wenlan could not tell what became of the file. Re-point it
+  (step 5).
 - Present with nothing outstanding: leave it, and say so in the report.
   `list_pages` rechecks the cited files first and lists only code bases that
   are not `ok`, so a page with none listed is current.
@@ -105,7 +122,10 @@ important first. The pages left over are written by the next run.
 
 **The overview's page list.** A new overview ends with a `## Pages` section
 (`## 頁面` in Chinese) listing every planned page, written or not, as
-`- [[<title>]]: <what it answers, one line>`. When the plan gained pages and
+`- [[<title>]]: <what it answers, one line>`, in reading order: the wiki
+folder's `README.md` lists the pages in this order.
+When existing docs replaced planned topics, an `## Existing docs` section
+follows it. When the plan gained pages and
 the overview already exists, update only that section: take `version` from
 your `read_page`, then call `write_page` with `page_id`, `expected_version`,
 `minor: true`, and `content` that is the page you read with only the list
@@ -176,7 +196,8 @@ the diagram.
 
 ## 5. Re-pointing a page whose code is gone
 
-Only for a page with an `unavailable` entry. Call `read_page` for its
+Only for a page with an `unavailable` entry whose reason is not
+`file_deleted`. Call `read_page` for its
 `version` and full `code_basis`. For each `unavailable` entry, find where that
 fact now lives in the repository, or drop the sentence if it is no longer
 true. Then call `write_page` with `page_id`, `expected_version` set to the
@@ -269,5 +290,6 @@ publish line says how many stayed out.
   yes or an existing binding.
 - Wiki only reads the repository. Shell commands are read-only ones such as
   `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
-  `ls`, `wc`, `grep` and `sed -n`, plus the `wenlan wiki` commands of step 8;
-  nothing that builds, installs, or changes a file.
+  `ls`, `wc`, `grep` and `sed -n`, plus `wenlan spaces add` for a Space that
+  has no pages yet and the `wenlan wiki` commands of step 8; nothing that
+  builds, installs, or changes a file.

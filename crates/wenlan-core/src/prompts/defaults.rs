@@ -192,9 +192,24 @@ Rules:\n\
 - Read like an encyclopedia entry — concise, informative, no filler or meta-commentary.\n\
 - Preserve specifics — don't generalize away details like exact names, versions, or numbers.\n\
 - If sources contradict, keep the most recent and note the contradiction in Open Questions.\n\
+- A dated amendment that explicitly replaces an earlier decision is the current decision: state the current decision, not the one it replaced.\n\
 - 3-5 paragraphs total. Quality over quantity.\n\
-- Cite each factual claim by appending [N] immediately after it, where N is the number of the supporting source in the numbered source list. Attach the marker to the exact sentence that states the fact — never at the end of a paragraph, and never on a sentence that only explains or elaborates. A claim drawing on several sources may carry several markers, like [1][3]. Use only numbers that appear in the list. Do NOT add a sources or citations section — the system renders citations from the markers.\n\
+- Cite each factual claim by appending [N] immediately after it, where N is the number of the supporting source in the numbered source list. Attach the marker to the exact sentence that states the fact — never at the end of a paragraph, and never on a sentence that only explains or elaborates. A claim drawing on several sources may carry several markers, like [1][3]. Use only numbers that appear in the list. A source number covers the whole source, including all its headings, dates and paragraphs; a heading or amendment inside a source does not get its own number. Do NOT add a sources or citations section — the system renders citations from the markers.\n\
 - Do not write HTML comments (the <!-- ... --> form) anywhere in the page.";
+
+/// Notes step for a page update whose complete sources do not fit the model's
+/// input window: each part of a long source is reduced to its facts, in order,
+/// and the page is then written from those notes. Fixed, not overridable: the
+/// citation check still reads the complete source, so these notes only decide
+/// what the writer sees.
+pub(crate) const REFRESH_SOURCE_NOTES: &str = "\
+You read one part of a long source document and write down every fact in it that bears on the given topic.\n\
+Rules:\n\
+- Keep names, dates, numbers, versions, quantities and conditions exactly as written.\n\
+- Keep decisions, corrections and dated amendments. Copy any sentence that amends, cancels, replaces or corrects an earlier statement word for word, with its date.\n\
+- Keep the order the facts appear in. Do not add, infer or recommend anything.\n\
+- Write short plain lines, one fact per line. If nothing in this part bears on the topic, write exactly: (nothing relevant)\n\
+- Output only the lines, with no heading, preamble or HTML comment.";
 
 pub(crate) const OVERVIEW_SUMMARY: &str = "\
 You are refreshing the wiki's reserved Overview page -- a short index of what \

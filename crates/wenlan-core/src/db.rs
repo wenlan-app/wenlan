@@ -131,6 +131,8 @@ mod claim_edge_lifecycle_test;
 #[cfg(test)]
 mod claim_identity_test;
 #[cfg(test)]
+mod code_basis_follow_test;
+#[cfg(test)]
 mod code_basis_recheck_test;
 #[cfg(test)]
 pub(crate) mod code_basis_test;
@@ -2296,7 +2298,7 @@ pub fn compute_rerank_fetch_pool(
 /// returns the top `limit`.
 ///
 /// Deliberately a STANDALONE step, NOT folded into `search_memory`, so internal
-/// callers (`search_corrections_by_topic`, `verify_page`) that call `search_memory`
+/// callers (e.g. `search_corrections_by_topic`) that call `search_memory`
 /// directly never get — or pay for — CE. The daemon handler fetches a widened pool
 /// via plain `search_memory`, then calls this. On reranker error / empty output the
 /// input order is preserved. The sync CE runs off the async runtime via
@@ -54301,6 +54303,27 @@ impl MemoryDB {
         &self,
         source_ids: &[String],
     ) -> Result<Vec<(String, String)>, WenlanError> {
+        self.get_memory_contents_by_ids_with_chunks(source_ids, false)
+            .await
+    }
+
+    /// Read complete source documents for Wiki candidate refreshes. The
+    /// ordinary reader intentionally keeps its chunk-zero contract for other
+    /// recompilation consumers; refresh needs every live chunk so a later
+    /// amendment cannot be missed merely because it falls outside chunk zero.
+    pub(crate) async fn get_refresh_source_contents_by_ids(
+        &self,
+        source_ids: &[String],
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        self.get_memory_contents_by_ids_with_chunks(source_ids, true)
+            .await
+    }
+
+    async fn get_memory_contents_by_ids_with_chunks(
+        &self,
+        source_ids: &[String],
+        include_all_chunks: bool,
+    ) -> Result<Vec<(String, String)>, WenlanError> {
         if source_ids.is_empty() {
             return Ok(vec![]);
         }
@@ -54311,16 +54334,43 @@ impl MemoryDB {
             .map(|(i, _)| format!("?{}", i + 1))
             .collect::<Vec<_>>()
             .join(",");
-        let sql = format!(
-            "SELECT source_id, content FROM memories WHERE source != 'episode' AND source_id IN ({}) AND chunk_index = 0 \
-             AND source_id NOT IN (\
-                 SELECT supersedes FROM memories \
-                 WHERE supersedes IS NOT NULL AND pending_revision = 0 \
-                 AND source = 'memory' AND supersede_mode = 'hide' \
-                 GROUP BY supersedes\
-             )",
-            placeholders
-        );
+        // Folder documents are the only multi-chunk canonical sources that a
+        // Wiki refresh may expand. Other source kinds retain the historical
+        // chunk-zero projection, even on the refresh path.
+        let sql = if include_all_chunks {
+            // The writer replaces the full set of rows for a folder document
+            // atomically. Validate the visible generation below before using it.
+            format!(
+                "SELECT m.source_id, m.content, m.chunk_index, m.source, m.source_agent, m.space, m.content_hash, m.version \
+             FROM memories AS m \
+             WHERE m.source != 'episode' AND m.source_id IN ({}) \
+               AND (m.chunk_index = 0 OR EXISTS (\
+                   SELECT 1 FROM memories AS head \
+                   WHERE head.source_id = m.source_id AND head.chunk_index = 0 \
+                     AND head.source = 'memory' AND head.source_agent = 'folder'\
+               ))\
+               AND m.source_id NOT IN (\
+                   SELECT supersedes FROM memories \
+                   WHERE supersedes IS NOT NULL AND pending_revision = 0 \
+                     AND source = 'memory' AND supersede_mode = 'hide' \
+                   GROUP BY supersedes\
+               )\
+             ORDER BY m.source_id ASC, m.chunk_index ASC",
+                placeholders
+            )
+        } else {
+            format!(
+                "SELECT source_id, content, chunk_index, source, source_agent, space, content_hash, version \
+             FROM memories WHERE source != 'episode' AND source_id IN ({}) AND chunk_index = 0 \
+               AND source_id NOT IN (\
+                   SELECT supersedes FROM memories \
+                   WHERE supersedes IS NOT NULL AND pending_revision = 0 \
+                     AND source = 'memory' AND supersede_mode = 'hide' \
+                   GROUP BY supersedes\
+               )",
+                placeholders
+            )
+        };
         let params: Vec<libsql::Value> = source_ids
             .iter()
             .map(|id| libsql::Value::Text(id.clone()))
@@ -54330,8 +54380,11 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("get memories by ids: {}", e)))?;
 
-        let mut results = vec![];
+        let mut results: Vec<(String, String)> = vec![];
         let mut resolved: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut full_source_positions: HashMap<String, usize> = HashMap::new();
+        type FolderSourceMetadata = (String, String, Option<String>, Option<String>, Option<i64>);
+        let mut full_source_metadata: HashMap<String, (FolderSourceMetadata, i64)> = HashMap::new();
         while let Some(row) = rows
             .next()
             .await
@@ -54344,7 +54397,82 @@ impl MemoryDB {
                 .get(1)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
             resolved.insert(id.clone());
-            results.push((id, content));
+            if !include_all_chunks {
+                results.push((id, content));
+                continue;
+            }
+            let chunk_index: i64 = row
+                .get(2)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let source: String = row
+                .get(3)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let source_agent: Option<String> = row.get(4).unwrap_or(None);
+            let space: Option<String> = row.get(5).unwrap_or(None);
+            let content_hash: Option<String> = row.get(6).unwrap_or(None);
+            let version: Option<i64> = row.get(7).unwrap_or(None);
+            let is_folder_document =
+                source == "memory" && source_agent.as_deref() == Some("folder");
+            if full_source_positions.contains_key(&id) {
+                if !is_folder_document {
+                    return Err(WenlanError::VectorDb(format!(
+                        "inconsistent folder document generation for source {id}"
+                    )));
+                }
+                let position = full_source_positions[&id];
+                let metadata = (
+                    source,
+                    source_agent.unwrap_or_default(),
+                    space,
+                    content_hash,
+                    version,
+                );
+                let (expected_metadata, expected_chunk_index) = full_source_metadata
+                    .get_mut(&id)
+                    .expect("a folded folder source has metadata from its first chunk");
+                if *expected_metadata != metadata {
+                    return Err(WenlanError::VectorDb(format!(
+                        "inconsistent folder document generation for source {id}"
+                    )));
+                }
+                if chunk_index != *expected_chunk_index {
+                    return Err(WenlanError::VectorDb(format!(
+                        "incomplete folder document generation for source {id}: expected chunk {}, found {chunk_index}",
+                        *expected_chunk_index
+                    )));
+                }
+                *expected_chunk_index += 1;
+                results[position].1.push('\n');
+                results[position].1.push_str(&content);
+            } else if is_folder_document {
+                if chunk_index != 0 {
+                    return Err(WenlanError::VectorDb(format!(
+                        "incomplete folder document generation for source {id}: first chunk is {chunk_index}"
+                    )));
+                }
+                full_source_metadata.insert(
+                    id.clone(),
+                    (
+                        (
+                            source,
+                            source_agent.unwrap_or_default(),
+                            space,
+                            content_hash,
+                            version,
+                        ),
+                        1,
+                    ),
+                );
+                full_source_positions.insert(id.clone(), results.len());
+                results.push((id, content));
+            } else {
+                if chunk_index != 0 {
+                    return Err(WenlanError::VectorDb(format!(
+                        "unexpected noncanonical chunk {chunk_index} for source {id}"
+                    )));
+                }
+                results.push((id, content));
+            }
         }
 
         // Document source pages store `memories.id` row keys as their
@@ -58649,6 +58777,35 @@ impl MemoryDB {
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("clear_page_staleness_at_fence: {e}")))?;
+        Ok(affected == 1)
+    }
+
+    /// Clear only the stale refresh failure marker after a successful gated
+    /// user-forced rebuild. Unlike `clear_page_staleness_at_fence`, this also
+    /// applies to an already-fresh page, and never changes its stale state.
+    pub(crate) async fn clear_page_refresh_blocked_reason_at_fence(
+        &self,
+        page_id: &str,
+        expected_version: i64,
+        fence: &PageFence,
+    ) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let affected = conn
+            .execute(
+                "UPDATE pages SET refresh_blocked_reason = NULL \
+                 WHERE id = ?1 AND version = ?2 AND refresh_blocked_reason IS NOT NULL \
+                   AND COALESCE(source_revision, 0) = ?3 AND incarnation = ?4",
+                libsql::params![
+                    page_id,
+                    expected_version,
+                    fence.source_revision,
+                    fence.incarnation.as_str()
+                ],
+            )
+            .await
+            .map_err(|e| {
+                WenlanError::VectorDb(format!("clear_page_refresh_blocked_reason_at_fence: {e}"))
+            })?;
         Ok(affected == 1)
     }
 

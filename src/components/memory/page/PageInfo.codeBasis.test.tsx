@@ -118,6 +118,20 @@ describe("PageInfo code section", () => {
     for (const note of notes) expect(note).toHaveClass("note-info-code-ai");
   });
 
+  it("says a deleted file is the next steep's, and that lost lines are lost", () => {
+    setup({
+      codeBasis: [
+        code({ path: "gone.rs", state: "unavailable", reason: "file_deleted" }),
+        code({ path: "lost.rs", state: "pending", reason: "lines_not_found" }),
+      ],
+    });
+
+    const section = screen.getByRole("region", { name: "Code this page relies on" });
+    expect(within(section).getByText("Deleted")).toBeInTheDocument();
+    expect(within(section).getByText("File deleted, the next steep updates the page")).toHaveClass("note-info-code-ai");
+    expect(within(section).getByText("The lines this page relied on are no longer in the file")).toBeInTheDocument();
+  });
+
   it("promises no look at a changed row when the daemon has no model", async () => {
     vi.mocked(getResolvedRouting).mockResolvedValue(routing("basic"));
     setup({ codeBasis: [code({ state: "pending" })] });

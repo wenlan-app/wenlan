@@ -23,7 +23,12 @@ import { RepoDocsSection } from "./RepoDocsSection";
 import { RepoWikiGithub } from "./RepoWikiGithub";
 import "./repo-wiki.css";
 
-const AGENT_NAMES: Record<RepoWikiAgent, string> = { claude: "Claude Code", codex: "Codex" };
+const AGENT_NAMES: Record<RepoWikiAgent, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  copilot: "GitHub Copilot",
+};
 const DEFAULT_DAILY: RepoWikiDaily = { enabled: false, hour: 9, agent: "claude", runs_on: "computer" };
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 

@@ -7,7 +7,6 @@ use crate::db::{
 };
 use crate::error::WenlanError;
 use crate::llm_provider::LlmProvider;
-use crate::read_scope::ReadScope;
 use crate::tuning::RefineryConfig;
 use std::sync::Arc;
 
@@ -15,7 +14,6 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct VerificationResult {
     pub entity_self_retrieval_passed: Option<bool>,
-    pub concept_self_retrieval_passed: Option<bool>,
     pub warnings: Vec<String>,
 }
 
@@ -57,48 +55,6 @@ pub async fn verify_entity(
 
     Ok(VerificationResult {
         entity_self_retrieval_passed: self_retrieval_passed,
-        concept_self_retrieval_passed: None,
-        warnings,
-    })
-}
-
-/// Run post-store verification on a newly distilled page.
-pub async fn verify_page(
-    db: &MemoryDB,
-    page_id: &str,
-    page_title: &str,
-) -> Result<VerificationResult, WenlanError> {
-    let mut warnings = Vec::new();
-
-    let self_retrieval_passed = match db
-        .search_memory(
-            page_title,
-            10,
-            None,
-            &ReadScope::Global,
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-    {
-        Ok(results) => {
-            let found = results.iter().any(|r| r.source_id == page_id);
-            if !found {
-                warnings.push(format!(
-                    "Page '{}' ({}) not found in top-10 self-retrieval results",
-                    page_title, page_id
-                ));
-            }
-            Some(found)
-        }
-        Err(_) => None,
-    };
-
-    Ok(VerificationResult {
-        entity_self_retrieval_passed: None,
-        concept_self_retrieval_passed: self_retrieval_passed,
         warnings,
     })
 }

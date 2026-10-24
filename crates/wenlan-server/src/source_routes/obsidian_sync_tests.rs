@@ -362,3 +362,31 @@ async fn background_pass_stores_a_bounded_number_of_notes() {
         .expect("second pass succeeds");
     assert_eq!(stored_ids(&db).await.len(), total);
 }
+
+/// Wenlan's pages folder moved into the vault: its pages and source stubs
+/// are Wenlan's own output, never read back as the person's notes.
+#[tokio::test]
+async fn a_pages_folder_inside_the_vault_is_not_read_as_notes() {
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let vault = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(vault.path().join(".obsidian")).unwrap();
+    let mine = write(vault.path(), "mine.md", &note("Mine"));
+    let pages = vault.path().join("Wenlan");
+    write(
+        &pages,
+        "_sources/mem_1.md",
+        "---\ntype: source\ntitle: \"mem_1\"\norigin_stub: \"mem_1\"\n---\n\nA source stub.\n",
+    );
+    write(&pages, "page.md", &note("Page"));
+    wenlan_core::config::save_config(&Config {
+        knowledge_path: Some(pages.clone()),
+        ..Config::default()
+    })
+    .unwrap();
+
+    assert_eq!(
+        super::scan_notes(&SourceType::Obsidian, vault.path()),
+        vec![mine]
+    );
+}

@@ -33,6 +33,11 @@ dirs = { workspace = true }
 log = { workspace = true }
 uuid = { workspace = true }
 pdf-extract = { workspace = true }
+# The same lopdf pdf-extract parses with (one version in the graph), so
+# sources::directory can load the Document itself and scope Form XObject font
+# names before handing it to pdf_extract::output_doc (#617). default-features
+# off: pdf-extract enables what it needs.
+lopdf = { version = "0.42", default-features = false }
 zip = { workspace = true }
 quick-xml = "0.41"
 
@@ -100,6 +105,12 @@ unicode-properties = "0.1"
 # graph; no default features because only the event parser is used.
 pulldown-cmark = { version = "0.13.3", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+# `renameat2(RENAME_NOREPLACE)` / `renamex_np(RENAME_EXCL)` for the export
+# writers' non-replacing rename. Already in the lock file at this version via
+# cap-std, so it adds no second copy of rustix to the graph.
+rustix = { version = "1.1.4", features = ["fs"] }
+
 [target.'cfg(windows)'.dependencies]
 fastembed = { workspace = true, features = ["ort-load-dynamic"] }
 
@@ -135,10 +146,6 @@ temp-env = { version = "0.3", features = ["async_closure"] }
 # test-util enables tokio::test(start_paused) for deterministic timeout tests
 # (the `full` feature deliberately excludes test-util). Test-only.
 tokio = { workspace = true, features = ["test-util"] }
-# lopdf generates byte-valid PDF fixtures for sources::directory tests (the same
-# lopdf pdf-extract parses with). default-features=false keeps it to the writer
-# path only, so no new crates enter the graph (mirrors the tokenizers/tempfile note).
-lopdf = { version = "0.38", default-features = false }
 # R4 test-support source teeth parse Rust syntax and retain stable source
 # locations. Exact pins keep the manifest identities deterministic.
 syn = { version = "=2.0.117", features = ["full", "visit"] }

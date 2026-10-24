@@ -97,8 +97,11 @@ For each page:
    `source_removed` is always rewritten.
    When `stale_reason` is `code_changed`, the claim's `code` shows the lines
    as they read now and `what_changed` says what the page should now say.
-   If, having read the code, the page still agrees with it, call
-   `still_accurate`; otherwise rewrite.
+   An entry with `deleted: true` is a file that was deleted from the
+   repository: its `excerpt` shows the lines as they were, and the rewrite
+   drops or corrects what only they supported. If, having read the code, the
+   page still agrees with it, call `still_accurate`; otherwise rewrite.
+   Either way Wenlan then stops relying on the deleted file.
 4. Rewrite it yourself, with your main model. Never let the small model write
    the page. Use only the numbered sources, cite every claim with its
    number like `[2]`, keep the title, headings and language, and drop

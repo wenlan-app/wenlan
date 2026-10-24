@@ -433,7 +433,7 @@ pub async fn claim_new(
     // stand alone (a long chat, a full vault note).
     if sources.len() < MIN_SOURCES && total_chars < MIN_SINGLE_SOURCE_CHARS {
         return Err(SteepError::Invalid(format!(
-            "too little to make a note from ({total_chars} characters in one source). Group              it with related items, or leave it for later"
+            "too little to make a note from ({total_chars} characters in one source). Group it with related items, or leave it for later"
         )));
     }
 

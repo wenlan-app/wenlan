@@ -1028,11 +1028,12 @@ const NODE_RING_COLOR: Record<TaskStatus, string> = {
  *  else). Rows still resolve concurrently and in whatever order they
  *  finish; this only decides what each row is allowed to SHOW.
  *
- *  Rule: a row's terminal state ("done" or "failed") is only revealed once
- *  every row above it is also terminal. A terminal row with a
- *  still-pending/running row above it displays as "running" instead — a
- *  failed row above never blocks the reveal, since "failed" is terminal
- *  too. Non-terminal statuses always display unchanged.
+ *  Rule: a row's "done" is only revealed once every row above it is also
+ *  terminal. A done row with a still-pending/running row above it displays
+ *  as "running" instead — a failed row above never blocks the reveal, since
+ *  "failed" is terminal too. A failed row is never held back: its error text
+ *  and Retry already show, and "Setting up…" beside them contradicts both.
+ *  Non-terminal statuses always display unchanged.
  *
  *  Pure and exported so the rule is independently testable. This is a
  *  RENDER-ONLY transform: the rail draws from its output, but every piece
@@ -1050,7 +1051,7 @@ export function displayedStatuses(
   for (const row of rows) {
     const real = statuses[row.id] ?? "pending";
     const isTerminal = real === "done" || real === "failed";
-    out[row.id] = isTerminal && !precedingAllTerminal ? "running" : real;
+    out[row.id] = real === "done" && !precedingAllTerminal ? "running" : real;
     precedingAllTerminal = precedingAllTerminal && isTerminal;
   }
   return out;

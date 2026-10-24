@@ -309,10 +309,15 @@ async fn release_gives_the_items_back() {
 async fn one_short_item_is_too_little_for_a_note_but_one_long_one_is_enough() {
     let (db, _dir) = test_db().await;
     capture(&db, "t_short", BREAD_1).await;
-    assert!(matches!(
-        claim_new(&db, &ReadScope::Global, &["t_short".into()]).await,
-        Err(SteepError::Invalid(_))
-    ));
+    let Err(SteepError::Invalid(message)) =
+        claim_new(&db, &ReadScope::Global, &["t_short".into()]).await
+    else {
+        panic!("one short item must be refused as too little");
+    };
+    assert!(
+        !message.contains("  "),
+        "the refusal must read with single spaces: {message:?}"
+    );
     capture(&db, "t_long", &BREAD_1.repeat(20)).await;
     assert!(claim_new(&db, &ReadScope::Global, &["t_long".into()])
         .await

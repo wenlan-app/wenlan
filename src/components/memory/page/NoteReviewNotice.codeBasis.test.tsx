@@ -203,6 +203,27 @@ describe("NoteReviewNotice with a code basis", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
+  it("leaves a deleted file to the steep, which updates the page", async () => {
+    const { container, client } = renderNotice({
+      ...basePage,
+      code_basis: [row({ state: "unavailable", reason: "file_deleted" })],
+    });
+
+    await waitFor(() => expect(listPendingRevisions).toHaveBeenCalled());
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("asks a person about lines that are no longer in the file, even with a model in the background", async () => {
+    vi.mocked(getResolvedRouting).mockResolvedValue(routing("anthropic"));
+    renderNotice({ ...basePage, code_basis: [row({ reason: "lines_not_found" })] });
+
+    await waitFor(() => expect(getResolvedRouting).toHaveBeenCalled());
+    fireEvent.click(await screen.findByRole("button", { name: "Review" }));
+    const dialog = await screen.findByRole("dialog", { name: "src/parser.rs lines 10–24" });
+    expect(within(dialog).getByText("The lines this page relied on are no longer in the file")).toBeInTheDocument();
+  });
+
   it("names a missing file in the one line", async () => {
     renderNotice({ ...basePage, code_basis: [row({ state: "unavailable", reason: "file_missing" })] });
 

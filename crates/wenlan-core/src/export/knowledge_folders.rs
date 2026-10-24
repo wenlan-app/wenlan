@@ -52,6 +52,7 @@ fn reserved_directory(name: &str) -> bool {
     name.starts_with('.')
         || name.eq_ignore_ascii_case("archive")
         || name.eq_ignore_ascii_case("_sources")
+        || name.eq_ignore_ascii_case(crate::attachments::ATTACHMENTS_DIR)
 }
 
 fn validate_component(name: &str) -> Result<(), WenlanError> {
@@ -318,6 +319,7 @@ pub(super) fn read_state_strict(control: &Dir) -> Result<KnowledgeState, WenlanE
                     )
                 })
                 .collect(),
+            ..KnowledgeState::default()
         }
     } else {
         serde_json::from_slice::<KnowledgeState>(&bytes)

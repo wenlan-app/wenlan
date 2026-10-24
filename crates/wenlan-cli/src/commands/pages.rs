@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! `wenlan pages [query]` — browse distilled pages, or open one in your editor.
 //!
-//! Local by default: reads the page markdown files the daemon writes under
-//! `knowledge_path_or_default()` (default `~/.wenlan/pages/`) and hands the
-//! match to the OS default `.md` app via `open`/`xdg-open`/`start`. No daemon
-//! round-trip and no agent turn, so it stays instant and works offline. This
-//! reads the user's own local page files, not daemon DB state, so it does not
-//! cross the "CLI talks HTTP only" boundary. Only `--print` talks to the
-//! daemon: it finds the page file the same way, then fetches the page body and
-//! its sources over HTTP.
+//! Reads the page markdown files the daemon writes and hands the match to the
+//! OS default `.md` app via `open`/`xdg-open`/`start`. The folder comes from
+//! the daemon the CLI talks to (`GET /api/knowledge/path`, so `WENLAN_HOST`
+//! selects whose pages are shown; the default is `~/.wenlan/pages/`), and the
+//! files are then read from disk. A stopped default daemon falls back to the
+//! local config's folder, which is the one it uses; another daemon that cannot
+//! be reached is an error, like every other read command.
+//! `--print` additionally fetches the page body and its sources over HTTP.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -249,6 +249,14 @@ fn collapse_by_title(pages: &[PageEntry]) -> Vec<(String, usize)> {
         .collect()
 }
 
+fn is_connect_failure(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_connect)
+    })
+}
+
 pub async fn run(
     client: &WenlanClient,
     format: ResolvedFormat,
@@ -260,7 +268,22 @@ pub async fn run(
 ) -> Result<()> {
     // An empty/whitespace query (e.g. a skill passing "" for no-arg) means "list".
     let query = query.filter(|q| !q.trim().is_empty());
-    let dir = wenlan_core::config::load_config().knowledge_path_or_default();
+    let dir = match client.knowledge_path().await {
+        Ok(response) => PathBuf::from(response.path),
+        // The default daemon keeps its pages where the local config says, so
+        // its pages stay listable while it is stopped, as before.
+        Err(error) if client.is_default_host() && is_connect_failure(&error) => {
+            wenlan_core::config::load_config().knowledge_path_or_default()
+        }
+        Err(error) => return Err(error),
+    };
+    if !client.is_local() && !dir.is_dir() {
+        anyhow::bail!(
+            "the daemon at {} keeps its pages in {}, which this machine cannot read",
+            client.base_url(),
+            dir.display()
+        );
+    }
     let pages = read_pages(&dir);
 
     match query {
@@ -290,7 +313,14 @@ pub async fn run(
                         "total_titles": total_titles,
                     }))?;
                 }
-                ResolvedFormat::Table => print_list(shown, total_titles, total_pages, &dir),
+                ResolvedFormat::Table => {
+                    // The default daemon's folder is the familiar one; name it
+                    // whenever WENLAN_HOST selects another daemon.
+                    if !client.is_default_host() {
+                        eprintln!("pages of {}: {}", client.base_url(), dir.display());
+                    }
+                    print_list(shown, total_titles, total_pages, &dir)
+                }
             }
         }
         // Query -> open the match.

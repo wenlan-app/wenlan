@@ -72,7 +72,14 @@ fn assess_code_basis(
                 unavailable += 1;
                 true
             }
-            CodeBasisVerdict::Unchanged { .. } | CodeBasisVerdict::Moved { .. } => false,
+            // A renamed file the lines followed: changed lines still wait.
+            CodeBasisVerdict::Renamed { anchor: None, .. } => {
+                pending += 1;
+                true
+            }
+            CodeBasisVerdict::Unchanged { .. }
+            | CodeBasisVerdict::Moved { .. }
+            | CodeBasisVerdict::Renamed { .. } => false,
         };
         if bad {
             drifted.insert(row.page_id.as_str(), true);

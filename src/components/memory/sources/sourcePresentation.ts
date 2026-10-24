@@ -19,6 +19,14 @@ export type NoteApp = "obsidian" | "logseq";
 export function isNoteApp(value: string | null | undefined): value is NoteApp {
   return value === "obsidian" || value === "logseq";
 }
+/** What to print for a stored source id such as `obsidian-vault::/Users/me/vault/Note.md::0`:
+ *  the file name, never the internal id. Plain ids and links are returned as they are. */
+export function sourceLocatorLabel(locator: string): string {
+  const separator = locator.indexOf("::");
+  if (separator < 0) return locator;
+  const path = locator.slice(separator + 2).replace(/::\d+$/, "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return path.split("/").pop() || locator;
+}
 export function isSourceApp(value: string): value is SourceApp {
   return Object.prototype.hasOwnProperty.call(SOURCE_APP_NAMES, value);
 }

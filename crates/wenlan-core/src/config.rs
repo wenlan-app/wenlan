@@ -109,6 +109,15 @@ pub struct Config {
     /// their behavior; a new install starts with it on.
     #[serde(default)]
     pub lock_my_pages: bool,
+    /// A pages folder the person picked, moved into at the next daemon start
+    /// by `pages_folder::apply_pending_move`, which then sets
+    /// `knowledge_path` and clears this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_knowledge_path: Option<PathBuf>,
+    /// Why the last pages folder move stopped, for the app to say. Cleared by
+    /// the next move that succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages_folder_move_error: Option<String>,
 }
 
 /// Generate a source ID slug from a directory path (last component, lowercased, sanitized).

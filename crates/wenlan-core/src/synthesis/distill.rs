@@ -7,7 +7,7 @@
 
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
-use crate::llm_provider::{LlmProvider, LlmRequest};
+use crate::llm_provider::{LlmBackend, LlmError, LlmProvider, LlmRequest};
 use crate::post_write::{page_write, PageWrite};
 use crate::prompts::PromptRegistry;
 use crate::refinery::helpers::{
@@ -119,6 +119,85 @@ pub(crate) async fn build_existing_titles_hint(
         "Existing pages you may reference with exact-match wikilinks: {formatted}\n\
          Use these labels verbatim when linking; only invent a new label \
          when the topic isn't already covered.\n\n"
+    )
+}
+
+/// Keep refresh-time wikilink suggestions grounded in the supplied sources or
+/// explicitly linked basis notes. Titles are navigation labels only; matching
+/// a title does not make that page evidence for the synthesis.
+async fn build_refresh_titles_hint(
+    db: &MemoryDB,
+    topic: &str,
+    workspace: Option<&str>,
+    memories_block: &str,
+) -> String {
+    let capped_topic: String = topic.chars().take(PAGE_TOPIC_CHAR_CAP).collect();
+    let mut titles = db
+        .list_relevant_active_page_titles(&capped_topic, workspace, EXISTING_TITLES_HINT_LIMIT)
+        .await
+        .unwrap_or_default();
+    if titles.is_empty() {
+        titles = db
+            .list_active_page_titles_scoped(workspace, EXISTING_TITLES_HINT_LIMIT)
+            .await
+            .unwrap_or_default();
+    }
+    let context = memories_block.to_lowercase();
+    titles.retain(|(_, title)| contains_whole_title(&context, title));
+    if titles.is_empty() {
+        return String::new();
+    }
+    let titles = filter_page_refs(db, &TruthGrant::Automatic, titles, |item| item.0.as_str())
+        .await
+        .unwrap_or_default();
+    if titles.is_empty() {
+        return String::new();
+    }
+    let formatted = titles
+        .iter()
+        .map(|(_, title)| {
+            let capped: String = title.chars().take(EXISTING_TITLE_CHAR_CAP).collect();
+            format!("[[{capped}]]")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Page titles mentioned in this page's sources or linked basis (link labels only, not evidence): {formatted}\n\n"
+    )
+}
+
+/// Case-insensitive whole-title mention test. Unicode letters and digits are
+/// word characters, so a short title such as "AI" does not match inside
+/// "paid" while `[[AI]]` remains a valid mention.
+fn contains_whole_title(context: &str, title: &str) -> bool {
+    let title = title.to_lowercase();
+    if title.is_empty() {
+        return false;
+    }
+    let title_chars: Vec<char> = title.chars().collect();
+    if title_chars.len() >= 2 && title_chars.iter().all(|ch| is_han(*ch)) {
+        // Han titles are commonly written directly next to other Han text,
+        // without spaces or punctuation to establish word boundaries.
+        return context.contains(&title);
+    }
+    context.match_indices(&title).any(|(start, matched)| {
+        let end = start + matched.len();
+        let left_is_word = context[..start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric);
+        let right_is_word = context[end..]
+            .chars()
+            .next()
+            .is_some_and(char::is_alphanumeric);
+        !left_is_word && !right_is_word
+    })
+}
+
+fn is_han(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0x20000..=0x2FA1F
     )
 }
 
@@ -239,7 +318,9 @@ pub(crate) async fn refine_clusters_with_llm(
                                             if merged_tokens > token_limit {
                                                 log::info!(
                                                     "[refine] skipping merge for '{}' — merged tokens {} > limit {}",
-                                                    entity, merged_tokens, token_limit
+                                                    entity,
+                                                    merged_tokens,
+                                                    token_limit
                                                 );
                                             } else {
                                                 // Merge: combine all into the first
@@ -660,7 +741,9 @@ async fn distill_one_cluster_with_tuning(
             }
             log::info!(
                 "[distill] cluster '{}' attached {} sources to existing page '{}' (scoped match), skipping new-page synth",
-                topic, cluster.source_ids.len(), matched.title
+                topic,
+                cluster.source_ids.len(),
+                matched.title
             );
             return Ok(None);
         }
@@ -1287,8 +1370,9 @@ pub struct RefreshOutcome {
     pub acknowledged: bool,
     /// Id of the staged revision card, present iff `gated`.
     pub revision_card_id: Option<String>,
-    /// Why the synthesis was discarded without a write (today: the fail-closed
-    /// citation verification gate). Also persisted on
+    /// Why the synthesis was discarded without a write (for example, failed
+    /// citation verification or source context exceeding the model input
+    /// budget). Also persisted on
     /// `pages.refresh_blocked_reason` so page reads can surface it; `None` on
     /// every other outcome, including the other no-op early returns.
     pub discard_reason: Option<String>,
@@ -1375,7 +1459,8 @@ pub(crate) enum CandidateOutcome {
     Unavailable,
 }
 
-/// Cap on source text length embedded in one numbered source entry.
+/// Limit for compact secondary source previews. Candidate synthesis and its
+/// citation verifier intentionally use full numbered source text.
 pub(crate) const CANDIDATE_MEM_SNIPPET_CAP: usize = 800;
 
 /// Cap on one basis note's text embedded in the "notes this note relies on"
@@ -1407,6 +1492,269 @@ fn build_basis_context_block(bases: &[crate::db::BasisContext]) -> String {
     block
 }
 
+/// Input tokens one page-update request may use. On-device models also keep
+/// room for the reply inside their fixed context window.
+fn refresh_input_budget(llm: &dyn LlmProvider) -> usize {
+    if llm.backend() == LlmBackend::OnDevice {
+        llm.synthesis_token_limit().min(
+            (llm.context_size() as usize).saturating_sub(llm.recommended_max_output() as usize),
+        )
+    } else {
+        llm.synthesis_token_limit()
+    }
+}
+
+/// One token per three UTF-8 bytes over the complete system and user prompts.
+fn estimate_prompt_tokens(system_prompt: &str, user_prompt: &str) -> usize {
+    system_prompt
+        .len()
+        .saturating_add(user_prompt.len())
+        .div_ceil(3)
+}
+
+fn refresh_memories_block(
+    numbered: &[crate::citations::NumberedSource],
+    basis_block: &str,
+) -> String {
+    [
+        crate::citations::build_numbered_block_full(numbered),
+        basis_block.to_string(),
+    ]
+    .into_iter()
+    .filter(|block| !block.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+/// Most model calls one page update may spend reading long sources in parts.
+/// A local model takes tens of seconds per call, so past this the update is
+/// reported as blocked rather than tying up the model for many minutes.
+pub(crate) const REFRESH_SOURCE_PART_CALL_CAP: usize = 24;
+
+/// Reply cap for one part's notes.
+const REFRESH_SOURCE_NOTES_MAX_TOKENS: u32 = 512;
+
+const REFRESH_SOURCE_NOTHING_RELEVANT: &str = "(nothing relevant)";
+
+/// Replace the longest sources in `sources` with in-order notes of their facts
+/// until the writer's prompt fits `input_budget`. `fixed_bytes` is every prompt
+/// byte that is not source text. Returns `Ok(Err(reason))` when the sources
+/// cannot be made to fit; model errors other than an oversized input propagate.
+async fn read_long_sources_in_parts(
+    llm: &dyn LlmProvider,
+    topic: &str,
+    sources: &mut [crate::citations::NumberedSource],
+    fixed_bytes: usize,
+    input_budget: usize,
+) -> Result<Result<(), String>, WenlanError> {
+    let notes_prompt = crate::prompts::defaults::REFRESH_SOURCE_NOTES;
+    // A part, its framing and the notes prompt must fit the same budget; keep
+    // a quarter spare because the byte estimate is not the model's tokenizer.
+    let framing_bytes = notes_prompt.len() + topic.len() + 96;
+    let part_bytes = input_budget.saturating_mul(3).saturating_sub(framing_bytes) / 4 * 3;
+    if part_bytes < 1_024 {
+        return Ok(Err(format!(
+            "source context exceeds model input budget (limit {input_budget} tokens is too small to read long sources in parts)"
+        )));
+    }
+    let fits = |sources: &[crate::citations::NumberedSource]| {
+        let source_bytes: usize = sources.iter().map(|source| source.text.len()).sum();
+        (fixed_bytes + source_bytes).div_ceil(3) <= input_budget
+    };
+    let mut longest_first: Vec<usize> = (0..sources.len()).collect();
+    longest_first.sort_by_key(|&i| std::cmp::Reverse(sources[i].text.len()));
+    let mut calls = 0usize;
+    for i in longest_first {
+        if fits(sources) {
+            break;
+        }
+        let parts = split_source_parts(&sources[i].text, part_bytes);
+        if calls + parts.len() > REFRESH_SOURCE_PART_CALL_CAP {
+            return Ok(Err(format!(
+                "source context exceeds model input budget and is too long to read in parts (more than {REFRESH_SOURCE_PART_CALL_CAP} parts; limit {input_budget} tokens)"
+            )));
+        }
+        let mut notes = Vec::with_capacity(parts.len());
+        for (k, part) in parts.iter().enumerate() {
+            calls += 1;
+            let user_prompt = format!(
+                "Topic: {topic}\n\nPart {} of {} of source [{}]:\n{part}",
+                k + 1,
+                parts.len(),
+                sources[i].index
+            );
+            let raw = match llm
+                .generate(LlmRequest {
+                    system_prompt: Some(notes_prompt.to_string()),
+                    user_prompt,
+                    max_tokens: llm
+                        .recommended_max_output()
+                        .min(REFRESH_SOURCE_NOTES_MAX_TOKENS),
+                    temperature: 0.1,
+                    label: Some("refresh_source_notes".into()),
+                    timeout_secs: None,
+                })
+                .await
+            {
+                Ok(raw) => raw,
+                Err(error @ LlmError::InputContextTooLarge { .. }) => {
+                    return Ok(Err(format!(
+                        "source context exceeds model input budget ({error})"
+                    )));
+                }
+                Err(error) => {
+                    return Err(WenlanError::Llm(format!(
+                        "refresh_source_notes LLM: {error}"
+                    )))
+                }
+            };
+            let part_notes = crate::llm_provider::strip_think_tags(&raw)
+                .trim()
+                .to_string();
+            if !part_notes.is_empty() && part_notes != REFRESH_SOURCE_NOTHING_RELEVANT {
+                notes.push(part_notes);
+            }
+            // A small model's notes keep an amendment's new value but can drop
+            // the words that make it one ("cancelled", the date), and then the
+            // writer keeps the decision it replaced. Carry those lines as written.
+            let amendments = amendment_lines(part);
+            if !amendments.is_empty() {
+                notes.push(amendments.join("\n"));
+            }
+        }
+        log::info!(
+            "[refresh] read source [{}] in {} parts for '{topic}'",
+            sources[i].index,
+            parts.len()
+        );
+        sources[i].text = if notes.is_empty() {
+            "(This long source has nothing on this topic.)".to_string()
+        } else {
+            format!(
+                "(Facts noted from this long source, read in {} parts, in order.)\n{}",
+                parts.len(),
+                notes.join("\n")
+            )
+        };
+    }
+    if fits(sources) {
+        Ok(Ok(()))
+    } else {
+        Ok(Err(format!(
+            "source context exceeds model input budget even after reading long sources in parts (limit {input_budget} tokens)"
+        )))
+    }
+}
+
+/// Words that mark a statement as changing an earlier one.
+const AMENDMENT_CUES: &[&str] = &[
+    "amend",
+    "cancel",
+    "supersede",
+    "rescind",
+    "revoke",
+    "reverse",
+    "withdrawn",
+    "no longer",
+    "instead of",
+    "correction",
+    "corrected",
+    "overrid",
+    "changed to",
+    "修訂",
+    "修正",
+    "更正",
+    "取消",
+    "撤回",
+    "撤銷",
+    "撤销",
+    "改為",
+    "改为",
+    "改成",
+    "不再",
+    "作廢",
+    "作废",
+    "取代",
+];
+
+/// Most bytes of verbatim amendment text carried from one part.
+const AMENDMENT_LINES_BYTE_CAP: usize = 2_000;
+
+/// The sentences of `part` that amend, cancel or correct something, verbatim
+/// and in order. Lines are split into sentences so one long paragraph does not
+/// pull in everything around the amendment.
+fn amendment_lines(part: &str) -> Vec<&str> {
+    let mut kept = Vec::new();
+    let mut bytes = 0usize;
+    for line in part.lines() {
+        for sentence in sentences(line) {
+            let sentence = sentence.trim();
+            if sentence.is_empty() {
+                continue;
+            }
+            let lower = sentence.to_lowercase();
+            if !AMENDMENT_CUES.iter().any(|cue| lower.contains(cue)) {
+                continue;
+            }
+            if bytes + sentence.len() > AMENDMENT_LINES_BYTE_CAP {
+                return kept;
+            }
+            bytes += sentence.len();
+            kept.push(sentence);
+        }
+    }
+    kept
+}
+
+/// Split one line into sentences: after `.`, `!` or `?` followed by
+/// whitespace (so "$48.5" and "v0.20" stay whole), and after `。！？`.
+fn sentences(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    let mut chars = line.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        let end = i + ch.len_utf8();
+        let ends = match ch {
+            '。' | '！' | '？' => true,
+            '.' | '!' | '?' => chars.peek().is_none_or(|(_, next)| next.is_whitespace()),
+            _ => false,
+        };
+        if ends {
+            out.push(&line[start..end]);
+            start = end;
+        }
+    }
+    if start < line.len() {
+        out.push(&line[start..]);
+    }
+    out
+}
+
+/// Split `text` into parts of at most `max_bytes`, at line ends where possible
+/// and always on a character boundary.
+fn split_source_parts(text: &str, max_bytes: usize) -> Vec<&str> {
+    let max_bytes = max_bytes.max(4);
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while rest.len() > max_bytes {
+        let mut cut = max_bytes;
+        while !rest.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        if let Some(line_end) = rest[..cut].rfind('\n') {
+            if line_end + 1 >= cut / 2 {
+                cut = line_end + 1;
+            }
+        }
+        parts.push(&rest[..cut]);
+        rest = &rest[cut..];
+    }
+    if !rest.trim().is_empty() || parts.is_empty() {
+        parts.push(rest);
+    }
+    parts
+}
+
 /// Synthesize one candidate body from `source_ids` under `system_prompt` and
 /// verify its per-claim `[N]` citations — the shared synthesis/verification
 /// core of [`refresh_page_with_prompt`], factored out so first-time creation
@@ -1428,12 +1776,14 @@ pub(crate) async fn synthesize_candidate_body(
     let memories = if source_ids.is_empty() {
         Vec::new()
     } else {
-        db.get_memory_contents_by_ids(source_ids).await?
+        db.get_refresh_source_contents_by_ids(source_ids).await?
     };
     if memories.is_empty() && bases.is_empty() {
         log::warn!("[refresh] page '{title}' sources are all orphaned, skipping");
         return Ok(CandidateOutcome::Unavailable);
     }
+
+    let input_budget = refresh_input_budget(llm.as_ref());
 
     // Resolve each source's typed kind (spec §5.1) so a folder-doc or webpage
     // source cited here carries external_file / external_url, not the
@@ -1450,23 +1800,58 @@ pub(crate) async fn synthesize_candidate_body(
                 .cloned()
                 .unwrap_or_else(|| "memory".to_string()),
             locator: id.clone(),
-            text: content.chars().take(CANDIDATE_MEM_SNIPPET_CAP).collect(),
+            // Keep full source text here: citation verification reads these
+            // entries, so truncating them would hide later amendments.
+            text: content.clone(),
         })
         .collect();
     // The notes this note relies on are context, never evidence: they are not
     // numbered, never enter the citation store, and the gate below does not
     // count them.
-    let memories_block = [
-        crate::citations::build_numbered_block(&numbered),
-        build_basis_context_block(bases),
-    ]
-    .into_iter()
-    .filter(|block| !block.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n\n");
-    let user_prompt = build_page_compile_user_prompt(db, title, workspace, &memories_block).await;
+    let basis_block = build_basis_context_block(bases);
+    let memories_block = refresh_memories_block(&numbered, &basis_block);
+    // Refresh only from this page's numbered sources and explicitly linked
+    // basis notes. Preserve exact wikilink labels when those contexts mention
+    // them, but do not expose unrelated active-page titles.
+    let capped_topic: String = title.chars().take(PAGE_TOPIC_CHAR_CAP).collect();
+    let titles_hint = build_refresh_titles_hint(db, title, workspace, &memories_block).await;
+    let mut user_prompt = format!("{titles_hint}Topic: {capped_topic}\n\n{memories_block}");
 
-    let raw = llm
+    // This is deliberately a byte-based estimate, not a tokenizer: count the
+    // complete system and user prompts, then budget one token per three UTF-8
+    // bytes. The on-device provider adds an exact tokenizer check as a final
+    // guard. When the complete sources do not fit, the longest ones are read
+    // in parts and the writer gets their facts in order; the citation check
+    // still reads every source in full. Never silently drop a source's tail.
+    if estimate_prompt_tokens(system_prompt, &user_prompt) > input_budget {
+        let source_bytes: usize = numbered.iter().map(|source| source.text.len()).sum();
+        let fixed_bytes = system_prompt.len() + user_prompt.len() - source_bytes;
+        let mut prompt_sources = numbered.clone();
+        if let Err(discard_reason) = read_long_sources_in_parts(
+            llm.as_ref(),
+            &capped_topic,
+            &mut prompt_sources,
+            fixed_bytes,
+            input_budget,
+        )
+        .await?
+        {
+            log::warn!("[refresh] page '{title}': {discard_reason}");
+            return Ok(CandidateOutcome::Discarded { discard_reason });
+        }
+        let memories_block = refresh_memories_block(&prompt_sources, &basis_block);
+        user_prompt = format!("{titles_hint}Topic: {capped_topic}\n\n{memories_block}");
+        let estimated_input_tokens = estimate_prompt_tokens(system_prompt, &user_prompt);
+        if estimated_input_tokens > input_budget {
+            return Ok(CandidateOutcome::Discarded {
+                discard_reason: format!(
+                    "source context exceeds model input budget even after reading long sources in parts (estimated {estimated_input_tokens} tokens from UTF-8 bytes; limit {input_budget})"
+                ),
+            });
+        }
+    }
+
+    let raw = match llm
         .generate(LlmRequest {
             system_prompt: Some(system_prompt.to_string()),
             user_prompt,
@@ -1476,7 +1861,15 @@ pub(crate) async fn synthesize_candidate_body(
             timeout_secs: None,
         })
         .await
-        .map_err(|e| WenlanError::Llm(format!("refresh_page LLM: {e}")))?;
+    {
+        Ok(raw) => raw,
+        Err(error @ LlmError::InputContextTooLarge { .. }) => {
+            return Ok(CandidateOutcome::Discarded {
+                discard_reason: format!("source context exceeds model input budget ({error})"),
+            });
+        }
+        Err(error) => return Err(WenlanError::Llm(format!("refresh_page LLM: {error}"))),
+    };
 
     let body = crate::llm_provider::strip_think_tags(&raw)
         .trim()
@@ -1493,8 +1886,8 @@ pub(crate) async fn synthesize_candidate_body(
     // Fail-closed (spec §7): discard when per-claim citation verification
     // verifies zero claims or leaves a majority unverified. The previous
     // whole-body sentence-majority scorer false-rejected thin-source pages:
-    // DISTILL_PAGE/OVERVIEW_SUMMARY require elaboration and Open Questions
-    // sentences that carry no markers by design.
+    // overview summaries and connective prose can contain uncited sentences
+    // by design.
     // A note built only from other notes has no memory citations to check, so
     // the body-length and no-change rules downstream are its only gates.
     let basis_only = numbered.is_empty();
@@ -1723,6 +2116,8 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         if candidate.content == page.content && old_sources == new_sources {
             // Nothing to change: no card, and nothing is confirmed. Only the
             // compile watermark advances.
+            db.clear_page_refresh_blocked_reason_at_fence(page_id, page.version, &page_fence)
+                .await?;
             db.clear_page_staleness_at_fence(page_id, page.version, &page_fence)
                 .await?;
             return Ok(RefreshOutcome {
@@ -1748,6 +2143,10 @@ pub(crate) async fn refresh_page_with_candidate_sources(
             );
             return Ok(RefreshOutcome::default());
         };
+        if staged.gated {
+            db.clear_page_refresh_blocked_reason_at_fence(page_id, page.version, &page_fence)
+                .await?;
+        }
         db.clear_page_staleness_at_fence(page_id, page.version, &page_fence)
             .await?;
         return Ok(RefreshOutcome {
@@ -1792,6 +2191,14 @@ pub(crate) async fn refresh_page_with_candidate_sources(
         .await?
     };
 
+    if user_forced_write && result.gated {
+        // A successful proposal supersedes an earlier synthesis failure even
+        // when the page was already fresh. Clear only the fenced error marker;
+        // the review gate still leaves page content and ownership untouched.
+        db.clear_page_refresh_blocked_reason_at_fence(page_id, page.version, &page_fence)
+            .await?;
+    }
+
     // The one-line summary is derived from the body, so a rebuilt body gets
     // a rebuilt summary; otherwise the pull quote outlives the prose it
     // summarised. A gated or unchanged outcome leaves the stored page alone.
@@ -1833,12 +2240,12 @@ pub async fn deep_distill_single(
         Some(_) => {
             return Err(WenlanError::Llm(
                 "LLM not available for re-distillation".into(),
-            ))
+            ));
         }
         None => {
             return Err(WenlanError::Llm(
                 "No LLM available for re-distillation".into(),
-            ))
+            ));
         }
     };
 
@@ -1872,12 +2279,12 @@ pub async fn force_redistill_single(
         Some(_) => {
             return Err(WenlanError::Llm(
                 "LLM not available for re-distillation".into(),
-            ))
+            ));
         }
         None => {
             return Err(WenlanError::Llm(
                 "No LLM available for re-distillation".into(),
-            ))
+            ));
         }
     };
 
@@ -2045,6 +2452,71 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         }
     }
 
+    struct BoundedRecordingProvider {
+        response: String,
+        input_limit: usize,
+        reject_physical_context: bool,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl BoundedRecordingProvider {
+        fn new(response: impl Into<String>, input_limit: usize) -> Self {
+            Self {
+                response: response.into(),
+                input_limit,
+                reject_physical_context: false,
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn rejecting_physical_context() -> Self {
+            Self {
+                response: String::new(),
+                input_limit: 100_000,
+                reject_physical_context: true,
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.prompts.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for BoundedRecordingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            self.prompts.lock().unwrap().push(request.user_prompt);
+            if self.reject_physical_context {
+                return Err(LlmError::InputContextTooLarge {
+                    input_tokens: 7_500,
+                    input_limit: 6_144,
+                });
+            }
+            Ok(self.response.clone())
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "bounded-recording"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "mock"
+        }
+
+        fn synthesis_token_limit(&self) -> usize {
+            self.input_limit
+        }
+    }
+
     #[async_trait::async_trait]
     impl LlmProvider for PromptRecordingProvider {
         async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
@@ -2145,12 +2617,30 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         // refine-clusters "unlinked" grouping key — with the gate ON, this
         // group has 2+ clusters and `refine_clusters_with_llm` would fire.
         let db_topic: Vec<(&str, &str)> = vec![
-            ("topic_db", "The wenlan daemon persists document chunks in a libSQL table using an F32_BLOB column for the 768-dimension embedding vector, with DiskANN indexing enabling fast approximate nearest-neighbor search across the whole memory store."),
-            ("topic_db", "libSQL's FTS5 virtual table stays synchronized with the chunks table through SQL triggers, so every insert or update to a chunk automatically refreshes its full-text search index without extra application code."),
-            ("topic_db", "Hybrid retrieval combines the vector similarity score and the FTS5 rank using reciprocal rank fusion, blending semantic and lexical signals into one ranked result list for each search query."),
-            ("topic_bread", "A sourdough levain needs to be fed with equal parts flour and water twice a day to stay active enough to leaven a loaf, and it should roughly double in volume within four to six hours after each feeding."),
-            ("topic_bread", "Increasing the hydration of a bread dough to around eighty percent produces a much more open, irregular crumb structure once it is baked, though it also makes the dough considerably harder to shape by hand."),
-            ("topic_bread", "Kneading a wheat dough develops long gluten strands that trap the carbon dioxide bubbles produced by yeast fermentation, which is what allows the loaf to rise instead of collapsing in the oven."),
+            (
+                "topic_db",
+                "The wenlan daemon persists document chunks in a libSQL table using an F32_BLOB column for the 768-dimension embedding vector, with DiskANN indexing enabling fast approximate nearest-neighbor search across the whole memory store.",
+            ),
+            (
+                "topic_db",
+                "libSQL's FTS5 virtual table stays synchronized with the chunks table through SQL triggers, so every insert or update to a chunk automatically refreshes its full-text search index without extra application code.",
+            ),
+            (
+                "topic_db",
+                "Hybrid retrieval combines the vector similarity score and the FTS5 rank using reciprocal rank fusion, blending semantic and lexical signals into one ranked result list for each search query.",
+            ),
+            (
+                "topic_bread",
+                "A sourdough levain needs to be fed with equal parts flour and water twice a day to stay active enough to leaven a loaf, and it should roughly double in volume within four to six hours after each feeding.",
+            ),
+            (
+                "topic_bread",
+                "Increasing the hydration of a bread dough to around eighty percent produces a much more open, irregular crumb structure once it is baked, though it also makes the dough considerably harder to shape by hand.",
+            ),
+            (
+                "topic_bread",
+                "Kneading a wheat dough develops long gluten strands that trap the carbon dioxide bubbles produced by yeast fermentation, which is what allows the loaf to rise instead of collapsing in the oven.",
+            ),
         ];
         for (i, (space, content)) in db_topic.iter().enumerate() {
             let doc = RawDocument {
@@ -2473,8 +2963,8 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             .first()
             .expect("deep refresh must send one compile prompt");
         assert!(
-            user_prompt.starts_with("Existing pages you may reference with exact-match wikilinks:"),
-            "PageWrite refresh prompt must start with existing-title hint, got:\n{user_prompt}"
+            user_prompt.starts_with("Page titles mentioned in this page's sources or linked basis (link labels only, not evidence):"),
+            "refresh prompt must label matching titles as navigation hints, got:\n{user_prompt}"
         );
         assert!(
             user_prompt.contains("[[Related Page]]"),
@@ -2484,12 +2974,129 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             !user_prompt.contains("[[Private Page]]"),
             "cross-space existing title must not be offered in a work refresh prompt, got:\n{user_prompt}"
         );
+        assert!(
+            user_prompt.contains("not evidence"),
+            "title hints must be explicitly separated from factual evidence"
+        );
 
         let page = db.get_page("page_target").await.unwrap().unwrap();
         assert!(
             page.content.contains("[[Related Page]]"),
             "refresh should retain already-valid wikilinks when the prompt exposes the real title, got:\n{}",
             page.content
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_prompt_excludes_unrelated_titles_but_keeps_sources_and_basis() {
+        assert!(contains_whole_title("the source mentions [[ai]]", "AI"));
+        assert!(
+            !contains_whole_title("a paid plan is available", "AI"),
+            "a title must not match inside an unrelated word"
+        );
+        assert!(
+            contains_whole_title("資料提到文蘭功能", "文蘭"),
+            "Han titles can appear adjacent to other Han prose"
+        );
+
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        upsert_test_sources(
+            &db,
+            &[("mem_cedar_atlas", "Cedar Atlas is based in Seattle.")],
+            Some("work"),
+        )
+        .await;
+
+        db.insert_page(
+            "page_unrelated_sentinel",
+            "UNRELATED_SENTINEL_TITLE_7F3A",
+            None,
+            "This page is unrelated to Cedar Atlas.",
+            None,
+            Some("work"),
+            &[],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.insert_page(
+            "page_explicit_basis",
+            "Atlas Project Note",
+            None,
+            "The Atlas project's launch review is scheduled for October.",
+            None,
+            Some("work"),
+            &[],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.insert_page(
+            "page_cedar_atlas",
+            "Cedar Atlas",
+            None,
+            "Original page body.",
+            None,
+            Some("work"),
+            &["mem_cedar_atlas"],
+            &now,
+        )
+        .await
+        .unwrap();
+        let basis_page = db.get_page("page_explicit_basis").await.unwrap().unwrap();
+        db.mark_page_basis(
+            "page_cedar_atlas",
+            "page_explicit_basis",
+            basis_page.version,
+            "test",
+        )
+        .await
+        .unwrap();
+        let bases = db.list_basis_context("page_cedar_atlas").await.unwrap();
+        assert_eq!(bases.len(), 1, "the test target must have one linked basis");
+
+        let provider = Arc::new(BoundedRecordingProvider::new(
+            "Cedar Atlas is based in Seattle [1].",
+            100_000,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let outcome = synthesize_candidate_body(
+            &db,
+            &llm,
+            "Summarize the topic using the supplied context.",
+            "Cedar Atlas",
+            Some("work"),
+            &["mem_cedar_atlas".to_string()],
+            &bases,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(outcome, CandidateOutcome::Verified(_)),
+            "the source-backed synthesis should pass citation verification"
+        );
+
+        let calls = provider.calls();
+        let prompt = calls.first().expect("one refresh synthesis call");
+        assert!(
+            !prompt.contains("UNRELATED_SENTINEL_TITLE_7F3A"),
+            "refresh context must not include unrelated page titles: {prompt}"
+        );
+        assert!(
+            prompt.contains("Topic: Cedar Atlas"),
+            "topic is retained: {prompt}"
+        );
+        assert!(
+            prompt.contains(
+                "--- BEGIN SOURCE [1] ---\nCedar Atlas is based in Seattle.\n--- END SOURCE [1] ---"
+            ),
+            "numbered source context is retained: {prompt}"
+        );
+        assert!(
+            prompt.contains("### [[Atlas Project Note]]")
+                && prompt.contains("The Atlas project's launch review is scheduled for October."),
+            "explicitly linked basis context is retained: {prompt}"
         );
     }
 
@@ -3026,6 +3633,547 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     }
 
     #[tokio::test]
+    async fn refresh_page_includes_and_cites_amendments_after_long_source_context() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let repeated_context = "Background notes retain the project setup record. ".repeat(80);
+        let amended_fact =
+            "The latest migration review on October 22 confirms Cedar Atlas remains in Seattle.";
+        let source = format!("{repeated_context}{amended_fact}");
+        assert!(source.len() > 1_500);
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: "folder-docs::cedar-atlas.md".to_string(),
+            title: "Cedar Atlas project notes".to_string(),
+            content: source,
+            last_modified: chrono::Utc::now().timestamp(),
+            memory_type: Some("fact".to_string()),
+            space: Some("test".to_string()),
+            source_agent: Some("folder".to_string()),
+            confirmed: Some(true),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        let stored = db
+            .get_memory_contents_by_ids(&["folder-docs::cedar-atlas.md".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            stored.len(),
+            1,
+            "the legacy read returns one canonical chunk"
+        );
+        assert!(
+            !stored[0].1.contains(amended_fact),
+            "the old chunk-zero reader should demonstrate that the final amendment is later"
+        );
+        let complete_source = db
+            .get_refresh_source_contents_by_ids(&["folder-docs::cedar-atlas.md".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(complete_source.len(), 1);
+        assert!(
+            complete_source[0].1.contains(amended_fact),
+            "the refresh reader must include the amendment stored in a later chunk"
+        );
+
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            "page_long_tail",
+            "Cedar Atlas migration review",
+            None,
+            "The earlier review is still current.",
+            None,
+            None,
+            &["folder-docs::cedar-atlas.md"],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.set_page_stale("page_long_tail", "source_updated")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(BoundedRecordingProvider::new(
+            format!("{amended_fact} [1]"),
+            100_000,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let prompts = PromptRegistry::default();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &prompts,
+            "page_long_tail",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 1, "one model request should be made");
+        assert!(
+            calls[0].contains(amended_fact),
+            "the full source tail must reach the synthesis prompt"
+        );
+        assert!(
+            outcome.wrote,
+            "the verified source amendment should update the page: {outcome:?}"
+        );
+        let page = db.get_page("page_long_tail").await.unwrap().unwrap();
+        assert!(page.content.contains(amended_fact));
+        assert!(
+            page.citations.iter().any(|citation| {
+                citation.locator == "folder-docs::cedar-atlas.md" && citation.status == "verified"
+            }),
+            "the tail claim's citation must be verified and persisted against the full source"
+        );
+    }
+
+    /// Answers the long-source notes step from each part's own text and the
+    /// final page write with a fixed body, recording every call by label.
+    struct PartsReadingProvider {
+        fact: String,
+        page_body: String,
+        input_limit: usize,
+        calls: Mutex<Vec<(String, String)>>,
+    }
+
+    impl PartsReadingProvider {
+        fn new(fact: &str, page_body: impl Into<String>, input_limit: usize) -> Self {
+            Self {
+                fact: fact.to_string(),
+                page_body: page_body.into(),
+                input_limit,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls_labelled(&self, label: &str) -> Vec<String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(l, _)| l == label)
+                .map(|(_, prompt)| prompt.clone())
+                .collect()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for PartsReadingProvider {
+        async fn generate(&self, request: LlmRequest) -> Result<String, LlmError> {
+            let label = request.label.clone().unwrap_or_default();
+            let estimated = request
+                .system_prompt
+                .as_deref()
+                .unwrap_or_default()
+                .len()
+                .saturating_add(request.user_prompt.len())
+                .div_ceil(3);
+            assert!(
+                estimated <= self.input_limit,
+                "{label} request of ~{estimated} tokens exceeds the {} token budget",
+                self.input_limit
+            );
+            let answer = if label == "refresh_source_notes" {
+                if request.user_prompt.contains(&self.fact) {
+                    self.fact.clone()
+                } else {
+                    "(nothing relevant)".to_string()
+                }
+            } else {
+                self.page_body.clone()
+            };
+            self.calls
+                .lock()
+                .unwrap()
+                .push((label, request.user_prompt));
+            Ok(answer)
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn name(&self) -> &str {
+            "parts-reading"
+        }
+
+        fn backend(&self) -> LlmBackend {
+            LlmBackend::OnDevice
+        }
+
+        fn kind(&self) -> &'static str {
+            "mock"
+        }
+
+        fn synthesis_token_limit(&self) -> usize {
+            self.input_limit
+        }
+    }
+
+    async fn insert_long_folder_source_page(
+        db: &MemoryDB,
+        page_id: &str,
+        source_id: &str,
+        content: String,
+    ) {
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: source_id.to_string(),
+            title: "Cedar Atlas project notes".to_string(),
+            content,
+            last_modified: chrono::Utc::now().timestamp(),
+            memory_type: Some("fact".to_string()),
+            space: Some("test".to_string()),
+            source_agent: Some("folder".to_string()),
+            confirmed: Some(true),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            page_id,
+            "Cedar Atlas migration review",
+            None,
+            "The earlier review is still current.",
+            None,
+            None,
+            &[source_id],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.set_page_stale(page_id, "source_updated").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn refresh_page_reads_a_source_over_budget_in_parts_and_cites_it_in_full() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let amended_fact =
+            "The latest migration review on October 22 confirms Cedar Atlas remains in Seattle.";
+        let background = "Background notes retain the project setup record.\n".repeat(240);
+        let source = format!("{background}{amended_fact}\n");
+        insert_long_folder_source_page(
+            &db,
+            "page_parts",
+            "folder-docs::cedar-parts.md",
+            source.clone(),
+        )
+        .await;
+
+        let provider = Arc::new(PartsReadingProvider::new(
+            amended_fact,
+            format!("{amended_fact} [1]"),
+            1_500,
+        ));
+        assert!(
+            estimate_prompt_tokens(&PromptRegistry::default().distill_page, &source) > 1_500,
+            "the complete source must not fit the budget"
+        );
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            "page_parts",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let notes_calls = provider.calls_labelled("refresh_source_notes");
+        assert!(
+            notes_calls.len() > 1,
+            "the long source is read in several parts"
+        );
+        assert!(
+            notes_calls
+                .iter()
+                .any(|prompt| prompt.contains(amended_fact)),
+            "the part holding the amendment is read"
+        );
+        let page_calls = provider.calls_labelled("refresh_page");
+        assert_eq!(page_calls.len(), 1);
+        assert!(
+            page_calls[0].contains(amended_fact),
+            "the writer sees the noted amendment"
+        );
+        assert!(
+            !page_calls[0].contains(&background),
+            "the writer gets notes, not the complete long source"
+        );
+        assert!(
+            outcome.wrote,
+            "the noted amendment should update the page: {outcome:?}"
+        );
+        let page = db.get_page("page_parts").await.unwrap().unwrap();
+        assert!(page.content.contains(amended_fact));
+        assert_eq!(page.refresh_blocked_reason, None);
+        assert!(
+            page.citations.iter().any(|citation| {
+                citation.locator == "folder-docs::cedar-parts.md" && citation.status == "verified"
+            }),
+            "the citation is still checked against the complete source"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_page_carries_an_amendment_verbatim_when_notes_drop_its_wording() {
+        // Mac e2e with Qwen3-4B (2026-10-23): the notes for the last part kept
+        // "stays in Seattle" but dropped "cancelled" and the date, so the
+        // writer kept the earlier "Portland is decided".
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let decided = "The office move to Portland is decided.";
+        let amendment = "Amendment, October 22: the Portland move is cancelled; Cedar Atlas stays in Seattle, with a budget cap of $48,000.";
+        let background = "Background notes retain the project setup record.\n".repeat(240);
+        let source = format!("{decided}\n{background}{amendment}\n");
+        insert_long_folder_source_page(&db, "page_amend", "folder-docs::cedar-amend.md", source)
+            .await;
+
+        let provider = Arc::new(PartsReadingProvider::new(
+            "Cedar Atlas stays in Seattle",
+            "Cedar Atlas stays in Seattle. [1]",
+            1_500,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            "page_amend",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let page_calls = provider.calls_labelled("refresh_page");
+        assert_eq!(page_calls.len(), 1);
+        assert!(
+            page_calls[0].contains(amendment),
+            "the writer must see the amendment as written: {}",
+            page_calls[0]
+        );
+    }
+
+    #[test]
+    fn amendment_lines_keep_changing_sentences_verbatim() {
+        let part = "Setup is done. The budget is $48.5k for v0.20.\n\
+                    ## Amendment, October 22\n\
+                    The Portland move is cancelled. Weekly sync stays on Monday.\n\
+                    十月二十二日更正：搬遷取消。其他照舊。";
+        assert_eq!(
+            amendment_lines(part),
+            vec![
+                "## Amendment, October 22",
+                "The Portland move is cancelled.",
+                "十月二十二日更正：搬遷取消。",
+            ]
+        );
+        assert!(amendment_lines("Nothing changes here. Budget $48.5k.").is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_page_blocks_a_source_needing_too_many_parts_without_writing() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let source = "Background notes retain the project setup record.\n".repeat(2_000);
+        insert_long_folder_source_page(&db, "page_too_long", "folder-docs::cedar-long.md", source)
+            .await;
+        let provider = Arc::new(PartsReadingProvider::new(
+            "never present",
+            "unexpected generation [1]",
+            1_500,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let before = db.get_page("page_too_long").await.unwrap().unwrap();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            "page_too_long",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.wrote);
+        assert!(
+            provider.calls.lock().unwrap().is_empty(),
+            "no model time is spent on a source past the part cap"
+        );
+        let reason = outcome
+            .discard_reason
+            .expect("the block reason is reported");
+        assert!(reason.contains("too long to read in parts"), "{reason}");
+        let after = db.get_page("page_too_long").await.unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(
+            after.refresh_blocked_reason.as_deref(),
+            Some(reason.as_str())
+        );
+    }
+
+    #[test]
+    fn split_source_parts_prefers_line_ends_and_keeps_characters_whole() {
+        let text = "第一行說明。\n".repeat(50) + &"長".repeat(400);
+        let parts = split_source_parts(&text, 200);
+        assert!(parts.len() > 1);
+        assert_eq!(parts.concat(), text, "parts rejoin to the exact source");
+        for part in &parts {
+            assert!(
+                part.len() <= 200,
+                "part of {} bytes exceeds the cap",
+                part.len()
+            );
+        }
+        assert!(
+            parts[0].ends_with('\n'),
+            "a part ends at a line end when one is near"
+        );
+        assert_eq!(split_source_parts("short", 200), vec!["short"]);
+    }
+
+    #[tokio::test]
+    async fn refresh_page_blocks_source_context_over_model_budget_without_calling_provider() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let source = format!(
+            "{}The amended fact is Cedar Atlas in Seattle.",
+            "Project history. ".repeat(120)
+        );
+        upsert_test_sources(&db, &[("mem_over_budget", &source)], Some("test")).await;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            "page_over_budget",
+            "Cedar Atlas",
+            None,
+            "Saved page body must remain intact.",
+            None,
+            None,
+            &["mem_over_budget"],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.set_page_stale("page_over_budget", "source_updated")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(BoundedRecordingProvider::new(
+            "unexpected generation [1]",
+            32,
+        ));
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let prompts = PromptRegistry::default();
+        let before = db.get_page("page_over_budget").await.unwrap().unwrap();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &prompts,
+            "page_over_budget",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            !outcome.wrote,
+            "an over-budget candidate must not overwrite the page"
+        );
+        assert!(
+            provider.calls().is_empty(),
+            "provider must not be called over its input budget"
+        );
+        let reason = outcome
+            .discard_reason
+            .expect("the caller should receive the budget block reason");
+        assert!(reason.contains("source context exceeds model input budget"));
+
+        let after = db.get_page("page_over_budget").await.unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(after.stale_reason.as_deref(), Some("source_updated"));
+        assert_eq!(
+            after.refresh_blocked_reason.as_deref(),
+            Some(reason.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_page_persists_provider_context_rejection_without_overwrite() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        upsert_test_sources(
+            &db,
+            &[("mem_physical_limit", "Cedar Atlas is based in Seattle.")],
+            Some("test"),
+        )
+        .await;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            "page_physical_limit",
+            "Cedar Atlas",
+            None,
+            "This saved body must survive provider rejection.",
+            None,
+            None,
+            &["mem_physical_limit"],
+            &now,
+        )
+        .await
+        .unwrap();
+        db.set_page_stale("page_physical_limit", "source_updated")
+            .await
+            .unwrap();
+
+        let provider = Arc::new(BoundedRecordingProvider::rejecting_physical_context());
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let prompts = PromptRegistry::default();
+        let before = db.get_page("page_physical_limit").await.unwrap().unwrap();
+        let outcome = refresh_page(
+            &db,
+            &llm,
+            &prompts,
+            "page_physical_limit",
+            RefreshReason::SourceChanged,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            !outcome.wrote,
+            "exact provider rejection must not overwrite the page"
+        );
+        assert_eq!(
+            provider.calls().len(),
+            1,
+            "the final tokenizer guard was reached"
+        );
+        let reason = outcome
+            .discard_reason
+            .expect("provider context rejection should be visible as a discard");
+        assert!(reason.contains("source context exceeds model input budget"));
+        assert!(reason.contains("physical input window"));
+
+        let after = db.get_page("page_physical_limit").await.unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(after.stale_reason.as_deref(), Some("source_updated"));
+        assert_eq!(
+            after.refresh_blocked_reason.as_deref(),
+            Some(reason.as_str())
+        );
+    }
+
+    #[tokio::test]
     async fn refresh_page_on_human_owned_page_stages_card_without_overwrite() {
         let (db, _db_dir) = crate::db::tests::test_db().await;
         let now = chrono::Utc::now().to_rfc3339();
@@ -3418,7 +4566,8 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             .remove(0);
         let long_content = "Tokio is an asynchronous runtime for the Rust programming language. \
             It provides a multi-threaded work-stealing scheduler, an async TCP and UDP socket API, \
-            and a reactor backed by the operating system event queue for scalable network services.".to_string();
+            and a reactor backed by the operating system event queue for scalable network services."
+            .to_string();
         let cluster = crate::db::DistillationCluster {
             source_ids: vec!["mem_x".into()],
             contents: vec![long_content],
@@ -3443,8 +4592,11 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
                 )
                 .await
                 .unwrap();
-            assert_eq!(probe.as_ref().map(|p| p.id.as_str()), Some("seed_tokio"),
-                "precondition: scoped matcher must find the seed at 0.85 (tune seed summary vs centroid text if this fails)");
+            assert_eq!(
+                probe.as_ref().map(|p| p.id.as_str()),
+                Some("seed_tokio"),
+                "precondition: scoped matcher must find the seed at 0.85 (tune seed summary vs centroid text if this fails)"
+            );
         }
 
         let pages_before = {
@@ -4220,6 +5372,152 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         assert!(
             after.user_edited,
             "a staged card must not release user_edited"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_gated_refresh_clears_old_block_on_fresh_page() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let db = Arc::new(db);
+        seed_protected_page(&db, "page_fresh_blocked_authored").await;
+        {
+            let conn = db.test_primary_session().await;
+            conn.execute(
+                "UPDATE pages SET creation_kind = 'authored', stale_reason = NULL, \
+                    refresh_blocked_reason = 'earlier citation failure' WHERE id = ?1",
+                libsql::params!["page_fresh_blocked_authored"],
+            )
+            .await
+            .unwrap();
+        }
+        let before = db
+            .get_page("page_fresh_blocked_authored")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(before.user_edited);
+        assert_eq!(before.stale_reason, None);
+        assert_eq!(
+            before.refresh_blocked_reason.as_deref(),
+            Some("earlier citation failure")
+        );
+
+        let provider =
+            forced_rebuild_provider(&db, "page_fresh_blocked_authored", MidGeneration::Observe);
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let outcome = force_redistill_single(
+            &db,
+            Some(&llm),
+            &PromptRegistry::default(),
+            "page_fresh_blocked_authored",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.wrote, "authored content remains gated");
+        assert!(
+            outcome.gated,
+            "the successful synthesis stages a review card"
+        );
+        assert!(outcome.revision_card_id.is_some());
+        let after = db
+            .get_page("page_fresh_blocked_authored")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert!(after.user_edited);
+        assert_eq!(after.stale_reason, None);
+        assert_eq!(
+            after.refresh_blocked_reason, None,
+            "the staged successful proposal replaces the old error state"
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_basis_preview_clears_old_block_on_fresh_page() {
+        let (db, _db_dir) = crate::db::tests::test_db().await;
+        let db = Arc::new(db);
+        seed_protected_page(&db, "page_fresh_blocked_basis").await;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page(
+            "page_fresh_basis_note",
+            "Tokio release note",
+            None,
+            "Tokio release context.",
+            None,
+            None,
+            &[],
+            &now,
+        )
+        .await
+        .unwrap();
+        let basis_page = db.get_page("page_fresh_basis_note").await.unwrap().unwrap();
+        db.mark_page_basis(
+            "page_fresh_blocked_basis",
+            "page_fresh_basis_note",
+            basis_page.version,
+            "test",
+        )
+        .await
+        .unwrap();
+        {
+            let conn = db.test_primary_session().await;
+            conn.execute(
+                "UPDATE pages SET stale_reason = NULL, refresh_blocked_reason = 'earlier citation failure' WHERE id = ?1",
+                libsql::params!["page_fresh_blocked_basis"],
+            )
+            .await
+            .unwrap();
+        }
+        let before = db
+            .get_page("page_fresh_blocked_basis")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.stale_reason, None);
+        assert_eq!(
+            before.refresh_blocked_reason.as_deref(),
+            Some("earlier citation failure")
+        );
+        assert_eq!(
+            db.list_basis_context("page_fresh_blocked_basis")
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "precondition: this refresh exercises the basis-preview branch"
+        );
+
+        let provider =
+            forced_rebuild_provider(&db, "page_fresh_blocked_basis", MidGeneration::Observe);
+        let llm: Arc<dyn LlmProvider> = provider.clone();
+        let outcome = force_redistill_single(
+            &db,
+            Some(&llm),
+            &PromptRegistry::default(),
+            "page_fresh_blocked_basis",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(!outcome.wrote, "basis-backed content remains behind review");
+        assert!(outcome.gated, "a successful basis refresh stages a preview");
+        assert!(outcome.revision_card_id.is_some());
+        let after = db
+            .get_page("page_fresh_blocked_basis")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(after.stale_reason, None);
+        assert_eq!(
+            after.refresh_blocked_reason, None,
+            "the successful basis preview clears only the stale error marker"
         );
     }
 }

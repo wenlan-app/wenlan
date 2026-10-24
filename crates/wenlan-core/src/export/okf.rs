@@ -10,26 +10,42 @@
 //! `index.md` / `pages/` / `sources/` layout with no Obsidian-only syntax.
 
 use crate::error::WenlanError;
+use crate::export::vault_fs::{self, Disposal, Replacement};
 use crate::export::ExportStats;
 use crate::pages::Page;
+use cap_fs_ext::DirExt as _;
+use cap_std::fs::Dir;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use wenlan_types::CodeBasisLocator;
 
 pub const OKF_VERSION: &str = "0.2";
 pub(crate) const MARKER_FILE: &str = ".wenlan-okf-export.json";
 const INDEX_FILE: &str = "index.md";
+/// The repository bundle's page list in reading order, which GitHub shows
+/// when someone opens the folder.
+const README_FILE: &str = "README.md";
 const PAGES_DIR: &str = "pages";
 const SOURCES_DIR: &str = "sources";
 
 /// Where a bundle file somebody edited is moved before the export replaces
-/// it. Dot-prefixed on purpose: `sources::directory::scan_directory` skips
-/// hidden entries, so the preserved copy is invisible to Wenlan's own
-/// importer and to any OKF consumer walking the bundle, while still sitting
-/// where a person can find it.
+/// it. Dot-prefixed so `sources::directory::scan_directory` skips it and the
+/// preserved copy never re-enters Wenlan's own importer. That is Wenlan's
+/// exclusion only: OKF applies §11 to every non-reserved `.md` file in the
+/// tree, hidden directories included, and forbids a nested `index.md` (§8).
+/// So every preserved file also carries [`ARCHIVE_SUFFIX`] and is not
+/// markdown to anything that walks the bundle.
 const ARCHIVE_DIR: &str = ".wenlan-archive";
+
+/// Appended to a preserved file's name (`alpha.md` -> `alpha.md.bak`). The
+/// bytes are unchanged; the name just stops being an OKF document.
+const ARCHIVE_SUFFIX: &str = ".bak";
+
+/// Largest bundle file a re-export reads to classify it. A file too big to read
+/// whole is one it cannot classify, and an unclassified file is kept.
+const CLASSIFY_SCAN_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Root marker proving a directory holds a Wenlan OKF export (and listing
 /// exactly the bundle files the last export wrote, so a re-export can remove
@@ -119,51 +135,247 @@ fn bundle_file_state(
     let Ok(bytes) = std::fs::read(&path) else {
         return BundleFileState::Changed;
     };
+    classify_bundle_bytes(&bytes, entry, digests, planned)
+}
+
+/// The byte half of [`bundle_file_state`]. The sweep and the planned writes
+/// call it again on the bytes they hold AFTER taking a file aside, so the
+/// answer they act on is about the file they are about to unlink or replace,
+/// not the one the preservation pass read earlier.
+fn classify_bundle_bytes(
+    bytes: &[u8],
+    entry: &str,
+    digests: &BTreeMap<String, String>,
+    planned: Option<&[u8]>,
+) -> BundleFileState {
     match digests.get(entry) {
-        Some(recorded) if &digest_of(&bytes) == recorded => BundleFileState::Ours,
+        Some(recorded) if &digest_of(bytes) == recorded => BundleFileState::Ours,
         Some(_) => BundleFileState::Changed,
-        None if planned == Some(bytes.as_slice()) => BundleFileState::Ours,
+        None if planned == Some(bytes) => BundleFileState::Ours,
         None => BundleFileState::Changed,
     }
 }
 
+/// The bundle directory, held as capabilities. The actions that follow a
+/// classification (move to the archive, unlink, install) go through these
+/// handles so they stay inside the bundle, never follow a symlink swapped in
+/// at `pages/` or `sources/`, and can use the non-replacing renames in
+/// [`vault_fs`].
+struct BundleDirs {
+    path: PathBuf,
+    root: Dir,
+    pages: Dir,
+    sources: Dir,
+}
+
+impl BundleDirs {
+    fn open(target: &Path) -> std::io::Result<Self> {
+        let root = Dir::open_ambient_dir(target, cap_std::ambient_authority())?;
+        let pages = root.open_dir_nofollow(PAGES_DIR)?;
+        let sources = root.open_dir_nofollow(SOURCES_DIR)?;
+        Ok(Self {
+            path: target.to_path_buf(),
+            root,
+            pages,
+            sources,
+        })
+    }
+
+    /// The directory holding a validated marker entry, and its file name.
+    fn locate<'a>(&self, entry: &'a str) -> std::io::Result<(&Dir, &'a str)> {
+        if entry == INDEX_FILE || entry == README_FILE {
+            return Ok((&self.root, entry));
+        }
+        for (dir, handle) in [(PAGES_DIR, &self.pages), (SOURCES_DIR, &self.sources)] {
+            if let Some(name) = entry
+                .strip_prefix(dir)
+                .and_then(|rest| rest.strip_prefix('/'))
+            {
+                return Ok((handle, name));
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{entry} is not a bundle file"),
+        ))
+    }
+}
+
 /// Move an edited bundle file into `.wenlan-archive/`, keeping its position in
-/// the bundle (`pages/alpha.md` becomes `.wenlan-archive/pages/alpha.md`) so
-/// two files of the same name from different directories cannot collide.
+/// the bundle (`pages/alpha.md` becomes `.wenlan-archive/pages/alpha.md.bak`)
+/// so two files of the same name from different directories cannot collide.
 /// Suffixes past an occupied destination rather than replacing it: an older
 /// preserved copy is the one thing here the database cannot reproduce.
-fn preserve_edited_bundle_file(target: &Path, entry: &str) -> Result<(), WenlanError> {
-    let source = target.join(entry);
-    let destination_dir = match Path::new(entry).parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => target.join(ARCHIVE_DIR).join(parent),
-        _ => target.join(ARCHIVE_DIR),
+fn preserve_edited_bundle_file(dirs: &BundleDirs, entry: &str) -> Result<(), WenlanError> {
+    let (source_dir, name) = dirs.locate(entry).map_err(WenlanError::Io)?;
+    preserve_into_archive(dirs, entry, source_dir, name)
+}
+
+/// Move the file `from` in `source_dir` -- the bundle file itself, or the
+/// private name it was taken aside under -- into the archive slot for `entry`.
+///
+/// The file is renamed into the archive directory under a private name first,
+/// which atomically takes whatever is there, and only then given its final
+/// name by a rename that cannot replace. Probing for a free name and renaming
+/// afterwards would replace an older preserved copy that a sync client put
+/// there in between.
+fn preserve_into_archive(
+    dirs: &BundleDirs,
+    entry: &str,
+    source_dir: &Dir,
+    from: &str,
+) -> Result<(), WenlanError> {
+    let relative = match Path::new(entry).parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Path::new(ARCHIVE_DIR).join(parent),
+        _ => PathBuf::from(ARCHIVE_DIR),
     };
-    std::fs::create_dir_all(&destination_dir).map_err(WenlanError::Io)?;
+    dirs.root
+        .create_dir_all(&relative)
+        .map_err(WenlanError::Io)?;
+    let archive = dirs.root.open_dir(&relative).map_err(WenlanError::Io)?;
+    let held = vault_fs::private_name("aside");
+    match source_dir.rename(from, &archive, &held) {
+        Ok(()) => {}
+        // Already gone: nothing left to preserve.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(WenlanError::Io(e)),
+    }
     let name = Path::new(entry)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(entry);
+    place_as_backup(&archive, &held, name)
+        .map_err(WenlanError::Io)?
+        .map_or_else(
+            // The bytes stay in the archive directory under the private name.
+            || {
+                Err(WenlanError::Conflict(format!(
+                    "cannot preserve {entry}: {ARCHIVE_DIR} has no free name for it"
+                )))
+            },
+            |placed| {
+                log::warn!(
+                    "[okf] {entry} was edited since the last export; preserved at {}",
+                    dirs.path.join(&relative).join(placed).display()
+                );
+                Ok(())
+            },
+        )
+}
+
+/// Give the file held at `held` in `dir` the first free backup name for
+/// `name`: `alpha.md` becomes `alpha.md.bak`, then `alpha-2.md.bak`, ... A
+/// taken name is skipped, never replaced. `None` when every candidate is taken.
+fn place_as_backup(dir: &Dir, held: &str, name: &str) -> std::io::Result<Option<String>> {
     let (stem, extension) = match name.strip_suffix(".md") {
         Some(stem) => (stem, ".md"),
         None => (name, ""),
     };
-    let mut destination = destination_dir.join(name);
-    let mut attempt = 1;
-    while destination.symlink_metadata().is_ok() {
-        attempt += 1;
-        if attempt > 100 {
-            return Err(WenlanError::Conflict(format!(
-                "cannot preserve {entry}: {ARCHIVE_DIR} has no free name for it"
-            )));
+    let extension = format!("{extension}{ARCHIVE_SUFFIX}");
+    crate::export::archive::place_suffixed(dir, held, stem, &extension, &mut |_| {})
+}
+
+/// Deepest directory nesting the legacy-archive migration descends. The
+/// archive mirrors the bundle's own layout (two levels at most); the cap only
+/// keeps a hostile or looping tree from running the walk away.
+const LEGACY_ARCHIVE_MAX_DEPTH: usize = 8;
+
+/// Rename the `.md` files an older build left under `.wenlan-archive/` to
+/// `<name>.md.bak`. Those copies were markdown inside the bundle -- a preserved
+/// root `index.md` even carried `okf_version` -- which OKF §8/§11 reads as a
+/// nested index and as concept documents without a `type`.
+///
+/// Plain files only; a symlink or directory symlink is never followed. Each
+/// file goes to a private name first and then to a name that cannot replace
+/// an existing one, so a clash with an existing `.bak` suffixes instead. A
+/// failure is logged and skipped: the migration never fails the export.
+fn migrate_legacy_archive(dirs: &BundleDirs) {
+    let archive = match dirs.root.open_dir_nofollow(ARCHIVE_DIR) {
+        Ok(archive) => archive,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            log::warn!("[okf] cannot open {ARCHIVE_DIR} to migrate older copies: {e}");
+            return;
         }
-        destination = destination_dir.join(format!("{stem}-{attempt}{extension}"));
+    };
+    let mut renamed = 0usize;
+    migrate_legacy_dir(&archive, Path::new(ARCHIVE_DIR), 0, &mut renamed);
+    if renamed > 0 {
+        log::info!(
+            "[okf] renamed {renamed} markdown file(s) under {ARCHIVE_DIR} to {ARCHIVE_SUFFIX} \
+             so the bundle stays OKF-conformant"
+        );
     }
-    std::fs::rename(&source, &destination).map_err(WenlanError::Io)?;
-    log::warn!(
-        "[okf] {entry} was edited since the last export; preserved at {}",
-        destination.display()
-    );
-    Ok(())
+}
+
+fn migrate_legacy_dir(dir: &Dir, shown: &Path, depth: usize, renamed: &mut usize) {
+    let entries = match dir.entries() {
+        Ok(entries) => entries,
+        Err(e) => {
+            log::warn!("[okf] cannot list {}: {e}", shown.display());
+            return;
+        }
+    };
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    for entry in entries.flatten() {
+        let (Ok(kind), Some(name)) = (
+            entry.file_type(),
+            entry.file_name().to_str().map(String::from),
+        ) else {
+            continue;
+        };
+        // `DirEntry::file_type` does not follow a symlink, so a link reports
+        // as neither a file nor a directory and is left alone.
+        if kind.is_dir() {
+            dirs.push(name);
+        } else if kind.is_file() && name.ends_with(".md") {
+            files.push(name);
+        }
+    }
+    for name in files {
+        let held = vault_fs::private_name("legacy");
+        if let Err(e) = dir.rename(&name, dir, &held) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("[okf] cannot rename {}: {e}", shown.join(&name).display());
+            }
+            continue;
+        }
+        match place_as_backup(dir, &held, &name) {
+            Ok(Some(placed)) => {
+                *renamed += 1;
+                log::debug!("[okf] {} -> {placed}", shown.join(&name).display());
+            }
+            // Out of free names or a failed rename: put the file back under its
+            // own name rather than leave it under a private one.
+            outcome => {
+                match outcome {
+                    Err(e) => {
+                        log::warn!("[okf] cannot rename {}: {e}", shown.join(&name).display())
+                    }
+                    _ => log::warn!(
+                        "[okf] no free backup name for {}; left as it was",
+                        shown.join(&name).display()
+                    ),
+                }
+                if let Err(e) = vault_fs::rename_noreplace(dir, &held, dir, &name) {
+                    log::warn!(
+                        "[okf] {} stays under the private name {held}: {e}",
+                        shown.join(&name).display()
+                    );
+                }
+            }
+        }
+    }
+    if depth >= LEGACY_ARCHIVE_MAX_DEPTH {
+        return;
+    }
+    for name in dirs {
+        match dir.open_dir_nofollow(&name) {
+            Ok(child) => migrate_legacy_dir(&child, &shown.join(&name), depth + 1, renamed),
+            Err(e) => log::warn!("[okf] cannot open {}: {e}", shown.join(&name).display()),
+        }
+    }
 }
 
 // Dedicated page-id links: `[Title](concept_<id>)` (the shape
@@ -185,11 +397,11 @@ static WIKILINK_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
 });
 
 /// True when `entry` names a file this exporter owns: `index.md`,
-/// `pages/<name>.md` or `sources/<name>.md` where `<name>` carries no `/`,
+/// `README.md`, `pages/<name>.md` or `sources/<name>.md` where `<name>` carries no `/`,
 /// `\` or `..` and has no leading dot. Anything else in a marker (a forged
 /// `../x.md`, an absolute path, a future key) is ignored, never deleted.
 pub(crate) fn marker_entry_is_safe(entry: &str) -> bool {
-    if entry == INDEX_FILE {
+    if entry == INDEX_FILE || entry == README_FILE {
         return true;
     }
     for dir in [PAGES_DIR, SOURCES_DIR] {
@@ -217,31 +429,109 @@ fn is_symlink(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Write `bytes` to `path`, refusing anything that is not already a plain
-/// file.
+/// What [`write_bundle_file`] did.
+enum BundleWrite {
+    /// The planned bytes are at the path (or were already).
+    Written,
+    /// The path holds a file that is not one this run may replace -- it was
+    /// edited, or a file appeared there, after it was classified. Left exactly
+    /// as it is; the planned bytes were not written.
+    Kept,
+}
+
+/// Write `bytes` to the bundle file `entry`, replacing only the exact bytes the
+/// last export (or this run's plan) accounts for.
 ///
-/// This used to unlink a symlink standing in the way, so the write could not
-/// clobber whatever the link pointed at. That protected the target and
-/// destroyed the link, which is somebody's file too: a person who points
-/// `pages/alpha.md` at a note they keep elsewhere gets it silently removed on
-/// the next export. Refusing protects both. The caller reports the page as
-/// failed, exactly as it does for a directory in the way.
-fn write_file_nofollow(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
-        Ok(_) => {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                format!(
-                    "{} is not a plain file; refusing to replace it",
-                    path.display()
-                ),
-            ))
+/// The preservation pass classified the file earlier. An editor can save
+/// between that and now, so the file is taken aside, re-read, and re-classified
+/// with [`classify_bundle_bytes`] before anything of it is discarded; the new
+/// bytes then go in with a rename that cannot replace. Anything else that has
+/// appeared at the path is kept and the write is skipped, to be dealt with by
+/// the next run's preservation pass.
+///
+/// A path that is not a plain file is refused with `AlreadyExists`, as the
+/// in-place writer this replaced did: the caller reports it as failed. A
+/// symlink there is somebody's link, and unlinking it would destroy it.
+fn write_bundle_file(
+    dirs: &BundleDirs,
+    entry: &str,
+    bytes: &[u8],
+    digests: &BTreeMap<String, String>,
+    before_act: &mut dyn FnMut(&str),
+) -> Result<BundleWrite, WenlanError> {
+    let (dir, name) = dirs.locate(entry).map_err(WenlanError::Io)?;
+    before_act(entry);
+    let replaced =
+        vault_fs::replace_if_unchanged(dir, name, bytes, CLASSIFY_SCAN_BYTES, |current| {
+            classify_bundle_bytes(current, entry, digests, Some(bytes)) == BundleFileState::Ours
+        })
+        .map_err(WenlanError::Io)?;
+    match replaced {
+        Replacement::Written | Replacement::Unchanged => Ok(BundleWrite::Written),
+        Replacement::Kept => Ok(BundleWrite::Kept),
+        Replacement::Displaced(aside) => {
+            preserve_into_archive(dirs, entry, dir, &aside)?;
+            Ok(BundleWrite::Kept)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e),
     }
-    std::fs::write(path, bytes)
+}
+
+/// Replace the root marker atomically: a temp file in the same directory,
+/// fsync, rename over the marker, then fsync the directory.
+///
+/// An in-place truncate-and-rewrite of the marker, killed partway through,
+/// left malformed JSON and the next export refused at the marker parse, stuck
+/// until somebody hand-edited the file and lost its ownership and
+/// digest records. A rename within one directory leaves the previous marker or
+/// the new one, never a torn file. The projection's atomic writer is reused for
+/// that, so the symlink guarantee comes with it: the temp is created
+/// `create_new` + nofollow, and a marker that is a symlink or a directory is
+/// refused rather than replaced.
+fn write_marker_atomically(root: &Path, bytes: &[u8]) -> Result<(), WenlanError> {
+    write_marker_atomically_with_hook(root, bytes, || Ok(()))
+}
+
+fn write_marker_atomically_with_hook(
+    root: &Path,
+    bytes: &[u8],
+    after_temp_write: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), WenlanError> {
+    let directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // Unique per write: a temp left by a killed run (or by a recycled pid) can
+    // never collide with this one under `create_new`.
+    let temporary = format!("{MARKER_FILE}.{}.tmp", uuid::Uuid::new_v4().simple());
+    crate::export::knowledge::write_page_atomically_nofollow_with_hook(
+        &directory,
+        MARKER_FILE,
+        &temporary,
+        bytes,
+        after_temp_write,
+    )?;
+    crate::export::knowledge::sync_dir_capability(&directory)
+}
+
+/// Remove marker temps that a killed run left behind. Best effort: a temp is
+/// only ever a copy of a marker that was never installed, so keeping one costs
+/// nothing but clutter. Plain files only; anything else by that name is not
+/// ours to touch.
+fn remove_stale_marker_temps(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let prefix = format!("{MARKER_FILE}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.ends_with(".tmp") {
+            continue;
+        }
+        let path = entry.path();
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 /// Plan stable bundle filenames: pages sorted by `(created_at, id)`, slug
@@ -393,22 +683,86 @@ fn replace_outside_code(
     out
 }
 
-/// An absolute bundle path (`/concepts/b.md`) mapped to the page Wenlan
-/// imported it as. Built from `okf_concepts`; see [`concept_path_map`].
-pub type ConceptPathMap = HashMap<String, String>;
+/// What the exporter knows about the concepts Wenlan imported, so a link an
+/// imported concept still spells in its ORIGINAL bundle's terms can be
+/// repaired to wherever the target is exported now. Built from
+/// `okf_concepts`; see [`concept_path_map`].
+///
+/// Two lookups, because two questions are asked:
+///
+/// - **From an imported page** (`/pages/b.md`, `./b.md`, `../x/b.md`): the
+///   link was written inside one bundle, so it is resolved against that
+///   bundle's concept ids, from the linking concept's own folder, exactly as
+///   the importer resolved it. Another bundle holding the same path cannot
+///   capture it.
+/// - **From any other page** (`/concepts/b.md`): no bundle is known, so the
+///   absolute path is looked up across every imported bundle, and a path two
+///   bundles share resolves to nothing.
+#[derive(Debug, Clone, Default)]
+pub struct ConceptPathMap {
+    /// `/<concept id>.md` -> page id, across all bundles; ambiguous paths absent.
+    by_path: HashMap<String, String>,
+    /// Imported page id -> `(source id, concept id)`.
+    origins: HashMap<String, (String, String)>,
+    /// Source id -> lowercased concept id -> page id (`None` when two concept
+    /// ids of the bundle differ only by case, which the importer's link graph
+    /// folds together).
+    by_source: HashMap<String, HashMap<String, Option<String>>>,
+}
+
+/// What an imported page's link resolves to.
+enum ImportedLink<'a> {
+    /// The linking page is not an imported concept; its bundle is unknown.
+    NotImported,
+    /// Imported linker, but the target is no concept of its bundle.
+    Unidentified,
+    /// The imported concept the link points at, as a page id.
+    Page(&'a str),
+}
+
+impl ConceptPathMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The page an absolute bundle path (`/concepts/b.md`) was imported as,
+    /// across all bundles.
+    pub fn get(&self, path: &str) -> Option<&String> {
+        self.by_path.get(path)
+    }
+
+    /// Resolve `target`, a link written in the body of page `linker`, to the
+    /// imported concept it names, using the importer's own normalization with
+    /// the folder of the linker's original path.
+    fn resolve_from_imported(&self, linker: &str, target: &str) -> ImportedLink<'_> {
+        let Some((source_id, concept_id)) = self.origins.get(linker) else {
+            return ImportedLink::NotImported;
+        };
+        let from_dir = concept_id.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let found = crate::sources::okf::normalize_link_target(from_dir, target)
+            .and_then(|id| self.by_source.get(source_id)?.get(&id.to_lowercase()))
+            .and_then(|page| page.as_deref());
+        match found {
+            Some(page) => ImportedLink::Page(page),
+            None => ImportedLink::Unidentified,
+        }
+    }
+}
 
 /// Build the lookup the exporter uses for links an imported concept still
 /// spells in its original bundle's terms.
 ///
-/// `rows` are `(page id, source id, concept id)` from `okf_concepts`. The key
-/// is the absolute bundle path the concept had, `/<concept id>.md`. Two
-/// bundles can both hold `concepts/b.md`, and a body link carries no source,
-/// so an ambiguous path resolves to nothing rather than to a guess: the link
-/// is then handled as unresolvable, which loses a relationship but never
-/// points a reader at the wrong page.
+/// `rows` are `(page id, source id, concept id)` from `okf_concepts`. The
+/// global key is the absolute bundle path the concept had,
+/// `/<concept id>.md`. Two bundles can both hold `concepts/b.md`, and a page
+/// that was not itself imported carries no source, so an ambiguous path
+/// resolves to nothing rather than to a guess: the link is then handled as
+/// unresolvable, which loses a relationship but never points a reader at the
+/// wrong page.
 pub fn concept_path_map(rows: &[(String, String, String)]) -> ConceptPathMap {
     let mut seen: HashMap<String, Option<String>> = HashMap::new();
-    for (page_id, _source_id, concept_id) in rows {
+    let mut map = ConceptPathMap::default();
+    for (page_id, source_id, concept_id) in rows {
         let key = format!("/{}.md", concept_id.trim_start_matches('/'));
         match seen.get(&key) {
             Some(Some(existing)) if existing == page_id => {}
@@ -419,66 +773,119 @@ pub fn concept_path_map(rows: &[(String, String, String)]) -> ConceptPathMap {
                 seen.insert(key, Some(page_id.clone()));
             }
         }
+        map.origins
+            .insert(page_id.clone(), (source_id.clone(), concept_id.clone()));
+        let in_source = map.by_source.entry(source_id.clone()).or_default();
+        let folded = concept_id.trim_start_matches('/').to_lowercase();
+        match in_source.get(&folded) {
+            Some(Some(existing)) if existing == page_id => {}
+            Some(_) => {
+                in_source.insert(folded, None);
+            }
+            None => {
+                in_source.insert(folded, Some(page_id.clone()));
+            }
+        }
     }
-    seen.into_iter()
+    map.by_path = seen
+        .into_iter()
         .filter_map(|(key, page)| page.map(|page| (key, page)))
-        .collect()
+        .collect();
+    map
 }
 
-/// What an absolute markdown link becomes in the exported bundle.
+/// Split a link target into its path and the `#fragment` / `?query` tail
+/// (delimiter included), after one pair of surrounding `<` `>`. This is the
+/// cut the importer makes before resolving the path.
+fn split_link_suffix(target: &str) -> (&str, &str) {
+    let inner = target
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+        .unwrap_or(target);
+    match inner.find(['#', '?']) {
+        Some(at) => inner.split_at(at),
+        None => (inner, ""),
+    }
+}
+
+/// What a markdown link to something other than an exported page id becomes
+/// in the exported bundle. `linker` is the page whose body holds the link.
 ///
-/// The exporter writes exactly `index.md`, `pages/*.md` and `sources/*.md`, so
-/// those three prefixes are the only absolute targets a bundle can satisfy and
-/// they pass through untouched (pass 1 writes `/pages/...` itself). Any other
-/// absolute `.md` target came in with an imported concept and names a path
-/// this bundle does not contain:
+/// The exporter writes exactly `index.md`, `pages/*.md` and `sources/*.md`, but
+/// a link in an imported concept names a path of its ORIGINAL bundle, which
+/// can be the same spelling as one of those and mean a different file. So when
+/// the linking page was imported, its link is resolved by identity first
+/// (see [`ConceptPathMap`]), for absolute and relative spellings alike:
 ///
-/// - resolvable through `concept_paths` to a page being exported: rewritten to
-///   that page, which is the same relationship at its new address;
-/// - otherwise: collapsed to its link text, the same way an unknown page id is
-///   handled in pass 1. A bundle that promises a document it does not carry is
-///   worse than prose that lost a link.
+/// - identified, and the target is being exported: rewritten to that page,
+///   fragment kept, which is the same relationship at its new address;
+/// - identified, but its page is not being exported: collapsed to its link
+///   text, the same way an unknown page id is handled. A bundle that promises
+///   a document it does not carry is worse than prose that lost a link, and a
+///   path left behind could be taken over by another page;
+/// - not identified: left exactly as written (OKF 6.1 tolerates a broken
+///   link), except that an absolute `.md` path outside `index.md`, `pages/`
+///   and `sources/` names a document this bundle cannot contain and collapses
+///   like an unidentified `/concepts/` link always did.
 ///
-/// A non-`.md` absolute target (an image, an asset) is left alone.
-fn convert_absolute_link(
+/// A page that was not imported has no bundle to resolve against. Its
+/// absolute `/concepts/...` paths are looked up across all imported bundles
+/// (a path two bundles share resolves to nothing), and everything else,
+/// including its `/pages/` and `/sources/` links, passes through untouched.
+/// A non-`.md` target (an image, an asset) is always left alone.
+fn convert_markdown_link(
     text: &str,
     target: &str,
+    linker: &str,
     id_to_file: &HashMap<String, String>,
     concept_paths: &ConceptPathMap,
 ) -> String {
     use crate::export::knowledge::escape_index_link_text;
-    let (path, suffix) = match target.split_once('#') {
-        Some((path, fragment)) => (path, Some(fragment)),
-        None => (target, None),
-    };
-    if path == "/index.md"
-        || path.starts_with("/pages/")
-        || path.starts_with("/sources/")
-        || !path.to_ascii_lowercase().ends_with(".md")
+    let unchanged = || format!("[{text}]({target})");
+    let (path, suffix) = split_link_suffix(target);
+    if path == "/index.md" || path.starts_with("//") || !path.to_ascii_lowercase().ends_with(".md")
     {
-        return format!("[{text}]({target})");
+        return unchanged();
     }
-    match concept_paths.get(path).and_then(|id| id_to_file.get(id)) {
-        Some(file) => {
-            let label = escape_index_link_text(text);
-            match suffix {
-                Some(fragment) => format!("[{label}](/pages/{file}#{fragment})"),
-                None => format!("[{label}](/pages/{file})"),
-            }
+    let page = match concept_paths.resolve_from_imported(linker, target) {
+        ImportedLink::Page(page) => Some(page),
+        ImportedLink::Unidentified | ImportedLink::NotImported
+            if path.starts_with("/pages/") || path.starts_with("/sources/") =>
+        {
+            return unchanged();
         }
+        ImportedLink::Unidentified => None,
+        ImportedLink::NotImported => concept_paths.get(path).map(String::as_str),
+    };
+    let absolute = path.starts_with('/');
+    match page {
+        Some(page) => match id_to_file.get(page) {
+            Some(file) => {
+                let label = escape_index_link_text(text);
+                format!("[{label}](/pages/{file}{suffix})")
+            }
+            None => text.to_string(),
+        },
+        // A relative link nobody can place stays; so does an absolute one
+        // that only an unidentified imported page could have meant.
+        None if !absolute => unchanged(),
         None => text.to_string(),
     }
 }
 
-/// Convert one page body to bundle links. `page_space` is the linking page's
-/// Space: `[[Target]]` resolves only against exported pages in the same Space
-/// (see [`title_owner_map`]). `id_to_file` maps exported page ids to bundle
-/// files, and `source_ids` is this page's cited memory ids.
+/// Convert one page body to bundle links. `page_id` and `page_space` are the
+/// linking page's id and Space: `[[Target]]` resolves only against exported
+/// pages in the same Space (see [`title_owner_map`]), and an imported page's
+/// own links resolve against its original bundle (see [`ConceptPathMap`]).
+/// `id_to_file` maps exported page ids to bundle files, and `source_ids` is
+/// this page's cited memory ids.
 ///
 /// - `[Text](concept_<id>)` / `[Text](page_<id>)`: exported page ->
 ///   `[Text](/pages/<file>)`, unknown id -> plain `Text`. Other
 ///   `[t](target)` links are already standard markdown: kept when `target`
-///   is not an exported page id, rewritten when it is.
+///   is not an exported page id, rewritten when it is, and repaired to the
+///   target's exported file when they name an imported concept (see
+///   [`convert_markdown_link`]).
 /// - `[[Target]]`, `[[Target|Display]]`, `[[Target#Heading]]`, `![[Target]]`:
 ///   resolved titles -> `[Display or Target](/pages/<file>)` with
 ///   `#<slugify(heading)>` when a heading is present; unresolved -> plain
@@ -491,6 +898,7 @@ fn convert_absolute_link(
 /// - Anything inside fenced code blocks or inline code spans is untouched.
 pub(crate) fn convert_body(
     content: &str,
+    page_id: &str,
     page_space: Option<&str>,
     source_ids: &[String],
     id_to_file: &HashMap<String, String>,
@@ -499,10 +907,22 @@ pub(crate) fn convert_body(
 ) -> String {
     use crate::export::knowledge::escape_index_link_text;
     let cited: HashSet<&str> = source_ids.iter().map(String::as_str).collect();
-    // Pass 1: page-id links. The dedicated shape first (unknown ids collapse
-    // to plain text), then any remaining `[t](target)` whose target is an
-    // exported page id.
-    let pass = replace_outside_code(content, &ID_LINK_RE, |cap| {
+    // Pass 1: markdown links, read from the page as written. Runs before the
+    // page-id shape below because that shape emits `/pages/<file>` links of
+    // this bundle, which a second look would take for an imported concept's
+    // original path.
+    let pass = replace_outside_code(content, &MD_LINK_RE, |cap| {
+        let (text, target) = (&cap[1], &cap[2]);
+        match id_to_file.get(target) {
+            Some(file) => {
+                let label = escape_index_link_text(text);
+                format!("[{label}](/pages/{file})")
+            }
+            None => convert_markdown_link(text, target, page_id, id_to_file, concept_paths),
+        }
+    });
+    // Page-id links left over are not exported pages: collapse to plain text.
+    let pass = replace_outside_code(&pass, &ID_LINK_RE, |cap| {
         let (text, id) = (&cap[1], &cap[2]);
         match id_to_file.get(id) {
             Some(file) => {
@@ -510,19 +930,6 @@ pub(crate) fn convert_body(
                 format!("[{label}](/pages/{file})")
             }
             None => text.to_string(),
-        }
-    });
-    let pass = replace_outside_code(&pass, &MD_LINK_RE, |cap| {
-        let (text, target) = (&cap[1], &cap[2]);
-        if target.starts_with('/') {
-            return convert_absolute_link(text, target, id_to_file, concept_paths);
-        }
-        match id_to_file.get(target) {
-            Some(file) => {
-                let label = escape_index_link_text(text);
-                format!("[{label}](/pages/{file})")
-            }
-            None => cap[0].to_string(),
         }
     });
     // Pass 2: wikilinks (code ranges recomputed on the rewritten text).
@@ -576,6 +983,7 @@ pub(crate) fn render_page_file(
     out.push_str("---\n\n");
     out.push_str(&convert_body(
         &page.content,
+        &page.id,
         page.space.as_deref(),
         &page.source_memory_ids,
         id_to_file,
@@ -623,6 +1031,124 @@ pub(crate) fn render_bundle_index(pages: &[Page], files: &HashMap<String, String
         })
         .collect();
     crate::export::knowledge::render_index_for_entries(rows, "/pages/")
+}
+
+/// The repository bundle's `README.md`: a line saying Wenlan keeps the folder,
+/// in the pages' language, then the pages in reading order, overview first, then the pages in the order the overview lists them, then the rest
+/// by title. `index.md` stays the OKF index, sorted by title. The overview is
+/// the page whose `## Pages` section (`## 頁面`, `## 页面`) links the most
+/// other pages; without such a section, the page with the section linking the
+/// most. Links are bundle-root (`/pages/...`), made relative by the caller.
+fn render_repository_readme(pages: &[Page], files: &HashMap<String, String>) -> String {
+    use crate::export::knowledge::{index_entry_line, sanitize_index_field};
+    let mut exported: Vec<&Page> = pages.iter().filter(|p| files.contains_key(&p.id)).collect();
+    exported.sort_by(|a, b| a.title.cmp(&b.title).then_with(|| a.id.cmp(&b.id)));
+    let owned: Vec<Page> = exported.iter().map(|p| (*p).clone()).collect();
+    let owners = title_owner_map(&owned);
+
+    // (named `## Pages` section, links) of the best section so far.
+    let mut best: Option<((bool, usize), &Page, Vec<String>)> = None;
+    for page in &exported {
+        for (named, linked) in linked_sections(page, &owners) {
+            let score = (named, linked.len());
+            if !linked.is_empty() && best.as_ref().is_none_or(|(top, _, _)| score > *top) {
+                best = Some((score, page, linked));
+            }
+        }
+    }
+    let mut order: Vec<&str> = Vec::new();
+    if let Some((_, overview, linked)) = &best {
+        order.push(&overview.id);
+        for id in linked {
+            if !order.contains(&id.as_str()) {
+                order.push(id);
+            }
+        }
+    }
+    for page in &exported {
+        if !order.contains(&page.id.as_str()) {
+            order.push(&page.id);
+        }
+    }
+    let mut out = format!("{}\n\n", readme_credit(&exported));
+    for id in order {
+        let Some(page) = exported.iter().find(|p| p.id == id) else {
+            continue;
+        };
+        out.push_str(&index_entry_line(
+            &sanitize_index_field(&page.title),
+            "/pages/",
+            &files[&page.id],
+            &sanitize_index_field(page.summary.as_deref().unwrap_or_default()),
+        ));
+    }
+    out
+}
+
+/// The README's opening line, in the language most of the pages are written
+/// in: Traditional or Simplified Chinese when their titles and summaries are,
+/// English otherwise.
+fn readme_credit(pages: &[&Page]) -> &'static str {
+    // Common characters whose two forms differ, paired by position.
+    const TRADITIONAL: &str = "麼來個這們為時說會碼頁開關發對沒還進過實現應從後專檔資庫夾試測檢設圖讀寫據變數與運執錯單處務機認樣點門問題體長東話語學經間動瀾舊";
+    const SIMPLIFIED: &str = "么来个这们为时说会码页开关发对没还进过实现应从后专档资库夹试测检设图读写据变数与运执错单处务机认样点门问题体长东话语学经间动澜旧";
+    let text: String = pages
+        .iter()
+        .flat_map(|page| {
+            [
+                page.title.as_str(),
+                page.summary.as_deref().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    let han = text
+        .chars()
+        .filter(|c| ('\u{4e00}'..='\u{9fff}').contains(c))
+        .count();
+    let latin = text.chars().filter(char::is_ascii_alphabetic).count();
+    if han == 0 || han * 3 < latin {
+        return "Kept by [Wenlan](https://wenlan.app) from this repository's code. \
+                Each page ends with the code lines it relies on.";
+    }
+    let count = |set: &str| text.chars().filter(|c| set.contains(*c)).count();
+    if count(SIMPLIFIED) > count(TRADITIONAL) {
+        "这个文件夹由 [Wenlan](https://wenlan.app) 依据代码维护，每页结尾列出它依据的代码行。"
+    } else {
+        "這個資料夾由 [Wenlan](https://wenlan.app) 依程式碼維護，每頁結尾列出它依據的程式碼行。"
+    }
+}
+
+/// Each `## ` section of `page`: whether its heading names the page list, and
+/// the other exported pages its `[[links]]` reach, in order, once each.
+fn linked_sections(page: &Page, owners: &TitleOwners) -> Vec<(bool, Vec<String>)> {
+    let mut sections: Vec<(bool, Vec<String>)> = Vec::new();
+    for line in page.content.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            let heading = heading.trim();
+            let named =
+                heading.eq_ignore_ascii_case("pages") || heading == "頁面" || heading == "页面";
+            sections.push((named, Vec::new()));
+            continue;
+        }
+        let Some((_, linked)) = sections.last_mut() else {
+            continue;
+        };
+        for cap in WIKILINK_RE.captures_iter(line) {
+            if !cap[1].is_empty() {
+                continue;
+            }
+            let key = (
+                page.space.clone(),
+                crate::db::MemoryDB::page_title_key(cap[2].trim()),
+            );
+            if let Some(Some(id)) = owners.get(&key) {
+                if *id != page.id && !linked.contains(id) {
+                    linked.push(id.clone());
+                }
+            }
+        }
+    }
+    sections
 }
 
 /// Read the previous marker. `Ok(None)` means no marker (fresh directory
@@ -698,7 +1224,7 @@ pub fn export_okf_with_concept_paths(
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
 ) -> Result<ExportStats, WenlanError> {
-    export_okf_inner(pages, target, concept_paths, code_bases, false)
+    export_okf_inner(pages, target, concept_paths, code_bases, false, &mut |_| {})
 }
 
 /// [`export_okf_with_concept_paths`] for a bundle that lives in a folder of a
@@ -712,7 +1238,7 @@ pub fn export_okf_for_repository(
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
 ) -> Result<ExportStats, WenlanError> {
-    export_okf_inner(pages, target, concept_paths, code_bases, true)
+    export_okf_inner(pages, target, concept_paths, code_bases, true, &mut |_| {})
 }
 
 /// The body of a page file in a repository bundle (`pages/<file>`) as page
@@ -762,12 +1288,17 @@ fn relative_bundle_links(path: &str, body: &str) -> String {
     out.replace(&format!("](/{INDEX_FILE}"), &format!("]({up}{INDEX_FILE}"))
 }
 
+/// `before_act` is a test seam: it runs with a bundle entry's path immediately
+/// before the stale sweep unlinks it or a planned write replaces it, which is
+/// where an editor's save can land after the preservation pass classified the
+/// file. Production passes a no-op.
 fn export_okf_inner(
     pages: &[Page],
     target: &Path,
     concept_paths: &ConceptPathMap,
     code_bases: &HashMap<String, Vec<CodeBasisLocator>>,
     relative_links: bool,
+    before_act: &mut dyn FnMut(&str),
 ) -> Result<ExportStats, WenlanError> {
     let mut stats = ExportStats::default();
     for dir in [target, &target.join(PAGES_DIR), &target.join(SOURCES_DIR)] {
@@ -795,11 +1326,28 @@ fn export_okf_inner(
             ));
         }
     }
-    let (old_file_list, old_digests) = match old_marker {
+    let (old_file_list, mut old_digests) = match old_marker {
         Some(marker) => (marker.files, marker.digests),
         None => (Vec::new(), BTreeMap::new()),
     };
-    let old_files: HashSet<String> = old_file_list.into_iter().collect();
+    let mut old_files: HashSet<String> = old_file_list.into_iter().collect();
+
+    // A repository bundle's README.md is Wenlan's while nobody else has
+    // written there: absent, or the bytes the last export wrote. One a person
+    // wrote or edited is theirs from then on: never written, moved or
+    // removed, and no longer listed in the marker.
+    let readme = relative_links
+        && if old_files.contains(README_FILE) {
+            let ours =
+                bundle_file_state(target, README_FILE, &old_digests, None) == BundleFileState::Ours;
+            if !ours {
+                old_files.remove(README_FILE);
+                old_digests.remove(README_FILE);
+            }
+            ours
+        } else {
+            std::fs::symlink_metadata(target.join(README_FILE)).is_err()
+        };
 
     let planned_pairs = plan_page_filenames(pages);
     let id_to_file: HashMap<String, String> = planned_pairs.iter().cloned().collect();
@@ -808,6 +1356,9 @@ fn export_okf_inner(
 
     let mut planned: HashSet<String> = HashSet::new();
     planned.insert(INDEX_FILE.to_string());
+    if readme {
+        planned.insert(README_FILE.to_string());
+    }
     for (_, file) in &planned_pairs {
         planned.insert(format!("{PAGES_DIR}/{file}"));
     }
@@ -839,6 +1390,10 @@ fn export_okf_inner(
 
     std::fs::create_dir_all(target.join(PAGES_DIR))?;
     std::fs::create_dir_all(target.join(SOURCES_DIR))?;
+    let dirs = BundleDirs::open(target).map_err(WenlanError::Io)?;
+
+    // Bundles exported by older builds hold preserved copies named `*.md`.
+    migrate_legacy_archive(&dirs);
 
     // Render every planned file before touching the tree, so the preservation
     // pass below can compare what is on disk against what this run would put
@@ -869,6 +1424,12 @@ fn export_okf_inner(
         INDEX_FILE.to_string(),
         render_bundle_index(pages, &id_to_file).into_bytes(),
     );
+    if readme {
+        planned_bytes.insert(
+            README_FILE.to_string(),
+            render_repository_readme(pages, &id_to_file).into_bytes(),
+        );
+    }
     if relative_links {
         for (path, bytes) in planned_bytes.iter_mut() {
             if let Ok(body) = std::str::from_utf8(bytes) {
@@ -893,7 +1454,7 @@ fn export_okf_inner(
         let planned_here = planned_bytes.get(entry.as_str()).map(Vec::as_slice);
         if bundle_file_state(target, entry, &old_digests, planned_here) == BundleFileState::Changed
         {
-            preserve_edited_bundle_file(target, entry)?;
+            preserve_edited_bundle_file(&dirs, entry)?;
         }
     }
 
@@ -906,8 +1467,9 @@ fn export_okf_inner(
     // unrecognized bytes were ours.
     let union: HashSet<String> = old_files.union(&planned).cloned().collect();
     let carried_digests: BTreeMap<String, String> = old_digests.clone();
-    write_file_nofollow(
-        &target.join(MARKER_FILE),
+    remove_stale_marker_temps(target);
+    write_marker_atomically(
+        target,
         serde_json::to_vec_pretty(&marker_for(&union, carried_digests.clone()))
             .expect("export marker serializes")
             .as_slice(),
@@ -927,12 +1489,14 @@ fn export_okf_inner(
         if !marker_entry_is_safe(entry) {
             continue;
         }
-        let path = target.join(entry);
+        let Ok((dir, name)) = dirs.locate(entry) else {
+            continue;
+        };
         // Only a plain file is ours to remove. A directory or a symlink
         // standing where a bundle file was is somebody else's, and its
         // presence must not abort an export that has already written the
         // union marker: every retry would fail at the same entry.
-        match std::fs::symlink_metadata(&path) {
+        match dir.symlink_metadata(name) {
             Ok(m) if m.is_file() && !m.file_type().is_symlink() => {}
             Ok(_) => {
                 log::warn!("[okf] leaving {entry} alone: not a plain file");
@@ -952,8 +1516,32 @@ fn export_okf_inner(
                 continue;
             }
         }
-        if let Err(e) = std::fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
+        before_act(entry);
+        // The preservation pass read this file some time ago. Unlinking by
+        // name now would delete a save that landed since, so the file is taken
+        // aside and its bytes classified again; only bytes that are still
+        // what the last export wrote are unlinked.
+        let still_ours = |bytes: &[u8]| {
+            classify_bundle_bytes(bytes, entry, &old_digests, None) == BundleFileState::Ours
+        };
+        match vault_fs::remove_if_unchanged(dir, name, CLASSIFY_SCAN_BYTES, still_ours) {
+            Ok(Disposal::Absent | Disposal::Removed) => {}
+            // Edited since it was classified, and put back. It stays listed
+            // with its digest, so the next run preserves it like any edit.
+            Ok(Disposal::Kept) => {
+                log::warn!("[okf] kept stale {entry}: it changed while it was being swept");
+                unswept.push(entry.clone());
+            }
+            Ok(Disposal::Displaced(aside)) => {
+                if let Err(e) = preserve_into_archive(&dirs, entry, dir, &aside) {
+                    log::warn!(
+                        "[okf] could not preserve edited stale {entry} (left as {aside}): {e}"
+                    );
+                    stats.failed += 1;
+                }
+                unswept.push(entry.clone());
+            }
+            Err(e) => {
                 log::warn!("[okf] could not remove stale {entry}: {e}");
                 unswept.push(entry.clone());
                 stats.failed += 1;
@@ -971,11 +1559,18 @@ fn export_okf_inner(
         };
         let entry = format!("{PAGES_DIR}/{file}");
         let body = planned_bytes.get(&entry).expect("page rendered above");
-        match write_file_nofollow(&target.join(PAGES_DIR).join(file), body) {
-            Ok(()) => {
+        match write_bundle_file(&dirs, &entry, body, &old_digests, before_act) {
+            Ok(BundleWrite::Written) => {
                 stats.exported += 1;
                 written_ids.insert(id.as_str());
                 new_digests.insert(entry, digest_of(body));
+            }
+            Ok(BundleWrite::Kept) => {
+                log::warn!(
+                    "[okf] export skipped '{}': {entry} changed after it was checked and was kept",
+                    page.title
+                );
+                stats.failed += 1;
             }
             Err(e) => {
                 log::warn!("[okf] export failed for '{}': {}", page.title, e);
@@ -987,11 +1582,18 @@ fn export_okf_inner(
         let name = crate::export::provenance::stub_filename(id);
         let entry = format!("{SOURCES_DIR}/{name}");
         let stub = planned_bytes.get(&entry).expect("stub rendered above");
-        if let Err(e) = write_file_nofollow(&target.join(SOURCES_DIR).join(&name), stub) {
-            log::warn!("[okf] source stub failed for '{id}': {e}");
-            stats.failed += 1;
-        } else {
-            new_digests.insert(entry, digest_of(stub));
+        match write_bundle_file(&dirs, &entry, stub, &old_digests, before_act) {
+            Ok(BundleWrite::Written) => {
+                new_digests.insert(entry, digest_of(stub));
+            }
+            Ok(BundleWrite::Kept) => {
+                log::warn!("[okf] source stub for '{id}' skipped: {entry} changed after it was checked and was kept");
+                stats.failed += 1;
+            }
+            Err(e) => {
+                log::warn!("[okf] source stub failed for '{id}': {e}");
+                stats.failed += 1;
+            }
         }
     }
     // The index lists only pages actually written: a failed page file must
@@ -1006,8 +1608,44 @@ fn export_okf_inner(
     if relative_links {
         index = relative_bundle_links(INDEX_FILE, &index);
     }
-    write_file_nofollow(&target.join(INDEX_FILE), index.as_bytes())?;
-    new_digests.insert(INDEX_FILE.to_string(), digest_of(index.as_bytes()));
+    match write_bundle_file(
+        &dirs,
+        INDEX_FILE,
+        index.as_bytes(),
+        &old_digests,
+        before_act,
+    )? {
+        BundleWrite::Written => {
+            new_digests.insert(INDEX_FILE.to_string(), digest_of(index.as_bytes()));
+        }
+        // Left as the person has it; the digest the last export recorded
+        // carries over below, and the next run preserves the edit.
+        BundleWrite::Kept => {
+            log::warn!("[okf] {INDEX_FILE} changed after it was checked and was kept");
+        }
+    }
+    if readme {
+        let list = relative_bundle_links(
+            README_FILE,
+            &render_repository_readme(&written_pages, &id_to_file),
+        );
+        match write_bundle_file(
+            &dirs,
+            README_FILE,
+            list.as_bytes(),
+            &old_digests,
+            before_act,
+        )? {
+            BundleWrite::Written => {
+                new_digests.insert(README_FILE.to_string(), digest_of(list.as_bytes()));
+            }
+            // A person saved their own README after the check above: it stays,
+            // and the next run sees it as theirs and leaves it alone.
+            BundleWrite::Kept => {
+                log::warn!("[okf] {README_FILE} changed after it was checked and was kept");
+            }
+        }
+    }
     // A planned file that failed to write keeps whatever digest the previous
     // export recorded for it, so the next run can still tell an edit from the
     // bytes we left there. Digests for files this run removed are dropped:
@@ -1025,8 +1663,8 @@ fn export_okf_inner(
             new_digests.entry(entry).or_insert(digest);
         }
     }
-    write_file_nofollow(
-        &target.join(MARKER_FILE),
+    write_marker_atomically(
+        target,
         serde_json::to_vec_pretty(&marker_for(&still_listed, new_digests))
             .expect("export marker serializes")
             .as_slice(),
@@ -1086,6 +1724,132 @@ mod tests {
         }
     }
 
+    fn repository_pages() -> Vec<Page> {
+        vec![
+            test_page("p-run", "How to run it", "Build it."),
+            test_page(
+                "p-map",
+                "Module map",
+                "## Parts\n\n- [[How to run it]]\n",
+            ),
+            test_page("p-zz", "Zebra notes", "Not in the plan."),
+            test_page(
+                "p-over",
+                "What Demo is",
+                "Demo does things.\n\n## Pages\n\n- [[Module map]]: parts\n- [[Not written yet]]: later\n- [[How to run it]]: start\n",
+            ),
+        ]
+    }
+
+    fn readme_titles(readme: &str) -> Vec<String> {
+        readme
+            .lines()
+            .filter_map(|line| line.strip_prefix("* ["))
+            .map(|line| line.split(']').next().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn repository_readme_starts_with_the_overview_then_its_page_order() {
+        let pages = repository_pages();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("wiki");
+        export_okf_for_repository(&pages, &target, &ConceptPathMap::new(), &HashMap::new())
+            .unwrap();
+        let readme = std::fs::read_to_string(target.join(README_FILE)).unwrap();
+        assert_eq!(
+            readme_titles(&readme),
+            ["What Demo is", "Module map", "How to run it", "Zebra notes"]
+        );
+        assert!(readme.contains("](pages/"), "{readme}");
+        assert!(
+            readme.starts_with("Kept by [Wenlan](https://wenlan.app) "),
+            "{readme}"
+        );
+        assert!(
+            !readme.starts_with("---"),
+            "no frontmatter on GitHub: {readme}"
+        );
+        let marker: ExportMarker =
+            serde_json::from_slice(&std::fs::read(target.join(MARKER_FILE)).unwrap()).unwrap();
+        assert!(marker.files.iter().any(|f| f == README_FILE));
+        assert!(marker.digests.contains_key(README_FILE));
+
+        // A plain export (not a repository bundle) writes no README.md.
+        let plain = dir.path().join("plain");
+        export_okf(&pages, &plain).unwrap();
+        assert!(!plain.join(README_FILE).exists());
+    }
+
+    #[test]
+    fn repository_readme_without_a_page_list_is_sorted_by_title() {
+        let pages = vec![
+            test_page("b", "Beta", "No links."),
+            test_page("a", "Alpha", "No links either."),
+        ];
+        let files: HashMap<String, String> = plan_page_filenames(&pages).into_iter().collect();
+        assert_eq!(
+            readme_titles(&render_repository_readme(&pages, &files)),
+            ["Alpha", "Beta"]
+        );
+    }
+
+    #[test]
+    fn repository_readme_credit_follows_the_pages_language() {
+        let files = |pages: &[Page]| -> HashMap<String, String> {
+            plan_page_filenames(pages).into_iter().collect()
+        };
+        let hant = vec![
+            test_page("a", "文瀾是什麼", "內容"),
+            test_page("b", "怎麼跑起來", "內容"),
+        ];
+        assert!(render_repository_readme(&hant, &files(&hant)).starts_with("這個資料夾由"));
+        let hans = vec![
+            test_page("a", "文澜是什么", "内容"),
+            test_page("b", "怎么跑起来", "内容"),
+        ];
+        assert!(render_repository_readme(&hans, &files(&hans)).starts_with("这个文件夹由"));
+    }
+
+    #[test]
+    fn repository_readme_a_person_wrote_or_edited_is_left_alone() {
+        let pages = repository_pages();
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("wiki");
+        export_okf_for_repository(&pages, &target, &ConceptPathMap::new(), &HashMap::new())
+            .unwrap();
+
+        // Edited after Wenlan wrote it: theirs from then on.
+        std::fs::write(target.join(README_FILE), "My own intro\n").unwrap();
+        export_okf_for_repository(&pages, &target, &ConceptPathMap::new(), &HashMap::new())
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join(README_FILE)).unwrap(),
+            "My own intro\n"
+        );
+        assert!(!target.join(ARCHIVE_DIR).join(README_FILE).exists());
+        assert!(!target
+            .join(ARCHIVE_DIR)
+            .join(format!("{README_FILE}{ARCHIVE_SUFFIX}"))
+            .exists());
+        let marker: ExportMarker =
+            serde_json::from_slice(&std::fs::read(target.join(MARKER_FILE)).unwrap()).unwrap();
+        assert!(!marker.files.iter().any(|f| f == README_FILE));
+
+        // Still left alone on the next run, and fewer pages remove nothing of it.
+        export_okf_for_repository(
+            &pages[..1],
+            &target,
+            &ConceptPathMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target.join(README_FILE)).unwrap(),
+            "My own intro\n"
+        );
+    }
+
     fn test_page_in_space(id: &str, title: &str, content: &str, space: Option<&str>) -> Page {
         let mut page = test_page(id, title, content);
         page.space = space.map(|space| space.to_owned());
@@ -1110,6 +1874,7 @@ mod tests {
         let (id_to_file, title_owner) = link_context(pages);
         convert_body(
             &page.content,
+            &page.id,
             page.space.as_deref(),
             &page.source_memory_ids,
             &id_to_file,
@@ -1541,7 +2306,7 @@ mod tests {
         assert_eq!(stats.exported, 1, "{stats:?}");
 
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md.bak")).unwrap(),
             mine,
             "the edit is preserved, byte for byte"
         );
@@ -1570,7 +2335,7 @@ mod tests {
             "the stale file still leaves the bundle"
         );
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md.bak")).unwrap(),
             mine,
             "but its bytes are preserved, not unlinked"
         );
@@ -1637,7 +2402,7 @@ mod tests {
         std::fs::write(dir.path().join("pages/alpha.md"), "edited before upgrade").unwrap();
         export_okf(&pages, dir.path()).unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md.bak")).unwrap(),
             "edited before upgrade",
             "Muse: the one-time upgrade overwrite is gone"
         );
@@ -1646,7 +2411,8 @@ mod tests {
         std::fs::write(dir.path().join("pages/alpha.md"), "edited after upgrade").unwrap();
         export_okf(&pages, dir.path()).unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha-2.md")).unwrap(),
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha-2.md.bak"))
+                .unwrap(),
             "edited after upgrade"
         );
     }
@@ -1819,6 +2585,216 @@ mod tests {
         let alpha = test_page("concept_a", "Alpha", "See [Gamma](/concepts/gamma.md).");
         let body = convert(std::slice::from_ref(&alpha), &alpha);
         assert_eq!(body.trim(), "See Gamma.", "{body}");
+    }
+
+    fn imported(page: &str, source: &str, concept: &str) -> (String, String, String) {
+        (page.to_string(), source.to_string(), concept.to_string())
+    }
+
+    /// Astra finding 4. An imported bundle holds `pages/b.md` ("Beta") and
+    /// `sources/x.md`; a concept links to both in the bundle's terms. The
+    /// export names Beta `beta.md` and the other concept `x-notes.md`, so the
+    /// verbatim `/pages/` and `/sources/` paths dangled. The link follows the
+    /// target's identity to its export file and keeps the fragment.
+    #[test]
+    fn an_imported_pages_and_sources_link_follows_a_renamed_target() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "See [Beta](/pages/b.md), its [setup](/pages/b.md#setup) and [X](/sources/x.md#top).",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let notes = test_page("concept_x", "X Notes", "z");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+            imported("concept_x", "src_1", "sources/x"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta, notes], &alpha, &concept_paths);
+
+        assert!(body.contains("[Beta](/pages/beta.md)"), "{body}");
+        assert!(body.contains("[setup](/pages/beta.md#setup)"), "{body}");
+        assert!(body.contains("[X](/pages/x-notes.md#top)"), "{body}");
+    }
+
+    /// The dangerous half: after the rename a DIFFERENT page owns `b.md`. The
+    /// old spelling would silently retarget the link at it; the target's
+    /// identity must win, and the link written for the other page by name is
+    /// not disturbed.
+    #[test]
+    fn a_different_page_now_holding_the_old_filename_does_not_capture_the_link() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+        ]);
+        let pages = [alpha.clone(), beta, other];
+        let (id_to_file, _) = link_context(&pages);
+        assert_eq!(id_to_file["concept_o"], "b.md", "the old filename is taken");
+
+        let body = convert_with_concepts(&pages, &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "[Beta](/pages/beta.md)", "{body}");
+    }
+
+    /// Relative links resolve from the importing concept's original folder,
+    /// the way the importer resolved them, then follow the target's identity.
+    #[test]
+    fn an_imported_relative_link_resolves_from_the_original_folder() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "[Beta](./b.md#why) [Up](../x/b.md) [Bare](b.md) [Gamma](../c.md)",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let xbeta = test_page("concept_xb", "Xbeta", "y");
+        let gamma = test_page("concept_c", "Gamma", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "concepts/b"),
+            imported("concept_xb", "src_1", "x/b"),
+            imported("concept_c", "src_1", "c"),
+        ]);
+
+        let body = convert_with_concepts(
+            &[alpha.clone(), beta, xbeta, gamma, other],
+            &alpha,
+            &concept_paths,
+        );
+
+        assert_eq!(
+            body.trim(),
+            "[Beta](/pages/beta.md#why) [Up](/pages/xbeta.md) [Bare](/pages/beta.md) \
+             [Gamma](/pages/gamma.md)",
+            "{body}"
+        );
+    }
+
+    /// A link whose target cannot be identified stays as written (OKF 6.1
+    /// tolerates a broken link) rather than being guessed, and another
+    /// bundle's concept of the same path is not the target.
+    #[test]
+    fn an_unidentifiable_imported_link_is_left_as_written() {
+        let alpha = test_page(
+            "concept_a",
+            "Alpha",
+            "[Z](/pages/zzz.md) [N](./nope.md) [S](/sources/nothing.md) [B](/pages/b.md)",
+        );
+        let beta = test_page("concept_b", "Beta", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_2", "pages/b"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), alpha.content, "{body}");
+    }
+
+    /// Identified but not exported: the path is not left behind for another
+    /// page to take over, so the link degrades to its text like an
+    /// unresolvable `/concepts/` link does.
+    #[test]
+    fn an_imported_link_to_a_page_that_is_not_exported_degrades_to_text() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md) [Rel](./b.md)");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+            imported("concept_b", "src_1", "concepts/b"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), other], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "Beta Rel", "{body}");
+    }
+
+    /// A page that was not imported has no bundle to read its paths in, so
+    /// its own `/pages/` and relative links are not reinterpreted.
+    #[test]
+    fn a_page_that_was_not_imported_keeps_its_pages_and_relative_links() {
+        let alpha = test_page("concept_a", "Alpha", "[B](/pages/b.md) [R](./b.md)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let concept_paths = concept_path_map(&[imported("concept_b", "src_1", "pages/b")]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), alpha.content, "{body}");
+    }
+
+    /// The `/pages/<file>` link written for a `concept_<id>` link is this
+    /// bundle's own address, not an imported concept's original path.
+    #[test]
+    fn a_page_id_link_is_not_reread_as_an_imported_path() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](concept_b)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let gamma = test_page("concept_c", "Gamma", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_c", "src_1", "pages/beta"),
+        ]);
+
+        let body = convert_with_concepts(&[alpha.clone(), beta, gamma], &alpha, &concept_paths);
+
+        assert_eq!(body.trim(), "[Beta](/pages/beta.md)", "{body}");
+    }
+
+    /// A bundle's `/pages/b.md` is its own: two bundles holding the same path
+    /// each resolve to their own concept, where a page of neither would find
+    /// the path ambiguous.
+    #[test]
+    fn two_bundles_sharing_a_path_each_resolve_their_own() {
+        let one = test_page("concept_1", "One", "[B](/pages/b.md)");
+        let two = test_page("concept_2", "Two", "[B](/pages/b.md)");
+        let b1 = test_page("concept_b1", "Beta One", "y");
+        let b2 = test_page("concept_b2", "Beta Two", "y");
+        let concept_paths = concept_path_map(&[
+            imported("concept_1", "src_1", "one"),
+            imported("concept_b1", "src_1", "pages/b"),
+            imported("concept_2", "src_2", "two"),
+            imported("concept_b2", "src_2", "pages/b"),
+        ]);
+        let pages = [one.clone(), two.clone(), b1, b2];
+
+        assert_eq!(
+            convert_with_concepts(&pages, &one, &concept_paths).trim(),
+            "[B](/pages/beta-one.md)"
+        );
+        assert_eq!(
+            convert_with_concepts(&pages, &two, &concept_paths).trim(),
+            "[B](/pages/beta-two.md)"
+        );
+    }
+
+    /// End to end through the exporter: the written page carries the repaired
+    /// link, and a repository bundle makes it relative to the linking file.
+    #[test]
+    fn export_writes_the_repaired_link_in_both_bundle_shapes() {
+        let alpha = test_page("concept_a", "Alpha", "[Beta](/pages/b.md#setup)");
+        let beta = test_page("concept_b", "Beta", "y");
+        let other = test_page("concept_o", "B", "unrelated");
+        let concept_paths = concept_path_map(&[
+            imported("concept_a", "src_1", "concepts/a"),
+            imported("concept_b", "src_1", "pages/b"),
+        ]);
+        let pages = [alpha, beta, other];
+
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf_with_concept_paths(&pages, dir.path(), &concept_paths, &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(dir.path().join("pages/alpha.md")).unwrap();
+        assert!(
+            written.contains("[Beta](/pages/beta.md#setup)"),
+            "{written}"
+        );
+
+        let repo = tempfile::TempDir::new().unwrap();
+        export_okf_for_repository(&pages, repo.path(), &concept_paths, &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(repo.path().join("pages/alpha.md")).unwrap();
+        assert!(written.contains("[Beta](beta.md#setup)"), "{written}");
     }
 
     /// The exporter's own absolute links, and non-markdown targets, pass
@@ -2339,5 +3315,610 @@ mod tests {
         }
         visible.push_str(&content[last..]);
         visible.contains(needle)
+    }
+
+    fn marker_temps(root: &Path) -> Vec<String> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.starts_with(&format!("{MARKER_FILE}.")))
+            .collect()
+    }
+
+    /// A kill between writing the temp and the rename must leave the previous
+    /// marker byte-for-byte: it used to be truncated in place, and the next
+    /// export refused at the malformed-marker parse.
+    #[test]
+    fn an_interrupted_marker_update_keeps_the_previous_marker_and_the_next_export_works() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = vec![
+            test_page("concept_a", "Alpha", "x"),
+            test_page("concept_b", "Beta", "y"),
+        ];
+        export_okf(&both, dir.path()).unwrap();
+        let marker_path = dir.path().join(MARKER_FILE);
+        let before = std::fs::read(&marker_path).unwrap();
+
+        let replacement =
+            serde_json::to_vec_pretty(&marker_for(&HashSet::new(), BTreeMap::new())).unwrap();
+        let temp_seen = std::cell::Cell::new(false);
+        let result = write_marker_atomically_with_hook(dir.path(), &replacement, || {
+            // The replacement is complete on disk beside the marker, which is
+            // still the old one: the window the in-place write left torn.
+            temp_seen.set(!marker_temps(dir.path()).is_empty());
+            assert_eq!(std::fs::read(&marker_path).unwrap(), before);
+            Err(std::io::Error::other("injected after temp write"))
+        });
+        assert!(result.is_err());
+        assert!(temp_seen.get(), "hook ran after the temp was written");
+        assert_eq!(std::fs::read(&marker_path).unwrap(), before);
+        assert!(
+            marker_temps(dir.path()).is_empty(),
+            "failed temp cleaned up"
+        );
+
+        // The previous ownership record is intact, so the re-export still
+        // knows `beta.md` is its own to remove.
+        let stats = export_okf(&both[..1], dir.path()).unwrap();
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert!(!dir.path().join("pages/beta.md").exists());
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(marker_path).unwrap()).unwrap();
+        assert!(marker["digests"]["pages/alpha.md"].is_string());
+        assert!(marker["digests"].get("pages/beta.md").is_none());
+    }
+
+    /// A process killed mid-update leaves its temp behind (a half-written one
+    /// here). It is not the marker, so it blocks nothing, and the next export
+    /// keeps the ownership and digests of the marker still in place.
+    #[test]
+    fn a_stale_marker_temp_neither_blocks_nor_corrupts_the_next_export() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "x")];
+        export_okf(&pages, dir.path()).unwrap();
+        let before = std::fs::read(dir.path().join(MARKER_FILE)).unwrap();
+
+        let stale = dir.path().join(format!("{MARKER_FILE}.deadbeef.tmp"));
+        std::fs::write(&stale, b"{\"okf_version\": \"0.2\", \"fil").unwrap();
+        std::fs::create_dir(dir.path().join(format!("{MARKER_FILE}.dir.tmp"))).unwrap();
+
+        let stats = export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert_eq!(std::fs::read(dir.path().join(MARKER_FILE)).unwrap(), before);
+        assert!(!stale.exists(), "stale temp swept");
+        assert!(
+            dir.path().join(format!("{MARKER_FILE}.dir.tmp")).is_dir(),
+            "only plain files are swept"
+        );
+        assert!(
+            !dir.path().join(ARCHIVE_DIR).exists(),
+            "no page was mistaken for an edit"
+        );
+    }
+
+    #[test]
+    fn the_marker_is_swapped_in_as_a_new_file_not_truncated_in_place() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_marker_atomically(dir.path(), b"one").unwrap();
+        let marker_path = dir.path().join(MARKER_FILE);
+        let first = std::fs::read(&marker_path).unwrap();
+        assert_eq!(first, b"one");
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&marker_path).unwrap().ino()
+        };
+        write_marker_atomically(dir.path(), b"two").unwrap();
+        assert_eq!(std::fs::read(&marker_path).unwrap(), b"two");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_ne!(std::fs::metadata(&marker_path).unwrap().ino(), inode);
+        }
+        assert!(marker_temps(dir.path()).is_empty());
+    }
+
+    /// The marker is not exempt from the symlink rule the atomic swap must not
+    /// weaken: a link standing at the marker is refused, not replaced, and
+    /// nothing is written through it.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_marker_is_refused_and_left_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "x")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        let elsewhere = tempfile::TempDir::new().unwrap();
+        let real = elsewhere.path().join("marker.json");
+        std::fs::rename(dir.path().join(MARKER_FILE), &real).unwrap();
+        let before = std::fs::read(&real).unwrap();
+        let link = dir.path().join(MARKER_FILE);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(export_okf(&pages, dir.path()).is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), before);
+        assert!(marker_temps(dir.path()).is_empty());
+
+        // A dangling link is refused too, and nothing appears at its target.
+        std::fs::remove_file(&link).unwrap();
+        let missing = elsewhere.path().join("missing.json");
+        std::os::unix::fs::symlink(&missing, &link).unwrap();
+        assert!(write_marker_atomically(dir.path(), b"{}").is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert!(!missing.exists());
+        assert!(marker_temps(dir.path()).is_empty());
+    }
+
+    // The tests below put an editor's save between the preservation pass that
+    // classified a bundle file and the sweep or write that acts on it.
+
+    fn export_with_hook(
+        pages: &[Page],
+        target: &Path,
+        before_act: &mut dyn FnMut(&str),
+    ) -> Result<ExportStats, WenlanError> {
+        export_okf_inner(
+            pages,
+            target,
+            &ConceptPathMap::new(),
+            &HashMap::new(),
+            false,
+            before_act,
+        )
+    }
+
+    /// Save the way an editor or sync client does: a new file renamed over the
+    /// name, so the exporter's open handle and inode are not involved.
+    fn save_by_replacing(path: &Path, text: &str) {
+        let scratch = path.with_extension("editor-tmp");
+        std::fs::write(&scratch, text).unwrap();
+        std::fs::rename(&scratch, path).unwrap();
+    }
+
+    fn private_names_in_bundle(root: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        for dir in [root.to_path_buf(), root.join("pages"), root.join("sources")] {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if name.starts_with(".wenlan-") && name.ends_with(".tmp") {
+                    found.push(name);
+                }
+            }
+        }
+        found
+    }
+
+    fn two_pages() -> Vec<Page> {
+        vec![
+            test_page("concept_a", "Alpha", "x"),
+            test_page("concept_b", "Beta", "y"),
+        ]
+    }
+
+    /// The stale sweep classified `pages/beta.md` as ours-unchanged, then an
+    /// editor saved over it. The unlink by name used to delete the save.
+    #[test]
+    fn stale_sweep_keeps_an_edit_saved_by_replacing_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = two_pages();
+        export_okf(&both, dir.path()).unwrap();
+        let ours = std::fs::read(dir.path().join("pages/beta.md")).unwrap();
+        let mine = "---\ntype: page\n---\n\nNotes I added to Beta, saved mid-export.\n";
+        let beta = dir.path().join("pages/beta.md");
+        let mut acted_on = Vec::new();
+
+        let stats = export_with_hook(&both[..1], dir.path(), &mut |entry| {
+            if entry == "pages/beta.md" {
+                acted_on.push(entry.to_string());
+                save_by_replacing(&beta, mine);
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            acted_on,
+            ["pages/beta.md"],
+            "the hook ran before the unlink"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&beta).unwrap(),
+            mine,
+            "the edit survives"
+        );
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+
+        // It stays listed with the digest of OUR bytes, so the next run
+        // recognizes it as an edit and preserves it.
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join(MARKER_FILE)).unwrap()).unwrap();
+        assert_eq!(
+            marker["digests"]["pages/beta.md"].as_str().unwrap(),
+            digest_of(&ours)
+        );
+        export_okf(&both[..1], dir.path()).unwrap();
+        assert!(!beta.exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/beta.md.bak")).unwrap(),
+            mine
+        );
+    }
+
+    /// Same, for an editor that writes into the existing file.
+    #[test]
+    fn stale_sweep_keeps_an_edit_written_in_place_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = two_pages();
+        export_okf(&both, dir.path()).unwrap();
+        let beta = dir.path().join("pages/beta.md");
+
+        export_with_hook(&both[..1], dir.path(), &mut |entry| {
+            if entry == "pages/beta.md" {
+                std::fs::write(&beta, "typed in place\n").unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&beta).unwrap(), "typed in place\n");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// An untouched stale file is still removed by the new path.
+    #[test]
+    fn stale_sweep_still_removes_what_it_wrote() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = two_pages();
+        export_okf(&both, dir.path()).unwrap();
+        let mut acted_on = 0;
+        export_with_hook(&both[..1], dir.path(), &mut |entry| {
+            if entry == "pages/beta.md" {
+                acted_on += 1;
+            }
+        })
+        .unwrap();
+        assert_eq!(acted_on, 1);
+        assert!(!dir.path().join("pages/beta.md").exists());
+        assert!(!dir.path().join(".wenlan-archive").exists());
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// The planned write classified `pages/alpha.md` as safe to overwrite, then
+    /// an editor saved over it. The write used to truncate the save.
+    #[test]
+    fn planned_overwrite_keeps_an_edit_saved_by_replacing_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf(&[test_page("concept_a", "Alpha", "first body")], dir.path()).unwrap();
+        let later = vec![test_page("concept_a", "Alpha", "second body")];
+        let alpha = dir.path().join("pages/alpha.md");
+        let mine = "---\ntype: page\n---\n\nMy rewrite of Alpha, saved mid-export.\n";
+
+        let stats = export_with_hook(&later, dir.path(), &mut |entry| {
+            if entry == "pages/alpha.md" {
+                save_by_replacing(&alpha, mine);
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&alpha).unwrap(),
+            mine,
+            "not replaced"
+        );
+        assert_eq!((stats.exported, stats.failed), (0, 1), "reported, not done");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+        let index = std::fs::read_to_string(dir.path().join("index.md")).unwrap();
+        assert!(
+            !index.contains("alpha.md"),
+            "the index lists only written pages"
+        );
+
+        // The next run sees an edit, preserves it, and writes the page.
+        let stats = export_okf(&later, dir.path()).unwrap();
+        assert_eq!((stats.exported, stats.failed), (1, 0), "{stats:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/pages/alpha.md.bak")).unwrap(),
+            mine
+        );
+        assert!(std::fs::read_to_string(&alpha)
+            .unwrap()
+            .contains("second body"));
+    }
+
+    #[test]
+    fn planned_overwrite_keeps_an_edit_written_in_place_after_classification() {
+        let dir = tempfile::TempDir::new().unwrap();
+        export_okf(&[test_page("concept_a", "Alpha", "first body")], dir.path()).unwrap();
+        let later = vec![test_page("concept_a", "Alpha", "second body")];
+        let alpha = dir.path().join("pages/alpha.md");
+
+        let stats = export_with_hook(&later, dir.path(), &mut |entry| {
+            if entry == "pages/alpha.md" {
+                std::fs::write(&alpha, "typed in place\n").unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&alpha).unwrap(), "typed in place\n");
+        assert_eq!((stats.exported, stats.failed), (0, 1), "{stats:?}");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// A page whose file vanished (first export, or deleted by hand) is
+    /// written with a rename that cannot replace: a save that creates the name
+    /// first is kept.
+    #[test]
+    fn planned_write_does_not_replace_a_file_created_after_the_path_was_found_free() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        let alpha = dir.path().join("pages/alpha.md");
+        std::fs::remove_file(&alpha).unwrap();
+
+        let stats = export_with_hook(&pages, dir.path(), &mut |entry| {
+            if entry == "pages/alpha.md" {
+                std::fs::write(&alpha, "created by a sync client\n").unwrap();
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&alpha).unwrap(),
+            "created by a sync client\n"
+        );
+        assert_eq!(stats.failed, 1, "{stats:?}");
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// The index is classified like any other planned file.
+    #[test]
+    fn index_edit_saved_after_classification_is_kept_and_does_not_abort_the_export() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        let index = dir.path().join("index.md");
+
+        let stats = export_with_hook(&pages, dir.path(), &mut |entry| {
+            if entry == "index.md" {
+                save_by_replacing(&index, "my home note\n");
+            }
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&index).unwrap(), "my home note\n");
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        // A later run preserves it and writes a fresh index.
+        export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".wenlan-archive/index.md.bak")).unwrap(),
+            "my home note\n"
+        );
+        assert!(std::fs::read_to_string(&index)
+            .unwrap()
+            .contains("alpha.md"));
+    }
+
+    /// A repository README saved after it was checked is the person's: kept by
+    /// this run, and left alone (not archived) by the next.
+    #[test]
+    fn readme_edit_saved_after_classification_is_kept_and_stays_theirs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = repository_pages();
+        let no_paths = ConceptPathMap::new();
+        let no_sources = HashMap::new();
+        export_okf_for_repository(&pages, dir.path(), &no_paths, &no_sources).unwrap();
+        let readme = dir.path().join(README_FILE);
+
+        let stats = export_okf_inner(
+            &pages,
+            dir.path(),
+            &no_paths,
+            &no_sources,
+            true,
+            &mut |entry| {
+                if entry == README_FILE {
+                    save_by_replacing(&readme, "My own intro\n");
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "My own intro\n");
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        export_okf_for_repository(&pages, dir.path(), &no_paths, &no_sources).unwrap();
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "My own intro\n");
+        assert!(!dir.path().join(ARCHIVE_DIR).join(README_FILE).exists());
+        assert!(!dir
+            .path()
+            .join(ARCHIVE_DIR)
+            .join(format!("{README_FILE}{ARCHIVE_SUFFIX}"))
+            .exists());
+        assert!(private_names_in_bundle(dir.path()).is_empty());
+    }
+
+    /// Every `.md` file under `dir`, hidden directories included. This is what
+    /// an OKF consumer sees: it has no idea `.wenlan-archive/` is Wenlan's.
+    fn collect_md_including_hidden(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                collect_md_including_hidden(&path, out);
+            } else if kind.is_file() && path.extension().and_then(|e| e.to_str()) == Some("md") {
+                out.push(path);
+            }
+        }
+    }
+
+    fn private_names_in_archive(dir: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type().unwrap().is_dir() {
+                found.extend(private_names_in_archive(&entry.path()));
+            } else if name.starts_with(".wenlan-") && name.ends_with(".tmp") {
+                found.push(name);
+            }
+        }
+        found
+    }
+
+    /// OKF §8: `index.md` appears at the bundle root only, and carries
+    /// `okf_version`. §11: every other non-reserved `.md` file anywhere in the
+    /// tree is a concept document with a `type`.
+    fn assert_whole_tree_conforms(root: &Path) {
+        let mut md_files = Vec::new();
+        collect_md_including_hidden(root, &mut md_files);
+        assert!(!md_files.is_empty());
+        for path in &md_files {
+            let rel = path.strip_prefix(root).unwrap();
+            let content = std::fs::read_to_string(path).unwrap();
+            let (fm, _body) = crate::sources::obsidian::extract_frontmatter(&content);
+            match rel.file_name().and_then(|n| n.to_str()).unwrap() {
+                "index.md" => {
+                    assert_eq!(rel, Path::new("index.md"), "nested index: {rel:?}");
+                    assert!(fm.get_str("okf_version").is_some(), "{content}");
+                }
+                "log.md" => {}
+                _ => {
+                    let ty = fm.get_str("type").unwrap_or("");
+                    assert!(!ty.is_empty(), "{rel:?} needs a type:\n{content}");
+                }
+            }
+        }
+        // Frontmatter-bearing indexes are the nested-index symptom itself.
+        let with_version: Vec<_> = md_files
+            .iter()
+            .filter(|p| {
+                let c = std::fs::read_to_string(p).unwrap();
+                crate::sources::obsidian::extract_frontmatter(&c)
+                    .0
+                    .get_str("okf_version")
+                    .is_some()
+            })
+            .collect();
+        assert_eq!(with_version, [&root.join("index.md")]);
+    }
+
+    /// An edited root `index.md` used to be preserved as
+    /// `.wenlan-archive/index.md` (a nested index with `okf_version`) and
+    /// `index-2.md` (a concept with no `type`), which breaks OKF §8/§11 for any
+    /// consumer that does not share Wenlan's exclusion of the archive.
+    #[test]
+    fn preserved_edits_leave_the_whole_bundle_tree_conformant() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        assert_whole_tree_conforms(dir.path());
+
+        let edited_index = "---\nokf_version: \"0.2\"\n---\n\nmy home note\n";
+        let edited_page = "---\ntype: page\n---\n\nMy rewrite of Alpha.\n";
+        std::fs::write(dir.path().join("index.md"), edited_index).unwrap();
+        std::fs::write(dir.path().join("pages/alpha.md"), edited_page).unwrap();
+        export_okf(&pages, dir.path()).unwrap();
+
+        // A second round of edits takes the next suffix, still not markdown.
+        std::fs::write(dir.path().join("index.md"), "second note\n").unwrap();
+        std::fs::write(dir.path().join("pages/alpha.md"), "second rewrite\n").unwrap();
+        export_okf(&pages, dir.path()).unwrap();
+
+        let archived = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+        assert_eq!(archived(".wenlan-archive/index.md.bak"), edited_index);
+        assert_eq!(archived(".wenlan-archive/index-2.md.bak"), "second note\n");
+        assert_eq!(archived(".wenlan-archive/pages/alpha.md.bak"), edited_page);
+        assert_eq!(
+            archived(".wenlan-archive/pages/alpha-2.md.bak"),
+            "second rewrite\n"
+        );
+
+        let mut archived_md = Vec::new();
+        collect_md_including_hidden(&dir.path().join(ARCHIVE_DIR), &mut archived_md);
+        assert!(archived_md.is_empty(), "{archived_md:?}");
+        assert_whole_tree_conforms(dir.path());
+        assert!(private_names_in_archive(&dir.path().join(ARCHIVE_DIR)).is_empty());
+    }
+
+    /// A bundle exported by an older build holds `.md` copies in the archive.
+    /// The next export renames them to `.md.bak` without touching a `.bak`
+    /// that is already there.
+    #[test]
+    fn export_migrates_markdown_copies_an_older_build_left_in_the_archive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        let archive = dir.path().join(".wenlan-archive");
+        std::fs::create_dir_all(archive.join("pages")).unwrap();
+        std::fs::write(archive.join("pages/alpha.md"), "old copy").unwrap();
+        std::fs::write(archive.join("pages/alpha.md.bak"), "already a backup").unwrap();
+        std::fs::write(archive.join("index.md"), "---\nokf_version: \"0.2\"\n---\n").unwrap();
+        std::fs::write(archive.join("index-2.md"), "second index").unwrap();
+        std::fs::write(archive.join("notes.txt"), "not markdown").unwrap();
+
+        export_okf(&pages, dir.path()).unwrap();
+
+        let read = |name: &str| std::fs::read_to_string(archive.join(name)).unwrap();
+        assert_eq!(read("pages/alpha.md.bak"), "already a backup");
+        assert_eq!(read("pages/alpha-2.md.bak"), "old copy");
+        assert!(!archive.join("pages/alpha.md").exists());
+        assert!(read("index.md.bak").contains("okf_version"));
+        assert_eq!(read("index-2.md.bak"), "second index");
+        assert!(!archive.join("index.md").exists());
+        assert!(!archive.join("index-2.md").exists());
+        assert_eq!(read("notes.txt"), "not markdown");
+        assert!(private_names_in_archive(&archive).is_empty());
+        assert_whole_tree_conforms(dir.path());
+
+        // Nothing left to migrate: a further export changes nothing there.
+        export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(read("pages/alpha-2.md.bak"), "old copy");
+    }
+
+    /// The migration touches plain files only and never follows a link.
+    #[cfg(unix)]
+    #[test]
+    fn migration_does_not_follow_symlinks_out_of_the_archive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let elsewhere = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        std::fs::write(elsewhere.path().join("theirs.md"), "not ours").unwrap();
+        let archive = dir.path().join(".wenlan-archive");
+        std::fs::create_dir_all(&archive).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), archive.join("linked")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path().join("theirs.md"), archive.join("t.md"))
+            .unwrap();
+
+        export_okf(&pages, dir.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(elsewhere.path().join("theirs.md")).unwrap(),
+            "not ours"
+        );
+        assert!(std::fs::symlink_metadata(archive.join("t.md"))
+            .unwrap()
+            .is_symlink());
+        assert!(!archive.join("t.md.bak").exists());
+    }
+
+    /// Unedited re-exports do not churn the vault: an identical file is left
+    /// alone, so no delete-and-recreate for a watcher to see.
+    #[cfg(unix)]
+    #[test]
+    fn reexport_of_unchanged_pages_does_not_recreate_their_files() {
+        use std::os::unix::fs::MetadataExt as _;
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "body")];
+        export_okf(&pages, dir.path()).unwrap();
+        let before = std::fs::metadata(dir.path().join("pages/alpha.md"))
+            .unwrap()
+            .ino();
+        export_okf(&pages, dir.path()).unwrap();
+        let after = std::fs::metadata(dir.path().join("pages/alpha.md"))
+            .unwrap()
+            .ino();
+        assert_eq!(before, after);
+        assert!(private_names_in_bundle(dir.path()).is_empty());
     }
 }

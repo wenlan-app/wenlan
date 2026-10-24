@@ -43,7 +43,7 @@ function renderChip(over: Partial<React.ComponentProps<typeof CitationChip>> = {
   const utils = render(
     <QueryClientProvider client={client}>
       <CitationChip
-        occurrence={1}
+        number={1}
         citation={cite()}
         sourceMemory={memory()}
         sourcesLoading={false}
@@ -129,7 +129,7 @@ describe("CitationChip", () => {
         <p data-testid="article-prose">
           A cited sentence
           <CitationChip
-            occurrence={1}
+            number={1}
             citation={cite()}
             sourceMemory={memory()}
             sourcesLoading={false}

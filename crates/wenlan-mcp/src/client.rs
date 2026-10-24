@@ -446,6 +446,14 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "steep_invalid"
             | "steep_citations"
             | "citations_unsupported"
+            | "attachment_type_unsupported"
+            | "attachment_content_mismatch"
+            | "attachment_not_found"
+            | "attachment_too_large"
+            | "attachment_empty"
+            | "attachment_not_a_file"
+            | "attachment_path_not_absolute"
+            | "attachment_name_taken"
             | "doc_fix_refused"
     );
     if !safe {

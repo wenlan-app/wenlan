@@ -165,15 +165,15 @@ test("proves Review identity and exercises Wiki Page mutations", async ({ page }
   await closeWritingView(page);
   await expect(page.getByText("Edited through the Review-flavor lane.")).toBeVisible();
 
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Page actions", exact: true }).click();
   await page.getByRole("menuitem", { name: "Update from sources", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Update from sources", exact: true }).click();
   await expect(page.getByText("Page updated from its sources.", { exact: true })).toBeVisible();
   await expect.poll(async () => (await storedReviewPage(page, "page-architecture"))?.last_compiled).toBe("2026-07-10T12:33:00Z");
 
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Page actions" }).click();
   await page.getByRole("menuitem", { name: "Delete page" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete page", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Open a page" })).toBeVisible();
   await expect(
     page.locator(".wiki-workspace-directory").getByText("Fixture architecture", { exact: true }),

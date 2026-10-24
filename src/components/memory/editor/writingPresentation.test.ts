@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { deleteCharBackward, deleteCharForward } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { forceParsing } from "@codemirror/language";
 import { EditorSelection, EditorState, type RangeSet } from "@codemirror/state";
@@ -10,6 +11,7 @@ import {
   setWritingCompositionActive,
   writingPresentation,
 } from "./writingPresentation";
+import { resetAttachmentsDirForTest } from "../../../lib/pageAttachments";
 
 beforeAll(() => installCodeMirrorDomPolyfills());
 
@@ -395,6 +397,85 @@ describe("writingPresentation", () => {
     expect(image).toHaveAttribute("loading", "lazy");
     expect(view.contentDOM.textContent).not.toContain("![Wenlan graph]");
     expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("shows page images and videos from the pages folder once it is known", () => {
+    resetAttachmentsDirForTest(null);
+    const source = "![Home](_attachments/home-3f2a9c1b0d.png)\n\n![Film](_attachments/film-0a1b2c3d4e.mp4)\naway";
+    const view = makeView(source, {
+      selection: EditorSelection.single(source.length),
+    });
+    expect(view.contentDOM.querySelector(".cm-writing-image")).toBeNull();
+
+    resetAttachmentsDirForTest("/Users/me/.wenlan/pages/_attachments");
+    const image = view.contentDOM.querySelector<HTMLImageElement>("img.cm-writing-image");
+    const video = view.contentDOM.querySelector<HTMLVideoElement>("video.cm-writing-video");
+    expect(image).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/home-3f2a9c1b0d.png");
+    expect(image).toHaveAttribute("alt", "Home");
+    expect(video).toHaveAttribute("src", "asset://localhost//Users/me/.wenlan/pages/_attachments/film-0a1b2c3d4e.mp4#t=0.1");
+    expect(video?.controls).toBe(true);
+    expect(view.state.doc.toString()).toBe(source);
+    resetAttachmentsDirForTest(null);
+  });
+
+  it("keeps an image shown while the caret touches it, so one key removes it whole", async () => {
+    const image = "![Wenlan graph](https://wenlan.app/graph.png)";
+    const source = `before\n${image}\nafter`;
+    const { from, to } = rangeFor(source, image);
+    const view = makeView(source, { selection: EditorSelection.single(to) });
+    await settleFocusChange();
+
+    expect(view.contentDOM.querySelector(".cm-writing-image")).not.toBeNull();
+    expect(deleteCharBackward(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("before\n\nafter");
+
+    view.dispatch({
+      changes: { from, insert: image },
+      selection: EditorSelection.single(from),
+    });
+    expect(view.contentDOM.querySelector(".cm-writing-image")).not.toBeNull();
+    expect(deleteCharForward(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe("before\n\nafter");
+  });
+
+  it("keeps a clicked image in view above its editable source", async () => {
+    const image = "![Wenlan graph](https://wenlan.app/graph.png)";
+    const source = `${image}\naway`;
+    const view = makeView(source, { selection: EditorSelection.single(source.length) });
+    await settleFocusChange();
+
+    const rendered = view.contentDOM.querySelector<HTMLImageElement>("img.cm-writing-image");
+    expect(rendered).not.toBeNull();
+    rendered!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, detail: 1 }));
+
+    expect(view.state.selection.main.head).toBe(2);
+    expect(view.contentDOM.querySelector("img.cm-writing-image-open")).toHaveAttribute("src", "https://wenlan.app/graph.png");
+    expect(view.contentDOM.querySelector(".cm-writing-media-source")?.textContent).toBe(image);
+    expect(concealedAtomicRanges(view)).toEqual([]);
+    expect(view.state.doc.toString()).toBe(source);
+  });
+
+  it("removes an image and the empty line under it with one Backspace", async () => {
+    const image = "![Wenlan graph](https://wenlan.app/graph.png)";
+    const source = `before\n${image}\n\nafter`;
+    const view = makeView(source, { selection: EditorSelection.single(source.indexOf("\nafter")) });
+    await settleFocusChange();
+
+    expect(view.contentDOM.querySelector(".cm-writing-image")).not.toBeNull();
+    view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", keyCode: 8, bubbles: true, cancelable: true }));
+
+    expect(view.state.doc.toString()).toBe("before\nafter");
+    expect(view.state.selection.main.head).toBe("before".length);
+  });
+
+  it("keeps Backspace ordinary under text or an unrendered image", async () => {
+    for (const above of ["plain words", "![local](./attachment.png)"]) {
+      const source = `${above}\n\nafter`;
+      const view = makeView(source, { selection: EditorSelection.single(above.length + 1) });
+      await settleFocusChange();
+      view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", keyCode: 8, bubbles: true, cancelable: true }));
+      expect(view.state.doc.toString()).toBe(source);
+    }
   });
 
   it("keeps unsafe or unresolved image destinations as editable source", () => {

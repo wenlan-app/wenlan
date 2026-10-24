@@ -152,9 +152,10 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// the `code_basis` sentence on `write_page` (the 31-tool surface sat 4
 /// characters under the old ceiling, so any new tool needs room), then by the
 /// length of `save_source`'s description when that tool was added, then by
-/// the length of `steep`'s, then by the length of `doc_fix`'s.
+/// the length of `steep`'s, then by the length of `doc_fix`'s, then by the
+/// length of `attach_file`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 16_984;
+const DESCRIPTION_BUDGET_CHARS: usize = 17_154;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1312,6 +1313,19 @@ pub struct GetPageSourcesParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct AttachFileParams {
+    #[schemars(
+        description = "Absolute path of an image (png, jpg, gif, webp, svg, avif, heic) or video (mp4, m4v, mov, webm) on this computer."
+    )]
+    pub path: String,
+    #[schemars(
+        description = "Short description of what the file shows, used as its alt text. Describe what you see; the file name is used when omitted."
+    )]
+    #[serde(default)]
+    pub alt: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReadPageParams {
     #[schemars(
         description = "Opaque page id from list_pages, recall, or write_page; ASCII letters, digits, underscores, and hyphens only, never a URL or file path."
@@ -1588,6 +1602,36 @@ fn save_source_request(
         create_only: params.create_only.unwrap_or(false),
         space: effective_space(&params.space).into(),
     })
+}
+
+fn format_attach_file_success(resp: &wenlan_types::responses::AttachFileResponse) -> String {
+    let stored = if resp.created {
+        "Copied"
+    } else {
+        "Already in the pages folder"
+    };
+    format!(
+        "{stored}: {path} ({kind}, {bytes} bytes)\nfile: {absolute}\nPut this line in the page content where the {kind} should appear, then write_page:\n{markdown}",
+        path = resp.path,
+        kind = resp.kind,
+        bytes = resp.bytes,
+        absolute = resp.absolute_path,
+        markdown = resp.markdown,
+    )
+}
+
+fn attach_file_refusal(code: &str) -> String {
+    let reason = match code {
+        "attachment_type_unsupported" => "only images (png, jpg, gif, webp, svg, avif, heic) and videos (mp4, m4v, mov, webm) can be attached",
+        "attachment_content_mismatch" => "the file's contents are not the image or video its name says",
+        "attachment_not_found" => "no file at that path",
+        "attachment_too_large" => "the file is too large (images up to 50 MB, videos up to 2 GB)",
+        "attachment_empty" => "the file is empty",
+        "attachment_not_a_file" => "the path is not a file",
+        "attachment_path_not_absolute" => "the path must be absolute",
+        _ => "the pages folder already has a different file with that name",
+    };
+    format!("Not attached: {reason}. Nothing was changed.")
 }
 
 fn format_save_source_success(resp: &wenlan_types::responses::IngestResponse) -> String {
@@ -2345,6 +2389,38 @@ impl WenlanMcpServer {
         };
         Ok(CallToolResult::success(vec![ContentBlock::text(
             format_save_source_success(&resp),
+        )]))
+    }
+
+    pub async fn attach_file_impl(
+        &self,
+        params: AttachFileParams,
+    ) -> Result<CallToolResult, McpError> {
+        let path = params.path.trim();
+        if path.is_empty() || !std::path::Path::new(path).is_absolute() {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "path must be an absolute path on this computer; got `{path}`. Nothing was attached."
+            ))]));
+        }
+        let request = wenlan_types::requests::AttachFileRequest {
+            source_path: path.to_string(),
+            alt: params.alt,
+        };
+        let resp: wenlan_types::responses::AttachFileResponse =
+            match self.client.post("/api/attachments", &request).await {
+                Ok(resp) => resp,
+                Err(WenlanError::Api {
+                    reason: Some(ref reason),
+                    ..
+                }) if reason.starts_with("attachment_") => {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        attach_file_refusal(reason),
+                    )]));
+                }
+                Err(error) => return Ok(tool_error(error, "attach file")),
+            };
+        Ok(CallToolResult::success(vec![ContentBlock::text(
+            format_attach_file_success(&resp),
         )]))
     }
 
@@ -3963,8 +4039,57 @@ impl WenlanMcpServer {
                     })?,
                 );
             }
+            // Images and videos the page shows. A local tool gets each file's
+            // path so it can open the file itself.
+            let attachments = self
+                .page_attachments(&client, &page.page.page.content)
+                .await;
+            if !attachments.is_empty() {
+                object.insert("attachments".into(), attachments.into());
+            }
         }
         Ok(CallToolResult::structured(value))
+    }
+
+    async fn page_attachments(
+        &self,
+        client: &crate::client::WenlanClient,
+        content: &str,
+    ) -> Vec<serde_json::Value> {
+        use wenlan_types::attachments::{kind_for_name, referenced_attachments, ATTACHMENTS_DIR};
+        let names = referenced_attachments(content);
+        if names.is_empty() {
+            return Vec::new();
+        }
+        // Only a local tool can open the file, so only stdio gets its path.
+        let local_dir = if self.transport == TransportMode::Stdio {
+            client
+                .get::<wenlan_types::responses::KnowledgePathResponse>("/api/knowledge/path")
+                .await
+                .ok()
+                .map(|resp| std::path::PathBuf::from(resp.path).join(ATTACHMENTS_DIR))
+        } else {
+            None
+        };
+        names
+            .into_iter()
+            .map(|name| {
+                let mut entry = serde_json::json!({
+                    "path": format!("{ATTACHMENTS_DIR}/{name}"),
+                    "kind": kind_for_name(&name).map(|kind| kind.as_str()),
+                });
+                if let (Some(dir), Some(object)) = (&local_dir, entry.as_object_mut()) {
+                    let file = dir.join(&name);
+                    let metadata = std::fs::metadata(&file).ok().filter(|m| m.is_file());
+                    object.insert("file".into(), file.to_string_lossy().into_owned().into());
+                    object.insert("exists".into(), metadata.is_some().into());
+                    if let Some(metadata) = metadata {
+                        object.insert("bytes".into(), metadata.len().into());
+                    }
+                }
+                entry
+            })
+            .collect()
     }
 
     pub async fn list_pages_impl(
@@ -4452,6 +4577,23 @@ impl WenlanMcpServer {
         Parameters(params): Parameters<SaveSourceParams>,
     ) -> Result<CallToolResult, McpError> {
         self.save_source_impl(params).await
+    }
+
+    #[tool(
+        description = "Copy an image or video on this computer into the pages folder. Returns a line like ![Home](_attachments/home.png) to put in write_page content; set alt to what it shows.",
+        annotations(
+            title = "Attach File",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn attach_file(
+        &self,
+        Parameters(params): Parameters<AttachFileParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.attach_file_impl(params).await
     }
 
     #[tool(
@@ -5086,6 +5228,7 @@ fn web_write_description(name: &str) -> Option<&'static str> {
 }
 
 const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
+    "attach_file",
     "lint_repair_prepare",
     "lint_repair_apply",
     "lint_repair_verify",
@@ -5618,6 +5761,7 @@ mod tests {
             .map(|tool| tool.name.to_string())
             .collect::<Vec<_>>();
         for name in [
+            "attach_file",
             "lint_repair_prepare",
             "lint_repair_apply",
             "lint_repair_verify",
@@ -11088,6 +11232,7 @@ mod tests {
         let mut expected = std::collections::BTreeMap::from([
             ("accept_refinement", (false, true, false)),
             ("accept_revision", (false, true, false)),
+            ("attach_file", (false, false, false)),
             ("brief", (true, false, false)),
             ("capture", (false, true, false)),
             ("confirm_memory", (false, false, false)),
@@ -11486,6 +11631,7 @@ mod tests {
         vec![
             "accept_refinement",
             "accept_revision",
+            "attach_file",
             "capture",
             "confirm_memory",
             "brief",

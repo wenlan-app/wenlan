@@ -204,9 +204,10 @@ impl LocalFilesSource {
     }
 }
 
-/// Extract text from a PDF using pdf-extract.
+/// Extract text from a PDF through wenlan-core's extractor, which isolates
+/// parser panics and scopes Form XObject font names before decoding (#617).
 fn extract_pdf_text(bytes: &[u8], path: &Path) -> Result<String, AppError> {
-    match pdf_extract::extract_text_from_mem(bytes) {
+    match wenlan_core::sources::directory::extract_pdf_text(bytes) {
         Ok(text) => {
             let trimmed = text.trim().to_string();
             if trimmed.is_empty() {

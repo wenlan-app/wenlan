@@ -8,6 +8,7 @@
 
 pub use wenlan_types;
 
+pub mod attachments;
 pub mod briefing;
 pub mod cache;
 pub mod chat_import;
@@ -17,6 +18,7 @@ pub mod claim_judge;
 pub mod classify;
 pub mod code_anchor;
 pub mod code_basis;
+pub mod code_basis_follow;
 pub mod code_basis_recheck;
 pub mod community_grouping;
 pub mod community_partition;
@@ -57,6 +59,7 @@ pub mod origin;
 pub mod page_map_improve;
 pub mod page_projection_tracker;
 pub mod pages;
+pub mod pages_folder;
 pub mod post_ingest;
 pub mod post_write;
 pub mod presence;
