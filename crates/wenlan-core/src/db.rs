@@ -28467,6 +28467,9 @@ impl MemoryDB {
 
         // --- FTS search ---
         let mut fts_results: Vec<SearchResult> = Vec::new();
+        // True when the first (all-words) query matched, false when only the
+        // relaxed-OR fallback did. Feeds `selective_fts_weight` below.
+        let mut fts_all_words_matched = false;
         {
             // Renumber placeholders: ?1 = query, ?2 = limit, ?3.. = filters
             let mut fts_where_parts: Vec<String> = Vec::new();
@@ -28533,7 +28536,7 @@ impl MemoryDB {
                 vec![query.to_string(), Self::fts_or_query(query)]
             };
 
-            for fts_query in &fts_queries {
+            for (attempt, fts_query) in fts_queries.iter().enumerate() {
                 let mut params: Vec<libsql::Value> = vec![
                     libsql::Value::Text(fts_query.clone()),
                     libsql::Value::Integer(fetch_limit),
@@ -28560,6 +28563,7 @@ impl MemoryDB {
                     }
                 }
                 if !fts_results.is_empty() {
+                    fts_all_words_matched = attempt == 0;
                     break; // AND matched, no need for OR fallback
                 }
             }
@@ -28588,6 +28592,17 @@ impl MemoryDB {
         // FTS weight: downweight keyword signal to reduce noise from keyword-heavy
         // negatives that share surface terms but are semantically wrong.
         let fts_weight = scoring.map(|s| s.fts_weight).unwrap_or(0.2);
+        // A query whose words appear together in only a few rows (a rare name,
+        // code or term) is an exact lookup: those rows get the full keyword
+        // weight. Otherwise a row only the keyword channel found can never
+        // outrank the vector pool once the library outgrows that pool.
+        let fts_channel_weight = crate::retrieval::fts_query::selective_fts_weight(
+            fts_weight,
+            fts_all_words_matched,
+            fts_results.len(),
+            limit,
+            crate::retrieval::fts_query::selective_fts_weight_enabled(),
+        );
 
         if magnitude_fusion_enabled() {
             // Magnitude-preserving FTS fusion (WENLAN_MAGNITUDE_FUSION).
@@ -28606,13 +28621,13 @@ impl MemoryDB {
                 // `fts_weight/rrf_k` equals the rank-only term's max, preserving
                 // the FTS/vector scale balance (vector max `1.0/rrf_k`) while the
                 // normalized magnitude differentiates strong vs weak matches.
-                let rrf_score = cw.fts * fts_weight * norm / rrf_k;
+                let rrf_score = cw.fts * fts_channel_weight * norm / rrf_k;
                 *score_map.entry(result.id.clone()).or_default() += rrf_score;
                 result_map.entry(result.id.clone()).or_insert(result);
             }
         } else {
             for (rank, result) in fts_results.into_iter().enumerate() {
-                let rrf_score = cw.fts * fts_weight / (rrf_k + rank as f32);
+                let rrf_score = cw.fts * fts_channel_weight / (rrf_k + rank as f32);
                 *score_map.entry(result.id.clone()).or_default() += rrf_score;
                 result_map.entry(result.id.clone()).or_insert(result);
             }
@@ -28684,7 +28699,20 @@ impl MemoryDB {
 
                 // Tiered retrieval: weight by confidence and recency decay
                 let conf = r.confidence.unwrap_or(0.5);
-                let tier = stability_tier(r.memory_type.as_deref());
+                // A note or file imported from the user's own folders ages like
+                // a protected memory whatever its type: its file date says when
+                // it was last edited, not that it went stale. Untyped imports
+                // otherwise decay as ephemeral (0.05/day), so a note last edited
+                // a few months ago could never outrank this week's notes.
+                let tier = if r
+                    .source_agent
+                    .as_deref()
+                    .is_some_and(crate::origin::is_document_ingest_source_agent)
+                {
+                    crate::sources::StabilityTier::Protected
+                } else {
+                    stability_tier(r.memory_type.as_deref())
+                };
                 // Inline decay rates (match TuningConfig defaults) — search doesn't hold config ref
                 let dr = match tier {
                     crate::sources::StabilityTier::Protected => 0.001,
