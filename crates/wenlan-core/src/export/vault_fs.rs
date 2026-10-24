@@ -318,7 +318,21 @@ pub(crate) fn replace_if_unchanged(
     limit: u64,
     is_ours: impl FnOnce(&[u8]) -> bool,
 ) -> io::Result<Replacement> {
-    replace_if_unchanged_with_hook(dir, name, bytes, limit, is_ours, |_| {})
+    replace_if_unchanged_with_hook(dir, name, bytes, limit, is_ours, false, |_| {})
+}
+
+/// [`replace_if_unchanged`] for a file that holds private state, such as the
+/// projection's `index.md`: a file created at a free name is `0600`, as the
+/// projection's atomic page writer makes it. A replaced file keeps the
+/// permissions it had either way.
+pub(crate) fn replace_private_if_unchanged(
+    dir: &Dir,
+    name: &str,
+    bytes: &[u8],
+    limit: u64,
+    is_ours: impl FnOnce(&[u8]) -> bool,
+) -> io::Result<Replacement> {
+    replace_if_unchanged_with_hook(dir, name, bytes, limit, is_ours, true, |_| {})
 }
 
 pub(crate) fn replace_if_unchanged_with_hook(
@@ -327,6 +341,7 @@ pub(crate) fn replace_if_unchanged_with_hook(
     bytes: &[u8],
     limit: u64,
     is_ours: impl FnOnce(&[u8]) -> bool,
+    private_when_new: bool,
     after_aside: impl FnOnce(&str),
 ) -> io::Result<Replacement> {
     single_component(name)?;
@@ -351,7 +366,7 @@ pub(crate) fn replace_if_unchanged_with_hook(
     }
 
     let staged = private_name("new");
-    stage_file(dir, &staged, bytes, permissions)?;
+    stage_file(dir, &staged, bytes, permissions, private_when_new)?;
     let result = install_staged(dir, name, &staged, limit, is_ours, after_aside);
     // On success the staged name was renamed away; this is for every other
     // path and is a no-op when it is already gone.
@@ -364,12 +379,20 @@ fn stage_file(
     staged: &str,
     bytes: &[u8],
     permissions: Option<Permissions>,
+    private_when_new: bool,
 ) -> io::Result<()> {
     let mut options = OpenOptions::new();
     options
         .write(true)
         .create_new(true)
         .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    if private_when_new {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    let _ = private_when_new;
     let mut file = dir.open_with(staged, &options)?;
     let written = (|| {
         if let Some(permissions) = permissions {
@@ -715,6 +738,7 @@ mod tests {
             b"new",
             1024,
             |b| b == b"old",
+            false,
             |aside| std::fs::write(base.join(aside), b"edit").unwrap(),
         )
         .unwrap();
@@ -735,6 +759,7 @@ mod tests {
             b"new",
             1024,
             |b| b == b"old",
+            false,
             |_| std::fs::write(base.join("a.md"), b"their save").unwrap(),
         )
         .unwrap();
@@ -769,12 +794,42 @@ mod tests {
         assert_eq!(names, vec![std::ffi::OsString::from("a.md")]);
     }
 
+    /// A private file created at a free name is `0600`; a replaced one keeps
+    /// the permissions it had.
+    #[cfg(unix)]
+    #[test]
+    fn replace_private_if_unchanged_creates_0600_and_keeps_existing_modes() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let (dir, root) = temp_root();
+        let outcome =
+            replace_private_if_unchanged(&root, "index.md", b"new", 1024, |_| true).unwrap();
+        assert_eq!(outcome, Replacement::Written);
+        let mode = |name: &str| {
+            std::fs::metadata(dir.path().join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode("index.md"), 0o600);
+
+        std::fs::set_permissions(
+            dir.path().join("index.md"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        let outcome =
+            replace_private_if_unchanged(&root, "index.md", b"newer", 1024, |_| true).unwrap();
+        assert_eq!(outcome, Replacement::Written);
+        assert_eq!(mode("index.md"), 0o644);
+    }
+
     /// A save at the name when the staged file is about to go in is taken
     /// aside, found not to be ours, and put back: the save stays.
     #[test]
     fn a_staged_file_does_not_replace_a_save_at_the_name() {
         let (dir, root) = temp_root();
-        stage_file(&root, ".wenlan-new-x.tmp", b"ours", None).unwrap();
+        stage_file(&root, ".wenlan-new-x.tmp", b"ours", None, false).unwrap();
         std::fs::write(dir.path().join("a.md"), b"their save").unwrap();
         let outcome =
             install_staged(&root, "a.md", ".wenlan-new-x.tmp", 1024, |_| false, |_| {}).unwrap();

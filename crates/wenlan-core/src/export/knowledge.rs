@@ -1681,7 +1681,7 @@ impl KnowledgeWriter {
         // must not be replaced, so the replacement moves the file aside, asks
         // again about the bytes it holds, and installs the new index only over
         // bytes that are still the generated ones.
-        match crate::export::vault_fs::replace_if_unchanged(
+        match crate::export::vault_fs::replace_private_if_unchanged(
             &capabilities.root,
             INDEX_FILE,
             bytes.as_bytes(),
