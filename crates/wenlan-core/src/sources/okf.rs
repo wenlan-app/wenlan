@@ -43,7 +43,7 @@ const RESERVED_NAMES: &[&str] = &["index.md", "log.md"];
 
 /// The producer convention for a folder's agent instructions. NOT reserved by
 /// the spec, so it is skipped on evidence rather than on its name: see
-/// [`is_untyped_instructions_file`].
+/// [`check_instructions_file`].
 const INSTRUCTIONS_NAME: &str = "INSTRUCTIONS.md";
 
 /// True when `path`'s file name is `index.md` or `log.md` (ASCII
@@ -55,26 +55,57 @@ pub fn is_reserved(path: &Path) -> bool {
     }
 }
 
-/// True when `path` is an `INSTRUCTIONS.md` that carries no `type`.
-///
-/// OKF reserves `index.md` and `log.md`, and nothing else. `INSTRUCTIONS.md`
-/// is a producer convention: Google's own `okf` package writes one to tell an
+/// What the scan learned about one file with respect to the `INSTRUCTIONS.md`
+/// convention.
+#[derive(Debug, PartialEq)]
+enum InstructionsCheck {
+    /// Not an `INSTRUCTIONS.md`, or one that carries a `type`: a concept.
+    Concept,
+    /// An `INSTRUCTIONS.md` confirmed to carry no `type`.
+    Untyped,
+    /// An `INSTRUCTIONS.md` that could not be read or parsed, so whether it is
+    /// typed is unknown. Carries the failure detail.
+    Unresolved(String),
+}
+
+/// Classify `path` for the scan. `INSTRUCTIONS.md` is a producer convention,
+/// not an OKF reservation: Google's own `okf` package writes one to tell an
 /// agent how to edit the folder, and that file has no `type`, so skipping it
 /// is right. Skipping it by NAME is not: a bundle whose author wrote a real,
 /// typed concept at `INSTRUCTIONS.md` had it silently dropped at import, and
 /// knowledge that never enters ingestion is knowledge the user cannot find
 /// again. A `type` is the evidence that the file is a concept.
-fn is_untyped_instructions_file(path: &Path) -> bool {
+///
+/// A file that cannot be read or parsed is no evidence either way. It is
+/// [`InstructionsCheck::Unresolved`], never `Untyped`: dropping it from the
+/// scan makes sync treat a typed file that is briefly malformed mid-save (or
+/// unreadable) as deleted and remove what it had imported.
+fn check_instructions_file(
+    path: &Path,
+    read: impl Fn(&Path) -> std::io::Result<Vec<u8>>,
+) -> InstructionsCheck {
     if !path
         .file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case(INSTRUCTIONS_NAME))
     {
-        return false;
+        return InstructionsCheck::Concept;
     }
-    frontmatter_of(path)
-        .and_then(|frontmatter| frontmatter.get("type").and_then(scalar_to_string))
-        .is_none_or(|okf_type| okf_type.trim().is_empty())
+    match read_frontmatter(path, read) {
+        FrontmatterRead::Failed(detail) => InstructionsCheck::Unresolved(detail),
+        FrontmatterRead::Absent => InstructionsCheck::Untyped,
+        FrontmatterRead::Parsed(frontmatter) => {
+            let typed = frontmatter
+                .get("type")
+                .and_then(scalar_to_string)
+                .is_some_and(|okf_type| !okf_type.trim().is_empty());
+            if typed {
+                InstructionsCheck::Concept
+            } else {
+                InstructionsCheck::Untyped
+            }
+        }
+    }
 }
 
 /// Strip a case-insensitive `.md` suffix, keeping the rest exactly as spelled.
@@ -604,22 +635,57 @@ pub fn is_wenlan_export(dir: &Path) -> bool {
     dir.join(crate::export::okf::MARKER_FILE).is_file()
 }
 
+/// One scan of a bundle: its concept files, and the files the scan could not
+/// classify.
+#[derive(Debug, Default, PartialEq)]
+pub struct ConceptScan {
+    /// `(concept id, absolute path)`, sorted by concept id.
+    pub concepts: Vec<(String, std::path::PathBuf)>,
+    /// `INSTRUCTIONS.md` files that could not be read or parsed, with the
+    /// failure detail, sorted by path. They are neither concepts nor
+    /// confirmed untyped, so a caller must neither import nor delete them.
+    pub unresolved: Vec<(std::path::PathBuf, String)>,
+}
+
 /// The bundle's concept files as `(concept id, absolute path)`, sorted by
-/// concept id. Starts from `directory::scan_directory` (no hidden files,
+/// concept id: [`scan_bundle`] without the unresolved files.
+pub fn scan_concepts(bundle_root: &Path) -> Vec<(String, std::path::PathBuf)> {
+    scan_bundle(bundle_root).concepts
+}
+
+/// Scan the bundle. Starts from `directory::scan_directory` (no hidden files,
 /// symlinks or oversized files) and keeps `.md` files that are not reserved
 /// names, are not an untyped `INSTRUCTIONS.md`, and do not sit under a
-/// subfolder holding a Wenlan export marker.
-pub fn scan_concepts(bundle_root: &Path) -> Vec<(String, std::path::PathBuf)> {
+/// subfolder holding a Wenlan export marker. An `INSTRUCTIONS.md` that cannot
+/// be read or parsed is reported in [`ConceptScan::unresolved`] instead of
+/// being dropped as untyped.
+pub fn scan_bundle(bundle_root: &Path) -> ConceptScan {
+    scan_bundle_with(bundle_root, |path| std::fs::read(path))
+}
+
+fn scan_bundle_with(
+    bundle_root: &Path,
+    read: impl Fn(&Path) -> std::io::Result<Vec<u8>>,
+) -> ConceptScan {
     let mut exported: HashMap<std::path::PathBuf, bool> = HashMap::new();
-    let mut concepts: Vec<(String, std::path::PathBuf)> =
-        crate::sources::directory::scan_directory(bundle_root)
-            .into_iter()
-            .filter(|path| !is_reserved(path) && !is_untyped_instructions_file(path))
-            .filter(|path| !under_wenlan_export(bundle_root, path, &mut exported))
-            .filter_map(|path| concept_id(bundle_root, &path).map(|id| (id, path)))
-            .collect();
-    concepts.sort();
-    concepts
+    let mut scan = ConceptScan::default();
+    for path in crate::sources::directory::scan_directory(bundle_root) {
+        if is_reserved(&path) || under_wenlan_export(bundle_root, &path, &mut exported) {
+            continue;
+        }
+        match check_instructions_file(&path, &read) {
+            InstructionsCheck::Untyped => {}
+            InstructionsCheck::Unresolved(detail) => scan.unresolved.push((path, detail)),
+            InstructionsCheck::Concept => {
+                if let Some(id) = concept_id(bundle_root, &path) {
+                    scan.concepts.push((id, path));
+                }
+            }
+        }
+    }
+    scan.concepts.sort();
+    scan.unresolved.sort();
+    scan
 }
 
 /// Whether a folder between `bundle_root` (exclusive) and `path` holds the
@@ -668,17 +734,62 @@ pub fn has_okf_signal(bundle_root: &Path) -> bool {
     })
 }
 
-/// A markdown file's parsed frontmatter, when it is a regular file within the
-/// text size cap and its frontmatter is valid YAML.
-fn frontmatter_of(path: &Path) -> Option<serde_yaml::Value> {
-    let metadata = std::fs::metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > crate::sources::directory::MAX_TEXT_SIZE {
-        return None;
+/// What reading a markdown file's frontmatter established.
+#[derive(Debug)]
+enum FrontmatterRead {
+    /// The file was read and carries no frontmatter (or an empty block).
+    Absent,
+    /// The file was read and its frontmatter is a YAML mapping.
+    Parsed(serde_yaml::Value),
+    /// The file could not be read, is over the size cap or not a regular
+    /// file, or its frontmatter is not a valid YAML mapping.
+    Failed(String),
+}
+
+/// Read a markdown file's frontmatter through `read`, keeping "there is none"
+/// apart from "it could not be read or parsed".
+fn read_frontmatter(
+    path: &Path,
+    read: impl Fn(&Path) -> std::io::Result<Vec<u8>>,
+) -> FrontmatterRead {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) => return FrontmatterRead::Failed(format!("metadata read failed: {err}")),
+    };
+    if !metadata.is_file() {
+        return FrontmatterRead::Failed("path is not a regular file".to_string());
     }
-    let bytes = std::fs::read(path).ok()?;
+    if metadata.len() > crate::sources::directory::MAX_TEXT_SIZE {
+        return FrontmatterRead::Failed(format!(
+            "oversized .md file: {} bytes exceeds {} bytes",
+            metadata.len(),
+            crate::sources::directory::MAX_TEXT_SIZE
+        ));
+    }
+    let bytes = match read(path) {
+        Ok(bytes) => bytes,
+        Err(err) => return FrontmatterRead::Failed(format!("read failed: {err}")),
+    };
     let content = crate::sources::directory::decode_text_bytes(&bytes);
-    let (yaml, _) = crate::sources::obsidian::split_frontmatter(&content)?;
-    serde_yaml::from_str(yaml).ok()
+    let Some((yaml, _)) = crate::sources::obsidian::split_frontmatter(&content) else {
+        return FrontmatterRead::Absent;
+    };
+    match serde_yaml::from_str::<serde_yaml::Value>(yaml) {
+        Ok(serde_yaml::Value::Null) => FrontmatterRead::Absent,
+        Ok(value @ serde_yaml::Value::Mapping(_)) => FrontmatterRead::Parsed(value),
+        Ok(_) => FrontmatterRead::Failed("frontmatter is not a mapping".to_string()),
+        Err(err) => FrontmatterRead::Failed(format!("invalid YAML frontmatter: {err}")),
+    }
+}
+
+/// A markdown file's parsed frontmatter, when it is a regular file within the
+/// text size cap and its frontmatter is a valid YAML mapping. Callers that
+/// must tell "none" from "unreadable" use [`read_frontmatter`].
+fn frontmatter_of(path: &Path) -> Option<serde_yaml::Value> {
+    match read_frontmatter(path, |path| std::fs::read(path)) {
+        FrontmatterRead::Parsed(frontmatter) => Some(frontmatter),
+        FrontmatterRead::Absent | FrontmatterRead::Failed(_) => None,
+    }
 }
 
 #[cfg(test)]
@@ -741,6 +852,137 @@ mod tests {
         let found: Vec<String> = scan_concepts(root).into_iter().map(|(id, _)| id).collect();
 
         assert_eq!(found, vec!["workflows/INSTRUCTIONS".to_string()]);
+    }
+
+    /// A typed `INSTRUCTIONS.md` that is momentarily malformed mid-save is not
+    /// evidence that the file is untyped. Dropping it from the scan made sync
+    /// read it as deleted and remove what it had imported, so the scan reports
+    /// it as unresolved instead, and it is a concept again once it parses.
+    #[test]
+    fn scan_bundle_reports_a_malformed_instructions_file_instead_of_dropping_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let typed = "---\ntype: workflow\n---\n# Steps\n";
+        let path = write_file(root, "INSTRUCTIONS.md", typed);
+        assert_eq!(scan_bundle(root).concepts.len(), 1);
+
+        write_file(
+            root,
+            "INSTRUCTIONS.md",
+            "---\ntype: [workflow\n---\n# Steps\n",
+        );
+        let scan = scan_bundle(root);
+        assert!(scan.concepts.is_empty());
+        assert_eq!(scan.unresolved.len(), 1);
+        assert_eq!(scan.unresolved[0].0, path);
+        assert!(
+            scan.unresolved[0].1.starts_with("invalid YAML frontmatter"),
+            "{}",
+            scan.unresolved[0].1
+        );
+
+        // Valid YAML that is not a mapping is just as malformed for a concept.
+        write_file(root, "INSTRUCTIONS.md", "---\nty\n---\n# Steps\n");
+        assert_eq!(scan_bundle(root).unresolved.len(), 1);
+
+        write_file(root, "INSTRUCTIONS.md", typed);
+        let scan = scan_bundle(root);
+        assert_eq!(scan.concepts.len(), 1);
+        assert!(scan.unresolved.is_empty());
+    }
+
+    /// A file that cannot be read is unresolved as well. The reader is
+    /// injected because a permission-based failure cannot be produced when the
+    /// tests run as root.
+    #[test]
+    fn scan_bundle_reports_an_unreadable_instructions_file_instead_of_dropping_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let path = write_file(
+            root,
+            "INSTRUCTIONS.md",
+            "---\ntype: workflow\n---\n# Steps\n",
+        );
+        write_file(root, "notes/alpha.md", "# Alpha\n");
+
+        let scan = scan_bundle_with(root, |p| {
+            if p == path {
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            } else {
+                std::fs::read(p)
+            }
+        });
+
+        assert_eq!(
+            scan.concepts
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["notes/alpha"],
+            "an unreadable file is not imported, and does not disturb the rest"
+        );
+        assert_eq!(scan.unresolved.len(), 1);
+        assert_eq!(scan.unresolved[0].0, path);
+        assert!(
+            scan.unresolved[0].1.starts_with("read failed"),
+            "{}",
+            scan.unresolved[0].1
+        );
+    }
+
+    /// The other ways a file can fail to be read: a directory where the file
+    /// was, and a file over the size cap. Neither is a confirmed untyped file.
+    #[test]
+    fn check_instructions_file_is_unresolved_for_a_directory_or_an_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let as_directory = root.join("INSTRUCTIONS.md");
+        std::fs::create_dir(&as_directory).unwrap();
+        assert_eq!(
+            check_instructions_file(&as_directory, |p| std::fs::read(p)),
+            InstructionsCheck::Unresolved("path is not a regular file".to_string())
+        );
+
+        let oversized = write_file(root, "big/INSTRUCTIONS.md", "---\ntype: workflow\n---\n");
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&oversized)
+            .unwrap();
+        file.set_len(crate::sources::directory::MAX_TEXT_SIZE + 1)
+            .unwrap();
+        assert!(matches!(
+            check_instructions_file(&oversized, |p| std::fs::read(p)),
+            InstructionsCheck::Unresolved(detail) if detail.starts_with("oversized .md file")
+        ));
+
+        let missing = root.join("gone/INSTRUCTIONS.md");
+        assert!(matches!(
+            check_instructions_file(&missing, |p| std::fs::read(p)),
+            InstructionsCheck::Unresolved(detail) if detail.starts_with("metadata read failed")
+        ));
+    }
+
+    /// Confirmed untyped stays filtered: no frontmatter, an empty block, and a
+    /// mapping without a `type` are all readable files that say "not a
+    /// concept", and none of them is reported as a failure.
+    #[test]
+    fn scan_bundle_still_drops_a_confirmed_untyped_instructions_file_quietly() {
+        for text in [
+            "# How to edit this folder\n",
+            "",
+            "---\n---\n# Empty block\n",
+            "---\ntitle: Notes\n---\n# Not typed\n",
+            "---\ntype: \"\"\n---\n# Blank type\n",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            write_file(dir.path(), "INSTRUCTIONS.md", text);
+            assert_eq!(
+                scan_bundle(dir.path()),
+                ConceptScan::default(),
+                "{text:?} is untyped, not unresolved"
+            );
+        }
     }
 
     #[test]
@@ -844,7 +1086,7 @@ mod tests {
         assert!(is_reserved(Path::new("index.md")));
         assert!(is_reserved(Path::new("log.md")));
         // `INSTRUCTIONS.md` is a producer convention, not a spec reservation:
-        // it is skipped by `is_untyped_instructions_file`, on evidence.
+        // it is skipped by `check_instructions_file`, on evidence.
         assert!(!is_reserved(Path::new("INSTRUCTIONS.md")));
         assert!(is_reserved(Path::new("concepts/index.md")));
         assert!(is_reserved(Path::new("a/b/c/log.md")));
