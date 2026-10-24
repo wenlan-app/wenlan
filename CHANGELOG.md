@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.20.1](https://github.com/wenlan-app/wenlan/compare/v0.20.0...v0.20.1) (2026-10-24)
+
+
+### Features
+
+* **app:** keep the sidebar footer to Activity and Account, and one-off messages in one toast stack ([#968](https://github.com/wenlan-app/wenlan/issues/968)) ([7ffc07e](https://github.com/wenlan-app/wenlan/commit/7ffc07e21eb7ab57d936b4e58107055c967c3e8a))
+* **app:** say in the page area why pages cannot load when the service never answers ([#979](https://github.com/wenlan-app/wenlan/issues/979)) ([dad7666](https://github.com/wenlan-app/wenlan/commit/dad7666c7ee327230e0fb2a5215890f3809351e7))
+* **app:** show a revision's changes on the page as it reads ([#985](https://github.com/wenlan-app/wenlan/issues/985)) ([044ae59](https://github.com/wenlan-app/wenlan/commit/044ae59f8ab66d26082b7f0b6fa27389ce121d4e))
+* **connect:** connect six more AI tools and give them Wenlan's skills ([#962](https://github.com/wenlan-app/wenlan/issues/962)) ([6beac45](https://github.com/wenlan-app/wenlan/commit/6beac4512f730ffd46689b5fd0d3c617c19ddc7d))
+* follow renamed code files and let steep handle deleted ones ([#973](https://github.com/wenlan-app/wenlan/issues/973)) ([dca0514](https://github.com/wenlan-app/wenlan/commit/dca0514fb1c5c9316fc4bf6e8cbf368c8ad326c3))
+* run the daily repository wiki update on GitHub, set it up from the app, and bring repository edits back into the Space ([#967](https://github.com/wenlan-app/wenlan/issues/967)) ([442a641](https://github.com/wenlan-app/wenlan/commit/442a6417d60203db8ef08169951e668b19a9db46))
+* show images and videos in pages ([#972](https://github.com/wenlan-app/wenlan/issues/972)) ([8ef25fd](https://github.com/wenlan-app/wenlan/commit/8ef25fd152b21f2dbc621c1a2931c55dc93bf17e))
+* the daily wiki update can use Cursor or GitHub Copilot ([#976](https://github.com/wenlan-app/wenlan/issues/976)) ([51a6b3f](https://github.com/wenlan-app/wenlan/commit/51a6b3fb768dab5d5970859ea1f0f87579f29045))
+* **wiki:** a README.md in the wiki folder lists the pages in reading order ([#989](https://github.com/wenlan-app/wenlan/issues/989)) ([6554a39](https://github.com/wenlan-app/wenlan/commit/6554a39e2629cba6d137cafad419371aa60844db))
+
+
+### Bug Fixes
+
+* **app:** ask in Wenlan's own confirm dialog so confirm-gated buttons work on macOS ([#999](https://github.com/wenlan-app/wenlan/issues/999)) ([71b5b04](https://github.com/wenlan-app/wenlan/commit/71b5b0474218edf55fdc3f8f3396b47fd7d7331b))
+* **app:** make removed words in a revision diff visible in the light theme ([#994](https://github.com/wenlan-app/wenlan/issues/994)) ([fa69d68](https://github.com/wenlan-app/wenlan/commit/fa69d688a42f51e5d37615f44c2012c13f7a688e))
+* **app:** say "you wrote this page" when a page you wrote waits for review ([#987](https://github.com/wenlan-app/wenlan/issues/987)) ([e812d51](https://github.com/wenlan-app/wenlan/commit/e812d51a8121e5e49cd377d83fca26a05ab1f34a))
+* **app:** translate citation times and the Space label, reuse a source's number when it is cited again ([#1000](https://github.com/wenlan-app/wenlan/issues/1000)) ([6ed49c9](https://github.com/wenlan-app/wenlan/commit/6ed49c9ba83990c6f0e113c54b007caf8c37596e))
+* **cli:** follow WENLAN_HOST in pages and the setup skill, drop the deprecated aliases ([#988](https://github.com/wenlan-app/wenlan/issues/988)) ([037ac11](https://github.com/wenlan-app/wenlan/commit/037ac1198cdd058d4bc89b56b232bbecaa375900))
+* **deps:** move the PDF extractor to lopdf 0.42 without regressing font decoding ([#990](https://github.com/wenlan-app/wenlan/issues/990)) ([9b47f85](https://github.com/wenlan-app/wenlan/commit/9b47f859deea5e8a14dc96d5a3f986a51d4c3d0e)), closes [#617](https://github.com/wenlan-app/wenlan/issues/617)
+* **export:** act on what was classified when a vault editor races the exporter ([#993](https://github.com/wenlan-app/wenlan/issues/993)) ([d9018db](https://github.com/wenlan-app/wenlan/commit/d9018db183d9f0d99a2c6a6bfd8743660440b667))
+* **export:** retry a failed reserved-name archive and repair imported links on OKF re-export ([#992](https://github.com/wenlan-app/wenlan/issues/992)) ([a846234](https://github.com/wenlan-app/wenlan/commit/a846234b06de9d504ae4910203482067f76090cd))
+* **okf:** write the export marker atomically and keep a briefly unreadable INSTRUCTIONS.md ([#991](https://github.com/wenlan-app/wenlan/issues/991)) ([93799bd](https://github.com/wenlan-app/wenlan/commit/93799bd279151662d2c5c83cd616b20a1f39b556))
+* quiet new-page review banner and clean-install setup rough edges ([#986](https://github.com/wenlan-app/wenlan/issues/986)) ([c51001c](https://github.com/wenlan-app/wenlan/commit/c51001c3e02e04b0f83632aab318c1ff4b1f1760))
+* stop flagging fresh linked pages as changed and keep preserved OKF copies out of the bundle's markdown ([#997](https://github.com/wenlan-app/wenlan/issues/997)) ([41e46cb](https://github.com/wenlan-app/wenlan/commit/41e46cb3de5faf461a6695b1f93fa3f8179ca517))
+* **wiki:** refresh pages from complete sources, reading long ones in parts ([#982](https://github.com/wenlan-app/wenlan/issues/982)) ([193ecb1](https://github.com/wenlan-app/wenlan/commit/193ecb177a1003e15dd31bdc232653340ec238e0))
+* **wiki:** stop the false self-retrieval warning and fold generated files in wiki PRs ([#984](https://github.com/wenlan-app/wenlan/issues/984)) ([3679382](https://github.com/wenlan-app/wenlan/commit/36793827a790bdb3ce8c6663c9efd451e9d4ce6d))
+
 ## [0.20.0](https://github.com/wenlan-app/wenlan/compare/v0.19.3...v0.20.0) (2026-10-23)
 
 
