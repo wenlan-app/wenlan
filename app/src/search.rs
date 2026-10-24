@@ -5638,6 +5638,103 @@ pub async fn set_knowledge_path(
         .await
 }
 
+// ── The person's own vault notes ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_note_ai_changes(
+    state: tauri::State<'_, State>,
+    source_id: String,
+    path: String,
+) -> Result<wenlan_types::sources::NoteAiChanges, String> {
+    let client = state.read().await.client.clone();
+    client
+        .get_json(&format!(
+            "/api/sources/{}/ai-changes?path={}",
+            percent_encode_path_segment(&source_id),
+            percent_encode_path_segment(&path)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn set_note_ai_changes(
+    state: tauri::State<'_, State>,
+    source_id: String,
+    path: String,
+    value: Option<wenlan_types::sources::AiChanges>,
+) -> Result<wenlan_types::sources::NoteAiChanges, String> {
+    let client = state.read().await.client.clone();
+    client
+        .put_json(
+            &format!(
+                "/api/sources/{}/ai-changes",
+                percent_encode_path_segment(&source_id)
+            ),
+            &requests::SetNoteAiChangesRequest { path, value },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn list_note_proposals(
+    state: tauri::State<'_, State>,
+    source_id: Option<String>,
+) -> Result<Vec<wenlan_types::sources::NoteProposal>, String> {
+    let client = state.read().await.client.clone();
+    let path = match source_id {
+        Some(id) => format!(
+            "/api/notes/proposals?source_id={}",
+            percent_encode_path_segment(&id)
+        ),
+        None => "/api/notes/proposals".to_string(),
+    };
+    let resp: responses::NoteProposalsResponse = client.get_json(&path).await?;
+    Ok(resp.proposals)
+}
+
+#[tauri::command]
+pub async fn get_note_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<responses::NoteProposalView, String> {
+    let client = state.read().await.client.clone();
+    client
+        .get_json(&format!(
+            "/api/notes/proposals/{}",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn accept_note_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<responses::AcceptNoteProposalResponse, String> {
+    let client = state.read().await.client.clone();
+    client
+        .post_empty(&format!(
+            "/api/notes/proposals/{}/accept",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn dismiss_note_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<(), String> {
+    let client = state.read().await.client.clone();
+    let _: serde_json::Value = client
+        .delete_path(&format!(
+            "/api/notes/proposals/{}",
+            percent_encode_path_segment(&id)
+        ))
+        .await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn count_knowledge_files(state: tauri::State<'_, State>) -> Result<u64, String> {
     let client = state.read().await.client.clone();

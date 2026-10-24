@@ -1073,6 +1073,26 @@ pub struct SyncStatsResponse {
     pub errors: usize,
 }
 
+/// GET /api/notes/proposals
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteProposalsResponse {
+    pub proposals: Vec<crate::sources::NoteProposal>,
+}
+
+/// GET /api/notes/proposals/{id}: the proposal and the note as it is now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteProposalView {
+    pub proposal: crate::sources::NoteProposal,
+    pub current: String,
+}
+
+/// POST /api/notes/proposals/{id}/accept
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptNoteProposalResponse {
+    /// The note that was written.
+    pub file: String,
+}
+
 // ===== Refinement proposals =====
 
 /// The action type for a background-refinery proposal.

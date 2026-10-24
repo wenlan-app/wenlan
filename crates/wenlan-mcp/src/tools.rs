@@ -153,9 +153,9 @@ const WEB_WRITE_LIFTED_TOOL_NAMES: &[&str] = &["forget", "rename_page", "delete_
 /// characters under the old ceiling, so any new tool needs room), then by the
 /// length of `save_source`'s description when that tool was added, then by
 /// the length of `steep`'s, then by the length of `doc_fix`'s, then by the
-/// length of `attach_file`'s.
+/// length of `attach_file`'s, then by the length of `propose_note_change`'s.
 #[cfg(test)]
-const DESCRIPTION_BUDGET_CHARS: usize = 17_154;
+const DESCRIPTION_BUDGET_CHARS: usize = 17_396;
 const QUERY_ONLY_REFUSAL_MESSAGE: &str =
     "This tool is not available in the query-only profile. Allowed tools: brief, recall, get_page_sources.";
 const WEB_WRITE_REFUSAL_MESSAGE: &str =
@@ -1313,6 +1313,21 @@ pub struct GetPageSourcesParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ProposeNoteChangeParams {
+    #[schemars(
+        description = "The note: its absolute path on this computer, or the id of a memory read from it (`<source>::<path>::<n>`)."
+    )]
+    pub file: String,
+    #[schemars(
+        description = "The whole new text of the note, frontmatter included. Keep everything you are not changing exactly as it is."
+    )]
+    pub content: String,
+    #[schemars(description = "One plain sentence for the person: what changes and why.")]
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct AttachFileParams {
     #[schemars(
         description = "Absolute path of an image (png, jpg, gif, webp, svg, avif, heic) or video (mp4, m4v, mov, webm) on this computer."
@@ -1632,6 +1647,19 @@ fn attach_file_refusal(code: &str) -> String {
         _ => "the pages folder already has a different file with that name",
     };
     format!("Not attached: {reason}. Nothing was changed.")
+}
+
+fn propose_note_change_refusal(code: &str) -> String {
+    let reason = match code.split(':').next().unwrap_or(code) {
+        "note_ai_changes_never" => "the person set this note to Never: AI cites it but does not change it. Do not ask again unless they bring it up",
+        "note_outside_vault" => "that file is not in any Obsidian vault the person connected",
+        "note_is_wenlan_page" => "that file is one of Wenlan's own pages; change it with write_page",
+        "note_not_markdown" => "only Markdown notes take a proposal",
+        "note_proposal_unchanged" => "the text is the same as the note",
+        "note_proposal_too_large" => "the proposed note is larger than 2 MB",
+        _ => "that is not one of the person's notes",
+    };
+    format!("Not proposed: {reason}. Nothing was changed.")
 }
 
 fn format_save_source_success(resp: &wenlan_types::responses::IngestResponse) -> String {
@@ -2390,6 +2418,34 @@ impl WenlanMcpServer {
         Ok(CallToolResult::success(vec![ContentBlock::text(
             format_save_source_success(&resp),
         )]))
+    }
+
+    pub async fn propose_note_change_impl(
+        &self,
+        params: ProposeNoteChangeParams,
+    ) -> Result<CallToolResult, McpError> {
+        let request = wenlan_types::requests::ProposeNoteChangeRequest {
+            file: params.file.trim().to_string(),
+            content: params.content,
+            reason: params.reason,
+        };
+        let resp: wenlan_types::sources::NoteProposal =
+            match self.client.post("/api/notes/proposals", &request).await {
+                Ok(resp) => resp,
+                Err(WenlanError::Api {
+                    reason: Some(ref reason),
+                    ..
+                }) if reason.starts_with("note_") => {
+                    return Ok(CallToolResult::error(vec![ContentBlock::text(
+                        propose_note_change_refusal(reason),
+                    )]));
+                }
+                Err(error) => return Ok(tool_error(error, "propose note change")),
+            };
+        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+            "Proposed a change to {}. Nothing is written yet: the person sees it on the note in Wenlan and accepts or declines it. A newer proposal for the same note replaces this one.",
+            resp.path
+        ))]))
     }
 
     pub async fn attach_file_impl(
@@ -4580,6 +4636,23 @@ impl WenlanMcpServer {
     }
 
     #[tool(
+        description = "Propose a change to one of the person's own Obsidian notes (Wenlan pages use write_page). Nothing is written until the person accepts it in Wenlan. A note they set to Never is cited only; the reply says so. Keep the rest of the note as it is.",
+        annotations(
+            title = "Propose note change",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    async fn propose_note_change(
+        &self,
+        Parameters(params): Parameters<ProposeNoteChangeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.propose_note_change_impl(params).await
+    }
+
+    #[tool(
         description = "Copy an image or video on this computer into the pages folder. Returns a line like ![Home](_attachments/home.png) to put in write_page content; set alt to what it shows.",
         annotations(
             title = "Attach File",
@@ -5241,6 +5314,7 @@ const LOCAL_ONLY_TOOL_NAMES: &[&str] = &[
     "reject_refinement",
     "accept_revision",
     "dismiss_revision",
+    "propose_note_change",
 ];
 
 impl WenlanMcpServer {
@@ -5773,6 +5847,7 @@ mod tests {
             "reject_refinement",
             "accept_revision",
             "dismiss_revision",
+            "propose_note_change",
         ] {
             assert!(stdio.iter().any(|candidate| candidate == name));
             assert!(!http.iter().any(|candidate| candidate == name));
@@ -11258,6 +11333,7 @@ mod tests {
             ("list_rejections", (true, false, false)),
             ("page_basis", (false, false, false)),
             ("page_code_basis", (false, false, false)),
+            ("propose_note_change", (false, false, false)),
             ("read_page", (true, false, false)),
             ("recall", (false, false, false)),
             ("rename_page", (false, true, false)),
@@ -11657,6 +11733,7 @@ mod tests {
             "list_rejections",
             "page_basis",
             "page_code_basis",
+            "propose_note_change",
             "read_page",
             "recall",
             "rename_page",

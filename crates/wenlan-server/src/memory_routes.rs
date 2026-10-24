@@ -685,6 +685,9 @@ async fn handle_store_memory_inner(
     // reader, because `not_hidden_by_superseder` requires a non-pending superseder.
     // An absent agent resolved to "unknown" was already granted "full" above, so
     // a first-party local write is never gated. An append is never gated.
+    if let Some(target) = req.supersedes.as_deref() {
+        crate::note_routes::refuse_ai_change_to_note(&headers, target)?;
+    }
     let pending_revision = req.supersedes.is_some() && trust_level != "full";
     let final_supersedes = req.supersedes.clone();
 
@@ -1526,6 +1529,7 @@ pub async fn handle_delete_memory(
     headers: HeaderMap,
     Path(source_id): Path<String>,
 ) -> Result<Json<DeleteResponse>, ServerError> {
+    crate::note_routes::refuse_ai_change_to_note(&headers, &source_id)?;
     // Snapshot Arc<MemoryDB> + resolve agent name from the RwLock guard,
     // then drop the guard BEFORE any `.await` calls. Follows the pattern
     // established in `handle_store_memory` (see AGENTS.md "Repository
@@ -1880,9 +1884,11 @@ pub async fn handle_get_version_chain(
 /// PUT /api/memory/{id}/update
 pub async fn handle_update_memory(
     State(state): State<Arc<RwLock<ServerState>>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
     Json(req): Json<wenlan_types::requests::UpdateMemoryRequest>,
 ) -> Result<Json<wenlan_types::responses::SuccessResponse>, ServerError> {
+    crate::note_routes::refuse_ai_change_to_note(&headers, &id)?;
     let db = {
         let s = state.read().await;
         s.db.clone().ok_or(ServerError::DbNotInitialized)?
