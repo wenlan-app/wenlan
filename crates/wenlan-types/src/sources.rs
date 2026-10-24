@@ -333,3 +333,66 @@ pub struct Source {
 fn default_sync_status() -> SyncStatus {
     SyncStatus::Active
 }
+
+/// Whether AI may change one of the person's own notes in a vault.
+///
+/// The note's file is the person's; this setting lives only on Wenlan's side.
+/// There is deliberately no "allowed" value yet: an AI change to a person's
+/// note is always a proposal they accept first, or nothing at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiChanges {
+    /// AI may propose a change; the file is written only when the person
+    /// accepts it.
+    AskFirst,
+    /// AI only cites the note. It proposes nothing and changes nothing.
+    Never,
+}
+
+/// Where a note's effective [`AiChanges`] came from, most specific first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiChangesFrom {
+    /// Set on this file.
+    File,
+    /// Set on a folder that holds it (the nearest one wins).
+    Folder,
+    /// Set for the whole vault.
+    Vault,
+    /// Nothing set: a person's notes start at [`AiChanges::Never`].
+    Default,
+    /// PDFs are always [`AiChanges::Never`].
+    Pdf,
+}
+
+/// The effective setting for one path in a vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoteAiChanges {
+    /// Vault-relative path with `/` separators: `""` is the vault, a folder
+    /// ends with `/`.
+    pub path: String,
+    pub value: AiChanges,
+    pub from: AiChangesFrom,
+}
+
+/// A change an AI proposed to one of the person's notes. Nothing is written
+/// to the note until the person accepts it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoteProposal {
+    pub id: String,
+    pub source_id: String,
+    /// Vault-relative path with `/` separators.
+    pub path: String,
+    /// The whole proposed file.
+    pub content: String,
+    /// Why the AI wants the change, in its words.
+    #[serde(default)]
+    pub reason: String,
+    /// The agent that proposed it.
+    pub agent: String,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// sha256 of the file the proposal was made against. Accepting refuses
+    /// when the file no longer matches, so an edit made since is never lost.
+    pub base_hash: String,
+}

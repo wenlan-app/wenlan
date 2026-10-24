@@ -455,6 +455,14 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
             | "attachment_path_not_absolute"
             | "attachment_name_taken"
             | "doc_fix_refused"
+            | "note_ai_changes_never"
+            | "note_outside_vault"
+            | "note_is_wenlan_page"
+            | "note_not_markdown"
+            | "note_path_invalid"
+            | "note_proposal_unchanged"
+            | "note_proposal_too_large"
+            | "note_change_needs_proposal"
     );
     if !safe {
         return None;
@@ -464,10 +472,12 @@ fn parse_api_error_reason(bytes: &[u8]) -> Option<String> {
     // can tell which entry was bad. Every other reason stays a bare code.
     // A steep refusal is a fixed sentence from the daemon (counts at most),
     // and the agent acts on it: claim again, fix a citation, pick another
-    // page. A write's citations refusal carries only counts.
+    // page. A write's citations refusal carries only counts. A refused change
+    // to a person's note is a fixed sentence pointing at propose_note_change.
     if code == "code_basis_invalid"
         || code.starts_with("steep_")
         || code == "citations_unsupported"
+        || code == "note_change_needs_proposal"
         || code == "doc_fix_refused"
     {
         if let Some((_, detail)) = reason.split_once(':') {

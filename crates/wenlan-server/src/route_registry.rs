@@ -408,6 +408,8 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     "/api/tags/{name}", "/api/documents/{source_id}/tags", "/api/memory/{id}/update", "/api/memory/{id}/stability",
     "/api/memory/{id}/correct", "/api/profile/narrative/regenerate", "/api/memory/{id}/pin", "/api/memory/{id}/unpin",
     "/api/snapshots/{id}/delete", "/api/memory/{id}/update-page", "/api/knowledge/path",
+    // Writes one note the person accepted; returns only its path.
+    "/api/notes/proposals/{id}/accept",
     // Copies one named media file into the pages folder; returns its path only.
     "/api/attachments",
     "/api/onboarding/milestones/{id}/acknowledge", "/api/onboarding/reset", "/ws/updates",
@@ -440,6 +442,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
 ];
 
 const NON_SENSITIVE_MIXED_ROUTES: &[(RegisteredMethod, &str)] = &[
+    (RegisteredMethod::Put, "/api/sources/{id}/ai-changes"),
+    (RegisteredMethod::Post, "/api/notes/proposals"),
+    (RegisteredMethod::Delete, "/api/notes/proposals/{id}"),
     (RegisteredMethod::Patch, "/api/brief"),
     (RegisteredMethod::Put, "/api/profile"),
     (RegisteredMethod::Post, "/api/agents"),

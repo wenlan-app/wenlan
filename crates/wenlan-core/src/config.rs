@@ -2,7 +2,9 @@
 use crate::error::WenlanError;
 use crate::sources::{Source, SourceType, SyncStatus};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use wenlan_types::sources::AiChanges;
 
 fn default_true() -> bool {
     true
@@ -118,6 +120,11 @@ pub struct Config {
     /// the next move that succeeds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pages_folder_move_error: Option<String>,
+    /// Per vault source id: whether AI may change the person's own notes,
+    /// keyed by vault-relative path (`""` = the whole vault, `dir/` = a
+    /// folder, `dir/note.md` = one file). Stored here, never in the notes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub note_ai_changes: BTreeMap<String, BTreeMap<String, AiChanges>>,
 }
 
 /// Generate a source ID slug from a directory path (last component, lowercased, sanitized).
@@ -234,13 +241,17 @@ fn default_config_root() -> PathBuf {
 }
 
 fn config_path() -> PathBuf {
+    config_root().join("config.json")
+}
+
+/// The folder that holds `config.json`, and small state kept beside it.
+pub(crate) fn config_root() -> PathBuf {
     // Honor the `WENLAN_DATA_DIR` override so a scratch daemon (e.g.
     // `wenlan-server --data-dir /tmp/wenlan-demo`) reads and writes its own
     // config file rather than clobbering the user's real one.
-    let root = crate::env_compat::var_compat("WENLAN_DATA_DIR")
+    crate::env_compat::var_compat("WENLAN_DATA_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(default_config_root);
-    root.join("config.json")
+        .unwrap_or_else(default_config_root)
 }
 
 /// Resolve the shared Wenlan data root used by the daemon and CLI durable

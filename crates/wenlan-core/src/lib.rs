@@ -91,6 +91,7 @@ pub mod truth_adapter;
 pub mod truth_contract;
 pub mod truth_manifest;
 pub mod tuning;
+pub mod vault_notes;
 pub mod vocab;
 
 // Re-exports for convenience.

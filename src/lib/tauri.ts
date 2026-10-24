@@ -3285,6 +3285,56 @@ export async function restartDaemonToMovePages(): Promise<string> {
   return invoke("restart_daemon_to_move_pages");
 }
 
+// ===== The person's own vault notes =====
+
+/** Whether AI may change one of the person's notes. Never is the default. */
+export type AiChanges = "ask_first" | "never";
+
+/** The setting at one vault-relative path and where it comes from. */
+export interface NoteAiChanges {
+  /** `""` is the vault, a folder ends with `/`. */
+  path: string;
+  value: AiChanges;
+  from: "file" | "folder" | "vault" | "default" | "pdf";
+}
+
+/** A change an AI proposed to a note; nothing is written until accepted. */
+export interface NoteProposal {
+  id: string;
+  source_id: string;
+  path: string;
+  content: string;
+  reason: string;
+  agent: string;
+  created_at: number;
+  base_hash: string;
+}
+
+export async function getNoteAiChanges(sourceId: string, path: string): Promise<NoteAiChanges> {
+  return invoke("get_note_ai_changes", { sourceId, path });
+}
+
+/** `value: null` clears the setting at `path`, so the folder or vault one applies. */
+export async function setNoteAiChanges(sourceId: string, path: string, value: AiChanges | null): Promise<NoteAiChanges> {
+  return invoke("set_note_ai_changes", { sourceId, path, value });
+}
+
+export async function listNoteProposals(sourceId?: string): Promise<NoteProposal[]> {
+  return invoke("list_note_proposals", { sourceId: sourceId ?? null });
+}
+
+export async function getNoteProposal(id: string): Promise<{ proposal: NoteProposal; current: string }> {
+  return invoke("get_note_proposal", { id });
+}
+
+export async function acceptNoteProposal(id: string): Promise<{ file: string }> {
+  return invoke("accept_note_proposal", { id });
+}
+
+export async function dismissNoteProposal(id: string): Promise<void> {
+  return invoke("dismiss_note_proposal", { id });
+}
+
 export async function countKnowledgeFiles(): Promise<number> {
   return invoke("count_knowledge_files");
 }

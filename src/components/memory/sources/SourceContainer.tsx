@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CaretRight, ArrowLeft, ArrowClockwise } from "@phosphor-icons/react";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   sourceFollowsChanges,
   syncRegisteredSource,
   type IndexedFileInfo,
+  type NoteProposal,
   type RegisteredSource,
   type SourceDirEntry,
 } from "../../../lib/tauri";
@@ -32,6 +33,7 @@ import { SourceCollection, SourceCollectionBreadcrumbs, SourceCollectionToolbar,
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { VaultPagesFolder } from "./VaultPagesFolder";
 import type { SourceLibraryFilter } from "./SourceLibrary";
+import { NoteAiChangesSection, NoteProposalNotice, VaultSuggestions, inPagesFolder, usePagesFolder } from "./VaultNotes";
 import "./SourceContainer.css";
 
 export interface SourceContainerLocation {
@@ -72,7 +74,7 @@ function formattedDate(ts: number | null, language: string, missing: string) {
   return new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(ts * 1000));
 }
 
-function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { source: RegisteredSource; refreshing: boolean; onRefresh: () => void; heading?: string }) {
+function SourceContainerInfo({ source, refreshing, onRefresh, heading, children }: { source: RegisteredSource; refreshing: boolean; onRefresh: () => void; heading?: string; children?: ReactNode }) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const following = sourceFollowsChanges(source);
@@ -105,7 +107,8 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
         aria-label={t("sourceContainer.followChanges")} />
     </div>
     <p>{t(following ? "sourceContainer.folderChecks" : "sourceContainer.importedOnce")}</p>
-    <p>{t(source.source_type === "obsidian" ? "sourceContainer.vaultReads" : "sourceContainer.oneWay")}</p>
+    <p>{t(source.source_type === "obsidian" ? "sourceContainer.vaultWrites" : "sourceContainer.oneWay")}</p>
+    {children}
     <button className="collection-control source-container-refresh" type="button" disabled={refreshing} onClick={onRefresh}>
       <ArrowClockwise size={16} aria-hidden="true" />{refreshing ? t("sourceContainer.refreshing") : t("sourceContainer.refresh")}
     </button>
@@ -125,6 +128,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     enabled: !!source,
   });
   const infoState = useDetailInfoOpen(`source-container:${location.sourceId}`);
+  const pagesFolder = usePagesFolder(source?.source_type === "obsidian");
   const infoToggleRef = useRef<HTMLButtonElement>(null);
   const refreshMutation = useMutation({
     mutationFn: () => syncRegisteredSource(location.sourceId),
@@ -210,6 +214,18 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     retry: false,
   });
 
+  // The person's own Markdown notes in a vault, not Wenlan's pages kept there.
+  const isNote = !!source && source.source_type === "obsidian" && !!selectedFile
+    && /\.(md|markdown)$/i.test(selectedFile.name) && !inPagesFolder(selectedPath, pagesFolder);
+  const atRoot = !!source && normalized(location.path) === normalized(source.path);
+  const openSuggestion = (proposal: NoteProposal) => {
+    if (!source) return;
+    const parts = proposal.path.split("/");
+    const name = parts.pop() ?? proposal.path;
+    onNavigate({ sourceId: source.id, path: [normalized(source.path), ...parts].join("/") });
+    setSelectedFile({ name, isDirectory: false });
+  };
+
   if (!source && sourcesQuery.isPending) return <section className="source-container-workspace"><p role="status">{t("sourceContainer.loading")}</p></section>;
   if (!source && sourcesQuery.isError) return <section className="source-container-workspace"><div role="alert">{t("sourceLibrary.folderError")} <button type="button" onClick={() => void sourcesQuery.refetch()}>{t("sourceLibrary.retryFolders")}</button></div></section>;
   if (!source) return <section className="source-container-workspace"><div role="alert">{t("sourceLibrary.folderError")} <button type="button" onClick={() => onNavigate(null)}>{t("sourceContainer.root")}</button></div></section>;
@@ -218,6 +234,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     <SourceDocumentLayout file={localFile} breadcrumbs={<SourceCollectionBreadcrumbs>
       <button className="source-container-back" type="button" onClick={() => setSelectedFile(null)}><ArrowLeft size={14} aria-hidden="true" />{t("sourceContainer.backToFolder")}</button>
     </SourceCollectionBreadcrumbs>} content={<div className="source-container-file-content">
+      {isNote && <NoteProposalNotice source={source} path={selectedPath} />}
       {textQuery.isPending && <p role="status">{t("sourceAccess.previewLoading")}</p>}
       {textQuery.isError && <div role="alert"><p>{t("sourceContainer.fileReadError")}</p><button type="button" className="page-editor-action" onClick={() => void textQuery.refetch()}>{t("sourceContainer.retryFile")}</button></div>}
       {!textQuery.isPending && !textQuery.isError && textQuery.data?.trim()
@@ -230,7 +247,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
         {selectedIndexed && <div><dt>{t("sourceAccess.indexedAs")}</dt><dd>{t(selectedIndexed.chunk_count === 1 ? "sourceAccess.onePassage" : "sourceAccess.passages", { count: selectedIndexed.chunk_count })}</dd></div>}
         <div><dt>{t("sourceAccess.localFile")}</dt><dd className="source-container-path">{selectedPath}</dd></div>
       </dl>
-    </section><SourceContainerInfo source={source} heading={t("sourceContainer.connection")} refreshing={refreshMutation.isPending} onRefresh={() => refreshMutation.mutate()} /></>} />
+    </section>{isNote && <NoteAiChangesSection source={source} path={selectedPath} kind="note" />}<SourceContainerInfo source={source} heading={t("sourceContainer.connection")} refreshing={refreshMutation.isPending} onRefresh={() => refreshMutation.mutate()} /></>} />
   </div>;
 
   return <section className={`source-container-workspace document-context-host${infoState.open ? " document-context-open" : ""}`}>
@@ -262,7 +279,12 @@ export default function SourceContainer({ location, search, filter, lens, onSear
     <PageInfoDrawer docked inspector focusOnOpen={false} returnFocusRef={infoToggleRef}
       open={infoState.open} onClose={() => infoState.setOpen(false)} title={t("knowledgeContext.memoryPanel")} closeLabel={t("common.close")}>
       <DetailInfoContent className="source-container-info">
-        <SourceContainerInfo source={source} refreshing={refreshMutation.isPending} onRefresh={() => refreshMutation.mutate()} />
+        <SourceContainerInfo source={source} refreshing={refreshMutation.isPending} onRefresh={() => refreshMutation.mutate()}>
+          {source.source_type === "obsidian" && !inPagesFolder(location.path, pagesFolder) && <>
+            <VaultSuggestions source={source} onOpen={openSuggestion} />
+            <NoteAiChangesSection source={source} path={location.path} kind={atRoot ? "vault" : "folder"} />
+          </>}
+        </SourceContainerInfo>
       </DetailInfoContent>
     </PageInfoDrawer>
   </section>;

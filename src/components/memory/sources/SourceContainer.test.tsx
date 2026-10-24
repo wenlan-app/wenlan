@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { getKnowledgePathInfo, listIndexedFiles, listRegisteredSources, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
+import { getKnowledgePath, getKnowledgePathInfo, getNoteAiChanges, listIndexedFiles, listNoteProposals, listRegisteredSources, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
 import SourceLibrary, { type SourceLibraryState } from "./SourceLibrary";
 import { useState } from "react";
 
@@ -19,6 +19,13 @@ vi.mock("../../../lib/tauri", () => ({
   getKnowledgePathInfo: vi.fn(),
   setKnowledgePath: vi.fn(),
   restartDaemonToMovePages: vi.fn(),
+  getKnowledgePath: vi.fn(),
+  getNoteAiChanges: vi.fn(),
+  setNoteAiChanges: vi.fn(),
+  listNoteProposals: vi.fn(),
+  getNoteProposal: vi.fn(),
+  acceptNoteProposal: vi.fn(),
+  dismissNoteProposal: vi.fn(),
 }));
 
 const source: RegisteredSource = {
@@ -45,6 +52,9 @@ beforeEach(() => {
   vi.mocked(readSourceDir).mockResolvedValue([]);
   vi.mocked(readSourceText).mockResolvedValue("");
   vi.mocked(syncRegisteredSource).mockResolvedValue({ files_found: 0, ingested: 0, skipped: 0, errors: 0 });
+  vi.mocked(getKnowledgePath).mockResolvedValue("/home/me/.wenlan/pages");
+  vi.mocked(getNoteAiChanges).mockImplementation(async (_id, path) => ({ path, value: "never", from: "default" }));
+  vi.mocked(listNoteProposals).mockResolvedValue([]);
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn().mockReturnValue({
     matches: true, media: "(min-width: 1100px)", addEventListener: vi.fn(), removeEventListener: vi.fn(),
   }) });
@@ -87,7 +97,7 @@ describe("Sources containers", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Vault|vault-1/i }));
     expect(await screen.findByText("Projects")).toBeInTheDocument();
-    const info = await screen.findByText(/sourceContainer\.vaultReads|Wenlan reads your notes here/);
+    const info = await screen.findByText(/Wenlan changes your notes only when you accept/);
     expect(info).toBeInTheDocument();
     expect(screen.getByText("12")).toBeInTheDocument();
     expect(screen.getByText("8")).toBeInTheDocument();
@@ -96,7 +106,7 @@ describe("Sources containers", () => {
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
     expect(screen.queryByText(/Wenlan reads your notes here/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /memoryPanel|Information|info/i }));
-    expect(await screen.findByText(/sourceContainer\.vaultReads|Wenlan reads your notes here/)).toBeInTheDocument();
+    expect(await screen.findByText(/Wenlan changes your notes only when you accept/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Projects/ }));
     expect(await screen.findByText("Nested")).toBeInTheDocument();

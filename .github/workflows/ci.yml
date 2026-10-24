@@ -411,6 +411,7 @@ jobs:
               - 'crates/wenlan-core/src/export/knowledge_folders_test.rs'
               - 'crates/wenlan-core/src/pages_folder.rs'
               - 'crates/wenlan-core/src/pages_folder_test.rs'
+              - 'crates/wenlan-core/src/vault_notes_test.rs'
               # The refusal to replace a non-plain file is proved against a real
               # symlink, and that case is `cfg(unix)`, so the file carries a
               # platform route and must schedule both sides of the gate.
@@ -530,6 +531,7 @@ jobs:
               - 'crates/wenlan-core/src/export/knowledge_folders_test.rs'
               - 'crates/wenlan-core/src/pages_folder.rs'
               - 'crates/wenlan-core/src/pages_folder_test.rs'
+              - 'crates/wenlan-core/src/vault_notes_test.rs'
               # The refusal to replace a non-plain file is proved against a real
               # symlink, and that case is `cfg(unix)`, so the file carries a
               # platform route and must schedule both sides of the gate.
