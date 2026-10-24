@@ -585,6 +585,13 @@ pub struct AttachFileRequest {
     pub alt: Option<String>,
 }
 
+/// Move the pages folder to `path` when the background service next starts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetKnowledgePathRequest {
+    /// Absolute path of an empty or new folder, such as one inside a vault.
+    pub path: String,
+}
+
 // ===== Ingest =====
 
 #[derive(Debug, Serialize, Deserialize)]

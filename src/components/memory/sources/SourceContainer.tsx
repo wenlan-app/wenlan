@@ -30,6 +30,7 @@ import SourceDocumentContent from "./SourceDocumentContent";
 import { getSourceAppFromUrl, getSourcePresentation, isNoteApp } from "./sourcePresentation";
 import { SourceCollection, SourceCollectionBreadcrumbs, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import { SourceTypeIcon } from "./SourceTypeIcon";
+import { VaultPagesFolder } from "./VaultPagesFolder";
 import type { SourceLibraryFilter } from "./SourceLibrary";
 import "./SourceContainer.css";
 
@@ -96,6 +97,7 @@ function SourceContainerInfo({ source, refreshing, onRefresh, heading }: { sourc
         {(source.last_sync_errors ?? 0) > 0 && <div><dt>{t("sourceContainer.syncErrors")}</dt><dd>{source.last_sync_errors!.toLocaleString()}</dd></div>}
       </dl>
     </section>
+    {source.source_type === "obsidian" && <VaultPagesFolder source={source} />}
     <div className="source-follow-row">
       <span>{t("sourceContainer.followChanges")}</span>
       <Toggle enabled={following} onToggle={() => followMutation.mutate(!following)}

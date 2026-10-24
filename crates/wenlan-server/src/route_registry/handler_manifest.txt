@@ -26,6 +26,7 @@ main|get|/api/import/state|wenlan_server::import_routes::handle_list_pending_imp
 main|get|/api/indexed-files|wenlan_server::indexed_files_routes::handle_list_indexed_files
 main|get|/api/knowledge/count|wenlan_server::knowledge_routes::handle_get_knowledge_count
 main|get|/api/knowledge/path|wenlan_server::knowledge_routes::handle_get_knowledge_path
+main|post|/api/knowledge/path|wenlan_server::knowledge_routes::handle_set_knowledge_path
 main|get|/api/lint|wenlan_server::lint_routes::handle_lint
 main|get|/api/memory/by-ids|wenlan_server::memory_detail_routes::handle_get_memories_by_ids
 main|get|/api/memory/entities/{entity_id}|wenlan_server::entity_graph_routes::handle_get_entity_detail

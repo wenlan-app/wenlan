@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { listIndexedFiles, listRegisteredSources, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
+import { getKnowledgePathInfo, listIndexedFiles, listRegisteredSources, readSourceDir, readSourceText, setSourceFollowChanges, syncRegisteredSource, type RegisteredSource } from "../../../lib/tauri";
 import SourceLibrary, { type SourceLibraryState } from "./SourceLibrary";
 import { useState } from "react";
 
@@ -16,6 +16,9 @@ vi.mock("../../../lib/tauri", () => ({
   setSourceFollowChanges: vi.fn(),
   sourceFollowsChanges: (s: { status: unknown }) => s.status !== "Paused",
   openFile: vi.fn(),
+  getKnowledgePathInfo: vi.fn(),
+  setKnowledgePath: vi.fn(),
+  restartDaemonToMovePages: vi.fn(),
 }));
 
 const source: RegisteredSource = {
@@ -38,6 +41,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   vi.mocked(listRegisteredSources).mockResolvedValue([source]);
   vi.mocked(listIndexedFiles).mockResolvedValue([]);
+  vi.mocked(getKnowledgePathInfo).mockResolvedValue({ path: "/home/me/.wenlan/pages" });
   vi.mocked(readSourceDir).mockResolvedValue([]);
   vi.mocked(readSourceText).mockResolvedValue("");
   vi.mocked(syncRegisteredSource).mockResolvedValue({ files_found: 0, ingested: 0, skipped: 0, errors: 0 });

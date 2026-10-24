@@ -3263,6 +3263,28 @@ export async function getKnowledgePath(): Promise<string> {
   return invoke("get_knowledge_path");
 }
 
+export interface KnowledgePathInfo {
+  path: string;
+  /** A folder the person picked; the pages move there when the daemon restarts. */
+  pending_path?: string;
+  /** Why the last move stopped. The pages stayed at `path`. */
+  move_error?: string;
+}
+
+export async function getKnowledgePathInfo(): Promise<KnowledgePathInfo> {
+  return invoke("get_knowledge_path_info");
+}
+
+/** Ask for the pages folder to move to `path` at the daemon's next start. */
+export async function setKnowledgePath(path: string): Promise<KnowledgePathInfo> {
+  return invoke("set_knowledge_path", { path });
+}
+
+/** Restart the daemon so it moves the pages folder. Rejects with a typed restart error. */
+export async function restartDaemonToMovePages(): Promise<string> {
+  return invoke("restart_daemon_to_move_pages");
+}
+
 export async function countKnowledgeFiles(): Promise<number> {
   return invoke("count_knowledge_files");
 }

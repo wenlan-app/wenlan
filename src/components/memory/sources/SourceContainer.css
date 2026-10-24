@@ -21,3 +21,11 @@
 .source-container-file-content [role="alert"] { color: var(--mem-text-secondary); }
 .source-container-file-content button { cursor: pointer; }
 .source-follow-row { align-items: center; color: var(--mem-text); display: flex; font-size: 13px; gap: 12px; justify-content: space-between; margin: 18px 0 0; }
+.vault-pages-folder { margin: 22px 0 0; }
+.vault-pages-folder-row { align-items: center; display: flex; font-size: 13px; gap: 12px; justify-content: space-between; }
+.vault-pages-folder-row .collection-control { flex: none; }
+.vault-pages-folder p { color: var(--mem-text-secondary); font-size: 12px; line-height: 1.6; margin: 8px 0 0; }
+.vault-pages-folder p[role="alert"] { color: var(--mem-danger); }
+.vault-pages-folder-confirm p { color: var(--mem-text); }
+.vault-pages-folder-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.vault-pages-folder-primary { background: var(--mem-accent-indigo); border-color: transparent; color: var(--mem-bg); }

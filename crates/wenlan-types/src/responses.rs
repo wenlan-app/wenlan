@@ -962,6 +962,13 @@ pub struct ExportPageResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KnowledgePathResponse {
     pub path: String,
+    /// A folder the person picked; the pages move there when the background
+    /// service next starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_path: Option<String>,
+    /// Why the last move stopped. The pages stayed at `path`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_error: Option<String>,
 }
 
 /// A file copied into the pages folder's `_attachments/` so pages can show it.
