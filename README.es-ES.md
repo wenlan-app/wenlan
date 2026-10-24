@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=293c4cc4fec5327467c507276c8b65b2f87df9144fd3e5900a67c461c5498159 -->
+<!-- README_SYNC: source=README.md sha256=9baf33f15ee86046018e0676e1672a7b8ebc12f12e9c2084422a4f3422e05ac6 -->
 
 <p align="center">
   <picture>
@@ -31,9 +31,9 @@
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
 
-https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
-
-<p>Portada: composición de vistas reales con datos de ejemplo; el grafo es ilustrativo, no una vista nativa de tres columnas.</p>
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Ver el recorrido por Wenlan" width="100%"></a>
+</p>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>

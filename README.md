@@ -29,9 +29,9 @@
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
 
-https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
-
-<p>Cover: localized composite of App views with demo data; the graph is illustrative, not a native three-column layout.</p>
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Watch the Wenlan walkthrough" width="100%"></a>
+</p>
 
 <a id="why-wenlan"></a>
 

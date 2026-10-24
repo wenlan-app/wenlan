@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=293c4cc4fec5327467c507276c8b65b2f87df9144fd3e5900a67c461c5498159 -->
+<!-- README_SYNC: source=README.md sha256=9baf33f15ee86046018e0676e1672a7b8ebc12f12e9c2084422a4f3422e05ac6 -->
 
 <p align="center">
   <picture>
@@ -31,9 +31,9 @@
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
 
-https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
-
-<p>封面為實機畫面與示範資料的合成圖；圖譜為示意，非 App 原生三欄版面。</p>
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a"><img src="./docs/assets/readme-video-cover-zh-Hant.png" alt="觀看 Wenlan 操作導覽" width="100%"></a>
+</p>
 
 <a id="why-wenlan"></a>
 
