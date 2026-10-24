@@ -26,6 +26,7 @@ afterEach(() => {
 
 const labels = {
   saving: "Saving…", savedLinkOnly: "This site needs a sign-in, so only the link was saved",
+  unreadable: "Couldn't read this page, so only the link was saved",
   failed: "Couldn't save this link.", retry: "Try again",
 };
 
@@ -50,7 +51,7 @@ function editor(doc: string, at: number, options: Partial<SourcePasteOptions> = 
   return view;
 }
 
-function saved(title: string, linkOnly = false, remove?: () => Promise<void>): PastedSourceSaved {
+function saved(title: string, linkOnly?: PastedSourceSaved["linkOnly"], remove?: () => Promise<void>): PastedSourceSaved {
   return { title, linkOnly, remove };
 }
 
@@ -87,17 +88,39 @@ describe("pasted links as sources", () => {
 
   it("says when only the link was kept, then puts the note away", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const view = editor("", 0, { save: vi.fn(async () => saved("X link", true)) });
+    const view = editor("", 0, { save: vi.fn(async () => saved("X link", "signIn")) });
     pasteText(view.contentDOM, X_URL);
     await vi.waitFor(() => expect(note(view)?.textContent).toBe(labels.savedLinkOnly));
     vi.advanceTimersByTime(5000);
     expect(note(view)).toBeNull();
   });
 
+  it("a page that could not be read says so, not that it needs a sign-in", async () => {
+    const view = editor("", 0, { save: vi.fn(async () => saved("example.com", "unreadable")) });
+    pasteText(view.contentDOM, "https://example.com/post");
+    await vi.waitFor(() => expect(note(view)?.textContent).toBe(labels.unreadable));
+  });
+
+  it("editing the link's tracking parameters or trailing slash keeps its source", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const remove = vi.fn(async () => undefined);
+    const url = "https://www.example.com/post/?utm_source=x#top";
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post", undefined, remove)) });
+    pasteText(view.contentDOM, url);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`[Post](${url})`));
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "[Post](https://example.com/post)" } });
+    vi.advanceTimersByTime(5000);
+    expect(remove).not.toHaveBeenCalled();
+    // Pointing it at another page is a different link.
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "[Post](https://example.com/other)" } });
+    vi.advanceTimersByTime(5000);
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   it("deleting the link deletes the source the paste created", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const remove = vi.fn(async () => undefined);
-    const save = vi.fn(async () => saved("Post", false, remove));
+    const save = vi.fn(async () => saved("Post", undefined, remove));
     const view = editor("", 0, { save });
     pasteText(view.contentDOM, X_URL);
     await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`));
@@ -114,7 +137,7 @@ describe("pasted links as sources", () => {
   it("a cut and paste of the link keeps its source", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const remove = vi.fn(async () => undefined);
-    const view = editor("", 0, { save: vi.fn(async () => saved("Post", false, remove)) });
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post", undefined, remove)) });
     pasteText(view.contentDOM, X_URL);
     await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`));
     const link = view.state.doc.toString();

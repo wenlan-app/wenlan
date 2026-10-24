@@ -759,6 +759,7 @@ const en = {
   sourcePaste: {
     saving: "Saving…",
     savedLinkOnly: "This site needs a sign-in, so only the link was saved",
+    unreadable: "Couldn't read this page, so only the link was saved",
     failed: "Couldn't save this link.",
     retry: "Try again",
     linkTitle: "{{app}} link",
@@ -3663,6 +3664,7 @@ const zhHans = {
   sourcePaste: {
     saving: "正在保存…",
     savedLinkOnly: "这个网站要登录，只存了链接",
+    unreadable: "读不到这个网页，只存了链接",
     failed: "无法保存这个链接。",
     retry: "再试一次",
     linkTitle: "{{app}}链接",
@@ -6522,6 +6524,7 @@ const zhHant = {
   sourcePaste: {
     saving: "儲存中…",
     savedLinkOnly: "這個網站要登入，只存了連結",
+    unreadable: "讀不到這個網頁，只存了連結",
     failed: "無法儲存這個連結。",
     retry: "再試一次",
     linkTitle: "{{app}}連結",

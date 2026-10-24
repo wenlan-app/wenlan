@@ -1772,7 +1772,7 @@ export default function PageDetail({
   };
   // A pasted link saved as a source, into this page's Space. Sites that need
   // a sign-in show the daemon a login screen, so only their link and a name
-  // are kept.
+  // are kept; so is a page that could not be read.
   const savePastedSource = async (url: string): Promise<PastedSourceSaved> => {
     const app = getSourceAppFromUrl(url);
     const linkOnly = app !== null && SIGN_IN_APPS.has(app);
@@ -1801,7 +1801,7 @@ export default function PageDetail({
     void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
     return {
       title: title || fallbackTitle,
-      linkOnly: linkOnly || !content,
+      linkOnly: linkOnly ? "signIn" : content ? undefined : "unreadable",
       // Deleting the link deletes the source, unless it was saved before.
       remove: created ? async () => {
         await deleteFileChunks("webpage", url);

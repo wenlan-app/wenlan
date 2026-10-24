@@ -500,6 +500,7 @@ function sourcePasteLabels(t: TFunction): SourcePasteLabels {
   return {
     saving: t("sourcePaste.saving"),
     savedLinkOnly: t("sourcePaste.savedLinkOnly"),
+    unreadable: t("sourcePaste.unreadable"),
     failed: t("sourcePaste.failed"),
     retry: t("sourcePaste.retry"),
   };

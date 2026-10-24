@@ -8,8 +8,9 @@ export type SourceIconMount = (container: HTMLElement, url: string) => () => voi
 
 export interface PastedSourceSaved {
   title: string;
-  /** Only the link and its title were saved: the site needs a sign-in. */
-  linkOnly: boolean;
+  /** Only the link and its title were saved, because the site needs a
+   *  sign-in or its page could not be read. */
+  linkOnly?: "signIn" | "unreadable";
   /** Deletes the source again; set only when this paste created it. */
   remove?(): Promise<void>;
 }
@@ -17,6 +18,7 @@ export interface PastedSourceSaved {
 export interface SourcePasteLabels {
   saving: string;
   savedLinkOnly: string;
+  unreadable: string;
   failed: string;
   retry: string;
 }
@@ -105,6 +107,7 @@ interface Prompt {
   to: number;
   url: string;
   phase: PromptPhase;
+  linkOnly?: PastedSourceSaved["linkOnly"];
 }
 
 interface PromptState {
@@ -188,8 +191,8 @@ function save(view: EditorView, id: number): void {
         createdSources.set(view, created);
       }
       // Saved is shown by the site icon alone; a note stays only for a link
-      // whose site needs a sign-in.
-      const next = saved.linkOnly ? { ...current, phase: "linkOnly" as const } : null;
+      // saved without its page.
+      const next = saved.linkOnly ? { ...current, phase: "linkOnly" as const, linkOnly: saved.linkOnly } : null;
       const markdown = sourceLinkMarkdown(saved.title, current.url);
       // The link reads as its title once saved, unless the writer changed it meanwhile.
       if (view.state.sliceDoc(current.from, current.to) === current.url && markdown !== current.url && !view.state.readOnly) {
@@ -220,7 +223,7 @@ class PromptWidget extends WidgetType {
   }
 
   eq(other: PromptWidget): boolean {
-    return other.prompt.id === this.prompt.id && other.prompt.phase === this.prompt.phase && other.prompt.url === this.prompt.url;
+    return other.prompt.id === this.prompt.id && other.prompt.phase === this.prompt.phase && other.prompt.linkOnly === this.prompt.linkOnly && other.prompt.url === this.prompt.url;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -254,7 +257,7 @@ class PromptWidget extends WidgetType {
     } else if (phase === "failed") {
       row.append(status(labels.failed), button(labels.retry, () => save(view, id)));
     } else {
-      row.append(status(labels.savedLinkOnly));
+      row.append(status(this.prompt.linkOnly === "unreadable" ? labels.unreadable : labels.savedLinkOnly));
     }
     return row;
   }
@@ -288,14 +291,26 @@ const removeWithLink = ViewPlugin.fromClass(class {
     const created = createdSources.get(this.view);
     if (!created) return;
     const text = this.view.state.doc.toString();
+    const kept = new Set([...text.matchAll(/https?:\/\/[^\s<>()[\]]+/g)].map((match) => linkKey(match[0])));
     for (const [url, remove] of [...created]) {
-      if (text.includes(url)) continue;
+      // Trimming tracking parameters or a trailing slash still links the same page.
+      if (text.includes(url) || kept.has(linkKey(url))) continue;
       created.delete(url);
       void remove().catch(() => undefined);
       if (live) this.view.dispatch({ effects: forgetLink.of(url) });
     }
   }
 });
+
+/** A link's site and path, so an edited query, fragment or trailing slash is the same page. */
+function linkKey(link: string): string {
+  try {
+    const url = new URL(link);
+    return `${url.hostname.replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return link;
+  }
+}
 
 /** Code and link destinations are not places to save a source from. */
 function pasteTargetsProse(state: EditorState, at: number): boolean {
