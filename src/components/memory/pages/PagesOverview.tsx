@@ -9,6 +9,8 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
+import type { SourceContainerLocation } from "../sources/SourceContainer";
+import { NoteSuggestionsSummary } from "../sources/VaultNotes";
 import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
 import { NewPagesList, newestPages } from "./NewPagesList";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
@@ -29,6 +31,8 @@ interface PagesOverviewProps {
   readonly onOpenIntelligence?: () => void;
   /** Open the review group for notes whose source note changed. */
   readonly onOpenBasisUpdates?: () => void;
+  /** Open a vault note an AI wants to change, where Accept and Decline are. */
+  readonly onOpenNoteSuggestion?: (location: SourceContainerLocation) => void;
 }
 
 export function PagesOverview({
@@ -39,6 +43,7 @@ export function PagesOverview({
   onSeeExample,
   onOpenIntelligence,
   onOpenBasisUpdates,
+  onOpenNoteSuggestion,
 }: PagesOverviewProps) {
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
@@ -94,6 +99,7 @@ export function PagesOverview({
       data-lists-pages={listsPages ? "true" : undefined}
     >
       {onOpenBasisUpdates && <BasisUpdatesSummary onOpen={onOpenBasisUpdates} />}
+      {onOpenNoteSuggestion && <NoteSuggestionsSummary onOpen={onOpenNoteSuggestion} />}
       {/* The open checklist carries the same offer as a step; one place at a time. */}
       {onboarding ? null : (
         <WritePagesLine

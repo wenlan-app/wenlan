@@ -108,7 +108,6 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "list_decision_domains_cmd",
   "list_decisions_cmd",
   "list_external_models",
-  "list_note_proposals",
   "list_orphan_links",
   "list_pending_imports",
   "list_pinned_memories",

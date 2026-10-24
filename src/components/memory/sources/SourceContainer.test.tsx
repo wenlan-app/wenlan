@@ -34,14 +34,14 @@ const source: RegisteredSource = {
 };
 const originalMatchMedia = Object.getOwnPropertyDescriptor(window, "matchMedia");
 
-function TestLibrary() {
-  const [state, setState] = useState<SourceLibraryState>({ search: "", filter: "all" });
+function TestLibrary({ initial = { search: "", filter: "all" } }: { initial?: SourceLibraryState }) {
+  const [state, setState] = useState<SourceLibraryState>(initial);
   return <SourceLibrary onAdd={vi.fn()} onOpenDocument={vi.fn()} state={state} onStateChange={setState} />;
 }
 
-function renderLibrary() {
+function renderLibrary(initial?: SourceLibraryState) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><TestLibrary /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><TestLibrary initial={initial} /></QueryClientProvider>);
 }
 
 beforeEach(() => {
@@ -145,5 +145,14 @@ describe("Sources containers", () => {
     expect(document.querySelector(".reading-document-frame")).toBeInTheDocument();
     expect(await screen.findByText("In your library")).toBeInTheDocument();
     expect(screen.getByText("3 passages")).toBeInTheDocument();
+  });
+
+  it("opens straight to a note when the home points at one", async () => {
+    vi.mocked(readSourceDir).mockResolvedValue([{ name: "plan.md", isDirectory: false }]);
+    vi.mocked(readSourceText).mockResolvedValue("Launch in October.");
+    renderLibrary({ search: "", filter: "all", container: { sourceId: "vault-1", path: "/notes/Vault/Work", file: "plan.md" } });
+
+    expect(await screen.findByText("Launch in October.")).toBeInTheDocument();
+    expect(readSourceText).toHaveBeenCalledWith("/notes/Vault/Work/plan.md");
   });
 });

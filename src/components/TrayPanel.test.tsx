@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import TrayPanel, { pagesWithPendingEdits, recentPages } from "./TrayPanel";
+import TrayPanel, { notesWithPendingEdits, pagesWithPendingEdits, recentPages } from "./TrayPanel";
 import type { Page } from "../lib/tauri";
 
 const mockedInvoke = vi.mocked(invoke);
@@ -57,6 +57,7 @@ const quietDay: Replies = {
     page("e-1", "Shadow entity", today, "entity"),
   ],
   list_pending_revisions: [],
+  list_note_proposals: [],
   get_background_ai_enabled: true,
   list_new_material: { items: [], total: 0 },
 };
@@ -82,6 +83,19 @@ describe("pagesWithPendingEdits", () => {
         { target_kind: "memory", target_source_id: "m1" },
       ]),
     ).toBe(2);
+  });
+});
+
+describe("notesWithPendingEdits", () => {
+  it("counts each vault note once", () => {
+    expect(
+      notesWithPendingEdits([
+        { source_id: "v1", path: "Plans.md" },
+        { source_id: "v1", path: "Plans.md" },
+        { source_id: "v1", path: "Ideas/Plans.md" },
+        { source_id: "v2", path: "Plans.md" },
+      ]),
+    ).toBe(3);
   });
 });
 
@@ -114,6 +128,22 @@ describe("TrayPanel", () => {
     expect(need.textContent).toContain("AI wants to edit 2 pages");
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(mockedInvoke).toHaveBeenCalledWith("tray_panel_open_main", { target: { kind: "review" } });
+  });
+
+  it("counts vault notes an AI wants to change and opens the home that lists them", async () => {
+    serve({
+      ...quietDay,
+      list_note_proposals: [
+        { id: "n1", source_id: "v1", path: "Plans.md", content: "", reason: "", agent: "claude-code", created_at: 0, base_hash: "" },
+      ],
+    });
+    renderPanel();
+
+    const need = await screen.findByTestId("tray-panel-note-suggestions");
+    expect(need.textContent).toContain("AI wants to change 1 note in your vault");
+    expect(screen.queryByTestId("tray-panel-needs-you")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(mockedInvoke).toHaveBeenCalledWith("tray_panel_open_main", { target: { kind: "home" } });
   });
 
   it("tells an On demand user what to type when material is waiting", async () => {
