@@ -1460,7 +1460,7 @@ carrying the authority of agreement.
 | `core/repair.rs::capture_page_projection_on_connection` | `pub(crate)` | no | no | — | `core/repair.rs::projection_page_row_on_connection` |
 | `core/repair.rs::validate_deterministic_target_resolved` | `pub(crate)` | no | no | — | `core/repair_plan.rs::deterministic_target_still_actionable` |
 | `core/repair_plan/deterministic.rs::resolve_page_projections` | `private` | no | no | — | `core/repair.rs::capture_page_projection_rollback` |
-| `core/sources/page_watcher.rs::sync_filesystem_edits_locking` | `pub` | no | **yes** | `server/scheduler.rs::spawn_scheduler` | `core/sources/page_watcher.rs::sync_one_file` |
+| `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
 | `core/synthesis/distill.rs::distill_one_cluster` | `pub` | no | no | — | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` |
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
