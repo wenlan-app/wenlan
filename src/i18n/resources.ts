@@ -758,11 +758,9 @@ const en = {
   },
   sourcePaste: {
     saving: "Saving…",
-    saved: "Saved as source",
     savedLinkOnly: "This site needs a sign-in, so only the link was saved",
     failed: "Couldn't save this link.",
     retry: "Try again",
-    undo: "Undo",
     linkTitle: "{{app}} link",
   },
   pageAttachments: {
@@ -3664,11 +3662,9 @@ const zhHans = {
   },
   sourcePaste: {
     saving: "正在保存…",
-    saved: "已存为来源",
     savedLinkOnly: "这个网站要登录，只存了链接",
-    failed: "无法保存这个网址。",
+    failed: "无法保存这个链接。",
     retry: "再试一次",
-    undo: "撤销",
     linkTitle: "{{app}} 链接",
   },
   pageAttachments: {
@@ -6525,11 +6521,9 @@ const zhHant = {
   },
   sourcePaste: {
     saving: "儲存中…",
-    saved: "已存成來源",
     savedLinkOnly: "這個網站要登入，只存了連結",
-    failed: "無法儲存這個網址。",
+    failed: "無法儲存這個連結。",
     retry: "再試一次",
-    undo: "撤銷",
     linkTitle: "{{app}} 連結",
   },
   pageAttachments: {

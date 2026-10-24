@@ -25,8 +25,8 @@ afterEach(() => {
 });
 
 const labels = {
-  saving: "Saving…", saved: "Saved as source",
-  savedLinkOnly: "Saved as source, link only", failed: "Couldn't save this link.", retry: "Try again", undo: "Undo",
+  saving: "Saving…", savedLinkOnly: "This site needs a sign-in, so only the link was saved",
+  failed: "Couldn't save this link.", retry: "Try again",
 };
 
 const X_URL = "https://x.com/simonw/status/1849";
@@ -50,8 +50,8 @@ function editor(doc: string, at: number, options: Partial<SourcePasteOptions> = 
   return view;
 }
 
-function saved(title: string, linkOnly = false, undo = vi.fn(async () => undefined)): PastedSourceSaved {
-  return { title, linkOnly, undo };
+function saved(title: string, linkOnly = false, remove?: () => Promise<void>): PastedSourceSaved {
+  return { title, linkOnly, remove };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -73,7 +73,7 @@ describe("pasted links as sources", () => {
     expect(sourceLinkMarkdown("  ", "https://a.com/x")).toBe("https://a.com/x");
   });
 
-  it("saves a pasted link at once and shows it under its title", async () => {
+  it("saves a pasted link at once and shows it under its title, with no note once saved", async () => {
     const save = vi.fn(async () => saved("Simon on local-first"));
     const view = editor("Reactions: ", 11, { save });
     const event = pasteText(view.contentDOM, X_URL);
@@ -82,25 +82,57 @@ describe("pasted links as sources", () => {
     expect(note(view)?.textContent).toBe("Saving…");
     await flush();
     expect(view.state.doc.toString()).toBe(`Reactions: [Simon on local-first](${X_URL})`);
-    expect(note(view)?.textContent).toBe("Saved as sourceUndo");
-  });
-
-  it("undo turns it back into the plain link and takes the save back", async () => {
-    const undo = vi.fn(async () => undefined);
-    const view = editor("", 0, { save: vi.fn(async () => saved("Post", false, undo)) });
-    pasteText(view.contentDOM, X_URL);
-    await flush();
-    buttonNamed(view, "Undo")!.click();
-    expect(view.state.doc.toString()).toBe(X_URL);
-    expect(undo).toHaveBeenCalledTimes(1);
     expect(note(view)).toBeNull();
   });
 
-  it("says when only the link was kept", async () => {
+  it("says when only the link was kept, then puts the note away", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const view = editor("", 0, { save: vi.fn(async () => saved("X link", true)) });
     pasteText(view.contentDOM, X_URL);
-    await flush();
-    expect(note(view)?.textContent).toBe("Saved as source, link onlyUndo");
+    await vi.waitFor(() => expect(note(view)?.textContent).toBe(labels.savedLinkOnly));
+    vi.advanceTimersByTime(5000);
+    expect(note(view)).toBeNull();
+  });
+
+  it("deleting the link deletes the source the paste created", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const remove = vi.fn(async () => undefined);
+    const save = vi.fn(async () => saved("Post", false, remove));
+    const view = editor("", 0, { save });
+    pasteText(view.contentDOM, X_URL);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`));
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+    vi.advanceTimersByTime(2000);
+    expect(remove).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(remove).toHaveBeenCalledTimes(1);
+    // Pasted again, it is saved again.
+    pasteText(view.contentDOM, X_URL);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("a cut and paste of the link keeps its source", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const remove = vi.fn(async () => undefined);
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post", false, remove)) });
+    pasteText(view.contentDOM, X_URL);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`));
+    const link = view.state.doc.toString();
+    view.dispatch({ changes: { from: 0, to: link.length, insert: "" } });
+    vi.advanceTimersByTime(1000);
+    view.dispatch({ changes: { from: 0, insert: `Moved: ${link}` } });
+    vi.advanceTimersByTime(5000);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("keeps a source that was saved before when its link is deleted", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const view = editor("", 0, { save: vi.fn(async () => saved("Post")) });
+    pasteText(view.contentDOM, X_URL);
+    await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`));
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+    vi.advanceTimersByTime(5000);
+    expect(note(view)).toBeNull();
   });
 
   it("offers a retry when saving fails, and keeps the link", async () => {
@@ -115,17 +147,8 @@ describe("pasted links as sources", () => {
     expect(view.state.doc.toString()).toBe(`[Post](${X_URL})`);
   });
 
-  it("puts the note away when the writer goes on, keeping the saved link", async () => {
-    const view = editor("", 0, { save: vi.fn(async () => saved("Post")) });
-    pasteText(view.contentDOM, X_URL);
-    await flush();
-    view.dispatch({ changes: { from: view.state.doc.length, insert: " nice" } });
-    expect(note(view)).toBeNull();
-    expect(view.state.doc.toString()).toBe(`[Post](${X_URL}) nice`);
-  });
-
-  it("Escape puts the note away", async () => {
-    const view = editor("", 0, { save: vi.fn(async () => saved("Post")) });
+  it("Escape puts the failure note away", async () => {
+    const view = editor("", 0, { save: vi.fn().mockRejectedValue(new Error("offline")) });
     pasteText(view.contentDOM, X_URL);
     await flush();
     pressKey(view.contentDOM, "Escape");

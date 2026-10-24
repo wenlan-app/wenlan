@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { syntaxTree } from "@codemirror/language";
 import { Annotation, Facet, Prec, StateEffect, StateField, type EditorState, type Extension } from "@codemirror/state";
-import { Decoration, EditorView, keymap, WidgetType } from "@codemirror/view";
+import { Decoration, EditorView, keymap, ViewPlugin, WidgetType } from "@codemirror/view";
 
 /** Draws a link's site icon into `container`; returns its cleanup. */
 export type SourceIconMount = (container: HTMLElement, url: string) => () => void;
@@ -10,17 +10,15 @@ export interface PastedSourceSaved {
   title: string;
   /** Only the link and its title were saved: the site needs a sign-in. */
   linkOnly: boolean;
-  /** Take the save back: the link is no longer a source of the page. */
-  undo(): Promise<void>;
+  /** Deletes the source again; set only when this paste created it. */
+  remove?(): Promise<void>;
 }
 
 export interface SourcePasteLabels {
   saving: string;
-  saved: string;
   savedLinkOnly: string;
   failed: string;
   retry: string;
-  undo: string;
 }
 
 export interface SourcePasteOptions {
@@ -99,7 +97,7 @@ export function sourceLinkMarkdown(title: string, url: string): string {
   return text ? `[${text}](${url})` : url;
 }
 
-type PromptPhase = "saving" | "saved" | "linkOnly" | "failed";
+type PromptPhase = "saving" | "linkOnly" | "failed";
 
 interface Prompt {
   id: number;
@@ -116,10 +114,14 @@ interface PromptState {
 }
 
 const setPrompt = StateEffect.define<Prompt | null>();
+/** A link whose source was deleted with it; pasting it again saves it again. */
+const forgetLink = StateEffect.define<string>();
 const ownChange = Annotation.define<true>();
 let nextPromptId = 0;
-/** What each finished save needs to be taken back, by prompt id. */
-const savedLinks = new Map<number, { markdown: string; undo(): Promise<void> }>();
+/** Sources a paste created, by editor and link, until their link is deleted. */
+const createdSources = new WeakMap<EditorView, Map<string, () => Promise<void>>>();
+/** How long a deleted link stays deleted before its source goes too, so a cut and paste keeps it. */
+const REMOVE_AFTER_MS = 3000;
 
 const promptState: StateField<PromptState> = StateField.define<PromptState>({
   create: () => ({ prompt: null, offered: new Set() }),
@@ -131,6 +133,9 @@ const promptState: StateField<PromptState> = StateField.define<PromptState>({
       else prompt = { ...prompt, from: transaction.changes.mapPos(prompt.from, 1), to: transaction.changes.mapPos(prompt.to, -1) };
     }
     for (const effect of transaction.effects) {
+      if (effect.is(forgetLink) && offered.has(effect.value)) {
+        offered = new Set([...offered].filter((url) => url !== effect.value));
+      }
       if (!effect.is(setPrompt)) continue;
       prompt = effect.value;
       if (prompt && !offered.has(prompt.url)) offered = new Set([...offered, prompt.url]);
@@ -167,22 +172,6 @@ function update(view: EditorView, id: number, phase: PromptPhase | null): void {
   view.dispatch({ effects: setPrompt.of(phase ? { ...prompt, phase } : null) });
 }
 
-function undo(view: EditorView, id: number): void {
-  const prompt = currentPrompt(view.state, id);
-  const saved = savedLinks.get(id);
-  savedLinks.delete(id);
-  if (!prompt || !saved) return;
-  // The link goes back to the plain address it was pasted as.
-  const restore = view.state.sliceDoc(prompt.from, prompt.to) === saved.markdown && !view.state.readOnly;
-  view.dispatch({
-    changes: restore ? { from: prompt.from, to: prompt.to, insert: prompt.url } : undefined,
-    effects: setPrompt.of(null),
-    annotations: ownChange.of(true),
-    userEvent: "input.paste",
-  });
-  void saved.undo().catch(() => undefined);
-}
-
 function save(view: EditorView, id: number): void {
   const options = view.state.facet(promptOptions);
   const prompt = currentPrompt(view.state, id);
@@ -193,26 +182,31 @@ function save(view: EditorView, id: number): void {
       if (!view.dom.isConnected) return;
       const current = currentPrompt(view.state, id);
       if (!current) return;
-      const phase: PromptPhase = saved.linkOnly ? "linkOnly" : "saved";
-      let markdown = sourceLinkMarkdown(saved.title, current.url);
+      if (saved.remove) {
+        const created = createdSources.get(view) ?? new Map<string, () => Promise<void>>();
+        created.set(current.url, saved.remove);
+        createdSources.set(view, created);
+      }
+      // Saved is shown by the site icon alone; a note stays only for a link
+      // whose site needs a sign-in.
+      const next = saved.linkOnly ? { ...current, phase: "linkOnly" as const } : null;
+      const markdown = sourceLinkMarkdown(saved.title, current.url);
       // The link reads as its title once saved, unless the writer changed it meanwhile.
-      const retitle = view.state.sliceDoc(current.from, current.to) === current.url && markdown !== current.url && !view.state.readOnly;
-      if (!retitle) markdown = view.state.sliceDoc(current.from, current.to);
-      savedLinks.set(id, { markdown, undo: saved.undo });
-      if (retitle) {
+      if (view.state.sliceDoc(current.from, current.to) === current.url && markdown !== current.url && !view.state.readOnly) {
         view.dispatch({
           changes: { from: current.from, to: current.to, insert: markdown },
-          effects: setPrompt.of({ ...current, to: current.from + markdown.length, phase }),
+          effects: setPrompt.of(next && { ...next, to: current.from + markdown.length }),
           annotations: ownChange.of(true),
           userEvent: "input.paste",
         });
       } else {
-        update(view, id, phase);
+        view.dispatch({ effects: setPrompt.of(next) });
       }
-      window.setTimeout(() => {
-        if (view.dom.isConnected && currentPrompt(view.state, id)?.phase === phase) update(view, id, null);
-        savedLinks.delete(id);
-      }, 6000);
+      if (next) {
+        window.setTimeout(() => {
+          if (view.dom.isConnected && currentPrompt(view.state, id)?.phase === "linkOnly") update(view, id, null);
+        }, 5000);
+      }
     },
     () => {
       if (view.dom.isConnected) update(view, id, "failed");
@@ -260,8 +254,7 @@ class PromptWidget extends WidgetType {
     } else if (phase === "failed") {
       row.append(status(labels.failed), button(labels.retry, () => save(view, id)));
     } else {
-      row.append(status(phase === "linkOnly" ? labels.savedLinkOnly : labels.saved));
-      if (savedLinks.has(id)) row.append(button(labels.undo, () => undo(view, id)));
+      row.append(status(labels.savedLinkOnly));
     }
     return row;
   }
@@ -270,6 +263,39 @@ class PromptWidget extends WidgetType {
     return true;
   }
 }
+
+/** Deleting a pasted link deletes the source that paste created. */
+const removeWithLink = ViewPlugin.fromClass(class {
+  private timer: number | null = null;
+
+  constructor(private readonly view: EditorView) {}
+
+  update(update: { docChanged: boolean }): void {
+    if (!update.docChanged || !createdSources.get(this.view)?.size) return;
+    if (this.timer !== null) window.clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => {
+      this.timer = null;
+      this.sweep();
+    }, REMOVE_AFTER_MS);
+  }
+
+  destroy(): void {
+    if (this.timer !== null) window.clearTimeout(this.timer);
+    this.sweep(false);
+  }
+
+  private sweep(live = true): void {
+    const created = createdSources.get(this.view);
+    if (!created) return;
+    const text = this.view.state.doc.toString();
+    for (const [url, remove] of [...created]) {
+      if (text.includes(url)) continue;
+      created.delete(url);
+      void remove().catch(() => undefined);
+      if (live) this.view.dispatch({ effects: forgetLink.of(url) });
+    }
+  }
+});
 
 /** Code and link destinations are not places to save a source from. */
 function pasteTargetsProse(state: EditorState, at: number): boolean {
@@ -315,9 +341,6 @@ const theme = EditorView.theme({
   ".cm-source-paste-status": {
     padding: "3px 0",
   },
-  ".cm-source-paste[data-phase=saved] .cm-source-paste-status, .cm-source-paste[data-phase=linkOnly] .cm-source-paste-status": {
-    color: "var(--mem-accent-sage)",
-  },
   ".cm-source-link-icon": {
     display: "inline-flex",
     alignItems: "center",
@@ -330,14 +353,16 @@ const theme = EditorView.theme({
 });
 
 /**
- * Pasting one link saves it as a source at once. A note under the line says
- * so and offers an undo for a moment; writing on or Escape puts it away.
+ * Pasting one link saves it as a source at once; its site icon shows it was
+ * saved. A note under the line shows only while saving, when the site needs
+ * a sign-in, or when saving failed. Deleting the link deletes that source.
  */
 export function sourcePaste(options: SourcePasteOptions): Extension {
   return [
     promptOptions.of(options),
     promptState,
     promptDecorations(),
+    removeWithLink,
     theme,
     Prec.highest(keymap.of([{
       key: "Escape",

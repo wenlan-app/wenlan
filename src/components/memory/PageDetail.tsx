@@ -1794,7 +1794,7 @@ export default function PageDetail({
     try {
       await ingestWebpage({ url, title: title || fallbackTitle, content: content || url, create_only: true, space: page.space ?? null });
     } catch (error) {
-      // Saved before: that copy is the source, and undo leaves it alone.
+      // Saved before: that copy is the source, and stays when the link goes.
       if ((error instanceof Error ? error.message : error) !== "WEBPAGE_ALREADY_EXISTS") throw error;
       created = false;
     }
@@ -1802,10 +1802,11 @@ export default function PageDetail({
     return {
       title: title || fallbackTitle,
       linkOnly: linkOnly || !content,
-      undo: async () => {
-        if (created) await deleteFileChunks("webpage", url);
+      // Deleting the link deletes the source, unless it was saved before.
+      remove: created ? async () => {
+        await deleteFileChunks("webpage", url);
         void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
-      },
+      } : undefined,
     };
   };
   // An entity's own page cannot rely on, or be, a note.

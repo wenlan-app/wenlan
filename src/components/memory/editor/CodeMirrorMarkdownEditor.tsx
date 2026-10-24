@@ -499,10 +499,8 @@ function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
 function sourcePasteLabels(t: TFunction): SourcePasteLabels {
   return {
     saving: t("sourcePaste.saving"),
-    saved: t("sourcePaste.saved"),
     savedLinkOnly: t("sourcePaste.savedLinkOnly"),
     failed: t("sourcePaste.failed"),
     retry: t("sourcePaste.retry"),
-    undo: t("sourcePaste.undo"),
   };
 }
