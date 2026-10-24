@@ -244,6 +244,64 @@ fn write_file_nofollow(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, bytes)
 }
 
+/// Replace the root marker atomically: a temp file in the same directory,
+/// fsync, rename over the marker, then fsync the directory.
+///
+/// `write_file_nofollow` truncates and rewrites in place, so a kill partway
+/// through left malformed JSON and the next export refused at the marker
+/// parse, stuck until somebody hand-edited the file and lost its ownership and
+/// digest records. A rename within one directory leaves the previous marker or
+/// the new one, never a torn file. The projection's atomic writer is reused for
+/// that, so the symlink guarantee comes with it: the temp is created
+/// `create_new` + nofollow, and a marker that is a symlink or a directory is
+/// refused rather than replaced.
+fn write_marker_atomically(root: &Path, bytes: &[u8]) -> Result<(), WenlanError> {
+    write_marker_atomically_with_hook(root, bytes, || Ok(()))
+}
+
+fn write_marker_atomically_with_hook(
+    root: &Path,
+    bytes: &[u8],
+    after_temp_write: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), WenlanError> {
+    let directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
+    // Unique per write: a temp left by a killed run (or by a recycled pid) can
+    // never collide with this one under `create_new`.
+    let temporary = format!("{MARKER_FILE}.{}.tmp", uuid::Uuid::new_v4().simple());
+    crate::export::knowledge::write_page_atomically_nofollow_with_hook(
+        &directory,
+        MARKER_FILE,
+        &temporary,
+        bytes,
+        after_temp_write,
+    )?;
+    crate::export::knowledge::sync_dir_capability(&directory)
+}
+
+/// Remove marker temps that a killed run left behind. Best effort: a temp is
+/// only ever a copy of a marker that was never installed, so keeping one costs
+/// nothing but clutter. Plain files only; anything else by that name is not
+/// ours to touch.
+fn remove_stale_marker_temps(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let prefix = format!("{MARKER_FILE}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.ends_with(".tmp") {
+            continue;
+        }
+        let path = entry.path();
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// Plan stable bundle filenames: pages sorted by `(created_at, id)`, slug
 /// via `obsidian::slugify`, empty slug falling back to
 /// `sanitize_stub_id(page.id)`, collisions suffixed `-2`, `-3`, ...
@@ -906,8 +964,9 @@ fn export_okf_inner(
     // unrecognized bytes were ours.
     let union: HashSet<String> = old_files.union(&planned).cloned().collect();
     let carried_digests: BTreeMap<String, String> = old_digests.clone();
-    write_file_nofollow(
-        &target.join(MARKER_FILE),
+    remove_stale_marker_temps(target);
+    write_marker_atomically(
+        target,
         serde_json::to_vec_pretty(&marker_for(&union, carried_digests.clone()))
             .expect("export marker serializes")
             .as_slice(),
@@ -1025,8 +1084,8 @@ fn export_okf_inner(
             new_digests.entry(entry).or_insert(digest);
         }
     }
-    write_file_nofollow(
-        &target.join(MARKER_FILE),
+    write_marker_atomically(
+        target,
         serde_json::to_vec_pretty(&marker_for(&still_listed, new_digests))
             .expect("export marker serializes")
             .as_slice(),
@@ -2339,5 +2398,138 @@ mod tests {
         }
         visible.push_str(&content[last..]);
         visible.contains(needle)
+    }
+
+    fn marker_temps(root: &Path) -> Vec<String> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| n.starts_with(&format!("{MARKER_FILE}.")))
+            .collect()
+    }
+
+    /// A kill between writing the temp and the rename must leave the previous
+    /// marker byte-for-byte: it used to be truncated in place, and the next
+    /// export refused at the malformed-marker parse.
+    #[test]
+    fn an_interrupted_marker_update_keeps_the_previous_marker_and_the_next_export_works() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let both = vec![
+            test_page("concept_a", "Alpha", "x"),
+            test_page("concept_b", "Beta", "y"),
+        ];
+        export_okf(&both, dir.path()).unwrap();
+        let marker_path = dir.path().join(MARKER_FILE);
+        let before = std::fs::read(&marker_path).unwrap();
+
+        let replacement =
+            serde_json::to_vec_pretty(&marker_for(&HashSet::new(), BTreeMap::new())).unwrap();
+        let temp_seen = std::cell::Cell::new(false);
+        let result = write_marker_atomically_with_hook(dir.path(), &replacement, || {
+            // The replacement is complete on disk beside the marker, which is
+            // still the old one: the window the in-place write left torn.
+            temp_seen.set(!marker_temps(dir.path()).is_empty());
+            assert_eq!(std::fs::read(&marker_path).unwrap(), before);
+            Err(std::io::Error::other("injected after temp write"))
+        });
+        assert!(result.is_err());
+        assert!(temp_seen.get(), "hook ran after the temp was written");
+        assert_eq!(std::fs::read(&marker_path).unwrap(), before);
+        assert!(
+            marker_temps(dir.path()).is_empty(),
+            "failed temp cleaned up"
+        );
+
+        // The previous ownership record is intact, so the re-export still
+        // knows `beta.md` is its own to remove.
+        let stats = export_okf(&both[..1], dir.path()).unwrap();
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert!(!dir.path().join("pages/beta.md").exists());
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(marker_path).unwrap()).unwrap();
+        assert!(marker["digests"]["pages/alpha.md"].is_string());
+        assert!(marker["digests"].get("pages/beta.md").is_none());
+    }
+
+    /// A process killed mid-update leaves its temp behind (a half-written one
+    /// here). It is not the marker, so it blocks nothing, and the next export
+    /// keeps the ownership and digests of the marker still in place.
+    #[test]
+    fn a_stale_marker_temp_neither_blocks_nor_corrupts_the_next_export() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "x")];
+        export_okf(&pages, dir.path()).unwrap();
+        let before = std::fs::read(dir.path().join(MARKER_FILE)).unwrap();
+
+        let stale = dir.path().join(format!("{MARKER_FILE}.deadbeef.tmp"));
+        std::fs::write(&stale, b"{\"okf_version\": \"0.2\", \"fil").unwrap();
+        std::fs::create_dir(dir.path().join(format!("{MARKER_FILE}.dir.tmp"))).unwrap();
+
+        let stats = export_okf(&pages, dir.path()).unwrap();
+        assert_eq!(stats.failed, 0, "{stats:?}");
+        assert_eq!(std::fs::read(dir.path().join(MARKER_FILE)).unwrap(), before);
+        assert!(!stale.exists(), "stale temp swept");
+        assert!(
+            dir.path().join(format!("{MARKER_FILE}.dir.tmp")).is_dir(),
+            "only plain files are swept"
+        );
+        assert!(
+            !dir.path().join(ARCHIVE_DIR).exists(),
+            "no page was mistaken for an edit"
+        );
+    }
+
+    #[test]
+    fn the_marker_is_swapped_in_as_a_new_file_not_truncated_in_place() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_marker_atomically(dir.path(), b"one").unwrap();
+        let marker_path = dir.path().join(MARKER_FILE);
+        let first = std::fs::read(&marker_path).unwrap();
+        assert_eq!(first, b"one");
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&marker_path).unwrap().ino()
+        };
+        write_marker_atomically(dir.path(), b"two").unwrap();
+        assert_eq!(std::fs::read(&marker_path).unwrap(), b"two");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_ne!(std::fs::metadata(&marker_path).unwrap().ino(), inode);
+        }
+        assert!(marker_temps(dir.path()).is_empty());
+    }
+
+    /// The marker is not exempt from the symlink rule the atomic swap must not
+    /// weaken: a link standing at the marker is refused, not replaced, and
+    /// nothing is written through it.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_marker_is_refused_and_left_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pages = vec![test_page("concept_a", "Alpha", "x")];
+        export_okf(&pages, dir.path()).unwrap();
+
+        let elsewhere = tempfile::TempDir::new().unwrap();
+        let real = elsewhere.path().join("marker.json");
+        std::fs::rename(dir.path().join(MARKER_FILE), &real).unwrap();
+        let before = std::fs::read(&real).unwrap();
+        let link = dir.path().join(MARKER_FILE);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(export_okf(&pages, dir.path()).is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read(&real).unwrap(), before);
+        assert!(marker_temps(dir.path()).is_empty());
+
+        // A dangling link is refused too, and nothing appears at its target.
+        std::fs::remove_file(&link).unwrap();
+        let missing = elsewhere.path().join("missing.json");
+        std::os::unix::fs::symlink(&missing, &link).unwrap();
+        assert!(write_marker_atomically(dir.path(), b"{}").is_err());
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert!(!missing.exists());
+        assert!(marker_temps(dir.path()).is_empty());
     }
 }

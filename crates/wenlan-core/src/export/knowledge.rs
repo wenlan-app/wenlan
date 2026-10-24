@@ -4597,7 +4597,7 @@ fn write_page_preserving_external_edits_with_hook(
     result
 }
 
-fn write_page_atomically_nofollow(
+pub(crate) fn write_page_atomically_nofollow(
     directory: &Dir,
     name: &str,
     temporary: &str,
@@ -4606,7 +4606,7 @@ fn write_page_atomically_nofollow(
     write_page_atomically_nofollow_with_hook(directory, name, temporary, bytes, || Ok(()))
 }
 
-fn write_page_atomically_nofollow_with_hook(
+pub(crate) fn write_page_atomically_nofollow_with_hook(
     directory: &Dir,
     name: &str,
     temporary: &str,
@@ -4895,7 +4895,7 @@ fn sync_projection_dirs(
 }
 
 #[cfg(unix)]
-fn sync_dir_capability(directory: &Dir) -> Result<(), WenlanError> {
+pub(crate) fn sync_dir_capability(directory: &Dir) -> Result<(), WenlanError> {
     // cap-std opens directory capabilities with O_PATH on Linux. Cloning that
     // descriptor preserves O_PATH, which cannot be fsynced (EBADF). Reopen the
     // same directory through the capability to obtain a syncable descriptor.
@@ -4904,7 +4904,7 @@ fn sync_dir_capability(directory: &Dir) -> Result<(), WenlanError> {
 }
 
 #[cfg(not(unix))]
-fn sync_dir_capability(_directory: &Dir) -> Result<(), WenlanError> {
+pub(crate) fn sync_dir_capability(_directory: &Dir) -> Result<(), WenlanError> {
     // Other platforms keep regular-file syncing; directory metadata sync is Unix-only.
     Ok(())
 }
