@@ -124,9 +124,14 @@ pub(super) async fn sync_okf_source_in_batches(
     // same-bytes file at a new path rebind instead of re-importing.
     let mut vanished_by_hash: HashMap<String, (String, String)> = HashMap::new();
     let mut files_to_delete: Vec<(String, String)> = Vec::new();
+    let mut tracked_unresolved: HashSet<String> = HashSet::new();
     if let Ok(tracked) = db.list_sync_state_paths(&id).await {
         for tracked_path in tracked {
-            if scanned.contains(&tracked_path) || unresolved_keys.contains(&tracked_path) {
+            if scanned.contains(&tracked_path) {
+                continue;
+            }
+            if unresolved_keys.contains(&tracked_path) {
+                tracked_unresolved.insert(tracked_path);
                 continue;
             }
             if let Ok(Some(sync_state)) = db.get_sync_state(&id, &tracked_path).await {
@@ -157,7 +162,17 @@ pub(super) async fn sync_okf_source_in_batches(
     let mut waiting: usize = 0;
     let mut renamed_files: HashSet<String> = HashSet::new();
 
+    // Only a file that imported before has state to protect, so only it is a
+    // file error. One never imported stays skipped quietly, as before.
     for (file_path, detail) in &unresolved {
+        if !tracked_unresolved.contains(file_path.to_string_lossy().as_ref()) {
+            tracing::debug!(
+                "[sync] skipping {} until it reads: {}",
+                file_path.display(),
+                detail
+            );
+            continue;
+        }
         tracing::warn!(
             "[sync] cannot classify {}: {}; keeping what it last imported",
             file_path.display(),
