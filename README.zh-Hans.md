@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9baf33f15ee86046018e0676e1672a7b8ebc12f12e9c2084422a4f3422e05ac6 -->
+<!-- README_SYNC: source=README.md sha256=220017d2ab7183acce7a016af2bd768dfe94f830fe24cd1d24a17e489be32c84 -->
 
 <p align="center">
   <picture>
@@ -110,6 +110,13 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 ## 把散落的资料整理成知识
 
+<a id="探索你的个人知识图谱"></a>
+
+<p align="center">
+  <img src="./docs/assets/wenlan-personal-graph-zh-Hans.png" alt="Wenlan 实机知识图谱，搭配个人兴趣、研究与开发的区域示意" width="100%">
+</p>
+<p>保留实机节点与连线；文字经翻译，区域名称与范围为示意。</p>
+
 **来源**保留文档与对话；**记忆**记录值得重用的决定、经验与理由。将两者整理成可编辑的**带引用 Markdown 笔记**，用 `[[wikilinks]]` 连接笔记，并沿引用回到原始资料。笔记可以包含 Mermaid 图表，由 App 绘制；AI 工具写入笔记时，文澜会检查图表的常见错误，并指出要修改的那一行。
 
 - **原子记忆：** 遵循 [Zettelkasten 的原子性原则](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，让每条发现都能独立检索和重用，无需加载整段对话或笔记。
@@ -127,13 +134,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 | 文本形式的现有记忆 | 将偏好、决定或经验保存为单条记忆。 |
 
 扫描版 PDF 需先提取文本；聊天附件不会导入。[导入指南（英文）](docs/import-guide.md)。
-
-<a id="探索你的个人知识图谱"></a>
-
-<p align="center">
-  <img src="./docs/assets/wenlan-personal-graph-zh-Hans.png" alt="Wenlan 实机知识图谱，搭配个人兴趣、研究与开发的区域示意" width="100%">
-</p>
-<p>保留实机节点与连线；文字经翻译，区域名称与范围为示意。</p>
 
 <a id="daily-workflow"></a>
 
@@ -214,6 +214,11 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 ## Steep（沉淀）：让知识跟上新发现
 
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
+</p>
+<p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
+
 保存资料只是开始。**Steep 会整理资料以便重用，并让受支持的笔记保持更新**，让你和 AI 能接续先前的发现，而不必反复重读原始材料。
 
 在“设置”中选择两种方式之一：
@@ -229,11 +234,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - **审核锁定：** 开启“我写过的页面自动上锁”（新安装默认开启）后，AI 对你写过或改过的笔记所做的修改会先等你审核。AI 写的笔记照常更新。
 
 [Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hans.png" alt="示意流程：文件来源中的发现将记忆由 V1 更新为 V2，再影响自动更新或待审修订的笔记。" width="100%">
-</p>
-<p>示意图依据当前的更新行为绘制；并非 App 截图。</p>
 
 <a id="architecture"></a>
 
