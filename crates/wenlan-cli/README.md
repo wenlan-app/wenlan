@@ -107,7 +107,7 @@ wenlan memories --pending
 
 **`wenlan pages [query]`**
 
-Browse distilled pages, or open one in your editor by title query. The pages come from the folder of the daemon the CLI talks to, so `WENLAN_HOST` selects whose pages are listed, and the command fails like the other read commands when that daemon is unreachable.
+Browse distilled pages, or open one in your editor by title query. The pages come from the folder of the daemon the CLI talks to, so `WENLAN_HOST` selects whose pages are listed. A daemon selected with `WENLAN_HOST` that is unreachable is an error like in the other read commands; while the default local daemon is stopped, the folder from the local config is listed.
 
 ```bash
 wenlan pages
