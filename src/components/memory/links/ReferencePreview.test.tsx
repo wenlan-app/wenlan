@@ -149,3 +149,39 @@ describe("ReferencePreview saved app links", () => {
     expect(screen.getByRole("dialog").querySelector('[data-resource-icon="webpage"]')).not.toBeNull();
   });
 });
+
+describe("ReferencePreview citation time", () => {
+  const memoryCitation: PageCitation = { ...citation, source_kind: "memory", locator: "source-1", status: "verified" };
+  const recent = (): MemoryItem => ({ ...sourceMemory, last_modified: Math.floor(Date.now() / 1000) - 15 * 3600 - 60 });
+  const renderTimed = () => {
+    const anchor = document.body.appendChild(document.createElement("a"));
+    anchor.textContent = "Memory";
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}>
+      <ReferencePreview
+        request={{ target: { kind: "citation", citation: memoryCitation, sourceMemory: recent(), sourcesLoading: false }, anchor, keyboard: false }}
+        onDismiss={vi.fn()}
+        onOpenMemory={vi.fn()}
+        onPointerEnter={vi.fn()}
+        onPointerLeave={vi.fn()}
+      />
+    </QueryClientProvider>);
+    return screen.getByRole("dialog");
+  };
+
+  it("keeps the short English relative time", () => {
+    expect(renderTimed()).toHaveTextContent("15h ago");
+  });
+
+  it.each(["zh-Hans", "zh-Hant"])("shows the source's age in %s, not in English", async (lng) => {
+    await i18n.changeLanguage(lng);
+    try {
+      const expected = new Intl.RelativeTimeFormat(lng, { numeric: "auto", style: "short" }).format(-15, "hour");
+      const preview = renderTimed();
+      expect(preview).toHaveTextContent(expected);
+      expect(preview).not.toHaveTextContent(/\bago\b/);
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+});

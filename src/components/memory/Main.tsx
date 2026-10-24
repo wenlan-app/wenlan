@@ -22,6 +22,7 @@ import {
 } from "../../lib/tauri";
 import { reloadWindow } from "../../lib/reloadWindow";
 import { setPendingPairingCode } from "../../lib/pairingLink";
+import { confirmAction } from "../../lib/confirmAction";
 import { MAIN_HEADER_HEIGHT, topBarLeftInset } from "../../lib/windowChrome";
 import ActivityFeed from "./ActivityFeed";
 import { useSearch } from "../../hooks/useSearch";
@@ -374,17 +375,32 @@ export default function Main({
   pageSavePendingRef.current = pageSavePending;
   pageEditDirtyRef.current = pageEditDirty;
 
-  const canLeaveCurrentPage = () => {
-    if (pageSavePending) return false;
-    if (
-      view.kind === "page"
-      && pageEditDirty
-      && !confirm(t("pageDetail.editor.discardConfirm"))
-    ) {
-      return false;
+  // Calls onLeave, or onStay, once. An unsaved page draft asks first; the
+  // returned cancel stays on the page if the question is still open.
+  const leaveCurrentPage = (onLeave: () => void, onStay: () => void): (() => void) => {
+    if (pageSavePending) { onStay(); return () => {}; }
+    if (view.kind !== "page" || !pageEditDirty) {
+      if (pageEditDirty) setPageEditDirty(false);
+      onLeave();
+      return () => {};
     }
-    if (pageEditDirty) setPageEditDirty(false);
-    return true;
+    const sourceView = view;
+    let settled = false;
+    void confirmAction(t("pageDetail.editor.discardConfirm"), {
+      confirm: t("pageDetail.editor.discard"),
+      cancel: t("common.cancel"),
+    }).then((discard) => {
+      if (settled) return;
+      settled = true;
+      if (!discard || viewRef.current !== sourceView) { onStay(); return; }
+      setPageEditDirty(false);
+      onLeave();
+    });
+    return () => {
+      if (settled) return;
+      settled = true;
+      onStay();
+    };
   };
 
   const prepareForQuit = useCallback(async (): Promise<boolean> => {
@@ -521,14 +537,17 @@ export default function Main({
         settlement.refuse();
       };
     }
-    if (!canLeaveCurrentPage()) {
-      settlement.refuse();
-      return () => {};
-    }
-    return afterPageDraftFlush(
-      source => settlement.succeed(() => action(source)),
-      settlement.refuse,
-    );
+    let cancelDraftFlush = () => {};
+    const cancelLeave = leaveCurrentPage(() => {
+      cancelDraftFlush = afterPageDraftFlush(
+        source => settlement.succeed(() => action(source)),
+        settlement.refuse,
+      );
+    }, settlement.refuse);
+    return () => {
+      cancelLeave();
+      cancelDraftFlush();
+    };
   };
 
   const leaveSpaceToParent = () => {
@@ -860,7 +879,10 @@ export default function Main({
       || (view.kind === "entity" && !!topicFlushRef.current) || (view.kind === "memory" && !!memoryFlushRef.current)
       || (view.kind === "space" && !!spaceIdentityFlushRef.current)
       || ((view.kind === "source-document" || view.kind === "sources") && !!sourceDescriptionFlushRef.current);
-    if (!query && nextQuery && !needsFlush && !canLeaveCurrentPage()) return;
+    if (!query && nextQuery && !needsFlush) {
+      leaveCurrentPage(() => applySearchQuery(nextQuery), () => {});
+      return;
+    }
     if (!query && nextQuery && needsFlush) {
       pendingDraftSearchCancelRef.current?.();
       setPendingDraftSearchQuery(nextQuery);
@@ -873,6 +895,9 @@ export default function Main({
       });
       return;
     }
+    applySearchQuery(nextQuery);
+  };
+  const applySearchQuery = (nextQuery: string) => {
     pendingDraftSearchCancelRef.current?.();
     pendingDraftSearchCancelRef.current = null;
     setPendingDraftSearchQuery(null);

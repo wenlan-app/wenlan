@@ -135,6 +135,20 @@ describe("PageDetail citations", () => {
     expect(screen.queryByText(/\[1\]/)).toBeNull();
   });
 
+  it("gives a source cited again the number of its first citation", async () => {
+    tauriMocks.getPage.mockResolvedValue({
+      ...BASE_PAGE,
+      content:
+        "# Cited Page\n\nIntro sentence stands alone. The daemon is local-first.[1] It uses libSQL.[2] Recall stays on the machine.[1]",
+      citations: [cite(1, 1), cite(2, 2), cite(3, 1)],
+    });
+    renderPage();
+    expect(await screen.findByText("Cited Page")).toBeInTheDocument();
+    const chips = await screen.findAllByRole("button", { name: /^Memory \d+$/ });
+    expect(chips.map((chip) => chip.textContent)).toEqual(["Memory1", "Memory2", "Memory1"]);
+    expect(screen.queryByRole("button", { name: /Memory 3/ })).toBeNull();
+  });
+
   it("resolves the popover from page-sources and opens the memory", async () => {
     const { props, user } = renderPage();
     const chip = await screen.findByRole("button", { name: /Memory 1/ });

@@ -25,6 +25,7 @@ import {
   type MemoryType,
   type PendingRevision,
 } from "../../lib/tauri";
+import { confirmAction } from "../../lib/confirmAction";
 import { MemoryDocumentEditor } from "./editor/MemoryDocumentEditor";
 import { InfoToggle } from "./page/InfoToggle";
 import TagEditor from "../TagEditor";
@@ -518,9 +519,9 @@ export default function MemoryDetail({
                   className="page-detail-menu-danger"
                   aria-label={t("memoryDetail.deleteMemory")}
                   disabled={pinMutation.isPending || deleteMutation.isPending}
-                  onClick={() => {
+                  onClick={async () => {
                     closeActions();
-                    if (window.confirm(t("memoryDetail.deleteConfirm"))) {
+                    if (await confirmAction(t("memoryDetail.deleteConfirm"), { confirm: t("memoryDetail.deleteMemory"), cancel: t("common.cancel") })) {
                       void (contentFlushRef.current?.() ?? Promise.resolve(true)).then(saved => { if (saved) deleteMutation.mutate(); });
                     }
                   }}

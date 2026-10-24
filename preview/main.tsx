@@ -36,6 +36,7 @@ const AtlasView = lazy(() => import("../src/components/memory/AtlasView"));
 
 const VARIANTS = [
   { id: "page-cited", label: "Cited (all kinds)" },
+  { id: "page-cited-repeat", label: "Cited twice" },
   { id: "page-cleared", label: "Edit-cleared" },
   { id: "page-mismatch", label: "Mismatch" },
   { id: "page-plain", label: "No citations" },

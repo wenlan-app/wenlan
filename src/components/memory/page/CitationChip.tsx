@@ -12,7 +12,9 @@ import { SOURCE_APP_NAMES } from "../sources/sourcePresentation";
 import "../links/reference-links.css";
 
 interface CitationChipProps {
-  occurrence: number;
+  /** The source's footnote number: a source cited again shows the number of
+   *  its first citation, not its position among the page's markers. */
+  number: number;
   citation: PageCitation;
   sourceMemory: MemoryItem | null;
   sourcesLoading: boolean;
@@ -23,7 +25,7 @@ const HOVER_OPEN_DELAY_MS = 150;
 const HOVER_CLOSE_GRACE_MS = 120;
 
 export default function CitationChip({
-  occurrence,
+  number,
   citation,
   sourceMemory,
   sourcesLoading,
@@ -197,7 +199,7 @@ export default function CitationChip({
         >
           {displayLabel}
         </span>
-        <sup style={{ marginLeft: "1px" }}>{occurrence}</sup>
+        <sup style={{ marginLeft: "1px" }}>{number}</sup>
       </button>
       {open && (
         <CitationPopover
