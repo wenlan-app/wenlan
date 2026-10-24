@@ -79,6 +79,15 @@ Let the repository decide the count. As a rough guide, a small repository
 a folder that only holds glue, and do not split a topic that fits on one
 screen.
 
+**Existing docs come first.** When the repository already has a doc that
+covers a planned topic (an architecture doc, a package's README or
+REFERENCE, a contributing guide that says how to build and run it), do not
+plan a page that retells it. Drop the topic from the plan and
+list the doc in the overview under `## Existing docs` (`## 現有文件` in
+Chinese) as `` - `<path>`: <what it covers, one line> ``. Plan a page on that
+topic only for what the doc leaves out, and open it with which doc to read
+first. Step 7 still checks those docs against the code.
+
 Titles are short noun phrases in the user's language, taken from how they typed
 the request. When a page already in the Space covers a planned topic (for
 example an earlier wiki's `Module map`), use that page's exact title in the
@@ -113,7 +122,10 @@ important first. The pages left over are written by the next run.
 
 **The overview's page list.** A new overview ends with a `## Pages` section
 (`## 頁面` in Chinese) listing every planned page, written or not, as
-`- [[<title>]]: <what it answers, one line>`. When the plan gained pages and
+`- [[<title>]]: <what it answers, one line>`, in reading order: the wiki
+folder's `README.md` lists the pages in this order.
+When existing docs replaced planned topics, an `## Existing docs` section
+follows it. When the plan gained pages and
 the overview already exists, update only that section: take `version` from
 your `read_page`, then call `write_page` with `page_id`, `expected_version`,
 `minor: true`, and `content` that is the page you read with only the list
