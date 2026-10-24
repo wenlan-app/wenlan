@@ -1699,8 +1699,18 @@ impl MemoryDB {
     }
 
     /// R12 (agents only): the notes `page_id` links to that changed after it
-    /// did. Computed from the link index and the two `last_modified` stamps at
-    /// read time; nothing is stored.
+    /// did. Computed from the link index, the `last_modified` and `created_at`
+    /// stamps and the version history at read time; nothing is stored.
+    ///
+    /// A target is "changed" only when it was edited after BOTH the linking
+    /// page's last write AND its own creation. Creating a page stamps its
+    /// `last_modified`, and publishing a draft does the same (the draft's first
+    /// active version), so without these bounds a target created or published
+    /// after the page that links to it (pages written in sequence, or a link
+    /// written before its target existed) would read as edited when it never
+    /// was. `created_at` bounds the first; the second is the target's current
+    /// version being the `publish` history row (any later edit is a new
+    /// version with its own row, so it still counts).
     pub async fn linked_changed(
         &self,
         page_id: &str,
@@ -1712,11 +1722,14 @@ impl MemoryDB {
                  FROM edges l \
                  JOIN pages c ON c.id = l.src_id \
                  JOIN pages t ON t.id = l.dst_id \
+                 LEFT JOIN page_history h ON h.page_id = t.id AND h.version = t.version \
                  WHERE l.edge_type = 'links' AND l.src_kind = 'page' AND l.dst_kind = 'page' \
                    AND l.valid_until IS NULL \
                    AND l.src_id = ?1 AND t.id <> c.id \
                    AND t.status = 'active' AND COALESCE(t.kind, 'concept') <> 'entity' \
-                   AND julianday(t.last_modified) > julianday(c.last_modified) \
+                   AND julianday(t.last_modified) > \
+                       MAX(julianday(c.last_modified), julianday(t.created_at)) \
+                   AND COALESCE(h.edited_by, '') <> 'publish' \
                  ORDER BY lower(t.title), t.id",
                 libsql::params![page_id],
             )

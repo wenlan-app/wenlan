@@ -1775,6 +1775,100 @@ async fn linked_changed_lists_linked_notes_edited_after_the_note_itself() {
     assert!(db.linked_changed("b").await.unwrap().is_empty());
 }
 
+/// A page created after the one that links to it was never edited: its
+/// creation stamp is its `last_modified`, and that must not read as a change.
+/// Edits made after that point still do, whichever page was written first.
+#[tokio::test]
+async fn linked_changed_ignores_a_target_created_after_the_linking_note() {
+    let (db, _dir) = test_db().await;
+    let link_to = |label: &'static str, id: &'static str| crate::synthesis::wikilinks::Wikilink {
+        label: label.into(),
+        target_page_id: Some(id.into()),
+    };
+    let stamp = |id: &'static str, col: &'static str, at: &'static str| {
+        let db = &db;
+        async move {
+            let conn = db.conn.lock().await;
+            conn.execute(
+                &format!("UPDATE pages SET {col} = ?2 WHERE id = ?1"),
+                libsql::params![id, at],
+            )
+            .await
+            .unwrap();
+        }
+    };
+
+    // Two fresh pages linking each other, written in sequence: "m" first, then
+    // "f". Each is at version 1 with creation == last write.
+    page(&db, "m", "Module map", "See [[Main flow]].", "sp").await;
+    page(&db, "f", "Main flow", "See [[Module map]].", "sp").await;
+    db.replace_page_links("m", &[link_to("Main flow", "f")])
+        .await
+        .unwrap();
+    db.replace_page_links("f", &[link_to("Module map", "m")])
+        .await
+        .unwrap();
+    for (id, at) in [("m", "2026-01-02T00:00:00Z"), ("f", "2026-01-03T00:00:00Z")] {
+        stamp(id, "created_at", at).await;
+        stamp(id, "last_modified", at).await;
+    }
+    assert!(db.linked_changed("m").await.unwrap().is_empty());
+    assert!(db.linked_changed("f").await.unwrap().is_empty());
+
+    // The later page is then edited: the page linking to it sees the change.
+    stamp("f", "last_modified", "2026-01-04T00:00:00Z").await;
+    assert_eq!(
+        db.linked_changed("m").await.unwrap(),
+        vec![("f".to_string(), "Main flow".to_string(), 1)]
+    );
+    assert!(db.linked_changed("f").await.unwrap().is_empty());
+
+    // A target created BEFORE the linking page and edited after it still shows.
+    stamp("f", "created_at", "2026-01-01T00:00:00Z").await;
+    stamp("f", "last_modified", "2026-01-04T00:00:00Z").await;
+    stamp("m", "created_at", "2026-01-02T00:00:00Z").await;
+    stamp("m", "last_modified", "2026-01-02T00:00:00Z").await;
+    assert_eq!(
+        db.linked_changed("m").await.unwrap(),
+        vec![("f".to_string(), "Main flow".to_string(), 1)]
+    );
+}
+
+/// Publishing a draft stamps `last_modified` and bumps the version to 2, but
+/// it is the page's first active version, not an edit of one a reader saw.
+#[tokio::test]
+async fn linked_changed_ignores_a_target_that_was_only_published_from_a_draft() {
+    let (db, _dir) = test_db().await;
+    page(&db, "m", "Module map", "See [[Draft note]].", "sp").await;
+    let draft = db
+        .create_page_draft("Draft note", "First text.", Some("sp"), None)
+        .await
+        .unwrap();
+    let d = draft.id.as_str();
+    db.replace_page_links(
+        "m",
+        &[crate::synthesis::wikilinks::Wikilink {
+            label: "Draft note".into(),
+            target_page_id: Some(d.into()),
+        }],
+    )
+    .await
+    .unwrap();
+    // The linking page predates the publish by construction (T0 is 2026-01-01).
+    match db.publish_page_draft(d, 1).await.unwrap() {
+        crate::pages::PageDraftPublishOutcome::Published(page) => assert_eq!(page.version, 2),
+        other => panic!("expected Published, got {other:?}"),
+    }
+    assert!(db.linked_changed("m").await.unwrap().is_empty());
+
+    // A real edit after the publish is a new version and is reported.
+    edit(&db, d, "Second text.", false).await;
+    assert_eq!(
+        db.linked_changed("m").await.unwrap(),
+        vec![(d.to_string(), "Draft note".to_string(), 3)]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Arc 2 review: the diff read carries the caller's scope (finding 2)
 // ---------------------------------------------------------------------------
