@@ -1499,6 +1499,52 @@ pub async fn restart_daemon(
     restart_outcome(&report)
 }
 
+/// Restart the daemon whatever its version, so it can move the pages folder
+/// the person picked (the move runs at start, before anything opens a page).
+/// Uses the same owner rules as the version heal: the service manager through
+/// the bundled CLI, or the app's own sidecar. An isolated run is not
+/// restarted; the caller asks the person to restart it.
+#[tauri::command]
+pub async fn restart_daemon_to_move_pages(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<RwLock<AppState>>>,
+) -> Result<String, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    let isolated = crate::lifecycle::data_dir_env_overridden();
+    let ownership =
+        crate::lifecycle::launchd_owns_server_daemon(&crate::lifecycle::SystemLaunchctl);
+    let (owner, action) = crate::lifecycle::decide_version_mismatch_action(isolated, ownership);
+    let _serialized = version_heal_lock().lock().await;
+    match action {
+        crate::lifecycle::VersionMismatchAction::ReportOnly => {
+            return Err(RESTART_ERROR_ISOLATED.to_string());
+        }
+        crate::lifecycle::VersionMismatchAction::RestartViaCli => {
+            log::info!("[pages-folder] restarting the service-manager daemon to move pages");
+            tauri::async_runtime::spawn_blocking(crate::lifecycle::restart_service_via_cli)
+                .await
+                .map_err(|e| format!("restart task failed: {e}"))?
+                .map_err(|e| format!("{e:#}"))?;
+        }
+        crate::lifecycle::VersionMismatchAction::RespawnSidecar => {
+            log::info!("[pages-folder] respawning the app-owned sidecar to move pages");
+            if matches!(stop_sidecar().await, SidecarStopOutcome::NoSidecar) {
+                return Err(RESTART_ERROR_NOT_OWNED.to_string());
+            }
+            respawn_sidecar_for_version_heal(
+                &app,
+                owner == crate::lifecycle::VersionMismatchOwner::Unknown,
+            )?;
+        }
+    }
+    repoll_health_for_match(&client)
+        .await
+        .ok_or_else(|| "daemon-restart:no-answer".to_string())
+}
+
 /// What `restart_daemon` answers for a heal report: the healthy version, or
 /// a typed error the banner localizes (a CLI failure passes through as-is).
 fn restart_outcome(report: &DaemonVersionReport) -> Result<String, String> {

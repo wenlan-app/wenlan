@@ -5613,6 +5613,31 @@ pub async fn get_knowledge_path(state: tauri::State<'_, State>) -> Result<String
     Ok(resp.path)
 }
 
+/// The pages folder, a move the person asked for, and why the last one
+/// stopped.
+#[tauri::command]
+pub async fn get_knowledge_path_info(
+    state: tauri::State<'_, State>,
+) -> Result<responses::KnowledgePathResponse, String> {
+    let client = state.read().await.client.clone();
+    client.get_json("/api/knowledge/path").await
+}
+
+/// Ask for the pages folder to move to `path` at the daemon's next start.
+#[tauri::command]
+pub async fn set_knowledge_path(
+    state: tauri::State<'_, State>,
+    path: String,
+) -> Result<responses::KnowledgePathResponse, String> {
+    let client = state.read().await.client.clone();
+    client
+        .post_json(
+            "/api/knowledge/path",
+            &wenlan_types::requests::SetKnowledgePathRequest { path },
+        )
+        .await
+}
+
 #[tauri::command]
 pub async fn count_knowledge_files(state: tauri::State<'_, State>) -> Result<u64, String> {
     let client = state.read().await.client.clone();

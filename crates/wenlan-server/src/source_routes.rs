@@ -579,8 +579,11 @@ pub(crate) async fn sync_directory_source(
     // user removes the source explicitly.
     let root = source.path.clone();
     let root_display = root.display().to_string();
+    let pages = config.knowledge_path_or_default();
     let files = tokio::task::spawn_blocking(move || {
-        directory_root_is_live(&root).then(|| scan_directory(&root))
+        directory_root_is_live(&root).then(|| {
+            wenlan_core::pages_folder::without_pages_folder(&root, &pages, scan_directory(&root))
+        })
     })
     .await
     .map_err(|error| {

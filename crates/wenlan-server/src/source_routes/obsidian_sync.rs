@@ -167,12 +167,15 @@ fn vault_root_is_live(path: &Path) -> bool {
     path.is_dir() && directory_root_is_live(path)
 }
 
-/// The note files of a vault or graph.
+/// The note files of a vault or graph. Wenlan's own pages folder is left
+/// out when the person put it inside the vault: those are pages, not notes.
 fn scan_notes(source_type: &SourceType, root: &Path) -> Vec<std::path::PathBuf> {
-    match source_type {
+    let notes = match source_type {
         SourceType::Logseq => logseq::scan_graph(root),
         _ => obsidian::scan_vault(root),
-    }
+    };
+    let pages = wenlan_core::config::load_config().knowledge_path_or_default();
+    wenlan_core::pages_folder::without_pages_folder(root, &pages, notes)
 }
 
 fn note_documents(

@@ -594,6 +594,7 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/knowledge/count` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/attachments` | main | no | not_applicable | `none` | — | copies one media file; returns its path and a Markdown line |
 | `GET` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | no prose fields |
+| `POST` | `/api/knowledge/path` | main | no | not_applicable | `none` | — | asks to move the pages folder; returns folder paths only |
 | `GET` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/lint` | main + repair | yes | automatic | `none` | `handle_lint_submission` | LintAgentRecord.excerpt, LintAgentRecord.source_excerpt, LintCheck |
 | `POST` | `/api/llm/test` | main | no | not_applicable | `none` | — | no prose fields |

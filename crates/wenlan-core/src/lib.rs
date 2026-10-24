@@ -59,6 +59,7 @@ pub mod origin;
 pub mod page_map_improve;
 pub mod page_projection_tracker;
 pub mod pages;
+pub mod pages_folder;
 pub mod post_ingest;
 pub mod post_write;
 pub mod presence;

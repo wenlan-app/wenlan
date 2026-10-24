@@ -959,6 +959,12 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   restore_entities_cmd: (a) => post("/api/memory/entities/restore", a.req),
   get_knowledge_graph_cmd: () => get("/api/memory/graph"),
   get_knowledge_path: () => get("/api/knowledge/path").then((r) => r.path),
+  get_knowledge_path_info: () => get("/api/knowledge/path"),
+  set_knowledge_path: (a) => post("/api/knowledge/path", { path: a?.path }),
+  // The browser preview cannot restart the daemon: the move waits for a restart by hand.
+  restart_daemon_to_move_pages: async (): Promise<never> => {
+    throw "daemon-restart:isolated";
+  },
   count_knowledge_files: () => get("/api/knowledge/count").then((r) => r.total ?? r.count ?? 0),
   // Images and videos in pages. The daemon copies a file it can read by path;
   // pasted bytes go through a temp file only the native app can write.

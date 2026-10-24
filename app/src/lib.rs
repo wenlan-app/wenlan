@@ -1833,6 +1833,8 @@ pub fn run() {
             search::export_page_to_obsidian,
             search::export_pages_as_okf,
             search::get_knowledge_path,
+            search::get_knowledge_path_info,
+            search::set_knowledge_path,
             search::count_knowledge_files,
             page_attachments::page_attachments_dir,
             page_attachments::attach_file_to_page,
@@ -1866,6 +1868,7 @@ pub fn run() {
             daemon_start::start_daemon_sidecar,
             daemon_start::daemon_version_status,
             daemon_start::restart_daemon,
+            daemon_start::restart_daemon_to_move_pages,
             // Which global hotkeys this session actually holds
             global_shortcuts::global_shortcut_status,
         ])
