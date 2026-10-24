@@ -9,7 +9,7 @@ use cap_std::fs::{Dir, OpenOptions};
 use fs2::FileExt as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
 use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -52,6 +52,20 @@ struct KnowledgeState {
     schema_version: u32,
     #[serde(deserialize_with = "folders::deserialize_pages")]
     pages: HashMap<String, PageFileState>,
+    /// Copies a relocation left at a reserved name (page id -> file) that
+    /// could not be archived yet. The page's own entry already points at its
+    /// new name, so without this record nothing would ever look at the old
+    /// copy again. Recorded in the same save that commits the new name, and
+    /// cleared only once the copy is archived or is no longer ours to move.
+    /// Absent from state files written before this field existed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pending_archives: BTreeMap<String, String>,
+    /// A relocation forces `index.md` to be regenerated, because the entry
+    /// that moved is the one link now wrong. Set in the save that commits the
+    /// relocation, cleared once the index is written, so a failed
+    /// regeneration is retried by the next write rather than forgotten.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    index_regeneration_pending: bool,
 }
 
 impl Default for KnowledgeState {
@@ -59,6 +73,8 @@ impl Default for KnowledgeState {
         Self {
             schema_version: KNOWLEDGE_STATE_SCHEMA_V2,
             pages: HashMap::new(),
+            pending_archives: BTreeMap::new(),
+            index_regeneration_pending: false,
         }
     }
 }
@@ -155,10 +171,15 @@ fn parse_rename_projection_state(bytes: &[u8]) -> Result<KnowledgeState, WenlanE
     let object = value
         .as_object()
         .ok_or_else(|| WenlanError::Conflict("page_projection_state_invalid".into()))?;
-    if object
-        .keys()
-        .any(|key| !["schema_version", "pages"].contains(&key.as_str()))
-    {
+    if object.keys().any(|key| {
+        ![
+            "schema_version",
+            "pages",
+            "pending_archives",
+            "index_regeneration_pending",
+        ]
+        .contains(&key.as_str())
+    }) {
         return Err(WenlanError::Conflict(
             "page_projection_state_invalid".into(),
         ));
@@ -590,18 +611,38 @@ impl KnowledgeWriter {
                 space: page.space.clone(),
             },
         );
-        self.save_state_cap(&capabilities.wenlan, &state)?;
-        let relocated_off_reserved = left_reserved_copy.is_some();
+        // The old copy and the stale index entry are recorded in the save that
+        // commits the new name. After it, nothing else looks at the reserved
+        // name, so a failure below would otherwise leave the copy there for
+        // good.
         if let Some(old) = left_reserved_copy {
-            Self::remove_reserved_name_copy_left_by(&capabilities.root, &old, &page.id);
+            state.pending_archives.insert(page.id.clone(), old);
+            state.index_regeneration_pending = true;
+        }
+        self.save_state_cap(&capabilities.wenlan, &state)?;
+        // Also retries a copy an earlier write could not archive, whichever
+        // page that write was for.
+        if Self::settle_pending_archives(&capabilities.root, &mut state) {
+            if let Err(e) = self.save_state_cap(&capabilities.wenlan, &state) {
+                log::warn!("[knowledge] could not record the archived reserved-name copy: {e}");
+            }
         }
 
         // A relocation forces the index even for a writer that normally skips
         // it: the entry that just moved is the one link in `index.md` that is
         // now wrong, and the repair path has no later pass that would fix it.
-        if relocated_off_reserved || (self.write_provenance && regenerate_index) {
-            if let Err(e) = Self::regenerate_index_cap(capabilities, &state) {
-                log::warn!("[knowledge] index.md regeneration failed: {e}");
+        if state.index_regeneration_pending || (self.write_provenance && regenerate_index) {
+            match Self::regenerate_index_cap(capabilities, &state) {
+                // A copy still waiting to be archived may be what blocks
+                // `index.md`, so the index is not settled until it is gone.
+                Ok(()) if state.index_regeneration_pending && state.pending_archives.is_empty() => {
+                    state.index_regeneration_pending = false;
+                    if let Err(e) = self.save_state_cap(&capabilities.wenlan, &state) {
+                        log::warn!("[knowledge] could not record the regenerated index: {e}");
+                    }
+                }
+                Ok(()) => {}
+                Err(e) => log::warn!("[knowledge] index.md regeneration failed: {e}"),
             }
         }
 
@@ -1456,17 +1497,26 @@ impl KnowledgeWriter {
     /// per page, the first time it leaves a reserved name, so `archive/` gains
     /// one file for a migration that happens to at most the page named "Index"
     /// and the page named "Log".
-    fn remove_reserved_name_copy_left_by(root: &Dir, file: &str, page_id: &str) {
+    ///
+    /// Returns whether the copy is settled: archived, already gone, or not
+    /// ours to move. `false` means the attempt failed for a reason that may
+    /// pass (an obstructed `archive/`, an unreadable file), so the caller
+    /// keeps it in `pending_archives` and tries again on a later write.
+    fn remove_reserved_name_copy_left_by(root: &Dir, file: &str, page_id: &str) -> bool {
         let mut options = OpenOptions::new();
         options.read(true).follow(FollowSymlinks::No);
-        let Ok((directory, name)) = folders::page_parent(root, file) else {
-            return;
+        let (directory, name) = match folders::page_parent(root, file) {
+            Ok(parent) => parent,
+            // A folder that is gone holds no copy; any other io error may pass.
+            Err(WenlanError::Io(e)) => return e.kind() == std::io::ErrorKind::NotFound,
+            Err(_) => return true,
         };
-        let Ok(mut handle) = directory.open_with(&name, &options) else {
-            return;
+        let mut handle = match directory.open_with(&name, &options) {
+            Ok(handle) => handle,
+            Err(e) => return e.kind() == std::io::ErrorKind::NotFound,
         };
         if !handle.metadata().is_ok_and(|meta| meta.is_file()) {
-            return;
+            return true;
         }
         let mut head = Vec::new();
         if (&mut handle)
@@ -1474,17 +1524,31 @@ impl KnowledgeWriter {
             .read_to_end(&mut head)
             .is_err()
         {
-            return;
+            return false;
         }
         drop(handle);
         let head = String::from_utf8_lossy(&head);
         let (fm, _body) = crate::sources::obsidian::extract_frontmatter(&head);
         if fm.get_str("origin_id").map(str::trim) != Some(page_id) {
-            return;
+            return true;
         }
-        if let Err(e) = Self::archive_projected_file(root, file) {
-            log::warn!("[knowledge] could not archive {file} after page {page_id} moved: {e}");
+        match Self::archive_projected_file(root, file) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("[knowledge] could not archive {file} after page {page_id} moved: {e}");
+                false
+            }
         }
+    }
+
+    /// Try every copy `state` still owes an archive for, dropping the ones
+    /// that are settled. Returns whether `state` changed and needs saving.
+    fn settle_pending_archives(root: &Dir, state: &mut KnowledgeState) -> bool {
+        let before = state.pending_archives.len();
+        state
+            .pending_archives
+            .retain(|page_id, file| !Self::remove_reserved_name_copy_left_by(root, file, page_id));
+        state.pending_archives.len() != before
     }
 
     /// Whether the projection may write `index.md`: the name is free, or the
@@ -7374,6 +7438,183 @@ mod tests {
         assert_eq!(index_frontmatter_keys(dir.path()), vec!["okf_version"]);
         let index = std::fs::read_to_string(dir.path().join(INDEX_FILE)).unwrap();
         assert!(index.contains("[Index](/index-page.md)"), "{index}");
+    }
+
+    /// Park `page` at the reserved `name`, the way an older build left it, and
+    /// return the bytes there. A regular file named `archive` then obstructs
+    /// the archive step; unlike chmod it also stops root.
+    fn park_page_at_reserved_name(
+        writer: &KnowledgeWriter,
+        dir: &Path,
+        page: &Page,
+        name: &str,
+    ) -> String {
+        let moved_path = writer.write_page_for_test(page).unwrap();
+        let projected = std::fs::read_to_string(&moved_path).unwrap();
+        std::fs::remove_file(&moved_path).unwrap();
+        std::fs::write(dir.join(name), &projected).unwrap();
+        let mut state = writer.load_state();
+        state.pages.get_mut(&page.id).unwrap().file = name.to_string();
+        writer.save_state(&state).unwrap();
+        projected
+    }
+
+    /// The relocation commits the new name before the old copy is archived. If
+    /// the archive fails, the copy used to be forgotten: every later write saw
+    /// the new name in `state.json` and never looked at the reserved name
+    /// again. The pending archive is recorded with the new name, kept while the
+    /// obstruction stands, retried by a later write (for any page), and the
+    /// bytes at the reserved name, edits included, end up in `archive/`.
+    #[test]
+    fn a_failed_reserved_name_archive_is_retried_on_a_later_write() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let mut page = test_concept();
+        page.title = "Log".to_string();
+        let projected = park_page_at_reserved_name(&writer, dir.path(), &page, "log.md");
+        let edited = format!("{projected}\n\nA line I typed myself.\n");
+        std::fs::write(dir.path().join("log.md"), &edited).unwrap();
+        std::fs::write(dir.path().join("archive"), b"in the way").unwrap();
+
+        page.version += 1;
+        let rewritten = writer.write_page_for_test(&page).unwrap();
+        assert!(rewritten.ends_with("log-page.md"), "{rewritten}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("log.md")).unwrap(),
+            edited,
+            "a failed archive must leave the copy where it was"
+        );
+        let state = writer.load_state();
+        assert_eq!(
+            state.pending_archives.get(&page.id).map(String::as_str),
+            Some("log.md")
+        );
+        assert!(
+            std::fs::read_to_string(dir.path().join(".wenlan/state.json"))
+                .unwrap()
+                .contains("pending_archives"),
+            "the pending archive must be durable, not in memory"
+        );
+
+        // Still obstructed: a write for a different page keeps the record.
+        let mut other = test_concept();
+        other.id = "page_other".to_string();
+        other.title = "Other".to_string();
+        writer.write_page_for_test(&other).unwrap();
+        assert!(dir.path().join("log.md").exists());
+        assert!(writer.load_state().pending_archives.contains_key(&page.id));
+
+        std::fs::remove_file(dir.path().join("archive")).unwrap();
+        other.version += 1;
+        writer.write_page_for_test(&other).unwrap();
+        assert!(
+            !dir.path().join("log.md").exists(),
+            "the reserved name must be free once the obstruction is gone"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/log-page.md")).unwrap(),
+            edited,
+            "the typing must survive in archive/"
+        );
+        let state = writer.load_state();
+        assert!(state.pending_archives.is_empty());
+        let saved = std::fs::read_to_string(dir.path().join(".wenlan/state.json")).unwrap();
+        assert!(!saved.contains("pending_archives"), "{saved}");
+    }
+
+    /// A pending copy the person has since replaced with a note of their own
+    /// (no `origin_id` of the page) is not Wenlan's to move: the retry leaves it
+    /// and stops tracking it rather than retrying it forever.
+    #[test]
+    fn a_pending_archive_ends_when_the_copy_is_no_longer_ours() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let mut page = test_concept();
+        page.title = "Log".to_string();
+        park_page_at_reserved_name(&writer, dir.path(), &page, "log.md");
+        std::fs::write(dir.path().join("archive"), b"in the way").unwrap();
+        page.version += 1;
+        writer.write_page_for_test(&page).unwrap();
+        assert!(writer.load_state().pending_archives.contains_key(&page.id));
+
+        std::fs::remove_file(dir.path().join("archive")).unwrap();
+        std::fs::write(dir.path().join("log.md"), b"my own log").unwrap();
+        page.version += 1;
+        writer.write_page_for_test(&page).unwrap();
+
+        assert_eq!(
+            std::fs::read(dir.path().join("log.md")).unwrap(),
+            b"my own log"
+        );
+        assert!(writer.load_state().pending_archives.is_empty());
+    }
+
+    /// The relocation forces `index.md` regeneration. A copy parked at
+    /// `index.md` blocks it while the archive fails, so the pending index work
+    /// is recorded with the pending archive and finishes with it.
+    #[test]
+    fn a_blocked_index_regeneration_stays_pending_until_the_archive_succeeds() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let mut page = test_concept();
+        page.title = "Index".to_string();
+        let projected = park_page_at_reserved_name(&writer, dir.path(), &page, INDEX_FILE);
+        std::fs::write(dir.path().join("archive"), b"in the way").unwrap();
+
+        page.version += 1;
+        writer.write_page_for_test(&page).unwrap();
+        let state = writer.load_state();
+        assert!(state.index_regeneration_pending);
+        assert!(state.pending_archives.contains_key(&page.id));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(INDEX_FILE)).unwrap(),
+            projected,
+            "the page copy at index.md is not replaced while it cannot be archived"
+        );
+
+        std::fs::remove_file(dir.path().join("archive")).unwrap();
+        // The repair writer skips the index on its own; the pending flag forces it.
+        let repair = KnowledgeWriter::new_for_test_repair(dir.path().to_path_buf());
+        page.version += 1;
+        repair.write_page_for_test(&page).unwrap();
+
+        assert_eq!(index_frontmatter_keys(dir.path()), vec!["okf_version"]);
+        let index = std::fs::read_to_string(dir.path().join(INDEX_FILE)).unwrap();
+        assert!(index.contains("[Index](/index-page.md)"), "{index}");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("archive/index-page.md")).unwrap(),
+            projected
+        );
+        let state = writer.load_state();
+        assert!(!state.index_regeneration_pending);
+        assert!(state.pending_archives.is_empty());
+    }
+
+    /// `state.json` written before the pending fields existed still loads, and
+    /// a state with nothing pending serializes exactly as it did before, so an
+    /// older build reading it sees no unknown key.
+    #[test]
+    fn state_without_pending_fields_loads_and_round_trips_unchanged() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let writer = KnowledgeWriter::new_for_test(dir.path().to_path_buf());
+        let page = test_concept();
+        writer.write_page_for_test(&page).unwrap();
+        let saved = std::fs::read_to_string(dir.path().join(".wenlan/state.json")).unwrap();
+        assert!(!saved.contains("pending_archives"), "{saved}");
+        assert!(!saved.contains("index_regeneration_pending"), "{saved}");
+
+        let state = writer.load_state();
+        assert!(state.pages.contains_key(&page.id));
+        assert!(state.pending_archives.is_empty());
+        assert!(!state.index_regeneration_pending);
+
+        let legacy: KnowledgeState =
+            serde_json::from_str(r#"{"schema_version":2,"pages":{}}"#).unwrap();
+        assert!(legacy.pending_archives.is_empty() && !legacy.index_regeneration_pending);
+        assert!(parse_rename_projection_state(
+            br#"{"schema_version":2,"pages":{},"pending_archives":{"p":"log.md"},"index_regeneration_pending":true}"#
+        )
+        .is_ok());
     }
 
     /// PR #763 closure review: a home note made by copying a page file keeps

@@ -319,6 +319,7 @@ pub(super) fn read_state_strict(control: &Dir) -> Result<KnowledgeState, WenlanE
                     )
                 })
                 .collect(),
+            ..KnowledgeState::default()
         }
     } else {
         serde_json::from_slice::<KnowledgeState>(&bytes)
