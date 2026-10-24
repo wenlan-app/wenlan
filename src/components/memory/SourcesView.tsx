@@ -18,6 +18,7 @@ import {
   type IndexedFileInfo,
 } from "../../lib/tauri";
 import { folderName } from "../../lib/dateFormat";
+import { confirmAction } from "../../lib/confirmAction";
 import AddSourceMenu from "./sources/AddSourceMenu";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -809,9 +810,12 @@ function FolderDetail({ node }: { node: Extract<SourcesNode, { kind: "folder" }>
 
   const label = statusLabel(source.status);
 
-  function handleRemove() {
+  async function handleRemove() {
     if (
-      !window.confirm(t("sourceAccess.removeConfirm", { name }))
+      !await confirmAction(t("sourceAccess.removeConfirm", { name }), {
+        confirm: t("sourceAccess.removePage"),
+        cancel: t("common.cancel"),
+      })
     )
       return;
     removeSource(source.id)

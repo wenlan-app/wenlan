@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { getChunks, openSearchResult, type IndexedFileInfo } from "../../../lib/tauri";
+import { i18n } from "../../../i18n";
 import { SourceDocumentLayout, SourceDocumentPage, SourceDocumentReader } from "./SourceDocumentReader";
 
 vi.mock("../../../lib/tauri", () => ({ getChunks: vi.fn(), openSearchResult: vi.fn() }));
@@ -56,6 +57,21 @@ describe("simple link source", () => {
     expect(screen.getByText("My description.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Info" }));
     expect(screen.getByRole("complementary")).toHaveTextContent("Related page");
+  });
+  it.each([
+    ["en", "Space"],
+    ["zh-Hans", "空间"],
+    ["zh-Hant", "空間"],
+  ])("labels the Space in the Info panel in %s", async (lng, label) => {
+    await i18n.changeLanguage(lng);
+    try {
+      wrap(<SourceDocumentPage file={file} space="Reading" />);
+      const info = screen.getByRole("complementary");
+      const term = Array.from(info.querySelectorAll("dt")).find((dt) => dt.nextElementSibling?.textContent === "Reading");
+      expect(term?.textContent).toBe(label);
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
   it("starts with Info collapsed on a narrow window", () => {
     vi.stubGlobal("matchMedia", vi.fn((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));

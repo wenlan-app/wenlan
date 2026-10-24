@@ -133,6 +133,38 @@ The launch date moved to November after the vendor confirmed the revised invoice
       }),
     ],
   } as Page,
+  // One memory cited twice (issue #907): both chips read 1, the footnote
+  // number of its first citation, not their position among the markers.
+  "page-cited-repeat": {
+    ...base,
+    id: "page-cited-repeat",
+    title: "Recall Pipeline",
+    content: `# Recall Pipeline
+
+Wenlan keeps recall on the local machine, so a query never leaves the device.[1] Search combines keyword and vector matches before ranking.[2] Each result names the memory it came from, and the reranker runs on the device as well.[1] The storage layout follows the libSQL notes.[3]
+`,
+    citations: [
+      cite(1, 1),
+      cite(2, 2),
+      cite(3, 1),
+      cite(4, 3, { source_kind: "external_url", locator: "https://docs.turso.tech/libsql" }),
+    ],
+  } as Page,
+  "page-cited-repeat-zh": {
+    ...base,
+    id: "page-cited-repeat-zh",
+    title: "回想流程",
+    content: `# 回想流程
+
+Wenlan 把回想留在本機，查詢不會離開這台裝置。[1] 搜尋會先合併關鍵字與向量比對，再排序結果。[2] 每筆結果都會標出來源記憶，重新排序也在裝置上執行。[1] 儲存配置沿用 libSQL 的說明文件。[3]
+`,
+    citations: [
+      cite(1, 1),
+      cite(2, 2),
+      cite(3, 1),
+      cite(4, 3, { source_kind: "external_url", locator: "https://docs.turso.tech/libsql" }),
+    ],
+  } as Page,
   "page-cleared": {
     ...base,
     id: "page-cleared",
@@ -410,6 +442,18 @@ export const SOURCES: PageSourceWithMemory[] = [
   // mem-9 is deliberately absent: exercises the unresolvable-source fallback
   // in CitationChip and the count-vs-rows case in PageInfo.
 ];
+
+// Recent sources for the repeat-citation pages, so the citation card shows a
+// relative time in hours ("15h ago" / "15 小時前") rather than a date.
+const nowSeconds = Math.floor(Date.now() / 1000);
+const recentSources = (pageId: string): PageSourceWithMemory[] => [
+  memory("mem-1", "Local-first decision", "We keep the daemon local-first: recall never leaves the machine.", nowSeconds - 15 * 3600 - 60),
+  memory("mem-2", "Hybrid search", "Search merges keyword and vector matches, then ranks them.", nowSeconds - 3 * 86400),
+].map((row) => ({ ...row, source: { ...row.source, page_id: pageId } }));
+export const REPEAT_CITED_SOURCES: Record<string, PageSourceWithMemory[]> = {
+  "page-cited-repeat": recentSources("page-cited-repeat"),
+  "page-cited-repeat-zh": recentSources("page-cited-repeat-zh"),
+};
 
 export const LINKS: PageLinksResponse = {
   outbound: [

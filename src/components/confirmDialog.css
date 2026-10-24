@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.confirm-dialog-overlay { position:fixed; inset:0; z-index:1400; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,.24); }
+.confirm-dialog { width:400px; max-width:100%; padding:20px; color:var(--mem-text); background:var(--mem-surface); border-radius:var(--mem-radius-lg); box-shadow:var(--mem-shadow-overlay); }
+.confirm-dialog-message { margin:0; font:500 16px/1.5 var(--mem-font-body); overflow-wrap:anywhere; }
+.confirm-dialog-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin-top:20px; }

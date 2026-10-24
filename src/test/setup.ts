@@ -2,6 +2,7 @@
 import { vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { initializeI18n } from '../i18n';
+import { setConfirmPresenter } from '../lib/confirmAction';
 
 // Mock @tauri-apps/api/core — all invoke() calls go through this
 vi.mock('@tauri-apps/api/core', () => ({
@@ -23,6 +24,10 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   ask: vi.fn(),
   confirm: vi.fn(),
 }));
+
+// Component tests answer "are you sure?" questions through a window.confirm
+// spy; src/lib/confirmAction.test.ts covers the dialog itself.
+setConfirmPresenter((message) => Promise.resolve(window.confirm(message)));
 
 vi.mock('@tauri-apps/plugin-fs', () => ({
   readDir: vi.fn(),
