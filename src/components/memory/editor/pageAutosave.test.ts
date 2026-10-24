@@ -192,6 +192,26 @@ describe("PageAutosave", () => {
     saver.dispose();
   });
 
+  it("takes a page changed elsewhere when nothing was typed here", () => {
+    const { saver, write } = setup();
+    expect(saver.observeCanonical(page("Edited in Obsidian", 4))).toBe("adopt");
+    expect(saver.snapshot()).toMatchObject({ state: { phase: "idle" }, dirty: false });
+    // Typed and then undone back to the saved text leaves nothing to lose.
+    saver.setSource("Typed");
+    saver.setSource("Original\r\nsource");
+    expect(saver.observeCanonical(page("Edited again", 5))).toBe("adopt");
+    expect(write).not.toHaveBeenCalled();
+    saver.dispose();
+  });
+
+  it("still reports a conflict when the person has unsaved text", () => {
+    const { saver } = setup();
+    saver.setSource("Local draft");
+    expect(saver.observeCanonical(page("Edited in Obsidian", 4))).toBeUndefined();
+    expect(saver.snapshot()).toMatchObject({ state: { phase: "conflict" }, latest: { content: "Edited in Obsidian" } });
+    saver.dispose();
+  });
+
   it("advances conflict observations monotonically without changing the draft operation", async () => {
     const { saver, write } = setup();
     saver.setSource("Local draft");

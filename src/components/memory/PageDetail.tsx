@@ -116,6 +116,9 @@ interface PageDetailProps {
   showAttachedPageNotice?: boolean;
 }
 
+/** How often an open page checks for edits made outside Wenlan. */
+const PAGE_REFRESH_MS = 5_000;
+
 function relativeTimeFromISO(iso: string, t: TFunction): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (diff < 60) return t("pageDetail.dateline.relativeJustNow");
@@ -437,6 +440,8 @@ export default function PageDetail({
     queryKey: ["page", pageId],
     queryFn: () => getPage(pageId, "explicit"),
     ...EXPLICIT_BROWSE_QUERY_POLICY,
+    // An open page follows edits made in Obsidian or another editor.
+    refetchInterval: PAGE_REFRESH_MS,
   });
   // A remote deletion must not unmount the only copy of the local document.
   const page = canonicalPage ?? (
@@ -1275,8 +1280,13 @@ export default function PageDetail({
 
   useLayoutEffect(() => {
     if (editing && editGate.kind === "editor" && canonicalPage !== undefined) {
-      autosave.observeCanonical(canonicalPage);
+      // Changed in Obsidian or another editor with nothing typed here: show it.
+      if (autosave.observeCanonical(canonicalPage) === "adopt" && canonicalPage) {
+        openPageSourceForEditing(canonicalPage, true);
+      }
     }
+    // The opener reads only refs and setters; the canonical page drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autosave, editing, editGate.kind, canonicalPage]);
 
   const requestCloseEditor = async () => {
@@ -1458,7 +1468,9 @@ export default function PageDetail({
       return;
     }
     const operationId = saveStateRef.current.pending.operationId;
-    if (!autosave.snapshot().latest) await fetchConflictLatest(operationId);
+    // Always ask again: the page may have changed more than once since the
+    // notice first appeared.
+    await fetchConflictLatest(operationId);
     const current = autosave.snapshot();
     if (
       activePageIdRef.current !== pageId ||

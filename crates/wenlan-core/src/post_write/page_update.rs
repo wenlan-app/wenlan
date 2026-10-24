@@ -1375,8 +1375,18 @@ async fn update_page_db_impl(
             if let Some(path) = knowledge_path {
                 let projection =
                     crate::export::knowledge::KnowledgeProjectionWrite::new(path.to_path_buf(), db);
-                if let Err(error) = projection.write_page_gated(db, &current).await {
-                    log::warn!("[update_page] baseline pending for {page_id}: {error}");
+                match projection.write_page_gated(db, &current).await {
+                    Ok(_) => {}
+                    // The file holds an edit this very write is reading back
+                    // (Obsidian, another editor): keeping it is the normal case.
+                    Err(WenlanError::Conflict(reason))
+                        if reason.starts_with("page_projection_external_edit") =>
+                    {
+                        log::info!("[update_page] baseline pending for {page_id}: {reason}");
+                    }
+                    Err(error) => {
+                        log::warn!("[update_page] baseline pending for {page_id}: {error}");
+                    }
                 }
             }
 
