@@ -28,7 +28,7 @@ import type { TFunction } from "i18next";
 import { toast } from "sonner";
 import { createSlashEditing, refreshSlashLabels, slashItems, type SlashLabels } from "./slashEditing";
 import { mediaPaste } from "./mediaPaste";
-import { setSourceLinkUrls, sourceIconMount, sourceLinkUrls, sourcePaste, type SourcePasteLabels } from "./sourcePaste";
+import { setSourceLinkUrls, sourceCardMount, sourceIconMount, sourceLinkPreference, sourceLinkUrls, sourcePaste, type SourcePasteLabels } from "./sourcePaste";
 import type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
@@ -41,6 +41,25 @@ import {
   setWritingCompositionActive,
   writingPresentation,
 } from "./writingPresentation";
+
+// The writer's last choice between a saved link and its preview card, for the next paste.
+const SOURCE_LINK_PREVIEW_KEY = "wenlan-source-link-preview";
+const sourceLinkPreviewChoice = {
+  prefer(): boolean {
+    try {
+      return localStorage.getItem(SOURCE_LINK_PREVIEW_KEY) === "card";
+    } catch {
+      return false;
+    }
+  },
+  remember(preview: boolean): void {
+    try {
+      localStorage.setItem(SOURCE_LINK_PREVIEW_KEY, preview ? "card" : "link");
+    } catch {
+      // Not remembered; links stay links.
+    }
+  },
+};
 
 const sourcePreservingDefaultKeymap = defaultKeymap.filter(
   (binding) => binding.key !== "Mod-Enter" && binding.key !== "Escape",
@@ -85,6 +104,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     onLinkPick: props.onLinkPick,
     onSavePastedSource: props.onSavePastedSource,
     mountSourceIcon: props.mountSourceIcon,
+    mountSourceCard: props.mountSourceCard,
   });
 
   const publishStatus = (view: EditorView): void => {
@@ -181,6 +201,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       onLinkPick: props.onLinkPick,
       onSavePastedSource: props.onSavePastedSource,
       mountSourceIcon: props.mountSourceIcon,
+      mountSourceCard: props.mountSourceCard,
     };
   }, [
     props.onCancel,
@@ -197,6 +218,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     props.onLinkPick,
     props.onSavePastedSource,
     props.mountSourceIcon,
+    props.mountSourceCard,
     props.sessionId,
   ]);
 
@@ -310,7 +332,9 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
             }),
             sourceLinkUrls.init(() => props.sourceLinks ?? new Map()),
-            sourceIconMount.of((container, url) => callbacksRef.current.mountSourceIcon?.(container, url) ?? (() => undefined)),
+            sourceIconMount.of((container, url, place) => callbacksRef.current.mountSourceIcon?.(container, url, place) ?? (() => undefined)),
+            sourceCardMount.of((container, url, title, place) => callbacksRef.current.mountSourceCard?.(container, url, title, place) ?? (() => undefined)),
+            sourceLinkPreference.of(sourceLinkPreviewChoice),
             sourcePaste({
               blocked: actionsBlocked,
               enabled: () => Boolean(callbacksRef.current.onSavePastedSource),

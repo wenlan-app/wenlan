@@ -34,6 +34,7 @@ import {
   fetchWebpage,
   ingestWebpage,
   deleteFileChunks,
+  getChunks,
   listIndexedFiles,
   type Entity,
   type BasisConfirmOutcome,
@@ -86,7 +87,7 @@ import {
 } from "./editor/MarkdownEditor";
 import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
 import type { PastedSourceSaved } from "./editor/sourcePaste";
-import { sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
+import { sourceLinkCardMount, sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
 import { sourceLinkKey } from "./editor/sourceLinkKey";
 import { SHARE_PREVIEW_APPS, sharePreview as readSharePreview, sharePreviewTitle } from "./sources/sharePreview";
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
@@ -249,6 +250,7 @@ function handleMenuKeyDown(
 
 /** Sites that show the daemon a sign-in page instead of the post or document. */
 const SIGN_IN_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack", "x", "threads", "instagram", "xiaohongshu"]);
+const PRIVATE_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack"]);
 
 export default function PageDetail({
   pageId,
@@ -617,22 +619,44 @@ export default function PageDetail({
   const { data: indexedFiles } = useQuery({ queryKey: ["indexedFiles"], queryFn: () => listIndexedFiles() });
   const sourceLinks = useMemo(() => new Map((indexedFiles ?? [])
     .filter((file) => file.source === "webpage")
-    .map((file) => [file.source_id, file.title] as const)), [indexedFiles]);
+    .map((file) => {
+      // Mail and chat are never read, so they have no words for a card.
+      const app = getSourceAppFromUrl(file.source_id);
+      return [file.source_id, { title: file.title, previewable: !app || !PRIVATE_APPS.has(app) }] as const;
+    })), [indexedFiles]);
   // A saved link's icon opens its source beside the page, as Sources does.
+  const savedWebSource = (url: string) => {
+    const webpages = (indexedFiles ?? []).filter((row) => row.source === "webpage");
+    return webpages.find((row) => row.source_id === url)
+      ?? webpages.find((row) => sourceLinkKey(row.source_id) === sourceLinkKey(url));
+  };
   const sourceIconActionsRef = useRef<SourceLinkIconActions | null>(null);
   sourceIconActionsRef.current = {
     label: t("sourcePaste.iconTitle"),
     open: (url) => {
-      const webpages = (indexedFiles ?? []).filter((row) => row.source === "webpage");
-      const file = webpages.find((row) => row.source_id === url)
-        ?? webpages.find((row) => sourceLinkKey(row.source_id) === sourceLinkKey(url));
+      const file = savedWebSource(url);
       if (!file) return;
       if (showCanvas) void requestToggleCanvas();
       changeCanvasWorkspaceExpanded(false);
       setSourcePreview(file);
     },
+    menu: {
+      showLink: t("sourcePaste.showLink"),
+      showPreview: t("sourcePaste.showPreview"),
+      openSource: t("sourcePaste.openSource"),
+      more: t("sourcePaste.moreActions"),
+    },
+    // A card's words: the saved page's opening, none when only its link was kept.
+    excerpt: async (url) => {
+      const file = savedWebSource(url);
+      if (!file) return null;
+      const chunks = await getChunks("webpage", file.source_id);
+      const first = [...chunks].sort((a, b) => a.chunk_index - b.chunk_index)[0]?.content.replace(/\s+/g, " ").trim() ?? "";
+      return first && first !== file.source_id ? first.slice(0, 280) : null;
+    },
   };
   const [mountSourceIcon] = useState(() => sourceLinkIconMount(() => sourceIconActionsRef.current ?? { label: "", open: () => undefined }));
+  const [mountSourceCard] = useState(() => sourceLinkCardMount(() => sourceIconActionsRef.current ?? { label: "", open: () => undefined }));
 
   // Entities on this page = the page's own anchor entity plus the anchor
   // entities of its source memories. These are enrichment links, not search.
@@ -2655,6 +2679,7 @@ export default function PageDetail({
                   sourceLinks={sourceLinks}
                   onSavePastedSource={savePastedSource}
                   mountSourceIcon={mountSourceIcon}
+                  mountSourceCard={mountSourceCard}
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }

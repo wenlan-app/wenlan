@@ -14,7 +14,7 @@ import { loadCodeMirrorEditor } from "./loadCodeMirrorEditor";
 
 import type { EditorReferenceContext } from "./wikiLinkEditing";
 import type { LinkCompletionNote } from "./wikiLinkCompletion";
-import type { PastedSourceSaved, SourceIconMount } from "./sourcePaste";
+import type { PastedSourceSaved, SourceCardMount, SourceIconMount, SourceLinkInfo } from "./sourcePaste";
 import type { ReferenceTarget } from "../links/referenceTypes";
 
 export interface MarkdownEditorHandle {
@@ -78,11 +78,13 @@ export interface MarkdownEditorProps {
   linkNotes?: readonly LinkCompletionNote[];
   onLinkPick?(note: LinkCompletionNote, asSource: boolean): void;
   /** Links saved as this page's sources; they show their site's icon. */
-  sourceLinks?: ReadonlyMap<string, string>;
+  sourceLinks?: ReadonlyMap<string, SourceLinkInfo>;
   /** Save a pasted link as a source. Leave unset to paste links as plain text. */
   onSavePastedSource?(url: string, label?: string): Promise<PastedSourceSaved>;
   /** Draws a site icon; passed in so the editor chunk stays free of the icon set. */
   mountSourceIcon?: SourceIconMount;
+  /** Draws a saved link as its source's preview card. */
+  mountSourceCard?: SourceCardMount;
 }
 
 export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(

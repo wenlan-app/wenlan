@@ -4,8 +4,27 @@ import { Annotation, Facet, Prec, StateEffect, StateField, type EditorState, typ
 import { Decoration, EditorView, keymap, ViewPlugin, WidgetType } from "@codemirror/view";
 import { sourceLinkKey } from "./sourceLinkKey";
 
+type SyntaxNode = ReturnType<typeof syntaxTree>["topNode"];
+
+/** Where a saved link sits, and whether it shows as a preview card. */
+export interface SourceLinkPlace {
+  /** Alone on its line, with a source that has words to show. */
+  canPreview: boolean;
+  preview: boolean;
+  setPreview(on: boolean): void;
+}
+
 /** Draws a link's site icon into `container`; returns its cleanup. */
-export type SourceIconMount = (container: HTMLElement, url: string) => () => void;
+export type SourceIconMount = (container: HTMLElement, url: string, place?: SourceLinkPlace) => () => void;
+/** Draws a link's preview card into `container`; returns its cleanup. */
+export type SourceCardMount = (container: HTMLElement, url: string, title: string, place: SourceLinkPlace) => () => void;
+
+/** A saved source, as its links show it. */
+export interface SourceLinkInfo {
+  title: string;
+  /** Its source has words a preview card can show. */
+  previewable: boolean;
+}
 
 export interface PastedSourceSaved {
   title: string;
@@ -33,9 +52,9 @@ export interface SourcePasteOptions {
   save(url: string, label?: string): Promise<PastedSourceSaved>;
 }
 
-/** The links already saved as sources, with their titles; they show their site icon. */
-export const setSourceLinkUrls = StateEffect.define<ReadonlyMap<string, string>>();
-export const sourceLinkUrls = StateField.define<ReadonlyMap<string, string>>({
+/** The links already saved as sources; they show their site icon. */
+export const setSourceLinkUrls = StateEffect.define<ReadonlyMap<string, SourceLinkInfo>>();
+export const sourceLinkUrls = StateField.define<ReadonlyMap<string, SourceLinkInfo>>({
   create: () => new Map(),
   update(value, transaction) {
     for (const effect of transaction.effects) if (effect.is(setSourceLinkUrls)) value = effect.value;
@@ -62,15 +81,75 @@ const freshLink = StateField.define<{ from: number; to: number } | null>({
   },
 });
 
-/** The title of the source a link points at, also when only its tracking
- *  parameters, fragment or trailing slash differ. */
-export function sourceLinkTitle(links: ReadonlyMap<string, string> | undefined, url: string): string | undefined {
+/** The source a link points at, also when only its tracking parameters,
+ *  fragment or trailing slash differ. */
+export function sourceLinkInfo(links: ReadonlyMap<string, SourceLinkInfo> | undefined, url: string): SourceLinkInfo | undefined {
   if (!links) return undefined;
   const exact = links.get(url);
   if (exact !== undefined) return exact;
   const key = sourceLinkKey(url);
-  for (const [link, title] of links) if (sourceLinkKey(link) === key) return title;
+  for (const [link, info] of links) if (sourceLinkKey(link) === key) return info;
   return undefined;
+}
+
+/** The link title that marks a link shown as a preview card: `[name](url "preview")`. */
+const PREVIEW_TITLE = '"preview"';
+
+/** Remembers whether links show as preview cards, so the next paste follows the writer's last choice. */
+export interface SourceLinkPreference {
+  prefer(): boolean;
+  remember(preview: boolean): void;
+}
+
+export const sourceLinkPreference = Facet.define<SourceLinkPreference, SourceLinkPreference | null>({
+  combine: (values) => values[0] ?? null,
+});
+
+export const sourceCardMount = Facet.define<SourceCardMount, SourceCardMount | null>({
+  combine: (values) => values[0] ?? null,
+});
+
+/** A link's own parts, read from the Markdown at `from`. */
+function linkAt(state: EditorState, from: number): { from: number; to: number; label: string; url: string; preview: boolean } | null {
+  for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(from + 1, 1); node; node = node.parent) {
+    if (node.name !== "Link") continue;
+    const marks = node.getChildren("LinkMark");
+    const url = node.getChild("URL");
+    if (!url || marks.length < 4) return null;
+    const title = node.getChild("LinkTitle");
+    return {
+      from: node.from,
+      to: node.to,
+      label: state.sliceDoc(marks[0].to, marks[1].from),
+      url: state.sliceDoc(url.from, url.to),
+      preview: Boolean(title && state.sliceDoc(title.from, title.to) === PREVIEW_TITLE),
+    };
+  }
+  return null;
+}
+
+/** Whether the link at `from`..`to` is alone on its line, and marked to show as a preview card. */
+export function sourceLinkPlaceAt(state: EditorState, from: number, to: number): { alone: boolean; preview: boolean } {
+  const line = state.doc.lineAt(from);
+  const title = linkAt(state, from);
+  return {
+    alone: to <= line.to && line.text.trim() === state.sliceDoc(from, to),
+    preview: Boolean(title?.preview),
+  };
+}
+
+/** Shows the link at `from` as a preview card, or back as a link, and remembers the choice. */
+export function setSourceLinkPreview(view: EditorView, from: number, preview: boolean): void {
+  const link = linkAt(view.state, from);
+  if (!link || link.preview === preview || view.state.readOnly) return;
+  const insert = `[${link.label}](${link.url}${preview ? ` ${PREVIEW_TITLE}` : ""})`;
+  view.dispatch({ changes: { from: link.from, to: link.to, insert }, userEvent: "input" });
+  view.state.facet(sourceLinkPreference)?.remember(preview);
+}
+
+function linkPlace(view: EditorView, from: number, canPreview: boolean, preview: boolean): SourceLinkPlace {
+  // A page that cannot be edited keeps its links as they are.
+  return { canPreview: canPreview && !view.state.readOnly, preview, setPreview: (on) => setSourceLinkPreview(view, from, on) };
 }
 
 /** Whether the link at `from`..`to` just took its title and stays closed. */
@@ -85,9 +164,9 @@ export const sourceIconMount = Facet.define<SourceIconMount, SourceIconMount | n
 
 const iconCleanups = new WeakMap<HTMLElement, () => void>();
 
-function mountIcon(view: EditorView, container: HTMLElement, url: string): void {
+function mountIcon(view: EditorView, container: HTMLElement, url: string, place?: SourceLinkPlace): void {
   const mount = view.state.facet(sourceIconMount);
-  if (mount) iconCleanups.set(container, mount(container, url));
+  if (mount) iconCleanups.set(container, mount(container, url, place));
 }
 
 function unmountIcon(container: HTMLElement): void {
@@ -97,20 +176,43 @@ function unmountIcon(container: HTMLElement): void {
 
 /** The site icon after a link saved as a source, where other links show an arrow. */
 export class SourceLinkIconWidget extends WidgetType {
-  constructor(readonly url: string) {
+  constructor(readonly url: string, readonly from = -1, readonly canPreview = false, readonly preview = false) {
     super();
   }
 
   eq(other: SourceLinkIconWidget): boolean {
-    return other.url === this.url;
+    return other.url === this.url && other.from === this.from && other.canPreview === this.canPreview && other.preview === this.preview;
   }
 
   toDOM(view: EditorView): HTMLElement {
     const icon = document.createElement("span");
     icon.className = "cm-source-link-icon";
     // The mount draws the icon, and a button to open the source when it can.
-    mountIcon(view, icon, this.url);
+    mountIcon(view, icon, this.url, this.from < 0 ? undefined : linkPlace(view, this.from, this.canPreview, this.preview));
     return icon;
+  }
+
+  destroy(dom: HTMLElement): void {
+    unmountIcon(dom);
+  }
+}
+
+/** A link shown as a preview card of its source, in place of its line. */
+export class SourceLinkCardWidget extends WidgetType {
+  constructor(readonly url: string, readonly title: string, readonly from: number) {
+    super();
+  }
+
+  eq(other: SourceLinkCardWidget): boolean {
+    return other.url === this.url && other.title === this.title && other.from === this.from;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const card = document.createElement("span");
+    card.className = "cm-source-link-card";
+    const mount = view.state.facet(sourceCardMount);
+    if (mount) iconCleanups.set(card, mount(card, this.url, this.title, linkPlace(view, this.from, true, true)));
+    return card;
   }
 
   destroy(dom: HTMLElement): void {
@@ -132,9 +234,15 @@ export function pastedSourceUrl(text: string): string | null {
 }
 
 /** Markdown for a link with its page title as the text. */
-export function sourceLinkMarkdown(title: string, url: string): string {
+export function sourceLinkMarkdown(title: string, url: string, preview = false): string {
   const text = title.replace(/\s+/g, " ").trim().slice(0, 140).replace(/[\\[\]]/g, "\\$&");
-  return text ? `[${text}](${url})` : url;
+  return text ? `[${text}](${url}${preview ? ` ${PREVIEW_TITLE}` : ""})` : url;
+}
+
+/** Whether a link put at `from`..`to` will be alone on its line and should follow the writer's preview choice. */
+function showsAsCard(state: EditorState, from: number, to: number, previewable: boolean): boolean {
+  if (!previewable || !state.facet(sourceLinkPreference)?.prefer()) return false;
+  return !state.sliceDoc(state.doc.lineAt(from).from, from).trim() && !state.sliceDoc(to, state.doc.lineAt(to).to).trim();
 }
 
 type PromptPhase = "saving" | "linkOnly" | "failed";
@@ -252,7 +360,7 @@ function save(view: EditorView, id: number): void {
       // Saved is shown by the site icon alone; a note stays only for a link
       // saved without its page.
       const next = saved.linkOnly ? { ...current, phase: "linkOnly" as const, linkOnly: saved.linkOnly } : null;
-      const markdown = sourceLinkMarkdown(saved.title, current.url);
+      const markdown = sourceLinkMarkdown(saved.title, current.url, showsAsCard(view.state, current.from, current.to, !saved.linkOnly));
       // The link reads as its title once saved, unless the writer changed it meanwhile.
       if (view.state.sliceDoc(current.from, current.to) === current.url && markdown !== current.url && !view.state.readOnly) {
         const to = current.from + markdown.length;
@@ -431,6 +539,11 @@ const theme = EditorView.theme({
     outline: "2px solid var(--mem-accent-indigo)",
     outlineOffset: "1px",
   },
+  ".cm-source-link-card": {
+    display: "block",
+    maxWidth: "520px",
+    margin: "0.15rem 0",
+  },
   ".cm-source-saving": {
     display: "inline-block",
     width: "11px",
@@ -481,7 +594,7 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         const url = pastedSourceUrl(data.getData("text/plain"));
         if (!url || options.blocked(view) || !options.enabled()) return false;
         const { offered } = view.state.field(promptState);
-        const known = sourceLinkTitle(view.state.field(sourceLinkUrls, false), url);
+        const known = sourceLinkInfo(view.state.field(sourceLinkUrls, false), url);
         const { from, to } = view.state.selection.main;
         if (!pasteTargetsProse(view.state, from)) return false;
         // Pasted over a few words, the link takes them as its name.
@@ -491,7 +604,7 @@ export function sourcePaste(options: SourcePasteOptions): Extension {
         if (known !== undefined) {
           // Saved before: it reads as that source here too, saved once.
           event.preventDefault();
-          const markdown = sourceLinkMarkdown(label ?? known, url);
+          const markdown = sourceLinkMarkdown(label ?? known.title, url, showsAsCard(view.state, from, to, known.previewable));
           view.dispatch({
             changes: { from, to, insert: markdown },
             selection: { anchor: from + markdown.length },

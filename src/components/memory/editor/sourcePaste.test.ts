@@ -6,7 +6,11 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { installCodeMirrorDomPolyfills, pasteText, pressKey } from "./editorTestUtils";
 import {
   pastedSourceUrl,
+  setSourceLinkPreview,
   setSourceLinkUrls,
+  sourceCardMount,
+  sourceLinkPlaceAt,
+  sourceLinkPreference,
   sourceLinkMarkdown,
   sourceLinkUrls,
   sourcePaste,
@@ -209,14 +213,14 @@ describe("pasted links as sources", () => {
   it("a link saved before reads as that source at once, saved only once", () => {
     const save = vi.fn(async () => saved("Post"));
     const known = editor("See ", 4, { save });
-    known.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, "@simonw on X"]])) });
+    known.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, { title: "@simonw on X", previewable: false }]])) });
     pasteText(known.contentDOM, X_URL);
     expect(save).not.toHaveBeenCalled();
     expect(known.state.doc.toString()).toBe(`See [@simonw on X](${X_URL})`);
     expect(note(known)).toBeNull();
     // The same page without its tracking parameters is that source too.
     const trimmed = editor("", 0, { save });
-    trimmed.dispatch({ effects: setSourceLinkUrls.of(new Map([["https://example.com/post?utm_source=x", "Post"]])) });
+    trimmed.dispatch({ effects: setSourceLinkUrls.of(new Map([["https://example.com/post?utm_source=x", { title: "Post", previewable: false }]])) });
     pasteText(trimmed.contentDOM, "https://example.com/post/");
     expect(save).not.toHaveBeenCalled();
     expect(trimmed.state.doc.toString()).toBe("[Post](https://example.com/post/)");
@@ -260,7 +264,7 @@ describe("links saved as sources", () => {
       }),
     });
     views.push(view);
-    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, "Post"]])) });
+    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, { title: "Post", previewable: false }]])) });
     expect(view.dom.querySelectorAll(".cm-source-link-icon")).toHaveLength(1);
     expect(view.dom.querySelectorAll(".cm-writing-link-external")).toHaveLength(1);
   });
@@ -285,12 +289,93 @@ describe("links saved as sources", () => {
     view.focus();
     pasteText(view.contentDOM, X_URL);
     await vi.waitFor(() => expect(view.state.doc.toString()).toBe(`Read [Post](${X_URL})`));
-    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, "Post"]])) });
+    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[X_URL, { title: "Post", previewable: false }]])) });
     // The caret is right after the link, yet its address stays hidden.
     expect(view.state.selection.main.head).toBe(view.state.doc.length);
     expect(view.contentDOM.textContent).toBe("Read Post");
     // Into the link, it opens like any other.
     view.dispatch({ selection: { anchor: 7 } });
     expect(view.contentDOM.textContent).toContain(X_URL);
+  });
+});
+
+describe("links shown as preview cards", () => {
+  const WEB = "https://example.com/local-first";
+
+  function cardEditor(doc: string, at: number, preference: { prefer(): boolean; remember: (preview: boolean) => void }, save = vi.fn(async () => saved("Local-first software"))) {
+    const parent = document.createElement("div");
+    document.body.append(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        selection: EditorSelection.single(at),
+        extensions: [
+          markdown({ base: markdownLanguage }),
+          sourceLinkUrls,
+          sourceLinkPreference.of(preference),
+          sourceCardMount.of((container, url, title) => {
+            container.textContent = `card:${title}:${url}`;
+            return () => undefined;
+          }),
+          sourcePaste({ blocked: () => false, enabled: () => true, labels: () => labels, save }),
+          writingPresentation(),
+        ],
+      }),
+    });
+    views.push(view);
+    return view;
+  }
+
+  it("switches a link alone on its line to a card and back, and remembers the choice", () => {
+    const remember = vi.fn();
+    const view = cardEditor(`Read this:\n[Local-first software](${WEB})\n\nend`, 0, { prefer: () => false, remember });
+    const from = view.state.doc.line(2).from;
+    expect(sourceLinkPlaceAt(view.state, from, view.state.doc.line(2).to)).toEqual({ alone: true, preview: false });
+    setSourceLinkPreview(view, from, true);
+    expect(view.state.doc.line(2).text).toBe(`[Local-first software](${WEB} "preview")`);
+    expect(remember).toHaveBeenLastCalledWith(true);
+    expect(sourceLinkPlaceAt(view.state, from, view.state.doc.line(2).to).preview).toBe(true);
+    setSourceLinkPreview(view, from, false);
+    expect(view.state.doc.line(2).text).toBe(`[Local-first software](${WEB})`);
+    expect(remember).toHaveBeenLastCalledWith(false);
+  });
+
+  it("draws the card only for a saved source alone on its line, away from the caret", () => {
+    const view = cardEditor(`[Local-first software](${WEB} "preview")\n\nSee [Local-first software](${WEB} "preview") here\n\nend`, 0, { prefer: () => false, remember: vi.fn() });
+    view.dispatch({ selection: { anchor: view.state.doc.length } });
+    expect(view.dom.querySelectorAll(".cm-source-link-card")).toHaveLength(0);
+    view.dispatch({ effects: setSourceLinkUrls.of(new Map([[WEB, { title: "Local-first software", previewable: true }]])) });
+    const cards = view.dom.querySelectorAll(".cm-source-link-card");
+    expect(cards).toHaveLength(1);
+    expect(cards[0].textContent).toBe(`card:Local-first software:${WEB}`);
+    // Mid-sentence it stays a link with its icon.
+    expect(view.dom.querySelectorAll(".cm-source-link-icon")).toHaveLength(1);
+    // With the caret on its line, the Markdown opens as usual.
+    view.focus();
+    view.dispatch({ selection: { anchor: 2 } });
+    expect(view.dom.querySelectorAll(".cm-source-link-card")).toHaveLength(0);
+    // A source with no words to show stays a link.
+    view.dispatch({ selection: { anchor: view.state.doc.length }, effects: setSourceLinkUrls.of(new Map([[WEB, { title: "Local-first software", previewable: false }]])) });
+    expect(view.dom.querySelectorAll(".cm-source-link-card")).toHaveLength(0);
+  });
+
+  it("a paste follows the writer's last choice only on a line of its own", async () => {
+    const save = vi.fn(async () => saved("Local-first software"));
+    const alone = cardEditor("", 0, { prefer: () => true, remember: vi.fn() }, save);
+    pasteText(alone.contentDOM, WEB);
+    await vi.waitFor(() => expect(alone.state.doc.toString()).toBe(`[Local-first software](${WEB} "preview")`));
+    const inline = cardEditor("See ", 4, { prefer: () => true, remember: vi.fn() }, save);
+    pasteText(inline.contentDOM, WEB);
+    await vi.waitFor(() => expect(inline.state.doc.toString()).toBe(`See [Local-first software](${WEB})`));
+    // A link saved without its page has nothing for a card.
+    const linkOnly = cardEditor("", 0, { prefer: () => true, remember: vi.fn() }, vi.fn(async () => saved("X post", "signIn")));
+    pasteText(linkOnly.contentDOM, X_URL);
+    await vi.waitFor(() => expect(linkOnly.state.doc.toString()).toBe(`[X post](${X_URL})`));
+    // A source saved before follows it too.
+    const known = cardEditor("", 0, { prefer: () => true, remember: vi.fn() }, save);
+    known.dispatch({ effects: setSourceLinkUrls.of(new Map([[WEB, { title: "Local-first software", previewable: true }]])) });
+    pasteText(known.contentDOM, WEB);
+    expect(known.state.doc.toString()).toBe(`[Local-first software](${WEB} "preview")`);
   });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { act } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { sourceLinkIconMount } from "./sourceLinkIcon";
+import { sourceLinkCardMount, sourceLinkIconMount, type SourceLinkIconActions } from "./sourceLinkIcon";
 
 const URL = "https://x.com/simonw/status/1849";
 
@@ -27,5 +27,66 @@ describe("a saved link's icon", () => {
     await act(async () => { sourceLinkIconMount()(container, URL); });
     expect(container.querySelector("button")).toBeNull();
     expect(container.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+  });
+});
+
+const WEB = "https://www.example.com/local-first";
+const menu = { showLink: "Show as link", showPreview: "Show as preview", openSource: "Open source", more: "More for this link" };
+
+function actionsWith(open: (url: string) => void, excerpt: string | null): () => SourceLinkIconActions {
+  const actions = { label: "Saved in Sources", open, menu, excerpt: vi.fn(async () => excerpt) };
+  return () => actions;
+}
+
+const item = (name: string) => [...document.querySelectorAll<HTMLButtonElement>(".source-link-menu button")].find((b) => b.textContent === name);
+
+describe("a saved link's menu", () => {
+  it("offers a card for a link alone on its line with words to show", async () => {
+    const open = vi.fn();
+    const setPreview = vi.fn();
+    const container = document.createElement("span");
+    document.body.append(container);
+    await act(async () => { sourceLinkIconMount(actionsWith(open, "You own your data"))(container, WEB, { canPreview: true, preview: false, setPreview }); });
+    await act(async () => { container.querySelector("button")!.click(); });
+    expect(open).not.toHaveBeenCalled();
+    expect(item("Show as link")?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => { item("Show as preview")!.click(); });
+    expect(setPreview).toHaveBeenCalledWith(true);
+    expect(document.querySelector(".source-link-menu")).toBeNull();
+    await act(async () => { container.querySelector("button")!.click(); });
+    await act(async () => { item("Open source")!.click(); });
+    expect(open).toHaveBeenCalledWith(WEB);
+    container.remove();
+  });
+
+  it("just opens the source when there is no card to offer", async () => {
+    const open = vi.fn();
+    const container = document.createElement("span");
+    document.body.append(container);
+    await act(async () => { sourceLinkIconMount(actionsWith(open, null))(container, `${WEB}/b`, { canPreview: true, preview: false, setPreview: vi.fn() }); });
+    await act(async () => { container.querySelector("button")!.click(); });
+    expect(document.querySelector(".source-link-menu")).toBeNull();
+    expect(open).toHaveBeenCalledWith(`${WEB}/b`);
+    container.remove();
+  });
+});
+
+describe("a saved link's card", () => {
+  it("shows the title, site and first words, opens the source and turns back into a link", async () => {
+    const open = vi.fn();
+    const setPreview = vi.fn();
+    const container = document.createElement("span");
+    document.body.append(container);
+    await act(async () => { sourceLinkCardMount(actionsWith(open, "You own your data, in spite of the cloud"))(container, `${WEB}/card`, "Local-first software", { canPreview: true, preview: true, setPreview }); });
+    expect(container.querySelector(".source-link-card__title")?.textContent).toBe("Local-first software");
+    expect(container.querySelector(".source-link-card__site")?.textContent).toBe("example.com");
+    expect(container.querySelector(".source-link-card__excerpt")?.textContent).toBe("You own your data, in spite of the cloud");
+    await act(async () => { container.querySelector<HTMLButtonElement>(".source-link-card__body")!.click(); });
+    expect(open).toHaveBeenCalledWith(`${WEB}/card`);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".source-link-card__more")!.click(); });
+    expect(item("Show as preview")?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => { item("Show as link")!.click(); });
+    expect(setPreview).toHaveBeenCalledWith(false);
+    container.remove();
   });
 });

@@ -770,6 +770,10 @@ const en = {
     noteTitle: "{{app}} note",
     messageTitle: "{{app}} message",
     iconTitle: "Saved in Sources",
+    showLink: "Show as link",
+    showPreview: "Show as preview",
+    openSource: "Open source",
+    moreActions: "More for this link",
   },
   pageAttachments: {
     failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
@@ -3682,6 +3686,10 @@ const zhHans = {
     noteTitle: "{{app}}笔记",
     messageTitle: "{{app}} 消息",
     iconTitle: "已存到来源",
+    showLink: "显示成链接",
+    showPreview: "显示成预览卡片",
+    openSource: "打开来源",
+    moreActions: "这个链接的更多操作",
   },
   pageAttachments: {
     failed: "无法加入 {{name}}。页面里只能放图片和视频。",
@@ -6549,6 +6557,10 @@ const zhHant = {
     noteTitle: "{{app}}筆記",
     messageTitle: "{{app}} 訊息",
     iconTitle: "已存到來源",
+    showLink: "顯示成連結",
+    showPreview: "顯示成預覽卡片",
+    openSource: "打開來源",
+    moreActions: "這個連結的更多操作",
   },
   pageAttachments: {
     failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",
