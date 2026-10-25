@@ -1278,7 +1278,6 @@ const UNSTUBBED_DEBT = new Set([
   "export_page_to_obsidian",
   "export_pages_to_obsidian",
   "get_agent",
-  "get_chunks",
   "get_enrichment_status",
   "get_external_llm_key_configured",
   "get_pending_revision",

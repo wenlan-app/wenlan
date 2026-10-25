@@ -89,4 +89,13 @@ describe("a saved link's card", () => {
     expect(setPreview).toHaveBeenCalledWith(false);
     container.remove();
   });
+
+  it("says a short post once when its words are its title", async () => {
+    const container = document.createElement("span");
+    document.body.append(container);
+    await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), "@jack: just setting up my twttr"))(container, "https://x.com/jack/status/20", "@jack: just setting up my twttr", { canPreview: true, preview: true, setPreview: vi.fn() }); });
+    expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
+    expect(container.querySelector(".source-link-card__excerpt")).toBeNull();
+    container.remove();
+  });
 });

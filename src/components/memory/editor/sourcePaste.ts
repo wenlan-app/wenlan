@@ -539,9 +539,13 @@ const theme = EditorView.theme({
     outline: "2px solid var(--mem-accent-indigo)",
     outlineOffset: "1px",
   },
+  // Inline-block, so the line holds only the card: a block inside a line
+  // would add an empty line box above and below it.
   ".cm-source-link-card": {
-    display: "block",
+    display: "inline-block",
+    width: "100%",
     maxWidth: "520px",
+    verticalAlign: "top",
     margin: "0.15rem 0",
   },
   ".cm-source-saving": {

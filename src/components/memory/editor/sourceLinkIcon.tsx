@@ -177,7 +177,8 @@ function SourceLinkCard({ url, title, place, actions }: { url: string; title: st
         <span>{title}</span>
       </span>
       <span className="source-link-card__site">{site}</span>
-      {excerpt && <span className="source-link-card__excerpt">{excerpt}</span>}
+      {/* A short post is its own title; say it once. */}
+      {excerpt && excerpt !== title.replace(/\s+/g, " ").trim() && <span className="source-link-card__excerpt">{excerpt}</span>}
     </button>
     {current.menu && <button
       ref={moreRef}

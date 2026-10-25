@@ -62,6 +62,8 @@ export function sharePreview(app: SourceApp, page: FetchedPage): SharePreview | 
       .replace(/\s*-\s*小[红紅]书$/, "")
       .trim();
     if (SITE_NAMES.has(text.toLowerCase())) text = description;
+    // Threads can title a post with its words alone; the address names who wrote it.
+    if (handle) who = `@${handle}`;
   }
   text = unquote(text.replace(/"\.$/, "\""));
   if (!text || SITE_NAMES.has(text.toLowerCase()) || WALL.test(text)) return null;

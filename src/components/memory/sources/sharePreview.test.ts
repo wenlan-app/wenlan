@@ -19,6 +19,8 @@ describe("a social link's preview text", () => {
       '60M likes, 4M comments - world_record_egg on January 4, 2019: "Let\'s set a world record together and get the most liked post on Instagram.".',
     ))).toEqual({ who: "@world_record_egg", text: "Let's set a world record together and get the most liked post on Instagram." });
     expect(sharePreview("xiaohongshu", page("https://www.xiaohongshu.com/explore/1", "东京三日游攻略 - 小红书"))).toEqual({ who: null, text: "东京三日游攻略" });
+    // Threads served to Wenlan titles a post with its words.
+    expect(sharePreview("threads", page("https://www.threads.com/@zuck/post/DMu508TRUyp", "We're building personal superintelligence for everyone."))).toEqual({ who: "@zuck", text: "We're building personal superintelligence for everyone." });
   });
 
   it("keeps a post that mentions signing in", () => {

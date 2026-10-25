@@ -990,6 +990,8 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   },
   list_indexed_files: (a) =>
     get(`/api/indexed-files${a?.space ? qs({ space: a.space }) : ""}`).then((r) => r?.files ?? []),
+  get_chunks: (a) =>
+    get(`/api/${a?.source === "webpage" ? "webpage-chunks" : "chunks"}/${enc(String(a?.sourceId ?? ""))}${a?.space ? qs({ space: a.space }) : ""}`),
   delete_file_chunks: (a) =>
     del(`/api/documents/${enc(String(a?.source ?? ""))}/${enc(String(a?.sourceId ?? ""))}`).then(() => undefined),
 
