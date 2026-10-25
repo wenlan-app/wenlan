@@ -150,6 +150,13 @@ function SourceLinkIcon({ url, place, actions }: { url: string; place?: SourceLi
   </>;
 }
 
+/** Whether a card's text only says its title again, as a short post does,
+ *  or a post whose title is its own words cut short. */
+function repeatsTitle(excerpt: string, title: string): boolean {
+  const stem = title.replace(/\s+/g, " ").trim().replace(/…$/, "").trimEnd();
+  return excerpt === stem || (title.trim().endsWith("…") && stem.length >= 10 && excerpt.startsWith(stem));
+}
+
 function SourceLinkCard({ url, title, place, actions }: { url: string; title: string; place: SourceLinkPlace; actions: () => SourceLinkIconActions }) {
   const current = actions();
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -177,8 +184,7 @@ function SourceLinkCard({ url, title, place, actions }: { url: string; title: st
         <span>{title}</span>
       </span>
       <span className="source-link-card__site">{site}</span>
-      {/* A short post is its own title; say it once. */}
-      {excerpt && excerpt !== title.replace(/\s+/g, " ").trim() && <span className="source-link-card__excerpt">{excerpt}</span>}
+      {excerpt && !repeatsTitle(excerpt, title) && <span className="source-link-card__excerpt">{excerpt}</span>}
     </button>
     {current.menu && <button
       ref={moreRef}

@@ -251,6 +251,8 @@ function handleMenuKeyDown(
 /** Sites that show the daemon a sign-in page instead of the post or document. */
 const SIGN_IN_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack", "x", "threads", "instagram", "xiaohongshu"]);
 const PRIVATE_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack"]);
+// A note above an article about other pages, as Wikipedia puts first.
+const HATNOTE = /redirects here|^for other uses|^this article is about|^not to be confused with/i;
 
 export default function PageDetail({
   pageId,
@@ -654,7 +656,7 @@ export default function PageDetail({
       const text = [...chunks].sort((a, b) => a.chunk_index - b.chunk_index)[0]?.content ?? "";
       const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
       // The first sentence-like paragraph, past menus and language lists.
-      const first = lines.find((line) => line.length >= 60 && /[.!?。！？]/.test(line)) ?? lines.join(" ");
+      const first = lines.find((line) => line.length >= 60 && /[.!?。！？]/.test(line) && !HATNOTE.test(line)) ?? lines.join(" ");
       return first && first !== file.source_id ? first.slice(0, 280) : null;
     },
   };

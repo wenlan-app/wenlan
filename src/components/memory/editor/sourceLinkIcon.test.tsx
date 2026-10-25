@@ -97,5 +97,11 @@ describe("a saved link's card", () => {
     expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
     expect(container.querySelector(".source-link-card__excerpt")).toBeNull();
     container.remove();
+    // A long post titled with its words cut short is not said twice either.
+    const long = document.createElement("span");
+    document.body.append(long);
+    await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), "@zuck: We're building personal superintelligence for everyone."))(long, "https://www.threads.com/@zuck/post/1", "@zuck: We're building personal…", { canPreview: true, preview: true, setPreview: vi.fn() }); });
+    expect(long.querySelector(".source-link-card__excerpt")).toBeNull();
+    long.remove();
   });
 });
