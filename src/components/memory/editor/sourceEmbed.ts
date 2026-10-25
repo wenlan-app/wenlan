@@ -79,8 +79,11 @@ export function postEmbedOrigin(embed: Extract<SourceEmbed, { kind: "post" }>, o
 }
 
 /** The height an embed page asks for in its own resize message, such as X's
- *  `twttr.private.resize` or Instagram's `MEASURE`; null for anything else. */
+ *  `twttr.private.resize`, Instagram's `MEASURE` or Threads' bare number;
+ *  null for anything else. */
 export function postEmbedHeight(data: unknown): number | null {
+  if (typeof data === "number") return Number.isFinite(data) ? data : null;
+  if (typeof data === "string" && /^\d+(\.\d+)?$/.test(data.trim())) return Number.parseFloat(data);
   let value = data;
   if (typeof value === "string") {
     if (!value.includes("height")) return null;

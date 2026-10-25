@@ -40,6 +40,9 @@ describe("what a saved link's card can show from its site", () => {
   it("reads the height an embed page asks for", () => {
     expect(postEmbedHeight({ "twttr.embed": { method: "twttr.private.resize", params: [{ height: 412, width: 550 }] } })).toBe(412);
     expect(postEmbedHeight(JSON.stringify({ type: "MEASURE", details: { height: 655 } }))).toBe(655);
+    expect(postEmbedHeight(218)).toBe(218);
+    expect(postEmbedHeight("226")).toBe(226);
+    expect(postEmbedHeight(Number.NaN)).toBeNull();
     expect(postEmbedHeight("not json, no size")).toBeNull();
     expect(postEmbedHeight({ type: "ready" })).toBeNull();
   });
