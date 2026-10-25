@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=7841dd0472c655956fdc66a43bff5e3646162a3f98d86ac8cc4d8faae4291e63 -->
+<!-- README_SYNC: source=README.md sha256=8cecad87f745895cb29bdb65c717ed9bd7a67f1f6b30a06b208012ac057e9048 -->
 
 <p align="center">
   <picture>
@@ -62,9 +62,11 @@
 
 - **沉淀有两种方式：**“随叫”用你自己的 AI 工具更新笔记，“自动”用你选的本地或云端模型在后台更新。
 - **为代码建 wiki：**`/wenlan wiki` 写出对应到代码行数的笔记，用 pull request 放进你的仓库，也能每天在你的电脑或 GitHub Actions 上更新。
-- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro 和 OpenCode 都能从设置里的“添加工具”连上。
-- **笔记可以放图片和视频**，也能导入 Logseq 图谱。
-- **你写的笔记由你把关：**AI 要改，会先等你审核。
+- **AI 可以建议修改你的 Obsidian 笔记：**把一篇笔记、一个文件夹或整个仓库设成“先问我”，你点接受才会写进文件。笔记默认“不能改”，只会被引用。文澜自己的笔记也可以搬进你的 Obsidian 仓库，直接在 Obsidian 里打开。
+- **大量资料更快：**第一次导入大型仓库，几分钟内就能搜索；AI 工具也找得到大型资料库里的罕见字词。
+- **笔记可以放链接、图片和视频：**粘贴的链接会存成来源，显示成卡片、可播放的 YouTube 视频，或 X、Threads、Instagram 的原始帖子。也能导入 Logseq 图谱。
+- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro、OpenCode 和 Kimi Code 都能从设置里的“添加工具”连上。
+- **统一的“AI 修改”设置：**你写的笔记设成“先问我”，AI 要改会先等你同意。
 
 每次发布的完整记录见[更新日志](CHANGELOG.md)。
 
@@ -100,7 +102,7 @@
 |---|---|---|
 | Claude Code / Claude Desktop | 插件 / MCP | [Claude 指南](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop（Codex）、Codex CLI | 插件 | [Codex 指南](docs/setup-with-ai.md#codex) |
-| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
 在 App 的设置里，“添加工具”会列出你电脑上装好的 AI 工具，点“全部连接”一次设好。能读技能的工具，也会拿到文澜的技能，例如找回和记下。
@@ -150,7 +152,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - **整理记忆：** 添加类型、结构化细节、搜索线索和图谱链接，让单条发现更容易在上下文中检索。
 - **让依据带动更新：** 来源、记忆或引用的代码变化时，依赖它们的笔记会标记待刷新；新记忆也可以丰富符合条件的笔记。如果草稿未通过引用检查，刷新会保留已保存笔记。通过检查并不代表事实正确。
 - **保留控制权与历史：** 后台刷新会更新符合条件的 AI 维护笔记；你撰写或编辑的笔记会收到修订提案。明确替代记忆时，旧记忆会隐藏或归档，同时保留其链接。笔记修订可供检查。
-- **审核锁定：** 开启“我写过的页面自动上锁”（新安装默认开启）后，AI 对你写过或改过的笔记所做的修改会先等你审核。AI 写的笔记照常更新。
+- **先问我：** 开启“我写过的笔记：先问我”（新安装默认开启）后，AI 对你写过或改过的笔记所做的修改会先等你同意。每篇笔记的“AI 修改”设置会显示“直接改”或“先问我”。AI 写的笔记照常更新。
 
 <a id="what-it-does-on-its-own"></a>
 
@@ -213,7 +215,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 | 导入内容 | 用途 |
 | --- | --- |
 | Markdown、文本、文本型 PDF 或文件夹 | 搜索和引用导入文本。文件夹可以只导入一次，也可以持续同步文件的变化。 |
-| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。没有你同意，不会改动你原有的笔记。 |
+| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。没有你同意，不会改动你原有的笔记：在 Obsidian 仓库里，设成“先问我”的笔记会收到 AI 的修改建议，由你接受或不要。 |
 | 带 URL 的网页摘录 | 粘贴文本与 URL，保存可搜索内容及原文链接。 |
 | ChatGPT 或 Claude 导出 ZIP | 检索过去的对话文本（包括最后一条没有得到回复的消息）并作为上下文引用；导入是快照，不会连接实时账户。 |
 | 文本形式的现有记忆 | 将偏好、决定或经验保存为单条记忆。 |
@@ -314,7 +316,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 | LME_S (deep, 90 Q) | 87.7% | 0.815 | 0.822 |
 <!-- EVAL_SNAPSHOT_END -->
 
-一万篇笔记的测试（生成的测试笔记，M2 Pro 16 GB，v0.20.0）：导入用了 81 分钟，App 搜索 11 到 50 毫秒，重启不到 0.3 秒，内存峰值约 1.2 GB。
+一万篇笔记的测试（生成的测试笔记，M2 Pro 16 GB，v0.20.0）：导入用了 81 分钟，App 搜索 11 到 50 毫秒，重启不到 0.3 秒，内存峰值约 1.2 GB。0.20.1 修好搜索后，AI 工具在同一个资料库里找到了全部 30 个罕见测试字词。
 
 [评估方法与基准详情](docs/eval/README.md)。
 

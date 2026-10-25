@@ -60,9 +60,11 @@ Keep doing that. Wenlan connects to the same AI tool and adds the checks a folde
 
 - **Steep, your way:** keep pages current On demand with your own AI tool, or Automatic with a local or cloud model you pick.
 - **A wiki for your code:** `/wenlan wiki` writes pages tied to the code lines they rely on and offers them to your repository as a pull request, updated daily on your computer or on GitHub Actions.
-- **More AI tools:** GitHub Copilot, Antigravity, Windsurf, Kiro, and OpenCode connect from **Add a tool** in Settings.
-- **Images and videos in pages**, and Logseq graphs as a new import.
-- **Pages you wrote stay yours:** AI edits to them wait for your review.
+- **AI can suggest changes to your Obsidian notes:** set a note, a folder, or the vault to **Ask me first**, and the file changes only when you accept. Notes start at **Never**, cited only. Wenlan's own pages can also move into your vault and open in Obsidian.
+- **Faster with big libraries:** a big first vault import is searchable in minutes, and AI tools now find rare words in a large library.
+- **Links, images, and videos in pages:** a pasted link is saved as a source and shows as a card, a playable YouTube video, or the original X, Threads, or Instagram post. Logseq graphs are a new import.
+- **More AI tools:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, and Kimi Code connect from **Add a tool** in Settings.
+- **One "AI changes" setting:** pages you wrote are set to **Ask me first**, so AI edits to them wait for your OK.
 
 Every release is in the [changelog](CHANGELOG.md).
 
@@ -98,7 +100,7 @@ Create a page in Wenlan, connect an Obsidian vault or a Logseq graph, add a fold
 |---|---|---|
 | Claude Code / Claude Desktop | Plugin / MCP | [Claude guide](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Codex guide](docs/setup-with-ai.md#codex) |
-| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
 In the App's Settings, **Add a tool** lists the AI tools installed on your computer, and **Connect all** sets them up in one press. Tools that read skills also get Wenlan's skills for setup, recall, capture, brief, and handoff.
@@ -147,7 +149,7 @@ What steep does:
 - **Enrich memories:** Add types, structured details, search cues, and graph links so individual findings are easier to retrieve in context.
 - **Follow the evidence:** Changed sources, memories, or cited code flag dependent pages for refresh; new memories can enrich eligible pages. Refresh keeps the saved page if a draft fails citation checks. Passing these checks does not establish factual correctness.
 - **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
-- **Review lock:** With **Lock pages I've written** on, as it is for new installs, AI changes to pages you wrote or edited wait for your review. Pages AI wrote keep updating.
+- **Ask me first:** With **Ask me first on pages I wrote** on, as it is for new installs, AI changes to pages you wrote or edited wait for your OK. Each page's **AI changes** setting shows **Allowed** or **Ask me first**. Pages AI wrote keep updating.
 
 <a id="what-it-does-on-its-own"></a>
 
@@ -209,7 +211,7 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 | Bring in | How you can use it |
 | --- | --- |
 | Markdown, text, text-based PDFs, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing pages. Keep it in sync to follow changes in the background, or import it once; Wenlan never edits your existing notes without your OK. |
+| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Wenlan never edits your existing notes without your OK: in an Obsidian vault, notes you set to **Ask me first** get AI suggestions you accept or decline. |
 | Web excerpts with a URL | Paste the text and its URL to save searchable material with a link to the original. |
 | ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
 | Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
@@ -307,7 +309,7 @@ These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI a
 | LME_S (deep, 90 Q) | 87.7% | 0.815 | 0.822 |
 <!-- EVAL_SNAPSHOT_END -->
 
-On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), import took 81 minutes, App search answered in 11 to 50 ms, restart took under 0.3 s, and memory peaked at about 1.2 GB.
+On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), import took 81 minutes, App search answered in 11 to 50 ms, restart took under 0.3 s, and memory peaked at about 1.2 GB. With the search fix in 0.20.1, AI-tool search found all 30 rare test words in that library.
 
 [Evaluation method and benchmark details](docs/eval/README.md).
 

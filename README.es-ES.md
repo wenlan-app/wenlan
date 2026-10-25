@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=7841dd0472c655956fdc66a43bff5e3646162a3f98d86ac8cc4d8faae4291e63 -->
+<!-- README_SYNC: source=README.md sha256=8cecad87f745895cb29bdb65c717ed9bd7a67f1f6b30a06b208012ac057e9048 -->
 
 <p align="center">
   <picture>
@@ -52,9 +52,11 @@ Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las c
 
 - **Steep a tu manera:** mantén las páginas al día en modo **On demand** con tu propia herramienta de IA, o en **Automatic** con un modelo local o en la nube que elijas.
 - **Una wiki para tu código:** `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan y las propone a tu repositorio como pull request, actualizadas cada día en tu ordenador o en GitHub Actions.
-- **Más herramientas de IA:** GitHub Copilot, Antigravity, Windsurf, Kiro y OpenCode se conectan desde **Add a tool** en los ajustes.
-- **Imágenes y vídeos en las páginas**, y los grafos de Logseq como nueva importación.
-- **Las páginas que escribes siguen siendo tuyas:** los cambios de la IA esperan tu revisión.
+- **La IA puede sugerir cambios en tus notas de Obsidian:** pon una nota, una carpeta o la bóveda en **Ask me first** y el archivo solo cambia cuando aceptas. Las notas empiezan en **Never**, solo se citan. Las páginas de Wenlan también pueden pasar a tu bóveda y abrirse en Obsidian.
+- **Más rápido con bibliotecas grandes:** una primera importación grande de una bóveda se puede buscar en minutos, y las herramientas de IA ya encuentran palabras raras en una biblioteca grande.
+- **Enlaces, imágenes y vídeos en las páginas:** un enlace pegado se guarda como fuente y se muestra como tarjeta, como vídeo de YouTube reproducible o como la publicación original de X, Threads o Instagram. Los grafos de Logseq son una nueva importación.
+- **Más herramientas de IA:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode y Kimi Code se conectan desde **Add a tool** en los ajustes.
+- **Un solo ajuste "AI changes":** las páginas que escribiste quedan en **Ask me first**, así que los cambios de la IA esperan tu visto bueno.
 
 Todas las versiones están en el [registro de cambios](CHANGELOG.md).
 
@@ -90,7 +92,7 @@ Crea una página en Wenlan, conecta una bóveda de Obsidian o un grafo de Logseq
 |---|---|---|
 | Claude Code / Claude Desktop | Plugin / MCP | [Guía de Claude](docs/setup-with-ai.md#claude-code) |
 | ChatGPT Desktop (Codex), Codex CLI | Plugin | [Guía de Codex](docs/setup-with-ai.md#codex) |
-| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
+| Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
 En los ajustes de la aplicación, **Add a tool** muestra las herramientas de IA instaladas en tu ordenador y **Connect all** las configura con un solo clic. Las herramientas que leen skills también reciben las skills de Wenlan para configurar, recuperar, guardar, el brief y el traspaso.
@@ -138,7 +140,7 @@ Qué hace Steep:
 - **Enriquece las memorias:** Añade tipos, detalles estructurados, pistas de búsqueda y enlaces al grafo para facilitar la recuperación contextual de cada hallazgo.
 - **Sigue la evidencia:** Los cambios en fuentes, memorias o código citado marcan las páginas dependientes para actualizarlas; las memorias nuevas también pueden enriquecer páginas compatibles. Si un borrador no supera las comprobaciones de citas, se conserva la página guardada. Superarlas no demuestra que los datos sean correctos.
 - **Conserva el control y el historial:** La actualización en segundo plano modifica las páginas compatibles mantenidas por IA; las páginas que hayas escrito o editado reciben propuestas de revisión. Las sustituciones explícitas ocultan o archivan las memorias anteriores y conservan sus enlaces. Las revisiones de páginas se pueden inspeccionar.
-- **Bloqueo de revisión:** Con **Lock pages I've written** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu revisión. Las páginas que escribió la IA siguen actualizándose.
+- **Ask me first:** Con **Ask me first on pages I wrote** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu visto bueno. El ajuste **AI changes** de cada página muestra **Allowed** o **Ask me first**. Las páginas que escribió la IA siguen actualizándose.
 
 <a id="what-it-does-on-its-own"></a>
 
@@ -222,7 +224,7 @@ Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan 
 | Qué puedes importar | Para qué sirve |
 | --- | --- |
 | Markdown, texto, PDF con texto o una carpeta | Busca y cita el texto importado. Importa una carpeta una vez o mantenla sincronizada cuando cambien sus archivos. |
-| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita páginas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez; Wenlan nunca edita tus notas existentes sin tu permiso. |
+| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita notas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez. Wenlan nunca edita tus notas existentes sin tu permiso: en una bóveda de Obsidian, las notas en **Ask me first** reciben sugerencias de la IA que aceptas o rechazas. |
 | Extractos web con URL | Pega el texto y su URL para guardar material buscable con un enlace al original. |
 | ZIP de exportación de ChatGPT o Claude | Recupera conversaciones anteriores, incluido un último mensaje que no obtuvo respuesta, y cítalas como contexto; la importación es una instantánea, no una conexión activa a la cuenta. |
 | Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
@@ -300,7 +302,7 @@ Estas mediciones de LongMemEval (LME) evalúan la recuperación de conocimiento 
 | LME_S (deep, 90 Q) | 87.7% | 0.815 | 0.822 |
 <!-- EVAL_SNAPSHOT_END -->
 
-En una prueba con 10.000 páginas (páginas generadas, M2 Pro con 16 GB, v0.20.0), la importación tardó 81 minutos, la búsqueda en la App respondió en 11 a 50 ms, el reinicio tardó menos de 0,3 s y la memoria llegó a un máximo de unos 1,2 GB.
+En una prueba con 10.000 páginas (páginas generadas, M2 Pro con 16 GB, v0.20.0), la importación tardó 81 minutos, la búsqueda en la App respondió en 11 a 50 ms, el reinicio tardó menos de 0,3 s y la memoria llegó a un máximo de unos 1,2 GB. Con la corrección de búsqueda de 0.20.1, la búsqueda de las herramientas de IA encontró las 30 palabras raras de prueba en esa biblioteca.
 
 [Método de evaluación y detalles del benchmark](docs/eval/README.md).
 
