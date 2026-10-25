@@ -44,13 +44,13 @@ I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI
 
 - **Kept current by your AI:** Documents, Markdown, Obsidian vaults, Logseq graphs, web links, and AI chats become pages that keep their sources and update when those change. Built in, with no maze of plugins.
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, and other MCP clients search and cite the same pages.
-- **Checked against sources:** A page is refused when most of its citations don't match the source, and pages are flagged when their sources change. Pages are local Markdown, AI edits to pages you wrote wait for your review, and Wenlan never edits your existing notes.
+- **Checked against sources:** A page is refused when most of its citations don't match the source, and pages are flagged when their sources change. Pages are local Markdown, AI edits to pages you wrote wait for your review, and Wenlan never edits your existing notes without your OK.
 
 <a id="if-you-already-use-claude-code-on-your-notes"></a>
 
 ### If you already use Claude Code or Codex on your notes
 
-Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: pages refused when their citations don't hold up, flags when sources change, review for AI edits to pages you wrote, and no edits to your existing notes.
+Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: pages refused when their citations don't hold up, flags when sources change, review for AI edits to pages you wrote, and it never edits your existing notes without your OK.
 
 <a id="whats-new"></a>
 
@@ -209,7 +209,7 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 | Bring in | How you can use it |
 | --- | --- |
 | Markdown, text, text-based PDFs, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing pages. Keep it in sync to follow changes in the background, or import it once; Wenlan never edits your existing notes. |
+| An Obsidian vault or a Logseq graph | Search and cite existing pages. Keep it in sync to follow changes in the background, or import it once; Wenlan never edits your existing notes without your OK. |
 | Web excerpts with a URL | Paste the text and its URL to save searchable material with a link to the original. |
 | ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
 | Existing memories as text | Save preferences, decisions, or lessons as individual memories. |

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=644bb6727884824da23fce6fa84f4fd22754429cabdad0ba491bb75869e76b94 -->
+<!-- README_SYNC: source=README.md sha256=7841dd0472c655956fdc66a43bff5e3646162a3f98d86ac8cc4d8faae4291e63 -->
 
 <p align="center">
   <picture>
@@ -42,7 +42,7 @@
 
 ## Si ya usas Claude Code o Codex con tus notas
 
-Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes.
+Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes sin tu permiso.
 
 <a id="whats-new"></a>
 
@@ -222,7 +222,7 @@ Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan 
 | Qué puedes importar | Para qué sirve |
 | --- | --- |
 | Markdown, texto, PDF con texto o una carpeta | Busca y cita el texto importado. Importa una carpeta una vez o mantenla sincronizada cuando cambien sus archivos. |
-| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita páginas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez; Wenlan nunca edita tus notas existentes. |
+| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita páginas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez; Wenlan nunca edita tus notas existentes sin tu permiso. |
 | Extractos web con URL | Pega el texto y su URL para guardar material buscable con un enlace al original. |
 | ZIP de exportación de ChatGPT o Claude | Recupera conversaciones anteriores, incluido un último mensaje que no obtuvo respuesta, y cítalas como contexto; la importación es una instantánea, no una conexión activa a la cuenta. |
 | Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
