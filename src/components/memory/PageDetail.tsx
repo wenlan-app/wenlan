@@ -654,7 +654,8 @@ export default function PageDetail({
       if (!file) return null;
       const chunks = await getChunks("webpage", file.source_id);
       const text = [...chunks].sort((a, b) => a.chunk_index - b.chunk_index)[0]?.content ?? "";
-      const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
+      // Footnote marks such as [1] mean nothing on a card.
+      const lines = text.split(/\n+/).map((line) => line.replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
       // The first sentence-like paragraph, past menus and language lists.
       const first = lines.find((line) => line.length >= 60 && /[.!?:。！？：]/.test(line) && !HATNOTE.test(line)) ?? lines.join(" ");
       return first && first !== file.source_id ? first.slice(0, 280) : null;
