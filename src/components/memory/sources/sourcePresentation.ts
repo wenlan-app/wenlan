@@ -3,15 +3,32 @@ import type { IndexedFileInfo } from "../../../lib/tauri";
 
 export type SourceKind = "pdf" | "text" | "image" | "webpage" | "file";
 /** Apps whose documents an agent can save with their permanent link. */
-export type SourceApp = "gmail" | "googleDrive" | "notion" | "slack" | "github";
-/** Brand names are not translated. */
+export type SourceApp =
+  | "gmail" | "googleDrive" | "notion" | "slack" | "github"
+  | "x" | "threads" | "instagram" | "xiaohongshu";
+/** Brand names are not translated, except where the brand itself has a name per language. */
 export const SOURCE_APP_NAMES: Readonly<Record<SourceApp, string>> = {
   gmail: "Gmail",
   googleDrive: "Google Drive",
   notion: "Notion",
   slack: "Slack",
   github: "GitHub",
+  x: "X",
+  threads: "Threads",
+  instagram: "Instagram",
+  xiaohongshu: "RedNote",
 };
+const LOCAL_APP_NAMES: Readonly<Partial<Record<SourceApp, Readonly<Record<string, string>>>>> = {
+  xiaohongshu: { "zh-Hans": "小红书", "zh-Hant": "小紅書" },
+};
+/** The app's name as people using `language` know it. */
+export function sourceAppName(app: SourceApp, language?: string): string {
+  return (language && LOCAL_APP_NAMES[app]?.[language]) || SOURCE_APP_NAMES[app];
+}
+/** Every name an app goes by, for search. */
+export function sourceAppSearchNames(app: SourceApp): string {
+  return [SOURCE_APP_NAMES[app], ...Object.values(LOCAL_APP_NAMES[app] ?? {})].join(" ");
+}
 /** Note apps whose connected vault or graph Wenlan follows. */
 export type NoteApp = "obsidian" | "logseq";
 /** Whether a source type or `source_agent` names a note app. Their notes are
@@ -36,6 +53,8 @@ const WEBPAGE_EXTENSIONS = new Set(["html", "htm", "php", "asp", "aspx"]);
 export interface SourcePresentationLabels {
   document: string;
   webExcerpt: string;
+  /** The app language, for app names that differ by language. */
+  language?: string;
 }
 
 export interface SourcePresentation {
@@ -60,6 +79,46 @@ export function getSourceAppFromUrl(value: string | URL | null | undefined): Sou
   if (host === "notion.so" || host === "www.notion.so" || host === "app.notion.com" || host.endsWith(".notion.site")) return "notion";
   if (under("slack.com")) return "slack";
   if (host === "github.com") return "github";
+  if (under("x.com") || under("twitter.com")) return "x";
+  if (under("threads.net") || under("threads.com")) return "threads";
+  if (under("instagram.com")) return "instagram";
+  if (under("xiaohongshu.com") || under("xhslink.com")) return "xiaohongshu";
+  return null;
+}
+
+const NOT_HANDLES: Partial<Record<SourceApp, ReadonlySet<string>>> = {
+  x: new Set(["home", "explore", "search", "i", "settings", "hashtag", "intent", "share", "messages", "notifications", "compose", "login", "signup", "tos", "privacy"]),
+  instagram: new Set(["p", "reel", "reels", "stories", "explore", "tv", "accounts", "direct", "about", "developer", "legal"]),
+};
+
+/** The account a social link belongs to, such as `simonw` for an X post, so
+ *  saved links are told apart by who wrote them. */
+export function sourceHandleFromUrl(value: string): string | null {
+  const url = httpUrl(value);
+  const app = getSourceAppFromUrl(url);
+  if (!url || !app) return null;
+  const first = url.pathname.split("/").filter(Boolean)[0] ?? "";
+  let handle: string | null = null;
+  if (app === "threads") handle = /^@([A-Za-z0-9._]{1,30})$/.exec(first)?.[1] ?? null;
+  else if (app === "x") handle = /^[A-Za-z0-9_]{1,15}$/.test(first) ? first : null;
+  else if (app === "instagram") handle = /^[A-Za-z0-9._]{1,30}$/.test(first) ? first : null;
+  return handle && !NOT_HANDLES[app]?.has(handle.toLowerCase()) ? handle : null;
+}
+
+/** What a social or mail link points at, so a link saved without its page
+ *  can be named "Instagram post" rather than only by its site. */
+export function sourceLinkKind(value: string): "post" | "note" | "message" | null {
+  const url = httpUrl(value);
+  const app = getSourceAppFromUrl(url);
+  if (!url || !app) return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (app === "x") return parts.includes("status") ? "post" : null;
+  if (app === "threads") return parts.includes("post") ? "post" : null;
+  if (app === "instagram") return ["p", "reel", "reels", "tv"].includes(parts[0] ?? "") ? "post" : null;
+  if (app === "xiaohongshu") {
+    return url.hostname.endsWith("xhslink.com") || ["explore", "discovery"].includes(parts[0] ?? "") ? "note" : null;
+  }
+  if (app === "gmail" || app === "slack") return "message";
   return null;
 }
 
@@ -185,7 +244,7 @@ export function getSourcePresentation(
 
   if (classification.app) {
     // The app is the provenance: name it instead of the generic format and raw host.
-    const name = SOURCE_APP_NAMES[classification.app];
+    const name = sourceAppName(classification.app, labels.language);
     return { kind: classification.kind, app: classification.app, iconKind: classification.app, format: name, origin: null, metadata: name };
   }
 

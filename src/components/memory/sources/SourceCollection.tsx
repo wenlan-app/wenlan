@@ -7,7 +7,7 @@ import type { NoteApp, SourceApp, SourceKind } from "./sourcePresentation";
 import type { AssetLens } from "../../../lib/assetLens";
 import { AssetLensToggle } from "../assets/AssetLensToggle";
 import type { SourceLibraryFilter } from "./SourceLibrary";
-import { isSourceApp, SOURCE_APP_NAMES } from "./sourcePresentation";
+import { isSourceApp, sourceAppName } from "./sourcePresentation";
 import "./SourceCollection.css";
 
 export interface SourceCollectionItem {
@@ -56,7 +56,7 @@ export function SourceCollectionToolbar({ search, filter, lens, apps = [], onSea
   trailing?: ReactNode;
   breadcrumbs?: ReactNode;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const filters: SourceLibraryFilter[] = ["all", "files", "links", ...apps, "folders"];
   return <>
     {breadcrumbs}
@@ -72,7 +72,7 @@ export function SourceCollectionToolbar({ search, filter, lens, apps = [], onSea
       </div>
     </div>
     <div className="source-library-filters collection-filter-row" role="group" aria-label={t("sourceLibrary.filterLabel")}>
-      {filters.map((value) => <button className="collection-control" key={value} aria-pressed={filter === value} onClick={() => onFilterChange(value)}>{isSourceApp(value) ? SOURCE_APP_NAMES[value] : t(`sourceLibrary.filters.${value}`)}</button>)}
+      {filters.map((value) => <button className="collection-control" key={value} aria-pressed={filter === value} onClick={() => onFilterChange(value)}>{isSourceApp(value) ? sourceAppName(value, i18n.language) : t(`sourceLibrary.filters.${value}`)}</button>)}
     </div>
   </>;
 }

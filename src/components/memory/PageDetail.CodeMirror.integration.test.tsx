@@ -837,6 +837,42 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     expect(tauriMocks.updatePage).not.toHaveBeenCalled();
   });
 
+  it("shows an edit made in Obsidian when nothing was typed here, with no conflict", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("textbox", { name: "Page editor" });
+    const edited = { ...PAGE, content: "Edited in Obsidian.\n", version: PAGE.version + 1 };
+    await act(async () => { client.setQueryData(["page", PAGE.id], edited); });
+    await waitFor(() => expect(editorViewFromTextbox(screen.getByRole("textbox", { name: "Page editor" })).state.doc.toString()).toBe(edited.content));
+    expect(screen.queryByText("This page changed elsewhere.")).toBeNull();
+    expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+  });
+
+  it("Reload latest asks again and loads the newest page, not the first one it saw", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <QueryClientProvider client={client}>
+        <PageDetail pageId={PAGE.id} initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onPageClick={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    const textbox = await screen.findByRole("textbox", { name: "Page editor" });
+    act(() => replaceDocument(editorViewFromTextbox(textbox), "My local draft."));
+    const remote = { ...PAGE, content: "Edit three.", version: PAGE.version + 1 };
+    const newest = { ...PAGE, content: "Edit five.", version: PAGE.version + 3 };
+    await act(async () => { client.setQueryData(["page", PAGE.id], remote); });
+    await screen.findByText(`Latest source (version ${remote.version})`);
+    tauriMocks.getPage.mockResolvedValue(newest);
+    await user.click(screen.getByRole("button", { name: "Reload latest" }));
+    await waitFor(() => expect(editorViewFromTextbox(screen.getByRole("textbox", { name: "Page editor" })).state.doc.toString()).toBe(newest.content));
+    expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+  });
+
   it("retains a successful Retry latest preview after additional typing", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const user = userEvent.setup();

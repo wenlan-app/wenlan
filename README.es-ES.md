@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=293c4cc4fec5327467c507276c8b65b2f87df9144fd3e5900a67c461c5498159 -->
+<!-- README_SYNC: source=README.md sha256=220017d2ab7183acce7a016af2bd768dfe94f830fe24cd1d24a17e489be32c84 -->
 
 <p align="center">
   <picture>
@@ -31,9 +31,9 @@
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
 
-https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
-
-<p>Portada: composición de vistas reales con datos de ejemplo; el grafo es ilustrativo, no una vista nativa de tres columnas.</p>
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Ver el recorrido por Wenlan" width="100%"></a>
+</p>
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -117,6 +117,13 @@ Flujo simplificado. Los comandos del plugin y la organización de páginas son o
 
 ## Organiza la información dispersa en conocimiento
 
+<a id="explora-tu-grafo-de-conocimiento-personal"></a>
+
+<p align="center">
+  <img src="./docs/assets/wenlan-personal-graph.png" alt="Grafo real de Wenlan con regiones ilustrativas de intereses personales, investigación y desarrollo" width="100%">
+</p>
+<p>Nodos y conexiones de la app; los nombres y límites de las regiones son ilustrativos.</p>
+
 Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan decisiones, aprendizajes y motivos que conviene reutilizar. Combínalas en **páginas Markdown editables con citas**, enlázalas con `[[wikilinks]]` y sigue las citas hasta los originales. Las páginas pueden incluir diagramas Mermaid, que la aplicación dibuja; cuando una herramienta de IA escribe una página, Wenlan revisa sus diagramas en busca de errores comunes e indica la línea que hay que corregir.
 
 - **Memorias atómicas:** Siguiendo el [principio de atomicidad de Zettelkasten](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), cada hallazgo puede recuperarse y reutilizarse por separado, sin cargar una conversación o página completa.
@@ -134,13 +141,6 @@ Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan 
 | Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
 
 Los PDF escaneados necesitan extracción de texto; los adjuntos de chats no se importan. [Guía de importación (en inglés)](docs/import-guide.md).
-
-<a id="explora-tu-grafo-de-conocimiento-personal"></a>
-
-<p align="center">
-  <img src="./docs/assets/wenlan-personal-graph.png" alt="Grafo real de Wenlan con regiones ilustrativas de intereses personales, investigación y desarrollo" width="100%">
-</p>
-<p>Nodos y conexiones de la app; los nombres y límites de las regiones son ilustrativos.</p>
 
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>
@@ -200,6 +200,11 @@ Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramien
 
 ## Steep: mantén útil el conocimiento cuando cambia
 
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Flujo ilustrativo: un hallazgo en un documento actualiza la memoria de V1 a V2 y después influye en una nota, que se actualiza automáticamente o queda pendiente de revisión." width="100%">
+</p>
+<p>Ilustración basada en el comportamiento actual de actualización; no es una captura de la app.</p>
+
 Guardar material es solo el comienzo. **Steep lo prepara para reutilizarlo y mantiene al día las páginas compatibles**, para que tú y tu IA podáis continuar a partir de hallazgos anteriores sin volver a procesar los originales.
 
 Elige uno de dos modos en Settings:
@@ -215,11 +220,6 @@ Qué hace Steep:
 - **Bloqueo de revisión:** Con **Lock pages I've written** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu revisión. Las páginas que escribió la IA siguen actualizándose.
 
 [Guía de Steep: activadores, reglas de revisión y modelos (en inglés)](docs/steep.md). Elige un modelo en el dispositivo, un servidor local o un proveedor en la nube; el trabajo en segundo plano con modelos es opcional.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Flujo ilustrativo: un hallazgo en un documento actualiza la memoria de V1 a V2 y después influye en una nota, que se actualiza automáticamente o queda pendiente de revisión." width="100%">
-</p>
-<p>Ilustración basada en el comportamiento actual de actualización; no es una captura de la app.</p>
 
 <a id="architecture"></a>
 

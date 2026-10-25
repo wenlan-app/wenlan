@@ -1999,6 +1999,18 @@ pub async fn ingest_webpage(
 }
 
 #[tauri::command]
+pub async fn fetch_webpage(
+    state: tauri::State<'_, State>,
+    url: String,
+) -> Result<responses::FetchWebpageResponse, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    client.fetch_webpage(&url).await
+}
+
+#[tauri::command]
 pub async fn distill_review(
     state: tauri::State<'_, State>,
 ) -> Result<crate::api::DistillReviewResponse, String> {

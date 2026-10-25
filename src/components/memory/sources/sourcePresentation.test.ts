@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, sourceLocatorLabel, type SourcePresentationInput } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourceKind, getSourcePresentation, sourceAppName, sourceAppSearchNames, sourceHandleFromUrl, sourceLinkKind, sourceLocatorLabel, type SourcePresentationInput } from "./sourcePresentation";
 
 const labels = { document: "Document", webExcerpt: "Web excerpt" };
 const source = (patch: Partial<SourcePresentationInput> = {}): SourcePresentationInput => ({
@@ -110,8 +110,43 @@ describe("source presentation", () => {
       ["https://acme.slack.com/archives/C024/p1712345678", "slack"],
       ["https://github.com/wenlan-app/wenlan/issues/12", "github"],
       ["HTTPS://Mail.Google.COM/mail/u/0/", "gmail"],
+      ["https://x.com/simonw/status/1849", "x"],
+      ["https://mobile.twitter.com/simonw/status/1849", "x"],
+      ["https://www.threads.net/@zuck/post/C1", "threads"],
+      ["https://www.threads.com/@zuck/post/C1", "threads"],
+      ["https://www.instagram.com/p/C1abc/", "instagram"],
+      ["https://www.xiaohongshu.com/explore/64ab", "xiaohongshu"],
+      ["http://xhslink.com/a/Ab12", "xiaohongshu"],
     ])("recognizes %s as %s", (url, app) => {
       expect(getSourceAppFromUrl(url)).toBe(app);
+    });
+
+    it.each([
+      ["https://x.com/simonw/status/1849", "simonw"],
+      ["https://twitter.com/simonw", "simonw"],
+      ["https://www.threads.net/@zuck/post/C1", "zuck"],
+      ["https://www.instagram.com/natgeo/", "natgeo"],
+      ["https://www.instagram.com/p/C1abc/", null],
+      ["https://x.com/i/web/status/1849", null],
+      ["https://x.com/search?q=wenlan", null],
+      ["https://www.xiaohongshu.com/explore/64ab", null],
+      ["https://example.com/simonw", null],
+    ])("finds the account in %s", (url, handle) => {
+      expect(sourceHandleFromUrl(url)).toBe(handle);
+    });
+
+    it.each([
+      ["https://x.com/i/web/status/1849", "post"],
+      ["https://www.instagram.com/p/C1abc/", "post"],
+      ["https://www.instagram.com/reel/C1abc/", "post"],
+      ["https://www.threads.net/@zuck/post/C1", "post"],
+      ["https://www.xiaohongshu.com/explore/64ab", "note"],
+      ["http://xhslink.com/a/Ab12", "note"],
+      ["https://mail.google.com/mail/u/0/#inbox/1", "message"],
+      ["https://www.instagram.com/natgeo/", null],
+      ["https://example.com/p/1", null],
+    ])("names what %s points at", (url, kind) => {
+      expect(sourceLinkKind(url)).toBe(kind);
     });
 
     it.each([
@@ -122,6 +157,8 @@ describe("source presentation", () => {
       "https://notion.so.example.com/x",
       "https://fakeslack.com/x",
       "https://gist.github.com/x",
+      "https://notx.com/x",
+      "https://instagram.com.example.com/p/1",
       "ftp://mail.google.com/x",
       "mail.google.com",
       "",
@@ -142,6 +179,16 @@ describe("source presentation", () => {
     it("keeps the app name identical whatever the UI labels say", () => {
       const file = source({ source: "webpage", source_id: "https://www.notion.so/team/Q4-roadmap-1a2b3c" });
       expect(getSourcePresentation(file, { document: "文件", webExcerpt: "網頁" }).metadata).toBe("Notion");
+    });
+
+    it("names RedNote the way each language knows it, and finds it by any of them", () => {
+      expect(sourceAppName("xiaohongshu", "en")).toBe("RedNote");
+      expect(sourceAppName("xiaohongshu", "zh-Hant")).toBe("小紅書");
+      expect(sourceAppName("xiaohongshu", "zh-Hans")).toBe("小红书");
+      expect(sourceAppName("x", "zh-Hant")).toBe("X");
+      expect(sourceAppSearchNames("xiaohongshu")).toContain("小紅書");
+      const file = source({ source: "webpage", source_id: "https://www.xiaohongshu.com/explore/64ab" });
+      expect(getSourcePresentation(file, { ...labels, language: "zh-Hant" }).metadata).toBe("小紅書");
     });
 
     it("leaves an unrecognized web page exactly as before", () => {

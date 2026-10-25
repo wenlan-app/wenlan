@@ -33,6 +33,28 @@ describe("live background AI preference", () => {
   });
 });
 
+describe("live pasted-link sources", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("creates through the create-only route and maps only a conflict", async () => {
+    const fetch = vi.fn(async () => new Response("exists", { status: 409 }));
+    vi.stubGlobal("fetch", fetch);
+    const req = { url: "https://example.com/a", content: "x", create_only: true };
+    await expect(liveInvoke("ingest_webpage", { req })).rejects.toThrow("WEBPAGE_ALREADY_EXISTS");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("/daemon/api/ingest/webpage/create", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("deletes a webpage source by encoded url and lists files in a Space", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ files: [{ source: "webpage" }] })));
+    vi.stubGlobal("fetch", fetch);
+    await liveInvoke("delete_file_chunks", { source: "webpage", sourceId: "https://example.com/a?b" });
+    expect(fetch).toHaveBeenCalledWith("/daemon/api/documents/webpage/https%3A%2F%2Fexample.com%2Fa%3Fb", expect.objectContaining({ method: "DELETE" }));
+    await expect(liveInvoke("list_indexed_files", { space: "Work" })).resolves.toEqual([{ source: "webpage" }]);
+    expect(fetch).toHaveBeenLastCalledWith("/daemon/api/indexed-files?space=Work", expect.objectContaining({ method: "GET" }));
+  });
+});
+
 /** Every command name passed to invoke(...) in src/lib/tauri.ts — both the
  *  plain `invoke("name", ...)` form and the generic-typed `invoke<T>("name")`
  *  form. */
@@ -1246,7 +1268,6 @@ const UNSTUBBED_DEBT = new Set([
   "delete_bulk",
   "delete_by_time_range",
   "delete_entity_cmd",
-  "delete_file_chunks",
   "delete_observation_cmd",
   "delete_snapshot",
   "delete_space",
@@ -1265,7 +1286,6 @@ const UNSTUBBED_DEBT = new Set([
   "get_snapshot_captures_with_content",
   "get_space",
   "import_chat_export",
-  "ingest_webpage",
   "install_client_plugin",
   "install_client_skills",
   "list_external_models",

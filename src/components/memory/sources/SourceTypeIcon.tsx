@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
-  EnvelopeSimple, File, FilePdf, FileText, Folder, GithubLogo, Globe, GoogleDriveLogo, Image as ImageIcon, NotionLogo, SlackLogo,
+  EnvelopeSimple, File, FilePdf, FileText, Folder, GithubLogo, Globe, GoogleDriveLogo, Image as ImageIcon, InstagramLogo, NotionLogo,
+  SlackLogo, ThreadsLogo, XLogo,
 } from "@phosphor-icons/react";
 import logseqLogo from "../../../assets/logseq-logo.svg";
 import obsidianLogo from "../../../assets/obsidian-logo-gradient.svg";
+import xiaohongshuLogo from "../../../assets/xiaohongshu-logo.svg";
 import type { NoteApp, SourceApp, SourceKind } from "./sourcePresentation";
 
 const ICONS = {
@@ -19,7 +21,13 @@ const ICONS = {
   notion: NotionLogo,
   slack: SlackLogo,
   github: GithubLogo,
-} satisfies Record<SourceKind | SourceApp | "folder", typeof File>;
+  x: XLogo,
+  threads: ThreadsLogo,
+  instagram: InstagramLogo,
+} satisfies Record<Exclude<SourceKind | SourceApp | "folder", "xiaohongshu">, typeof File>;
+
+// Phosphor has no RedNote mark; its logo is a red badge.
+const LOGOS = { obsidian: obsidianLogo, logseq: logseqLogo, xiaohongshu: xiaohongshuLogo } as const;
 
 export function SourceTypeIcon({
   kind,
@@ -30,9 +38,9 @@ export function SourceTypeIcon({
   size?: number;
   className?: string;
 }) {
-  if (kind === "obsidian" || kind === "logseq") {
+  if (kind === "obsidian" || kind === "logseq" || kind === "xiaohongshu") {
     return <img alt="" aria-hidden="true" className={className} data-resource-icon={kind}
-      src={kind === "obsidian" ? obsidianLogo : logseqLogo} width={size} height={size} style={{ flexShrink: 0, objectFit: "contain" }} />;
+      src={LOGOS[kind]} width={size} height={size} style={{ flexShrink: 0, objectFit: "contain" }} />;
   }
   const Icon = ICONS[kind];
   return <Icon aria-hidden="true" className={className} data-resource-icon={kind} focusable="false" size={size} weight="regular" />;

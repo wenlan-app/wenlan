@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=293c4cc4fec5327467c507276c8b65b2f87df9144fd3e5900a67c461c5498159 -->
+<!-- README_SYNC: source=README.md sha256=220017d2ab7183acce7a016af2bd768dfe94f830fe24cd1d24a17e489be32c84 -->
 
 <p align="center">
   <picture>
@@ -31,9 +31,9 @@
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
 
-https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a
-
-<p>封面為實機畫面與示範資料的合成圖；圖譜為示意，非 App 原生三欄版面。</p>
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/40374fc0-dc6e-41e1-bc48-7740c735911a"><img src="./docs/assets/readme-video-cover-zh-Hant.png" alt="觀看 Wenlan 操作導覽" width="100%"></a>
+</p>
 
 <a id="why-wenlan"></a>
 
@@ -110,6 +110,13 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 ## 把散落的資料整理成知識
 
+<a id="探索你的個人知識圖譜"></a>
+
+<p align="center">
+  <img src="./docs/assets/wenlan-personal-graph-zh-Hant.png" alt="Wenlan 實機知識圖譜，搭配個人興趣、研究與開發的區域示意" width="100%">
+</p>
+<p>保留實機節點與連線；文字經翻譯，區域名稱與範圍為示意。</p>
+
 **來源**保留文件與對話原文；**記憶**留下值得重用的決定、心得與理由。兩者可整理成**帶有引用、可編輯的 Markdown 筆記**，用 `[[wikilinks]]` 連結筆記，也能沿引用查回原文。筆記可以包含 Mermaid 圖表，由 App 繪製；AI 工具寫入筆記時，文瀾會檢查圖表的常見錯誤，並指出要修改的那一行。
 
 - **原子記憶**：延續 [Zettelkasten（卡片盒筆記法）的原子化原則](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，讓每筆發現能獨立找回、重用，不必載入整段對話或整個筆記。
@@ -127,13 +134,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 | 既有記憶文字 | 將偏好、決定或心得保存為獨立記憶。 |
 
 掃描版 PDF 須先擷取文字；對話附件不會匯入。[匯入教學](docs/import-guide.zh-Hant.md)。
-
-<a id="探索你的個人知識圖譜"></a>
-
-<p align="center">
-  <img src="./docs/assets/wenlan-personal-graph-zh-Hant.png" alt="Wenlan 實機知識圖譜，搭配個人興趣、研究與開發的區域示意" width="100%">
-</p>
-<p>保留實機節點與連線；文字經翻譯，區域名稱與範圍為示意。</p>
 
 <a id="daily-workflow"></a>
 
@@ -214,6 +214,11 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 ## Steep（沉澱）：讓知識持續更新
 
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
+</p>
+<p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
+
 保存資料只是開始。**沉澱讓資料更容易重用，也讓引用它的筆記跟上新發現**，讓你和 AI 延續已有的理解，不必每次重新翻閱原始內容。
 
 在「設定」中選擇兩種方式之一：
@@ -229,11 +234,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 - **審核鎖定**：開啟「我寫過的頁面自動上鎖」（新安裝預設開啟）後，AI 對你寫過或改過的筆記所做的修改會先等你審核。AI 寫的筆記照常更新。
 
 [沉澱指南：觸發條件、審核規則與模型設定](docs/steep.zh-Hant.md)。可選裝置端模型、本地服務或雲端供應商；模型驅動的背景處理為選配。
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history-zh-Hant.png" alt="示意流程：文件來源中的發現將記憶由 V1 更新為 V2，再影響自動更新或待審修訂的筆記。" width="100%">
-</p>
-<p>示意圖依據目前的更新行為繪製；並非 App 截圖。</p>
 
 <a id="architecture"></a>
 

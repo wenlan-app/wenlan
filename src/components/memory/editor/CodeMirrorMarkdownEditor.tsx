@@ -28,6 +28,7 @@ import type { TFunction } from "i18next";
 import { toast } from "sonner";
 import { createSlashEditing, refreshSlashLabels, slashItems, type SlashLabels } from "./slashEditing";
 import { mediaPaste } from "./mediaPaste";
+import { setSourceLinkUrls, sourceIconMount, sourceLinkUrls, sourcePaste, type SourcePasteLabels } from "./sourcePaste";
 import type {
   MarkdownEditorHandle,
   MarkdownEditorProps,
@@ -57,6 +58,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   const slashLabelsRef = useRef<SlashLabels>({ label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels);
   const linkLabelsRef = useRef<LinkCompletionLabels>(linkCompletionLabels(t));
   const linkNotesRef = useRef<readonly LinkCompletionNote[]>(props.linkNotes ?? []);
+  const sourcePasteLabelsRef = useRef<SourcePasteLabels>(sourcePasteLabels(t));
   const mountRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const focusRequestedRef = useRef(false);
@@ -81,6 +83,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     onWikiLinkPreview: props.onWikiLinkPreview,
     onWikiLinkPreviewLeave: props.onWikiLinkPreviewLeave,
     onLinkPick: props.onLinkPick,
+    onSavePastedSource: props.onSavePastedSource,
+    mountSourceIcon: props.mountSourceIcon,
   });
 
   const publishStatus = (view: EditorView): void => {
@@ -147,8 +151,13 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   useLayoutEffect(() => {
     slashLabelsRef.current = { label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels;
     linkLabelsRef.current = linkCompletionLabels(t);
+    sourcePasteLabelsRef.current = sourcePasteLabels(t);
     viewRef.current?.dispatch({ effects: [refreshSlashLabels.of(null), refreshLinkCompletion.of(null)] });
   }, [t]);
+
+  useLayoutEffect(() => {
+    if (props.sourceLinks) viewRef.current?.dispatch({ effects: setSourceLinkUrls.of(props.sourceLinks) });
+  }, [props.sourceLinks]);
 
   useLayoutEffect(() => {
     linkNotesRef.current = props.linkNotes ?? [];
@@ -170,6 +179,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       onWikiLinkPreview: props.onWikiLinkPreview,
       onWikiLinkPreviewLeave: props.onWikiLinkPreviewLeave,
       onLinkPick: props.onLinkPick,
+      onSavePastedSource: props.onSavePastedSource,
+      mountSourceIcon: props.mountSourceIcon,
     };
   }, [
     props.onCancel,
@@ -184,6 +195,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     props.onWikiLinkPreview,
     props.onWikiLinkPreviewLeave,
     props.onLinkPick,
+    props.onSavePastedSource,
+    props.mountSourceIcon,
     props.sessionId,
   ]);
 
@@ -295,6 +308,17 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               blocked: actionsBlocked,
               onError: (file) => toast.error(t("pageAttachments.failed", { name: file.name || "file" })),
               pendingLabel: (file) => t("pageAttachments.adding", { name: file.name || "file" }),
+            }),
+            sourceLinkUrls.init(() => props.sourceLinks ?? new Map()),
+            sourceIconMount.of((container, url) => callbacksRef.current.mountSourceIcon?.(container, url) ?? (() => undefined)),
+            sourcePaste({
+              blocked: actionsBlocked,
+              enabled: () => Boolean(callbacksRef.current.onSavePastedSource),
+              labels: () => sourcePasteLabelsRef.current,
+              save: (url, label) => {
+                const save = callbacksRef.current.onSavePastedSource;
+                return save ? save(url, label) : Promise.reject(new Error("unavailable"));
+              },
             }),
             props.linkNotes ? createLinkCompletion({
               notes: () => linkNotesRef.current,
@@ -469,5 +493,15 @@ function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
     empty: t("linkCompletion.empty"),
     useAsSource: t("noteBasis.useAsSource"),
     useAsSourceHint: t("noteBasis.useAsSourceHint"),
+  };
+}
+
+function sourcePasteLabels(t: TFunction): SourcePasteLabels {
+  return {
+    saving: t("sourcePaste.saving"),
+    savedLinkOnly: t("sourcePaste.savedLinkOnly"),
+    unreadable: t("sourcePaste.unreadable"),
+    failed: t("sourcePaste.failed"),
+    retry: t("sourcePaste.retry"),
   };
 }

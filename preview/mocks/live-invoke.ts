@@ -986,6 +986,24 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     throw new Error("Pasting images and videos requires the native Wenlan app.");
   },
 
+  // Saving a pasted link as a source (PageDetail). Mirrors app/src/api.rs:
+  // a create-only ingest fails closed on 409 instead of replacing the page.
+  fetch_webpage: (a) => post("/api/webpage/fetch", { url: a?.url }),
+  ingest_webpage: async (a) => {
+    const req = a?.req ?? {};
+    if (!req.create_only) return post("/api/ingest/webpage", req);
+    try {
+      return await post("/api/ingest/webpage/create", req);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) throw new Error("WEBPAGE_ALREADY_EXISTS");
+      throw e;
+    }
+  },
+  list_indexed_files: (a) =>
+    get(`/api/indexed-files${a?.space ? qs({ space: a.space }) : ""}`).then((r) => r?.files ?? []),
+  delete_file_chunks: (a) =>
+    del(`/api/documents/${enc(String(a?.source ?? ""))}/${enc(String(a?.sourceId ?? ""))}`).then(() => undefined),
+
   // --- home / profile / spaces / misc ---
   get_home_stats: () => get("/api/home-stats"),
   get_briefing: () => get("/api/briefing"),
@@ -1246,7 +1264,6 @@ export const DEFAULTS: Record<string, unknown> = {
   list_watch_paths: [],
   list_sources: [],
   list_registered_sources: [],
-  list_indexed_files: [],
   list_pending_imports: [],
   get_index_status: {
     indexing: false,
