@@ -222,7 +222,7 @@ describe("CitationChip", () => {
     expect(chip).not.toHaveTextContent("mem-1");
     expect(screen.getByText("Source removed")).toBeInTheDocument();
     expect(screen.getByText(/update the page from its sources/i)).toBeInTheDocument();
-    expect(screen.getByText("mem-1")).toBeInTheDocument();
+    expect(screen.queryByText("mem-1")).toBeNull();
     await user.click(chip);
     expect(onOpenMemory).not.toHaveBeenCalled();
   });

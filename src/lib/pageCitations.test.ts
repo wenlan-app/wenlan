@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import type { PageCitation } from "./tauri";
 import {
+  CITATION_ANCHOR_PREFIX,
   processCitations,
   citationSourceNumbers,
   stripCitationLinks,
@@ -44,6 +45,12 @@ describe("processCitations", () => {
     expect(r.content).toBe("A claim.[1](#citation:1) Another.[2](#citation:2)");
     expect(r.byOccurrence.get(1)?.locator).toBe("mem-1");
     expect(r.byOccurrence.get(2)?.locator).toBe("mem-2");
+  });
+
+  it("drops a marker on the reader's own sentence and keeps the visible numbers contiguous", () => {
+    const r = processCitations("Mine [1]. Sourced [2].", [cite(1, 1, { source_kind: "authored" }), cite(2, 2)]);
+    expect(r.content).toBe(`Mine. Sourced [2](${CITATION_ANCHOR_PREFIX}2).`);
+    expect(r.sourceNumberByOccurrence.get(2)).toBe(1);
   });
 
   it("numbers multi-source runs like [1][3] by occurrence, not marker", () => {
