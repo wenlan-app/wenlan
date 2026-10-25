@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { i18n } from "../../../i18n";
@@ -195,6 +195,75 @@ describe("ActivityNow", () => {
     renderNow(activity({ state: "off" }));
     expect(await screen.findByTestId("activity-now-off")).toHaveTextContent("Steeping runs on demand.");
     expect(screen.queryByTestId("activity-now-idle")).toBeNull();
+  });
+
+  it("shows Prepare as running in On demand mode, not waiting", async () => {
+    renderNow(activity({
+      state: "off",
+      assets: [{
+        kind: "memories",
+        state: "running",
+        done: 40,
+        total: 40,
+        blocked: 0,
+        steps: [
+          { name: "store", state: "idle", done: 40, total: 40, failed: 0, job: null },
+          { name: "embed", state: "running", done: 700, total: 1000, failed: 0, job: null },
+          { name: "summarize", state: "idle", done: 40, total: 40, failed: 0, job: "everyday" },
+        ],
+      }],
+    }));
+
+    expect(await screen.findByTestId("activity-now-off")).toBeInTheDocument();
+    const memories = screen.getByRole("region", { name: "Memories" });
+    const step = within(memories).getByTestId("activity-now-running-step");
+    expect(step).toHaveTextContent("Prepare");
+    expect(step).toHaveTextContent("Running");
+    expect(step).toHaveTextContent("700 / 1000 passages");
+    expect(within(memories).queryByText("Waiting")).toBeNull();
+  });
+
+  it("keeps AI steps waiting On demand while Prepare runs beside them", async () => {
+    renderNow(activity({
+      state: "off",
+      assets: [{
+        kind: "memories",
+        state: "running",
+        done: 0,
+        total: 8,
+        blocked: 0,
+        steps: [
+          { name: "embed", state: "running", done: 1, total: 4, failed: 0, job: null },
+          { name: "summarize", state: "running", done: 0, total: 8, failed: 0, job: "everyday" },
+        ],
+      }],
+    }));
+
+    await screen.findByTestId("activity-now-off");
+    const running = screen.getAllByTestId("activity-now-running-step");
+    expect(running).toHaveLength(1);
+    expect(running[0]).toHaveTextContent("Prepare");
+    expect(screen.getByText("Summarize").closest(".mem-activity-step")).toHaveTextContent("Waiting");
+  });
+
+  it("leaves out an idle Prepare step with nothing to prepare", async () => {
+    renderNow(activity({
+      assets: [{
+        kind: "memories",
+        state: "idle",
+        done: 2,
+        total: 2,
+        blocked: 0,
+        steps: [
+          { name: "store", state: "idle", done: 2, total: 2, failed: 0, job: null },
+          { name: "embed", state: "idle", done: 0, total: 0, failed: 0, job: null },
+        ],
+      }],
+    }));
+
+    expect(await screen.findByText("Store")).toBeInTheDocument();
+    expect(screen.queryByText("Prepare")).toBeNull();
+    expect(screen.queryByTestId("activity-now-unknown")).toBeNull();
   });
 
   it.each([

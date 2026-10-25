@@ -9,7 +9,10 @@ import {
   knownAssets,
   knownState,
   onDemandPagesWaiting,
+  runsInEveryMode,
   STEP_UNIT,
+  type KnownActivityAsset,
+  type KnownActivityStep,
 } from "../../../lib/activitySentence";
 import { useActivity } from "../../../lib/useActivity";
 
@@ -23,6 +26,25 @@ const displayState = (state: string, onDemand: boolean) =>
   onDemand && (state === "running" || state === "blocked")
     ? "waiting"
     : state === "idle" || state === "running" || state === "blocked" ? state : "unknown";
+// A step that runs in every mode (Embed, on the built-in embedder) keeps its
+// own state On demand: it really is running, not waiting for the AI tool.
+const stepDisplayState = (step: KnownActivityStep, onDemand: boolean) =>
+  displayState(step.state, onDemand && !runsInEveryMode(step.name));
+// On demand, an asset waits only on steps that need the user's AI tool. With
+// none of those pending, a running every-mode step makes it read as running.
+const assetDisplayState = (asset: KnownActivityAsset, onDemand: boolean) => {
+  if (!onDemand) return displayState(asset.state, false);
+  const waiting = asset.steps.some((step) =>
+    !runsInEveryMode(step.name) && (step.state === "running" || step.state === "blocked"));
+  if (!waiting && asset.steps.some((step) => runsInEveryMode(step.name) && step.state === "running")) {
+    return "running";
+  }
+  return displayState(asset.state, true);
+};
+// Embed exists only while a big import is being prepared; idle at 0 of 0 it
+// has nothing to say, so its row is left out.
+const shownStep = (step: KnownActivityStep) =>
+  !(step.name === "embed" && step.state === "idle" && step.total === 0);
 
 export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenIntelligence?: () => void }) {
   const { t } = useTranslation();
@@ -139,7 +161,7 @@ export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenInt
           <div className="mem-activity-asset-list">
             {assets.map((asset) => {
               const sentence = assetSentence(activity, asset);
-              const assetState = displayState(asset.state, summary === "off");
+              const assetState = assetDisplayState(asset, summary === "off");
               const AssetIcon = ASSET_ICONS[asset.kind];
               return (
                 <section key={asset.kind} className="mem-activity-asset-row" aria-label={t(`activityStatus.asset.${asset.kind}`)}>
@@ -150,9 +172,9 @@ export default function ActivityNow({ onOpenIntelligence }: { readonly onOpenInt
                     </span>
                   </div>
                   <div className="mem-activity-step-list">
-                    {asset.steps.map((step) => {
+                    {asset.steps.filter(shownStep).map((step) => {
                       const count = { key: `activityStatus.compactStepCount.${STEP_UNIT[step.name]}` as const, params: { count: step.total, done: step.done } };
-                      const state = displayState(step.state, summary === "off");
+                      const state = stepDisplayState(step, summary === "off");
 
                       const measurable = Number.isFinite(step.total) && step.total > 0 && Number.isFinite(step.done) && step.done >= 0;
                       const completed = measurable && step.done >= step.total;

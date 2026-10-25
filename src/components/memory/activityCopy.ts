@@ -156,6 +156,7 @@ export const enActivityStatus = {
   readAgain: "Read again",
   runningStep: {
     store: "Storing memories.",
+    embed: "Preparing passages for search.",
     summarize: "Organizing memory summaries.",
     link: "Linking related memories.",
     detect: "Identifying topics in memories.",
@@ -165,6 +166,8 @@ export const enActivityStatus = {
   failedStep: {
     store_one: "{{count}} memory could not be stored.",
     store_other: "{{count}} memories could not be stored.",
+    embed_one: "{{count}} passage could not be prepared.",
+    embed_other: "{{count}} passages could not be prepared.",
     summarize_one: "{{count}} memory could not be summarized.",
     summarize_other: "{{count}} memories could not be summarized.",
     link_one: "{{count}} memory could not be linked.",
@@ -181,6 +184,7 @@ export const enActivityStatus = {
   hideSteps: "Hide steps",
   step: {
     store: "Store",
+    embed: "Prepare",
     summarize: "Summarize",
     link: "Link",
     detect: "Detect",
@@ -189,6 +193,7 @@ export const enActivityStatus = {
   },
   stepValue: {
     store: "saved and searchable right away",
+    embed: "so search by meaning finds them",
     summarize: "summary and tags so recall is accurate",
     link: "connected to related memories and entities",
     detect: "people, projects and tools you mention",
@@ -210,6 +215,8 @@ export const enActivityStatus = {
     entities_other: "{{done}} / {{count}} entities",
     pages_one: "{{done}} / {{count}} page",
     pages_other: "{{done}} / {{count}} pages",
+    passages_one: "{{done}} / {{count}} passage",
+    passages_other: "{{done}} / {{count}} passages",
   },
   moreDetails: "Details",
   processingDetails: "Models and privacy",
@@ -221,6 +228,8 @@ export const enActivityStatus = {
     entities_other: "{{done}} of {{count}} entities",
     pages_one: "{{done}} of {{count}} page",
     pages_other: "{{done}} of {{count}} pages",
+    passages_one: "{{done}} of {{count}} passage",
+    passages_other: "{{done}} of {{count}} passages",
   },
   lane: {
     on_device: "on this machine",
@@ -378,6 +387,7 @@ export const hansActivityStatus = {
   readAgain: "重新读取",
   runningStep: {
     store: "正在存入记忆。",
+    embed: "正在为搜索准备段落。",
     summarize: "正在整理记忆摘要。",
     link: "正在关联相关记忆。",
     detect: "正在识别记忆中的主题。",
@@ -387,6 +397,8 @@ export const hansActivityStatus = {
   failedStep: {
     store_one: "有 {{count}} 条记忆未能存入。",
     store_other: "有 {{count}} 条记忆未能存入。",
+    embed_one: "有 {{count}} 段未能准备好。",
+    embed_other: "有 {{count}} 段未能准备好。",
     summarize_one: "有 {{count}} 条记忆未能生成摘要。",
     summarize_other: "有 {{count}} 条记忆未能生成摘要。",
     link_one: "有 {{count}} 条记忆未能关联相关内容。",
@@ -403,6 +415,7 @@ export const hansActivityStatus = {
   hideSteps: "收起步骤",
   step: {
     store: "存入",
+    embed: "准备",
     summarize: "摘要",
     link: "关联",
     detect: "识别",
@@ -411,6 +424,7 @@ export const hansActivityStatus = {
   },
   stepValue: {
     store: "存入后立即可搜索",
+    embed: "让按意思搜索也能找到",
     summarize: "生成摘要与标签，让回忆更准确",
     link: "与相关记忆和实体建立关联",
     detect: "你提到的人、项目和工具",
@@ -432,6 +446,8 @@ export const hansActivityStatus = {
     entities_other: "{{done}} / {{count}} 个实体",
     pages_one: "{{done}} / {{count}} 篇笔记",
     pages_other: "{{done}} / {{count}} 篇笔记",
+    passages_one: "{{done}} / {{count}} 段",
+    passages_other: "{{done}} / {{count}} 段",
   },
   moreDetails: "详情",
   processingDetails: "模型与隐私",
@@ -442,6 +458,8 @@ export const hansActivityStatus = {
     entities_other: "{{count}} 个实体中已完成 {{done}} 个",
     pages_one: "{{count}} 篇笔记中已完成 {{done}} 篇",
     pages_other: "{{count}} 篇笔记中已完成 {{done}} 篇",
+    passages_one: "{{count}} 段中已完成 {{done}} 段",
+    passages_other: "{{count}} 段中已完成 {{done}} 段",
   },
   lane: {
     on_device: "在本机",
@@ -587,6 +605,7 @@ export const hantActivityStatus = {
   readAgain: "重新讀取",
   runningStep: {
     store: "正在儲存記憶。",
+    embed: "正在為搜尋準備段落。",
     summarize: "正在整理記憶摘要。",
     link: "正在連結相關內容。",
     detect: "正在辨識記憶中的主題。",
@@ -596,6 +615,8 @@ export const hantActivityStatus = {
   failedStep: {
     store_one: "有 {{count}} 則記憶未能存入。",
     store_other: "有 {{count}} 則記憶未能存入。",
+    embed_one: "有 {{count}} 段未能準備好。",
+    embed_other: "有 {{count}} 段未能準備好。",
     summarize_one: "有 {{count}} 則記憶未能產生摘要。",
     summarize_other: "有 {{count}} 則記憶未能產生摘要。",
     link_one: "有 {{count}} 則記憶未能連結相關內容。",
@@ -612,6 +633,7 @@ export const hantActivityStatus = {
   hideSteps: "收合步驟",
   step: {
     store: "存入",
+    embed: "準備",
     summarize: "摘要",
     link: "關聯",
     detect: "辨識",
@@ -620,6 +642,7 @@ export const hantActivityStatus = {
   },
   stepValue: {
     store: "存入後立即可搜尋",
+    embed: "讓用意思搜尋也找得到",
     summarize: "產生摘要與標籤，讓回想更準確",
     link: "與相關記憶和實體建立關聯",
     detect: "你提到的人、專案和工具",
@@ -641,6 +664,8 @@ export const hantActivityStatus = {
     entities_other: "{{done}} / {{count}} 個實體",
     pages_one: "{{done}} / {{count}} 篇筆記",
     pages_other: "{{done}} / {{count}} 篇筆記",
+    passages_one: "{{done}} / {{count}} 段",
+    passages_other: "{{done}} / {{count}} 段",
   },
   moreDetails: "詳細資料",
   processingDetails: "模型與隱私",
@@ -651,6 +676,8 @@ export const hantActivityStatus = {
     entities_other: "{{count}} 個實體中已完成 {{done}} 個",
     pages_one: "{{count}} 篇筆記中已完成 {{done}} 篇",
     pages_other: "{{count}} 篇筆記中已完成 {{done}} 篇",
+    passages_one: "{{count}} 段中已完成 {{done}} 段",
+    passages_other: "{{count}} 段中已完成 {{done}} 段",
   },
   lane: {
     on_device: "在本機",

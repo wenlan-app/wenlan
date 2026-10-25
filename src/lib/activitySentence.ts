@@ -138,15 +138,46 @@ function findStep(
   return asset.steps.find((step) => step.name === name);
 }
 
+/**
+ * The unit a step counts in: an asset's own items, or passages for Embed,
+ * which prepares memory rows (one memory can be several passages).
+ */
+export type StepUnit = KnownActivityAssetKind | "passages";
+
 /** What one step counts. Detect scans memories; Confirm settles entities. */
-export const STEP_UNIT: Readonly<Record<KnownActivityStepName, KnownActivityAssetKind>> = {
+export const STEP_UNIT: Readonly<Record<KnownActivityStepName, StepUnit>> = {
   store: "memories",
+  embed: "passages",
   summarize: "memories",
   link: "memories",
   detect: "memories",
   confirm: "entities",
   write: "pages",
 };
+
+/**
+ * Steps that run in every mode, On demand and Off included. Embed prepares
+ * passages for search by meaning with the built-in embedder, not the user's
+ * AI model, so it is never "waiting for your AI tool" and never blocked.
+ */
+const RUNS_IN_EVERY_MODE: ReadonlySet<KnownActivityStepName> = new Set(["embed"]);
+
+export function runsInEveryMode(name: KnownActivityStepName): boolean {
+  return RUNS_IN_EVERY_MODE.has(name);
+}
+
+/**
+ * Passages a big import stored that search by meaning cannot find yet:
+ * what the running Embed step still has to do. Zero when nothing waits, the
+ * step is idle, or a daemon predates the step.
+ */
+export function passagesBeingPrepared(activity: ActivityResponse | undefined): number {
+  if (activity === undefined) return 0;
+  const memories = activity.assets.find((asset) => asset.kind === "memories");
+  const embed = memories?.steps.find((step) => step.name === "embed");
+  if (embed === undefined || embed.state !== "running") return 0;
+  return Math.max(0, embed.total - embed.done);
+}
 
 /** "3 of 12 memories": a step's count with the unit it actually counts. */
 export function stepCount(step: KnownActivityStep): Phrase {

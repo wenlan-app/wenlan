@@ -147,7 +147,7 @@ async fn rows_waiting_for_the_background_embedding_are_not_an_embedding_finding(
     let report = run_at(&db, 1_000_000, TestMemoryFeatures::default()).await;
     assert_eq!(outcome(&report, EMBEDDING_ID), LintOutcome::Pass);
 
-    db.set_embedding_backlog(false);
+    db.end_embedding_catch_up();
     let report = run_at(&db, 1_000_000, TestMemoryFeatures::default()).await;
     assert_eq!(outcome(&report, EMBEDDING_ID), LintOutcome::Finding);
 }

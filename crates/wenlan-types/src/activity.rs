@@ -43,12 +43,19 @@ pub enum ActivityAssetKind {
     Unknown,
 }
 
-/// One background step inside an asset. `Store` and `Confirm` finish without
-/// a model lane (the import request stores; the user confirms).
+/// One background step inside an asset. `Store`, `Embed` and `Confirm` finish
+/// without a model lane (the import request stores; the built-in embedder
+/// prepares; the user confirms).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityStepName {
     Store,
+    /// Memory rows a big import stored without a vector, which the built-in
+    /// embedder prepares for search by meaning in the background. Keyword
+    /// search already finds them. Counts rows (passages), not memories, and
+    /// runs in every mode: it needs neither the user's AI model nor
+    /// background AI, and is never blocked.
+    Embed,
     Summarize,
     Link,
     Detect,
@@ -60,16 +67,19 @@ pub enum ActivityStepName {
 }
 
 impl ActivityStepName {
-    /// The job whose resolved lane serves this step; `None` for the laneness
-    /// steps `Store` (done inside the import request) and `Confirm`
-    /// (user-driven in the Wiki).
+    /// The job whose resolved lane serves this step; `None` for the laneless
+    /// steps `Store` (done inside the import request), `Embed` (the built-in
+    /// embedder) and `Confirm` (user-driven in the Wiki).
     pub fn job(self) -> Option<ActivityJob> {
         match self {
             ActivityStepName::Summarize | ActivityStepName::Link | ActivityStepName::Detect => {
                 Some(ActivityJob::Everyday)
             }
             ActivityStepName::Write => Some(ActivityJob::Synthesis),
-            ActivityStepName::Store | ActivityStepName::Confirm | ActivityStepName::Unknown => None,
+            ActivityStepName::Store
+            | ActivityStepName::Embed
+            | ActivityStepName::Confirm
+            | ActivityStepName::Unknown => None,
         }
     }
 }
@@ -132,7 +142,8 @@ pub struct ActivityStep {
     pub done: u64,
     pub total: u64,
     pub failed: u64,
-    /// The job whose lane serves this step; `None` for Store and Confirm.
+    /// The job whose lane serves this step; `None` for Store, Embed and
+    /// Confirm.
     pub job: Option<ActivityJob>,
 }
 
@@ -216,6 +227,17 @@ mod tests {
         }
     }
 
+    /// An app from before `Embed` reads it as `Unknown`, not a parse failure.
+    #[test]
+    fn embed_step_wire_label() {
+        assert_eq!(
+            serde_json::to_value(ActivityStepName::Embed).unwrap(),
+            serde_json::Value::String("embed".to_string())
+        );
+        let back: ActivityStepName = serde_json::from_str("\"embed\"").unwrap();
+        assert_eq!(back, ActivityStepName::Embed);
+    }
+
     #[test]
     fn activity_step_job_mapping() {
         assert_eq!(
@@ -226,6 +248,7 @@ mod tests {
         assert_eq!(ActivityStepName::Detect.job(), Some(ActivityJob::Everyday));
         assert_eq!(ActivityStepName::Write.job(), Some(ActivityJob::Synthesis));
         assert_eq!(ActivityStepName::Store.job(), None);
+        assert_eq!(ActivityStepName::Embed.job(), None);
         assert_eq!(ActivityStepName::Confirm.job(), None);
         assert_eq!(ActivityStepName::Unknown.job(), None);
     }

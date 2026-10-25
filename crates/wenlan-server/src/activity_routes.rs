@@ -14,7 +14,7 @@ use crate::scheduler::AmbientGateSnapshot;
 use crate::state::SharedState;
 use axum::{extract::State, response::Json};
 use wenlan_core::config;
-use wenlan_core::db::ActivityCounts;
+use wenlan_core::db::{ActivityCounts, EmbeddingBacklog};
 use wenlan_types::activity::{
     ActivityAssetKind, ActivityAssetStatus, ActivityJob, ActivityLane, ActivityRefinement,
     ActivityRefinementGroup, ActivityResponse, ActivityRoute, ActivityState, ActivityStep,
@@ -51,12 +51,34 @@ pub async fn handle_activity(
         .active_import_batches(DEFAULT_ACTIVE_IMPORT_BATCH_LIMIT)
         .await?;
     let mut response = compose_activity(counts, &batches, &everyday, &synthesis);
-    response.state = if cfg.background_ai_enabled() {
-        held_until_idle(response.state, work_can_run)
+    response.state = final_state(
+        &response,
+        &batches,
+        cfg.background_ai_enabled(),
+        work_can_run,
+    );
+    Ok(Json(response))
+}
+
+/// The state the route reports: Off when background AI is off (whatever
+/// runs, including the Embed catch-up, which needs no AI model), otherwise
+/// the composed state refined by the scheduler's gate. Steps keep their own
+/// states either way, so Embed reads Running in every mode.
+fn final_state(
+    response: &ActivityResponse,
+    batches: &[ImportBatchStatus],
+    background_ai_enabled: bool,
+    work_can_run: Option<bool>,
+) -> ActivityState {
+    if background_ai_enabled {
+        held_until_idle(
+            response.state,
+            work_can_run,
+            gated_work_in_flight(response, batches),
+        )
     } else {
         ActivityState::Off
-    };
-    Ok(Json(response))
+    }
 }
 
 /// Organizing work that cannot run yet becomes WaitingForIdle. The scheduler
@@ -67,10 +89,54 @@ pub async fn handle_activity(
 /// held, its work waits like everything else. Before the first check (`None`)
 /// nothing is claimed. Every other state passes through: Blocked needs the
 /// user, and UpToDate has nothing to hold.
-fn held_until_idle(state: ActivityState, work_can_run: Option<bool>) -> ActivityState {
+///
+/// `gated_work` is false when the only work in flight is the Embed catch-up,
+/// which the gate does not hold: it is really running, so it stays
+/// Organizing rather than claiming to wait for an idle computer.
+fn held_until_idle(
+    state: ActivityState,
+    work_can_run: Option<bool>,
+    gated_work: bool,
+) -> ActivityState {
     match state {
-        ActivityState::Organizing if work_can_run == Some(false) => ActivityState::WaitingForIdle,
+        ActivityState::Organizing if gated_work && work_can_run == Some(false) => {
+            ActivityState::WaitingForIdle
+        }
         other => other,
+    }
+}
+
+/// Whether any work the scheduler's gate holds is in flight: an unfinished
+/// import batch or a running step other than Embed. Embed runs on the
+/// built-in embedder under a maintenance lease, outside the gate.
+fn gated_work_in_flight(response: &ActivityResponse, batches: &[ImportBatchStatus]) -> bool {
+    batches.iter().any(|batch| !batch.complete)
+        || response.assets.iter().any(|asset| {
+            asset.steps.iter().any(|step| {
+                step.name != ActivityStepName::Embed && step.state == ActivityStepState::Running
+            })
+        })
+}
+
+/// The Embed step: rows a big import stored without a vector, which the
+/// built-in embedder catches up on in the background. Running with done of
+/// total while rows wait, Idle at 0 of 0 otherwise. Never Blocked and never
+/// failed: it needs no model lane, and a row it cannot embed is counted
+/// again by the next run. Like the other steps, done is finished work and
+/// total is done plus what is still waiting.
+fn embed_step(backlog: EmbeddingBacklog) -> ActivityStep {
+    let waiting = backlog.remaining > 0;
+    ActivityStep {
+        name: ActivityStepName::Embed,
+        state: if waiting {
+            ActivityStepState::Running
+        } else {
+            ActivityStepState::Idle
+        },
+        done: if waiting { backlog.done() } else { 0 },
+        total: if waiting { backlog.total } else { 0 },
+        failed: 0,
+        job: ActivityStepName::Embed.job(),
     }
 }
 
@@ -267,15 +333,23 @@ pub(crate) fn compose_activity(
         failed: link_tally.failed,
         job: ActivityStepName::Link.job(),
     };
-    let memory_steps = vec![store, summarize, link];
-    let (memories_done, memories_total) = headline(&memory_steps, ActivityStepName::Summarize);
+    let embed = embed_step(counts.embedding_backlog);
+    // The headline leaves Embed out: it counts passages (rows), not
+    // memories, so the asset's numbers stay in memories. Its Running state
+    // still rolls up, because the work is real and runs in every mode.
+    let (memories_done, memories_total) = headline(
+        &[store.clone(), summarize.clone(), link.clone()],
+        ActivityStepName::Summarize,
+    );
+    let memory_steps = vec![store, embed, summarize, link];
     let memories = ActivityAssetStatus {
         kind: ActivityAssetKind::Memories,
-        state: rollup(&[
-            memory_steps[0].state,
-            memory_steps[1].state,
-            memory_steps[2].state,
-        ]),
+        state: rollup(
+            &memory_steps
+                .iter()
+                .map(|step| step.state)
+                .collect::<Vec<_>>(),
+        ),
         done: memories_done,
         total: memories_total,
         blocked: asset_blocked(&counts.memories_backlog, everyday_route.available),
@@ -439,6 +513,7 @@ mod tests {
             pages_refresh_blocked: 0,
             last_work_at: None,
             refinement_open: vec![],
+            embedding_backlog: EmbeddingBacklog::default(),
         }
     }
 
@@ -818,7 +893,7 @@ mod tests {
         for (state, gate, expected) in cases {
             let work_can_run = gate.as_ref().map(AmbientGateSnapshot::work_can_run);
             assert_eq!(
-                held_until_idle(state, work_can_run),
+                held_until_idle(state, work_can_run, true),
                 expected,
                 "{state:?} gate={gate:?}"
             );
@@ -918,6 +993,216 @@ mod tests {
         assert_eq!(response.refinement.not_ready, 8);
         assert_eq!(response.refinement.ready_for_review, 0);
         assert_eq!(response.state, ActivityState::UpToDate);
+    }
+
+    fn embedding_waiting(remaining: u64, total: u64) -> ActivityCounts {
+        ActivityCounts {
+            embedding_backlog: EmbeddingBacklog { remaining, total },
+            ..empty_counts()
+        }
+    }
+
+    fn embed_of(response: &ActivityResponse) -> &ActivityStep {
+        memories_asset(response)
+            .steps
+            .iter()
+            .find(|step| step.name == ActivityStepName::Embed)
+            .expect("Embed step")
+    }
+
+    /// Rows waiting for a vector: Embed runs with done = total - remaining
+    /// of the catch-up's total, has no lane and nothing failed, and the
+    /// Memories headline stays in memories rather than passages.
+    #[test]
+    fn embed_step_runs_with_done_of_total_while_rows_wait() {
+        let (everyday, synthesis) = pinned_local();
+        let counts = ActivityCounts {
+            memories_total: 40,
+            step_counts: ["title_enrich", "page_growth"]
+                .into_iter()
+                .map(|step_name| StepCount {
+                    step_name: step_name.to_string(),
+                    status: "ok".to_string(),
+                    count: 40,
+                })
+                .collect(),
+            ..embedding_waiting(300, 1_000)
+        };
+        let response = compose_activity(counts, &[], &everyday, &synthesis);
+        let embed = embed_of(&response);
+        assert_eq!(embed.state, ActivityStepState::Running);
+        assert_eq!((embed.done, embed.total, embed.failed), (700, 1_000, 0));
+        assert_eq!(embed.job, None);
+        let memories = memories_asset(&response);
+        assert_eq!(
+            memories
+                .steps
+                .iter()
+                .map(|step| step.name)
+                .collect::<Vec<_>>(),
+            vec![
+                ActivityStepName::Store,
+                ActivityStepName::Embed,
+                ActivityStepName::Summarize,
+                ActivityStepName::Link,
+            ]
+        );
+        assert_eq!(memories.state, ActivityStepState::Running);
+        assert_eq!((memories.done, memories.total), (40, 40));
+        assert_eq!(memories.blocked, 0);
+        assert_eq!(response.state, ActivityState::Organizing);
+    }
+
+    #[test]
+    fn embed_step_is_idle_at_zero_when_nothing_waits() {
+        let (everyday, synthesis) = pinned_local();
+        let response = compose_activity(empty_counts(), &[], &everyday, &synthesis);
+        let embed = embed_of(&response);
+        assert_eq!(embed.state, ActivityStepState::Idle);
+        assert_eq!((embed.done, embed.total, embed.failed), (0, 0, 0));
+        assert_eq!(response.state, ActivityState::UpToDate);
+        // A stale total with nothing remaining reads as idle, not 1000 of 1000.
+        let response = compose_activity(embedding_waiting(0, 1_000), &[], &everyday, &synthesis);
+        let embed = embed_of(&response);
+        assert_eq!(embed.state, ActivityStepState::Idle);
+        assert_eq!((embed.done, embed.total), (0, 0));
+    }
+
+    /// Embed needs no model: with no lane configured it is still running,
+    /// never blocked, and on its own never makes the library Blocked.
+    #[test]
+    fn embed_without_a_model_is_running_not_blocked() {
+        let everyday = job_route("basic", None, "unconfigured");
+        let synthesis = job_route("none", None, "unconfigured");
+        let response = compose_activity(embedding_waiting(5, 5), &[], &everyday, &synthesis);
+        assert_eq!(embed_of(&response).state, ActivityStepState::Running);
+        assert_eq!(memories_asset(&response).state, ActivityStepState::Running);
+        assert_eq!(memories_asset(&response).blocked, 0);
+        assert_eq!(response.state, ActivityState::Organizing);
+    }
+
+    /// Embed running beside work a missing model blocks hides nothing: the
+    /// library is still Blocked and the blocked count is the same.
+    #[test]
+    fn embed_does_not_hide_a_blocked_library() {
+        let everyday = job_route("basic", None, "unconfigured");
+        let (_, synthesis) = pinned_local();
+        let counts = ActivityCounts {
+            embedding_backlog: EmbeddingBacklog {
+                remaining: 3,
+                total: 9,
+            },
+            ..eight_memories_no_rows()
+        };
+        let response = compose_activity(counts, &[], &everyday, &synthesis);
+        assert_eq!(response.state, ActivityState::Blocked);
+        assert_eq!(memories_asset(&response).state, ActivityStepState::Blocked);
+        assert_eq!(memories_asset(&response).blocked, 8);
+        assert_eq!(embed_of(&response).state, ActivityStepState::Running);
+    }
+
+    /// The reported state in each mode while only the catch-up runs. Off
+    /// stays Off (the step still says Running); with background AI on, a
+    /// closed gate does not turn it into WaitingForIdle, because the gate
+    /// does not hold the catch-up. Gated work beside it still waits.
+    #[test]
+    fn embed_keeps_each_mode_honest() {
+        let (everyday, synthesis) = pinned_local();
+        let closed = Some(false);
+        let embed_only = compose_activity(embedding_waiting(10, 20), &[], &everyday, &synthesis);
+
+        assert_eq!(
+            final_state(&embed_only, &[], false, closed),
+            ActivityState::Off
+        );
+        assert_eq!(embed_of(&embed_only).state, ActivityStepState::Running);
+        assert_eq!(
+            final_state(&embed_only, &[], true, closed),
+            ActivityState::Organizing
+        );
+        assert_eq!(
+            final_state(&embed_only, &[], true, Some(true)),
+            ActivityState::Organizing
+        );
+
+        // An unfinished import batch is gated work: it waits.
+        let batch = incomplete_batch();
+        assert_eq!(
+            final_state(&embed_only, std::slice::from_ref(&batch), true, closed),
+            ActivityState::WaitingForIdle
+        );
+
+        // So is a running Summarize beside the catch-up.
+        let counts = ActivityCounts {
+            embedding_backlog: EmbeddingBacklog {
+                remaining: 10,
+                total: 20,
+            },
+            ..eight_memories_no_rows()
+        };
+        let both = compose_activity(counts, &[], &everyday, &synthesis);
+        assert_eq!(both.state, ActivityState::Organizing);
+        assert_eq!(
+            final_state(&both, &[], true, closed),
+            ActivityState::WaitingForIdle
+        );
+        assert_eq!(final_state(&both, &[], false, closed), ActivityState::Off);
+    }
+
+    /// The route itself: a big import's deferred rows show up as a running
+    /// Embed step, read from the live counters, and the step goes idle when
+    /// the catch-up ends.
+    #[tokio::test]
+    async fn activity_route_reports_rows_waiting_for_a_vector() {
+        let tmp = tempfile::tempdir().unwrap();
+        let emitter: Arc<dyn wenlan_core::events::EventEmitter> =
+            Arc::new(wenlan_core::events::NoopEmitter);
+        let db = Arc::new(
+            wenlan_core::db::MemoryDB::new(tmp.path(), emitter)
+                .await
+                .unwrap(),
+        );
+        let written = db
+            .upsert_documents_without_embeddings(vec![wenlan_core::sources::RawDocument {
+                source: "memory".to_string(),
+                source_id: "vault::big/note.md::0".to_string(),
+                title: "note".to_string(),
+                content: "a vault note stored first and embedded in the background".to_string(),
+                last_modified: 1,
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+        assert!(written > 0);
+        let state = Arc::new(RwLock::new(crate::state::ServerState {
+            db: Some(db.clone()),
+            ..Default::default()
+        }));
+        let get = || async {
+            let app = crate::router::build_router(state.clone());
+            let req = Request::builder()
+                .method("GET")
+                .uri("/api/activity")
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<ActivityResponse>(&body).unwrap()
+        };
+
+        let response = get().await;
+        let embed = embed_of(&response);
+        assert_eq!(embed.state, ActivityStepState::Running);
+        assert_eq!((embed.done, embed.total), (0, written as u64));
+
+        db.end_embedding_catch_up();
+        let response = get().await;
+        let embed = embed_of(&response);
+        assert_eq!(embed.state, ActivityStepState::Idle);
+        assert_eq!((embed.done, embed.total), (0, 0));
     }
 
     #[tokio::test]

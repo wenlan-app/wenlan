@@ -40,19 +40,22 @@ async fn recover_null_memory_embeddings_run(
     maintenance: &wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
     shutdown: &tokio::sync::watch::Receiver<bool>,
 ) -> bool {
+    // The run's one full count: Activity's live counters start from it, so
+    // the route never counts rows without a vector itself.
     let mut pending = match db.count_null_memory_embeddings().await {
         Ok(0) => {
-            db.set_embedding_backlog(false);
+            db.end_embedding_catch_up();
             return true;
         }
         Ok(pending) => pending,
         Err(error) => {
             tracing::warn!("[memory_db] null embedding check failed: {error}");
+            db.end_embedding_catch_up();
             return true;
         }
     };
     tracing::warn!("[memory_db] embedding {pending} memories with no embedding in the background");
-    db.set_embedding_backlog(true);
+    db.begin_embedding_catch_up(pending);
     let mut recovered = 0usize;
     let mut skipped = 0usize;
     'run: loop {
@@ -87,7 +90,7 @@ async fn recover_null_memory_embeddings_run(
                         "[memory_db] background embedding stopped after \
                          {recovered} recovered, {skipped} skipped: {error}"
                     );
-                    db.set_embedding_backlog(false);
+                    db.end_embedding_catch_up();
                     return true;
                 }
             }
@@ -99,9 +102,11 @@ async fn recover_null_memory_embeddings_run(
                 "[memory_db] background embedding complete: \
                  {recovered} recovered, {skipped} skipped, {left} left"
             );
-            db.set_embedding_backlog(false);
+            db.end_embedding_catch_up();
             return true;
         }
+        // The pass's closing count re-anchors the live counters for free.
+        db.begin_embedding_catch_up(left);
         pending = left;
     }
     tracing::info!(

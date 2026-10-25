@@ -775,6 +775,7 @@ export type ActivityState =
 export type ActivityAssetKind = "memories" | "entities" | "pages" | "unknown";
 export type ActivityStepName =
   | "store"
+  | "embed"
   | "summarize"
   | "link"
   | "detect"

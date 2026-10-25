@@ -509,6 +509,8 @@ const en = {
       memories_one: "{{count}} memory for “{{query}}”",
       memories_other: "{{count}} memories for “{{query}}”",
       noResults: "0 results for “{{query}}”",
+      preparing_one: "Still preparing {{count}} passage. Keyword matches are complete.",
+      preparing_other: "Still preparing {{count}} passages. Keyword matches are complete.",
     },
   },
   reviewEnvironment: {
@@ -3430,6 +3432,8 @@ const zhHans = {
       memories_one: "{{count}} 条记忆匹配“{{query}}”",
       memories_other: "{{count}} 条记忆匹配“{{query}}”",
       noResults: "没有匹配“{{query}}”的结果",
+      preparing_one: "还有 {{count}} 段在准备中，关键词搜索已完整。",
+      preparing_other: "还有 {{count}} 段在准备中，关键词搜索已完整。",
     },
   },
   reviewEnvironment: {
@@ -6306,6 +6310,8 @@ const zhHant = {
       memories_one: "{{count}} 則記憶符合「{{query}}」",
       memories_other: "{{count}} 則記憶符合「{{query}}」",
       noResults: "沒有符合「{{query}}」的結果",
+      preparing_one: "還有 {{count}} 段在準備中，關鍵字搜尋已完整。",
+      preparing_other: "還有 {{count}} 段在準備中，關鍵字搜尋已完整。",
     },
   },
   reviewEnvironment: {

@@ -81,7 +81,8 @@ pub(crate) mod repair_stale_projection;
 pub(crate) mod repair_target_receipt;
 pub(crate) mod repair_verification;
 pub use activity_counts::{
-    ActivityCounts, AssetBacklog, DetectTally, RefinementOpenCount, StepBacklog, StepCount,
+    ActivityCounts, AssetBacklog, DetectTally, EmbeddingBacklog, RefinementOpenCount, StepBacklog,
+    StepCount,
 };
 mod scoped_entities;
 mod scoped_pages;
@@ -26244,6 +26245,7 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("null embed recovery commit: {e}")))?;
         drop(conn);
+        self.note_backlog_rows_embedded(recovered);
 
         Ok(NullEmbeddingBatch {
             recovered,
@@ -26977,9 +26979,7 @@ impl MemoryDB {
             )
             .await?
             .unwrap_or(0);
-        if written > 0 {
-            self.set_embedding_backlog(true);
-        }
+        self.add_embedding_backlog(written);
         Ok(written)
     }
 
