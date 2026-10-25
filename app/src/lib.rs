@@ -1599,6 +1599,7 @@ pub fn run() {
             search::update_source_annotation,
             search::quick_capture,
             search::ingest_webpage,
+            search::fetch_webpage,
             search::distill_review,
             search::redistill_page,
             search::list_new_material,

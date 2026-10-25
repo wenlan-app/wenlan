@@ -29,9 +29,9 @@
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
 
-https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32
-
-<p>Cover: localized composite of App views with demo data; the graph is illustrative, not a native three-column layout.</p>
+<p align="center">
+  <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Watch the Wenlan walkthrough" width="100%"></a>
+</p>
 
 <a id="why-wenlan"></a>
 
@@ -107,6 +107,13 @@ Not sure what to ask? Open **What your AI can do** in the App for the exact text
 
 ## Organize scattered material into knowledge
 
+<a id="explore-your-personal-knowledge-graph"></a>
+
+<p align="center">
+  <img src="./docs/assets/wenlan-personal-graph.png" alt="Wenlan knowledge graph with illustrative regions for personal interests, research, and development" width="100%">
+</p>
+<p>App nodes and connections; translated labels and illustrative regions.</p>
+
 **Sources** preserve documents and conversations; **memories** keep the decisions, lessons, and reasons worth reusing. Combine them in editable **Markdown pages with citations**, connect pages with `[[wikilinks]]`, and follow citations back to the originals. Pages can include Mermaid diagrams, which the App draws; when an AI tool writes a page, Wenlan checks its diagrams for common mistakes and names the line to fix.
 
 - **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
@@ -124,13 +131,6 @@ Not sure what to ask? Open **What your AI can do** in the App for the exact text
 | Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
 
 Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
-
-<a id="explore-your-personal-knowledge-graph"></a>
-
-<p align="center">
-  <img src="./docs/assets/wenlan-personal-graph.png" alt="Wenlan knowledge graph with illustrative regions for personal interests, research, and development" width="100%">
-</p>
-<p>App nodes and connections; translated labels and illustrative regions.</p>
 
 <a id="daily-workflow"></a>
 
@@ -209,6 +209,11 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 
 ## Steep: keep knowledge useful as it changes
 
+<p align="center">
+  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
+</p>
+<p>Illustration based on current update behavior; not an App screenshot.</p>
+
 Saving material is only the start. **Steep prepares it for reuse and keeps supported pages current**, so you and your AI can build on earlier findings instead of repeatedly working through the originals.
 
 Choose one of two modes in Settings:
@@ -224,11 +229,6 @@ What steep does:
 - **Review lock:** With **Lock pages I've written** on, as it is for new installs, AI changes to pages you wrote or edited wait for your review. Pages AI wrote keep updating.
 
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-updates-history.png" alt="Illustrative flow: a finding in a source document updates memory from V1 to V2, then informs a page that is either updated automatically or sent for review." width="100%">
-</p>
-<p>Illustration based on current update behavior; not an App screenshot.</p>
 
 <a id="architecture"></a>
 
