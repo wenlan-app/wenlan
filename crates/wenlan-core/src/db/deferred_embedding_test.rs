@@ -27,8 +27,9 @@ async fn vector(db: &MemoryDB, source_id: &str) -> Option<Vec<f32>> {
     let conn = db.conn.lock().await;
     let mut rows = conn
         .query(
-            "SELECT vector_extract(embedding) FROM memories \
-             WHERE source = 'memory' AND source_id = ?1",
+            "SELECT CASE WHEN embedding IS NULL THEN NULL \
+                    ELSE vector_extract(embedding) END \
+             FROM memories WHERE source = 'memory' AND source_id = ?1",
             libsql::params![source_id],
         )
         .await
