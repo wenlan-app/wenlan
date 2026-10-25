@@ -746,6 +746,7 @@ const en = {
   citation: {
     authoredDescription: "Written by you in this page. It is kept unchanged when the page is rebuilt from its sources.",
     missingTitle: "Source removed",
+    untitledMemory: "Untitled memory",
     missingMemory: "Deleted or merged after this page was written. Update the page from its sources to refresh it.",
     openMemory: "Open →",
     openFile: "Open →",
@@ -3678,6 +3679,7 @@ const zhHans = {
   citation: {
     authoredDescription: "你在本页撰写的内容。文澜重新整理来源时，会保留原文。",
     missingTitle: "来源已删除",
+    untitledMemory: "未命名记忆",
     missingMemory: "这条记忆已被删除或合并。按来源更新笔记即可。",
     openMemory: "打开 →",
     openFile: "打开 →",
@@ -6565,6 +6567,7 @@ const zhHant = {
   citation: {
     authoredDescription: "你在這篇筆記撰寫的內容。文瀾重新整理來源時，會保留原文。",
     missingTitle: "來源已刪除",
+    untitledMemory: "未命名記憶",
     missingMemory: "這條記憶已被刪除或合併。依來源更新筆記即可。",
     openMemory: "開啟 →",
     openFile: "開啟 →",
