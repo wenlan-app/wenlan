@@ -17,5 +17,6 @@ describe("which page a link opens", () => {
     const watch = sourceLinkKey("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     expect(sourceLinkKey("https://youtu.be/dQw4w9WgXcQ?si=abc")).toBe(watch);
     expect(sourceLinkKey("https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=share")).toBe(watch);
+    expect(sourceLinkKey("https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&index=2")).toBe(watch);
   });
 });

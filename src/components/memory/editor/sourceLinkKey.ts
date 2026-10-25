@@ -17,7 +17,11 @@ export function sourceLinkKey(link: string): string {
       query.set("v", path.slice(1));
       [host, path] = ["youtube.com", "/watch"];
     }
-    const kept = [...query].filter(([name]) => !TRACKING.test(name)).sort(([a], [b]) => a.localeCompare(b));
+    // A video is one page whichever playlist it was opened from.
+    const video = host === "youtube.com" && path === "/watch";
+    const kept = [...query]
+      .filter(([name]) => (video ? name === "v" : !TRACKING.test(name)))
+      .sort(([a], [b]) => a.localeCompare(b));
     const search = kept.length ? `?${new URLSearchParams(kept).toString()}` : "";
     return `${host}${path}${search}`;
   } catch {
