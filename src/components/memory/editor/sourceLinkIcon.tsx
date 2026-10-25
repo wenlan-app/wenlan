@@ -162,6 +162,9 @@ function SourceLinkCard({ url, title, place, actions }: { url: string; title: st
   const moreRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const excerpt = useExcerpt(url, current, true);
+  // A post named by its own words reads whole in the card, said once.
+  const repeated = Boolean(excerpt && repeatsTitle(excerpt, title));
+  const heading = repeated ? excerpt! : title;
   let site = url;
   try {
     site = new URL(url).hostname.replace(/^www\./, "");
@@ -179,12 +182,12 @@ function SourceLinkCard({ url, title, place, actions }: { url: string; title: st
         actions().open(url);
       }}
     >
-      <span className="source-link-card__title">
+      <span className={`source-link-card__title${repeated ? " source-link-card__title--post" : ""}`}>
         <SourceTypeIcon kind={getSourceAppFromUrl(url) ?? "webpage"} size={16} />
-        <span>{title}</span>
+        <span>{heading}</span>
       </span>
       <span className="source-link-card__site">{site}</span>
-      {excerpt && !repeatsTitle(excerpt, title) && <span className="source-link-card__excerpt">{excerpt}</span>}
+      {excerpt && !repeated && <span className="source-link-card__excerpt">{excerpt}</span>}
     </button>
     {current.menu && <button
       ref={moreRef}

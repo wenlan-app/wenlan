@@ -102,6 +102,8 @@ describe("a saved link's card", () => {
     document.body.append(long);
     await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), "@zuck: We're building personal superintelligence for everyone."))(long, "https://www.threads.com/@zuck/post/1", "@zuck: We're building personal…", { canPreview: true, preview: true, setPreview: vi.fn() }); });
     expect(long.querySelector(".source-link-card__excerpt")).toBeNull();
+    // Its words are shown whole instead of cut short.
+    expect(long.querySelector(".source-link-card__title")?.textContent).toBe("@zuck: We're building personal superintelligence for everyone.");
     long.remove();
   });
 });

@@ -89,6 +89,21 @@
   white-space: nowrap;
 }
 
+.source-link-card__title--post {
+  align-items: flex-start;
+}
+
+.source-link-card__title--post > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+}
+
+.source-link-card__title--post svg {
+  margin-top: 3px;
+}
+
 .source-link-card__title svg {
   flex: none;
   color: var(--mem-text-secondary);

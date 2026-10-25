@@ -656,7 +656,7 @@ export default function PageDetail({
       const text = [...chunks].sort((a, b) => a.chunk_index - b.chunk_index)[0]?.content ?? "";
       const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean);
       // The first sentence-like paragraph, past menus and language lists.
-      const first = lines.find((line) => line.length >= 60 && /[.!?。！？]/.test(line) && !HATNOTE.test(line)) ?? lines.join(" ");
+      const first = lines.find((line) => line.length >= 60 && /[.!?:。！？：]/.test(line) && !HATNOTE.test(line)) ?? lines.join(" ");
       return first && first !== file.source_id ? first.slice(0, 280) : null;
     },
   };
