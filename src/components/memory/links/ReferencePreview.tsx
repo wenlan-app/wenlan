@@ -233,7 +233,8 @@ export function ReferencePreview({
         <button type="button" onClick={() => void query?.refetch()} style={{ color: "var(--mem-accent-indigo)" }}>{t(`${copyPrefix}.retry`)}</button>
       </div>}
       {unavailable && <p role="status" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{citation?.source_kind === "memory" ? t("citation.missingMemory") : t(`${copyPrefix}.unavailable`)}</p>}
-      {excerpt && <p style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)", lineHeight: 1.5, overflowWrap: "anywhere" }}>{excerpt}</p>}
+      {/* Three lines are enough to recognise the source; the card is for a glance, not for reading. */}
+      {excerpt && <p data-reference-excerpt="true" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)", lineHeight: 1.5, overflowWrap: "anywhere", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{excerpt}</p>}
       {citation?.source_kind === "memory" && <details>
         <summary style={{ color: "var(--mem-accent-indigo)", cursor: "pointer", fontSize: "var(--mem-text-xs)" }}>{t("pageDetail.editor.technicalDetails")}</summary>
         <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>

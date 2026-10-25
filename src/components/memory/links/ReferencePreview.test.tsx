@@ -180,6 +180,13 @@ describe("ReferencePreview citation time", () => {
     expect(preview).not.toHaveTextContent(/Open memory/);
   });
 
+  it("clamps the source excerpt to three lines so the card stays a glance", () => {
+    const excerpt = renderTimed().querySelector<HTMLElement>('[data-reference-excerpt="true"]');
+    expect(excerpt).not.toBeNull();
+    expect(excerpt!.style.webkitLineClamp).toBe("3");
+    expect(excerpt!.style.overflow).toBe("hidden");
+  });
+
   it.each(["zh-Hans", "zh-Hant"])("shows the source's age in %s, not in English", async (lng) => {
     await i18n.changeLanguage(lng);
     try {
