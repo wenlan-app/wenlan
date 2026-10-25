@@ -47,11 +47,11 @@ function SourceLinkMenu({ anchor, url, place, actions, onClose, canPreview }: {
   canPreview: boolean;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const [spot, setSpot] = useState<{ top: number; left: number } | null>(null);
   useLayoutEffect(() => {
     const rect = anchor.getBoundingClientRect();
     const width = menuRef.current?.offsetWidth ?? 200;
-    setPosition({ top: rect.bottom + 4, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) });
+    setSpot({ top: rect.bottom + 4, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) });
   }, [anchor]);
   useEffect(() => {
     const closeOutside = (event: Event) => {
@@ -86,7 +86,7 @@ function SourceLinkMenu({ anchor, url, place, actions, onClose, canPreview }: {
       className="mem-popover-surface source-link-menu"
       role="menu"
       aria-label={actions.label}
-      style={position ? { top: position.top, left: position.left } : { visibility: "hidden" }}
+      style={spot ? { top: spot.top, left: spot.left } : { visibility: "hidden" }}
     >
       <span className="source-link-menu__title" aria-hidden="true">{actions.label}</span>
       {items.map((item) => <button
