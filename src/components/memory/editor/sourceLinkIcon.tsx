@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { SourceTypeIcon } from "../sources/SourceTypeIcon";
 import { getSourceAppFromUrl } from "../sources/sourcePresentation";
-import { postEmbedDocument, sourceEmbed, videoCoverUrl, videoPlayerUrl, type SourceEmbed } from "./sourceEmbed";
+import { postEmbedHeight, postEmbedOrigin, postEmbedUrl, sourceEmbed, videoCoverUrl, videoPlayerUrl, type SourceEmbed } from "./sourceEmbed";
 import type { SourceCardMount, SourceIconMount, SourceLinkPlace } from "./sourcePaste";
 import "./sourceLinkIcon.css";
 
@@ -158,12 +158,13 @@ function repeatsTitle(excerpt: string, title: string): boolean {
   return excerpt === stem || (title.trim().endsWith("…") && stem.length >= 10 && excerpt.startsWith(stem));
 }
 
-let embedFrames = 0;
-
 type EmbedState = "waiting" | "shown" | "failed";
 
-/** A post shown by its site's own embed code, in a frame that cannot reach
- *  the app. It stays out of sight until the site has drawn the post. */
+/** How long a post may take to show before its card stays words only. */
+const POST_EMBED_WAIT_MS = 15_000;
+
+/** A post shown by its site's own embed page. It stays out of sight until the
+ *  page says how tall the post is, which it does only once the post is drawn. */
 function PostEmbed({ embed, title, onState, resized }: {
   embed: Extract<SourceEmbed, { kind: "post" }>;
   title: string;
@@ -171,37 +172,40 @@ function PostEmbed({ embed, title, onState, resized }: {
   resized?(): void;
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [frame] = useState(() => `wenlan-embed-${++embedFrames}`);
-  const [shown, setShown] = useState(false);
   const [height, setHeight] = useState(0);
   const [dark] = useState(() => document.documentElement.getAttribute("data-theme") !== "light");
-  const document_ = useMemo(() => postEmbedDocument(embed, frame, dark), [embed, frame, dark]);
+  const src = useMemo(() => postEmbedUrl(embed, dark), [embed, dark]);
+  const shown = height > 80;
   useEffect(() => {
     const listen = (event: MessageEvent) => {
-      const data: unknown = event.data;
-      if (event.source !== frameRef.current?.contentWindow || !data || typeof data !== "object") return;
-      const message = data as { wenlanEmbed?: unknown; shown?: unknown; failed?: unknown; height?: unknown };
-      if (message.wenlanEmbed !== frame) return;
-      if (message.failed === true) onState("failed");
-      if (message.shown === true) {
-        setShown(true);
-        onState("shown");
-      }
-      if (typeof message.height === "number" && Number.isFinite(message.height)) setHeight(Math.min(Math.max(Math.round(message.height), 0), 2400));
+      if (event.source !== frameRef.current?.contentWindow || !postEmbedOrigin(embed, event.origin)) return;
+      if (import.meta.env.DEV) console.debug("[source embed]", event.origin, event.data);
+      const asked = postEmbedHeight(event.data);
+      if (asked !== null) setHeight(Math.min(Math.max(Math.round(asked), 0), 2400));
     };
     window.addEventListener("message", listen);
     return () => window.removeEventListener("message", listen);
-  }, [frame, onState]);
-  useEffect(() => { resized?.(); }, [shown, height, resized]);
+  }, [embed]);
+  useEffect(() => {
+    if (shown) {
+      onState("shown");
+      return;
+    }
+    // Offline, or a site that would not draw the post.
+    const timer = window.setTimeout(() => onState("failed"), POST_EMBED_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [shown, onState]);
+  useEffect(() => { resized?.(); }, [height, resized]);
   return <iframe
     ref={frameRef}
     className={`source-link-card__post${shown ? "" : " source-link-card__post--waiting"}`}
     title={title}
-    // No allow-same-origin: the site's script runs apart from the app.
-    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-    srcDoc={document_}
+    src={src}
+    // The frame holds the site's own page at the site's own address, so it
+    // keeps its origin; it may not move the app or open dialogs over it.
+    sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
     referrerPolicy="strict-origin-when-cross-origin"
-    style={shown && height ? { height } : undefined}
+    style={shown ? { height } : undefined}
     aria-hidden={shown ? undefined : true}
     tabIndex={shown ? undefined : -1}
   />;
@@ -232,7 +236,7 @@ function VideoCover({ id, title, play, onState }: { id: string; title: string; p
   >
     <img src={videoCoverUrl(id)} alt="" draggable={false} onLoad={() => onState("shown")} onError={() => onState("failed")} />
     <span className="source-link-card__play" aria-hidden="true">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z" /></svg>
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z" /></svg>
     </span>
   </button>;
 }

@@ -147,25 +147,23 @@ describe("a saved post's card", () => {
     const resized = vi.fn();
     await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), "@jack: just setting up my twttr"))(container, "https://x.com/jack/status/20?s=20", "@jack: just setting up my twttr", { canPreview: true, preview: true, setPreview: vi.fn(), resized }); });
     const frame = container.querySelector<HTMLIFrameElement>(".source-link-card__post")!;
-    const id = /wenlanEmbed:&quot;([^&]+)&quot;/.exec(frame.getAttribute("srcdoc") ?? "")?.[1];
-    const tell = (data: object, source: MessageEventSource | null = frame.contentWindow) => act(async () => {
-      window.dispatchEvent(new MessageEvent("message", { data: { wenlanEmbed: id, ...data }, source }));
+    const tell = (data: unknown, origin = "https://platform.twitter.com", source: MessageEventSource | null = frame.contentWindow) => act(async () => {
+      window.dispatchEvent(new MessageEvent("message", { data, origin, source }));
     });
     return { container, frame, tell, resized };
   }
+  const resize = (height: number) => ({ "twttr.embed": { method: "twttr.private.resize", params: [{ height, width: 550 }] } });
 
-  it("draws X's own embed apart from the app, out of sight until the post shows", async () => {
+  it("loads X's own embed page, out of sight until X says how tall the post is", async () => {
     const { container, frame, tell, resized } = await postCard();
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups allow-popups-to-escape-sandbox");
-    expect(frame.getAttribute("srcdoc")).toContain('<blockquote class="twitter-tweet" data-dnt="true"');
-    expect(frame.getAttribute("srcdoc")).toContain('href="https://twitter.com/jack/status/20"');
+    expect(frame.getAttribute("src")).toMatch(/^https:\/\/platform\.twitter\.com\/embed\/Tweet\.html\?id=20&dnt=true&theme=/);
     expect(frame.className).toContain("source-link-card__post--waiting");
     expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
-    // Another frame cannot say it showed.
-    await tell({ shown: true }, window);
+    // Another frame, or another site, cannot size it.
+    await tell(resize(412), "https://platform.twitter.com", window);
+    await tell(resize(412), "https://evil.example");
     expect(frame.className).toContain("source-link-card__post--waiting");
-    await tell({ shown: true });
-    await tell({ height: 412 });
+    await tell(resize(412));
     expect(frame.className).not.toContain("--waiting");
     expect(frame.style.height).toBe("412px");
     expect(container.querySelector(".source-link-card--media")).not.toBeNull();
@@ -173,11 +171,16 @@ describe("a saved post's card", () => {
     container.remove();
   });
 
-  it("falls back to its words when the site will not draw the post", async () => {
-    const { container, tell } = await postCard();
-    await tell({ failed: true });
-    expect(container.querySelector("iframe")).toBeNull();
-    expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
-    container.remove();
+  it("falls back to its words when the site does not draw the post in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = await postCard();
+      await act(async () => { vi.advanceTimersByTime(15_000); });
+      expect(container.querySelector("iframe")).toBeNull();
+      expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
+      container.remove();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

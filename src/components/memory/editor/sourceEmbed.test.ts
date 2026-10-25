@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { postEmbedDocument, sourceEmbed } from "./sourceEmbed";
+import { postEmbedHeight, postEmbedOrigin, postEmbedUrl, sourceEmbed } from "./sourceEmbed";
 
 describe("what a saved link's card can show from its site", () => {
   it("finds a YouTube video however its link is written", () => {
@@ -24,12 +24,23 @@ describe("what a saved link's card can show from its site", () => {
     expect(sourceEmbed("https://en.wikipedia.org/wiki/Local-first_software")).toBeNull();
   });
 
-  it("puts the site's own embed code in the frame, and nothing it could break out of", () => {
-    const threads = sourceEmbed("https://www.threads.com/@zuck/post/DAbc")!;
-    if (threads.kind !== "post") throw new Error("not a post");
-    const html = postEmbedDocument(threads, "frame-1", false);
-    expect(html).toContain('data-text-post-permalink="https://www.threads.com/@zuck/post/DAbc"');
-    expect(html).toContain('src="https://www.threads.com/embed.js"');
-    expect(html).toContain('var id="frame-1"');
+  it("loads each site's own embed page, and listens only to that site", () => {
+    const post = (url: string) => {
+      const embed = sourceEmbed(url);
+      if (embed?.kind !== "post") throw new Error("not a post");
+      return embed;
+    };
+    expect(postEmbedUrl(post("https://x.com/jack/status/20"), true)).toBe("https://platform.twitter.com/embed/Tweet.html?id=20&dnt=true&theme=dark");
+    expect(postEmbedUrl(post("https://www.threads.net/@zuck/post/DAbc"), false)).toBe("https://www.threads.com/@zuck/post/DAbc/embed");
+    expect(postEmbedUrl(post("https://www.instagram.com/p/C1x2y3/"), false)).toBe("https://www.instagram.com/p/C1x2y3/embed/captioned/");
+    expect(postEmbedOrigin(post("https://x.com/jack/status/20"), "https://platform.twitter.com")).toBe(true);
+    expect(postEmbedOrigin(post("https://x.com/jack/status/20"), "https://www.instagram.com")).toBe(false);
+  });
+
+  it("reads the height an embed page asks for", () => {
+    expect(postEmbedHeight({ "twttr.embed": { method: "twttr.private.resize", params: [{ height: 412, width: 550 }] } })).toBe(412);
+    expect(postEmbedHeight(JSON.stringify({ type: "MEASURE", details: { height: 655 } }))).toBe(655);
+    expect(postEmbedHeight("not json, no size")).toBeNull();
+    expect(postEmbedHeight({ type: "ready" })).toBeNull();
   });
 });

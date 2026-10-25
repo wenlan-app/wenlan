@@ -56,46 +56,51 @@ export function videoPlayerUrl(id: string): string {
   return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`;
 }
 
-function attribute(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-}
-
-/** The site's own embed code, as its share menu gives it. */
-function embedCode(embed: Extract<SourceEmbed, { kind: "post" }>, dark: boolean): { quote: string; script: string } {
-  const link = attribute(embed.permalink);
+/** The site's own embed page for a post: the page its embed script puts in
+ *  a frame, loaded straight away so it keeps its own origin and storage. */
+export function postEmbedUrl(embed: Extract<SourceEmbed, { kind: "post" }>, dark: boolean): string {
   if (embed.app === "x") {
-    return {
-      quote: `<blockquote class="twitter-tweet" data-dnt="true" data-theme="${dark ? "dark" : "light"}"><a href="${link}"></a></blockquote>`,
-      script: "https://platform.twitter.com/widgets.js",
-    };
+    const id = embed.permalink.split("/").pop() ?? "";
+    return `https://platform.twitter.com/embed/Tweet.html?id=${id}&dnt=true&theme=${dark ? "dark" : "light"}`;
   }
-  if (embed.app === "threads") {
-    return {
-      quote: `<blockquote class="text-post-media" data-text-post-permalink="${link}" data-text-post-version="0"><a href="${link}"></a></blockquote>`,
-      script: "https://www.threads.com/embed.js",
-    };
-  }
-  return {
-    quote: `<blockquote class="instagram-media" data-instgrm-captioned data-instgrm-permalink="${link}" data-instgrm-version="14" style="margin:0;min-width:0;width:100%;max-width:540px"><a href="${link}"></a></blockquote>`,
-    script: "https://www.instagram.com/embed.js",
-  };
+  if (embed.app === "threads") return `${embed.permalink}/embed`;
+  return `${embed.permalink}embed/captioned/`;
 }
 
-/** A document holding the site's embed code, for a sandboxed frame. It tells
- *  the page its height, and whether the post showed (the site's script drew
- *  its frame) or failed (the script did not load, or drew nothing). */
-export function postEmbedDocument(embed: Extract<SourceEmbed, { kind: "post" }>, frame: string, dark: boolean): string {
-  const { quote, script } = embedCode(embed, dark);
-  const id = JSON.stringify(frame);
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin">
-<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden}body>*{margin-left:auto!important;margin-right:auto!important}</style></head>
-<body>${quote}<script async src="${script}" onerror="parent.postMessage({wenlanEmbed:${attribute(id)},failed:true},'*')"></script>
-<script>(function(){var id=${id},shown=false,done=false,start=Date.now(),timer;
-function tell(m){m.wenlanEmbed=id;parent.postMessage(m,'*')}
-function check(){if(done)return;var f=document.querySelector('iframe');var h=f?f.getBoundingClientRect().height:0;
-if(!shown&&f&&h>80){shown=true;clearInterval(timer);tell({shown:true})}
-if(shown)tell({height:Math.ceil(document.body.getBoundingClientRect().height)});
-else if(Date.now()-start>15000){done=true;clearInterval(timer);tell({failed:true})}}
-new ResizeObserver(check).observe(document.body);timer=setInterval(check,500)})();</script>
-</body></html>`;
+const EMBED_ORIGINS: Readonly<Record<Extract<SourceEmbed, { kind: "post" }>["app"], readonly string[]>> = {
+  x: ["https://platform.twitter.com"],
+  threads: ["https://www.threads.com", "https://www.threads.net"],
+  instagram: ["https://www.instagram.com"],
+};
+
+/** Whether a message comes from the site whose post is embedded. */
+export function postEmbedOrigin(embed: Extract<SourceEmbed, { kind: "post" }>, origin: string): boolean {
+  return EMBED_ORIGINS[embed.app].includes(origin);
+}
+
+/** The height an embed page asks for in its own resize message, such as X's
+ *  `twttr.private.resize` or Instagram's `MEASURE`; null for anything else. */
+export function postEmbedHeight(data: unknown): number | null {
+  let value = data;
+  if (typeof value === "string") {
+    if (!value.includes("height")) return null;
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  const find = (node: unknown, depth: number): number | null => {
+    if (!node || typeof node !== "object" || depth > 5) return null;
+    const record = node as Record<string, unknown>;
+    const height = record.height;
+    if (typeof height === "number" && Number.isFinite(height)) return height;
+    if (typeof height === "string" && /^\d+(\.\d+)?(px)?$/.test(height)) return Number.parseFloat(height);
+    for (const child of Object.values(record)) {
+      const found = find(child, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return find(value, 0);
 }
