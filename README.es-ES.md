@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=32ad2009f132e4ddff10cb950e12564a585de74f4d296488860e2c322ed3ab6f -->
+<!-- README_SYNC: source=README.md sha256=644bb6727884824da23fce6fa84f4fd22754429cabdad0ba491bb75869e76b94 -->
 
 <p align="center">
   <picture>
@@ -8,8 +8,9 @@
 </p>
 
 <p align="center">
-  Wenlan convierte tus notas, archivos, conversaciones con IA y código en una wiki viva.<br>
-  Tu IA la mantiene al día, tus herramientas de IA pueden buscar en ella y citarla, y cada frase citada se comprueba con su fuente.
+  <strong>Notas, código y chats de IA en una wiki, contrastada con sus fuentes.</strong><br>
+  Gratis, de código abierto y local. Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.<br>
+  App de escritorio para Mac (Apple silicon) y Windows. CLI y servicio local en Linux.
 </p>
 
 <p align="center">
@@ -34,6 +35,14 @@
 <p align="center">
   <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Ver el recorrido por Wenlan" width="100%"></a>
 </p>
+
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+<br>
+
+## Si ya usas Claude Code o Codex con tus notas
+
+Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes.
 
 <a id="whats-new"></a>
 
@@ -131,6 +140,18 @@ Qué hace Steep:
 - **Conserva el control y el historial:** La actualización en segundo plano modifica las páginas compatibles mantenidas por IA; las páginas que hayas escrito o editado reciben propuestas de revisión. Las sustituciones explícitas ocultan o archivan las memorias anteriores y conservan sus enlaces. Las revisiones de páginas se pueden inspeccionar.
 - **Bloqueo de revisión:** Con **Lock pages I've written** activado, como en las instalaciones nuevas, los cambios de la IA en páginas que escribiste o editaste esperan tu revisión. Las páginas que escribió la IA siguen actualizándose.
 
+<a id="what-it-does-on-its-own"></a>
+
+### Lo que hace por su cuenta
+
+En ambos modos, sin modelo, Wenlan:
+
+- **Marca páginas desactualizadas** cuando cambian sus fuentes, memorias o el código citado. Las páginas de la wiki de un repositorio muestran qué cambió en el código.
+- **Sugiere fusionar páginas casi duplicadas** con una tarjeta que tú o tu IA aceptan o descartan.
+- **Ordena los enlaces:** lista los `[[enlaces]]` que aún no llevan a ninguna página y quita las citas a memorias que borraste.
+
+Reescribir una página marcada requiere un modelo. En **Automatic**, Wenlan lo hace en segundo plano. En **On demand**, las páginas marcadas esperan hasta que ejecutes `/wenlan steep` en tu herramienta de IA.
+
 [Guía de Steep: activadores, reglas de revisión y modelos (en inglés)](docs/steep.md). Elige un modelo en el dispositivo, un servidor local o un proveedor en la nube; el trabajo en segundo plano con modelos es opcional.
 
 <a id="code-repository-wiki"></a>
@@ -201,7 +222,7 @@ Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan 
 | Qué puedes importar | Para qué sirve |
 | --- | --- |
 | Markdown, texto, PDF con texto o una carpeta | Busca y cita el texto importado. Importa una carpeta una vez o mantenla sincronizada cuando cambien sus archivos. |
-| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita páginas existentes mediante una conexión de solo lectura. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez; no se escribe en ella. |
+| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita páginas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez; Wenlan nunca edita tus notas existentes. |
 | Extractos web con URL | Pega el texto y su URL para guardar material buscable con un enlace al original. |
 | ZIP de exportación de ChatGPT o Claude | Recupera conversaciones anteriores, incluido un último mensaje que no obtuvo respuesta, y cítalas como contexto; la importación es una instantánea, no una conexión activa a la cuenta. |
 | Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
@@ -278,6 +299,8 @@ Estas mediciones de LongMemEval (LME) evalúan la recuperación de conocimiento 
 | LME_Oracle (500 Q) | 93.6% | 0.857 | 0.883 |
 | LME_S (deep, 90 Q) | 87.7% | 0.815 | 0.822 |
 <!-- EVAL_SNAPSHOT_END -->
+
+En una prueba con 10.000 páginas (páginas generadas, M2 Pro con 16 GB, v0.20.0), la importación tardó 81 minutos, la búsqueda en la App respondió en 11 a 50 ms, el reinicio tardó menos de 0,3 s y la memoria llegó a un máximo de unos 1,2 GB.
 
 [Método de evaluación y detalles del benchmark](docs/eval/README.md).
 

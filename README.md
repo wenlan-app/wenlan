@@ -6,8 +6,9 @@
 </p>
 
 <p align="center">
-  Wenlan turns your notes, files, AI chats, and code into a living wiki.<br>
-  Your AI keeps it current, your AI tools can search and cite it, and cited sentences are checked against their sources.
+  <strong>Notes, code, AI chats into a wiki, checked against sources.</strong><br>
+  Free, open source, and local. Your notes stay on your machine and go only to the AI tools you pick.<br>
+  Desktop app for Mac (Apple silicon) and Windows. CLI and local service on Linux.
 </p>
 
 <p align="center">
@@ -43,7 +44,13 @@ I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI
 
 - **Kept current by your AI:** Documents, Markdown, Obsidian vaults, Logseq graphs, web links, and AI chats become pages that keep their sources and update when those change. Built in, with no maze of plugins.
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, and other MCP clients search and cite the same pages.
-- **Checked against sources:** A page is refused when its cited text doesn't match the source, and pages are flagged when their sources change. Pages are local Markdown, and AI edits to pages you wrote wait for your review.
+- **Checked against sources:** A page is refused when most of its citations don't match the source, and pages are flagged when their sources change. Pages are local Markdown, AI edits to pages you wrote wait for your review, and Wenlan never edits your existing notes.
+
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+### If you already use Claude Code or Codex on your notes
+
+Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: pages refused when their citations don't hold up, flags when sources change, review for AI edits to pages you wrote, and no edits to your existing notes.
 
 <a id="whats-new"></a>
 
@@ -142,6 +149,18 @@ What steep does:
 - **Keep control and history:** Background refresh updates eligible AI-maintained pages; your authored or edited pages receive proposed revisions. Explicit memory replacements hide or archive earlier memories while preserving their links. Page revisions remain inspectable.
 - **Review lock:** With **Lock pages I've written** on, as it is for new installs, AI changes to pages you wrote or edited wait for your review. Pages AI wrote keep updating.
 
+<a id="what-it-does-on-its-own"></a>
+
+### What it does on its own
+
+In both modes, without a model, Wenlan:
+
+- **Flags out-of-date pages** when their sources, memories, or cited code change. Repository wiki pages show what changed in the code.
+- **Suggests merging near-duplicate pages** as a card for you or your AI to accept or dismiss.
+- **Tidies links:** lists `[[links]]` that point to no page yet, and drops citations to memories you deleted.
+
+Rewriting a flagged page takes a model. In Automatic, Wenlan does it in the background. In On demand, flagged pages wait until you run `/wenlan steep` in your AI tool.
+
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
 <a id="code-repository-wiki"></a>
@@ -190,7 +209,7 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 | Bring in | How you can use it |
 | --- | --- |
 | Markdown, text, text-based PDFs, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing pages through a read-only connection. Keep it in sync to follow changes in the background, or import it once; nothing is written back. |
+| An Obsidian vault or a Logseq graph | Search and cite existing pages. Keep it in sync to follow changes in the background, or import it once; Wenlan never edits your existing notes. |
 | Web excerpts with a URL | Paste the text and its URL to save searchable material with a link to the original. |
 | ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
 | Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
@@ -287,6 +306,8 @@ These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI a
 | LME_Oracle (500 Q) | 93.6% | 0.857 | 0.883 |
 | LME_S (deep, 90 Q) | 87.7% | 0.815 | 0.822 |
 <!-- EVAL_SNAPSHOT_END -->
+
+On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), import took 81 minutes, App search answered in 11 to 50 ms, restart took under 0.3 s, and memory peaked at about 1.2 GB.
 
 [Evaluation method and benchmark details](docs/eval/README.md).
 
