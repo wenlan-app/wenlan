@@ -37,6 +37,9 @@ pub(crate) fn skills_dir_for(client_type: &str, home: &Path) -> Option<PathBuf> 
         "windsurf" => &[".codeium", "windsurf", "skills"],
         "kiro" => &[".kiro", "skills"],
         "opencode" => &[".config", "opencode", "skills"],
+        // Kimi Code also reads the shared `~/.agents/skills`; its own folder
+        // keeps Wenlan's copy next to the MCP entry it pairs with.
+        "kimi_code" => &[".kimi-code", "skills"],
         _ => return None,
     };
     Some(
@@ -443,6 +446,7 @@ mod tests {
             ("windsurf", &[".codeium", "windsurf", "skills"]),
             ("kiro", &[".kiro", "skills"]),
             ("opencode", &[".config", "opencode", "skills"]),
+            ("kimi_code", &[".kimi-code", "skills"]),
         ] {
             let expected = tail.iter().fold(home.clone(), |acc, part| acc.join(part));
             assert_eq!(

@@ -87,6 +87,7 @@ mod tests {
             "windsurf",
             "kiro",
             "opencode",
+            "kimi-code",
         ] {
             assert_eq!(prompt_link(family, "hi"), None, "{family}");
         }

@@ -502,7 +502,8 @@ pub async fn install_client_plugin(
 }
 
 /// Installs Wenlan's skills into `client_type`'s own skills folder (Cursor,
-/// Gemini CLI, Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode)
+/// Gemini CLI, Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode,
+/// Kimi Code)
 /// — see `skills_install::install_skills`. Returns the skills folder. Refuses,
 /// writing nothing, when a same-named skill folder there was not written by
 /// Wenlan. Runs on a blocking thread (it writes a folder tree).
@@ -7054,6 +7055,7 @@ mod register_connected_agent_tests {
             ("windsurf", "windsurf"),
             ("kiro", "kiro"),
             ("opencode", "opencode"),
+            ("kimi_code", "kimi-code"),
         ] {
             // The name sent is the one the written entry reports with
             // `--agent-name`, or the daemon would trust a row the tool never uses.

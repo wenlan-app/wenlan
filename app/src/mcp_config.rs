@@ -355,6 +355,13 @@ pub(crate) fn client_config_path_for(
         // (not `config_dir`, same as Muse Code). A JSONC-only install is
         // refused, never rewritten: see `read_config_for`.
         "opencode" => under(home, HOME, &[".config", "opencode", "opencode.json"]),
+        // Kimi Code (Moonshot AI's coding CLI, also behind its desktop app):
+        // `~/.kimi-code/mcp.json`, `mcpServers` with `{command, args}`. The
+        // legacy Python `kimi-cli` used `~/.kimi/mcp.json`; `kimi migrate`
+        // moves it, and it is being retired, so only the current file is
+        // written. `KIMI_CODE_HOME` relocates the folder; like `CODEX_HOME`,
+        // it is not followed here.
+        "kimi_code" => under(home, HOME, &[".kimi-code", "mcp.json"]),
         _ => ClientConfigPath::UnknownClient,
     }
 }
@@ -1029,6 +1036,7 @@ fn client_cli_names(client_type: &str) -> &'static [&'static str] {
         "windsurf" => &["windsurf"],
         "kiro" => &["kiro", "kiro-cli"],
         "opencode" => &["opencode"],
+        "kimi_code" => &["kimi"],
         _ => &[],
     }
 }
@@ -1146,6 +1154,13 @@ fn client_home_dir_reading(
         "windsurf" => &[&[".codeium", "windsurf"]],
         "kiro" => &[&[".kiro"]],
         "opencode" => &[&[".config", "opencode"]],
+        // Files Kimi Code writes on first run, not the `~/.kimi-code` folder:
+        // Wenlan's own MCP entry and skills install create that folder.
+        "kimi_code" => &[
+            &[".kimi-code", "device_id"],
+            &[".kimi-code", "config.toml"],
+            &[".kimi-code", "logs"],
+        ],
         _ => return Reading::No,
     };
     match home {
@@ -1628,6 +1643,7 @@ pub(crate) fn detect_mcp_clients_with(
         ("Windsurf", "windsurf"),
         ("Kiro", "kiro"),
         ("OpenCode", "opencode"),
+        ("Kimi Code", "kimi_code"),
     ];
 
     clients
@@ -2526,6 +2542,7 @@ pub fn agent_name_for_client(client_type: &str) -> Option<&'static str> {
         "windsurf" => Some("windsurf"),
         "kiro" => Some("kiro"),
         "opencode" => Some("opencode"),
+        "kimi_code" => Some("kimi-code"),
         _ => None,
     }
 }
@@ -3029,6 +3046,7 @@ mod tests {
             ("windsurf", &[".codeium", "windsurf", "mcp_config.json"]),
             ("kiro", &[".kiro", "settings", "mcp.json"]),
             ("opencode", &[".config", "opencode", "opencode.json"]),
+            ("kimi_code", &[".kimi-code", "mcp.json"]),
         ] {
             let path = client_config_path(client_type).unwrap();
             let expected = tail.iter().fold(PathBuf::new(), |acc, part| acc.join(part));
@@ -4618,6 +4636,7 @@ mod tests {
             "windsurf",
             "kiro",
             "opencode",
+            "kimi_code",
         ] {
             match client_config_path_for(client_type, None, Some(&config_dir)) {
                 ClientConfigPath::Undetermined(why) => assert!(
@@ -4643,7 +4662,7 @@ mod tests {
         let clients = detect_mcp_clients_from(None, None, |_| Reading::No);
         assert_eq!(
             clients.len(),
-            12,
+            13,
             "a client whose path could not be built must still be a row that says so"
         );
         for client in &clients {
@@ -4813,6 +4832,7 @@ mod tests {
             "windsurf",
             "kiro",
             "opencode",
+            "kimi_code",
         ] {
             assert!(types.contains(&expected.to_string()), "missing {expected}");
         }
@@ -7231,6 +7251,7 @@ args = ["-y", "wenlan-mcp"]
                 ("kiro", &[".kiro", "settings", "mcp.json"]),
                 // Not `config_dir`, on any OS.
                 ("opencode", &[".config", "opencode", "opencode.json"]),
+                ("kimi_code", &[".kimi-code", "mcp.json"]),
             ] {
                 assert_eq!(
                     client_config_path_for(client_type, Some(&home), Some(&config)),
@@ -7281,6 +7302,12 @@ args = ["-y", "wenlan-mcp"]
             ),
             ("kiro", JsonDialect::McpServers, "mcpServers", "kiro"),
             ("opencode", JsonDialect::OpenCode, "mcp", "opencode"),
+            (
+                "kimi_code",
+                JsonDialect::McpServers,
+                "mcpServers",
+                "kimi-code",
+            ),
         ] {
             assert_eq!(
                 JsonDialect::for_client(client_type),
@@ -7412,7 +7439,7 @@ args = ["-y", "wenlan-mcp"]
         assert!(!configured("opencode", cursor_style));
         assert!(!configured("cursor", vscode_style));
         assert!(!configured("cursor", opencode_style));
-        for client in ["antigravity", "windsurf", "kiro"] {
+        for client in ["antigravity", "windsurf", "kiro", "kimi_code"] {
             assert!(configured(client, cursor_style), "{client}");
             assert!(!configured(client, vscode_style), "{client}");
         }
@@ -7438,6 +7465,7 @@ args = ["-y", "wenlan-mcp"]
             ("antigravity", "antigravity"),
             ("windsurf", "windsurf"),
             ("kiro", "kiro"),
+            ("kimi_code", "kimi-code"),
         ] {
             let config_path = client_config_path_for(client_type, Some(tmp.path()), None).unwrap();
             write_wenlan_entry(&config_path, client_type).unwrap();
@@ -7745,6 +7773,7 @@ args = ["-y", "wenlan-mcp"]
             ("windsurf", &["windsurf"]),
             ("kiro", &["kiro", "kiro-cli"]),
             ("opencode", &["opencode"]),
+            ("kimi_code", &["kimi"]),
         ] {
             assert_eq!(
                 Machine::new(HostKind::Linux).install_state(home, client_type),
@@ -7785,6 +7814,9 @@ args = ["-y", "wenlan-mcp"]
             ("windsurf", &[".codeium", "windsurf"]),
             ("kiro", &[".kiro"]),
             ("opencode", &[".config", "opencode"]),
+            ("kimi_code", &[".kimi-code", "device_id"]),
+            ("kimi_code", &[".kimi-code", "config.toml"]),
+            ("kimi_code", &[".kimi-code", "logs"]),
         ] {
             let mut machine = Machine::new(HostKind::MacOs);
             machine.existing = vec![joined(home, folder)];
@@ -7806,10 +7838,17 @@ args = ["-y", "wenlan-mcp"]
             home.join(".copilot").join("skills"),
             home.join(".gemini"),
             home.join(".gemini").join("skills"),
+            // Kimi Code's folder holding only what Wenlan writes there.
+            home.join(".kimi-code"),
+            home.join(".kimi-code").join("skills"),
         ];
         let clients = machine.detect(home);
         assert_eq!(
             row(&clients, "copilot_cli").install_state,
+            InstallState::NotFound
+        );
+        assert_eq!(
+            row(&clients, "kimi_code").install_state,
             InstallState::NotFound
         );
         assert_eq!(
@@ -7844,6 +7883,7 @@ args = ["-y", "wenlan-mcp"]
             "windsurf",
             "kiro",
             "opencode",
+            "kimi_code",
         ] {
             assert_eq!(
                 row(&clients, client_type).has_skills,
@@ -7914,6 +7954,7 @@ args = ["-y", "wenlan-mcp"]
             ("windsurf", "Windsurf"),
             ("kiro", "Kiro"),
             ("opencode", "OpenCode"),
+            ("kimi_code", "Kimi Code"),
         ] {
             let client = row(&clients, client_type);
             assert_eq!(client.name, name);

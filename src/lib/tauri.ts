@@ -1239,6 +1239,7 @@ export const AGENT_DISPLAY: Record<string, string> = {
   "copilot-cli": "GitHub Copilot",
   cursor: "Cursor",
   "gemini-cli": "Gemini CLI",
+  "kimi-code": "Kimi Code",
   kiro: "Kiro",
   "muse-code": "Muse Code",
   opencode: "OpenCode",
