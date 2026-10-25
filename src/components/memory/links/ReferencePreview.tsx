@@ -235,10 +235,6 @@ export function ReferencePreview({
       {unavailable && <p role="status" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{citation?.source_kind === "memory" ? t("citation.missingMemory") : t(`${copyPrefix}.unavailable`)}</p>}
       {/* Three lines are enough to recognise the source; the card is for a glance, not for reading. */}
       {excerpt && <p data-reference-excerpt="true" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)", lineHeight: 1.5, overflowWrap: "anywhere", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{excerpt}</p>}
-      {citation?.source_kind === "memory" && <details>
-        <summary style={{ color: "var(--mem-accent-indigo)", cursor: "pointer", fontSize: "var(--mem-text-xs)" }}>{t("pageDetail.editor.technicalDetails")}</summary>
-        <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>
-      </details>}
       {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
       {modifiedAgo && !canOpen && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{modifiedAgo}</p>}
       {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}

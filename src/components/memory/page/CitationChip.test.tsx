@@ -85,7 +85,7 @@ describe("CitationChip", () => {
     expect(chip).toHaveAttribute("data-status", "verified");
   });
 
-  it("does not expose an imported memory locator in the chip", () => {
+  it("does not expose an imported memory locator in the chip or its card", () => {
     const locator = "import_20260908T150227Z_0_0";
     renderChip({
       citation: cite({ locator }),
@@ -99,8 +99,8 @@ describe("CitationChip", () => {
     fireEvent.focus(chip);
     const popover = screen.getByRole("tooltip");
     expect(popover).toHaveTextContent("Imported project context");
-    expect(popover).toHaveTextContent(locator);
-    expect(popover).toHaveTextContent("Technical details");
+    expect(popover).not.toHaveTextContent(locator);
+    expect(popover).not.toHaveTextContent("Technical details");
   });
 
   it("marks unverified citations", () => {
@@ -151,11 +151,8 @@ describe("CitationChip", () => {
 
     const openMemory = within(popover).getByRole("button", { name: /^Open →$/ });
     await user.tab();
-    expect(document.activeElement).toBe(within(popover).getByText("Technical details"));
-    await user.tab();
     expect(document.activeElement).toBe(openMemory);
     expect(screen.getByRole("tooltip")).toBeInTheDocument();
-    await user.tab({ shift: true });
     await user.tab({ shift: true });
     expect(document.activeElement).toBe(chip);
     await user.tab();
@@ -165,7 +162,6 @@ describe("CitationChip", () => {
     await user.tab();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Next article action" }));
     await user.tab({ shift: true });
-    await user.tab();
     await user.tab();
     await user.tab();
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Next article action" }));
@@ -226,7 +222,7 @@ describe("CitationChip", () => {
     expect(chip).not.toHaveTextContent("mem-1");
     expect(screen.getByText(/no longer exists/i)).toBeInTheDocument();
     expect(screen.getByText(/update the page from its sources/i)).toBeInTheDocument();
-    expect(screen.getByText("mem-1")).toBeInTheDocument();
+    expect(screen.queryByText("mem-1")).toBeNull();
     await user.click(chip);
     expect(onOpenMemory).not.toHaveBeenCalled();
   });
