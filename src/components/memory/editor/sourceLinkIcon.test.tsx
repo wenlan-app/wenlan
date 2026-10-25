@@ -184,3 +184,23 @@ describe("a saved post's card", () => {
     }
   });
 });
+
+describe("a saved link's menu near the bottom of the window", () => {
+  it("opens upward when there is no room below", async () => {
+    const container = document.createElement("span");
+    document.body.append(container);
+    await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), "You own your data"))(container, `${WEB}/bottom`, "Local-first software", { canPreview: true, preview: true, setPreview: vi.fn() }); });
+    const more = container.querySelector<HTMLButtonElement>(".source-link-card__more")!;
+    more.getBoundingClientRect = () => ({ top: window.innerHeight - 30, bottom: window.innerHeight - 4, left: 100, right: 126, width: 26, height: 26, x: 100, y: window.innerHeight - 30, toJSON: () => ({}) });
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(120);
+    try {
+      await act(async () => { more.click(); });
+      const menu = document.querySelector<HTMLElement>(".source-link-menu")!;
+      expect(Number.parseFloat(menu.style.top)).toBe(window.innerHeight - 30 - 120 - 4);
+    } finally {
+      height.mockRestore();
+      container.remove();
+    }
+  });
+});
+

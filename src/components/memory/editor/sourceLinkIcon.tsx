@@ -52,7 +52,11 @@ function SourceLinkMenu({ anchor, url, place, actions, onClose, canPreview }: {
   useLayoutEffect(() => {
     const rect = anchor.getBoundingClientRect();
     const width = menuRef.current?.offsetWidth ?? 200;
-    setSpot({ top: rect.bottom + 4, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) });
+    const height = menuRef.current?.offsetHeight ?? 0;
+    // Opens upward when there is no room below, as for a card at the bottom of the window.
+    const below = rect.bottom + 4;
+    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 4) : below;
+    setSpot({ top, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) });
   }, [anchor]);
   useEffect(() => {
     const closeOutside = (event: Event) => {
