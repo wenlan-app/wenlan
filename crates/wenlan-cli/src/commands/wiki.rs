@@ -8,7 +8,8 @@
 
 use anyhow::{bail, Result};
 use clap::{Subcommand, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use wenlan_core::repo_wiki::{self, PublishTarget};
 use wenlan_types::repo_wiki::{
     BindRepoWikiRequest, RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiPublishResult,
     RepoWikiPublishStatus, RepoWikiRunner,
@@ -58,6 +59,10 @@ pub enum WikiCommand {
         /// the next publish adds the workflow to the pull request.
         #[arg(long, requires = "daily")]
         on_github: bool,
+        /// The repository pull requests go to (`owner/name` on GitHub, else
+        /// the remote URL). Needed when it is not yours.
+        #[arg(long, value_name = "OWNER/NAME")]
+        confirm_repo: Option<String>,
     },
     /// Write the Space's code pages into the repository and open or update
     /// the pull request.
@@ -102,12 +107,19 @@ pub async fn run(
             daily,
             agent,
             on_github,
+            confirm_repo,
         } => {
             let repo = match repo {
                 Some(repo) => repo,
                 None => std::env::current_dir()?,
             };
             let repo = std::path::absolute(repo)?;
+            let top = repo_wiki::repository_top_level(&repo)?;
+            let target = repo_wiki::publish_target(&top, repo_wiki::find_gh().as_deref());
+            let existing = client.repo_wiki_binding(space).await?;
+            if !already_agreed(existing.as_ref(), &top, &target) {
+                check_target(&target, confirm_repo.as_deref())?;
+            }
             let daily = parse_daily(daily.as_deref(), agent, on_github)?;
             let binding = client
                 .bind_repo_wiki(
@@ -162,6 +174,52 @@ pub async fn run(
             Ok(())
         }
     }
+}
+
+/// Whether the Space is already bound to this repository with this `origin`:
+/// changing its folder or daily setting needs no new agreement.
+fn already_agreed(existing: Option<&RepoWikiBinding>, top: &Path, target: &PublishTarget) -> bool {
+    existing.is_some_and(|binding| {
+        Path::new(&binding.repo_root) == top
+            && match (&binding.remote_url, &target.remote_url) {
+                (Some(bound), Some(now)) => repo_wiki::same_remote(bound, now),
+                (None, None) => true,
+                _ => false,
+            }
+    })
+}
+
+/// Refuse to bind a repository the user did not name when it is not theirs:
+/// a publish pushes a branch there and opens a pull request.
+fn check_target(target: &PublishTarget, confirm: Option<&str>) -> Result<()> {
+    let Some(name) = target.name() else {
+        // No `origin`: a publish has nowhere to go and says so.
+        return Ok(());
+    };
+    if let Some(confirm) = confirm {
+        if target.confirmed_by(confirm) {
+            return Ok(());
+        }
+        bail!(
+            "--confirm-repo names {confirm}, but pull requests would go to {name}; nothing was bound"
+        );
+    }
+    if target.owned() {
+        return Ok(());
+    }
+    let whose = match (target.owner(), target.signed_in_as.as_deref()) {
+        (Some(owner), Some(login)) => {
+            format!("github.com/{name}, which belongs to {owner}, not to you (signed in to GitHub as {login})")
+        }
+        (Some(_), None) => format!(
+            "github.com/{name}, and Wenlan cannot tell whether it is yours (the GitHub CLI is not signed in)"
+        ),
+        _ => name.to_owned(),
+    };
+    bail!(
+        "pull requests from this Space would open on {whose}; nothing was bound. \
+         If that is what you want, run it again with --confirm-repo {name}"
+    )
 }
 
 fn parse_daily(
@@ -282,6 +340,72 @@ fn describe_publish(result: &RepoWikiPublishResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn target(slug: Option<&str>, login: Option<&str>) -> PublishTarget {
+        PublishTarget {
+            remote_url: slug.map(|slug| format!("https://github.com/{slug}.git")),
+            slug: slug.map(str::to_owned),
+            signed_in_as: login.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn binding_someone_elses_repo_needs_it_named() {
+        let theirs = target(Some("pallets/itsdangerous"), Some("lucian"));
+        let error = check_target(&theirs, None).unwrap_err().to_string();
+        assert!(error.contains("github.com/pallets/itsdangerous"), "{error}");
+        assert!(error.contains("belongs to pallets"), "{error}");
+        assert!(
+            error.contains("--confirm-repo pallets/itsdangerous"),
+            "{error}"
+        );
+        check_target(&theirs, Some("pallets/itsdangerous")).unwrap();
+        check_target(&theirs, Some("https://github.com/Pallets/itsdangerous")).unwrap();
+        let wrong = check_target(&theirs, Some("lucian/itsdangerous"))
+            .unwrap_err()
+            .to_string();
+        assert!(wrong.contains("nothing was bound"), "{wrong}");
+    }
+
+    #[test]
+    fn binding_your_own_repo_or_one_without_origin_just_works() {
+        check_target(&target(Some("Lucian/site"), Some("lucian")), None).unwrap();
+        check_target(&target(None, None), None).unwrap();
+        let unknown = check_target(&target(Some("lucian/site"), None), None)
+            .unwrap_err()
+            .to_string();
+        assert!(unknown.contains("not signed in"), "{unknown}");
+        let elsewhere = PublishTarget {
+            remote_url: Some("git@gitlab.com:lucian/site.git".into()),
+            slug: None,
+            signed_in_as: None,
+        };
+        assert!(check_target(&elsewhere, None).is_err());
+        check_target(&elsewhere, Some("git@gitlab.com:lucian/site.git")).unwrap();
+    }
+
+    #[test]
+    fn rebinding_the_same_repo_needs_no_new_agreement() {
+        let binding = |remote: Option<&str>| RepoWikiBinding {
+            space: "s".into(),
+            repo_root: "/r".into(),
+            folder: "wiki".into(),
+            remote_url: remote.map(str::to_owned),
+            daily: None,
+            last_publish: None,
+            last_daily_run: None,
+            doc_fixes: Vec::new(),
+            doc_check: None,
+            kept_edits: Vec::new(),
+        };
+        let now = target(Some("pallets/itsdangerous"), None);
+        let ssh = binding(Some("git@github.com:pallets/itsdangerous.git"));
+        assert!(already_agreed(Some(&ssh), Path::new("/r"), &now));
+        assert!(!already_agreed(Some(&ssh), Path::new("/other"), &now));
+        let moved = binding(Some("https://github.com/lucian/itsdangerous"));
+        assert!(!already_agreed(Some(&moved), Path::new("/r"), &now));
+        assert!(!already_agreed(None, Path::new("/r"), &now));
+    }
 
     #[test]
     fn daily_takes_an_hour_or_off() {

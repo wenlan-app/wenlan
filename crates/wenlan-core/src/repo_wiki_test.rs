@@ -1264,3 +1264,123 @@ fn a_page_file_reads_back_as_page_content() {
         .ends_with("We like Rust."));
     assert!(parse_wiki_page_file("no frontmatter").is_none());
 }
+
+#[test]
+fn publish_refuses_an_origin_that_changed_since_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let root = binding.repo_root.clone();
+    let code_bases = HashMap::from([("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)])]);
+    let (pages, _) = select_pages(
+        vec![page("p1", "Module map", "What each part owns.")],
+        &code_bases,
+        &root,
+    );
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let concept_paths = ConceptPathMap::new();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    // Someone points `origin` at another repository after agreeing to this one.
+    let other = dir.path().join("other.git");
+    sh(
+        dir.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            &origin.to_string_lossy(),
+            &other.to_string_lossy(),
+        ],
+    );
+    sh(
+        &clone,
+        &["remote", "set-url", "origin", &other.to_string_lossy()],
+    );
+    let Err(error) = publish(publish_input(
+        &binding,
+        pages,
+        &code_bases,
+        &anchors,
+        &concept_paths,
+        &worktree,
+    )) else {
+        panic!("a changed origin is refused");
+    };
+    let error = error.to_string();
+    assert!(error.contains("changed since it was bound"), "{error}");
+    let branches = sh(&other, &["branch", "--list", REPO_WIKI_BRANCH]);
+    assert!(branches.is_empty(), "nothing was pushed: {branches}");
+}
+
+#[test]
+fn same_remote_matches_a_repository_over_https_and_ssh() {
+    assert!(same_remote(
+        "https://github.com/pallets/itsdangerous.git",
+        "git@github.com:Pallets/itsdangerous"
+    ));
+    assert!(!same_remote(
+        "https://github.com/pallets/itsdangerous",
+        "https://github.com/lucian/itsdangerous"
+    ));
+    assert!(same_remote("/srv/site.git", "/srv/site.git"));
+    assert!(!same_remote("/srv/site.git", "/srv/other.git"));
+}
+
+#[cfg(unix)]
+#[test]
+fn publish_target_names_the_repository_and_the_signed_in_account() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (_, clone) = repo_with_origin(dir.path());
+    let gh = dir.path().join("gh");
+    std::fs::write(
+        &gh,
+        "#!/bin/sh\n[ \"$1 $2\" = \"api user\" ] && echo lucian\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let local = publish_target(&clone, Some(&gh));
+    assert!(local.slug.is_none(), "a local remote is not on GitHub");
+    assert_eq!(
+        local.signed_in_as, None,
+        "gh is not asked about a non-GitHub remote"
+    );
+    assert_eq!(local.name(), local.remote_url.as_deref());
+
+    sh(
+        &clone,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:pallets/itsdangerous.git",
+        ],
+    );
+    let theirs = publish_target(&clone, Some(&gh));
+    assert_eq!(theirs.slug.as_deref(), Some("pallets/itsdangerous"));
+    assert_eq!(theirs.signed_in_as.as_deref(), Some("lucian"));
+    assert!(!theirs.owned());
+    assert!(theirs.confirmed_by("pallets/itsdangerous"));
+    assert!(theirs.confirmed_by("github.com/pallets/itsdangerous"));
+    assert!(!theirs.confirmed_by("lucian/itsdangerous"));
+
+    sh(
+        &clone,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/Lucian/site",
+        ],
+    );
+    assert!(publish_target(&clone, Some(&gh)).owned());
+    assert!(
+        !publish_target(&clone, None).owned(),
+        "unknown account is not the owner"
+    );
+}

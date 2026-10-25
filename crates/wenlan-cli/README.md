@@ -572,6 +572,7 @@ Options:
 - `--daily <HOUR|off>`: Bring the wiki up to date by itself every day after this local hour (0-23), or `off`.
 - `--agent <AGENT>`: The AI tool the daily run starts. Default: claude. Possible values: `claude`, `codex`, `cursor`, `copilot`.
 - `--on-github`: Run the daily update on GitHub Actions instead of this computer: the next publish adds the workflow to the pull request.
+- `--confirm-repo <OWNER/NAME>`: The repository pull requests go to (`owner/name` on GitHub, else the remote URL). Needed when it is not yours.
 
 #### `wenlan wiki publish`
 

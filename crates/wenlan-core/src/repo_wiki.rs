@@ -785,6 +785,112 @@ pub fn find_gh() -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
+/// Where a publish from a repository pushes the wiki branch and opens the
+/// pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishTarget {
+    /// `origin`'s URL; `None` when the repository has no `origin`.
+    pub remote_url: Option<String>,
+    /// `owner/name` when `origin` is on github.com.
+    pub slug: Option<String>,
+    /// The GitHub account the GitHub CLI is signed in to, when known.
+    pub signed_in_as: Option<String>,
+}
+
+impl PublishTarget {
+    /// What the user names to confirm this target: `owner/name` on GitHub,
+    /// otherwise the remote URL.
+    pub fn name(&self) -> Option<&str> {
+        self.slug.as_deref().or(self.remote_url.as_deref())
+    }
+
+    /// The owner of the GitHub repository.
+    pub fn owner(&self) -> Option<&str> {
+        self.slug.as_deref().and_then(|slug| slug.split('/').next())
+    }
+
+    /// Whether the GitHub repository belongs to the signed-in account.
+    pub fn owned(&self) -> bool {
+        matches!(
+            (self.owner(), self.signed_in_as.as_deref()),
+            (Some(owner), Some(login)) if owner.eq_ignore_ascii_case(login)
+        )
+    }
+
+    /// Whether `confirm` names this target.
+    pub fn confirmed_by(&self, confirm: &str) -> bool {
+        let confirm = confirm.trim();
+        match &self.slug {
+            Some(slug) => {
+                let confirm = github_slug(confirm).unwrap_or_else(|| {
+                    confirm
+                        .strip_prefix("github.com/")
+                        .unwrap_or(confirm)
+                        .trim_end_matches('/')
+                        .to_owned()
+                });
+                confirm.eq_ignore_ascii_case(slug)
+            }
+            None => self.remote_url.as_deref().is_some_and(|url| url == confirm),
+        }
+    }
+}
+
+/// Where a publish from the repository holding `repo` would go, and which
+/// GitHub account `gh` is signed in to.
+pub fn publish_target(repo: &Path, gh: Option<&Path>) -> PublishTarget {
+    let remote_url = origin_url(repo);
+    let slug = remote_url.as_deref().and_then(github_slug);
+    let signed_in_as = match (&slug, gh) {
+        (Some(_), Some(gh)) => {
+            let mut command = Command::new(gh);
+            command
+                .args(["api", "user", "--jq", ".login"])
+                .stdin(std::process::Stdio::null());
+            run(command, "gh api user")
+                .ok()
+                .filter(|login| !login.is_empty())
+        }
+        _ => None,
+    };
+    PublishTarget {
+        remote_url,
+        slug,
+        signed_in_as,
+    }
+}
+
+/// Whether two remote URLs name the same repository: the same `owner/name`
+/// on GitHub over https or ssh, otherwise the same URL.
+pub fn same_remote(a: &str, b: &str) -> bool {
+    match (github_slug(a), github_slug(b)) {
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(&b),
+        _ => a.trim() == b.trim(),
+    }
+}
+
+/// The bound repository's `origin`, refused when it no longer names the
+/// repository the user agreed to at bind: nothing is fetched from or pushed to
+/// it until they bind again.
+fn bound_origin(binding: &RepoWikiBinding) -> Result<String, WenlanError> {
+    let repo = Path::new(&binding.repo_root);
+    let remote = origin_url(repo).ok_or_else(|| {
+        WenlanError::Validation(format!(
+            "{} has no `origin` remote to open a pull request on",
+            repo.display()
+        ))
+    })?;
+    if let Some(bound) = binding.remote_url.as_deref() {
+        if !same_remote(bound, &remote) {
+            return Err(WenlanError::Validation(format!(
+                "the repository's `origin` changed since it was bound (was {bound}, now \
+                 {remote}); nothing was pushed. Run `wenlan wiki bind` again to publish there"
+            )));
+        }
+    }
+    Ok(remote)
+}
+
 /// What a publish needs besides the binding.
 /// Code basis anchors by [`anchor_key`].
 pub type CodeAnchors = HashMap<(String, String, u32, u32), CodeAnchor>;
@@ -1169,12 +1275,7 @@ fn files_changed_by_others(repo: &Path, base_tree: &str, branch: &str, fork: &st
 pub fn prepare(binding: &RepoWikiBinding, worktree: &Path) -> Result<Prepared, WenlanError> {
     let repo = PathBuf::from(&binding.repo_root);
     let folder = normalize_folder(&binding.folder)?;
-    if origin_url(&repo).is_none() {
-        return Err(WenlanError::Validation(format!(
-            "{} has no `origin` remote to open a pull request on",
-            repo.display()
-        )));
-    }
+    bound_origin(binding)?;
     let mut command = git(&repo);
     command.args(["fetch", "--quiet", "origin"]);
     run(command, "git fetch origin")?;
@@ -1491,12 +1592,7 @@ pub fn publish(input: PublishInput<'_>) -> Result<Published, WenlanError> {
     }
     let repo = PathBuf::from(&binding.repo_root);
     let folder = normalize_folder(&binding.folder)?;
-    let remote = origin_url(&repo).ok_or_else(|| {
-        WenlanError::Validation(format!(
-            "{} has no `origin` remote to open a pull request on",
-            repo.display()
-        ))
-    })?;
+    let remote = bound_origin(binding)?;
     let prepared = match input.prepared {
         Some(prepared) => prepared,
         None => prepare(binding, &input.worktree)?,

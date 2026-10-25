@@ -269,11 +269,21 @@ W="$(command -v wenlan || echo "$HOME/.wenlan/bin/wenlan")"
 - It prints a binding: run `"$W" wiki publish --space "$space"` and add its
   line to the report (pull request opened or updated, already up to date, or
   a link to open the pull request by hand).
-- It prints `null`: ask once whether to put the pages in this repository's
-  `wiki/` folder and open a pull request. On yes, run
-  `"$W" wiki bind --space "$space" --repo "$repo_root"`, then `wiki publish`
-  as above, and mention that `wiki bind --daily <hour>` keeps the wiki up to
-  date every day with the user's own AI tool. On no, leave it.
+- It prints `null`: find where a pull request would go with
+  `git -C "$repo_root" remote get-url origin` (on GitHub, the `owner/name` in
+  it). Ask once whether to put the pages in this repository's `wiki/` folder
+  and open a pull request there, naming that repository in the question.
+  Offer two answers, with No first and as the default: "No, keep the pages in
+  Wenlan only" and "Yes, open a pull request on <owner/name>". Only a clear
+  yes counts: an empty answer, a timeout, Enter on the default or anything
+  unclear is no. On no, leave it and do not ask again in this run.
+- On yes, run `"$W" wiki bind --space "$space" --repo "$repo_root"`, then
+  `wiki publish` as above, and mention that `wiki bind --daily <hour>` keeps
+  the wiki up to date every day with the user's own AI tool. When `wiki bind`
+  refuses because the repository is not the user's (it names the owner), say
+  whose it is and ask once more, No first and as the default; only on a clear
+  yes to that repository by name run `wiki bind` again with
+  `--confirm-repo <owner/name>`. Never add `--confirm-repo` on your own.
 - The command is missing or has no `wiki` subcommand: skip this step without
   saying so.
 
@@ -287,7 +297,7 @@ publish line says how many stayed out.
   A doc fix of step 7 is only recorded; it reaches the repository through the
   pull request of step 8, for the user to review. Step 8 asks Wenlan to write the wiki folder on its own `wenlan/wiki` branch,
   apart from the working copy, and open a pull request; only with the user's
-  yes or an existing binding.
+  clear yes to the repository named in the question, or an existing binding.
 - Wiki only reads the repository. Shell commands are read-only ones such as
   `git rev-parse`, `git ls-files`, `git check-ignore`, `git log`, `git show`,
   `ls`, `wc`, `grep` and `sed -n`, plus `wenlan spaces add` for a Space that
