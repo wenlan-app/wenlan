@@ -1330,27 +1330,15 @@ fn same_remote_matches_a_repository_over_https_and_ssh() {
     assert!(!same_remote("/srv/site.git", "/srv/other.git"));
 }
 
-#[cfg(unix)]
 #[test]
-fn publish_target_names_the_repository_and_the_signed_in_account() {
-    use std::os::unix::fs::PermissionsExt;
+fn publish_target_names_the_repository_and_its_owner() {
     let dir = tempfile::tempdir().unwrap();
     let (_, clone) = repo_with_origin(dir.path());
-    let gh = dir.path().join("gh");
-    std::fs::write(
-        &gh,
-        "#!/bin/sh\n[ \"$1 $2\" = \"api user\" ] && echo lucian\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let local = publish_target(&clone, Some(&gh));
+    let local = publish_target(&clone, None);
     assert!(local.slug.is_none(), "a local remote is not on GitHub");
-    assert_eq!(
-        local.signed_in_as, None,
-        "gh is not asked about a non-GitHub remote"
-    );
     assert_eq!(local.name(), local.remote_url.as_deref());
+    assert!(local.confirmed_by(local.remote_url.as_deref().unwrap()));
 
     sh(
         &clone,
@@ -1361,26 +1349,19 @@ fn publish_target_names_the_repository_and_the_signed_in_account() {
             "git@github.com:pallets/itsdangerous.git",
         ],
     );
-    let theirs = publish_target(&clone, Some(&gh));
+    let theirs = publish_target(&clone, None);
     assert_eq!(theirs.slug.as_deref(), Some("pallets/itsdangerous"));
-    assert_eq!(theirs.signed_in_as.as_deref(), Some("lucian"));
-    assert!(!theirs.owned());
+    assert_eq!(theirs.owner(), Some("pallets"));
+    assert!(!theirs.owned(), "an unknown account is not the owner");
     assert!(theirs.confirmed_by("pallets/itsdangerous"));
     assert!(theirs.confirmed_by("github.com/pallets/itsdangerous"));
+    assert!(theirs.confirmed_by("https://github.com/Pallets/itsdangerous.git"));
     assert!(!theirs.confirmed_by("lucian/itsdangerous"));
 
-    sh(
-        &clone,
-        &[
-            "remote",
-            "set-url",
-            "origin",
-            "https://github.com/Lucian/site",
-        ],
-    );
-    assert!(publish_target(&clone, Some(&gh)).owned());
-    assert!(
-        !publish_target(&clone, None).owned(),
-        "unknown account is not the owner"
-    );
+    let signed_in = |login: &str| PublishTarget {
+        signed_in_as: Some(login.to_owned()),
+        ..theirs.clone()
+    };
+    assert!(!signed_in("lucian").owned());
+    assert!(signed_in("Pallets").owned());
 }
