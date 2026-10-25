@@ -165,7 +165,7 @@ describe("PageDetail citations", () => {
     renderPage();
     const chip = await screen.findByRole("button", { name: /Memory 2/ });
     fireEvent.focus(chip);
-    expect(await screen.findByText(/no longer exists/i)).toBeInTheDocument();
+    expect(await screen.findByText("Source removed")).toBeInTheDocument();
   });
 
   it("display-strips markers when citations were cleared by an edit", async () => {

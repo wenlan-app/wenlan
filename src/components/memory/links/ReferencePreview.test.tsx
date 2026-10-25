@@ -89,7 +89,7 @@ describe("ReferencePreview citation targets", () => {
     await act(async () => { rejectOpen(new Error("old target could not open")); });
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "File · original.md" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "original.md" })).toBeInTheDocument();
   });
 });
 

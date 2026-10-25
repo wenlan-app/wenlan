@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getMemoryDetail, getPage, type MemoryItem, type Page, type PageCitation } from "../../../lib/tauri";
-import { citationDisplayLabel } from "../../../lib/pageCitations";
+import { citationDisplayLabel, citationExternalDetail } from "../../../lib/pageCitations";
 import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp, type ReferenceKind } from "./ReferenceTypeIcon";
 import { sourceAppName } from "../sources/sourcePresentation";
 import type { NavigableReferenceTarget, ReferencePreviewRequest } from "./referenceTypes";
@@ -150,7 +150,10 @@ export function ReferencePreview({
   const fallbackCitationLabel = citation ? appName ?? citationDisplayLabel(citation, {
     memory: t("citation.kind.memory"), external_file: t("citation.kind.file"), external_url: t("citation.kind.url"), authored: t("citation.kind.authored"),
   }) : "";
-  const title = page?.title ?? memory?.title ?? (citation ? fallbackCitationLabel : anchorLabel);
+  // The card's header already names the kind, so an external source's title is just its file or host name.
+  const citationTitle = citation ? citationExternalDetail(citation) ?? fallbackCitationLabel : "";
+  const memoryCitationGone = citation?.source_kind === "memory" && !memory && !citationTarget?.sourcesLoading;
+  const title = page?.title ?? memory?.title ?? (memoryCitationGone ? t("citation.missingTitle") : citation ? citationTitle : anchorLabel);
   const citationLocation = citation?.source_kind === "external_file" ? citationFilePath(citation.locator) : citation?.locator;
   const query = pageId ? pageQuery : memoryId ? memoryQuery : null;
   const content = page?.summary || (page ? page.content : memory?.summary || memory?.content) || "";
@@ -235,7 +238,9 @@ export function ReferencePreview({
       {unavailable && <p role="status" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{citation?.source_kind === "memory" ? t("citation.missingMemory") : t(`${copyPrefix}.unavailable`)}</p>}
       {/* Three lines are enough to recognise the source; the card is for a glance, not for reading. */}
       {excerpt && <p data-reference-excerpt="true" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)", lineHeight: 1.5, overflowWrap: "anywhere", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{excerpt}</p>}
-      {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
+      {/* A removed memory can no longer be opened, so its ID stays on the card as the only trace for diagnosing it. */}
+      {memoryCitationGone && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
+      {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p title={citationLocation} style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{citationLocation}</p>}
       {modifiedAgo && !canOpen && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{modifiedAgo}</p>}
       {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}
       {/* The age shares the action's row so the card ends on one line instead of a stray link under a gap. */}

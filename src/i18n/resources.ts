@@ -745,7 +745,8 @@ const en = {
   },
   citation: {
     authoredDescription: "Written by you in this page. It is kept unchanged when the page is rebuilt from its sources.",
-    missingMemory: "This source memory no longer exists. It was deleted or merged after the page was organized. Update the page from its sources to refresh its citations.",
+    missingTitle: "Source removed",
+    missingMemory: "Deleted or merged after this page was written. Update the page from its sources to refresh it.",
     openMemory: "Open →",
     openFile: "Open →",
     openLink: "Open in browser →",
@@ -856,7 +857,7 @@ const en = {
     unavailable: "Preview unavailable.",
     error: "Could not load this preview.",
     retry: "Try again",
-    open: "Open {{title}}",
+    open: "Open →",
   },
   reference: {
     type: { page: "Page", memory: "Memory", file: "File", url: "Web link", authored: "Wenlan citation" },
@@ -864,7 +865,7 @@ const en = {
     unavailable: "Preview unavailable. Open the original to read it.",
     error: "Could not load this preview.",
     retry: "Try again",
-    open: "Open {{title}}",
+    open: "Open →",
   },
   references: { page: "Page", source: "Source" },
   pageDetail: {
@@ -3676,7 +3677,8 @@ const zhHans = {
   },
   citation: {
     authoredDescription: "你在本页撰写的内容。文澜重新整理来源时，会保留原文。",
-    missingMemory: "这条来源记忆已被删除或合并。按来源更新笔记后，引用就会更新。",
+    missingTitle: "来源已删除",
+    missingMemory: "这条记忆已被删除或合并。按来源更新笔记即可。",
     openMemory: "打开 →",
     openFile: "打开 →",
     openLink: "在浏览器打开 →",
@@ -3787,7 +3789,7 @@ const zhHans = {
     unavailable: "无法预览此笔记。",
     error: "无法加载此预览。",
     retry: "重试",
-    open: "打开 {{title}}",
+    open: "打开 →",
   },
   reference: {
     type: { page: "笔记", memory: "记忆", file: "文件", url: "网页链接", authored: "文澜引用" },
@@ -3795,7 +3797,7 @@ const zhHans = {
     unavailable: "无法预览。可打开原始来源阅读。",
     error: "无法加载此预览。",
     retry: "重试",
-    open: "打开 {{title}}",
+    open: "打开 →",
   },
   references: { page: "笔记", source: "来源" },
   pageDetail: {
@@ -6562,7 +6564,8 @@ const zhHant = {
   },
   citation: {
     authoredDescription: "你在這篇筆記撰寫的內容。文瀾重新整理來源時，會保留原文。",
-    missingMemory: "這條來源記憶已被刪除或合併。依來源更新筆記後，引用就會更新。",
+    missingTitle: "來源已刪除",
+    missingMemory: "這條記憶已被刪除或合併。依來源更新筆記即可。",
     openMemory: "開啟 →",
     openFile: "開啟 →",
     openLink: "在瀏覽器開啟 →",
@@ -6673,7 +6676,7 @@ const zhHant = {
     unavailable: "無法預覽此筆記。",
     error: "無法載入此預覽。",
     retry: "再試一次",
-    open: "開啟 {{title}}",
+    open: "開啟 →",
   },
   reference: {
     type: { page: "筆記", memory: "記憶", file: "檔案", url: "網頁連結", authored: "文瀾引用" },
@@ -6681,7 +6684,7 @@ const zhHant = {
     unavailable: "無法預覽。可開啟原始來源閱讀。",
     error: "無法載入此預覽。",
     retry: "再試一次",
-    open: "開啟 {{title}}",
+    open: "開啟 →",
   },
   references: { page: "筆記", source: "來源" },
   pageDetail: {
