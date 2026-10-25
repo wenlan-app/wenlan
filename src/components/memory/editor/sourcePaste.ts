@@ -12,6 +12,8 @@ export interface SourceLinkPlace {
   canPreview: boolean;
   preview: boolean;
   setPreview(on: boolean): void;
+  /** Tells the editor a card changed height, as a post's embed does once it shows. */
+  resized?(): void;
 }
 
 /** Draws a link's site icon into `container`; returns its cleanup. */
@@ -147,9 +149,15 @@ export function setSourceLinkPreview(view: EditorView, from: number, preview: bo
   view.state.facet(sourceLinkPreference)?.remember(preview);
 }
 
-function linkPlace(view: EditorView, from: number, canPreview: boolean, preview: boolean): SourceLinkPlace {
-  // A page that cannot be edited keeps its links as they are.
-  return { canPreview: canPreview && !view.state.readOnly, preview, setPreview: (on) => setSourceLinkPreview(view, from, on) };
+function linkPlace(view: EditorView, from: number | (() => number), canPreview: boolean, preview: boolean): SourceLinkPlace {
+  const at = typeof from === "number" ? () => from : from;
+  return {
+    // A page that cannot be edited keeps its links as they are.
+    canPreview: canPreview && !view.state.readOnly,
+    preview,
+    setPreview: (on) => setSourceLinkPreview(view, at(), on),
+    resized: () => view.requestMeasure(),
+  };
 }
 
 /** Whether the link at `from`..`to` just took its title and stays closed. */
@@ -210,15 +218,29 @@ export class SourceLinkCardWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const card = document.createElement("span");
     card.className = "cm-source-link-card";
+    const spot = { from: this.from };
+    cardSpots.set(card, spot);
     const mount = view.state.facet(sourceCardMount);
-    if (mount) iconCleanups.set(card, mount(card, this.url, this.title, linkPlace(view, this.from, true, true)));
+    if (mount) iconCleanups.set(card, mount(card, this.url, this.title, linkPlace(view, () => spot.from, true, true)));
     return card;
+  }
+
+  // Text typed above a card only moves it: the card, and a video playing in
+  // it, stays as it is.
+  updateDOM(dom: HTMLElement, _view: EditorView, previous: SourceLinkCardWidget): boolean {
+    const spot = cardSpots.get(dom);
+    if (!spot || previous.url !== this.url || previous.title !== this.title) return false;
+    spot.from = this.from;
+    return true;
   }
 
   destroy(dom: HTMLElement): void {
     unmountIcon(dom);
+    cardSpots.delete(dom);
   }
 }
+
+const cardSpots = new WeakMap<HTMLElement, { from: number }>();
 
 /** A link worth offering as a source: one public http(s) address, nothing else. */
 export function pastedSourceUrl(text: string): string | null {

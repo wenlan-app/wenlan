@@ -647,6 +647,7 @@ export default function PageDetail({
       showPreview: t("sourcePaste.showPreview"),
       openSource: t("sourcePaste.openSource"),
       more: t("sourcePaste.moreActions"),
+      play: t("sourcePaste.playVideo"),
     },
     // A card's words: the saved page's opening, none when only its link was kept.
     excerpt: async (url) => {

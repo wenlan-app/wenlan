@@ -776,6 +776,7 @@ const en = {
     showPreview: "Show as preview",
     openSource: "Open source",
     moreActions: "More for this link",
+    playVideo: "Play video",
   },
   pageAttachments: {
     failed: "Couldn't add {{name}}. Only images and videos can go in a page.",
@@ -3694,6 +3695,7 @@ const zhHans = {
     showPreview: "显示成预览卡片",
     openSource: "打开来源",
     moreActions: "这个链接的更多操作",
+    playVideo: "播放视频",
   },
   pageAttachments: {
     failed: "无法加入 {{name}}。页面里只能放图片和视频。",
@@ -6567,6 +6569,7 @@ const zhHant = {
     showPreview: "顯示成預覽卡片",
     openSource: "打開來源",
     moreActions: "這個連結的更多操作",
+    playVideo: "播放影片",
   },
   pageAttachments: {
     failed: "無法加入 {{name}}。頁面裡只能放圖片和影片。",

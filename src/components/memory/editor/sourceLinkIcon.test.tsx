@@ -107,3 +107,77 @@ describe("a saved link's card", () => {
     long.remove();
   });
 });
+
+describe("a saved video's card", () => {
+  const VIDEO = "https://www.youtube.com/watch?v=msVuCEs8Ydo";
+
+  it("shows the video's cover once it loads, and plays YouTube's own player in its place", async () => {
+    const container = document.createElement("span");
+    document.body.append(container);
+    const actions = { label: "Saved in Sources", open: vi.fn(), menu: { ...menu, play: "Play video" }, excerpt: vi.fn(async () => null) };
+    await act(async () => { sourceLinkCardMount(() => actions)(container, VIDEO, "Is there something faster than light? · Veritasium", { canPreview: true, preview: true, setPreview: vi.fn(), resized: vi.fn() }); });
+    const cover = container.querySelector<HTMLButtonElement>(".source-link-card__cover")!;
+    expect(container.querySelector(".source-link-card--media")).toBeNull();
+    expect(cover.querySelector("img")?.getAttribute("src")).toBe("https://i.ytimg.com/vi/msVuCEs8Ydo/hqdefault.jpg");
+    await act(async () => { cover.querySelector("img")!.dispatchEvent(new Event("load")); });
+    expect(container.querySelector(".source-link-card--media")).not.toBeNull();
+    expect(cover.getAttribute("aria-label")).toBe("Play video: Is there something faster than light? · Veritasium");
+    // Nothing is asked of YouTube's player until the video is played.
+    expect(container.querySelector("iframe")).toBeNull();
+    await act(async () => { cover.click(); });
+    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://www.youtube-nocookie.com/embed/msVuCEs8Ydo?autoplay=1&rel=0");
+    container.remove();
+  });
+
+  it("stays words only when the cover cannot load", async () => {
+    const container = document.createElement("span");
+    document.body.append(container);
+    await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), null))(container, VIDEO, "A video", { canPreview: true, preview: true, setPreview: vi.fn() }); });
+    await act(async () => { container.querySelector(".source-link-card__cover img")!.dispatchEvent(new Event("error")); });
+    expect(container.querySelector(".source-link-card__cover")).toBeNull();
+    expect(container.querySelector(".source-link-card__title")?.textContent).toBe("A video");
+    container.remove();
+  });
+});
+
+describe("a saved post's card", () => {
+  async function postCard() {
+    const container = document.createElement("span");
+    document.body.append(container);
+    const resized = vi.fn();
+    await act(async () => { sourceLinkCardMount(actionsWith(vi.fn(), "@jack: just setting up my twttr"))(container, "https://x.com/jack/status/20?s=20", "@jack: just setting up my twttr", { canPreview: true, preview: true, setPreview: vi.fn(), resized }); });
+    const frame = container.querySelector<HTMLIFrameElement>(".source-link-card__post")!;
+    const id = /wenlanEmbed:&quot;([^&]+)&quot;/.exec(frame.getAttribute("srcdoc") ?? "")?.[1];
+    const tell = (data: object, source: MessageEventSource | null = frame.contentWindow) => act(async () => {
+      window.dispatchEvent(new MessageEvent("message", { data: { wenlanEmbed: id, ...data }, source }));
+    });
+    return { container, frame, tell, resized };
+  }
+
+  it("draws X's own embed apart from the app, out of sight until the post shows", async () => {
+    const { container, frame, tell, resized } = await postCard();
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-popups allow-popups-to-escape-sandbox");
+    expect(frame.getAttribute("srcdoc")).toContain('<blockquote class="twitter-tweet" data-dnt="true"');
+    expect(frame.getAttribute("srcdoc")).toContain('href="https://twitter.com/jack/status/20"');
+    expect(frame.className).toContain("source-link-card__post--waiting");
+    expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
+    // Another frame cannot say it showed.
+    await tell({ shown: true }, window);
+    expect(frame.className).toContain("source-link-card__post--waiting");
+    await tell({ shown: true });
+    await tell({ height: 412 });
+    expect(frame.className).not.toContain("--waiting");
+    expect(frame.style.height).toBe("412px");
+    expect(container.querySelector(".source-link-card--media")).not.toBeNull();
+    expect(resized).toHaveBeenCalled();
+    container.remove();
+  });
+
+  it("falls back to its words when the site will not draw the post", async () => {
+    const { container, tell } = await postCard();
+    await tell({ failed: true });
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector(".source-link-card__title")?.textContent).toBe("@jack: just setting up my twttr");
+    container.remove();
+  });
+});

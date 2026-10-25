@@ -50,6 +50,99 @@
   display: block;
 }
 
+.source-link-card__head {
+  position: relative;
+  display: block;
+}
+
+/* A video or a site's own post: the card is one surface around it. */
+.source-link-card--media {
+  overflow: hidden;
+  border-radius: var(--mem-radius-md);
+  background: var(--mem-hover);
+}
+
+.source-link-card--media .source-link-card__body {
+  border-radius: 0;
+  background: transparent;
+}
+
+.source-link-card__video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  background: var(--mem-hover-strong);
+}
+
+/* Until the cover has loaded the card reads as words only. */
+.source-link-card:not(.source-link-card--media) .source-link-card__cover {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.source-link-card__cover {
+  position: relative;
+  padding: 0;
+  cursor: pointer;
+}
+
+.source-link-card__cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.source-link-card__play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  transform: translate(-50%, -50%);
+  transition: background 120ms ease;
+}
+
+.source-link-card__cover:hover .source-link-card__play {
+  background: rgb(0 0 0 / 0.86);
+}
+
+.source-link-card__cover:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: -2px;
+}
+
+.source-link-card__post {
+  display: block;
+  width: calc(100% - 24px);
+  height: 0;
+  margin: 0 12px 12px;
+  border: 0;
+  background: transparent;
+  color-scheme: normal;
+}
+
+/* Drawn out of sight, so the site's script lays the post out at full width. */
+.source-link-card__post--waiting {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 600px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .source-link-card__body {
   display: grid;
   gap: 3px;

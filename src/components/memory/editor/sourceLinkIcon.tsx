@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { SourceTypeIcon } from "../sources/SourceTypeIcon";
 import { getSourceAppFromUrl } from "../sources/sourcePresentation";
+import { postEmbedDocument, sourceEmbed, videoCoverUrl, videoPlayerUrl, type SourceEmbed } from "./sourceEmbed";
 import type { SourceCardMount, SourceIconMount, SourceLinkPlace } from "./sourcePaste";
 import "./sourceLinkIcon.css";
 
@@ -12,7 +13,7 @@ export interface SourceLinkIconActions {
   label: string;
   open(url: string): void;
   /** The menu's words; without them the icon only opens the source. */
-  menu?: { showLink: string; showPreview: string; openSource: string; more: string };
+  menu?: { showLink: string; showPreview: string; openSource: string; more: string; play?: string };
   /** The first words of a saved source, or null when only its link was saved. */
   excerpt?(url: string): Promise<string | null>;
 }
@@ -157,55 +158,146 @@ function repeatsTitle(excerpt: string, title: string): boolean {
   return excerpt === stem || (title.trim().endsWith("…") && stem.length >= 10 && excerpt.startsWith(stem));
 }
 
+let embedFrames = 0;
+
+type EmbedState = "waiting" | "shown" | "failed";
+
+/** A post shown by its site's own embed code, in a frame that cannot reach
+ *  the app. It stays out of sight until the site has drawn the post. */
+function PostEmbed({ embed, title, onState, resized }: {
+  embed: Extract<SourceEmbed, { kind: "post" }>;
+  title: string;
+  onState(state: EmbedState): void;
+  resized?(): void;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [frame] = useState(() => `wenlan-embed-${++embedFrames}`);
+  const [shown, setShown] = useState(false);
+  const [height, setHeight] = useState(0);
+  const [dark] = useState(() => document.documentElement.getAttribute("data-theme") !== "light");
+  const document_ = useMemo(() => postEmbedDocument(embed, frame, dark), [embed, frame, dark]);
+  useEffect(() => {
+    const listen = (event: MessageEvent) => {
+      const data: unknown = event.data;
+      if (event.source !== frameRef.current?.contentWindow || !data || typeof data !== "object") return;
+      const message = data as { wenlanEmbed?: unknown; shown?: unknown; failed?: unknown; height?: unknown };
+      if (message.wenlanEmbed !== frame) return;
+      if (message.failed === true) onState("failed");
+      if (message.shown === true) {
+        setShown(true);
+        onState("shown");
+      }
+      if (typeof message.height === "number" && Number.isFinite(message.height)) setHeight(Math.min(Math.max(Math.round(message.height), 0), 2400));
+    };
+    window.addEventListener("message", listen);
+    return () => window.removeEventListener("message", listen);
+  }, [frame, onState]);
+  useEffect(() => { resized?.(); }, [shown, height, resized]);
+  return <iframe
+    ref={frameRef}
+    className={`source-link-card__post${shown ? "" : " source-link-card__post--waiting"}`}
+    title={title}
+    // No allow-same-origin: the site's script runs apart from the app.
+    sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+    srcDoc={document_}
+    referrerPolicy="strict-origin-when-cross-origin"
+    style={shown && height ? { height } : undefined}
+    aria-hidden={shown ? undefined : true}
+    tabIndex={shown ? undefined : -1}
+  />;
+}
+
+/** A video's cover, and YouTube's own player in its place once played. */
+function VideoCover({ id, title, play, onState }: { id: string; title: string; play: string; onState(state: EmbedState): void }) {
+  const [playing, setPlaying] = useState(false);
+  if (playing) {
+    return <iframe
+      className="source-link-card__video"
+      src={videoPlayerUrl(id)}
+      title={title}
+      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+      allowFullScreen
+      referrerPolicy="strict-origin-when-cross-origin"
+    />;
+  }
+  return <button
+    type="button"
+    className="source-link-card__video source-link-card__cover"
+    aria-label={`${play}: ${title}`}
+    onMouseDown={(event) => event.preventDefault()}
+    onClick={(event) => {
+      event.preventDefault();
+      setPlaying(true);
+    }}
+  >
+    <img src={videoCoverUrl(id)} alt="" draggable={false} onLoad={() => onState("shown")} onError={() => onState("failed")} />
+    <span className="source-link-card__play" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10.5-6.5z" /></svg>
+    </span>
+  </button>;
+}
+
 function SourceLinkCard({ url, title, place, actions }: { url: string; title: string; place: SourceLinkPlace; actions: () => SourceLinkIconActions }) {
   const current = actions();
   const moreRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  const embed = useMemo(() => sourceEmbed(url), [url]);
+  const [embedState, setEmbedState] = useState<EmbedState>("waiting");
   const excerpt = useExcerpt(url, current, true);
   // A post named by its own words reads whole in the card, said once.
   const repeated = Boolean(excerpt && repeatsTitle(excerpt, title));
-  const heading = repeated ? excerpt! : title;
+  // The site's own post, or the video, says the words; the card only names it.
+  const media = embed && embedState === "shown";
+  const heading = repeated && !media ? excerpt! : title;
   let site = url;
   try {
     site = new URL(url).hostname.replace(/^www\./, "");
   } catch {
     // Shown as written.
   }
-  return <span className="source-link-card">
-    <button
-      type="button"
-      className="source-link-card__body"
-      title={current.label}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={(event) => {
-        event.preventDefault();
-        actions().open(url);
-      }}
-    >
-      <span className={`source-link-card__title${repeated ? " source-link-card__title--post" : ""}`}>
-        <SourceTypeIcon kind={getSourceAppFromUrl(url) ?? "webpage"} size={16} />
-        <span>{heading}</span>
-      </span>
-      <span className="source-link-card__site">{site}</span>
-      {excerpt && !repeated && <span className="source-link-card__excerpt">{excerpt}</span>}
-    </button>
-    {current.menu && <button
-      ref={moreRef}
-      type="button"
-      className="mem-icon-action source-link-card__more"
-      aria-label={current.menu.more}
-      aria-haspopup="menu"
-      aria-expanded={open}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={(event) => {
-        event.preventDefault();
-        setOpen((value) => !value);
-      }}
-    >
-      <svg aria-hidden="true" width="14" height="4" viewBox="0 0 16 4" fill="currentColor">
-        <circle cx="2" cy="2" r="1.5" /><circle cx="8" cy="2" r="1.5" /><circle cx="14" cy="2" r="1.5" />
-      </svg>
-    </button>}
+  // Offline, or a site that would not draw the post: the card stays words only.
+  const showEmbed = embed && embedState !== "failed";
+  const resized = place.resized;
+  useEffect(() => { resized?.(); }, [embedState, resized]);
+  return <span className={`source-link-card${media ? " source-link-card--media" : ""}`}>
+    {showEmbed && embed.kind === "video" && <VideoCover id={embed.id} title={title} play={current.menu?.play ?? title} onState={setEmbedState} />}
+    <span className="source-link-card__head">
+      <button
+        type="button"
+        className="source-link-card__body"
+        title={current.label}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          actions().open(url);
+        }}
+      >
+        <span className={`source-link-card__title${repeated && !media ? " source-link-card__title--post" : ""}`}>
+          <SourceTypeIcon kind={getSourceAppFromUrl(url) ?? "webpage"} size={16} />
+          <span>{heading}</span>
+        </span>
+        <span className="source-link-card__site">{site}</span>
+        {excerpt && !repeated && !media && <span className="source-link-card__excerpt">{excerpt}</span>}
+      </button>
+      {current.menu && <button
+        ref={moreRef}
+        type="button"
+        className="mem-icon-action source-link-card__more"
+        aria-label={current.menu.more}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={(event) => {
+          event.preventDefault();
+          setOpen((value) => !value);
+        }}
+      >
+        <svg aria-hidden="true" width="14" height="4" viewBox="0 0 16 4" fill="currentColor">
+          <circle cx="2" cy="2" r="1.5" /><circle cx="8" cy="2" r="1.5" /><circle cx="14" cy="2" r="1.5" />
+        </svg>
+      </button>}
+    </span>
+    {showEmbed && embed.kind === "post" && <PostEmbed embed={embed} title={title} onState={setEmbedState} resized={resized} />}
     {open && moreRef.current && <SourceLinkMenu
       anchor={moreRef.current}
       url={url}
