@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "Wenlan",
         "width": 1280,
         "height": 720,

@@ -50,10 +50,17 @@ export function videoCoverUrl(id: string): string {
   return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
 }
 
-/** YouTube's embedded player in privacy-enhanced mode: no cookies until the
- *  video plays. */
+/** Wenlan's page on its website that holds YouTube's player. YouTube's
+ *  embedded player needs a web page address as the referrer, which the app's
+ *  own window (tauri://localhost) does not have, and shows Error 153 without
+ *  it. A test build can point at another copy of the page. */
+const VIDEO_PLAYER_PAGE = import.meta.env.VITE_WENLAN_VIDEO_PLAYER_PAGE || "https://wenlan.app/embed/youtube.html";
+
+/** The player for a video: YouTube's privacy-enhanced player, inside
+ *  Wenlan's player page. The video id goes after the #, so it never reaches
+ *  the website's server. */
 export function videoPlayerUrl(id: string): string {
-  return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`;
+  return `${VIDEO_PLAYER_PAGE}#${id}`;
 }
 
 /** The site's own embed page for a post: the page its embed script puts in

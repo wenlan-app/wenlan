@@ -13,6 +13,7 @@
     },
     "windows": [{
       "label": "main",
+        "create": false,
       "title": "Wenlan Dev · Live data · Read-only",
       "url": "http://127.0.0.1:1424",
       "width": 1280,

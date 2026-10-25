@@ -125,7 +125,7 @@ describe("a saved video's card", () => {
     // Nothing is asked of YouTube's player until the video is played.
     expect(container.querySelector("iframe")).toBeNull();
     await act(async () => { cover.click(); });
-    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://www.youtube-nocookie.com/embed/msVuCEs8Ydo?autoplay=1&rel=0");
+    expect(container.querySelector("iframe")?.getAttribute("src")).toBe("https://wenlan.app/embed/youtube.html#msVuCEs8Ydo");
     container.remove();
   });
 

@@ -77,6 +77,37 @@ fn set_main_window_dock_visibility<R: tauri::Runtime>(app: &tauri::AppHandle<R>,
 #[cfg(not(target_os = "macos"))]
 fn set_main_window_dock_visibility<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _visible: bool) {}
 
+/// Builds the main window when its config leaves it to the app
+/// (`"create": false`), so a link a page's embed opens in a new window, such
+/// as a post's author or "View on X", goes to the browser. Without a handler
+/// the webview drops the request and the click does nothing.
+fn build_main_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main" && !window.create)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let links = app.clone();
+    tauri::WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(move |url, _features| {
+            if matches!(url.scheme(), "http" | "https") {
+                use tauri_plugin_shell::ShellExt;
+                #[allow(deprecated)]
+                if let Err(error) = links.shell().open(url.as_str(), None) {
+                    log::warn!("[links] could not open {url} in the browser: {error}");
+                }
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
+        .build()?;
+    Ok(())
+}
+
 /// Shows, restores, and focuses the main window (second launch, pairing link).
 pub(crate) fn reveal_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::Manager;
@@ -836,6 +867,8 @@ pub fn run() {
         .manage(tray_panel::TrayPanelState::default())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            build_main_window(&handle)?;
 
             // Keep the app LaunchServices-friendly: the UI process is a normal
             // Dock app from startup, while close/hide only affects the window.

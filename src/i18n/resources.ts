@@ -774,7 +774,7 @@ const en = {
     iconTitle: "Saved in Sources",
     showLink: "Show as link",
     showPreview: "Show as preview",
-    openSource: "Open source",
+    openSource: "Open in Sources",
     moreActions: "More for this link",
     playVideo: "Play video",
   },
