@@ -2,76 +2,118 @@
 
 use super::*;
 
-/// Re-embed memory rows that have no embedding, one bounded batch per
-/// background maintenance lease, until none are left, a batch fails, or
-/// shutdown is requested.
-///
-/// The lease is taken for each batch and released before the next, so an
-/// approved repair waits for at most one in-flight batch and holds every later
-/// batch off until it finishes. Once a batch holds its lease it runs to its
-/// commit: dropping it between `BEGIN` and `COMMIT` would leave the shared
-/// writer connection inside a transaction. A failed batch ends the run without
-/// retrying; rows still unembedded are counted again on the next start.
+/// Re-embed memory rows that have no embedding: once at boot, and again each
+/// time a big import stored rows without a vector
+/// ([`wenlan_server::embedding_backfill::request`]), until shutdown.
 async fn recover_null_memory_embeddings_in_background(
     db: Arc<wenlan_core::db::MemoryDB>,
     maintenance: wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
-    let pending = match db.count_null_memory_embeddings().await {
-        Ok(0) => return,
+    loop {
+        if !recover_null_memory_embeddings_run(&db, &maintenance, &shutdown).await {
+            return;
+        }
+        tokio::select! {
+            biased;
+            _ = lifecycle::wait_for_shutdown(shutdown.clone()) => return,
+            _ = wenlan_server::embedding_backfill::requested() => {}
+        }
+    }
+}
+
+/// One run: re-embed rows that have no embedding, one bounded batch per
+/// background maintenance lease. A pass walks the rows once in id order; the
+/// run makes another pass while the previous one lowered the count (rows a
+/// pass skipped because they changed meanwhile), and ends when none are left,
+/// a pass embeds nothing more, or a batch fails. Returns `false` when
+/// shutdown was requested.
+///
+/// The lease is taken for each batch and released before the next, so an
+/// approved repair waits for at most one in-flight batch and holds every later
+/// batch off until it finishes. Once a batch holds its lease it runs to its
+/// commit: dropping it between `BEGIN` and `COMMIT` would leave the shared
+/// writer connection inside a transaction. Rows still unembedded are counted
+/// again on the next run (next import or start).
+async fn recover_null_memory_embeddings_run(
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    maintenance: &wenlan_server::maintenance_coordinator::MaintenanceCoordinator,
+    shutdown: &tokio::sync::watch::Receiver<bool>,
+) -> bool {
+    // The run's one full count: Activity's live counters start from it, so
+    // the route never counts rows without a vector itself.
+    let mut pending = match db.count_null_memory_embeddings().await {
+        Ok(0) => {
+            db.end_embedding_catch_up();
+            return true;
+        }
         Ok(pending) => pending,
         Err(error) => {
             tracing::warn!("[memory_db] null embedding check failed: {error}");
-            return;
+            db.end_embedding_catch_up();
+            return true;
         }
     };
-    tracing::warn!("[memory_db] recovering {pending} memories with no embedding in the background");
-    let mut cursor: Option<String> = None;
+    tracing::warn!("[memory_db] embedding {pending} memories with no embedding in the background");
+    db.begin_embedding_catch_up(pending);
     let mut recovered = 0usize;
     let mut skipped = 0usize;
-    loop {
-        let guard = tokio::select! {
-            biased;
-            _ = lifecycle::wait_for_shutdown(shutdown.clone()) => break,
-            guard = maintenance.begin_background() => guard,
-        };
-        if lifecycle::shutdown_requested(&shutdown) {
-            break;
-        }
-        let batch = db
-            .recover_null_memory_embeddings_batch(
-                cursor.as_deref(),
-                wenlan_core::db::NULL_EMBEDDING_RECOVERY_BATCH,
-            )
-            .await;
-        drop(guard);
-        match batch {
-            Ok(batch) => {
-                recovered += batch.recovered;
-                skipped += batch.skipped;
-                let Some(next_cursor) = batch.next_cursor else {
-                    tracing::info!(
-                        "[memory_db] background embedding recovery complete: \
-                         {recovered} recovered, {skipped} skipped"
+    'run: loop {
+        let mut cursor: Option<String> = None;
+        loop {
+            let guard = tokio::select! {
+                biased;
+                _ = lifecycle::wait_for_shutdown(shutdown.clone()) => break 'run,
+                guard = maintenance.begin_background() => guard,
+            };
+            if lifecycle::shutdown_requested(shutdown) {
+                break 'run;
+            }
+            let batch = db
+                .recover_null_memory_embeddings_batch(
+                    cursor.as_deref(),
+                    wenlan_core::db::NULL_EMBEDDING_RECOVERY_BATCH,
+                )
+                .await;
+            drop(guard);
+            match batch {
+                Ok(batch) => {
+                    recovered += batch.recovered;
+                    skipped += batch.skipped;
+                    let Some(next_cursor) = batch.next_cursor else {
+                        break;
+                    };
+                    cursor = Some(next_cursor);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        "[memory_db] background embedding stopped after \
+                         {recovered} recovered, {skipped} skipped: {error}"
                     );
-                    return;
-                };
-                cursor = Some(next_cursor);
+                    db.end_embedding_catch_up();
+                    return true;
+                }
             }
-            Err(error) => {
-                tracing::warn!(
-                    "[memory_db] background embedding recovery stopped after \
-                     {recovered} recovered, {skipped} skipped: {error}"
-                );
-                return;
-            }
+            tokio::task::yield_now().await;
         }
-        tokio::task::yield_now().await;
+        let left = db.count_null_memory_embeddings().await.unwrap_or(0);
+        if left == 0 || left >= pending {
+            tracing::info!(
+                "[memory_db] background embedding complete: \
+                 {recovered} recovered, {skipped} skipped, {left} left"
+            );
+            db.end_embedding_catch_up();
+            return true;
+        }
+        // The pass's closing count re-anchors the live counters for free.
+        db.begin_embedding_catch_up(left);
+        pending = left;
     }
     tracing::info!(
-        "[memory_db] background embedding recovery paused for shutdown after \
+        "[memory_db] background embedding paused for shutdown after \
          {recovered} recovered, {skipped} skipped"
     );
+    false
 }
 
 pub(super) async fn register_optional_runtime_workers(

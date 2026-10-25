@@ -57,6 +57,25 @@ pub struct RefinementOpenCount {
     pub count: u64,
 }
 
+/// Memory rows waiting for a vector after a big import stored them without
+/// one, from live counters kept beside the write path and the background
+/// catch-up (`MemoryDB::embedding_backlog`), not from a table scan. `total`
+/// is how many rows the current catch-up has had in all, so a reader can say
+/// "done of total"; it never shrinks while the catch-up runs, and both are
+/// zero when none is running.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EmbeddingBacklog {
+    pub remaining: u64,
+    pub total: u64,
+}
+
+impl EmbeddingBacklog {
+    /// Rows the current catch-up has embedded (or that no longer need it).
+    pub const fn done(self) -> u64 {
+        self.total.saturating_sub(self.remaining)
+    }
+}
+
 /// Every count `GET /api/activity` composes into an `ActivityResponse`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityCounts {
@@ -99,6 +118,8 @@ pub struct ActivityCounts {
     /// action and status, ordered by action then status. Served by the partial
     /// index `idx_refinement_status`, which covers exactly those two statuses.
     pub refinement_open: Vec<RefinementOpenCount>,
+    /// Rows waiting for a vector, from the live counters (no query).
+    pub embedding_backlog: EmbeddingBacklog,
 }
 
 impl MemoryDB {
@@ -370,6 +391,7 @@ impl MemoryDB {
             pages_refresh_blocked,
             last_work_at,
             refinement_open,
+            embedding_backlog: self.embedding_backlog(),
         })
     }
 }
@@ -458,6 +480,7 @@ mod tests {
                 pages_refresh_blocked: 0,
                 last_work_at: None,
                 refinement_open: vec![],
+                embedding_backlog: super::EmbeddingBacklog::default(),
             }
         );
     }

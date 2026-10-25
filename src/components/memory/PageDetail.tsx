@@ -31,6 +31,11 @@ import {
   pageReviewSupported,
   parseEntityGuardError,
   markPageBasis,
+  fetchWebpage,
+  ingestWebpage,
+  deleteFileChunks,
+  getChunks,
+  listIndexedFiles,
   type Entity,
   type BasisConfirmOutcome,
   type BasisRef,
@@ -56,7 +61,8 @@ import { InfoAction } from "./page/InfoAction";
 import "./page/pageDocumentTools.css";
 import KnowledgeContext from "./context/KnowledgeContext";
 import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice";
-import { LockIcon, RailPanelTitle } from "./MemoryDetailPrimitives";
+import { RailPanelTitle } from "./MemoryDetailPrimitives";
+import { AiChangesOptions } from "./AiChangesOptions";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
@@ -81,6 +87,11 @@ import {
   type MarkdownEditorSelection,
 } from "./editor/MarkdownEditor";
 import type { LinkCompletionNote } from "./editor/wikiLinkCompletion";
+import type { PastedSourceSaved } from "./editor/sourcePaste";
+import { sourceLinkCardMount, sourceLinkIconMount, type SourceLinkIconActions } from "./editor/sourceLinkIcon";
+import { sourceLinkKey } from "./editor/sourceLinkKey";
+import { SHARE_PREVIEW_APPS, sharePreview as readSharePreview, sharePreviewTitle } from "./sources/sharePreview";
+import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
@@ -238,6 +249,12 @@ function handleMenuKeyDown(
   items[nextIndex]?.focus();
 }
 
+/** Sites that show the daemon a sign-in page instead of the post or document. */
+const SIGN_IN_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack", "x", "threads", "instagram", "xiaohongshu"]);
+const PRIVATE_APPS: ReadonlySet<SourceApp> = new Set(["gmail", "slack"]);
+// A note above an article about other pages, as Wikipedia puts first.
+const HATNOTE = /redirects here|^for other uses|^this article is about|^not to be confused with/i;
+
 export default function PageDetail({
   pageId,
   projectionIssue,
@@ -260,7 +277,7 @@ export default function PageDetail({
   onRegisterFlush,
   showAttachedPageNotice = false,
 }: PageDetailProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [wikiLinkPreview, setWikiLinkPreview] = useState<ReferencePreviewRequest | null>(null);
   const wikiLinkPreviewLeaveTimerRef = useRef<number | null>(null);
@@ -600,6 +617,54 @@ export default function PageDetail({
     // A save can clear or replace the evidence map. Never keep a stale citation open.
     setWikiLinkPreview((current) => current?.target.kind === "citation" ? null : current);
   }, [page?.citations]);
+
+  // Links saved as sources; the editor shows their site's icon.
+  const { data: indexedFiles } = useQuery({ queryKey: ["indexedFiles"], queryFn: () => listIndexedFiles() });
+  const sourceLinks = useMemo(() => new Map((indexedFiles ?? [])
+    .filter((file) => file.source === "webpage")
+    .map((file) => {
+      // Mail and chat are never read, so they have no words for a card.
+      const app = getSourceAppFromUrl(file.source_id);
+      return [file.source_id, { title: file.title, previewable: !app || !PRIVATE_APPS.has(app) }] as const;
+    })), [indexedFiles]);
+  // A saved link's icon opens its source beside the page, as Sources does.
+  const savedWebSource = (url: string) => {
+    const webpages = (indexedFiles ?? []).filter((row) => row.source === "webpage");
+    return webpages.find((row) => row.source_id === url)
+      ?? webpages.find((row) => sourceLinkKey(row.source_id) === sourceLinkKey(url));
+  };
+  const sourceIconActionsRef = useRef<SourceLinkIconActions | null>(null);
+  sourceIconActionsRef.current = {
+    label: t("sourcePaste.iconTitle"),
+    open: (url) => {
+      const file = savedWebSource(url);
+      if (!file) return;
+      if (showCanvas) void requestToggleCanvas();
+      changeCanvasWorkspaceExpanded(false);
+      setSourcePreview(file);
+    },
+    menu: {
+      showLink: t("sourcePaste.showLink"),
+      showPreview: t("sourcePaste.showPreview"),
+      openSource: t("sourcePaste.openSource"),
+      more: t("sourcePaste.moreActions"),
+      play: t("sourcePaste.playVideo"),
+    },
+    // A card's words: the saved page's opening, none when only its link was kept.
+    excerpt: async (url) => {
+      const file = savedWebSource(url);
+      if (!file) return null;
+      const chunks = await getChunks("webpage", file.source_id);
+      const text = [...chunks].sort((a, b) => a.chunk_index - b.chunk_index)[0]?.content ?? "";
+      // Footnote marks such as [1] mean nothing on a card.
+      const lines = text.split(/\n+/).map((line) => line.replace(/\[\d+\]/g, "").replace(/\s+/g, " ").trim()).filter(Boolean);
+      // The first sentence-like paragraph, past menus and language lists.
+      const first = lines.find((line) => line.length >= 60 && /[.!?:。！？：]/.test(line) && !HATNOTE.test(line)) ?? lines.join(" ");
+      return first && first !== file.source_id ? first.slice(0, 280) : null;
+    },
+  };
+  const [mountSourceIcon] = useState(() => sourceLinkIconMount(() => sourceIconActionsRef.current ?? { label: "", open: () => undefined }));
+  const [mountSourceCard] = useState(() => sourceLinkCardMount(() => sourceIconActionsRef.current ?? { label: "", open: () => undefined }));
 
   // Entities on this page = the page's own anchor entity plus the anchor
   // entities of its source memories. These are enrichment links, not search.
@@ -1008,7 +1073,7 @@ export default function PageDetail({
     },
     onError: (_error, { id }) => {
       if (activePageIdRef.current !== id) return;
-      setActionErrorMessage(t("pageDetail.requireReviewFailed"));
+      setActionErrorMessage(t("pageDetail.aiSaveFailed"));
     },
   });
 
@@ -1783,6 +1848,81 @@ export default function PageDetail({
       if (!ok && mountedRef.current && activePageIdRef.current === originPageId) setActionErrorMessage(t("noteBasis.markFailed"));
     });
   };
+  // A pasted link saved as a source, into this page's Space. Sites that need
+  // a sign-in show the daemon a login screen, so only their link and a name
+  // are kept; so is a page that could not be read.
+  const savePastedSource = async (url: string, label?: string): Promise<PastedSourceSaved> => {
+    const app = getSourceAppFromUrl(url);
+    const signIn = app !== null && SIGN_IN_APPS.has(app);
+    const sharePreview = app !== null && SHARE_PREVIEW_APPS.has(app);
+    let title = "";
+    let content = "";
+    if (!signIn || sharePreview) {
+      try {
+        const fetched = await fetchWebpage(url);
+        if (sharePreview && app) {
+          // Only what the site gives link previews; the rest is its sign-in wall.
+          const preview = readSharePreview(app, fetched);
+          if (preview) {
+            const short = sharePreviewTitle(preview.text);
+            title = preview.who ? t("sourcePaste.previewTitle", { who: preview.who, text: short }) : short;
+            content = preview.who ? t("sourcePaste.previewTitle", { who: preview.who, text: preview.text }) : preview.text;
+          }
+        } else if (app === "youtube") {
+          // YouTube can give a video another video's description, so only its
+          // name and channel are kept.
+          const name = fetched.title.trim().replace(/\s+-\s+YouTube$/, "");
+          const author = fetched.author?.trim();
+          if (name && name !== "YouTube") {
+            title = author && !name.toLowerCase().includes(author.toLowerCase())
+              ? t("sourcePaste.videoByTitle", { title: name, author })
+              : name;
+            content = title;
+          }
+        } else {
+          title = fetched.title.trim();
+          content = fetched.content.trim();
+        }
+      } catch {
+        // Saved as a link below.
+      }
+    }
+    const linkOnly = signIn && !content;
+    const handle = sourceHandleFromUrl(url);
+    const kind = sourceLinkKind(url);
+    const appName = app ? sourceAppName(app, i18n.language) : "";
+    const fallbackTitle = app
+      ? handle
+        ? t("sourcePaste.accountTitle", { app: appName, handle })
+        : t(kind ? `sourcePaste.${kind}Title` : "sourcePaste.linkTitle", { app: appName })
+      // Site and path, so two unreadable pages of one site are told apart.
+      : (() => {
+        try {
+          const parsed = new URL(url);
+          return `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname.replace(/\/+$/, "")}`.slice(0, 80);
+        } catch {
+          return url;
+        }
+      })();
+    let created = true;
+    try {
+      await ingestWebpage({ url, title: title || label || fallbackTitle, content: content || url, create_only: true, space: page.space ?? null });
+    } catch (error) {
+      // Saved before: that copy is the source, and stays when the link goes.
+      if ((error instanceof Error ? error.message : error) !== "WEBPAGE_ALREADY_EXISTS") throw error;
+      created = false;
+    }
+    void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
+    return {
+      title: title || label || fallbackTitle,
+      linkOnly: linkOnly ? "signIn" : content ? undefined : "unreadable",
+      // Deleting the link deletes the source, unless it was saved before.
+      remove: created ? async () => {
+        await deleteFileChunks("webpage", url);
+        void queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
+      } : undefined,
+    };
+  };
   // An entity's own page cannot rely on, or be, a note.
   const basisEditable = page.creation_kind !== "entity";
 
@@ -1897,6 +2037,7 @@ export default function PageDetail({
   // PageDetail is reused across pages; a slow request for another page must
   // not disable this page's toggle.
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
+  const humanOwned = page.user_edited === true || page.creation_kind === "authored";
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
   const canRenamePage = page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
@@ -2058,21 +2199,6 @@ export default function PageDetail({
                           ? t("pageDetail.redistillingPage")
                           : t("pageDetail.redistillPage")}
                     </button> : null}
-                    {/* The daemon refuses to lock an entity shadow page. */}
-                    {page.creation_kind !== "entity" ? <button
-                      aria-checked={page.review_required === true}
-                      disabled={storedActionBlocked || reviewLockPending}
-                      onClick={() => {
-                        closeActionMenu();
-                        setActionErrorMessage(null);
-                        reviewRequiredMutation.mutate({ id: page.id, required: page.review_required !== true });
-                      }}
-                      role="menuitemcheckbox"
-                      type="button"
-                    >
-                      <LockIcon filled={page.review_required === true} size={12} />
-                      {t("pageDetail.requireReview")}
-                    </button> : null}
                     {obsidianSources.length === 0 ? (
                       <button
                         className="page-detail-mobile-menu-item"
@@ -2191,12 +2317,6 @@ export default function PageDetail({
           }}
           codeBasis={{ actions: codeBasisActions, onEditToConfirm: startCodeConfirmEdit }}
         />}
-
-        {page.review_required === true && (
-          <div className="note-review-notice" data-testid="page-review-lock-notice" role="status">
-            <p className="note-review-notice__message">{t("pageDetail.reviewLockedNotice")}</p>
-          </div>
-        )}
 
         {projectionIssue && !inventoryPageFilename(page) && <PageProjectionNotice key={`${pageId}:${projectionIssue.expectedVersion}`} pageId={pageId} issue={projectionIssue} disabled={editDirty || saveState.phase !== "idle" || !!editorStatus?.compositionActive} onResolved={onProjectionResolved} />}
 
@@ -2555,6 +2675,10 @@ export default function PageDetail({
                   wikiLinkTargets={editorWikiLinkTargets}
                   linkNotes={linkNotes}
                   onLinkPick={pickLink}
+                  sourceLinks={sourceLinks}
+                  onSavePastedSource={savePastedSource}
+                  mountSourceIcon={mountSourceIcon}
+                  mountSourceCard={mountSourceCard}
                   referenceContext={editorReferenceContext}
                   onReferenceActivate={(target, anchor) => {
                     if (target.kind === "page") { dismissWikiLinkPreview(); onPageClick?.(target.id); }
@@ -2709,6 +2833,29 @@ export default function PageDetail({
             <PageTruthBadges cutoverLive={cutoverLive} truth={page.truth} />
           </div>
           </div>
+          {/* The daemon refuses to lock an entity shadow page. "Ask me first"
+              is the page's review lock; a locked page someone edited is the
+              one "Ask me first on pages I wrote" locks. */}
+          {page.creation_kind !== "entity" && <AiChangesOptions
+            heading={t("pageDetail.aiChanges")}
+            name={`page-ai-${page.id}`}
+            options={[
+              { value: "allowed", label: t("pageDetail.aiAllowed"), hint: t("pageDetail.aiAllowedHint") },
+              { value: "ask_first", label: t("pageDetail.aiAskFirst"), hint: t("pageDetail.aiAskFirstHint") },
+            ]}
+            value={page.review_required === true ? "ask_first" : "allowed"}
+            disabled={storedActionBlocked || reviewLockPending}
+            onChange={(value) => {
+              setActionErrorMessage(null);
+              reviewRequiredMutation.mutate({ id: page.id, required: value === "ask_first" });
+            }}
+          >
+            {/* "Wrote" follows the daemon's own ownership rule
+                (page_is_human_owned): edited by hand, or written here. */}
+            {page.review_required === true
+              ? <p className="note-ai-from">{t(humanOwned ? "pageDetail.aiFromWrote" : "pageDetail.aiFromPage")}</p>
+              : !humanOwned && <p className="note-ai-from">{t("pageDetail.aiFromAi")}</p>}
+          </AiChangesOptions>}
           <div className="note-info-sections">
             <KnowledgeContext standaloneGraph diagramOnly key={pageId} kind="page" id={pageId} title={page.title}
               onOpenGraph={onOpenGraph ? () => onOpenGraph(pageId) : undefined}

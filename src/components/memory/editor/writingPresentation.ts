@@ -23,6 +23,7 @@ import {
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { hiddenUrlPrefixLength } from "../../../lib/displayUrl";
+import { SourceLinkCardWidget, SourceLinkIconWidget, sourceLinkInfo, sourceLinkIsFresh, sourceLinkPlaceAt, sourceLinkUrls } from "./sourcePaste";
 import {
   attachmentKind,
   attachmentName,
@@ -460,6 +461,7 @@ function buildWritingRanges(view: EditorView): WritingRanges {
   const markKeys = new Set<string>();
   const state = view.state;
   const compositionActive = state.field(writingCompositionActive, false) ?? false;
+  const sourceLinks = state.field(sourceLinkUrls, false);
   const contentFocused =
     view.contentDOM === view.contentDOM.ownerDocument.activeElement;
   const frontmatterEnd = findFrontmatterEnd(state);
@@ -561,12 +563,28 @@ function buildWritingRanges(view: EditorView): WritingRanges {
           if (url && /^#(?:concept|memory):[^\s#]+$/.test(state.sliceDoc(url.from, url.to))) return;
           if (url && marks.length >= 4 && opening && closingLabel && closing) {
             addMarkClass(opening.to, closingLabel.from, "cm-writing-link");
-            if (!constructIsRevealed(state, node.from, node.to, contentFocused)) {
+            // A link that just took its title stays a link beside the caret.
+            if (!constructIsRevealed(state, node.from, node.to, contentFocused) || sourceLinkIsFresh(state, node.from, node.to)) {
+              const target = state.sliceDoc(url.from, url.to);
+              const source = sourceLinkInfo(sourceLinks, target);
+              const place = source ? sourceLinkPlaceAt(state, node.from, node.to) : null;
+              const canPreview = Boolean(source?.previewable && place?.alone);
+              // A link alone on its line, marked so, reads as its source's card.
+              if (source && canPreview && place?.preview) {
+                addConcealment(node.from, node.to, new SourceLinkCardWidget(target, state.sliceDoc(opening.to, closingLabel.from), node.from));
+                return;
+              }
               addConcealment(opening.from, opening.to);
               addConcealment(closingLabel.from, closing.to);
               // The arrow stands in for the hidden URL, so it only shows
-              // while the URL is concealed.
-              if (isBrowserUrl(state.sliceDoc(url.from, url.to))) {
+              // while the URL is concealed. A link saved as a source shows
+              // its site's icon instead.
+              if (source) {
+                decorations.push(Decoration.widget({
+                  widget: new SourceLinkIconWidget(target, node.from, canPreview, Boolean(place?.preview)),
+                  side: -1,
+                }).range(closingLabel.from));
+              } else if (isBrowserUrl(target)) {
                 addMarkClass(opening.to, closingLabel.from, "cm-writing-link-external");
               }
             }

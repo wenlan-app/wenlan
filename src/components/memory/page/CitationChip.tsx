@@ -8,7 +8,7 @@ import {
 } from "../../../lib/pageCitations";
 import CitationPopover, { openCitationTarget } from "./CitationPopover";
 import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp } from "../links/ReferenceTypeIcon";
-import { SOURCE_APP_NAMES } from "../sources/sourcePresentation";
+import { sourceAppName } from "../sources/sourcePresentation";
 import "../links/reference-links.css";
 
 interface CitationChipProps {
@@ -33,7 +33,7 @@ export default function CitationChip({
 }: CitationChipProps) {
   const [open, setOpen] = useState(false);
   const [openFailure, setOpenFailure] = useState<string | null>(null);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const chipRef = useRef<HTMLButtonElement>(null);
   const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -46,7 +46,7 @@ export default function CitationChip({
     authored: t("citation.kind.authored"),
   };
   const app = citationSourceApp(citation);
-  const displayLabel = app ? SOURCE_APP_NAMES[app] : citationDisplayLabel(citation, kindLabels);
+  const displayLabel = app ? sourceAppName(app, i18n.language) : citationDisplayLabel(citation, kindLabels);
 
   const clearCloseTimer = () => {
     if (closeTimer.current) clearTimeout(closeTimer.current);

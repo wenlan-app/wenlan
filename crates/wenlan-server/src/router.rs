@@ -92,6 +92,7 @@ pub fn build_router_with_shutdown(state: SharedState, shutdown: ShutdownHandle) 
     let router = snapshot_routes::register(router);
     let router = page_routes::register_manual_edit(router);
     let router = knowledge_routes::register(router);
+    let router = crate::note_routes::register(router);
     let router = onboarding_routes::register(router);
     let router = websocket::register(router);
     let router = session_routes::register(router);

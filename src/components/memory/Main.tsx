@@ -1444,6 +1444,10 @@ export default function Main({
                 onSeeExample={() => navigateTo({ kind: "first-use" })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
                 onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
+                onOpenNoteSuggestion={(container) => {
+                  setSourceLibraryState({ search: "", filter: "all", container });
+                  navigateTo({ kind: "sources" });
+                }}
               />
             </WikiWorkspace>
           ) : view.kind === "entities" ? (

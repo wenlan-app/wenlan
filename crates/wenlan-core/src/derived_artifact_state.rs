@@ -1,6 +1,6 @@
-use crate::db::MemoryDB;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use crate::db::{EmbeddingBacklog, MemoryDB};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 pub(crate) fn summary_eligible_predicate(alias: &str) -> String {
     let minimum = crate::refinery::summary::min_bucket_members();
@@ -138,12 +138,21 @@ impl DerivedArtifact {
 pub(crate) struct DerivedArtifactState {
     active: [AtomicU32; 3],
     generation: AtomicU64,
+    /// Memory rows were stored without a vector on purpose (a big import)
+    /// and the background catch-up has not finished embedding them.
+    embedding_backlog: AtomicBool,
+    /// Live counts behind that flag, kept here so `GET /api/activity` never
+    /// has to count the rows without a vector (a scan of the whole table)
+    /// on every poll. One lock for both numbers so a reader never sees one
+    /// updated without the other.
+    embedding_progress: Mutex<EmbeddingBacklog>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DerivedArtifactSample {
     active: [u32; 3],
     generation: u64,
+    embedding_backlog: bool,
 }
 
 impl DerivedArtifactState {
@@ -163,13 +172,81 @@ impl DerivedArtifactState {
         DerivedArtifactSample {
             active: std::array::from_fn(|index| self.active[index].load(Ordering::Acquire)),
             generation: self.generation.load(Ordering::Acquire),
+            embedding_backlog: self.embedding_backlog.load(Ordering::Acquire),
         }
+    }
+
+    fn set_embedding_backlog(&self, pending: bool) {
+        if self.embedding_backlog.swap(pending, Ordering::AcqRel) != pending {
+            self.generation.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    fn embedding_progress(&self) -> std::sync::MutexGuard<'_, EmbeddingBacklog> {
+        // The counts are plain numbers: a panic elsewhere cannot leave them
+        // half written, so a poisoned lock is still safe to read.
+        self.embedding_progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A write stored `rows` rows without a vector. They join the current
+    /// catch-up: both `remaining` and `total` grow, so `done` stays put.
+    fn add_embedding_backlog(&self, rows: u64) {
+        if rows == 0 {
+            return;
+        }
+        {
+            let mut progress = self.embedding_progress();
+            progress.remaining = progress.remaining.saturating_add(rows);
+            progress.total = progress.total.saturating_add(rows);
+        }
+        self.set_embedding_backlog(true);
+    }
+
+    /// The catch-up embedded `rows` rows.
+    fn embedded(&self, rows: u64) {
+        let mut progress = self.embedding_progress();
+        progress.remaining = progress.remaining.saturating_sub(rows);
+    }
+
+    /// Re-anchor `remaining` on a real count of rows without a vector. The
+    /// running counts can drift from it (a note re-synced or deleted while
+    /// waiting, a write counted twice around the count), and the count wins.
+    /// `total` never shrinks and `done` never goes back: `total` grows just
+    /// enough to keep what is already done, so the UI never shows done
+    /// moving backwards or above total.
+    fn begin_embedding_catch_up(&self, waiting: u64) {
+        if waiting == 0 {
+            self.end_embedding_catch_up();
+            return;
+        }
+        {
+            let mut progress = self.embedding_progress();
+            let done = progress.done();
+            progress.remaining = waiting;
+            progress.total = progress.total.max(done.saturating_add(waiting));
+        }
+        self.set_embedding_backlog(true);
+    }
+
+    fn end_embedding_catch_up(&self) {
+        *self.embedding_progress() = EmbeddingBacklog::default();
+        self.set_embedding_backlog(false);
+    }
+
+    fn embedding_backlog_progress(&self) -> EmbeddingBacklog {
+        *self.embedding_progress()
     }
 }
 
 impl DerivedArtifactSample {
     pub(crate) const fn is_active(self, artifact: DerivedArtifact) -> bool {
         self.active[artifact.index()] > 0
+    }
+
+    pub(crate) const fn embedding_backlog(self) -> bool {
+        self.embedding_backlog
     }
 }
 
@@ -195,6 +272,180 @@ impl MemoryDB {
 
     pub(crate) fn derived_artifact_sample(&self) -> DerivedArtifactSample {
         self.derived_artifact_state.sample()
+    }
+
+    /// A big import stored `rows` memory rows without a vector on purpose.
+    /// While rows wait for the background catch-up the memory lint counts a
+    /// missing vector as pending, not as damage, and Activity reports them.
+    pub(crate) fn add_embedding_backlog(&self, rows: usize) {
+        self.derived_artifact_state
+            .add_embedding_backlog(u64::try_from(rows).unwrap_or(u64::MAX));
+    }
+
+    /// The background catch-up embedded `rows` rows.
+    pub(crate) fn note_backlog_rows_embedded(&self, rows: usize) {
+        self.derived_artifact_state
+            .embedded(u64::try_from(rows).unwrap_or(u64::MAX));
+    }
+
+    /// A catch-up run (or pass) counted `waiting` rows without a vector:
+    /// mark the backlog and re-anchor its counts on that real number. Called
+    /// once per run, never per poll, since the count scans the whole table.
+    /// Zero ends the backlog.
+    pub fn begin_embedding_catch_up(&self, waiting: usize) {
+        self.derived_artifact_state
+            .begin_embedding_catch_up(u64::try_from(waiting).unwrap_or(u64::MAX));
+    }
+
+    /// The catch-up run ended (nothing left, nothing more it can embed, or a
+    /// failed batch): clear the flag and both counts. Rows still without a
+    /// vector are counted again by the next run.
+    pub fn end_embedding_catch_up(&self) {
+        self.derived_artifact_state.end_embedding_catch_up();
+    }
+
+    /// Rows still waiting for a vector and the size of the current catch-up,
+    /// from the live counters: no database read. All zero when no catch-up
+    /// is running.
+    pub fn embedding_backlog(&self) -> EmbeddingBacklog {
+        self.derived_artifact_state.embedding_backlog_progress()
+    }
+}
+
+#[cfg(test)]
+mod embedding_backlog_tests {
+    use super::DerivedArtifactState;
+    use crate::db::tests::test_db;
+    use crate::db::EmbeddingBacklog;
+    use crate::sources::RawDocument;
+
+    fn progress(state: &DerivedArtifactState) -> (u64, u64, u64, bool) {
+        let backlog = state.embedding_backlog_progress();
+        (
+            backlog.remaining,
+            backlog.total,
+            backlog.done(),
+            state.sample().embedding_backlog(),
+        )
+    }
+
+    #[test]
+    fn deferred_rows_add_and_embedded_rows_subtract() {
+        let state = DerivedArtifactState::default();
+        state.add_embedding_backlog(100);
+        assert_eq!(progress(&state), (100, 100, 0, true));
+        state.embedded(30);
+        assert_eq!(progress(&state), (70, 100, 30, true));
+        // A second import mid catch-up joins it: done stays where it was.
+        state.add_embedding_backlog(50);
+        assert_eq!(progress(&state), (120, 150, 30, true));
+        // Subtracting more than is left never wraps.
+        state.embedded(500);
+        assert_eq!(progress(&state), (0, 150, 150, true));
+        state.end_embedding_catch_up();
+        assert_eq!(progress(&state), (0, 0, 0, false));
+    }
+
+    /// A run re-anchors on its real count; total never shrinks and done
+    /// never moves backwards or past total, whichever way the count drifts.
+    #[test]
+    fn a_run_count_re_anchors_without_moving_done_back() {
+        let state = DerivedArtifactState::default();
+        // Boot with leftover rows and no counters: the count is the total.
+        state.begin_embedding_catch_up(400);
+        assert_eq!(progress(&state), (400, 400, 0, true));
+        state.embedded(100);
+        assert_eq!(progress(&state), (300, 400, 100, true));
+        // Fewer than expected (rows deleted while waiting): done jumps ahead.
+        state.begin_embedding_catch_up(250);
+        assert_eq!(progress(&state), (250, 400, 150, true));
+        // More than expected (a write counted late): total grows, done holds.
+        state.begin_embedding_catch_up(320);
+        assert_eq!(progress(&state), (320, 470, 150, true));
+        // A zero count ends the backlog.
+        state.begin_embedding_catch_up(0);
+        assert_eq!(progress(&state), (0, 0, 0, false));
+    }
+
+    #[test]
+    fn backlog_flag_changes_bump_the_generation_once() {
+        let state = DerivedArtifactState::default();
+        let before = state.sample();
+        state.add_embedding_backlog(0);
+        assert_eq!(state.sample(), before, "nothing written, nothing changes");
+        state.add_embedding_backlog(2);
+        state.add_embedding_backlog(3);
+        let during = state.sample();
+        assert!(during.embedding_backlog());
+        state.embedded(5);
+        assert_eq!(state.sample(), during, "counts alone never bump it");
+        state.end_embedding_catch_up();
+        assert!(!state.sample().embedding_backlog());
+    }
+
+    fn note(source_id: &str) -> RawDocument {
+        RawDocument {
+            source: "memory".to_string(),
+            source_id: source_id.to_string(),
+            title: "note".to_string(),
+            content: "a vault note stored first and embedded in the background".to_string(),
+            last_modified: 1,
+            ..RawDocument::default()
+        }
+    }
+
+    /// The deferred upsert adds exactly the rows it wrote (no model needed).
+    #[tokio::test]
+    async fn deferred_upsert_adds_the_rows_it_wrote() {
+        let (db, _tmp) = test_db().await;
+        assert_eq!(db.embedding_backlog(), EmbeddingBacklog::default());
+        let first = db
+            .upsert_documents_without_embeddings(vec![note("vault::a.md::0")])
+            .await
+            .unwrap();
+        let second = db
+            .upsert_documents_without_embeddings(vec![note("vault::b.md::0")])
+            .await
+            .unwrap();
+        let written = (first + second) as u64;
+        assert!(written >= 2);
+        assert_eq!(
+            db.embedding_backlog(),
+            EmbeddingBacklog {
+                remaining: written,
+                total: written,
+            }
+        );
+        // The count the activity route reads comes from the same counters.
+        let counts = db.activity_counts().await.unwrap();
+        assert_eq!(counts.embedding_backlog.remaining, written);
+        db.end_embedding_catch_up();
+        assert_eq!(db.embedding_backlog(), EmbeddingBacklog::default());
+    }
+
+    /// Each recovery batch subtracts the rows it embedded. Needs the
+    /// embedding model.
+    #[tokio::test]
+    async fn a_recovery_batch_subtracts_the_rows_it_embedded() {
+        let (db, _tmp) = test_db().await;
+        let written = db
+            .upsert_documents_without_embeddings(vec![
+                note("vault::a.md::0"),
+                note("vault::b.md::0"),
+            ])
+            .await
+            .unwrap();
+        let waiting = db.count_null_memory_embeddings().await.unwrap();
+        db.begin_embedding_catch_up(waiting);
+        assert_eq!(db.embedding_backlog().remaining, waiting as u64);
+        let batch = db
+            .recover_null_memory_embeddings_batch(None, crate::db::NULL_EMBEDDING_RECOVERY_BATCH)
+            .await
+            .unwrap();
+        assert_eq!(batch.recovered, written);
+        let backlog = db.embedding_backlog();
+        assert_eq!(backlog.remaining, (waiting - batch.recovered) as u64);
+        assert_eq!(backlog.done(), batch.recovered as u64);
     }
 }
 

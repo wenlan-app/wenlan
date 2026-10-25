@@ -390,3 +390,49 @@ async fn a_pages_folder_inside_the_vault_is_not_read_as_notes() {
         vec![mine]
     );
 }
+
+/// Past the inline limit a sync stores notes without a vector: their text is
+/// there at once, the background catch-up embeds them later, and a later sync
+/// of the unchanged vault does not store them again.
+#[tokio::test]
+async fn notes_past_the_inline_limit_are_stored_first_and_embedded_later() {
+    use super::sync_obsidian_source_embedding_first;
+
+    let _lock = data_dir_lock().await;
+    let _env = DataDirGuard::new();
+    let (db, _db_dir) = new_test_db().await;
+    let vault = tempfile::tempdir().unwrap();
+    let notes: Vec<PathBuf> = ["Alpha", "Beta", "Gamma"]
+        .iter()
+        .enumerate()
+        .map(|(i, topic)| write(vault.path(), &format!("note-{i}.md"), &note(topic)))
+        .collect();
+    let source = register_vault(vault.path());
+    let gate = ServerState::default().quality_gate;
+    let before = db.count_null_memory_embeddings().await.unwrap();
+
+    let stats = sync_obsidian_source_embedding_first(db.clone(), &gate, &source, 1)
+        .await
+        .expect("vault sync succeeds");
+    assert_eq!(stats.errors, 0);
+    assert_eq!(stored_ids(&db).await.len(), 3);
+    for (path, topic) in notes.iter().zip(["Alpha", "Beta", "Gamma"]) {
+        assert!(note_text(&db, path).await.contains(topic));
+    }
+    assert_eq!(
+        db.count_null_memory_embeddings().await.unwrap(),
+        before + 2,
+        "the first note is embedded as it is stored, the other two wait"
+    );
+
+    db.recover_null_memory_embeddings(&wenlan_core::events::NoopEmitter)
+        .await
+        .expect("background catch-up succeeds");
+    assert_eq!(db.count_null_memory_embeddings().await.unwrap(), 0);
+
+    let again = sync_obsidian_source_embedding_first(db.clone(), &gate, &source, 1)
+        .await
+        .expect("second sync succeeds");
+    assert_eq!(again.ingested, 0);
+    assert_eq!(db.count_null_memory_embeddings().await.unwrap(), 0);
+}

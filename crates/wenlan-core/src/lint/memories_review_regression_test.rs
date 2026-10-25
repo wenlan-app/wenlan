@@ -125,6 +125,33 @@ async fn pending_reembed_on_one_chunk_does_not_mask_an_unowned_missing_embedding
     assert_eq!(outcome(&report, EMBEDDING_ID), LintOutcome::Finding);
 }
 
+/// A big vault import stores rows without a vector on purpose and embeds
+/// them in the background. Until that catch-up ends, the missing vectors are
+/// pending work, not damage; once it ends, a row still without one is.
+#[tokio::test]
+async fn rows_waiting_for_the_background_embedding_are_not_an_embedding_finding() {
+    let (db, _tmp) = test_db().await;
+    db.upsert_documents_without_embeddings(vec![RawDocument {
+        source: "memory".to_string(),
+        source_id: "vault::big/note.md::0".to_string(),
+        title: "note".to_string(),
+        content: "a vault note stored first and embedded in the background".to_string(),
+        last_modified: 1,
+        stability: Some("new".to_string()),
+        memory_type: Some("fact".to_string()),
+        ..RawDocument::default()
+    }])
+    .await
+    .unwrap();
+
+    let report = run_at(&db, 1_000_000, TestMemoryFeatures::default()).await;
+    assert_eq!(outcome(&report, EMBEDDING_ID), LintOutcome::Pass);
+
+    db.end_embedding_catch_up();
+    let report = run_at(&db, 1_000_000, TestMemoryFeatures::default()).await;
+    assert_eq!(outcome(&report, EMBEDDING_ID), LintOutcome::Finding);
+}
+
 #[tokio::test]
 async fn canonical_episode_cowrite_between_samples_marks_memory_checks_incomplete() {
     let (db, _tmp) = test_db().await;

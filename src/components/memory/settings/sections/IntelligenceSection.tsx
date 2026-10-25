@@ -201,16 +201,18 @@ function SteepModeRow({ automatic, loading, saving, readiness, error, onChoose }
   );
 }
 
-/** "Lock pages I've written": AI changes to pages the user wrote or edited
+/** "Ask me first on pages I wrote": AI changes to pages the user wrote or edited
  * wait for review. Switching it on also locks the pages they already wrote and
- * says how many in one grey line; switching it off unlocks nothing. */
+ * says how many in one grey line; switching it off unlocks nothing, and says that. */
 function LockMyPagesRow() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["lockMyPages"], queryFn: getLockMyPages });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
-  const [locked, setLocked] = useState<number | null>(null);
+  // What the last switch did: how many pages it set to Ask me first, or "off"
+  // (which leaves those pages as they are, so the line says so).
+  const [changed, setChanged] = useState<number | "off" | null>(null);
   return (
     <div data-testid="lock-my-pages">
       <SettingRow
@@ -221,8 +223,10 @@ function LockMyPagesRow() {
         unknownState={saving ? "saving" : query.isPending ? "loading" : "unavailable"}
         toggleHitArea
         error={error ? t("intelligence.backgroundAiSaveError") : null}
-        statusLine={locked !== null
-          ? <p role="status" style={metaLineStyle}>{t("intelligence.lockMyPagesLocked", { count: locked })}</p>
+        statusLine={changed !== null
+          ? <p role="status" style={metaLineStyle}>{changed === "off"
+            ? t("intelligence.lockMyPagesOff")
+            : changed === 0 ? t("intelligence.lockMyPagesNone") : t("intelligence.lockMyPagesLocked", { count: changed })}</p>
           : undefined}
         onToggle={async () => {
           if (!query.isSuccess || saving) return;
@@ -231,7 +235,7 @@ function LockMyPagesRow() {
           setError(false);
           try {
             const count = await setLockMyPages(next);
-            setLocked(next ? count ?? 0 : null);
+            setChanged(next ? count ?? 0 : "off");
             queryClient.setQueryData(["lockMyPages"], next);
             queryClient.invalidateQueries({ queryKey: ["page"] });
             queryClient.invalidateQueries({ queryKey: ["pages"] });

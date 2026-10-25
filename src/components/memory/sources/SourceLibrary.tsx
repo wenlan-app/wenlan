@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Funnel, Plus } from "@phosphor-icons/react";
 import { listIndexedFiles, listRegisteredSources, type IndexedFileInfo } from "../../../lib/tauri";
 import type { AssetLens } from "../../../lib/assetLens";
-import { getSourceAppFromUrl, getSourcePresentation, isNoteApp, isSourceApp, SOURCE_APP_NAMES, type SourceApp } from "./sourcePresentation";
+import { getSourceAppFromUrl, getSourcePresentation, isNoteApp, isSourceApp, SOURCE_APP_NAMES, sourceAppSearchNames, type SourceApp } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { SourceCollection, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import SourceContainer, { type SourceContainerLocation } from "./SourceContainer";
@@ -65,7 +65,7 @@ function documentUrl(file: IndexedFileInfo): URL | null {
 }
 
 export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateChange }: SourceLibraryProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const libraryRef = useRef<HTMLElement>(null);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -107,7 +107,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
     const visibleType = filter === "all" ? (!!needle || !coveredDocuments.has(`${file.source}:${file.source_id}`))
       : filter === "links" ? link && !app : filter === "files" ? !link : app === filter;
     return visibleType &&
-      `${file.title} ${documentPath(file)} ${file.url ?? ""} ${app ? SOURCE_APP_NAMES[app] : ""}`.toLocaleLowerCase().includes(needle);
+      `${file.title} ${documentPath(file)} ${file.url ?? ""} ${app ? sourceAppSearchNames(app) : ""}`.toLocaleLowerCase().includes(needle);
   });
   const bothLoaded = foldersQuery.isSuccess && filesQuery.isSuccess;
   const realEmpty = bothLoaded && folders.length === 0 && documents.length === 0;
@@ -145,7 +145,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
     })),
     ...visibleDocuments.map((file) => {
       const path = normalizedPath(documentPath(file));
-      const presentation = getSourcePresentation(file, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt") });
+      const presentation = getSourcePresentation(file, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt"), language: i18n.language });
       return {
         id: `${file.source}:${file.source_id}`,
         title: file.title || pathName(path),

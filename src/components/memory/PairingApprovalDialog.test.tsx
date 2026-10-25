@@ -363,7 +363,12 @@ describe("PairingApprovalDialog", () => {
     setPendingPairingCode(SHORT);
     mount();
     await screen.findByRole("heading", { name: /request expired/ });
-    act(() => setPendingPairingCode("WXYZ-2345"));
+    // The expired step releases its hold in an effect that a busy runner can run
+    // after the heading shows, so offer the newer link until it is taken.
+    await waitFor(() => {
+      act(() => setPendingPairingCode("WXYZ-2345"));
+      expect(screen.getByTestId("code")).toHaveTextContent("WXYZ-2345");
+    });
     await waitFor(() => expect(mocks.lookupRemotePairing).toHaveBeenLastCalledWith("r1", "WXYZ2345"));
     expect(await screen.findByRole("button", { name: "Allow" })).toBeInTheDocument();
   });

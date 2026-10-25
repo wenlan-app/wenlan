@@ -78,7 +78,9 @@ describe("PageDetail action menu focus", () => {
     vi.clearAllMocks();
     editor.reportReady = null;
     tauriMocks.getPage.mockResolvedValue(PAGE);
-    tauriMocks.getPageSources.mockResolvedValue([]);
+    // One source, so "Update from sources" joins Delete as a second item
+    // that waits for the editor.
+    tauriMocks.getPageSources.mockResolvedValue([{ source: { page_id: "page-1", memory_source_id: "mem-1", linked_at: 0 }, memory: null }]);
     tauriMocks.listRegisteredSources.mockResolvedValue([]);
     tauriMocks.getPageLinks.mockResolvedValue({ outbound: [], inbound: [] });
     tauriMocks.listOrphanLinks.mockResolvedValue({ min_count: 2, orphan_labels: [] });
@@ -104,7 +106,7 @@ describe("PageDetail action menu focus", () => {
 
     await user.click(screen.getByRole("button", { name: i18n.t("pageDetail.actions") }));
     const menu = screen.getByRole("menu", { name: i18n.t("pageDetail.actions") });
-    const toggle = screen.getByRole("menuitemcheckbox", { name: i18n.t("pageDetail.requireReview") });
+    const toggle = screen.getByRole("menuitem", { name: i18n.t("pageDetail.deletePage") });
     expect(toggle).toBeDisabled();
     expect(menu).toHaveFocus();
 
@@ -131,7 +133,7 @@ describe("PageDetail action menu focus", () => {
     expect(menu).toHaveFocus();
 
     act(() => editor.reportReady!());
-    const toggle = screen.getByRole("menuitemcheckbox", { name: i18n.t("pageDetail.requireReview") });
+    const toggle = screen.getByRole("menuitem", { name: i18n.t("pageDetail.deletePage") });
     await waitFor(() => expect(toggle).toBeEnabled());
     const enabled = Array.from(menu.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)'));
     expect(enabled.length).toBeGreaterThan(1);

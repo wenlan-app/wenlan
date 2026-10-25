@@ -71,6 +71,7 @@ pub(crate) struct MemoryFeatureConfig {
     episode_active: bool,
     fact_active: bool,
     summary_active: bool,
+    embedding_backlog: bool,
     artifact_sample: crate::derived_artifact_state::DerivedArtifactSample,
 }
 
@@ -87,6 +88,7 @@ impl MemoryFeatureConfig {
             episode_active: artifact_sample.is_active(DerivedArtifact::Episode),
             fact_active: artifact_sample.is_active(DerivedArtifact::Fact),
             summary_active: artifact_sample.is_active(DerivedArtifact::Summary),
+            embedding_backlog: artifact_sample.embedding_backlog(),
             artifact_sample,
         }
     }
@@ -108,6 +110,7 @@ impl MemoryFeatureConfig {
             episode_active: artifact_sample.is_active(DerivedArtifact::Episode),
             fact_active: artifact_sample.is_active(DerivedArtifact::Fact),
             summary_active: artifact_sample.is_active(DerivedArtifact::Summary),
+            embedding_backlog: artifact_sample.embedding_backlog(),
             artifact_sample,
         }
     }

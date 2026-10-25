@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import {
   getBackgroundAiEnabled,
   listNewMaterial,
+  listNoteProposals,
   listPendingRevisions,
   restartDaemon,
   type Page,
@@ -83,6 +84,11 @@ export function pagesWithPendingEdits(
   ).size;
 }
 
+/** Vault notes with an AI change waiting for the user's yes or no. */
+export function notesWithPendingEdits(proposals: { source_id: string; path: string }[]): number {
+  return new Set(proposals.map((item) => `${item.source_id}\n${item.path}`)).size;
+}
+
 function PageIcon() {
   return (
     <svg className="tray-panel-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
@@ -116,6 +122,7 @@ export default function TrayPanel() {
     queryFn: () => listPendingRevisions(REVISION_LIMIT),
     enabled: up,
   });
+  const noteProposals = useQuery({ queryKey: ["tray-panel", "note-proposals"], queryFn: () => listNoteProposals(), enabled: up });
   const automatic = useQuery({ queryKey: ["tray-panel", "steep-mode"], queryFn: () => getBackgroundAiEnabled(), enabled: up });
   const material = useQuery({ queryKey: ["tray-panel", "new-material"], queryFn: listNewMaterial, enabled: up });
 
@@ -154,6 +161,7 @@ export default function TrayPanel() {
 
   const recent = useMemo(() => recentPages(pages.data ?? []), [pages.data]);
   const pendingEdits = pagesWithPendingEdits(revisions.data ?? []);
+  const noteEdits = notesWithPendingEdits(noteProposals.data ?? []);
   const waiting = Math.max(0, (material.data?.total ?? 0) - (material.data?.held ?? 0));
 
   let steepLine: string | null = null;
@@ -200,15 +208,22 @@ export default function TrayPanel() {
             <span>{t("trayPanel.search")}</span>
           </button>
 
-          {pendingEdits > 0 && (
+          {(pendingEdits > 0 || noteEdits > 0) && (
             <div className="tray-panel-group">
               <div className="tray-panel-label">{t("trayPanel.needsYou")}</div>
-              <div className="tray-panel-need" data-testid="tray-panel-needs-you">
+              {pendingEdits > 0 && <div className="tray-panel-need" data-testid="tray-panel-needs-you">
                 <span className="tray-panel-need-text">{t("trayPanel.revisions", { count: pendingEdits })}</span>
                 <button type="button" className="tray-panel-need-action" onClick={() => void openMain({ kind: "review" })}>
                   {t("trayPanel.review")}
                 </button>
-              </div>
+              </div>}
+              {/* The home lists each note, with the way to its Accept and Decline. */}
+              {noteEdits > 0 && <div className="tray-panel-need" data-testid="tray-panel-note-suggestions">
+                <span className="tray-panel-need-text">{t("trayPanel.noteSuggestions", { count: noteEdits })}</span>
+                <button type="button" className="tray-panel-need-action" onClick={() => void openMain({ kind: "home" })}>
+                  {t("trayPanel.review")}
+                </button>
+              </div>}
             </div>
           )}
 

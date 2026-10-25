@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import PageSearchResult from "./PageSearchResult";
 import { highlightTerms } from "../../lib/highlight";
 import type { EntitySearchResult, Page, SearchResult } from "../../lib/tauri";
+import { passagesBeingPrepared } from "../../lib/activitySentence";
+import { useActivity } from "../../lib/useActivity";
 
 interface SearchResultsProps {
   query: string;
@@ -32,13 +34,28 @@ export function SearchResults({
   onOpenEntity,
 }: SearchResultsProps) {
   const { t } = useTranslation();
+  // The same shared query as the Activity surfaces: no extra request.
+  const { data: activity } = useActivity();
   if (!ready) return null;
   const hasResults = memoryResults.length + sourceResults.length + entityResults.length + conceptResults.length > 0;
   if (!query.trim()) return null;
-  if (!loading && !error && !hasResults) return <p className="search-modal-status">{t("main.search.noResults", { query })}</p>;
+  // After a big import, keyword search already finds every passage while
+  // search by meaning catches up in the background. One quiet line above the
+  // results says so, where it is seen without scrolling.
+  const preparing = passagesBeingPrepared(activity);
+  const preparingLine = preparing > 0
+    ? <p className="search-modal-status" data-testid="search-preparing">{t("main.search.preparing", { count: preparing })}</p>
+    : null;
+  if (!loading && !error && !hasResults) {
+    return <>
+      <p className="search-modal-status">{t("main.search.noResults", { query })}</p>
+      {preparingLine}
+    </>;
+  }
 
   return (
     <div className="flex flex-col gap-2">
+      {preparingLine}
       {conceptResults.length > 0 && <>
         <p className="search-results-heading">{t("main.search.pages")}</p>
         {conceptResults.map((page) => (

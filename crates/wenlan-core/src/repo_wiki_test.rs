@@ -1264,3 +1264,104 @@ fn a_page_file_reads_back_as_page_content() {
         .ends_with("We like Rust."));
     assert!(parse_wiki_page_file("no frontmatter").is_none());
 }
+
+#[test]
+fn publish_refuses_an_origin_that_changed_since_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let (origin, clone) = repo_with_origin(dir.path());
+    let store = dir.path().join("data/repo-wiki.json");
+    let binding = bind_at(&store, "site", &clone, None, None).unwrap();
+    let root = binding.repo_root.clone();
+    let code_bases = HashMap::from([("p1".to_string(), vec![locator(&root, "src/lib.rs", 1, 2)])]);
+    let (pages, _) = select_pages(
+        vec![page("p1", "Module map", "What each part owns.")],
+        &code_bases,
+        &root,
+    );
+    let anchors = anchors_for(
+        &code_bases,
+        &[("src/lib.rs", "fn a() {}\nfn b() {}\nfn c() {}\n")],
+    );
+    let concept_paths = ConceptPathMap::new();
+    let worktree = dir.path().join("data/repo-wiki/site");
+    // Someone points `origin` at another repository after agreeing to this one.
+    let other = dir.path().join("other.git");
+    sh(
+        dir.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            &origin.to_string_lossy(),
+            &other.to_string_lossy(),
+        ],
+    );
+    sh(
+        &clone,
+        &["remote", "set-url", "origin", &other.to_string_lossy()],
+    );
+    let Err(error) = publish(publish_input(
+        &binding,
+        pages,
+        &code_bases,
+        &anchors,
+        &concept_paths,
+        &worktree,
+    )) else {
+        panic!("a changed origin is refused");
+    };
+    let error = error.to_string();
+    assert!(error.contains("changed since it was bound"), "{error}");
+    let branches = sh(&other, &["branch", "--list", REPO_WIKI_BRANCH]);
+    assert!(branches.is_empty(), "nothing was pushed: {branches}");
+}
+
+#[test]
+fn same_remote_matches_a_repository_over_https_and_ssh() {
+    assert!(same_remote(
+        "https://github.com/pallets/itsdangerous.git",
+        "git@github.com:Pallets/itsdangerous"
+    ));
+    assert!(!same_remote(
+        "https://github.com/pallets/itsdangerous",
+        "https://github.com/lucian/itsdangerous"
+    ));
+    assert!(same_remote("/srv/site.git", "/srv/site.git"));
+    assert!(!same_remote("/srv/site.git", "/srv/other.git"));
+}
+
+#[test]
+fn publish_target_names_the_repository_and_its_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, clone) = repo_with_origin(dir.path());
+
+    let local = publish_target(&clone, None);
+    assert!(local.slug.is_none(), "a local remote is not on GitHub");
+    assert_eq!(local.name(), local.remote_url.as_deref());
+    assert!(local.confirmed_by(local.remote_url.as_deref().unwrap()));
+
+    sh(
+        &clone,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "git@github.com:pallets/itsdangerous.git",
+        ],
+    );
+    let theirs = publish_target(&clone, None);
+    assert_eq!(theirs.slug.as_deref(), Some("pallets/itsdangerous"));
+    assert_eq!(theirs.owner(), Some("pallets"));
+    assert!(!theirs.owned(), "an unknown account is not the owner");
+    assert!(theirs.confirmed_by("pallets/itsdangerous"));
+    assert!(theirs.confirmed_by("github.com/pallets/itsdangerous"));
+    assert!(theirs.confirmed_by("https://github.com/Pallets/itsdangerous.git"));
+    assert!(!theirs.confirmed_by("lucian/itsdangerous"));
+
+    let signed_in = |login: &str| PublishTarget {
+        signed_in_as: Some(login.to_owned()),
+        ..theirs.clone()
+    };
+    assert!(!signed_in("lucian").owned());
+    assert!(signed_in("Pallets").owned());
+}

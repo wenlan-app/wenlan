@@ -110,7 +110,7 @@ for (const cfg of [
     const inspector = page.locator(".page-info-drawer");
     if (cfg.width >= 1100) {
       await expect(inspector).toBeVisible();
-      await expect(inspector).toContainText(t.sourceContainer.vaultReads);
+      await expect(inspector).toContainText(t.sourceContainer.vaultWrites);
       await expect(inspector).toContainText(t.sourceContainer.folderChecks);
       await inspector.getByRole("button", { name: t.sourceContainer.refresh, exact: true }).click();
       expect(calls.filter(c => c.command === "sync_registered_source").map(c => c.args)).toEqual([{ id: "vault" }]);

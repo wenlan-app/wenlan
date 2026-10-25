@@ -746,6 +746,13 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `DELETE` | `/api/sources/{id}` | main | no | not_applicable | `none` | — | no prose fields |
 | `PATCH` | `/api/sources/{id}` | main | no | not_applicable | `none` | — | no prose fields |
 | `POST` | `/api/sources/{id}/sync` | main | no | not_applicable | `none` | — | no prose fields |
+| `GET` | `/api/sources/{id}/ai-changes` | main | no | not_applicable | `none` | — | one note setting; no prose |
+| `PUT` | `/api/sources/{id}/ai-changes` | main | no | not_applicable | `none` | — | sets one note setting; no prose |
+| `GET` | `/api/notes/proposals` | main | no | not_applicable | `none` | — | the person's note text, not page prose |
+| `POST` | `/api/notes/proposals` | main | no | not_applicable | `none` | — | records an AI's note change; not page prose |
+| `GET` | `/api/notes/proposals/{id}` | main | no | not_applicable | `none` | — | the person's note text, not page prose |
+| `DELETE` | `/api/notes/proposals/{id}` | main | no | not_applicable | `none` | — | drops a note proposal |
+| `POST` | `/api/notes/proposals/{id}/accept` | main | no | not_applicable | `none` | — | writes the person's note; returns its path |
 | `GET` | `/api/spaces` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `POST` | `/api/spaces` | main | no | not_applicable | `none` | — | DEMOTED — proof in the inventory doc |
 | `DELETE` | `/api/spaces/default` | main | no | not_applicable | `none` | — | no prose fields |
@@ -820,6 +827,7 @@ must be demoted individually with a recorded reason. **Every MCP tool is
 | `list_rejections` | yes | automatic | `none` | tool handler |
 | `page_basis` | yes | automatic | `none` | tool handler |
 | `page_code_basis` | yes | automatic | `none` | tool handler |
+| `propose_note_change` | no | not_applicable | `none` | — |
 | `read_page` | yes | automatic | `none` | tool handler |
 | `recall` | yes | automatic | `none` | tool handler |
 | `reject_refinement` | yes | automatic | `none` | tool handler |

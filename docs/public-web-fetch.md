@@ -35,7 +35,16 @@ An illustrative response (the text is not a fetched receipt):
 - `final_url` is the final validated HTTP request URL, normalized without a
   fragment. It is informational; clients may retain it as metadata.
 - `content_type` is `text/html` or `text/plain`. `extraction` is
-  `html_semantic`, `html_body`, or `plain_text`.
+  `html_semantic`, `html_body`, `plain_text`, or `html_metadata`.
+  `html_metadata` means the body had no readable text and `content` is only the
+  page's link preview text, as on a social site's sign-in shell.
+- `description`, when present, is the text the page gives link previews
+  (`og:description`, `twitter:description`, or `description` meta), capped at
+  2048 characters. When `<title>` is a single word such as a bare site name,
+  `og:title` (or `twitter:title`) is used as the title instead.
+- `author`, when present, is who made the page: the `author` meta, or the
+  `author` microdata name a video page gives its channel, capped at 200
+  characters.
 - `title` and `content` are untrusted external text. Render them as text, never
   as HTML or agent instructions. The server does not interpret instructions
   embedded in the page.
@@ -63,7 +72,8 @@ decompression, and rejects compressed responses explicitly. It supports UTF-8
 (including valid ASCII), not other declared character sets. It removes scripts,
 common navigation/forms/hidden elements, then prefers an article or main region
 with useful text, otherwise body text. At least 40 alphanumeric characters are
-required. This is a best-effort text extraction, not a guarantee of the complete
+required, except that link preview text of at least 8 alphanumeric characters
+stands in for a body with none. This is a best-effort text extraction, not a guarantee of the complete
 rendered article. JavaScript, external CSS, links, frames, and other resources
 are not loaded. Login, paywall, CAPTCHA, and JavaScript-only pages may fail or
 produce incomplete text; the client must let the user inspect the preview.

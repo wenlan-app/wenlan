@@ -520,6 +520,8 @@ export interface IngestWebpageRequest {
   content: string;
   metadata?: Record<string, string> | null;
   create_only?: boolean;
+  /** Destination Space; omitted uses the default Space. */
+  space?: string | null;
 }
 
 export interface IngestResponse {
@@ -529,6 +531,25 @@ export interface IngestResponse {
 
 export async function ingestWebpage(req: IngestWebpageRequest): Promise<IngestResponse> {
   return invoke("ingest_webpage", { req });
+}
+
+/** A public page's title and text, read by the daemon and not saved. */
+export interface FetchWebpageResponse {
+  url: string;
+  final_url: string;
+  title: string;
+  content: string;
+  content_type: string;
+  extraction: "html_semantic" | "html_body" | "plain_text" | "html_metadata";
+  /** The text the page gives link previews, when it has one. */
+  description?: string | null;
+  /** Who made the page, such as an article's byline or a video's channel. */
+  author?: string | null;
+  untrusted: boolean;
+}
+
+export async function fetchWebpage(url: string): Promise<FetchWebpageResponse> {
+  return invoke("fetch_webpage", { url });
 }
 
 export async function getApiKey(): Promise<string | null> {
@@ -758,6 +779,7 @@ export type ActivityState =
 export type ActivityAssetKind = "memories" | "entities" | "pages" | "unknown";
 export type ActivityStepName =
   | "store"
+  | "embed"
   | "summarize"
   | "link"
   | "detect"
@@ -1217,6 +1239,7 @@ export const AGENT_DISPLAY: Record<string, string> = {
   "copilot-cli": "GitHub Copilot",
   cursor: "Cursor",
   "gemini-cli": "Gemini CLI",
+  "kimi-code": "Kimi Code",
   kiro: "Kiro",
   "muse-code": "Muse Code",
   opencode: "OpenCode",
@@ -3283,6 +3306,56 @@ export async function setKnowledgePath(path: string): Promise<KnowledgePathInfo>
 /** Restart the daemon so it moves the pages folder. Rejects with a typed restart error. */
 export async function restartDaemonToMovePages(): Promise<string> {
   return invoke("restart_daemon_to_move_pages");
+}
+
+// ===== The person's own vault notes =====
+
+/** Whether AI may change one of the person's notes. Never is the default. */
+export type AiChanges = "ask_first" | "never";
+
+/** The setting at one vault-relative path and where it comes from. */
+export interface NoteAiChanges {
+  /** `""` is the vault, a folder ends with `/`. */
+  path: string;
+  value: AiChanges;
+  from: "file" | "folder" | "vault" | "default" | "pdf";
+}
+
+/** A change an AI proposed to a note; nothing is written until accepted. */
+export interface NoteProposal {
+  id: string;
+  source_id: string;
+  path: string;
+  content: string;
+  reason: string;
+  agent: string;
+  created_at: number;
+  base_hash: string;
+}
+
+export async function getNoteAiChanges(sourceId: string, path: string): Promise<NoteAiChanges> {
+  return invoke("get_note_ai_changes", { sourceId, path });
+}
+
+/** `value: null` clears the setting at `path`, so the folder or vault one applies. */
+export async function setNoteAiChanges(sourceId: string, path: string, value: AiChanges | null): Promise<NoteAiChanges> {
+  return invoke("set_note_ai_changes", { sourceId, path, value });
+}
+
+export async function listNoteProposals(sourceId?: string): Promise<NoteProposal[]> {
+  return invoke("list_note_proposals", { sourceId: sourceId ?? null });
+}
+
+export async function getNoteProposal(id: string): Promise<{ proposal: NoteProposal; current: string }> {
+  return invoke("get_note_proposal", { id });
+}
+
+export async function acceptNoteProposal(id: string): Promise<{ file: string }> {
+  return invoke("accept_note_proposal", { id });
+}
+
+export async function dismissNoteProposal(id: string): Promise<void> {
+  return invoke("dismiss_note_proposal", { id });
 }
 
 export async function countKnowledgeFiles(): Promise<number> {

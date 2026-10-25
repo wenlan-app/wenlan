@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { StrictMode } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -929,7 +929,6 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
 
   it("queues Back immediately with the navigation owner when a flush handle is registered", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const user = userEvent.setup();
     const onBack = vi.fn();
     const register = vi.fn();
     render(
@@ -938,13 +937,19 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       </QueryClientProvider>,
     );
     const textbox = await screen.findByRole("textbox", { name: "Page editor" });
-    act(() => replaceDocument(editorViewFromTextbox(textbox), "Main owns this flush."));
-    await user.click(screen.getByRole("button", { name: "Back" }));
-    expect(onBack).toHaveBeenCalledOnce();
-    expect(tauriMocks.updatePage).not.toHaveBeenCalled();
-    const flush = register.mock.lastCall?.[0] as () => Promise<boolean>;
-    await act(async () => expect(await flush()).toBe(true));
-    expect(tauriMocks.updatePage).toHaveBeenCalledOnce();
+    // Hold the 650 ms autosave debounce so a slow CI click cannot let it write first.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      act(() => replaceDocument(editorViewFromTextbox(textbox), "Main owns this flush."));
+      act(() => { fireEvent.click(screen.getByRole("button", { name: "Back" })); });
+      expect(onBack).toHaveBeenCalledOnce();
+      expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+      const flush = register.mock.lastCall?.[0] as () => Promise<boolean>;
+      await act(async () => expect(await flush()).toBe(true));
+      expect(tauriMocks.updatePage).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
 });

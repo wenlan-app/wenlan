@@ -245,10 +245,10 @@ describe("ReviewDialog page-target revision card", () => {
   it.each([
     ["authored", "en", "Reason: you wrote this page, so AI edits wait for your review"],
     ["authored", "zh-Hant", "原因：你寫過這篇筆記，AI 的修改要等你審核"],
-    ["locked", "en", "Reason: this page is set to review every change"],
+    ["locked", "en", "Reason: this page is set to Ask me first"],
     ["background", "en", "Reason: Wenlan steeped this automatically"],
     ["owned", "en", "Reason: the page has your edits"],
-    ["locked", "zh-Hant", "原因：這篇筆記設為改動要審核"],
+    ["locked", "zh-Hant", "原因：這篇設成了先問我"],
     ["background", "zh-Hans", "原因：文澜自动沉淀"],
     ["owned", "zh-Hant", "原因：筆記有你的修改"],
   ])("says why a %s card needs review (%s)", async (reviewReason, language, text) => {

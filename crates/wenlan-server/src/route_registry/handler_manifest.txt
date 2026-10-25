@@ -166,6 +166,13 @@ main|post|/api/shutdown|wenlan_server::routes::handle_shutdown
 main|post|/api/snapshots/{id}/delete|wenlan_server::snapshot_routes::handle_delete_snapshot
 main|post|/api/sources|wenlan_server::source_routes::handle_add_source
 main|post|/api/sources/{id}/sync|wenlan_server::source_routes::handle_sync_source
+main|get|/api/sources/{id}/ai-changes|wenlan_server::note_routes::handle_get_note_ai_changes
+main|put|/api/sources/{id}/ai-changes|wenlan_server::note_routes::handle_set_note_ai_changes
+main|get|/api/notes/proposals|wenlan_server::note_routes::handle_list_note_proposals
+main|post|/api/notes/proposals|wenlan_server::note_routes::handle_propose_note_change
+main|get|/api/notes/proposals/{id}|wenlan_server::note_routes::handle_get_note_proposal
+main|delete|/api/notes/proposals/{id}|wenlan_server::note_routes::handle_dismiss_note_proposal
+main|post|/api/notes/proposals/{id}/accept|wenlan_server::note_routes::handle_accept_note_proposal
 main|post|/api/spaces|wenlan_server::spaces_routes::handle_create_space
 main|post|/api/spaces/reorder|wenlan_server::spaces_routes::handle_reorder_space
 main|post|/api/spaces/{from}/move-to/{to}|wenlan_server::spaces_routes::handle_move_space

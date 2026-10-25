@@ -10,7 +10,7 @@ import { InfoToggle } from "../page/InfoToggle";
 import { useDetailInfoOpen } from "../useDetailInfoOpen";
 import SourceDocumentContent from "./SourceDocumentContent";
 import SourceAnnotations from "./SourceAnnotations";
-import { getSourcePresentation, getSourceAppFromUrl, SOURCE_APP_NAMES } from "./sourcePresentation";
+import { getSourcePresentation, getSourceAppFromUrl, sourceAppName } from "./sourcePresentation";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import "../readingSurface.css";
 import "../page/detailInfo.css";
@@ -36,7 +36,7 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
   frame?: boolean;
   renderRelatedPages?: (content: ReactNode) => ReactNode;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const source = ["file", "webpage"].includes(file.source) ? file.source : "memory";
   const isWebpage = file.source === "webpage";
   const chunks = useQuery({
@@ -53,7 +53,7 @@ export function SourceDocumentReader({ file, space, onReady, onRegisterFlush, fr
   return <div className={`source-document-reader${frame ? " reading-document-frame" : ""}`}>
     {originalUrl && <div className="source-document-reader-url">
       {app && <span className="source-document-reader-app" data-source-app={app}>
-        <SourceTypeIcon kind={app} size={16} />{SOURCE_APP_NAMES[app]}
+        <SourceTypeIcon kind={app} size={16} />{sourceAppName(app, i18n.language)}
       </span>}
       <a href={originalUrl} aria-label={t("sourceAccess.openOriginal")} onClick={(event) => {
         event.preventDefault();
@@ -88,7 +88,7 @@ export function SourceDocumentLayout({ file, space, onReady, onRegisterFlush, co
   const { t, i18n } = useTranslation();
   const { open, setOpen, toggle } = useDetailInfoOpen(JSON.stringify([file.source, file.source_id, space ?? null]));
   const infoToggleRef = useRef<HTMLButtonElement>(null);
-  const presentation = getSourcePresentation(file, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt") });
+  const presentation = getSourcePresentation(file, { document: t("sourceLibrary.document"), webExcerpt: t("sourceLibrary.webExcerpt"), language: i18n.language });
   const sourceSpace = space ?? file.space;
   const modified = Number.isFinite(file.last_modified) && file.last_modified > 0
     ? new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(file.last_modified * 1000)) : null;

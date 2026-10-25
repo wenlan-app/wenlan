@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { getActivity, type ActivityResponse } from "./tauri";
+import { passagesBeingPrepared } from "./activitySentence";
 
 /** Poll cadence while there is work in flight or something is stuck. */
 export const ACTIVITY_BUSY_POLL_MS = 5_000;
@@ -33,6 +34,9 @@ export function useActivity(): UseQueryResult<ActivityResponse> {
       // yet is more likely to be mid-import than idle, and guessing idle would
       // leave a fresh install looking frozen for a minute.
       if (data === undefined) return ACTIVITY_BUSY_POLL_MS;
+      // Passages a big import is still preparing count down in every mode,
+      // On demand included, and search shows that count.
+      if (passagesBeingPrepared(data) > 0) return ACTIVITY_BUSY_POLL_MS;
       return data.state === "up_to_date" || data.state === "off"
         ? ACTIVITY_IDLE_POLL_MS
         : ACTIVITY_BUSY_POLL_MS;

@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { getMemoryDetail, getPage, type MemoryItem, type Page, type PageCitation } from "../../../lib/tauri";
 import { citationDisplayLabel } from "../../../lib/pageCitations";
 import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp, type ReferenceKind } from "./ReferenceTypeIcon";
-import { SOURCE_APP_NAMES } from "../sources/sourcePresentation";
+import { sourceAppName } from "../sources/sourcePresentation";
 import type { NavigableReferenceTarget, ReferencePreviewRequest } from "./referenceTypes";
 import { openCitationTarget } from "./openCitationTarget";
 import { useReferencePopoverPosition } from "./useReferencePopoverPosition";
@@ -145,7 +145,7 @@ export function ReferencePreview({
   const citation = citationTarget?.citation ?? null;
   const kind: ReferenceKind = citation ? citationReferenceKind(citation) : target?.kind === "memory" ? "memory" : "page";
   const app = citation ? citationSourceApp(citation) : null;
-  const appName = app ? SOURCE_APP_NAMES[app] : null;
+  const appName = app ? sourceAppName(app, i18n.language) : null;
   const typeLabel = appName ?? t(`reference.type.${kind}`);
   const fallbackCitationLabel = citation ? appName ?? citationDisplayLabel(citation, {
     memory: t("citation.kind.memory"), external_file: t("citation.kind.file"), external_url: t("citation.kind.url"), authored: t("citation.kind.authored"),

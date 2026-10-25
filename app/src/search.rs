@@ -502,7 +502,8 @@ pub async fn install_client_plugin(
 }
 
 /// Installs Wenlan's skills into `client_type`'s own skills folder (Cursor,
-/// Gemini CLI, Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode)
+/// Gemini CLI, Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode,
+/// Kimi Code)
 /// — see `skills_install::install_skills`. Returns the skills folder. Refuses,
 /// writing nothing, when a same-named skill folder there was not written by
 /// Wenlan. Runs on a blocking thread (it writes a folder tree).
@@ -1996,6 +1997,18 @@ pub async fn ingest_webpage(
         s.client.clone()
     };
     client.ingest_webpage(req).await
+}
+
+#[tauri::command]
+pub async fn fetch_webpage(
+    state: tauri::State<'_, State>,
+    url: String,
+) -> Result<responses::FetchWebpageResponse, String> {
+    let client = {
+        let s = state.read().await;
+        s.client.clone()
+    };
+    client.fetch_webpage(&url).await
 }
 
 #[tauri::command]
@@ -5638,6 +5651,103 @@ pub async fn set_knowledge_path(
         .await
 }
 
+// ── The person's own vault notes ──────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_note_ai_changes(
+    state: tauri::State<'_, State>,
+    source_id: String,
+    path: String,
+) -> Result<wenlan_types::sources::NoteAiChanges, String> {
+    let client = state.read().await.client.clone();
+    client
+        .get_json(&format!(
+            "/api/sources/{}/ai-changes?path={}",
+            percent_encode_path_segment(&source_id),
+            percent_encode_path_segment(&path)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn set_note_ai_changes(
+    state: tauri::State<'_, State>,
+    source_id: String,
+    path: String,
+    value: Option<wenlan_types::sources::AiChanges>,
+) -> Result<wenlan_types::sources::NoteAiChanges, String> {
+    let client = state.read().await.client.clone();
+    client
+        .put_json(
+            &format!(
+                "/api/sources/{}/ai-changes",
+                percent_encode_path_segment(&source_id)
+            ),
+            &requests::SetNoteAiChangesRequest { path, value },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn list_note_proposals(
+    state: tauri::State<'_, State>,
+    source_id: Option<String>,
+) -> Result<Vec<wenlan_types::sources::NoteProposal>, String> {
+    let client = state.read().await.client.clone();
+    let path = match source_id {
+        Some(id) => format!(
+            "/api/notes/proposals?source_id={}",
+            percent_encode_path_segment(&id)
+        ),
+        None => "/api/notes/proposals".to_string(),
+    };
+    let resp: responses::NoteProposalsResponse = client.get_json(&path).await?;
+    Ok(resp.proposals)
+}
+
+#[tauri::command]
+pub async fn get_note_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<responses::NoteProposalView, String> {
+    let client = state.read().await.client.clone();
+    client
+        .get_json(&format!(
+            "/api/notes/proposals/{}",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn accept_note_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<responses::AcceptNoteProposalResponse, String> {
+    let client = state.read().await.client.clone();
+    client
+        .post_empty(&format!(
+            "/api/notes/proposals/{}/accept",
+            percent_encode_path_segment(&id)
+        ))
+        .await
+}
+
+#[tauri::command]
+pub async fn dismiss_note_proposal(
+    state: tauri::State<'_, State>,
+    id: String,
+) -> Result<(), String> {
+    let client = state.read().await.client.clone();
+    let _: serde_json::Value = client
+        .delete_path(&format!(
+            "/api/notes/proposals/{}",
+            percent_encode_path_segment(&id)
+        ))
+        .await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn count_knowledge_files(state: tauri::State<'_, State>) -> Result<u64, String> {
     let client = state.read().await.client.clone();
@@ -6945,6 +7055,7 @@ mod register_connected_agent_tests {
             ("windsurf", "windsurf"),
             ("kiro", "kiro"),
             ("opencode", "opencode"),
+            ("kimi_code", "kimi-code"),
         ] {
             // The name sent is the one the written entry reports with
             // `--agent-name`, or the daemon would trust a row the tool never uses.

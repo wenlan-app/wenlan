@@ -923,6 +923,9 @@ pub enum WebpageExtraction {
     HtmlSemantic,
     HtmlBody,
     PlainText,
+    /// Only the page's link preview text (`og:description` or similar): the
+    /// body had none, as on a sign-in shell.
+    HtmlMetadata,
 }
 
 /// Untrusted external text, not a saved source or an instruction to an agent.
@@ -936,6 +939,12 @@ pub struct FetchWebpageResponse {
     pub content: String,
     pub content_type: String,
     pub extraction: WebpageExtraction,
+    /// The text the page gives link previews, when it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Who made the page, such as an article's byline or a video's channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     pub untrusted: bool,
 }
 
@@ -1071,6 +1080,26 @@ pub struct SyncStatsResponse {
     pub ingested: usize,
     pub skipped: usize,
     pub errors: usize,
+}
+
+/// GET /api/notes/proposals
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteProposalsResponse {
+    pub proposals: Vec<crate::sources::NoteProposal>,
+}
+
+/// GET /api/notes/proposals/{id}: the proposal and the note as it is now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteProposalView {
+    pub proposal: crate::sources::NoteProposal,
+    pub current: String,
+}
+
+/// POST /api/notes/proposals/{id}/accept
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcceptNoteProposalResponse {
+    /// The note that was written.
+    pub file: String,
 }
 
 // ===== Refinement proposals =====

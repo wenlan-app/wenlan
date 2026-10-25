@@ -39660,6 +39660,71 @@ async fn fts_hardening_on_handles_special_char_query_without_error() {
     );
 }
 
+/// A rare word buried in one old imported note must reach the top of the AI
+/// tools' search once the library is bigger than the vector pool (3 x limit).
+/// At 10,000 notes the quick path used to miss every such word: the keyword
+/// channel only weighed 0.2 against the vector pool, and untyped imports
+/// decayed as ephemeral memories, so an old note sank further.
+#[tokio::test]
+async fn search_memory_finds_rare_word_in_old_note_beyond_vector_pool() {
+    let (db, _tmp) = test_db().await;
+    let now = chrono::Utc::now().timestamp();
+    let topics = [
+        "weekly planning for the product roadmap and launch checklist",
+        "meeting notes on hiring, onboarding and team rituals",
+        "reading notes about databases, indexes and query plans",
+        "travel ideas, packing lists and places to eat",
+        "budget review with spending categories and savings goals",
+    ];
+    let mut docs: Vec<RawDocument> = (0..60)
+        .map(|i| RawDocument {
+            source: "memory".to_string(),
+            source_id: format!("vault::notes/note-{i}.md::0"),
+            title: format!("note {i}"),
+            content: format!(
+                "Note {i}. {} Follow up next week and keep the list short.",
+                topics[i % topics.len()]
+            ),
+            last_modified: now - (i as i64) * 3600,
+            source_agent: Some("obsidian".to_string()),
+            ..Default::default()
+        })
+        .collect();
+    docs.push(RawDocument {
+        source: "memory".to_string(),
+        source_id: "vault::notes/old-trip.md::0".to_string(),
+        title: "old trip".to_string(),
+        content: "Packing list for the coast trip. Bring the blue tent, \
+                  the Quillnorbet stove adapter and two rain jackets. \
+                  Book the ferry early."
+            .to_string(),
+        last_modified: now - 180 * 86_400,
+        source_agent: Some("obsidian".to_string()),
+        ..Default::default()
+    });
+    db.upsert_documents(docs).await.unwrap();
+
+    let results = db
+        .search_memory(
+            "Quillnorbet",
+            10,
+            None,
+            &ReadScope::Global,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        results.first().map(|r| r.source_id.as_str()),
+        Some("vault::notes/old-trip.md::0"),
+        "the only note containing the rare word must rank first; got {:?}",
+        results.iter().map(|r| &r.source_id).collect::<Vec<_>>()
+    );
+}
+
 /// With hardening ON, an overlong query (>128 tokens) must succeed (Ok)
 /// and return non-empty results via the vector-only path; no panic or error.
 #[tokio::test]

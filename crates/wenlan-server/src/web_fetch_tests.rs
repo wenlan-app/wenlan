@@ -467,6 +467,65 @@ fn cjk_main_body_plaintext_and_no_readable_text() {
         FetchError::NoReadableText
     );
 }
+#[test]
+fn link_preview_metadata_names_and_fills_a_sign_in_shell() {
+    // Threads and Instagram serve bots a bare site title, preview tags and an
+    // empty shell.
+    let shell = r#"<html><head><title>Threads</title>
+        <meta property="og:title" content="Mark Zuckerberg (@zuck) on Threads">
+        <meta property="og:description" content="We're building personal superintelligence for everyone.">
+        </head><body><div id="root"></div><script>app()</script></body></html>"#;
+    let r = extract(shell, "text/html", "a", "b").unwrap();
+    assert_eq!(r.title, "Mark Zuckerberg (@zuck) on Threads");
+    assert_eq!(r.extraction, WebpageExtraction::HtmlMetadata);
+    assert_eq!(
+        r.content,
+        "We're building personal superintelligence for everyone."
+    );
+    assert_eq!(r.description.as_deref(), Some(r.content.as_str()));
+    // A short post is kept.
+    let r = extract(
+        r#"<head><title>X</title><meta name="description" content="just setting up my twttr"></head><body></body>"#,
+        "text/html",
+        "a",
+        "b",
+    )
+    .unwrap();
+    assert_eq!(r.content, "just setting up my twttr");
+    assert_eq!(r.title, "X");
+    // A real title stays; the body is still preferred over the preview text.
+    let r = extract(
+        &format!(r#"<head><title>A real article</title><meta property="og:title" content="Something longer than the title"><meta property="og:description" content="Summary"></head><body><article>{TEXT}</article></body>"#),
+        "text/html",
+        "a",
+        "b",
+    )
+    .unwrap();
+    assert_eq!(r.title, "A real article");
+    assert_eq!(r.extraction, WebpageExtraction::HtmlSemantic);
+    assert_eq!(r.description.as_deref(), Some("Summary"));
+    assert_eq!(r.author, None);
+    // A video page names its channel in microdata.
+    let r = extract(
+        r#"<head><title>Never Gonna Give You Up - YouTube</title><meta name="description" content="The official video for Never Gonna Give You Up"></head><body><span itemprop="author"><link itemprop="url" href="https://www.youtube.com/@RickAstleyYT"><link itemprop="name" content="Rick Astley"></span></body>"#,
+        "text/html",
+        "a",
+        "b",
+    )
+    .unwrap();
+    assert_eq!(r.author.as_deref(), Some("Rick Astley"));
+    // A label is not a page.
+    assert_eq!(
+        extract(
+            r#"<head><meta name="description" content="Log in"></head><body></body>"#,
+            "text/html",
+            "a",
+            "b"
+        )
+        .unwrap_err(),
+        FetchError::NoReadableText
+    );
+}
 #[tokio::test]
 async fn pinned_client_host_and_credential_free_identity_request() {
     let (tx, rx) = tokio::sync::oneshot::channel();

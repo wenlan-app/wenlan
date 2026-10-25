@@ -27,6 +27,7 @@ export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
   "copilot-cli": "GitHub Copilot",
   "cursor": "Cursor",
   "gemini-cli": "Gemini CLI",
+  "kimi-code": "Kimi Code",
   "kiro": "Kiro",
   "logseq": "Logseq",
   "muse-code": "Muse Code",
@@ -136,6 +137,8 @@ export function clientTypeFamily(clientType: string): string {
       return "kiro";
     case "opencode":
       return "opencode";
+    case "kimi_code":
+      return "kimi-code";
     default:
       return "";
   }

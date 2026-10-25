@@ -965,6 +965,17 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   restart_daemon_to_move_pages: async (): Promise<never> => {
     throw "daemon-restart:isolated";
   },
+  get_note_ai_changes: (a) =>
+    get(`/api/sources/${enc(a.sourceId)}/ai-changes?path=${enc(a.path)}`),
+  set_note_ai_changes: (a) =>
+    put(`/api/sources/${enc(a.sourceId)}/ai-changes`, { path: a.path, value: a.value ?? null }),
+  list_note_proposals: async (a) =>
+    (await get(a?.sourceId ? `/api/notes/proposals?source_id=${enc(a.sourceId)}` : "/api/notes/proposals")).proposals,
+  get_note_proposal: (a) => get(`/api/notes/proposals/${enc(a.id)}`),
+  accept_note_proposal: (a) => post(`/api/notes/proposals/${enc(a.id)}/accept`),
+  dismiss_note_proposal: async (a) => {
+    await del(`/api/notes/proposals/${enc(a.id)}`);
+  },
   count_knowledge_files: () => get("/api/knowledge/count").then((r) => r.total ?? r.count ?? 0),
   // Images and videos in pages. The daemon copies a file it can read by path;
   // pasted bytes go through a temp file only the native app can write.
@@ -974,6 +985,26 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
   attach_bytes_to_page: async (): Promise<never> => {
     throw new Error("Pasting images and videos requires the native Wenlan app.");
   },
+
+  // Saving a pasted link as a source (PageDetail). Mirrors app/src/api.rs:
+  // a create-only ingest fails closed on 409 instead of replacing the page.
+  fetch_webpage: (a) => post("/api/webpage/fetch", { url: a?.url }),
+  ingest_webpage: async (a) => {
+    const req = a?.req ?? {};
+    if (!req.create_only) return post("/api/ingest/webpage", req);
+    try {
+      return await post("/api/ingest/webpage/create", req);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) throw new Error("WEBPAGE_ALREADY_EXISTS");
+      throw e;
+    }
+  },
+  list_indexed_files: (a) =>
+    get(`/api/indexed-files${a?.space ? qs({ space: a.space }) : ""}`).then((r) => r?.files ?? []),
+  get_chunks: (a) =>
+    get(`/api/${a?.source === "webpage" ? "webpage-chunks" : "chunks"}/${enc(String(a?.sourceId ?? ""))}${a?.space ? qs({ space: a.space }) : ""}`),
+  delete_file_chunks: (a) =>
+    del(`/api/documents/${enc(String(a?.source ?? ""))}/${enc(String(a?.sourceId ?? ""))}`).then(() => undefined),
 
   // --- home / profile / spaces / misc ---
   get_home_stats: () => get("/api/home-stats"),
@@ -1235,7 +1266,6 @@ export const DEFAULTS: Record<string, unknown> = {
   list_watch_paths: [],
   list_sources: [],
   list_registered_sources: [],
-  list_indexed_files: [],
   list_pending_imports: [],
   get_index_status: {
     indexing: false,

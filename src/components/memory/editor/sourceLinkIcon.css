@@ -1,0 +1,228 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.source-link-menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  min-width: 190px;
+  max-width: 280px;
+  padding: 4px;
+}
+
+.source-link-menu__title {
+  padding: 6px 10px 4px;
+  color: var(--mem-text-tertiary);
+  font: 400 12px/1.35 var(--mem-font-body);
+}
+
+.source-link-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--mem-control-radius);
+  background: transparent;
+  color: var(--mem-text);
+  font: 500 13px/1.35 var(--mem-font-body);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.source-link-menu__item svg {
+  color: var(--mem-accent-indigo);
+  flex: none;
+}
+
+.source-link-menu__item:hover,
+.source-link-menu__item:focus-visible {
+  background: var(--mem-hover);
+}
+
+.source-link-menu__item:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: -2px;
+}
+
+.source-link-card {
+  position: relative;
+  display: block;
+}
+
+.source-link-card__head {
+  position: relative;
+  display: block;
+}
+
+/* A video or a site's own post: the card is one surface around it. */
+.source-link-card--media {
+  overflow: hidden;
+  border-radius: var(--mem-radius-md);
+  background: var(--mem-hover);
+}
+
+.source-link-card--media .source-link-card__body {
+  border-radius: 0;
+  background: transparent;
+}
+
+.source-link-card__video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  background: var(--mem-hover-strong);
+}
+
+/* Until the cover has loaded the card reads as words only. */
+.source-link-card:not(.source-link-card--media) .source-link-card__cover {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.source-link-card__cover {
+  position: relative;
+  padding: 0;
+  cursor: pointer;
+}
+
+.source-link-card__cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.source-link-card__play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 50px;
+  border-radius: 14px;
+  border: 2px solid rgb(255 255 255 / 0.92);
+  background: rgb(0 0 0 / 0.82);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.45);
+  color: #fff;
+  transform: translate(-50%, -50%);
+  transition: background 120ms ease;
+}
+
+.source-link-card__cover:hover .source-link-card__play {
+  background: rgb(0 0 0 / 0.92);
+}
+
+.source-link-card__cover:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: -2px;
+}
+
+.source-link-card__post {
+  display: block;
+  width: calc(100% - 24px);
+  height: 0;
+  margin: 0 12px 12px;
+  border: 0;
+  background: transparent;
+  color-scheme: normal;
+}
+
+/* Drawn out of sight, so the site's script lays the post out at full width. */
+.source-link-card__post--waiting {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 600px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.source-link-card__body {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 40px 12px 14px;
+  border: 0;
+  border-radius: var(--mem-radius-md);
+  background: var(--mem-hover);
+  color: var(--mem-text);
+  font-family: var(--mem-font-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.source-link-card__body:hover {
+  background: var(--mem-hover-strong);
+}
+
+.source-link-card__body:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 1px;
+}
+
+.source-link-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.source-link-card__title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-link-card__title--post {
+  align-items: flex-start;
+}
+
+.source-link-card__title--post > span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+}
+
+.source-link-card__title--post svg {
+  margin-top: 3px;
+}
+
+.source-link-card__title svg {
+  flex: none;
+  color: var(--mem-text-secondary);
+}
+
+.source-link-card__site {
+  color: var(--mem-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.source-link-card__excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.source-link-card__more {
+  --mem-icon-action-size: 26px;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}

@@ -11,6 +11,8 @@ use url::Host;
 use wenlan_types::responses::{FetchWebpageResponse, WebpageExtraction};
 
 pub(crate) const MAX_BYTES: usize = 2 * 1024 * 1024;
+const MAX_DESCRIPTION_CHARS: usize = 2048;
+const MAX_AUTHOR_CHARS: usize = 200;
 const MAX_URL_BYTES: usize = 4096;
 const MAX_REDIRECTS: usize = 3;
 pub(crate) const TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -313,7 +315,7 @@ pub(crate) fn extract(
     original: &str,
     final_url: &str,
 ) -> Result<FetchWebpageResponse, FetchError> {
-    let (title, content, extraction) = if mime == "text/plain" {
+    let (title, content, extraction, description, author) = if mime == "text/plain" {
         (
             text.lines()
                 .find(|line| !line.trim().is_empty())
@@ -321,6 +323,8 @@ pub(crate) fn extract(
                 .to_owned(),
             clean(text),
             WebpageExtraction::PlainText,
+            None,
+            None,
         )
     } else {
         let doc = Document::from(text);
@@ -328,6 +332,22 @@ pub(crate) fn extract(
             return Err(FetchError::TooLarge);
         }
         let title = doc.select_single("title").text().to_string();
+        let meta = |selector: &str| {
+            doc.select(selector)
+                .nodes()
+                .iter()
+                .filter_map(|node| node.attr("content"))
+                .map(|content| clean(&content))
+                .find(|content| !content.is_empty())
+        };
+        // What link previews show: social sites serve it to bots even when the
+        // body is only a sign-in shell.
+        let preview_title = meta("meta[property='og:title'],meta[name='twitter:title']");
+        let preview = meta(
+            "meta[property='og:description'],meta[name='twitter:description'],meta[name='description']",
+        );
+        // Who made it: an article's byline, or a video's channel.
+        let author = meta("meta[name='author'],[itemprop='author'] [itemprop='name']");
         doc.select("script,style,noscript,template,nav,footer,aside,iframe,object,embed,svg,canvas,form,button,input,select,textarea,dialog,[hidden],[aria-hidden='true'],body > header").remove();
         // Ignore explicit inline hiding; no browser/JS/CSS execution or paywall bypass.
         for node in doc.select("[style]").nodes() {
@@ -345,27 +365,36 @@ pub(crate) fn extract(
             .select_single("main,[role='main']")
             .formatted_text()
             .to_string();
+        let body = doc.select_single("body").formatted_text().to_string();
         let (content, method) = if meaningful(&article) {
             (article, WebpageExtraction::HtmlSemantic)
         } else if meaningful(&main) {
             (main, WebpageExtraction::HtmlSemantic)
+        } else if meaningful(&body) {
+            (body, WebpageExtraction::HtmlBody)
+        } else if let Some(text) = preview.as_ref().filter(|text| alphanumerics(text) >= 8) {
+            // A short post is still worth keeping; fewer than 8 letters is a label.
+            (text.clone(), WebpageExtraction::HtmlMetadata)
         } else {
-            (
-                doc.select_single("body").formatted_text().to_string(),
-                WebpageExtraction::HtmlBody,
-            )
+            (body, WebpageExtraction::HtmlBody)
         };
-        let title = if title.trim().is_empty() {
-            doc.select_single("h1").text().to_string()
-        } else {
-            title
+        // A bare site name such as "Threads" or "Instagram" names no page.
+        let title = match preview_title {
+            Some(preview_title)
+                if !title.trim().contains(char::is_whitespace)
+                    && preview_title.chars().count() > title.trim().chars().count() =>
+            {
+                preview_title
+            }
+            _ if title.trim().is_empty() => doc.select_single("h1").text().to_string(),
+            _ => title,
         };
-        (title, clean(&content), method)
+        (title, clean(&content), method, preview, author)
     };
     if content.len() > MAX_BYTES {
         return Err(FetchError::TooLarge);
     }
-    if !meaningful(&content) {
+    if !meaningful(&content) && extraction != WebpageExtraction::HtmlMetadata {
         return Err(FetchError::NoReadableText);
     }
     let title = clean(&title).chars().take(512).collect::<String>();
@@ -380,16 +409,21 @@ pub(crate) fn extract(
         content,
         content_type: mime.to_owned(),
         extraction,
+        description: description.map(|text| text.chars().take(MAX_DESCRIPTION_CHARS).collect()),
+        author: author.map(|text| text.chars().take(MAX_AUTHOR_CHARS).collect()),
         untrusted: true,
     })
 }
 
-fn meaningful(text: &str) -> bool {
+fn alphanumerics(text: &str) -> usize {
     text.chars()
         .filter(|c| c.is_alphanumeric())
         .take(40)
         .count()
-        >= 40
+}
+
+fn meaningful(text: &str) -> bool {
+    alphanumerics(text) >= 40
 }
 
 #[cfg(test)]

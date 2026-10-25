@@ -669,6 +669,26 @@ pub struct UpdateSourceRequest {
     pub follow_changes: bool,
 }
 
+/// PUT /api/sources/{id}/ai-changes -- whether AI may change the person's own
+/// notes at `path` (vault-relative: `""` the vault, `dir/` a folder,
+/// `dir/note.md` one file). `None` clears the setting there.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SetNoteAiChangesRequest {
+    #[serde(default)]
+    pub path: String,
+    pub value: Option<crate::sources::AiChanges>,
+}
+
+/// POST /api/notes/proposals -- an AI proposes a change to one of the person's
+/// notes. `file` is the note's absolute path; `content` is the whole new note.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProposeNoteChangeRequest {
+    pub file: String,
+    pub content: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
 // ===== Config =====
 
 /// Distinguishes an omitted JSON field (outer None) from an explicit `null`

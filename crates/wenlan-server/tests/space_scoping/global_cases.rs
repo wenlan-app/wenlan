@@ -22,6 +22,15 @@ pub async fn global_routes_enforce_scope_contracts() {
         ("/api/spaces", "/api/spaces"),
         ("/api/spaces/default", "/api/spaces/default"),
         ("/api/sources", "/api/sources"),
+        (
+            "/api/sources/missing-source/ai-changes?path=Plan.md",
+            "/api/sources/{id}/ai-changes",
+        ),
+        ("/api/notes/proposals", "/api/notes/proposals"),
+        (
+            "/api/notes/proposals/missing-proposal",
+            "/api/notes/proposals/{id}",
+        ),
         ("/api/profile/narrative", "/api/profile/narrative"),
         ("/api/knowledge/count", "/api/knowledge/count"),
         ("/api/onboarding/milestones", "/api/onboarding/milestones"),

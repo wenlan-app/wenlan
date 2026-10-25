@@ -362,6 +362,7 @@ mod tests {
             "windsurf",
             "kiro",
             "opencode",
+            "kimi_code",
         ] {
             assert_eq!(
                 route_for(client_type, &Reading::Yes, &Reading::No),
