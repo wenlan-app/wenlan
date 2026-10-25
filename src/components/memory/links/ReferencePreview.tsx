@@ -42,11 +42,13 @@ export function referenceExcerpt(raw: string): string {
     .replace(/<[^>]*>/g, " ")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_all, target: string, alias?: string) => alias?.trim() || target.trim())
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    // A heading becomes its own sentence, so it does not run into the paragraph under it.
+    .replace(/^\s{0,3}#{1,6}\s+(.+?)\s*$/gm, (_all, heading: string) => /[.!?:;。！？：；]$/.test(heading) ? heading : `${heading}${/[\u3000-\u9fff]$/.test(heading) ? "。" : "."}`)
     .replace(/^\s{0,3}(?:[-*+]\s+|\d+\.\s+)/gm, "")
     .replace(/[`*_>#~]/g, "")
     .replace(/<[^>\n]*>/g, " ")
     .replace(/\s+/g, " ")
+    .replace(/([。！？；：]) /g, "$1")
     .trim()
     .slice(0, 240);
 }

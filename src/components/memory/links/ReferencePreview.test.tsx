@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { invoke } from "@tauri-apps/api/core";
 import type { MemoryItem, PageCitation } from "../../../lib/tauri";
 import { i18n } from "../../../i18n";
-import { ReferencePreview } from "./ReferencePreview";
+import { ReferencePreview, referenceExcerpt } from "./ReferencePreview";
 
 afterEach(() => { cleanup(); vi.mocked(invoke).mockReset(); });
 
@@ -197,5 +197,13 @@ describe("ReferencePreview citation time", () => {
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+});
+
+describe("referenceExcerpt", () => {
+  it("ends a heading as a sentence so it does not run into the next paragraph", () => {
+    expect(referenceExcerpt("## Ask before changing the plan\nIf proceeding, say so.")).toBe("Ask before changing the plan. If proceeding, say so.");
+    expect(referenceExcerpt("## 何時求助\n先說明情況。")).toBe("何時求助。先說明情況。");
+    expect(referenceExcerpt("## Already done?\nYes.")).toBe("Already done? Yes.");
   });
 });
