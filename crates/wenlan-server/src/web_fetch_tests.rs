@@ -504,6 +504,16 @@ fn link_preview_metadata_names_and_fills_a_sign_in_shell() {
     assert_eq!(r.title, "A real article");
     assert_eq!(r.extraction, WebpageExtraction::HtmlSemantic);
     assert_eq!(r.description.as_deref(), Some("Summary"));
+    assert_eq!(r.author, None);
+    // A video page names its channel in microdata.
+    let r = extract(
+        r#"<head><title>Never Gonna Give You Up - YouTube</title><meta name="description" content="The official video for Never Gonna Give You Up"></head><body><span itemprop="author"><link itemprop="url" href="https://www.youtube.com/@RickAstleyYT"><link itemprop="name" content="Rick Astley"></span></body>"#,
+        "text/html",
+        "a",
+        "b",
+    )
+    .unwrap();
+    assert_eq!(r.author.as_deref(), Some("Rick Astley"));
     // A label is not a page.
     assert_eq!(
         extract(

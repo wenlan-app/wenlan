@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import {
   EnvelopeSimple, File, FilePdf, FileText, Folder, GithubLogo, Globe, GoogleDriveLogo, Image as ImageIcon, InstagramLogo, NotionLogo,
-  SlackLogo, ThreadsLogo, XLogo,
+  SlackLogo, ThreadsLogo, XLogo, YoutubeLogo,
 } from "@phosphor-icons/react";
 import logseqLogo from "../../../assets/logseq-logo.svg";
 import obsidianLogo from "../../../assets/obsidian-logo-gradient.svg";
@@ -24,6 +24,7 @@ const ICONS = {
   x: XLogo,
   threads: ThreadsLogo,
   instagram: InstagramLogo,
+  youtube: YoutubeLogo,
 } satisfies Record<Exclude<SourceKind | SourceApp | "folder", "xiaohongshu">, typeof File>;
 
 // Phosphor has no RedNote mark; its logo is a red badge.

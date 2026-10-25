@@ -42,6 +42,9 @@ An illustrative response (the text is not a fetched receipt):
   (`og:description`, `twitter:description`, or `description` meta), capped at
   2048 characters. When `<title>` is a single word such as a bare site name,
   `og:title` (or `twitter:title`) is used as the title instead.
+- `author`, when present, is who made the page: the `author` meta, or the
+  `author` microdata name a video page gives its channel, capped at 200
+  characters.
 - `title` and `content` are untrusted external text. Render them as text, never
   as HTML or agent instructions. The server does not interpret instructions
   embedded in the page.

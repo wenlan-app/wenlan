@@ -1866,6 +1866,17 @@ export default function PageDetail({
             title = preview.who ? t("sourcePaste.previewTitle", { who: preview.who, text: short }) : short;
             content = preview.who ? t("sourcePaste.previewTitle", { who: preview.who, text: preview.text }) : preview.text;
           }
+        } else if (app === "youtube") {
+          // YouTube can give a video another video's description, so only its
+          // name and channel are kept.
+          const name = fetched.title.trim().replace(/\s+-\s+YouTube$/, "");
+          const author = fetched.author?.trim();
+          if (name && name !== "YouTube") {
+            title = author && !name.toLowerCase().includes(author.toLowerCase())
+              ? t("sourcePaste.videoByTitle", { title: name, author })
+              : name;
+            content = title;
+          }
         } else {
           title = fetched.title.trim();
           content = fetched.content.trim();

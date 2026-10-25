@@ -5,7 +5,7 @@ export type SourceKind = "pdf" | "text" | "image" | "webpage" | "file";
 /** Apps whose documents an agent can save with their permanent link. */
 export type SourceApp =
   | "gmail" | "googleDrive" | "notion" | "slack" | "github"
-  | "x" | "threads" | "instagram" | "xiaohongshu";
+  | "x" | "threads" | "instagram" | "xiaohongshu" | "youtube";
 /** Brand names are not translated, except where the brand itself has a name per language. */
 export const SOURCE_APP_NAMES: Readonly<Record<SourceApp, string>> = {
   gmail: "Gmail",
@@ -17,6 +17,7 @@ export const SOURCE_APP_NAMES: Readonly<Record<SourceApp, string>> = {
   threads: "Threads",
   instagram: "Instagram",
   xiaohongshu: "RedNote",
+  youtube: "YouTube",
 };
 const LOCAL_APP_NAMES: Readonly<Partial<Record<SourceApp, Readonly<Record<string, string>>>>> = {
   xiaohongshu: { "zh-Hans": "小红书", "zh-Hant": "小紅書" },
@@ -83,6 +84,7 @@ export function getSourceAppFromUrl(value: string | URL | null | undefined): Sou
   if (under("threads.net") || under("threads.com")) return "threads";
   if (under("instagram.com")) return "instagram";
   if (under("xiaohongshu.com") || under("xhslink.com")) return "xiaohongshu";
+  if (under("youtube.com") || host === "youtu.be" || under("youtube-nocookie.com")) return "youtube";
   return null;
 }
 
@@ -107,7 +109,7 @@ export function sourceHandleFromUrl(value: string): string | null {
 
 /** What a social or mail link points at, so a link saved without its page
  *  can be named "Instagram post" rather than only by its site. */
-export function sourceLinkKind(value: string): "post" | "note" | "message" | null {
+export function sourceLinkKind(value: string): "post" | "note" | "message" | "video" | null {
   const url = httpUrl(value);
   const app = getSourceAppFromUrl(url);
   if (!url || !app) return null;
@@ -117,6 +119,9 @@ export function sourceLinkKind(value: string): "post" | "note" | "message" | nul
   if (app === "instagram") return ["p", "reel", "reels", "tv"].includes(parts[0] ?? "") ? "post" : null;
   if (app === "xiaohongshu") {
     return url.hostname.endsWith("xhslink.com") || ["explore", "discovery"].includes(parts[0] ?? "") ? "note" : null;
+  }
+  if (app === "youtube") {
+    return url.hostname === "youtu.be" || ["watch", "shorts", "live"].includes(parts[0] ?? "") ? "video" : null;
   }
   if (app === "gmail" || app === "slack") return "message";
   return null;

@@ -12,6 +12,7 @@ use wenlan_types::responses::{FetchWebpageResponse, WebpageExtraction};
 
 pub(crate) const MAX_BYTES: usize = 2 * 1024 * 1024;
 const MAX_DESCRIPTION_CHARS: usize = 2048;
+const MAX_AUTHOR_CHARS: usize = 200;
 const MAX_URL_BYTES: usize = 4096;
 const MAX_REDIRECTS: usize = 3;
 pub(crate) const TOTAL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -314,7 +315,7 @@ pub(crate) fn extract(
     original: &str,
     final_url: &str,
 ) -> Result<FetchWebpageResponse, FetchError> {
-    let (title, content, extraction, description) = if mime == "text/plain" {
+    let (title, content, extraction, description, author) = if mime == "text/plain" {
         (
             text.lines()
                 .find(|line| !line.trim().is_empty())
@@ -322,6 +323,7 @@ pub(crate) fn extract(
                 .to_owned(),
             clean(text),
             WebpageExtraction::PlainText,
+            None,
             None,
         )
     } else {
@@ -344,6 +346,8 @@ pub(crate) fn extract(
         let preview = meta(
             "meta[property='og:description'],meta[name='twitter:description'],meta[name='description']",
         );
+        // Who made it: an article's byline, or a video's channel.
+        let author = meta("meta[name='author'],[itemprop='author'] [itemprop='name']");
         doc.select("script,style,noscript,template,nav,footer,aside,iframe,object,embed,svg,canvas,form,button,input,select,textarea,dialog,[hidden],[aria-hidden='true'],body > header").remove();
         // Ignore explicit inline hiding; no browser/JS/CSS execution or paywall bypass.
         for node in doc.select("[style]").nodes() {
@@ -385,7 +389,7 @@ pub(crate) fn extract(
             _ if title.trim().is_empty() => doc.select_single("h1").text().to_string(),
             _ => title,
         };
-        (title, clean(&content), method, preview)
+        (title, clean(&content), method, preview, author)
     };
     if content.len() > MAX_BYTES {
         return Err(FetchError::TooLarge);
@@ -406,6 +410,7 @@ pub(crate) fn extract(
         content_type: mime.to_owned(),
         extraction,
         description: description.map(|text| text.chars().take(MAX_DESCRIPTION_CHARS).collect()),
+        author: author.map(|text| text.chars().take(MAX_AUTHOR_CHARS).collect()),
         untrusted: true,
     })
 }

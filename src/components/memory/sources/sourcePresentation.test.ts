@@ -117,6 +117,9 @@ describe("source presentation", () => {
       ["https://www.instagram.com/p/C1abc/", "instagram"],
       ["https://www.xiaohongshu.com/explore/64ab", "xiaohongshu"],
       ["http://xhslink.com/a/Ab12", "xiaohongshu"],
+      ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube"],
+      ["https://youtu.be/dQw4w9WgXcQ", "youtube"],
+      ["https://m.youtube.com/shorts/wxLc-gFORPQ", "youtube"],
     ])("recognizes %s as %s", (url, app) => {
       expect(getSourceAppFromUrl(url)).toBe(app);
     });
@@ -143,6 +146,10 @@ describe("source presentation", () => {
       ["https://www.xiaohongshu.com/explore/64ab", "note"],
       ["http://xhslink.com/a/Ab12", "note"],
       ["https://mail.google.com/mail/u/0/#inbox/1", "message"],
+      ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "video"],
+      ["https://youtu.be/dQw4w9WgXcQ", "video"],
+      ["https://www.youtube.com/shorts/wxLc-gFORPQ", "video"],
+      ["https://www.youtube.com/@veritasium", null],
       ["https://www.instagram.com/natgeo/", null],
       ["https://example.com/p/1", null],
     ])("names what %s points at", (url, kind) => {

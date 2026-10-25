@@ -942,6 +942,9 @@ pub struct FetchWebpageResponse {
     /// The text the page gives link previews, when it has one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Who made the page, such as an article's byline or a video's channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
     pub untrusted: bool,
 }
 
