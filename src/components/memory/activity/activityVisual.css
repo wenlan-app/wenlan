@@ -38,10 +38,18 @@ button.mem-activity-review-link:hover {
 .mem-activity-state-blocked { color: var(--mem-accent-amber); }
 .mem-activity-state-unknown { color: var(--mem-text-secondary); }
 .mem-activity-asset-context { color: var(--mem-text-secondary); font-size: 14px; line-height: 1.5; margin: 5px 0 0; }
-.mem-activity-step-list { display: grid; gap: 6px; margin-top: 10px; }
-.mem-activity-step {
+/* The rows share one set of columns (subgrid), so a longer count in one row
+   does not shift that row's bar and state against the others. */
+.mem-activity-step-list {
   display: grid;
   grid-template-columns: minmax(72px, 1fr) minmax(56px, 0.7fr) minmax(82px, 0.9fr) max-content;
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+.mem-activity-step {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
   gap: 10px;
   min-width: 0;
@@ -62,8 +70,8 @@ button.mem-activity-review-link:hover {
 
 @media (max-width: 420px) {
   .mem-activity-section-title { font-size: 19px; }
+  .mem-activity-step-list { grid-template-columns: minmax(0, 1fr) max-content; column-gap: 12px; }
   .mem-activity-step {
-    grid-template-columns: minmax(0, 1fr) max-content;
     gap: 4px 12px;
     padding-block: 3px;
     font-size: 13px;
@@ -91,7 +99,8 @@ button.mem-activity-review-link:hover {
   .mem-activity-page-header { align-items: flex-start; gap: 14px; margin-bottom: 28px; }
   .mem-activity-page-actions { width: 100%; gap: 6px; }
   .mem-activity-page .mem-activity-page-actions > button { padding-inline: 8px; }
-  .mem-activity-step { grid-template-columns: minmax(0, 1fr) max-content; gap: 4px 12px; padding-block: 3px; font-size: 13px; }
+  .mem-activity-step-list { grid-template-columns: minmax(0, 1fr) max-content; column-gap: 12px; }
+  .mem-activity-step { gap: 4px 12px; padding-block: 3px; font-size: 13px; }
   .mem-activity-step-label { grid-column: 1; grid-row: 1; }
   .mem-activity-step-state { grid-column: 2; grid-row: 1; white-space: nowrap; }
   .mem-activity-step-progress { grid-column: 1; grid-row: 2; justify-content: flex-start; }

@@ -40,7 +40,8 @@ export function SearchResults({
   const hasResults = memoryResults.length + sourceResults.length + entityResults.length + conceptResults.length > 0;
   if (!query.trim()) return null;
   // After a big import, keyword search already finds every passage while
-  // search by meaning catches up in the background. One quiet line says so.
+  // search by meaning catches up in the background. One quiet line above the
+  // results says so, where it is seen without scrolling.
   const preparing = passagesBeingPrepared(activity);
   const preparingLine = preparing > 0
     ? <p className="search-modal-status" data-testid="search-preparing">{t("main.search.preparing", { count: preparing })}</p>
@@ -54,6 +55,7 @@ export function SearchResults({
 
   return (
     <div className="flex flex-col gap-2">
+      {preparingLine}
       {conceptResults.length > 0 && <>
         <p className="search-results-heading">{t("main.search.pages")}</p>
         {conceptResults.map((page) => (
@@ -103,7 +105,6 @@ export function SearchResults({
           </button>
         ))}
       </>}
-      {preparingLine}
     </div>
   );
 }

@@ -69,6 +69,10 @@ describe("SearchResults preparing line", () => {
       "Still preparing 300 passages. Keyword matches are complete.",
     );
     expect(screen.getByTestId("search-preparing")).toHaveClass("search-modal-status");
+    // Above the results, so ten results do not push it out of view.
+    const line = screen.getByTestId("search-preparing");
+    const firstResult = screen.getByRole("button");
+    expect(line.compareDocumentPosition(firstResult) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows the line under an empty result too", async () => {
