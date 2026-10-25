@@ -940,6 +940,35 @@ fn app_candidates(
                 out.push(local.join("Programs").join("Claude").join("Claude.exe"));
             }
         }
+        // Kimi Code Desktop, an Electron app that shares `~/.kimi-code` with
+        // the CLI and installs no `kimi` command. The macOS bundle name is
+        // read from the 1.1.3 DMG; the Windows and Linux places are where an
+        // Electron "Kimi Code" app (package `kimi-code-app`) installs by
+        // default, unmeasured.
+        ("kimi_code", HostKind::MacOs) => {
+            out.push(PathBuf::from("/Applications/Kimi Code.app"));
+            out.extend(under_home("Applications/Kimi Code.app"));
+        }
+        ("kimi_code", HostKind::Windows) => {
+            if let Some(local) = local {
+                out.push(
+                    local
+                        .join("Programs")
+                        .join("Kimi Code")
+                        .join("Kimi Code.exe"),
+                );
+            }
+            out.extend(
+                program_files
+                    .iter()
+                    .map(|dir| dir.join("Kimi Code").join("Kimi Code.exe")),
+            );
+        }
+        ("kimi_code", HostKind::Linux) => {
+            out.extend(
+                ["/opt/Kimi Code/kimi-code-app", "/usr/bin/kimi-code-app"].map(PathBuf::from),
+            );
+        }
         // The VS Code family (VS Code and the editors built from it) installs
         // the same way everywhere: a `.app` bundle on macOS, a per-user
         // `%LOCALAPPDATA%\Programs\<folder>\<exe>` or a machine-wide
@@ -1079,12 +1108,11 @@ fn has_claude_store_package(local: &Path, list_dir: &dyn Fn(&Path) -> Vec<PathBu
 /// report, makes an empty result "unknown", never "absent".
 fn program_reading(client_type: &str, home: Option<&Path>, probes: &DetectProbes) -> Reading {
     let seed = match client_type {
-        "cursor" | "claude_desktop" | "antigravity" | "vscode" | "windsurf" | "kiro" => {
-            home_lookup_reading(home).or(local_data_lookup_reading(
-                probes.host,
-                probes.local_data_dir,
-            ))
-        }
+        "cursor" | "claude_desktop" | "antigravity" | "vscode" | "windsurf" | "kiro"
+        | "kimi_code" => home_lookup_reading(home).or(local_data_lookup_reading(
+            probes.host,
+            probes.local_data_dir,
+        )),
         _ => Reading::No,
     };
     let app = if client_type == "codex_cli" {
@@ -7760,6 +7788,59 @@ args = ["-y", "wenlan-mcp"]
             Machine::new(HostKind::Windows).install_state(home, "vscode"),
             InstallState::Unreadable { .. }
         ));
+    }
+
+    /// Kimi Code Desktop alone (no `kimi` CLI) is an installed Kimi Code: it
+    /// reads the same `~/.kimi-code/mcp.json` and skills.
+    #[test]
+    fn kimi_code_desktop_is_found_on_each_os() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let local = home.join("AppData").join("Local");
+        let program_files = home.join("PF");
+        let cases = [
+            (
+                HostKind::MacOs,
+                PathBuf::from("/Applications/Kimi Code.app"),
+            ),
+            (
+                HostKind::MacOs,
+                home.join("Applications").join("Kimi Code.app"),
+            ),
+            (
+                HostKind::Windows,
+                local
+                    .join("Programs")
+                    .join("Kimi Code")
+                    .join("Kimi Code.exe"),
+            ),
+            (
+                HostKind::Windows,
+                program_files.join("Kimi Code").join("Kimi Code.exe"),
+            ),
+            (
+                HostKind::Linux,
+                PathBuf::from("/opt/Kimi Code/kimi-code-app"),
+            ),
+            (HostKind::Linux, PathBuf::from("/usr/bin/kimi-code-app")),
+        ];
+        for (host, hit) in cases {
+            let mut machine = Machine::new(host);
+            machine.local = Some(local.clone());
+            machine.program_files = vec![program_files.clone()];
+            assert_eq!(
+                machine.install_state(home, "kimi_code"),
+                InstallState::NotFound,
+                "control: an empty {host:?} machine"
+            );
+            machine.existing = vec![hit.clone()];
+            assert_eq!(
+                machine.install_state(home, "kimi_code"),
+                InstallState::Installed,
+                "{} was not probed on {host:?}",
+                hit.display()
+            );
+        }
     }
 
     #[test]
