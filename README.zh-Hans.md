@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=fe4a1b516995af4610e04d1d4630d195aa680314e484e0865dd7aaeed823004c -->
+<!-- README_SYNC: source=README.md sha256=32ad2009f132e4ddff10cb950e12564a585de74f4d296488860e2c322ed3ab6f -->
 
 <p align="center">
   <picture>
@@ -45,7 +45,7 @@
 
 - **AI 帮你持续更新：** 文档、Markdown、Obsidian 仓库、Logseq 图谱、网页链接和 AI 对话都变成笔记，保留来源，来源变了就跟着更新。全部内置，不用拼装一堆插件。
 - **所有 AI 工具共用一份：** Claude Code、Codex、Cursor、GitHub Copilot 等 MCP 工具都查得到、引用得到同一批笔记。
-- **对照过来源：** 文澜会检查所引来源是否支持每个句子，未通过的引用太多时，不会保存该笔记。笔记是本地 Markdown，AI 要改你写的笔记，会先等你审核。
+- **对照过来源：** 引用的文字和来源对不上时，文澜不会保存该笔记；来源变了，相关笔记会被标记出来。笔记是本地 Markdown，AI 要改你写的笔记，会先等你审核。
 
 <a id="whats-new"></a>
 

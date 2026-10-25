@@ -43,7 +43,7 @@ I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI
 
 - **Kept current by your AI:** Documents, Markdown, Obsidian vaults, Logseq graphs, web links, and AI chats become pages that keep their sources and update when those change. Built in, with no maze of plugins.
 - **One wiki for all your AI tools:** Claude Code, Codex, Cursor, GitHub Copilot, and other MCP clients search and cite the same pages.
-- **Checked against the source:** Wenlan checks the cited source supports each sentence, and does not save a page when too many citations fail. Pages are local Markdown, and AI edits to pages you wrote wait for your review.
+- **Checked against sources:** A page is refused when its cited text doesn't match the source, and pages are flagged when their sources change. Pages are local Markdown, and AI edits to pages you wrote wait for your review.
 
 <a id="whats-new"></a>
 
