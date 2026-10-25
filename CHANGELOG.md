@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.20.1](https://github.com/wenlan-app/wenlan/compare/v0.20.0...v0.20.1) (2026-10-25)
+
+
+### Features
+
+* **app:** keep the sidebar footer to Activity and Account, and one-off messages in one toast stack ([#968](https://github.com/wenlan-app/wenlan/issues/968)) ([7ffc07e](https://github.com/wenlan-app/wenlan/commit/7ffc07e21eb7ab57d936b4e58107055c967c3e8a))
+* **app:** name pasted social posts and YouTube videos properly, and show a saved link as a card, a playable video or the site's own post ([#1008](https://github.com/wenlan-app/wenlan/issues/1008)) ([5533843](https://github.com/wenlan-app/wenlan/commit/5533843dd61c837cd6f4ecd6804eac650b314216))
+* **app:** one "AI changes" setting for pages and notes ([#1002](https://github.com/wenlan-app/wenlan/issues/1002)) ([aecbc0b](https://github.com/wenlan-app/wenlan/commit/aecbc0bb7b7fb81180baff6b5cacdf5614f64cce))
+* **app:** save a link pasted into a page as a source, with icons for X, Threads, Instagram and RedNote ([#1001](https://github.com/wenlan-app/wenlan/issues/1001)) ([ae36655](https://github.com/wenlan-app/wenlan/commit/ae36655f01a548afcda7d42767cfa928bdd01466))
+* **app:** say in the page area why pages cannot load when the service never answers ([#979](https://github.com/wenlan-app/wenlan/issues/979)) ([dad7666](https://github.com/wenlan-app/wenlan/commit/dad7666c7ee327230e0fb2a5215890f3809351e7))
+* **app:** show a revision's changes on the page as it reads ([#985](https://github.com/wenlan-app/wenlan/issues/985)) ([044ae59](https://github.com/wenlan-app/wenlan/commit/044ae59f8ab66d26082b7f0b6fa27389ce121d4e))
+* **app:** show vault notes an AI wants to change on the home and in the menu bar ([#1003](https://github.com/wenlan-app/wenlan/issues/1003)) ([f959799](https://github.com/wenlan-app/wenlan/commit/f95979965374284593799862f453d4d96d18cf39))
+* **connect:** connect Kimi Code and give it Wenlan's skills ([#1011](https://github.com/wenlan-app/wenlan/issues/1011)) ([d3f3f70](https://github.com/wenlan-app/wenlan/commit/d3f3f704e0b392a10a01bce9cea62fb7dbb4d2fa))
+* **connect:** connect six more AI tools and give them Wenlan's skills ([#962](https://github.com/wenlan-app/wenlan/issues/962)) ([6beac45](https://github.com/wenlan-app/wenlan/commit/6beac4512f730ffd46689b5fd0d3c617c19ddc7d))
+* follow renamed code files and let steep handle deleted ones ([#973](https://github.com/wenlan-app/wenlan/issues/973)) ([dca0514](https://github.com/wenlan-app/wenlan/commit/dca0514fb1c5c9316fc4bf6e8cbf368c8ad326c3))
+* let AI suggest changes to your Obsidian notes, written only when you accept ([#996](https://github.com/wenlan-app/wenlan/issues/996)) ([c9c5090](https://github.com/wenlan-app/wenlan/commit/c9c50907a91c25bee32bf17543670600fd0675fa))
+* move Wenlan's pages into an Obsidian vault ([#995](https://github.com/wenlan-app/wenlan/issues/995)) ([8518fc4](https://github.com/wenlan-app/wenlan/commit/8518fc4482ed2917df749af4e72b6b6a2f0f3fdb))
+* run the daily repository wiki update on GitHub, set it up from the app, and bring repository edits back into the Space ([#967](https://github.com/wenlan-app/wenlan/issues/967)) ([442a641](https://github.com/wenlan-app/wenlan/commit/442a6417d60203db8ef08169951e668b19a9db46))
+* show images and videos in pages ([#972](https://github.com/wenlan-app/wenlan/issues/972)) ([8ef25fd](https://github.com/wenlan-app/wenlan/commit/8ef25fd152b21f2dbc621c1a2931c55dc93bf17e))
+* the daily wiki update can use Cursor or GitHub Copilot ([#976](https://github.com/wenlan-app/wenlan/issues/976)) ([51a6b3f](https://github.com/wenlan-app/wenlan/commit/51a6b3fb768dab5d5970859ea1f0f87579f29045))
+* **wiki:** a README.md in the wiki folder lists the pages in reading order ([#989](https://github.com/wenlan-app/wenlan/issues/989)) ([6554a39](https://github.com/wenlan-app/wenlan/commit/6554a39e2629cba6d137cafad419371aa60844db))
+
+
+### Bug Fixes
+
+* **app:** ask in Wenlan's own confirm dialog so confirm-gated buttons work on macOS ([#999](https://github.com/wenlan-app/wenlan/issues/999)) ([71b5b04](https://github.com/wenlan-app/wenlan/commit/71b5b0474218edf55fdc3f8f3396b47fd7d7331b))
+* **app:** call the web excerpt dialog "Add a link with text" ([#1005](https://github.com/wenlan-app/wenlan/issues/1005)) ([9b9739e](https://github.com/wenlan-app/wenlan/commit/9b9739efb498f396818b154f67094fa2eb00c3ac)), closes [#907](https://github.com/wenlan-app/wenlan/issues/907)
+* **app:** make removed words in a revision diff visible in the light theme ([#994](https://github.com/wenlan-app/wenlan/issues/994)) ([fa69d68](https://github.com/wenlan-app/wenlan/commit/fa69d688a42f51e5d37615f44c2012c13f7a688e))
+* **app:** say "you wrote this page" when a page you wrote waits for review ([#987](https://github.com/wenlan-app/wenlan/issues/987)) ([e812d51](https://github.com/wenlan-app/wenlan/commit/e812d51a8121e5e49cd377d83fca26a05ab1f34a))
+* **app:** translate citation times and the Space label, reuse a source's number when it is cited again ([#1000](https://github.com/wenlan-app/wenlan/issues/1000)) ([6ed49c9](https://github.com/wenlan-app/wenlan/commit/6ed49c9ba83990c6f0e113c54b007caf8c37596e))
+* **cli:** follow WENLAN_HOST in pages and the setup skill, drop the deprecated aliases ([#988](https://github.com/wenlan-app/wenlan/issues/988)) ([037ac11](https://github.com/wenlan-app/wenlan/commit/037ac1198cdd058d4bc89b56b232bbecaa375900))
+* **core:** let AI-tool search find a rare word in a large library ([#1004](https://github.com/wenlan-app/wenlan/issues/1004)) ([19eb4a4](https://github.com/wenlan-app/wenlan/commit/19eb4a47961a73d5dd4447cf960f04a81818c41d))
+* **deps:** move the PDF extractor to lopdf 0.42 without regressing font decoding ([#990](https://github.com/wenlan-app/wenlan/issues/990)) ([9b47f85](https://github.com/wenlan-app/wenlan/commit/9b47f859deea5e8a14dc96d5a3f986a51d4c3d0e)), closes [#617](https://github.com/wenlan-app/wenlan/issues/617)
+* **export:** act on what was classified when a vault editor races the exporter ([#993](https://github.com/wenlan-app/wenlan/issues/993)) ([d9018db](https://github.com/wenlan-app/wenlan/commit/d9018db183d9f0d99a2c6a6bfd8743660440b667))
+* **export:** retry a failed reserved-name archive and repair imported links on OKF re-export ([#992](https://github.com/wenlan-app/wenlan/issues/992)) ([a846234](https://github.com/wenlan-app/wenlan/commit/a846234b06de9d504ae4910203482067f76090cd))
+* **okf:** write the export marker atomically and keep a briefly unreadable INSTRUCTIONS.md ([#991](https://github.com/wenlan-app/wenlan/issues/991)) ([93799bd](https://github.com/wenlan-app/wenlan/commit/93799bd279151662d2c5c83cd616b20a1f39b556))
+* **pages:** show edits made in Obsidian on an open page, without a false draft warning ([#998](https://github.com/wenlan-app/wenlan/issues/998)) ([0af9648](https://github.com/wenlan-app/wenlan/commit/0af9648f9cff471cbad69aa857edaee7bfaedec2))
+* quiet new-page review banner and clean-install setup rough edges ([#986](https://github.com/wenlan-app/wenlan/issues/986)) ([c51001c](https://github.com/wenlan-app/wenlan/commit/c51001c3e02e04b0f83632aab318c1ff4b1f1760))
+* stop flagging fresh linked pages as changed and keep preserved OKF copies out of the bundle's markdown ([#997](https://github.com/wenlan-app/wenlan/issues/997)) ([41e46cb](https://github.com/wenlan-app/wenlan/commit/41e46cb3de5faf461a6695b1f93fa3f8179ca517))
+* **wiki:** never open a pull request on a repository the user did not choose ([#1010](https://github.com/wenlan-app/wenlan/issues/1010)) ([5e4173d](https://github.com/wenlan-app/wenlan/commit/5e4173dda3b6fbf3af3cadc2e2cf75fcc77a6e58))
+* **wiki:** refresh pages from complete sources, reading long ones in parts ([#982](https://github.com/wenlan-app/wenlan/issues/982)) ([193ecb1](https://github.com/wenlan-app/wenlan/commit/193ecb177a1003e15dd31bdc232653340ec238e0))
+* **wiki:** stop the false self-retrieval warning and fold generated files in wiki PRs ([#984](https://github.com/wenlan-app/wenlan/issues/984)) ([3679382](https://github.com/wenlan-app/wenlan/commit/36793827a790bdb3ce8c6663c9efd451e9d4ce6d))
+
+
+### Performance Improvements
+
+* make a big first vault import searchable in minutes ([#1009](https://github.com/wenlan-app/wenlan/issues/1009)) ([7aaffd1](https://github.com/wenlan-app/wenlan/commit/7aaffd168559b56c12e72acb74aea178b0ad4dc1))
+
 ## [0.20.0](https://github.com/wenlan-app/wenlan/compare/v0.19.3...v0.20.0) (2026-10-23)
 
 
