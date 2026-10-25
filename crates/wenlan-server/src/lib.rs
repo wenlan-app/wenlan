@@ -15,6 +15,7 @@ pub mod code_basis_routes;
 pub mod community_routes;
 pub mod config_routes;
 pub mod decisions_routes;
+pub mod embedding_backfill;
 pub mod entity_graph_routes;
 pub mod error;
 mod host_activity;

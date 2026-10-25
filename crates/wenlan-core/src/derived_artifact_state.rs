@@ -1,5 +1,5 @@
 use crate::db::MemoryDB;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 pub(crate) fn summary_eligible_predicate(alias: &str) -> String {
@@ -138,12 +138,16 @@ impl DerivedArtifact {
 pub(crate) struct DerivedArtifactState {
     active: [AtomicU32; 3],
     generation: AtomicU64,
+    /// Memory rows were stored without a vector on purpose (a big import)
+    /// and the background catch-up has not finished embedding them.
+    embedding_backlog: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DerivedArtifactSample {
     active: [u32; 3],
     generation: u64,
+    embedding_backlog: bool,
 }
 
 impl DerivedArtifactState {
@@ -163,6 +167,13 @@ impl DerivedArtifactState {
         DerivedArtifactSample {
             active: std::array::from_fn(|index| self.active[index].load(Ordering::Acquire)),
             generation: self.generation.load(Ordering::Acquire),
+            embedding_backlog: self.embedding_backlog.load(Ordering::Acquire),
+        }
+    }
+
+    fn set_embedding_backlog(&self, pending: bool) {
+        if self.embedding_backlog.swap(pending, Ordering::AcqRel) != pending {
+            self.generation.fetch_add(1, Ordering::AcqRel);
         }
     }
 }
@@ -170,6 +181,10 @@ impl DerivedArtifactState {
 impl DerivedArtifactSample {
     pub(crate) const fn is_active(self, artifact: DerivedArtifact) -> bool {
         self.active[artifact.index()] > 0
+    }
+
+    pub(crate) const fn embedding_backlog(self) -> bool {
+        self.embedding_backlog
     }
 }
 
@@ -195,6 +210,14 @@ impl MemoryDB {
 
     pub(crate) fn derived_artifact_sample(&self) -> DerivedArtifactSample {
         self.derived_artifact_state.sample()
+    }
+
+    /// Record whether memory rows stored without a vector on purpose are
+    /// still waiting for the background catch-up. While they are, the memory
+    /// lint counts a missing vector as pending, not as damage. The import sets
+    /// it; the catch-up clears it when its run ends.
+    pub fn set_embedding_backlog(&self, pending: bool) {
+        self.derived_artifact_state.set_embedding_backlog(pending);
     }
 }
 

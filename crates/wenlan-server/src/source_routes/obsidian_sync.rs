@@ -23,6 +23,10 @@
 //!   notes ([`OBSIDIAN_BUSY_NOTE_LIMIT`] while the machine is busy), so it
 //!   never holds the serial poll loop for a whole vault; the rest are picked
 //!   up by the next polls. The HTTP sync has no limit.
+//! - The first [`INLINE_EMBED_NOTES`] changed notes of a sync are embedded as
+//!   they are stored. Past that (a big first import) notes are stored without
+//!   a vector, so the whole vault is keyword-searchable in minutes, and the
+//!   background worker embeds them afterwards ([`crate::embedding_backfill`]).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -46,6 +50,12 @@ pub(crate) const OBSIDIAN_POLL_NOTE_LIMIT: usize = 50;
 /// is busy: enough that an edit made in Obsidian still shows up within a
 /// poll or two, small enough that embedding it costs little.
 pub(crate) const OBSIDIAN_BUSY_NOTE_LIMIT: usize = 5;
+
+/// How many changed notes one sync embeds as it stores them before it hands
+/// the rest to the background worker. Embedding is about nine tenths of an
+/// import's time (10,000 notes: 44 of 49 minutes), so a small vault or an
+/// edit is searchable by meaning at once while a big one does not wait.
+pub(crate) const INLINE_EMBED_NOTES: usize = 100;
 
 type SyncLock = Arc<tokio::sync::Mutex<()>>;
 
@@ -98,7 +108,21 @@ pub(crate) async fn sync_obsidian_source(
 ) -> Result<SyncStatsResponse, ServerError> {
     let lock = sync_lock(&source.id);
     let _guard = lock.lock().await;
-    sync_obsidian_source_locked(db, quality_gate, source, None).await
+    sync_obsidian_source_locked(db, quality_gate, source, None, INLINE_EMBED_NOTES).await
+}
+
+/// [`sync_obsidian_source`] that embeds only the first `inline_embed_notes`
+/// changed notes as it stores them.
+#[cfg(test)]
+pub(crate) async fn sync_obsidian_source_embedding_first(
+    db: Arc<MemoryDB>,
+    quality_gate: &QualityGate,
+    source: &Source,
+    inline_embed_notes: usize,
+) -> Result<SyncStatsResponse, ServerError> {
+    let lock = sync_lock(&source.id);
+    let _guard = lock.lock().await;
+    sync_obsidian_source_locked(db, quality_gate, source, None, inline_embed_notes).await
 }
 
 /// Sync an Obsidian or Logseq source unless a sync of it is already running, in which
@@ -112,7 +136,16 @@ pub(crate) async fn try_sync_obsidian_source(
 ) -> Option<Result<SyncStatsResponse, ServerError>> {
     let lock = sync_lock(&source.id);
     let _guard = lock.try_lock().ok()?;
-    Some(sync_obsidian_source_locked(db, quality_gate, source, Some(note_limit)).await)
+    Some(
+        sync_obsidian_source_locked(
+            db,
+            quality_gate,
+            source,
+            Some(note_limit),
+            INLINE_EMBED_NOTES,
+        )
+        .await,
+    )
 }
 
 fn note_chunk_prefix(source_id: &str, path: &str) -> String {
@@ -196,6 +229,7 @@ async fn sync_obsidian_source_locked(
     quality_gate: &QualityGate,
     source: &Source,
     note_limit: Option<usize>,
+    inline_embed_notes: usize,
 ) -> Result<SyncStatsResponse, ServerError> {
     let id = source.id.clone();
 
@@ -241,6 +275,7 @@ async fn sync_obsidian_source_locked(
     let mut file_errors: usize = 0;
     let mut gdrive_errors: usize = 0;
     let mut stored_notes: usize = 0;
+    let mut deferred_notes: usize = 0;
     let mut skipped_files: Vec<SkippedFile> = Vec::new();
     let mut note_skipped = |path: &Path, reason: &str| {
         tracing::info!(
@@ -387,10 +422,17 @@ async fn sync_obsidian_source_locked(
 
         let count = filtered.len();
         let keep: HashSet<String> = filtered.iter().map(|d| d.source_id.clone()).collect();
-        match db.upsert_documents(filtered).await {
+        let defer_embedding = stored_notes >= inline_embed_notes;
+        let upserted = if defer_embedding {
+            db.upsert_documents_without_embeddings(filtered).await
+        } else {
+            db.upsert_documents(filtered).await
+        };
+        match upserted {
             Ok(_) => {
                 ingested += count;
                 stored_notes += 1;
+                deferred_notes += usize::from(defer_embedding);
                 // Upsert first, then drop the old tail, so the note is never
                 // missing from search in between.
                 let failures = delete_note_chunks_except(&db, &id, &file_key, &keep).await;
@@ -405,6 +447,13 @@ async fn sync_obsidian_source_locked(
                 errors += count;
             }
         }
+    }
+
+    if deferred_notes > 0 {
+        tracing::info!(
+            "[sync] {id}: {deferred_notes} notes stored without a vector; embedding them in the background"
+        );
+        crate::embedding_backfill::request();
     }
 
     let stats = finalize_sync(

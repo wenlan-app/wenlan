@@ -137,6 +137,8 @@ mod code_basis_recheck_test;
 #[cfg(test)]
 pub(crate) mod code_basis_test;
 #[cfg(test)]
+mod deferred_embedding_test;
+#[cfg(test)]
 mod edges_rebuild_test;
 #[cfg(test)]
 mod entity_clean_readers_test;
@@ -214,6 +216,8 @@ mod scoped_records_test;
 mod sessions_test;
 #[cfg(test)]
 mod source_annotations_test;
+#[cfg(test)]
+mod source_lookup_plan_test;
 #[cfg(test)]
 mod space_rename_test;
 #[cfg(test)]
@@ -1521,6 +1525,39 @@ pub const EMBEDDING_DIM: usize = 768;
 /// not.
 pub const SCHEMA_VERSION: u32 = 143;
 
+/// The text a `source = 'memory'` row is embedded from: `[space] ` when the
+/// row has a space, its retrieval cue on its own line when it has one, then
+/// the content. Shared by the write path and the background catch-up of rows
+/// stored without a vector, so both produce the same vector.
+pub(crate) fn memory_embedding_text(
+    space: Option<&str>,
+    retrieval_cue: Option<&str>,
+    content: &str,
+) -> String {
+    let prefix = space.map(|space| format!("[{space}] ")).unwrap_or_default();
+    match retrieval_cue.filter(|cue| !cue.is_empty()) {
+        Some(cue) => format!("{prefix}{cue}\n{content}"),
+        None => format!("{prefix}{content}"),
+    }
+}
+
+/// The smallest string greater than every string that starts with `prefix`,
+/// for an index range scan (`>= prefix AND < bound`). SQLite compares TEXT
+/// byte by byte, and UTF-8 byte order is code point order, so bumping the
+/// last character that can be bumped gives the bound. `None` when no
+/// character can be (an empty prefix): every string then matches.
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        let next = (u32::from(last) + 1..=u32::from(char::MAX)).find_map(char::from_u32);
+        if let Some(next) = next {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
 /// `pages.established_by` for an entity a person or agent confirmed by hand.
 pub const ESTABLISHED_BY_MANUAL: &str = "manual";
 /// `pages.established_by` for an entity the linked-memory threshold promoted.
@@ -1866,7 +1903,13 @@ pub enum MemoryEmbeddingRecovery {
 }
 
 /// Largest batch one recovery step embeds and writes in one transaction.
-pub const NULL_EMBEDDING_RECOVERY_BATCH: usize = 64;
+pub const NULL_EMBEDDING_RECOVERY_BATCH: usize = 128;
+
+/// How many texts of similar length one model pass embeds during recovery.
+/// The quantized model pads a pass to its longest text, so passes over mixed
+/// lengths were slower than one note at a time; sorted passes of 32 measured
+/// 1.24x faster than per note on real vault chunks (M2 Pro).
+const RECOVERY_EMBED_PASS: usize = 32;
 
 /// What one bounded recovery batch did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -4322,6 +4365,12 @@ CREATE INDEX IF NOT EXISTS idx_access_log_source ON access_log(source_id);
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_memories_source_id ON memories(source_id);
 CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);
+-- Most writes and deletes look a row up by `source = ? AND source_id = ?`.
+-- With only the two single-column indexes above, SQLite plans that off
+-- `idx_memories_source`, which matches every 'memory' row, so each lookup
+-- scanned the whole table and a big first import slowed down as it grew.
+-- Created here (every open) so existing databases get it too.
+CREATE INDEX IF NOT EXISTS idx_memories_source_source_id ON memories(source, source_id);
 CREATE INDEX IF NOT EXISTS idx_memories_last_modified ON memories(last_modified);
 CREATE INDEX IF NOT EXISTS idx_memories_memory_type ON memories(memory_type) WHERE memory_type IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_memories_supersedes ON memories(supersedes) WHERE supersedes IS NOT NULL;
@@ -25941,6 +25990,64 @@ impl MemoryDB {
         .map_err(|e| WenlanError::Embedding(format!("embedding task failed: {e}")))?
     }
 
+    /// Embed `texts` in passes of [`RECOVERY_EMBED_PASS`] texts of similar
+    /// length, returning one entry per text, in the order of `texts`. A pass
+    /// that fails or comes back short is retried one text at a time, so one
+    /// text the model cannot embed leaves only that entry `None` instead of
+    /// stopping the catch-up at the same place on every run. When no text of
+    /// such a retry embeds and one errors, the model itself is failing and
+    /// the error is returned.
+    async fn generate_embeddings_by_length(
+        &self,
+        texts: Vec<String>,
+    ) -> Result<Vec<Option<Vec<f32>>>, WenlanError> {
+        let mut order: Vec<usize> = (0..texts.len()).collect();
+        order.sort_by_key(|&index| texts[index].len());
+        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        for pass in order.chunks(RECOVERY_EMBED_PASS) {
+            let pass_texts = pass.iter().map(|&index| texts[index].clone()).collect();
+            match self.generate_embeddings_blocking(pass_texts).await {
+                Ok(pass_vectors) if pass_vectors.len() == pass.len() => {
+                    for (&index, vector) in pass.iter().zip(pass_vectors) {
+                        vectors[index] = Some(vector);
+                    }
+                    continue;
+                }
+                Ok(pass_vectors) => log::warn!(
+                    "[memory_db] null embed recovery: model returned {} vectors for {} texts; \
+                     retrying one at a time",
+                    pass_vectors.len(),
+                    pass.len()
+                ),
+                Err(error) => log::warn!(
+                    "[memory_db] null embed recovery pass failed: {error}; retrying one at a time"
+                ),
+            }
+            let mut last_error = None;
+            let mut any_embedded = false;
+            for &index in pass {
+                match self
+                    .generate_embeddings_blocking(vec![texts[index].clone()])
+                    .await
+                {
+                    Ok(mut one) if one.len() == 1 => {
+                        vectors[index] = one.pop();
+                        any_embedded = true;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        log::warn!("[memory_db] null embed recovery: one text failed: {error}");
+                        last_error = Some(error);
+                    }
+                }
+            }
+            if let (false, Some(error)) = (any_embedded, last_error) {
+                return Err(error);
+            }
+        }
+        Ok(vectors)
+    }
+
     /// How many memory rows have no embedding.
     pub async fn count_null_memory_embeddings(&self) -> Result<usize, WenlanError> {
         let conn = self.conn.lock().await;
@@ -26025,11 +26132,13 @@ impl MemoryDB {
         batch_size: usize,
     ) -> Result<NullEmbeddingBatch, WenlanError> {
         let limit = batch_size.clamp(1, NULL_EMBEDDING_RECOVERY_BATCH) as i64;
-        let batch: Vec<(String, Option<String>, Option<String>)> = {
+        // (id, embedded text read back, space, embedding input)
+        let batch: Vec<(String, Option<String>, Option<String>, String)> = {
             let conn = self.conn.lock().await;
             let mut rows = conn
                 .query(
-                    "SELECT id, COALESCE(source_text, content), space FROM memories \
+                    "SELECT id, COALESCE(source_text, content), space, source, \
+                            content, retrieval_cue FROM memories \
                      WHERE embedding IS NULL AND (?1 IS NULL OR id > ?1) \
                      ORDER BY id LIMIT ?2",
                     libsql::params![after_id.map(str::to_string), limit],
@@ -26047,37 +26156,43 @@ impl MemoryDB {
                     .map_err(|e| WenlanError::VectorDb(format!("null embed batch id: {e}")))?;
                 let text: Option<String> = row.get(1).unwrap_or(None);
                 let space: Option<String> = row.get(2).unwrap_or(None);
-                batch.push((id, text, space));
+                let source: Option<String> = row.get(3).unwrap_or(None);
+                let content: Option<String> = row.get(4).unwrap_or(None);
+                let cue: Option<String> = row.get(5).unwrap_or(None);
+                // The same text the write path embeds (`memory_embedding_text`
+                // on the chunk content). A row filed under no Space carries
+                // the Unfiled sentinel, which the write path never prefixed.
+                let input = if source.as_deref() == Some("memory") {
+                    memory_embedding_text(
+                        space.as_deref().filter(|space| *space != UNFILED_SPACE_ID),
+                        cue.as_deref(),
+                        content.as_deref().unwrap_or_default(),
+                    )
+                } else {
+                    content.unwrap_or_default()
+                };
+                batch.push((id, text, space, input));
             }
             batch
         };
-        let Some(next_cursor) = batch.last().map(|(id, _, _)| id.clone()) else {
+        let Some(next_cursor) = batch.last().map(|(id, _, _, _)| id.clone()) else {
             return Ok(NullEmbeddingBatch::default());
         };
 
-        let texts: Vec<String> = batch
-            .iter()
-            .map(|(_, text, space)| {
-                let text = text.as_deref().unwrap_or_default();
-                match space {
-                    Some(space) => format!("[{space}] {text}"),
-                    None => text.to_string(),
-                }
-            })
-            .collect();
+        let texts: Vec<String> = batch.iter().map(|(_, _, _, input)| input.clone()).collect();
         #[allow(unused_mut)]
-        let mut embeddings = self.generate_embeddings_blocking(texts).await?;
+        let mut embeddings = self.generate_embeddings_by_length(texts).await?;
         #[cfg(test)]
         let fault = take_null_embed_recovery_fault();
         #[cfg(test)]
         if let Some(keep) = fault.and_then(|fault| fault.keep_vectors) {
             embeddings.truncate(keep);
         }
-        if embeddings.len() < batch.len() {
+        let embedded = embeddings.iter().flatten().count();
+        if embedded < batch.len() {
             log::warn!(
-                "[memory_db] null embed recovery: model returned {} vectors for {} rows; \
+                "[memory_db] null embed recovery: {embedded} vectors for {} rows; \
                  the rest stay unembedded this run",
-                embeddings.len(),
                 batch.len()
             );
         }
@@ -26094,8 +26209,8 @@ impl MemoryDB {
             .map_err(|e| WenlanError::VectorDb(format!("null embed recovery begin: {e}")))?;
         let mut recovered = 0usize;
         let mut skipped = 0usize;
-        for (idx, (id, text, space)) in batch.iter().enumerate() {
-            let Some(embedding) = embeddings.get(idx) else {
+        for (idx, (id, text, space, _)) in batch.iter().enumerate() {
+            let Some(Some(embedding)) = embeddings.get(idx) else {
                 skipped += 1;
                 continue;
             };
@@ -26822,10 +26937,50 @@ impl MemoryDB {
         (docs, write_spaces)
     }
 
+    /// What a replacing upsert reads about the rows it replaces. Runs once per
+    /// document, so it must find them through `idx_memories_source_source_id`
+    /// (pinned by `source_lookup_plan_test`).
+    pub(crate) const REPLACEMENT_SOURCE_SQL: &'static str =
+        "SELECT MAX(version), COUNT(*), COUNT(space),
+                COUNT(DISTINCT space), MIN(space)
+         FROM memories
+         WHERE source = ?1 AND source_id = ?2";
+
+    /// The delete a replacing upsert runs once per document.
+    pub(crate) const DELETE_SOURCE_ROWS_SQL: &'static str =
+        "DELETE FROM memories WHERE source = ?1 AND source_id = ?2";
+
+    /// `list_source_ids_with_prefix` with an upper bound (see
+    /// `prefix_upper_bound`), so the lookup is an index range scan.
+    pub(crate) const SOURCE_IDS_IN_RANGE_SQL: &'static str =
+        "SELECT DISTINCT source_id FROM memories
+         WHERE source = ?1 AND source_id >= ?2 AND source_id < ?3
+           AND substr(source_id, 1, length(?2)) = ?2";
+
     /// Chunk, embed, and upsert documents. Returns the number of memory rows created.
     pub async fn upsert_documents(&self, docs: Vec<RawDocument>) -> Result<usize, WenlanError> {
         self.upsert_documents_with_derived_channels(docs, None, None, None, None, None)
             .await
+    }
+
+    /// [`Self::upsert_documents`] that stores the memory rows without a
+    /// vector, for a big import: the rows are keyword-searchable at once and
+    /// [`Self::recover_null_memory_embeddings_batch`] embeds them later, from
+    /// the same text the write path would have used.
+    pub async fn upsert_documents_without_embeddings(
+        &self,
+        docs: Vec<RawDocument>,
+    ) -> Result<usize, WenlanError> {
+        let written = self
+            .upsert_documents_at_optional_page_fence(
+                docs, None, None, None, None, None, None, None, false, true,
+            )
+            .await?
+            .unwrap_or(0);
+        if written > 0 {
+            self.set_embedding_backlog(true);
+        }
+        Ok(written)
     }
 
     /// Upsert top-level writes while resolving their stable Space IDs inside
@@ -26929,6 +27084,7 @@ impl MemoryDB {
             None,
             None,
             false,
+            false,
         )
         .await
         .map(|written| written.unwrap_or(0))
@@ -26938,7 +27094,7 @@ impl MemoryDB {
     /// The existence predicate is checked inside the same transaction as rows.
     pub async fn create_documents(&self, docs: Vec<RawDocument>) -> Result<usize, WenlanError> {
         self.upsert_documents_at_optional_page_fence(
-            docs, None, None, None, None, None, None, None, true,
+            docs, None, None, None, None, None, None, None, true, false,
         )
         .await
         .map(|written| written.unwrap_or(0))
@@ -26964,6 +27120,7 @@ impl MemoryDB {
             None,
             None,
             true,
+            false,
         )
         .await
         .map(|written| written.unwrap_or(0))
@@ -26994,6 +27151,7 @@ impl MemoryDB {
             Some((page_id, expected_version, fence)),
             None,
             false,
+            false,
         )
         .await
         .map(|written| written.is_some())
@@ -27021,6 +27179,7 @@ impl MemoryDB {
             None,
             Some((page_id, scope)),
             false,
+            false,
         )
         .await
         .map(|written| written.is_some())
@@ -27041,6 +27200,7 @@ impl MemoryDB {
         page_fence: Option<(&str, i64, &PageFence)>,
         page_space: Option<(&str, &crate::read_scope::ReadScope)>,
         create_only: bool,
+        defer_embeddings: bool,
     ) -> Result<Option<usize>, WenlanError> {
         if docs.is_empty() {
             return Ok(Some(0));
@@ -27170,18 +27330,12 @@ impl MemoryDB {
                 // is +25% NDCG over [type | space] — type labels add noise that
                 // dilutes semantic signal. Retrieval cue follows on its own line.
                 let embedding_text = if doc.source == "memory" {
-                    let prefix = if let Some(ref d) = doc.space {
-                        format!("[{}] ", d)
-                    } else {
-                        String::new()
-                    };
-                    let cue_prefix = doc.retrieval_cue.as_deref().unwrap_or("");
                     let embed_content = derived_source_text.as_deref().unwrap_or(&chunk.content);
-                    if cue_prefix.is_empty() {
-                        format!("{}{}", prefix, embed_content)
-                    } else {
-                        format!("{}{}\n{}", prefix, cue_prefix, embed_content)
-                    }
+                    memory_embedding_text(
+                        doc.space.as_deref(),
+                        doc.retrieval_cue.as_deref(),
+                        embed_content,
+                    )
                 } else {
                     chunk.content.clone()
                 };
@@ -27377,7 +27531,14 @@ impl MemoryDB {
         }
 
         // Generate embeddings for all memory rows
-        let embeddings = self.generate_embeddings(&chunk_texts)?;
+        let embeddings: Vec<Option<Vec<f32>>> = if defer_embeddings {
+            vec![None; memory_rows.len()]
+        } else {
+            self.generate_embeddings(&chunk_texts)?
+                .into_iter()
+                .map(Some)
+                .collect()
+        };
         if embeddings.len() != memory_rows.len() {
             return Err(WenlanError::Embedding(format!(
                 "Expected {} embeddings, got {}",
@@ -27539,10 +27700,7 @@ impl MemoryDB {
             for (source, source_id) in &source_ids_to_delete {
                 let mut rows = conn
                     .query(
-                        "SELECT MAX(version), COUNT(*), COUNT(space),
-                                COUNT(DISTINCT space), MIN(space)
-                         FROM memories
-                         WHERE source = ?1 AND source_id = ?2",
+                        Self::REPLACEMENT_SOURCE_SQL,
                         libsql::params![source.clone(), source_id.clone()],
                     )
                     .await
@@ -27651,7 +27809,7 @@ impl MemoryDB {
                         })?;
                 }
                 conn.execute(
-                    "DELETE FROM memories WHERE source = ?1 AND source_id = ?2",
+                    Self::DELETE_SOURCE_ROWS_SQL,
                     libsql::params![source.clone(), source_id.clone()],
                 )
                 .await
@@ -27677,7 +27835,11 @@ impl MemoryDB {
                     .get(&(row.source.clone(), row.source_id.clone()))
                     .copied()
                     .unwrap_or(1);
-                let vec_str = Self::vec_to_sql(embedding);
+                let vec_str: libsql::Value = embedding
+                    .as_ref()
+                    .map_or(libsql::Value::Null, |embedding| {
+                        libsql::Value::Text(Self::vec_to_sql(embedding))
+                    });
                 let confirmed_int: Option<i64> = row.confirmed.map(|b| if b { 1 } else { 0 });
 
                 let summary_val: libsql::Value = row
@@ -27797,8 +27959,8 @@ impl MemoryDB {
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
                     ?24, ?25, ?26, ?27, ?28,
                     ?29, ?30, ?31,
-                    vector32(?32), ?33, ?34, ?35, ?36, ?37,
-                    ?38)",
+                    CASE WHEN ?32 IS NULL THEN NULL ELSE vector32(?32) END,
+                    ?33, ?34, ?35, ?36, ?37, ?38)",
                     libsql::params![
                         row.id,
                         row.content,
@@ -27948,7 +28110,8 @@ impl MemoryDB {
             }
         }
 
-        if let Err(error) = conn.execute("COMMIT", ()).await {
+        let __commit = conn.execute("COMMIT", ()).await;
+        if let Err(error) = __commit {
             if let Err(rollback_error) = conn.execute("ROLLBACK", ()).await {
                 return Err(WenlanError::VectorDb(format!(
                     "commit transaction: {error}; rollback failed: {rollback_error}"
@@ -32334,21 +32497,33 @@ impl MemoryDB {
     /// Distinct `source_id`s of `source` rows that start with `prefix`. Used by
     /// the Obsidian vault sync to find every chunk document one note owns
     /// (`<source>::<path>::<n>`). Compared with `substr`, not `LIKE`, so a
-    /// path holding `%` or `_` matches only itself.
+    /// path holding `%` or `_` matches only itself. The range on `source_id`
+    /// lets `idx_memories_source_source_id` find the rows without reading
+    /// every row of `source`; the vault sync runs this once per note.
     pub async fn list_source_ids_with_prefix(
         &self,
         source: &str,
         prefix: &str,
     ) -> Result<Vec<String>, WenlanError> {
         let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(
-                "SELECT DISTINCT source_id FROM memories
-                 WHERE source = ?1 AND substr(source_id, 1, length(?2)) = ?2",
-                libsql::params![source, prefix],
-            )
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("list_source_ids_with_prefix: {e}")))?;
+        let mut rows = match prefix_upper_bound(prefix) {
+            Some(upper) => {
+                conn.query(
+                    Self::SOURCE_IDS_IN_RANGE_SQL,
+                    libsql::params![source, prefix, upper],
+                )
+                .await
+            }
+            None => {
+                conn.query(
+                    "SELECT DISTINCT source_id FROM memories
+                     WHERE source = ?1 AND substr(source_id, 1, length(?2)) = ?2",
+                    libsql::params![source, prefix],
+                )
+                .await
+            }
+        }
+        .map_err(|e| WenlanError::VectorDb(format!("list_source_ids_with_prefix: {e}")))?;
         let mut source_ids = Vec::new();
         while let Some(row) = rows
             .next()

@@ -21,7 +21,11 @@ pub(super) fn assessments(
             && record.target_exists
             && (!record.pending_revision || record.supersedes.is_some())
     });
-    let embedding = structural(EMBEDDING_ID, &heads, |record| record.embedding_valid);
+    // A big import stores rows without a vector and embeds them in the
+    // background; until that catch-up ends a missing vector is pending work.
+    let embedding = structural(EMBEDDING_ID, &heads, |record| {
+        record.embedding_valid || config.embedding_backlog
+    });
     let enrichment = structural(ENRICHMENT_ID, records, |record| record.failed_steps == 0);
     let mut checks = vec![lifecycle, supersession, embedding, enrichment];
     checks.push(partition_assessment(&heads, records));
