@@ -746,8 +746,8 @@ const en = {
   citation: {
     authoredDescription: "Written by you in this page. It is kept unchanged when the page is rebuilt from its sources.",
     missingMemory: "This source memory no longer exists. It was deleted or merged after the page was organized. Update the page from its sources to refresh its citations.",
-    openMemory: "Open memory →",
-    openFile: "Open file →",
+    openMemory: "Open →",
+    openFile: "Open →",
     openLink: "Open in browser →",
     openInApp: "Open in {{app}} →",
     unverified: "unverified",
@@ -3677,8 +3677,8 @@ const zhHans = {
   citation: {
     authoredDescription: "你在本页撰写的内容。文澜重新整理来源时，会保留原文。",
     missingMemory: "这条来源记忆已被删除或合并。按来源更新笔记后，引用就会更新。",
-    openMemory: "打开记忆 →",
-    openFile: "打开文件 →",
+    openMemory: "打开 →",
+    openFile: "打开 →",
     openLink: "在浏览器打开 →",
     openInApp: "在 {{app}} 打开 →",
     unverified: "未验证",
@@ -6563,8 +6563,8 @@ const zhHant = {
   citation: {
     authoredDescription: "你在這篇筆記撰寫的內容。文瀾重新整理來源時，會保留原文。",
     missingMemory: "這條來源記憶已被刪除或合併。依來源更新筆記後，引用就會更新。",
-    openMemory: "開啟記憶 →",
-    openFile: "開啟檔案 →",
+    openMemory: "開啟 →",
+    openFile: "開啟 →",
     openLink: "在瀏覽器開啟 →",
     openInApp: "在 {{app}} 開啟 →",
     unverified: "未驗證",

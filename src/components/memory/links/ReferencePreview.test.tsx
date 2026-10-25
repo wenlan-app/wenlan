@@ -58,7 +58,7 @@ describe("ReferencePreview citation targets", () => {
     expect(preview).toHaveTextContent("/notes/original.md");
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open file/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open →$/ }));
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_file", { path: "/notes/original.md" });
   });
 
@@ -83,7 +83,7 @@ describe("ReferencePreview citation targets", () => {
     </QueryClientProvider>;
     const view = render(renderPreview(citation, anchorA));
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open file/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open →$/ }));
     await waitFor(() => expect(rejectOpen).toBeTypeOf("function"));
     view.rerender(renderPreview(citation, anchorB));
     await act(async () => { rejectOpen(new Error("old target could not open")); });
@@ -171,6 +171,13 @@ describe("ReferencePreview citation time", () => {
 
   it("keeps the short English relative time", () => {
     expect(renderTimed()).toHaveTextContent("15h ago");
+  });
+
+  it("puts the age and a plain Open action on one footer row", () => {
+    const preview = renderTimed();
+    const actions = screen.getByRole("button", { name: "Open →" }).closest<HTMLElement>('[data-reference-preview-actions="true"]');
+    expect(actions).toHaveTextContent("15h ago");
+    expect(preview).not.toHaveTextContent(/Open memory/);
   });
 
   it.each(["zh-Hans", "zh-Hant"])("shows the source's age in %s, not in English", async (lng) => {

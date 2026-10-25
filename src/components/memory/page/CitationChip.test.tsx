@@ -149,7 +149,7 @@ describe("CitationChip", () => {
     expect(popover.parentElement).toBe(document.body);
     expect(article).not.toContainElement(popover);
 
-    const openMemory = within(popover).getByRole("button", { name: /Open memory/ });
+    const openMemory = within(popover).getByRole("button", { name: /^Open →$/ });
     await user.tab();
     expect(document.activeElement).toBe(within(popover).getByText("Technical details"));
     await user.tab();
@@ -204,7 +204,7 @@ describe("CitationChip", () => {
     expect(
       within(popover).getByText(/We decided to keep the daemon/),
     ).toBeInTheDocument();
-    await user.click(within(popover).getByRole("button", { name: /Open memory/ }));
+    await user.click(within(popover).getByRole("button", { name: /^Open →$/ }));
     expect(onOpenMemory).toHaveBeenCalledWith("mem-1");
   });
 
@@ -282,7 +282,7 @@ describe("CitationChip", () => {
     });
     fireEvent.focus(screen.getByRole("button", { name: /File.*design\.md/ }));
     expect(screen.getByText("/notes/design.md")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Open file/ }));
+    await user.click(screen.getByRole("button", { name: /^Open →$/ }));
     // A bare path must not go to the shell plugin: its `open` validator only
     // admits URL schemes, so the app's own `open_file` command opens files.
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_file", { path: "/notes/design.md" });
@@ -300,7 +300,7 @@ describe("CitationChip", () => {
       sourceMemory: null,
     });
     fireEvent.focus(screen.getByRole("button", { name: /File.*run\.command/ }));
-    await user.click(screen.getByRole("button", { name: /Open file/ }));
+    await user.click(screen.getByRole("button", { name: /^Open →$/ }));
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Could not open this file.");
     expect(alert).toHaveTextContent(/Refusing to run/);
@@ -345,7 +345,7 @@ describe("CitationChip", () => {
     fireEvent.focus(screen.getByRole("button", { name: /File.*architecture-notes\.md/ }));
     expect(screen.getByText("/Users/me/Tally/notes/architecture-notes.md")).toBeInTheDocument();
     expect(screen.queryByText(/directory-notes::/)).toBeNull();
-    await user.click(screen.getByRole("button", { name: /Open file/ }));
+    await user.click(screen.getByRole("button", { name: /^Open →$/ }));
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_file", {
       path: "/Users/me/Tally/notes/architecture-notes.md",
     });

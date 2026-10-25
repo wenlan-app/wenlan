@@ -184,6 +184,7 @@ export function ReferencePreview({
     : target?.kind === "page" || target?.kind === "memory"
     ? t(`${copyPrefix}.open`, { title })
     : citation?.source_kind === "external_file" ? t("citation.openFile") : citation?.source_kind === "external_url" ? (appName ? t("citation.openInApp", { app: appName }) : t("citation.openLink")) : "";
+  const modifiedAgo = citationTarget?.sourceMemory?.last_modified ? relativeMs(citationTarget.sourceMemory.last_modified * 1000, relativeLocale) : "";
   const activeOpenFailure = openFailure?.key === requestKey && openFailure.anchor === request.anchor ? openFailure.message : null;
   const preview = (
     <div
@@ -238,10 +239,12 @@ export function ReferencePreview({
         <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>
       </details>}
       {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
-      {citationTarget?.sourceMemory?.last_modified && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{relativeMs(citationTarget.sourceMemory.last_modified * 1000, relativeLocale)}</p>}
+      {modifiedAgo && !canOpen && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{modifiedAgo}</p>}
       {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}
-      {canOpen && <div data-reference-preview-actions="true" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "6px 12px 12px", background: "var(--mem-surface)" }}>
-        <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>
+      {/* The age shares the action's row so the card ends on one line instead of a stray link under a gap. */}
+      {canOpen && <div data-reference-preview-actions="true" className="flex items-baseline justify-between gap-3" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "2px 12px 12px", background: "var(--mem-surface)" }}>
+        <span style={{ color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{modifiedAgo}</span>
+        <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)", whiteSpace: "nowrap", flexShrink: 0 }}>{action}</button>
       </div>}
     </div>
   );

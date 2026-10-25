@@ -157,7 +157,7 @@ describe("PageDetail citations", () => {
     // than the separate information dialog's source list.
     const popover = await screen.findByRole("tooltip");
     expect(within(popover).getByText("Local-first decision")).toBeInTheDocument();
-    await user.click(within(popover).getByRole("button", { name: /Open memory/ }));
+    await user.click(within(popover).getByRole("button", { name: /^Open →$/ }));
     expect(props.onMemoryClick).toHaveBeenCalledWith("mem-1");
   });
 
