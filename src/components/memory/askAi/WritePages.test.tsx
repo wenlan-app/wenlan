@@ -177,18 +177,27 @@ describe("WritePagesLine", () => {
     expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
   });
 
-  it("copies the command when the tool cannot be opened", async () => {
-    vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
-    vi.mocked(listNewMaterial).mockResolvedValue(material(5));
-    vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
-    wrap(<Line pages={[]} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
-    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Paste the command into Codex and press Enter."));
-    // Said once, on the button that copied it.
-    expect(screen.getByTestId("write-pages-line").textContent?.match(/Copied/g)).toHaveLength(1);
-    expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
-  });
+  it.each(["en", "zh-Hans", "zh-Hant"] as const)(
+    "keeps the Codex CLI action name when copying the command in %s",
+    async (locale) => {
+      await i18n.changeLanguage(locale);
+      vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
+      vi.mocked(listNewMaterial).mockResolvedValue(material(5));
+      vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
+      wrap(<Line pages={[]} />);
+      fireEvent.click(await screen.findByRole("button", {
+        name: i18n.t("askAi.writePages.askIn", { tool: "Codex" }),
+      }));
+      await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
+      await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent(
+        i18n.t("askAi.writePages.pasteIt", { tool: "Codex" }),
+      ));
+      // Said once, on the button that copied it.
+      const copied = i18n.t("askAi.copied");
+      expect(screen.getByTestId("write-pages-line").textContent?.split(copied)).toHaveLength(2);
+      expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
+    },
+  );
 
   it("offers to connect a tool or use the local model when no tool is connected", async () => {
     vi.mocked(listAgents).mockResolvedValue([]);

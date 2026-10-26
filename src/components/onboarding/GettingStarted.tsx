@@ -13,7 +13,7 @@ import {
 import { clipboardWrite, getBackgroundAiEnabled, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
 import type { WritePagesState } from "../memory/askAi/WritePages";
 import { AskAiDialog } from "../memory/askAi/AskAiDialog";
-import { resolveAgentDisplayName } from "../../lib/agents";
+import { resolveAgentActionName } from "../../lib/agents";
 import {
   askablePages,
   connectedToolFamilies,
@@ -171,7 +171,7 @@ export function GettingStarted({
   const promptFamily = families.find((family) => PROMPT_LINK_FAMILIES.includes(family)) ?? families[0];
   const opensTool = promptFamily != null && PROMPT_LINK_FAMILIES.includes(promptFamily);
   const promptTool = askable != null && !writing && progress.tool && !progress.recall && promptFamily != null
-    ? resolveAgentDisplayName(promptFamily, agents)
+    ? resolveAgentActionName(promptFamily, agents)
     : null;
   const promptText = promptTool && askable
     ? t("firstUse.checklist.steps.recall.prompt", { title: askable.title })

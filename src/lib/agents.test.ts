@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   clientTypeFamily,
   familyDisplayName,
+  resolveAgentActionName,
   resolveAgentDisplayName,
   toolFamilyOf,
 } from "./agents";
@@ -27,6 +28,7 @@ describe("resolveAgentDisplayName", () => {
 
   it("prettifies an unrecognized slug instead of passing it through raw", () => {
     expect(resolveAgentDisplayName("codex-mcp-client")).toBe("Codex MCP Client");
+    expect(resolveAgentDisplayName("My Bot")).toBe("My Bot");
   });
 
   it("applies the acronym map for cli/api/ai/vscode", () => {
@@ -41,6 +43,17 @@ describe("resolveAgentDisplayName", () => {
 
   it("never returns empty for a non-empty input", () => {
     expect(resolveAgentDisplayName("x")).toBe("X");
+  });
+});
+
+describe("resolveAgentActionName", () => {
+  it("keeps a narrow executable name for Codex CLI actions", () => {
+    expect(resolveAgentActionName("codex")).toBe("Codex");
+    expect(resolveAgentActionName("codex", [
+      { name: "codex", display_name: "ChatGPT / Codex" } as AgentConnection,
+    ])).toBe("Codex");
+    expect(resolveAgentActionName("claude-code")).toBe("Claude Code");
+    expect(resolveAgentActionName("my-bot")).toBe("My Bot");
   });
 });
 

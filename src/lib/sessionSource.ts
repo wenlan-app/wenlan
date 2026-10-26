@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { AgentSession } from "./tauri";
-import { resolveAgentDisplayName } from "./agents";
+import { resolveAgentActionName, resolveAgentDisplayName } from "./agents";
 
 /** Product name for a session tool; unknown IDs are still made readable. */
 export function sessionToolLabel(tool: string): string {
   return resolveAgentDisplayName(tool);
+}
+
+/** Executable name for actions that resume a session in its source tool. */
+export function sessionToolActionLabel(tool: string): string {
+  return resolveAgentActionName(tool);
 }
 
 function lastSegment(path: string): string {

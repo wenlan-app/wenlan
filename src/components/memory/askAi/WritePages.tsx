@@ -12,7 +12,7 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { OWN_IDENTITY, resolveAgentDisplayName, toolFamilyOf } from "../../../lib/agents";
+import { OWN_IDENTITY, resolveAgentActionName, toolFamilyOf } from "../../../lib/agents";
 import { useSteepOnDemand } from "../../../lib/steepMode";
 import { useLiveAgents } from "../../connect/connectionState";
 import { writeClipboard } from "../page/codeBasisShared";
@@ -128,7 +128,7 @@ export function recentTool(agents: readonly AgentConnection[]): { family: string
     .sort((a, b) => (b.last_seen_at ?? b.created_at) - (a.last_seen_at ?? a.created_at));
   if (tools.length === 0) return null;
   const family = toolFamilyOf(tools[0]);
-  return { family, name: resolveAgentDisplayName(family, [...agents]) };
+  return { family, name: resolveAgentActionName(family, [...agents]) };
 }
 
 const KIND_ORDER = ["note", "chat", "file", "capture"] as const;

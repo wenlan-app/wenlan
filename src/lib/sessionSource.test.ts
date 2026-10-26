@@ -7,6 +7,7 @@ import {
   sessionPlaceName,
   sessionRepoName,
   sessionResumeCommand,
+  sessionToolActionLabel,
   sessionToolLabel,
   shortCommit,
 } from "./sessionSource";
@@ -31,6 +32,13 @@ describe("sessionToolLabel", () => {
     ["some-new-tool", "Some New Tool"],
   ])("%s shows as %s", (tool, label) => {
     expect(sessionToolLabel(tool)).toBe(label);
+  });
+});
+
+describe("sessionToolActionLabel", () => {
+  it("names the executable an action targets", () => {
+    expect(sessionToolActionLabel("codex")).toBe("Codex");
+    expect(sessionToolActionLabel("claude-code")).toBe("Claude Code");
   });
 });
 

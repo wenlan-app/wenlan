@@ -354,18 +354,22 @@ describe("GettingStarted", () => {
     expect(screen.getAllByRole("button", { name: ask("action") })).toHaveLength(1);
   });
 
-  it("falls back to the copied question when the tool cannot be opened", async () => {
-    vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
-    vi.mocked(clipboardWrite).mockResolvedValue(undefined);
-    vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
-    renderAskStep();
-    await screen.findByRole("heading", { name: title() });
+  it.each(["en", "zh-Hans", "zh-Hant"] as const)(
+    "keeps the Codex CLI action name when the tool cannot be opened in %s",
+    async (locale) => {
+      await i18n.changeLanguage(locale);
+      vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
+      vi.mocked(clipboardWrite).mockResolvedValue(undefined);
+      vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
+      renderAskStep();
+      await screen.findByRole("heading", { name: title() });
 
-    fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
-    expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
-    expect(clipboardWrite).toHaveBeenCalledWith(ask("prompt", { title: "Kyoto itinerary" }));
-    expect(screen.getByText(ask("askLine", { tool: "Codex", title: "Kyoto itinerary" }))).toBeInTheDocument();
-  });
+      fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
+      expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
+      expect(clipboardWrite).toHaveBeenCalledWith(ask("prompt", { title: "Kyoto itinerary" }));
+      expect(screen.getByText(ask("askLine", { tool: "Codex", title: "Kyoto itinerary" }))).toBeInTheDocument();
+    },
+  );
 
   it("only copies the question for a tool no link can open", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);

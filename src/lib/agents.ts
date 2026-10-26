@@ -7,7 +7,7 @@
 //
 // Resolution order:
 //   1. User registration (`agent_connections.display_name` via listAgents).
-//   2. Built-in `KNOWN_CLIENT_DISPLAY_NAMES` registry (mirrors origin-core's `KNOWN_CLIENTS`).
+//   2. Built-in `KNOWN_CLIENT_NAMES` registry (mirrors origin-core's `KNOWN_CLIENTS`).
 //   3. The canonical ID prettified into a readable title (word-split on
 //      `-`/`_`, title-case each word, acronym map for mcp/cli/api/ai/vscode).
 //
@@ -15,34 +15,46 @@
 
 import type { AgentConnection } from "./tauri";
 
-export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
-  "antigravity": "Antigravity",
-  "chatgpt": "ChatGPT",
-  "chatgpt-mcp": "ChatGPT",
-  "claude": "Claude",
-  "claude-ai": "Claude",
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  "codex": "ChatGPT / Codex",
-  "continue": "Continue",
-  "copilot-cli": "GitHub Copilot CLI",
-  "cursor": "Cursor",
-  "gemini-cli": "Gemini CLI",
-  "kimi-code": "Kimi Code",
-  "kimi-desktop": "Kimi",
-  "kiro": "Kiro",
-  "logseq": "Logseq",
-  "muse-code": "Muse Code",
-  "obsidian": "Obsidian",
-  "openai-mcp": "ChatGPT",
-  "opencode": "OpenCode",
-  "raycast": "Raycast",
-  "vscode": "VS Code",
-  "windsurf": "Windsurf",
-  "wenlan": "Wenlan",
-  "wenlan-app": "Wenlan",
-  "zed": "Zed",
+interface ClientNames {
+  /** Broad product label used for provenance and connection surfaces. */
+  display: string;
+  /** Narrow label used when an action targets one specific executable. */
+  action?: string;
+}
+
+export const KNOWN_CLIENT_NAMES: Record<string, ClientNames> = {
+  "antigravity": { display: "Antigravity" },
+  "chatgpt": { display: "ChatGPT" },
+  "chatgpt-mcp": { display: "ChatGPT" },
+  "claude": { display: "Claude" },
+  "claude-ai": { display: "Claude" },
+  "claude-code": { display: "Claude Code" },
+  "claude-desktop": { display: "Claude Desktop" },
+  "codex": { display: "ChatGPT / Codex", action: "Codex" },
+  "continue": { display: "Continue" },
+  "copilot-cli": { display: "GitHub Copilot CLI" },
+  "cursor": { display: "Cursor" },
+  "gemini-cli": { display: "Gemini CLI" },
+  "kimi-code": { display: "Kimi Code" },
+  "kimi-desktop": { display: "Kimi" },
+  "kiro": { display: "Kiro" },
+  "logseq": { display: "Logseq" },
+  "muse-code": { display: "Muse Code" },
+  "obsidian": { display: "Obsidian" },
+  "openai-mcp": { display: "ChatGPT" },
+  "opencode": { display: "OpenCode" },
+  "raycast": { display: "Raycast" },
+  "vscode": { display: "VS Code" },
+  "windsurf": { display: "Windsurf" },
+  "wenlan": { display: "Wenlan" },
+  "wenlan-app": { display: "Wenlan" },
+  "zed": { display: "Zed" },
 };
+
+/** Compatibility view for callers that need the canonical display map. */
+export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
+  Object.entries(KNOWN_CLIENT_NAMES).map(([id, names]) => [id, names.display]),
+);
 
 /** Word-level overrides applied after title-casing an unknown slug's parts. */
 const SLUG_WORD_OVERRIDES: Record<string, string> = {
@@ -85,7 +97,8 @@ export function resolveAgentDisplayName(
   canonicalId: string,
   connections?: AgentConnection[],
 ): string {
-  const normalized = canonicalId.trim().toLowerCase();
+  const trimmed = canonicalId.trim();
+  const normalized = trimmed.toLowerCase();
   if (!normalized) return "";
 
   // 1. User override via registration.
@@ -97,12 +110,30 @@ export function resolveAgentDisplayName(
   }
 
   // 2. Built-in registry.
-  const known = KNOWN_CLIENT_DISPLAY_NAMES[normalized];
-  if (known) return known;
+  const known = KNOWN_CLIENT_NAMES[normalized];
+  if (known) return known.display;
+
+  // Some older call sites can already hold a human-readable display value.
+  // Preserve that explicit casing; only canonical slug IDs need prettifying.
+  if (/\s/.test(trimmed)) return trimmed;
 
   // 3. Prettify the slug so an unknown integration never leaks a raw ID into
   //    visible copy.
   return prettifySlug(normalized);
+}
+
+/**
+ * Resolve the shorter product name used when an action targets one concrete
+ * tool rather than attributing work to the broader product family.
+ */
+export function resolveAgentActionName(
+  canonicalId: string,
+  connections?: AgentConnection[],
+): string {
+  const normalized = canonicalId.trim().toLowerCase();
+  if (!normalized) return "";
+  return KNOWN_CLIENT_NAMES[normalized]?.action
+    ?? resolveAgentDisplayName(canonicalId, connections);
 }
 
 // ── Tool families ──────────────────────────────────────────────────────
