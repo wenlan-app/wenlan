@@ -39,6 +39,7 @@ use wenlan_types::steep_new::{
 
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
+use crate::page_titles::{same_title_note, title_key};
 use crate::post_write::{page_write, PageWrite};
 use crate::read_scope::ReadScope;
 use crate::steep::SteepError;
@@ -68,6 +69,10 @@ pub const CLAIM_CHAR_CAP: usize = 40_000;
 /// A note from fewer sources than this needs one source of at least
 /// [`MIN_SINGLE_SOURCE_CHARS`] characters.
 pub const MIN_SOURCES: usize = 2;
+/// A group below this source count is worth warning about when enough other
+/// material is waiting to make a fuller note.
+pub const THIN_GROUP_SOURCES: usize = 4;
+const PLENTY_WAITING_ITEMS: usize = 4;
 pub const MIN_SINGLE_SOURCE_CHARS: usize = 800;
 
 /// Longest title a note may get.
@@ -443,6 +448,9 @@ pub struct NewPageClaim {
     /// An existing page on this subject: the sources go into it
     /// ([`attach_new`]) instead of a second page.
     pub existing_page: Option<SteepExistingPage>,
+    /// The group is small even though enough unclaimed material remains to
+    /// reconsider it. Advisory only.
+    pub thin_group: bool,
 }
 
 /// Hold `item_ids` (one topic) for one note and number their text.
@@ -606,6 +614,11 @@ pub async fn claim_new_on(
     } else {
         None
     };
+    let waiting_after_claim = new_material_count(db, scope)
+        .await?
+        .saturating_sub(claimed_items.len());
+    let thin_group =
+        sources.len() < THIN_GROUP_SOURCES && waiting_after_claim >= PLENTY_WAITING_ITEMS;
 
     let token = uuid::Uuid::new_v4().to_string();
     let until = now + NEW_PAGE_HOLD;
@@ -689,6 +702,7 @@ pub async fn claim_new_on(
         organize: organize_work,
         link_targets,
         existing_page,
+        thin_group,
     })
 }
 
@@ -714,27 +728,6 @@ pub fn organize_tasks_new(
         return Err(SteepError::TokenGone);
     }
     Ok(crate::steep_organize::work(&claim.organize))
-}
-
-/// The key two titles share when they name the same subject: lowercase
-/// words, with years, dates and version numbers left out ("Kitchen
-/// Renovation 2023" and "kitchen renovation" share one).
-fn title_key(title: &str) -> String {
-    let mut words: Vec<String> = Vec::new();
-    for word in title.split(|c: char| !c.is_alphanumeric()) {
-        let letters: String = word
-            .chars()
-            .filter(|c| !c.is_numeric())
-            .flat_map(char::to_lowercase)
-            .collect();
-        let had_digits = letters.chars().count() < word.chars().count();
-        // "v2", "q3": what is left of a version or quarter is no word.
-        if letters.is_empty() || (had_digits && letters.chars().count() <= 1) {
-            continue;
-        }
-        words.push(letters);
-    }
-    words.join(" ")
 }
 
 /// Words too common to tell two titles apart.
@@ -952,42 +945,6 @@ async fn existing_page(
         .map(|(_, page_id, title)| SteepExistingPage { page_id, title })
 }
 
-/// The note titled `title` (years and versions aside) that a new note
-/// under that title would repeat: one in `space` first, else one in another
-/// Space `scope` reads. Every note counts, however old.
-async fn same_title_note(
-    db: &MemoryDB,
-    scope: &ReadScope,
-    space: Option<&str>,
-    title: &str,
-) -> Result<Option<SteepExistingPage>, WenlanError> {
-    let key = title_key(title);
-    if key.is_empty() {
-        return Ok(None);
-    }
-    let mut notes = db.notes_titled(title).await?;
-    notes.extend(db.recent_notes(TITLE_MATCH_NOTES).await?);
-    let mut elsewhere = None;
-    for (page_id, note_title, page_space) in notes {
-        if !scope.matches(page_space.as_deref()) || title_key(&note_title) != key {
-            continue;
-        }
-        if page_space.as_deref() == space {
-            return Ok(Some(SteepExistingPage {
-                page_id,
-                title: note_title,
-            }));
-        }
-        if elsewhere.is_none() {
-            elsewhere = Some(SteepExistingPage {
-                page_id,
-                title: note_title,
-            });
-        }
-    }
-    Ok(elsewhere)
-}
-
 /// A held claim's `link_targets` and `existing_page` as they are now: pages
 /// written since the claim (by this run's earlier groups) count. Needs no
 /// model, and leaves the claim as it is.
@@ -1008,6 +965,7 @@ pub async fn links_new(db: &MemoryDB, token: &str) -> Result<SteepNewLinksRespon
     Ok(SteepNewLinksResponse {
         link_targets,
         existing_page,
+        next_step: String::new(),
     })
 }
 
@@ -1110,6 +1068,57 @@ async fn link_targets(
         }
     }
     out
+}
+
+/// Related pages `content` could still link. Candidate generation uses only
+/// existing vault links, title mentions and shared entities; this removes the
+/// saved page itself and any target its current wikilinks already resolve to.
+pub async fn unused_link_targets(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    space: Option<&str>,
+    sources: &[(String, String)],
+    page_id: &str,
+    content: &str,
+) -> Vec<String> {
+    let candidates = link_targets(db, scope, space, sources, Some(page_id)).await;
+    if candidates.is_empty() {
+        return candidates;
+    }
+    let written = crate::synthesis::wikilinks::extract_wikilinks(content);
+    let used_ids: HashSet<String> =
+        crate::synthesis::wikilinks::resolve_against_pages(db, &written, space)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|link| link.target_page_id)
+            .collect();
+    let written_lower: HashSet<String> = written
+        .into_iter()
+        .map(|label| label.trim().to_lowercase())
+        .collect();
+    let resolved =
+        match crate::synthesis::wikilinks::resolve_against_pages(db, &candidates, space).await {
+            Ok(resolved) => resolved,
+            Err(_) => {
+                return candidates
+                    .into_iter()
+                    .filter(|label| !written_lower.contains(&label.trim().to_lowercase()))
+                    .collect()
+            }
+        };
+    candidates
+        .into_iter()
+        .zip(resolved)
+        .filter_map(|(label, link)| {
+            let already_used = written_lower.contains(&label.trim().to_lowercase())
+                || link
+                    .target_page_id
+                    .as_ref()
+                    .is_some_and(|target| used_ids.contains(target));
+            (!already_used).then_some(label)
+        })
+        .collect()
 }
 
 /// The name a vault note goes by in `[[links]]`: the file name of the note
@@ -1481,6 +1490,7 @@ pub struct NewPageCommit {
     pub page_id: Option<String>,
     pub title: Option<String>,
     pub citations: Option<String>,
+    pub link_targets: Vec<String>,
 }
 
 /// Give a claim's items back without writing a note.
@@ -1491,6 +1501,7 @@ pub fn release_new(token: &str) -> Result<NewPageCommit, SteepError> {
             page_id: None,
             title: None,
             citations: None,
+            link_targets: Vec::new(),
         }),
         None => Err(SteepError::TokenGone),
     }
@@ -1572,6 +1583,7 @@ async fn attach_sources(
     page: SteepExistingPage,
     agent: &str,
 ) -> Result<NewPageCommit, SteepError> {
+    let claim = renew(token)?;
     let result = page_write(
         db,
         PageWrite::Attach {
@@ -1584,6 +1596,36 @@ async fn attach_sources(
     .await;
     holds().drop_token(token);
     result?;
+    let saved = db.get_page(&page.page_id).await?;
+    let content = saved
+        .as_ref()
+        .map(|saved| saved.content.as_str())
+        .unwrap_or_default();
+    let page_space = saved
+        .as_ref()
+        .and_then(|saved| saved.workspace.as_deref().or(saved.space.as_deref()));
+    let link_sources = match saved.as_ref() {
+        Some(saved) => match db
+            .get_memory_contents_by_ids(&saved.source_memory_ids)
+            .await
+        {
+            Ok(sources) => sources,
+            Err(error) => {
+                log::warn!("[steep-new] attached-page link sources: {error}");
+                claim.sources.clone()
+            }
+        },
+        None => claim.sources.clone(),
+    };
+    let link_targets = unused_link_targets(
+        db,
+        &claim.scope,
+        page_space,
+        &link_sources,
+        &page.page_id,
+        content,
+    )
+    .await;
     if let Err(error) = db
         .stamp_last_distilled_at(ids, chrono::Utc::now().timestamp())
         .await
@@ -1601,6 +1643,7 @@ async fn attach_sources(
         page_id: Some(page.page_id),
         title: Some(page.title),
         citations: None,
+        link_targets,
     })
 }
 
@@ -1641,8 +1684,20 @@ pub async fn commit_new(
     // into it, as `attach` does, instead of a second page under the same
     // title. The claim's Space first; else another Space the caller reads
     // (a claim whose sources classification filed apart has no Space).
-    if let Some(page) = same_title_note(db, &claim.scope, claim.space.as_deref(), title).await? {
-        return attach_sources(db, token, &ids, page, agent).await;
+    if let Some(page) =
+        same_title_note(db, &claim.scope, claim.space.as_deref(), title, false).await?
+    {
+        return attach_sources(
+            db,
+            token,
+            &ids,
+            SteepExistingPage {
+                page_id: page.page_id,
+                title: page.title,
+            },
+            agent,
+        )
+        .await;
     }
 
     let kinds = db.resolve_source_kinds(&ids).await.unwrap_or_default();
@@ -1747,6 +1802,7 @@ pub async fn commit_new(
             citations_json: Some(citations_json),
             basis_marks: Vec::new(),
             basis_space_guard: (claim.scope != ReadScope::Global).then(|| claim.scope.clone()),
+            skip_protected_title_match: false,
         },
     )
     .await;
@@ -1774,13 +1830,40 @@ pub async fn commit_new(
         Some(existing) => ("merged", existing),
         None => ("created", result.id),
     };
-    let page_title = db
-        .get_page(&page_id)
-        .await
-        .ok()
-        .flatten()
-        .map(|page| page.title)
+    let saved = db.get_page(&page_id).await.ok().flatten();
+    let page_title = saved
+        .as_ref()
+        .map(|page| page.title.clone())
         .unwrap_or_else(|| title.to_string());
+    let saved_content = saved
+        .as_ref()
+        .map(|page| page.content.as_str())
+        .unwrap_or_default();
+    let page_space = saved
+        .as_ref()
+        .and_then(|page| page.workspace.as_deref().or(page.space.as_deref()));
+    let link_sources = match saved.as_ref() {
+        Some(saved) => match db
+            .get_memory_contents_by_ids(&saved.source_memory_ids)
+            .await
+        {
+            Ok(sources) => sources,
+            Err(error) => {
+                log::warn!("[steep-new] committed-page link sources: {error}");
+                claim.sources.clone()
+            }
+        },
+        None => claim.sources.clone(),
+    };
+    let link_targets = unused_link_targets(
+        db,
+        &claim.scope,
+        page_space,
+        &link_sources,
+        &page_id,
+        saved_content,
+    )
+    .await;
     log::info!(
         "[steep-new] {outcome} note {page_id} '{page_title}' from {} sources ({})",
         ids.len(),
@@ -1791,6 +1874,7 @@ pub async fn commit_new(
         page_id: Some(page_id),
         title: Some(page_title),
         citations: Some(stats.summary()),
+        link_targets,
     })
 }
 

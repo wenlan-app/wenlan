@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use wenlan_types::steep::SteepCodeAnswer;
 use wenlan_types::RawDocument;
@@ -321,6 +322,46 @@ async fn organize_lands_the_same_rows_as_the_ambient_lanes() {
 }
 
 #[tokio::test]
+async fn claim_planning_does_not_wait_for_the_shared_embedder() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(
+        &db,
+        "claim_busy_embedder",
+        "A long uncached memory about a ceramic kiln, glaze tests, and a notebook.",
+    )
+    .await;
+    db.clear_embedding_cache_for_test();
+
+    let embedder = db.shared_embedder_for_test().expect("test embedder");
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let busy_worker = std::thread::spawn(move || {
+        let _guard = embedder.lock().unwrap();
+        locked_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(750));
+    });
+    locked_rx.recv().unwrap();
+
+    let started = Instant::now();
+    let tasks = plan(&db, &options(0.8), &["claim_busy_embedder".to_string()])
+        .await
+        .unwrap();
+    let elapsed = started.elapsed();
+    println!("claim organize plan with busy embedder: {elapsed:?}");
+
+    assert!(
+        elapsed < Duration::from_millis(300),
+        "claim planning waited for the shared embedder: {elapsed:?}"
+    );
+    assert!(
+        tasks
+            .iter()
+            .any(|task| task.stage() == STEEP_ORGANIZE_STAGE_ENTITIES),
+        "a busy embedder must leave entity extraction pending"
+    );
+    busy_worker.join().unwrap();
+}
+
+#[tokio::test]
 async fn an_answer_lands_once_and_unknown_numbers_are_reported() {
     let (db, _dir) = crate::db::tests::test_db().await;
     memory(&db, "once_a", MIRA_NOTE).await;
@@ -500,6 +541,7 @@ async fn the_note_is_about_the_entity_most_sources_mention_and_links_its_pages()
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await
@@ -618,6 +660,7 @@ async fn a_note_is_about_the_next_majority_entity_when_the_first_has_a_note() {
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await
@@ -730,6 +773,7 @@ async fn authored_note_in(
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await
@@ -1059,9 +1103,32 @@ async fn a_page_tagged_with_an_entity_it_is_not_about_takes_none_of_its_material
 #[tokio::test]
 async fn a_note_under_an_existing_title_goes_into_that_note() {
     let (db, _dir) = crate::db::tests::test_db().await;
+    authored_note(&db, "Glaze recipes", None).await;
     let recipes = authored_note(&db, "Recipes", None).await;
-    memory(&db, "rec_a", MIRA_NOTE).await;
-    memory(&db, "rec_b", KILN_NOTE).await;
+    memory(&db, "rec_old", MIRA_NOTE).await;
+    crate::post_write::page_write(
+        &db,
+        crate::post_write::PageWrite::Attach {
+            page_id: &recipes,
+            source_memory_ids: &["rec_old".into()],
+            link_reason: "test",
+            agent: "test",
+        },
+    )
+    .await
+    .unwrap();
+    memory(
+        &db,
+        "rec_a",
+        "Family recipes keep weeknight meals repeatable.",
+    )
+    .await;
+    memory(
+        &db,
+        "rec_b",
+        "The recipe collection also records holiday dinners.",
+    )
+    .await;
     let claim = claim_new(
         &db,
         &ReadScope::Global,
@@ -1078,6 +1145,11 @@ async fn a_note_under_an_existing_title_goes_into_that_note() {
     assert_eq!(written.outcome, "attached");
     assert_eq!(written.page_id.as_deref(), Some(recipes.as_str()));
     assert_eq!(written.title.as_deref(), Some("Recipes"));
+    assert_eq!(
+        written.link_targets,
+        vec!["Glaze recipes".to_string()],
+        "post-attach hints use the page's full accumulated source set"
+    );
 }
 
 /// What Codex did when it wrote "Running" next to an existing "Running": it
@@ -1171,6 +1243,11 @@ async fn link_targets_are_the_notes_the_sources_name() {
     let written = commit_new(&db, &claim.token, "Kiln cooling", body, "test", None)
         .await
         .unwrap();
+    assert!(
+        written.link_targets.is_empty(),
+        "commit must not re-offer links already used: {:?}",
+        written.link_targets
+    );
     let links = db
         .get_page_outbound_links_scoped(written.page_id.as_deref().unwrap(), &ReadScope::Global)
         .await
@@ -1183,6 +1260,38 @@ async fn link_targets_are_the_notes_the_sources_name() {
         2,
         "both labels resolve: {links:?}"
     );
+}
+
+#[tokio::test]
+async fn commit_returns_only_unused_link_targets_and_never_the_page_itself() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    authored_note(&db, "Glaze recipes", None).await;
+    memory(&db, "unused_link_a", MIRA_NOTE).await;
+    memory(&db, "unused_link_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["unused_link_a".into(), "unused_link_b".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(claim.link_targets.contains(&"Glaze recipes".to_string()));
+
+    let written = commit_new(
+        &db,
+        &claim.token,
+        "Mira",
+        "Mira fires the kiln in Oslo every Sunday and keeps glaze recipes in a red notebook [1]. \
+         Mira says the kiln needs eight hours to cool before anyone opens it [2].",
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(written.link_targets.contains(&"Glaze recipes".to_string()));
+    assert!(!written.link_targets.contains(&"Mira".to_string()));
 }
 
 /// "Lisbon and Porto 2026" from sources that mostly mention Lisbon is about
@@ -1313,6 +1422,7 @@ async fn a_note_in_another_space_that_shares_an_entity_is_a_link_target() {
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await

@@ -58,6 +58,7 @@ pub mod onboarding;
 pub mod origin;
 pub mod page_map_improve;
 pub mod page_projection_tracker;
+pub mod page_titles;
 pub mod pages;
 pub mod pages_folder;
 pub mod post_ingest;

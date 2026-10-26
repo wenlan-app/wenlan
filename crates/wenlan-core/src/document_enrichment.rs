@@ -1023,6 +1023,7 @@ async fn write_source_page(
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await

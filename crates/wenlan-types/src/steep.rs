@@ -201,6 +201,12 @@ pub struct SteepCommitResponse {
     /// per diagram, so the agent fixes or drops it. The write still landed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Related pages the committed page could still link but does not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 #[cfg(test)]

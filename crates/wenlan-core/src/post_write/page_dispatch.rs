@@ -36,6 +36,9 @@ pub enum PageWrite<'a> {
         /// A Space-locked caller's Space: each basis must still be in it
         /// inside the create transaction. `None` for a Global caller.
         basis_space_guard: Option<crate::read_scope::ReadScope>,
+        /// Automatic lanes must not attach new sources to a page a person
+        /// edited or locked for review.
+        skip_protected_title_match: bool,
     },
     Update {
         page_id: &'a str,
@@ -142,6 +145,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
             citations_json,
             basis_marks,
             basis_space_guard,
+            skip_protected_title_match,
         } => {
             create_page_impl(
                 db,
@@ -155,6 +159,7 @@ pub async fn page_write(db: &MemoryDB, write: PageWrite<'_>) -> Result<WriteResu
                     citations_json: citations_json.as_deref(),
                     basis_marks: &basis_marks,
                     basis_space_guard: basis_space_guard.as_ref(),
+                    skip_protected_title_match,
                 },
             )
             .await
@@ -373,6 +378,7 @@ pub async fn create_page_with_tuning(
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await

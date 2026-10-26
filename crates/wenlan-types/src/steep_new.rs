@@ -72,6 +72,9 @@ pub struct SteepNewListResponse {
     /// the first page of the list only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub page_titles: Vec<String>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -125,6 +128,12 @@ pub struct SteepNewClaimResponse {
     /// (commit action `attach`) instead of writing another page.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_page: Option<SteepExistingPage>,
+    /// Non-fatal grouping concerns. The claim remains valid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 /// `organize.tasks[].stage`: memory type, quality, importance and tags.
@@ -188,7 +197,7 @@ pub struct SteepOrganizeCommitResponse {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unknown: Vec<u32>,
     /// Tasks of the claim still without an answer.
-    #[serde(default, skip_serializing_if = "is_zero")]
+    #[serde(default)]
     pub remaining: u32,
     /// As in the claim, now that the sources are organized.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -196,6 +205,9 @@ pub struct SteepOrganizeCommitResponse {
     /// As in the claim, now that the sources are organized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_page: Option<SteepExistingPage>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 /// `POST /api/steep/new/links`: a claim's `link_targets` and
@@ -219,6 +231,9 @@ pub struct SteepNewTasksRequest {
 pub struct SteepNewTasksResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub organize: Option<SteepOrganizeWork>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 /// What `POST /api/steep/new/links` returns.
@@ -228,6 +243,9 @@ pub struct SteepNewLinksResponse {
     pub link_targets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub existing_page: Option<SteepExistingPage>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 /// `POST /api/steep/new/commit`.
@@ -269,6 +287,12 @@ pub struct SteepNewCommitResponse {
     /// per diagram, so the agent fixes or drops it. The write still landed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Link targets the saved page could still use but did not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
+    /// The next protocol action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 #[cfg(test)]
@@ -299,6 +323,12 @@ mod tests {
         let json = serde_json::to_value(&item).unwrap();
         assert!(json.get("held").is_none());
         assert!(json.get("space").is_none());
+    }
+
+    #[test]
+    fn organize_receipt_keeps_zero_remaining() {
+        let json = serde_json::to_value(SteepOrganizeCommitResponse::default()).unwrap();
+        assert_eq!(json["remaining"], 0);
     }
 }
 

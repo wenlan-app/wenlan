@@ -2241,6 +2241,7 @@ async fn create_with(
             citations_json: None,
             basis_marks,
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await

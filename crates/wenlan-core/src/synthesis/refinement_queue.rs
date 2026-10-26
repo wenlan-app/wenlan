@@ -323,6 +323,7 @@ async fn apply_cross_space_discovery(
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: true,
         },
     )
     .await?;
