@@ -34,11 +34,13 @@ const BANNER = {
 
 const BANNER_COPY = {
   en: {
-    title: ["A living personal wiki"],
+    title: ["Your living wiki"],
+    tagline: "Free · Open source · Local-first",
     font: BANNER.latin,
   },
   "zh-Hant": {
-    title: ["持續更新的個人知識庫"],
+    title: ["持續更新的知識庫"],
+    tagline: "免費 · 開源 · 本地優先",
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
@@ -91,11 +93,23 @@ function makeSimpleBanner(viewport, locale) {
   const chineseName = locale === "zh-Hant" ? "文瀾" : locale === "zh-Hans" ? "文澜" : "";
   const brand = (x, y, size, anchor) =>
     `<text x="${x}" y="${y}" fill="${BANNER.accent}" font-size="${size}" font-weight="500" text-anchor="${anchor}"><tspan font-family="${esc(BANNER.latin)}">Wenlan</tspan>${chineseName ? `<tspan dx="12" font-family="${esc(copy.font)}">${chineseName}</tspan>` : ""}</text>`;
+  const tagline = copy.tagline ?? null;
+  // With a tagline the stack moves up so the three lines stay centred on the logo.
   const content = mobile
-    ? `${logoMarkup({ x: 320, y: 32, size: 80, prefix })}
+    ? tagline
+      ? `${logoMarkup({ x: 320, y: 20, size: 80, prefix })}
+  ${brand(360, 136, chineseName ? 29.12 : 30.24, "middle")}
+  ${text(360, 180, copy.title[0], 32, BANNER.white, 500, "middle")}
+  ${text(360, 220, tagline, 21, BANNER.secondary, 400, "middle")}`
+      : `${logoMarkup({ x: 320, y: 32, size: 80, prefix })}
   ${brand(360, 150, chineseName ? 29.12 : 30.24, "middle")}
   ${text(360, 195, copy.title[0], 32, BANNER.white, 500, "middle")}`
-    : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
+    : tagline
+      ? `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
+  ${brand(300, 140, chineseName ? 41.6 : 43.2, "start")}
+  ${text(300, 203, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}
+  ${text(300, 255, tagline, 24, BANNER.secondary, 400, "start", chineseName ? 0.65 : null)}`
+      : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
   ${brand(300, 153, chineseName ? 41.6 : 43.2, "start")}
   ${text(300, 219, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}`;
 
@@ -116,7 +130,7 @@ function makeSimpleBanner(viewport, locale) {
     width,
     height,
     background: BANNER.dark,
-    requiredCopy: ["Wenlan", ...(chineseName ? [chineseName] : []), ...copy.title],
+    requiredCopy: ["Wenlan", ...(chineseName ? [chineseName] : []), ...copy.title, ...(tagline ? [tagline] : [])],
     svg,
   };
 }

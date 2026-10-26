@@ -1,15 +1,15 @@
-<!-- README_SYNC: source=README.md sha256=d4244e6aa20d8515090c9ea8af99f094f803f73af6862caa223f2480271f3dbc -->
+<!-- README_SYNC: source=README.md sha256=1b4d754473a5c3b209934dea7d8e6c5c2d7eb2261276cc475e612fb736e396c1 -->
 
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hant-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="Wenlan: 持續更新的個人知識庫" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hant.png" alt="Wenlan：持續更新的知識庫。免費、開源、本地優先。" width="100%">
   </picture>
 </p>
 
 <p align="center">
   <strong>筆記、程式碼、AI 對話整理成知識庫，對照過來源。</strong><br>
-  免費、開源、在本機執行。你的筆記留在你的電腦上，只會送到你選的 AI 工具。<br>
+  你的筆記留在你的電腦上，只會送到你選的 AI 工具。<br>
   桌面版支援 Mac（Apple 晶片）和 Windows；Linux 可用 CLI 和本機服務。
 </p>
 

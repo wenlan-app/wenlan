@@ -1,13 +1,13 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-mobile.png">
-    <img src="./docs/assets/readme-banner.png" alt="Wenlan: A living personal wiki" width="100%">
+    <img src="./docs/assets/readme-banner.png" alt="Wenlan: Your living wiki. Free, open source, local-first." width="100%">
   </picture>
 </p>
 
 <p align="center">
   <strong>Notes, code, AI chats into a wiki, checked against sources.</strong><br>
-  Free, open source, and local. Your notes stay on your machine and go only to the AI tools you pick.<br>
+  Your notes stay on your machine and go only to the AI tools you pick.<br>
   Desktop app for Mac (Apple silicon) and Windows. CLI and local service on Linux.
 </p>
 
