@@ -111,10 +111,11 @@ pub use steep::{
     SteepWorkItem, SteepWorklistResponse,
 };
 pub use steep_new::{
-    SteepExistingPage, SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest,
-    SteepNewCommitResponse, SteepNewItem, SteepNewLinksRequest, SteepNewLinksResponse,
-    SteepNewListResponse, SteepNewTasksRequest, SteepNewTasksResponse, SteepOrganizeCommitRequest,
-    SteepOrganizeCommitResponse, SteepOrganizeStage, SteepOrganizeTask, SteepOrganizeWork,
+    steep_short_id, SteepExistingPage, SteepNewClaimRequest, SteepNewClaimResponse,
+    SteepNewCommitRequest, SteepNewCommitResponse, SteepNewItem, SteepNewLinksRequest,
+    SteepNewLinksResponse, SteepNewListResponse, SteepNewTasksRequest, SteepNewTasksResponse,
+    SteepOrganizeCommitRequest, SteepOrganizeCommitResponse, SteepOrganizeStage, SteepOrganizeTask,
+    SteepOrganizeWork,
 };
 
 use serde::{Deserialize, Serialize};

@@ -1155,7 +1155,7 @@ pub struct SteepParams {
     #[serde(default)]
     pub answers: Option<Vec<SteepAnswer>>,
     #[schemars(
-        description = "list: how many pages (default 20). new: how many items (default 70)."
+        description = "list: how many pages (default 20). new: how many items (default 110)."
     )]
     #[serde(default)]
     pub limit: Option<u32>,
@@ -1858,20 +1858,31 @@ fn page_code_basis_error_result(error: WenlanError, action: PageCodeBasisAction)
 /// Items one `new` call lists unless asked for another number: with
 /// [`steep_new_compact`], about 25k characters at most, inside an AI tool's
 /// tool-result limit.
-const STEEP_NEW_DEFAULT_LIMIT: u32 = 70;
+const STEEP_NEW_DEFAULT_LIMIT: u32 = 110;
 
-/// A `new` page as a grouping model reads it: per item only its id, title
-/// (`t`), snippet (`s`) and length in characters (`n`), and no item another
-/// run holds. The daemon's list carries more (Space, kind, time) for the app.
+/// Longest title a compact `new` item shows, in characters.
+const STEEP_NEW_TITLE_CHARS: usize = 44;
+
+/// A `new` page as a grouping model reads it: per item only its short id
+/// ([`wenlan_types::steep_short_id`], which `claim_new` takes), title (`t`,
+/// cut to [`STEEP_NEW_TITLE_CHARS`]), snippet (`s`) and length in characters
+/// (`n`), and no item another run holds. The daemon's list carries more
+/// (Space, kind, time) for the app.
 fn steep_new_compact(list: &wenlan_types::SteepNewListResponse) -> serde_json::Value {
     let items: Vec<serde_json::Value> = list
         .items
         .iter()
         .filter(|item| !item.held)
         .map(|item| {
+            let title = if item.title.chars().count() > STEEP_NEW_TITLE_CHARS {
+                let cut: String = item.title.chars().take(STEEP_NEW_TITLE_CHARS - 1).collect();
+                format!("{}…", cut.trim_end())
+            } else {
+                item.title.clone()
+            };
             serde_json::json!({
-                "id": item.item_id,
-                "t": item.title,
+                "id": wenlan_types::steep_short_id(&item.item_id),
+                "t": title,
                 "s": item.snippet,
                 "n": item.chars,
             })
@@ -10231,8 +10242,8 @@ mod tests {
                     i
                 ),
                 kind: "note".into(),
-                title: format!("Kitchen renovation notes, part {i:03} of the year"),
-                snippet: "x".repeat(160),
+                title: format!("Kitchen renovation notes, part {i:03} of the year and the next"),
+                snippet: format!("{}…", "x".repeat(120)),
                 space: Some("home".into()),
                 chars: 12_345,
                 last_modified: 1_700_000_000,
@@ -10242,7 +10253,7 @@ mod tests {
         let list = wenlan_types::SteepNewListResponse {
             items,
             total: 9_850,
-            next_cursor: Some("70".into()),
+            next_cursor: Some("110".into()),
             kinds: Default::default(),
             held: 1,
             page_titles: (0..50)
@@ -10263,6 +10274,15 @@ mod tests {
             "the held item is left out"
         );
         assert!(items[0].get("id").is_some() && items[0].get("s").is_some());
+        assert_eq!(
+            items[0]["id"],
+            wenlan_types::steep_short_id(&list.items[1].item_id),
+            "a short id stands for the long one"
+        );
+        assert_eq!(
+            items[0]["t"].as_str().unwrap().chars().count(),
+            STEEP_NEW_TITLE_CHARS
+        );
         assert!(items[0].get("space").is_none() && items[0].get("last_modified").is_none());
         assert_eq!(out["total"], 9_850);
         assert_eq!(out["page_titles"].as_array().unwrap().len(), 50);

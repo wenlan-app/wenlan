@@ -329,6 +329,30 @@ async fn release_gives_the_items_back() {
         .is_ok());
 }
 
+/// A compact list names items by short id; a claim takes it, and the same
+/// item named twice (short and full) is claimed once.
+#[tokio::test]
+async fn a_claim_takes_the_short_ids_a_compact_list_shows() {
+    let (db, _dir) = test_db().await;
+    capture(&db, "short_a", BREAD_1).await;
+    capture(&db, "short_b", BREAD_2).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &[
+            wenlan_types::steep_short_id("short_a"),
+            wenlan_types::steep_short_id("short_b"),
+            "short_b".to_string(),
+        ],
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(claim.sources.len(), 2);
+    assert!(claim.skipped.is_empty(), "{:?}", claim.skipped);
+    release_new(&claim.token).unwrap();
+}
+
 #[tokio::test]
 async fn one_short_item_is_too_little_for_a_note_but_one_long_one_is_enough() {
     let (db, _dir) = test_db().await;
@@ -389,7 +413,7 @@ async fn a_limited_list_is_the_newest_items_with_short_snippets() {
     let got: Vec<&str> = list.items.iter().map(|i| i.item_id.as_str()).collect();
     assert_eq!(got, vec!["lim_4", "lim_3"], "newest first");
     assert_eq!(list.next_cursor.as_deref(), Some("2"));
-    assert_eq!(SNIPPET_CHARS, 160);
+    assert_eq!(SNIPPET_CHARS, 120);
     for item in &list.items {
         assert!(
             item.snippet.chars().count() <= SNIPPET_CHARS + 1,

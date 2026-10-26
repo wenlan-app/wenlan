@@ -691,6 +691,21 @@ async fn a_folder_file_is_organized_for_entities_only() {
 
 /// An authored note in the unfiled Space, about `entity_id` when given.
 async fn authored_note(db: &MemoryDB, title: &str, entity_id: Option<String>) -> String {
+    authored_note_in(db, title, entity_id, None).await
+}
+
+/// [`authored_note`] in the Space named `space` (created first), or unfiled.
+async fn authored_note_in(
+    db: &MemoryDB,
+    title: &str,
+    entity_id: Option<String>,
+    space: Option<&str>,
+) -> String {
+    if let Some(space) = space {
+        if db.get_space(space).await.unwrap().is_none() {
+            db.create_space(space, None, false).await.unwrap();
+        }
+    }
     crate::post_write::page_write(
         db,
         crate::post_write::PageWrite::Create {
@@ -700,10 +715,13 @@ async fn authored_note(db: &MemoryDB, title: &str, entity_id: Option<String>) ->
                 content: format!("{title} is a subject of these notes."),
                 summary: None,
                 entity_id,
-                space: wenlan_types::WriteSpaceTarget::Uncategorized,
+                space: match space {
+                    Some(space) => wenlan_types::WriteSpaceTarget::Named(space.into()),
+                    None => wenlan_types::WriteSpaceTarget::Uncategorized,
+                },
                 source_memory_ids: Vec::new(),
                 creation_kind: Some("authored".into()),
-                workspace: None,
+                workspace: space.map(str::to_string),
             },
             agent: "test",
             knowledge_path: None,
@@ -1050,4 +1068,266 @@ async fn a_note_under_an_existing_title_goes_into_that_note() {
     assert_eq!(written.outcome, "attached");
     assert_eq!(written.page_id.as_deref(), Some(recipes.as_str()));
     assert_eq!(written.title.as_deref(), Some("Recipes"));
+}
+
+/// What Codex did when it wrote "Running" next to an existing "Running": it
+/// claimed a group without naming its topic, called `links`, and wrote
+/// under the existing note's title. The note is in another Space than the
+/// claim (its sources are unfiled), so a same-Space check missed it. The
+/// write goes into that note, and only one note has the title.
+#[tokio::test]
+async fn a_write_under_an_existing_title_in_another_space_goes_into_that_note() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    let running = authored_note_in(&db, "Running", None, Some("Personal")).await;
+    memory(&db, "dup_a", MIRA_NOTE).await;
+    memory(&db, "dup_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["dup_a".into(), "dup_b".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        claim.existing_page.is_none(),
+        "no topic, no entity: nothing to offer"
+    );
+    let links = crate::steep_new::links_new(&db, &claim.token)
+        .await
+        .unwrap();
+    assert!(links.existing_page.is_none());
+    let body = "Mira fires the kiln in Oslo every Sunday [1]. Mira says the kiln needs \
+                eight hours to cool before anyone opens it [2].";
+    let written = commit_new(&db, &claim.token, "running", body, "test", None)
+        .await
+        .unwrap();
+    assert_eq!(written.outcome, "attached");
+    assert_eq!(written.page_id.as_deref(), Some(running.as_str()));
+    assert_eq!(written.title.as_deref(), Some("Running"));
+    assert_eq!(
+        db.notes_titled("Running").await.unwrap().len(),
+        1,
+        "one note under the title"
+    );
+
+    // Named as the group's topic, the note is offered before the write.
+    memory(&db, "dup_c", MIRA_NOTE).await;
+    memory(&db, "dup_d", KILN_NOTE).await;
+    let named = crate::steep_new::claim_new_on(
+        &db,
+        &ReadScope::Global,
+        &["dup_c".into(), "dup_d".into()],
+        None,
+        Some("Running 2026"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        named.existing_page.map(|page| page.page_id).as_deref(),
+        Some(running.as_str())
+    );
+    crate::steep_new::release_new(&named.token).unwrap();
+}
+
+/// `link_targets` holds the notes the sources' text names, as the label a
+/// link in the new note resolves with: the bare title in the claim's Space,
+/// `Space/Title` in another.
+#[tokio::test]
+async fn link_targets_are_the_notes_the_sources_name() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    authored_note(&db, "Glaze recipes", None).await;
+    authored_note_in(&db, "Oslo", None, Some("Travel")).await;
+    authored_note(&db, "Sourdough", None).await;
+    memory(&db, "lt_a", MIRA_NOTE).await;
+    memory(&db, "lt_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["lt_a".into(), "lt_b".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    let mut targets = claim.link_targets.clone();
+    targets.sort();
+    assert_eq!(
+        targets,
+        vec!["Glaze recipes".to_string(), "Travel/Oslo".to_string()]
+    );
+    let body = "Mira fires the kiln in [[Travel/Oslo]] every Sunday [1]. Mira says the \
+                kiln needs eight hours to cool before anyone opens it [2]. See \
+                [[Glaze recipes]].";
+    let written = commit_new(&db, &claim.token, "Kiln cooling", body, "test", None)
+        .await
+        .unwrap();
+    let links = db
+        .get_page_outbound_links_scoped(written.page_id.as_deref().unwrap(), &ReadScope::Global)
+        .await
+        .unwrap();
+    assert_eq!(
+        links
+            .iter()
+            .filter(|link| link.target_page_id.is_some())
+            .count(),
+        2,
+        "both labels resolve: {links:?}"
+    );
+}
+
+/// "Lisbon and Porto 2026" from sources that mostly mention Lisbon is about
+/// both cities, so about no one entity; here Mira stands in for Lisbon.
+#[tokio::test]
+async fn a_title_joining_two_names_is_about_no_entity() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(&db, "two_a", MIRA_NOTE).await;
+    memory(&db, "two_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["two_a".into(), "two_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().unwrap();
+    organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    let body = "Mira fires the kiln in Oslo every Sunday [1]. Mira says the kiln needs \
+                eight hours to cool before anyone opens it [2].";
+    let written = commit_new(&db, &claim.token, "Mira and Tove 2026", body, "test", None)
+        .await
+        .unwrap();
+    assert_eq!(written.outcome, "created");
+    let page = db
+        .get_page(written.page_id.as_deref().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.entity_id, None);
+}
+
+/// On-demand organizing files a memory only into a Space the user already
+/// has, as Automatic does (both land through
+/// `ingest::apply_classification_output`): a classifier `domain` that names
+/// no Space creates none and leaves the memory unfiled.
+#[tokio::test]
+async fn organizing_files_into_existing_spaces_only_and_creates_none() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(&db, "sp_a", MIRA_NOTE).await;
+    memory(&db, "sp_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["sp_a".into(), "sp_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().unwrap();
+    let done = organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    assert_eq!(done.classified, 2);
+    assert_eq!(db.get_memory_space("sp_a").await.unwrap(), None);
+    assert!(
+        db.get_space("ceramics").await.unwrap().is_none(),
+        "the domain the classifier named is no Space"
+    );
+    crate::steep_new::release_new(&claim.token).unwrap();
+
+    // A Space the user made with that name takes the memory.
+    db.create_space("ceramics", None, false).await.unwrap();
+    memory(&db, "sp_c", MIRA_NOTE).await;
+    memory(&db, "sp_d", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["sp_c".into(), "sp_d".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().unwrap();
+    organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    assert_eq!(
+        db.get_memory_space("sp_c").await.unwrap().as_deref(),
+        Some("ceramics")
+    );
+    crate::steep_new::release_new(&claim.token).unwrap();
+}
+
+/// What Claude Code saw: `links` answered `{}` for every group, because the
+/// notes that shared its entities were in other Spaces (one per group, after
+/// classification) and only same-Space notes counted. A note in another
+/// Space that shares an entity is offered as `Space/Title`.
+#[tokio::test]
+async fn a_note_in_another_space_that_shares_an_entity_is_a_link_target() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    db.create_space("Studio", None, false).await.unwrap();
+    memory(&db, "xs_old", MIRA_NOTE).await;
+    let pending = match db
+        .entity_enrichment_for("xs_old", NO_AUTO_LINK)
+        .await
+        .unwrap()
+    {
+        Some(crate::db::EntityEnrichmentPrep::NeedsExtraction(pending)) => pending,
+        other => panic!("xs_old waits for extraction: {other:?}"),
+    };
+    let kg = crate::kg::entity_extraction::parse_kg_output(
+        &pending.content,
+        &kg_reply(&pending.content),
+    );
+    assert!(db.apply_entity_extraction(&pending, Ok(kg)).await.unwrap());
+    crate::post_write::page_write(
+        &db,
+        crate::post_write::PageWrite::Create {
+            page_id: None,
+            req: wenlan_types::requests::CreateConceptRequest {
+                title: "Firing schedule".into(),
+                content: "Mira fires the kiln in Oslo every Sunday [1].".into(),
+                summary: None,
+                entity_id: None,
+                space: wenlan_types::WriteSpaceTarget::Named("Studio".into()),
+                source_memory_ids: vec!["xs_old".into()],
+                creation_kind: Some("authored".into()),
+                workspace: Some("Studio".into()),
+            },
+            agent: "test",
+            knowledge_path: None,
+            page_min_cluster_size: 1,
+            page_match_threshold: 2.0,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    memory(&db, "xs_a", MIRA_NOTE).await;
+    memory(&db, "xs_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["xs_a".into(), "xs_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().unwrap();
+    organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    let links = crate::steep_new::links_new(&db, &claim.token)
+        .await
+        .unwrap();
+    assert_eq!(
+        links.link_targets,
+        vec!["Studio/Firing schedule".to_string()]
+    );
+    crate::steep_new::release_new(&claim.token).unwrap();
 }

@@ -1082,7 +1082,8 @@ carrying the authority of agreement.
 | `core/db/steep.rs::list_steep_pages` | `pub(crate)` | no | no | — | — |
 | `core/db/steep_new.rs::entity_page_titles` | `pub(crate)` | no | no | — | — |
 | `core/db/steep_new.rs::notes_about_entity` | `pub(crate)` | no | no | — | — |
-| `core/db/steep_new.rs::pages_related_to_entities` | `pub(crate)` | no | no | — | — |
+| `core/db/steep_new.rs::notes_sharing_entities` | `pub(crate)` | no | no | — | — |
+| `core/db/steep_new.rs::notes_titled` | `pub(crate)` | no | no | — | — |
 | `core/db/steep_new.rs::recent_notes` | `pub(crate)` | no | no | — | — |
 | `core/db/truth_exposure.rs::conflict_identity_snapshot` | `pub` | no | **yes** | `server/page_routes.rs::visible_conflict_identity` | — |
 | `core/db/truth_exposure.rs::page_truth_states_on_conn` | `private` | no | no | — | — |
@@ -1202,11 +1203,12 @@ carrying the authority of agreement.
 | `core/steep.rs::steep_work` | `private` | no | no | — | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
-| `core/steep_new.rs::commit_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db/steep_new.rs::entity_page_titles`, `core/db/steep_new.rs::recent_notes` |
+| `core/steep_new.rs::commit_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db/steep_new.rs::entity_page_titles` |
 | `core/steep_new.rs::entity_titled` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles` |
-| `core/steep_new.rs::existing_page` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles`, `core/db/steep_new.rs::notes_about_entity`, `core/db/steep_new.rs::recent_notes` |
-| `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db.rs::find_unique_active_page_id_by_title_scoped`, `core/db/steep_new.rs::pages_related_to_entities` |
+| `core/steep_new.rs::existing_page` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles`, `core/db/steep_new.rs::notes_about_entity`, `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
+| `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db/steep_new.rs::notes_sharing_entities`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
+| `core/steep_new.rs::same_title_note` | `private` | no | no | — | `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::build_refresh_titles_hint` | `private` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::list_basis_context` |

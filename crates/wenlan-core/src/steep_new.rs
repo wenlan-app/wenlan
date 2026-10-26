@@ -53,7 +53,7 @@ pub const NEW_PAGE_HOLD: Duration = Duration::from_secs(45 * 60);
 /// Characters of an item's text the list shows: with the title, enough for
 /// a small model to group items by topic, and small enough that one run's
 /// list of the newest items stays a few thousand tokens.
-pub const SNIPPET_CHARS: usize = 160;
+pub const SNIPPET_CHARS: usize = 120;
 
 /// Most items one claim takes. A topic bigger than this is written from its
 /// first items; the rest stay on the list for the next note.
@@ -74,7 +74,7 @@ pub const MIN_SINGLE_SOURCE_CHARS: usize = 800;
 const MAX_TITLE_CHARS: usize = 120;
 
 /// Most existing pages a claim offers as `[[links]]`.
-const MAX_LINK_TARGETS: usize = 20;
+const MAX_LINK_TARGETS: usize = 10;
 
 /// Most existing page titles the list hands to grouping.
 pub const MAX_PAGE_TITLES: usize = 50;
@@ -420,6 +420,11 @@ pub async fn claim_new_on(
         .iter()
         .map(|m| (m.item.item_id.as_str(), m))
         .collect();
+    // A compact list names each item by its short id.
+    let by_short_id: HashMap<String, &NewMaterial> = material
+        .iter()
+        .map(|m| (wenlan_types::steep_short_id(&m.item.item_id), m))
+        .collect();
 
     let now = Instant::now();
     let mut skipped = Vec::new();
@@ -428,9 +433,18 @@ pub async fn claim_new_on(
         let mut holds = holds();
         holds.expire(now);
         for id in &wanted {
-            match by_id.get(id.as_str()) {
-                Some(m) if !holds.by_item.contains_key(id) && taken.len() < MAX_CLAIM_ITEMS => {
-                    taken.push(m)
+            let found = by_id
+                .get(id.as_str())
+                .copied()
+                .or_else(|| by_short_id.get(id.as_str()).copied());
+            match found {
+                Some(m)
+                    if !holds.by_item.contains_key(&m.item.item_id)
+                        && taken.len() < MAX_CLAIM_ITEMS =>
+                {
+                    if !taken.iter().any(|t| t.item.item_id == m.item.item_id) {
+                        taken.push(m)
+                    }
                 }
                 _ => skipped.push(id.clone()),
             }
@@ -565,7 +579,7 @@ pub async fn claim_new_on(
             Err(error) => log::warn!("[steep-new] organize planning failed: {error}"),
         }
     }
-    let link_targets = link_targets(db, scope, space.as_deref(), &source_ids).await;
+    let link_targets = link_targets(db, scope, space.as_deref(), &sources).await;
     let existing_page =
         existing_page(db, scope, space.as_deref(), &source_ids, topic.as_deref()).await;
     Ok(NewPageClaim {
@@ -709,13 +723,58 @@ fn names_subject(name: &str, title: &str) -> bool {
         })
 }
 
+/// Whether `title` names the entity called `name` as its only subject:
+/// [`names_subject`], and the title does not join the name to another thing
+/// of the same rank ("Lisbon and Porto 2026", "Billing & Onboarding"): such
+/// a note is about both, and so about neither one entity. What a title
+/// joins counts as another thing when it starts with a capital letter or is
+/// in a script without capitals; "Portugal trip and food" is still about
+/// Portugal.
+fn names_sole_subject(name: &str, title: &str) -> bool {
+    if !names_subject(name, title) {
+        return false;
+    }
+    // "Rock and Roll" for the entity Rock and Roll.
+    if title_closeness(name, title) >= TITLE_CLOSE_ENOUGH {
+        return true;
+    }
+    const JOINS: &[&str] = &[
+        "and", "&", "+", "vs", "vs.", "versus", "or", "/", "和", "與", "与", "及", "跟",
+    ];
+    let name_key = title_key(name);
+    let mut sides: Vec<Vec<&str>> = vec![Vec::new()];
+    for word in title.split_whitespace() {
+        if JOINS.contains(&word.to_lowercase().as_str()) {
+            sides.push(Vec::new());
+        } else if let Some(side) = sides.last_mut() {
+            side.push(word);
+        }
+    }
+    let sides: Vec<String> = sides
+        .into_iter()
+        .map(|side| side.join(" "))
+        .filter(|side| !title_key(side).is_empty())
+        .collect();
+    if sides.len() < 2 {
+        return true;
+    }
+    let is_name = |side: &str| names_subject(name, side) || title_key(side) == name_key;
+    sides.iter().filter(|side| !is_name(side)).all(|side| {
+        let first = side.chars().find(|c| c.is_alphabetic());
+        // Another thing of the same rank: a proper name, or a word in a
+        // script that has no capitals to tell.
+        !first.is_some_and(|c| c.is_uppercase() || !c.is_ascii())
+    })
+}
+
 /// Least [`title_closeness`] for a topic to name an existing page.
 const TITLE_CLOSE_ENOUGH: f64 = 0.6;
 
-/// An existing note on a claim's subject, in the claim's Space (`space`)
-/// and the caller's scope: the note about the first entity a strict majority
-/// of the sources mention that has one, else a note whose title matches
-/// `topic` ([`title_closeness`], the closest, newest first). Best effort: a failed read offers none.
+/// An existing note on a claim's subject in the caller's scope: the note in
+/// the claim's Space (`space`) about the first entity a strict majority of
+/// the sources mention that has one, else a note whose title matches `topic`
+/// ([`title_closeness`], the closest, newest first), in the claim's Space
+/// before any other. Best effort: a failed read offers none.
 async fn existing_page(
     db: &MemoryDB,
     scope: &ReadScope,
@@ -747,14 +806,15 @@ async fn existing_page(
         let Some((_, name)) = names.iter().find(|(id, _)| *id == entity_id) else {
             continue;
         };
-        if topic.is_some_and(|topic| !names_subject(name, topic)) {
+        if topic.is_some_and(|topic| !names_sole_subject(name, topic)) {
             continue;
         }
         match db.notes_about_entity(&entity_id).await {
             Ok(notes) => {
-                if let Some((page_id, title, _)) = notes
-                    .into_iter()
-                    .find(|(_, title, page_space)| fits(page_space) && names_subject(name, title))
+                if let Some((page_id, title, _)) =
+                    notes.into_iter().find(|(_, title, page_space)| {
+                        fits(page_space) && names_sole_subject(name, title)
+                    })
                 {
                     return Some(SteepExistingPage { page_id, title });
                 }
@@ -766,26 +826,75 @@ async fn existing_page(
     if title_key(topic).is_empty() {
         return None;
     }
+    let mut notes = db.notes_titled(topic).await.unwrap_or_else(|error| {
+        log::warn!("[steep-new] existing page: {error}");
+        Vec::new()
+    });
     match db.recent_notes(TITLE_MATCH_NOTES).await {
-        Ok(notes) => {
-            let mut best: Option<(f64, String, String)> = None;
-            for (page_id, title, page_space) in notes {
-                if !fits(&page_space) {
-                    continue;
-                }
-                let close = title_closeness(topic, &title);
-                // Newest first: an equally close older note does not win.
-                if close >= TITLE_CLOSE_ENOUGH && best.as_ref().is_none_or(|(b, _, _)| close > *b) {
-                    best = Some((close, page_id, title));
-                }
-            }
-            best.map(|(_, page_id, title)| SteepExistingPage { page_id, title })
+        Ok(recent) => notes.extend(recent),
+        Err(error) => log::warn!("[steep-new] existing page: {error}"),
+    }
+    // The closest note in the claim's Space; else, when the claim's Space
+    // has none, the closest in another Space the caller reads: the sources
+    // go into it rather than a second page on the subject.
+    let mut best: Option<(f64, String, String)> = None;
+    let mut best_elsewhere: Option<(f64, String, String)> = None;
+    for (page_id, title, page_space) in notes {
+        if !scope.matches(page_space.as_deref()) {
+            continue;
         }
-        Err(error) => {
-            log::warn!("[steep-new] existing page: {error}");
-            None
+        let close = title_closeness(topic, &title);
+        if close < TITLE_CLOSE_ENOUGH {
+            continue;
+        }
+        let slot = if page_space.as_deref() == space {
+            &mut best
+        } else {
+            &mut best_elsewhere
+        };
+        // Newest first: an equally close older note does not win.
+        if slot.as_ref().is_none_or(|(b, _, _)| close > *b) {
+            *slot = Some((close, page_id, title));
         }
     }
+    best.or(best_elsewhere)
+        .map(|(_, page_id, title)| SteepExistingPage { page_id, title })
+}
+
+/// The note titled `title` (years and versions aside) that a new note
+/// under that title would repeat: one in `space` first, else one in another
+/// Space `scope` reads. Every note counts, however old.
+async fn same_title_note(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    space: Option<&str>,
+    title: &str,
+) -> Result<Option<SteepExistingPage>, WenlanError> {
+    let key = title_key(title);
+    if key.is_empty() {
+        return Ok(None);
+    }
+    let mut notes = db.notes_titled(title).await?;
+    notes.extend(db.recent_notes(TITLE_MATCH_NOTES).await?);
+    let mut elsewhere = None;
+    for (page_id, note_title, page_space) in notes {
+        if !scope.matches(page_space.as_deref()) || title_key(&note_title) != key {
+            continue;
+        }
+        if page_space.as_deref() == space {
+            return Ok(Some(SteepExistingPage {
+                page_id,
+                title: note_title,
+            }));
+        }
+        if elsewhere.is_none() {
+            elsewhere = Some(SteepExistingPage {
+                page_id,
+                title: note_title,
+            });
+        }
+    }
+    Ok(elsewhere)
 }
 
 /// A held claim's `link_targets` and `existing_page` as they are now: pages
@@ -796,61 +905,116 @@ pub async fn links_new(db: &MemoryDB, token: &str) -> Result<SteepNewLinksRespon
     let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
     let space = claim.space.as_deref();
     Ok(SteepNewLinksResponse {
-        link_targets: link_targets(db, &claim.scope, space, &source_ids).await,
+        link_targets: link_targets(db, &claim.scope, space, &claim.sources).await,
         existing_page: existing_page(db, &claim.scope, space, &source_ids, claim.topic.as_deref())
             .await,
     })
 }
 
-/// Existing pages a note from `source_ids` may link: notes about, or citing
-/// memories about, the entities those sources mention, that a `[[Title]]`
-/// in a note born in `space` resolves to. Entity pages are not offered: a
-/// wikilink never resolves to one. Best effort: a failed read offers none.
+/// Existing pages a note from `sources` (`(memory id, text)`) may link,
+/// best first: notes whose title the sources' text names, then notes that
+/// share the most entities with the sources (the note is about one, or cites
+/// memories that mention one). Each comes as the label a `[[link]]` in a
+/// note born in `space` resolves with: its title, or `Space/Title` for a
+/// note in another Space. Entity pages are not offered: a wikilink never
+/// resolves to one. Best effort: a failed read offers none.
 async fn link_targets(
     db: &MemoryDB,
     scope: &ReadScope,
     space: Option<&str>,
-    source_ids: &[String],
+    sources: &[(String, String)],
 ) -> Vec<String> {
-    let links = match db.source_entity_links(source_ids).await {
-        Ok(links) => links,
+    let source_ids: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
+    let text: String = sources
+        .iter()
+        .map(|(_, text)| text.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut candidates: Vec<(String, String, Option<String>)> = Vec::new();
+    match db.recent_notes(TITLE_MATCH_NOTES).await {
+        Ok(notes) => {
+            for (page_id, title, page_space) in notes {
+                if candidates.len() < MAX_LINK_TARGETS * 2 && names_in_text(&text, &title) {
+                    candidates.push((page_id, title, page_space));
+                }
+            }
+        }
+        Err(error) => log::warn!("[steep-new] link targets: {error}"),
+    }
+    let mut entity_ids: Vec<String> = match db.source_entity_links(&source_ids).await {
+        Ok(links) => links.into_iter().map(|(_, entity, _)| entity).collect(),
         Err(error) => {
             log::warn!("[steep-new] link targets: {error}");
-            return Vec::new();
+            Vec::new()
         }
     };
-    let mut entity_ids: Vec<String> = links.into_iter().map(|(_, entity, _)| entity).collect();
     entity_ids.sort();
     entity_ids.dedup();
-    let pages = match db
-        .pages_related_to_entities(&entity_ids, MAX_LINK_TARGETS * 2)
+    match db
+        .notes_sharing_entities(&entity_ids, MAX_LINK_TARGETS * 3)
         .await
     {
-        Ok(pages) => pages,
-        Err(error) => {
-            log::warn!("[steep-new] link targets: {error}");
-            return Vec::new();
-        }
-    };
+        Ok(pages) => candidates.extend(
+            pages
+                .into_iter()
+                .map(|(page_id, title, page_space, _)| (page_id, title, page_space)),
+        ),
+        Err(error) => log::warn!("[steep-new] link targets: {error}"),
+    }
+    let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
-    for (page_id, title, page_space) in pages {
-        if out.len() >= MAX_LINK_TARGETS || title.trim().is_empty() {
+    for (page_id, title, page_space) in candidates {
+        if out.len() >= MAX_LINK_TARGETS {
+            break;
+        }
+        if !seen.insert(page_id.clone()) || !scope.matches(page_space.as_deref()) {
             continue;
         }
-        if !scope.matches(page_space.as_deref()) || out.contains(&title) {
+        let label = if page_space.as_deref() == space {
+            title
+        } else if let Some(other) = page_space.as_deref() {
+            format!("{other}/{title}")
+        } else {
             continue;
-        }
-        let resolves = db
-            .find_unique_active_page_id_by_title_scoped(&title, space)
-            .await
-            .ok()
-            .flatten()
-            .is_some_and(|resolved| resolved == page_id);
-        if resolves {
-            out.push(title);
+        };
+        let resolves = crate::synthesis::wikilinks::resolve_against_pages(
+            db,
+            std::slice::from_ref(&label),
+            space,
+        )
+        .await
+        .ok()
+        .and_then(|links| links.into_iter().next())
+        .and_then(|link| link.target_page_id)
+        .is_some_and(|resolved| resolved == page_id);
+        if resolves && !out.contains(&label) {
+            out.push(label);
         }
     }
     out
+}
+
+/// Whether lowercased `text` names the page `title` as a whole phrase. A
+/// title of under four characters (an initialism, a one-word stub) counts
+/// for nothing: too many texts contain it by chance.
+fn names_in_text(text: &str, title: &str) -> bool {
+    let wanted = title.trim().to_lowercase();
+    if wanted.chars().count() < 4 {
+        return false;
+    }
+    let mut from = 0;
+    while let Some(at) = text[from..].find(&wanted) {
+        let start = from + at;
+        let end = start + wanted.len();
+        let before = text[..start].chars().next_back();
+        let after = text[end..].chars().next();
+        let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric() || !c.is_ascii());
+        if edge(before) && edge(after) {
+            return true;
+        }
+        from = start + wanted.chars().next().map_or(1, char::len_utf8);
+    }
+    false
 }
 
 /// An entity `source_ids` mention whose entity page has `title`, years,
@@ -913,7 +1077,7 @@ pub async fn organize_new(
     token: &str,
     answers: &[SteepCodeAnswer],
 ) -> Result<SteepOrganizeCommitResponse, SteepError> {
-    let (taken, unknown, source_ids, scope, topic) = {
+    let (taken, unknown, sources, scope, topic) = {
         let mut holds = holds();
         holds.expire(Instant::now());
         let claim = holds.by_token.get_mut(token).ok_or(SteepError::TokenGone)?;
@@ -926,15 +1090,15 @@ pub async fn organize_new(
                 None => unknown.push(answer.n),
             }
         }
-        let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
         (
             taken,
             unknown,
-            source_ids,
+            claim.sources.clone(),
             claim.scope.clone(),
             claim.topic.clone(),
         )
     };
+    let source_ids: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
 
     // The answers may create the very entities they confirm, so compare
     // against every entity confirmed before them.
@@ -994,7 +1158,7 @@ pub async fn organize_new(
         out.remaining = u32::try_from(claim.organize.len()).unwrap_or(u32::MAX);
         claim.space.clone()
     };
-    out.link_targets = link_targets(db, &scope, space_now.as_deref(), &source_ids).await;
+    out.link_targets = link_targets(db, &scope, space_now.as_deref(), &sources).await;
     out.existing_page = existing_page(
         db,
         &scope,
@@ -1179,22 +1343,12 @@ pub async fn commit_new(
     crate::export::provenance::validate_canonical_page_content(content)?;
     let ids = sources_as_claimed(db, token, &claim).await?;
 
-    // A note with this title already in the claim's Space is this subject's
-    // page: the sources go into it, as `attach` does, instead of a second
-    // page under the same title.
-    let key = title_key(title);
-    if !key.is_empty() {
-        let same = db.recent_notes(TITLE_MATCH_NOTES).await?.into_iter().find(
-            |(_, note_title, page_space)| {
-                page_space.as_deref() == claim.space.as_deref()
-                    && claim.scope.matches(page_space.as_deref())
-                    && title_key(note_title) == key
-            },
-        );
-        if let Some((page_id, title, _)) = same {
-            return attach_sources(db, token, &ids, SteepExistingPage { page_id, title }, agent)
-                .await;
-        }
+    // A note with this title already is this subject's page: the sources go
+    // into it, as `attach` does, instead of a second page under the same
+    // title. The claim's Space first; else another Space the caller reads
+    // (a claim whose sources classification filed apart has no Space).
+    if let Some(page) = same_title_note(db, &claim.scope, claim.space.as_deref(), title).await? {
+        return attach_sources(db, token, &ids, page, agent).await;
     }
 
     let kinds = db.resolve_source_kinds(&ids).await.unwrap_or_default();
@@ -1260,13 +1414,14 @@ pub async fn commit_new(
     }
     if entity_id.is_none() {
         // Most sources mentioning an entity does not make it the subject:
-        // the title must name it too, or the note stays about no entity.
+        // the title must name it, and nothing else of its rank, or the note
+        // stays about no entity.
         let majority = majority_entities(db, &ids).await?;
         let names = db.entity_page_titles(&majority).await?;
         for candidate in majority {
             let named = names
                 .iter()
-                .any(|(id, name)| *id == candidate && names_subject(name, &title));
+                .any(|(id, name)| *id == candidate && names_sole_subject(name, &title));
             if named && !db.entity_has_note(&candidate).await? {
                 entity_id = Some(candidate);
                 break;
@@ -1346,6 +1501,28 @@ pub async fn commit_new(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_title_joining_two_names_has_no_sole_subject() {
+        assert!(!names_sole_subject("Lisbon", "Lisbon and Porto 2026"));
+        assert!(!names_sole_subject("Billing", "Billing & Onboarding"));
+        assert!(!names_sole_subject("里斯本", "里斯本 和 波爾圖"));
+        assert!(names_sole_subject("Lisbon", "Lisbon 2026"));
+        assert!(names_sole_subject("Portugal", "Portugal trip and food"));
+        assert!(names_sole_subject("Mira", "Mira's kiln"));
+        assert!(names_sole_subject("Rock and Roll", "Rock and Roll"));
+        assert!(!names_sole_subject("Lisbon", "Porto"));
+    }
+
+    #[test]
+    fn a_title_names_a_note_in_text_only_as_a_whole_phrase() {
+        let text = "we fired the kiln in oslo; glaze recipes are in the red notebook";
+        assert!(names_in_text(text, "Glaze recipes"));
+        assert!(names_in_text(text, "Oslo"));
+        assert!(!names_in_text(text, "Glaze recipe book"));
+        assert!(!names_in_text(text, "Kil"), "under four characters");
+        assert!(!names_in_text("oslofjord trips", "Oslo"));
+    }
 
     #[test]
     fn chunks_of_a_note_fold_into_one_item() {

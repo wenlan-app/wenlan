@@ -235,62 +235,23 @@ impl MemoryDB {
         Ok(out)
     }
 
-    /// Notes (not entity or source pages) about one of `entity_ids`, or citing
-    /// a memory linked to one, newest first, as `(page id, title, space)`.
-    /// The space is the page's workspace, else its space.
-    pub(crate) async fn pages_related_to_entities(
+    /// Notes (not entity or source pages, not the Overview) whose title is
+    /// `title` (case aside), newest first, as `(page id, title, space)`, as
+    /// in [`Self::notes_about_entity`]. Reads every note, however old.
+    pub(crate) async fn notes_titled(
         &self,
-        entity_ids: &[String],
-        limit: usize,
+        title: &str,
     ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
-        if entity_ids.is_empty() || limit == 0 {
-            return Ok(Vec::new());
-        }
-        let marks = (1..=entity_ids.len())
-            .map(|i| format!("?{i}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT p.id, p.title, COALESCE(p.workspace, p.space) FROM pages p \
-             WHERE {ORGANIZING} \
-               AND (p.entity_id IN ({marks}) \
-                    OR EXISTS (SELECT 1 FROM edges e \
-                               JOIN memory_entities me ON me.memory_id = e.dst_id \
-                               WHERE e.src_id = p.id AND e.edge_type = 'cites' \
-                                 AND e.dst_kind = 'memory' AND e.valid_until IS NULL \
-                                 AND me.entity_id IN ({marks}))) \
-             ORDER BY p.last_modified DESC, p.id ASC \
-             LIMIT {limit}"
-        );
-        let params: Vec<libsql::Value> = entity_ids
-            .iter()
-            .map(|id| libsql::Value::Text(id.clone()))
-            .collect();
-        let conn = self.conn.lock().await;
-        let mut rows = conn
-            .query(&sql, params)
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("pages_related_to_entities: {e}")))?;
-        let mut out = Vec::new();
-        while let Some(row) = rows
-            .next()
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("pages_related_to_entities row: {e}")))?
-        {
-            let space: Option<String> = row
-                .get::<Option<String>>(2)
-                .unwrap_or(None)
-                .filter(|s| s != super::UNFILED_SPACE_ID);
-            out.push((
-                row.get(0)
-                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
-                row.get::<Option<String>>(1)
-                    .unwrap_or(None)
-                    .unwrap_or_default(),
-                space,
-            ));
-        }
-        Ok(out)
+        self.note_rows(
+            &format!(
+                "SELECT p.id, p.title, COALESCE(p.workspace, p.space) FROM pages p \
+                 WHERE LOWER(TRIM(p.title)) = LOWER(TRIM(?1)) AND {ORGANIZING} \
+                   AND LOWER(p.title) <> 'overview' \
+                 ORDER BY p.last_modified DESC, p.id ASC LIMIT 20"
+            ),
+            vec![libsql::Value::Text(title.to_string())],
+        )
+        .await
     }
 
     /// Notes (not entity or source pages, not the Overview) about
@@ -410,6 +371,74 @@ impl MemoryDB {
                     title,
                 ));
             }
+        }
+        Ok(out)
+    }
+
+    /// Notes that share entities with `entity_ids`, most shared first, as
+    /// `(page id, title, space, shared)`: a note about one of them counts one,
+    /// and each of them a memory the note cites mentions counts one more.
+    pub(crate) async fn notes_sharing_entities(
+        &self,
+        entity_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<(String, String, Option<String>, i64)>, WenlanError> {
+        if entity_ids.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let marks = (1..=entity_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT id, title, sp, SUM(w) AS shared, MAX(lm) AS newest FROM ( \
+               SELECT p.id, p.title, COALESCE(p.workspace, p.space) AS sp, \
+                      COUNT(DISTINCT me.entity_id) AS w, p.last_modified AS lm \
+               FROM pages p \
+               JOIN edges e ON e.src_id = p.id AND e.edge_type = 'cites' \
+                AND e.dst_kind = 'memory' AND e.valid_until IS NULL \
+               JOIN memory_entities me ON me.memory_id = e.dst_id \
+               WHERE {ORGANIZING} AND LOWER(p.title) <> 'overview' AND me.entity_id IN ({marks}) \
+               GROUP BY p.id \
+               UNION ALL \
+               SELECT p.id, p.title, COALESCE(p.workspace, p.space), 1, p.last_modified \
+               FROM pages p \
+               WHERE {ORGANIZING} AND LOWER(p.title) <> 'overview' AND p.entity_id IN ({marks}) \
+             ) GROUP BY id ORDER BY shared DESC, newest DESC, id ASC LIMIT {limit}"
+        );
+        let params: Vec<libsql::Value> = entity_ids
+            .iter()
+            .map(|id| libsql::Value::Text(id.clone()))
+            .collect();
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, params)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("notes_sharing_entities: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("notes_sharing_entities row: {e}")))?
+        {
+            let title = row
+                .get::<Option<String>>(1)
+                .unwrap_or(None)
+                .unwrap_or_default();
+            if title.trim().is_empty() {
+                continue;
+            }
+            let space: Option<String> = row
+                .get::<Option<String>>(2)
+                .unwrap_or(None)
+                .filter(|s| s != super::UNFILED_SPACE_ID);
+            out.push((
+                row.get(0)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                title,
+                space,
+                row.get::<i64>(3).unwrap_or(0),
+            ));
         }
         Ok(out)
     }

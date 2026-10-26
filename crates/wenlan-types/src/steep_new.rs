@@ -19,6 +19,18 @@ pub const STEEP_NEW_KIND_CHAT: &str = "chat";
 /// `kind` of a new-material item: a file from a folder or an upload.
 pub const STEEP_NEW_KIND_FILE: &str = "file";
 
+/// The short id a compact list shows for an item: ten hex digits of the
+/// FNV-1a hash of its `item_id`. A claim's `item_ids` take it in place of the
+/// full id, which for a file can run to a hundred characters.
+pub fn steep_short_id(item_id: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in item_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:010x}", hash >> 24)
+}
+
 /// One piece of material no page uses yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteepNewItem {
@@ -287,5 +299,27 @@ mod tests {
         let json = serde_json::to_value(&item).unwrap();
         assert!(json.get("held").is_none());
         assert!(json.get("space").is_none());
+    }
+}
+
+#[cfg(test)]
+mod short_id_tests {
+    use super::steep_short_id;
+
+    #[test]
+    fn a_short_id_is_ten_stable_hex_digits() {
+        let id = steep_short_id("vault1::Projects/Home/Kitchen renovation notes.md");
+        assert_eq!(id.len(), 10);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            id,
+            steep_short_id("vault1::Projects/Home/Kitchen renovation notes.md")
+        );
+        assert_ne!(
+            id,
+            steep_short_id("vault1::Projects/Home/Kitchen renovation notes 2.md")
+        );
+        // FNV-1a 64 of "" is cbf29ce484222325; its top 40 bits.
+        assert_eq!(steep_short_id(""), "cbf29ce484");
     }
 }
