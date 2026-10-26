@@ -46,7 +46,7 @@ helper only its instructions below and, for organizing, a token. Never copy
 items, sources or tasks to a helper.
 
 1. Group with the helper. Ask it to call `steep` with `action: "new"`,
-   `limit: 70` (and `space`), once. The answer is the newest material,
+   `limit: 110` (and `space`), once. The answer is the newest material,
    newest first, each item with its `id`, title `t`, snippet `s` and length
    in characters `n`; `total` counts all of it. Do not fetch more with
    `next_cursor`: a run writes at most 8 pages, and the rest waits for the
@@ -59,9 +59,11 @@ items, sources or tasks to a helper.
    on one subject from different years or versions is one group. If the
    material belongs under an existing page, even one whose title words
    differ (a trip to Porto under "Lisbon and Porto"), the topic is that
-   page's title, exactly as given. An item belongs to at most one group;
-   items that fit no group are left out. A group may be a single item only
-   when that item is long on its own (a whole note, a long chat).
+   page's title, exactly as given. Prefer groups of 4 or more items: a few
+   short items on a nearby subject join that group rather than stand
+   alone. An item belongs to at most one group; items that fit no group
+   are left out. A group may be a single item only when that item is long
+   on its own (`n` over 1500: a whole note, a long chat).
 2. Claim the groups, biggest first, at most 8 this run: for each, call
    `steep` with `action: "claim_new"`, its `item_ids` and its topic as
    `title`. The answer has the items' text numbered `[1]` to `[n]`, a
@@ -91,8 +93,9 @@ items, sources or tasks to a helper.
       token. The sources go into that page, which then waits to be rewritten
       with all of them (section 3). Go on to the next page.
    3. Otherwise write the page yourself, with your main model. Never let the
-      small model write it. Title: short, names the topic, in the sources'
-      language. Open with one plain sentence that says what the page is
+      small model write it. Title: a short heading that names the topic, in
+      the sources' language; in English, in title case ("Sourdough", not
+      "sourdough"), with proper names kept as written. Open with one plain sentence that says what the page is
       about, then short paragraphs or lists. Use only what the sources say
       and cite every claim with its number, like `[2]`. Link every page in
       `link_targets` that the text talks about, each as `[[Title]]` at its
