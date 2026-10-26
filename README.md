@@ -43,11 +43,11 @@
 
 I started Wenlan because my notes, documents, and AI chats were scattered and always changing, and keeping a vault from rotting took constant upkeep. I wanted an AI-native knowledge base that stays useful without the hassle.
 
-- **Your AI writes it and keeps it current:** The AI tool you already use, such as Claude Code, Codex, or Cursor, turns your notes, files, and AI chats into pages and updates them later. No extra model needed.
-- **It tells you what it can't back up:** When an AI saves a page, Wenlan compares its citations with the original sources. A page is refused when most of its citations don't match the source, and the AI is told why. Each citation opens the original.
-- **It flags what changed:** Pages remember the sources, other pages, and code lines they rely on. When those change, only the affected pages are flagged for an update.
-- **What you write stays yours:** Pages you wrote or edited are set to **Ask me first**, so AI changes wait for your OK, and you see what each change removes and adds. Wenlan never edits your existing notes without your OK, Obsidian notes included.
-- **Bring what you have, keep it when you switch tools:** Obsidian, Logseq, folders, documents, web links, and chat exports come in as they are ([full list](#what-can-i-bring-in)). Pages are local Markdown, and the same pages work in the AI tools you pick.
+- **Your AI writes it and keeps it current:** The AI tool you already use turns your notes, files, and AI chats into pages, with no extra model.
+- **It tells you what it can't back up:** A page is refused when most of its citations don't match the source, and each citation opens the original.
+- **It flags what changed:** When a source, page, or code line changes, only the pages that rely on it are flagged.
+- **What you write stays yours:** Wenlan never edits your existing notes without your OK, and pages you wrote are set to **Ask me first**.
+- **Bring what you have, keep it when you switch tools:** Notes, documents, links, and chats come in ([full list](#what-can-i-bring-in)) as local Markdown that works in the AI tools you pick.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -262,24 +262,6 @@ Keep doing that. Wenlan connects to the same AI tool and adds the checks a folde
 
 Turn on **Web access** in Settings to let supported web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. This feature is experimental; queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
 
-<a id="whats-new"></a>
-
-<br>
-
-## What's new
-
-Since 0.19:
-
-- **Steep, your way:** keep pages current On demand with your own AI tool, or Automatic with a local or cloud model you pick.
-- **Citations checked on save:** a page whose citations mostly don't match their sources is refused, and Mermaid diagrams are checked for mistakes.
-- **Pages follow what they rely on:** other pages and code lines, even when the lines move or the file is renamed.
-- **Ask me first:** one **AI changes** setting for pages, and AI can suggest changes to your Obsidian notes that are written only when you accept. Notes start at **Never**, cited only. Each change shows what it removes and adds.
-- **A wiki for your code:** `/wenlan wiki` writes pages tied to the code lines they rely on and offers them to your repository as a pull request, updated daily on your computer or on GitHub Actions with your AI tool, Cursor, or GitHub Copilot.
-- **More to bring in:** a pasted link is saved as a source and shows as a card, a playable YouTube video, or the original X, Threads, or Instagram post. Logseq graphs, DOCX, and folders kept in sync are new imports, and images and videos can go in pages. A big first vault import is searchable in minutes, and AI tools now find rare words in a large library.
-- **More AI tools:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, Muse Code, and Kimi Code connect from **Add a tool** in Settings, and web AI apps can search, and with your permission write, through **Web access**.
-
-Every release is in the [changelog](CHANGELOG.md).
-
 <a id="architecture"></a>
 
 <br>
@@ -326,6 +308,7 @@ On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), App search 
 [Evaluation method and benchmark details](docs/eval/README.md).
 
 <a id="learn-more"></a>
+<a id="whats-new"></a>
 
 <a id="offline-queue-outbox"></a>
 
@@ -339,6 +322,7 @@ On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), App search 
 - [Local files, backups, and offline use](docs/setup-and-data.md)
 - [Privacy](docs/PRIVACY.md)
 - [Doctor and issue reports](https://wenlan.app/docs/diagnostics-and-issue-reports)
+- [What's new in each release](CHANGELOG.md)
 - [Full documentation index](docs/README.md)
 
 <br>

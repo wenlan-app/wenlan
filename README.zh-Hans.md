@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=24d7a2bfcab534fe15117f7e5d69d61d92768496b9066a8199b589d789659368 -->
+<!-- README_SYNC: source=README.md sha256=d4244e6aa20d8515090c9ea8af99f094f803f73af6862caa223f2480271f3dbc -->
 
 <p align="center">
   <picture>
@@ -45,11 +45,11 @@
 
 我做文澜，是因为笔记、文档和 AI 对话散落各处又一直在变，要让笔记库不荒废得不停维护。我想要一个 AI 原生、不用费心照顾的知识库。
 
-- **你的 AI 帮你写、帮你维护：** 你平常用的 AI 工具，例如 Claude Code、Codex 或 Cursor，会把你的文档、旧笔记和 AI 对话写成新的笔记，之后也由它更新。不需要另外装模型。
-- **站不住的会告诉你：** AI 保存笔记时，文澜会拿它的引用对照原始来源。一篇笔记的引用大多对不上时就不会保存，AI 也会知道原因。每个引用都能点回原文。
-- **变了会标出来：** 笔记记得它依靠哪些来源、哪些笔记、哪几行代码。那些东西变了，只有受影响的笔记会被标出来等更新。
-- **你写的还是你的：** 你写过或改过的笔记设成“先问我”，AI 要改会先等你同意，每次修改都看得到删了什么、加了什么。没有你同意，不会改动你原有的笔记，Obsidian 笔记也一样。
-- **带进现有资料，换工具也不怕：** Obsidian、Logseq、文件夹、文档、网页链接和对话导出都能直接带进来（[完整清单](#what-can-i-bring-in)）。笔记是本地 Markdown，你选的 AI 工具都能用同一份。
+- **你的 AI 帮你写、帮你维护：** 你平常用的 AI 工具把你的文档、旧笔记和 AI 对话写成新的笔记，不用另外装模型。
+- **站不住的会告诉你：** 引用大多对不上来源的笔记不会保存，每个引用都能点回原文。
+- **变了会标出来：** 来源、笔记或代码一变，只有依靠它的笔记会被标出来。
+- **你写的还是你的：** 没有你同意，不会改动你原有的笔记；你写的笔记设成“先问我”。
+- **带进现有资料，换工具也不怕：** 笔记、文档、链接和对话都能带进来（[完整清单](#what-can-i-bring-in)），存成本地 Markdown，你选的 AI 工具都能用。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -269,24 +269,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 在“设置”中开启“网页访问”开关，即可让 Claude、ChatGPT 或 Muse 等受支持的网页 AI 客户端，在你的电脑保持联网时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。此功能仍处于实验阶段；查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
 
-<a id="whats-new"></a>
-
-<br>
-
-## 最近新增
-
-0.19 以来：
-
-- **沉淀有两种方式：**“随叫”用你自己的 AI 工具更新笔记，“自动”用你选的本地或云端模型在后台更新。
-- **保存时对照引用：**引用大多和来源对不上的笔记不会保存，Mermaid 图表也会检查有没有写错。
-- **笔记跟着它依靠的东西：**其他笔记和代码行数都追得到，行数移动或文件改名也跟得上。
-- **先问我：**笔记用一个“AI 修改”设置；AI 也可以建议修改你的 Obsidian 笔记，你点接受才会写进文件。Obsidian 笔记默认“不能改”，只会被引用。每次修改都看得到删了什么、加了什么。
-- **为代码建 wiki：**`/wenlan wiki` 写出对应到代码行数的笔记，用 pull request 放进你的仓库，也能每天在你的电脑或 GitHub Actions 上更新，可用你的 AI 工具、Cursor 或 GitHub Copilot。
-- **能带进来的更多：**粘贴的链接会存成来源，显示成卡片、可播放的 YouTube 视频，或 X、Threads、Instagram 的原始帖子。新增 Logseq 图谱、DOCX 和持续同步的文件夹，笔记里也能放图片和视频。第一次导入大型 Obsidian 仓库，几分钟内就能搜索；AI 工具也找得到大型资料库里的罕见字词。
-- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro、OpenCode、Muse Code 和 Kimi Code 都能从设置里的“添加工具”连上；网页版 AI 也能通过“网页访问”搜索，经你允许还能写入。
-
-每次发布的完整记录见[更新日志](CHANGELOG.md)。
-
 <a id="architecture"></a>
 
 <br>
@@ -333,6 +315,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 [评估方法与基准详情](docs/eval/README.md)。
 
 <a id="learn-more"></a>
+<a id="whats-new"></a>
 <a id="离线队列outbox"></a>
 
 <br>
@@ -345,6 +328,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - [本地文件、备份与离线使用](docs/setup-and-data.zh-Hans.md)
 - [隐私](docs/PRIVACY.md)
 - [Doctor 与问题反馈](https://wenlan.app/docs/diagnostics-and-issue-reports)
+- [每次发布的更新记录](CHANGELOG.md)
 - [完整文档索引](docs/README.md)
 
 <br>
