@@ -693,7 +693,7 @@ pub fn workflow(
             "          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}\n",
         ),
         RepoWikiAgent::Copilot => (
-            "GitHub Copilot",
+            "GitHub Copilot CLI",
             "npm install --global @github/copilot",
             "COPILOT_GITHUB_TOKEN (a fine-grained personal access token with the\n\
              #   \"Copilot Requests\" permission).",

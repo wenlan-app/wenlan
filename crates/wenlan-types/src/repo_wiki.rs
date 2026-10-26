@@ -52,7 +52,7 @@ impl RepoWikiAgent {
             RepoWikiAgent::Claude => "Claude Code",
             RepoWikiAgent::Codex => "Codex",
             RepoWikiAgent::Cursor => "Cursor",
-            RepoWikiAgent::Copilot => "GitHub Copilot",
+            RepoWikiAgent::Copilot => "GitHub Copilot CLI",
         }
     }
 

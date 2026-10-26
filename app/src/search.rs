@@ -502,7 +502,7 @@ pub async fn install_client_plugin(
 }
 
 /// Installs Wenlan's skills into `client_type`'s own skills folder (Cursor,
-/// Gemini CLI, Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode,
+/// Gemini CLI, Antigravity, GitHub Copilot CLI, VS Code, Windsurf, Kiro, OpenCode,
 /// Kimi Code, Kimi)
 /// — see `skills_install::install_skills`. Returns the skills folder. Refuses,
 /// writing nothing, when a same-named skill folder there was not written by

@@ -1000,9 +1000,9 @@ fn app_candidates(
         }
         // Kimi, Moonshot AI's general desktop app (bundle id
         // `com.moonshot.kimichat`, measured on 3.2.21). It installs no CLI.
-        // The Windows and Linux places are where an Electron "Kimi" app
-        // installs by default, unmeasured; never a bare `kimi`, which is
-        // Kimi Code's CLI.
+        // Windows is supported too; never probe a bare `kimi`, which is Kimi
+        // Code's CLI. Kimi has no Linux build, so it has no Linux candidates
+        // and its client row is omitted there entirely.
         ("kimi_desktop", HostKind::MacOs) => {
             out.push(PathBuf::from("/Applications/Kimi.app"));
             out.extend(under_home("Applications/Kimi.app"));
@@ -1016,9 +1016,6 @@ fn app_candidates(
                     .iter()
                     .map(|dir| dir.join("Kimi").join("Kimi.exe")),
             );
-        }
-        ("kimi_desktop", HostKind::Linux) => {
-            out.extend(["/opt/Kimi/kimi", "/opt/Kimi/kimi-desktop"].map(PathBuf::from));
         }
         // The VS Code family (VS Code and the editors built from it) installs
         // the same way everywhere: a `.app` bundle on macOS, a per-user
@@ -1769,10 +1766,10 @@ pub(crate) fn detect_mcp_clients_with(
         ("Claude Code", "claude_code"),
         ("Claude Desktop", "claude_desktop"),
         ("Gemini CLI", "gemini_cli"),
-        ("Codex CLI", "codex_cli"),
+        ("ChatGPT / Codex", "codex_cli"),
         ("Muse Code", "muse_code"),
         ("Antigravity", "antigravity"),
-        ("GitHub Copilot", "copilot_cli"),
+        ("GitHub Copilot CLI", "copilot_cli"),
         ("VS Code", "vscode"),
         ("Windsurf", "windsurf"),
         ("Kiro", "kiro"),
@@ -1784,6 +1781,7 @@ pub(crate) fn detect_mcp_clients_with(
 
     clients
         .iter()
+        .filter(|(_, client_type)| probes.host != HostKind::Linux || *client_type != "kimi_desktop")
         // `map`, not `filter_map`: a row that says "could not read" is the only
         // honest output for a client whose config path could not be built, and
         // it can only exist if the row exists.
@@ -7469,7 +7467,7 @@ args = ["-y", "wenlan-mcp"]
         assert_eq!(row(&clients, "gemini_cli").has_raw_entry, Reading::No);
     }
 
-    // ── Antigravity, GitHub Copilot, VS Code, Windsurf, Kiro, OpenCode ───
+    // ── Antigravity, GitHub Copilot CLI, VS Code, Windsurf, Kiro, OpenCode ───
 
     /// What each platform's `dirs` lookups report, as fixtures: the home
     /// directory and the application-configuration directory.
@@ -8119,7 +8117,7 @@ args = ["-y", "wenlan-mcp"]
     /// Kimi, Moonshot AI's general desktop app, is found by its own app, and
     /// neither it nor Kimi Code Desktop is mistaken for the other.
     #[test]
-    fn kimi_desktop_is_found_on_each_os() {
+    fn kimi_desktop_is_found_on_supported_os() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         let local = home.join("AppData").join("Local");
@@ -8135,8 +8133,6 @@ args = ["-y", "wenlan-mcp"]
                 HostKind::Windows,
                 program_files.join("Kimi").join("Kimi.exe"),
             ),
-            (HostKind::Linux, PathBuf::from("/opt/Kimi/kimi")),
-            (HostKind::Linux, PathBuf::from("/opt/Kimi/kimi-desktop")),
         ];
         for (host, hit) in cases {
             let mut machine = Machine::new(host);
@@ -8174,6 +8170,22 @@ args = ["-y", "wenlan-mcp"]
         assert_eq!(
             row(&clients, "kimi_desktop").install_state,
             InstallState::NotFound
+        );
+    }
+
+    #[test]
+    fn kimi_desktop_is_absent_from_the_linux_client_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let clients = Machine::new(HostKind::Linux).detect(tmp.path());
+
+        assert!(clients
+            .iter()
+            .all(|client| client.client_type != "kimi_desktop"));
+        assert!(
+            clients
+                .iter()
+                .any(|client| client.client_type == "kimi_code"),
+            "Kimi Code remains a supported Linux client"
         );
     }
 
@@ -8400,8 +8412,9 @@ args = ["-y", "wenlan-mcp"]
         let tmp = tempfile::tempdir().unwrap();
         let clients = Machine::new(HostKind::MacOs).detect(tmp.path());
         for (client_type, name) in [
+            ("codex_cli", "ChatGPT / Codex"),
             ("antigravity", "Antigravity"),
-            ("copilot_cli", "GitHub Copilot"),
+            ("copilot_cli", "GitHub Copilot CLI"),
             ("vscode", "VS Code"),
             ("windsurf", "Windsurf"),
             ("kiro", "Kiro"),
