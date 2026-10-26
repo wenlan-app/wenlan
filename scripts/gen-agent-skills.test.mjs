@@ -440,3 +440,19 @@ test("bundle: the version hashes paths and contents, and renders the same for th
   assert.equal(renderBundle(a), renderBundle(reordered));
   assert.ok(renderBundle(a).indexOf('"a/SKILL.md"') < renderBundle(a).indexOf('"b/SKILL.md"'));
 });
+
+test("real tree: steep names each host's cheap helper and the one-run fallback", () => {
+  const steep = read(`${SKILLS}/wenlan/references/steep.md`);
+  const newPages = steep.slice(steep.indexOf("## 2. New pages"), steep.indexOf("## 3."));
+  for (const needle of [
+    "your tool's smallest or cheapest model",
+    "Gemini Flash in\nAntigravity, Composer in Cursor, or Haiku or Luna in GitHub Copilot",
+    "the `wenlan-helper` agent",
+    "Kimi Code has no cheaper helper",
+    "for this run only and at most 8 pages",
+    "say in the\nreport that no cheaper helper was available",
+  ]) {
+    assert.ok(newPages.includes(needle), needle);
+  }
+  assert.ok(!/model: "haiku"/.test(steep), "no Claude Code helper call in the shared copy");
+});

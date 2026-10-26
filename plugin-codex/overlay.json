@@ -408,22 +408,13 @@
         },
         {
           "from": [
-            "   on a small model: in Claude Code, start an `Agent` with `model: \"haiku\"`,",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+            "model, so they do not spend your main model. In Claude Code, start an",
+            "`Agent` with `model: \"haiku\"`."
           ],
           "to": [
-            "   on a small model when you can start one (a subagent on a smaller model):",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
-          ]
-        },
-        {
-          "from": [
-            "      helper on a small model: in Claude Code, start an `Agent` with",
-            "      `model: \"haiku\"`, hand it `organize.stages` and `organize.tasks`, and"
-          ],
-          "to": [
-            "      helper on a small model when you can start one (a subagent on a",
-            "      smaller model): hand it `organize.stages` and `organize.tasks`, and"
+            "model, so they do not spend your main model. Spawn a subagent on",
+            "`gpt-6-luna`; when subagents are off, run",
+            "`codex exec -m gpt-6-luna \"<the task>\"` and use what it prints."
           ]
         }
       ]

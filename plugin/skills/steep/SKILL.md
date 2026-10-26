@@ -44,35 +44,36 @@ New pages come first (section 2), then the pages waiting (section 3).
 
 Skip this section when `new_total` is 0.
 
+Grouping and organizing below are small work for a helper on a cheaper
+model, so they do not spend your main model. In Claude Code, start an
+`Agent` with `model: "haiku"`.
+Only when no helper on a cheaper model can start at all, do the grouping and
+organizing yourself, for this run only and at most 8 pages, and say in the
+report that no cheaper helper was available. You always write the pages
+yourself.
+
 1. Call `steep` with `action: "new"` (and `space`). Each item is one imported
    note, chat, file or saved memory, with `item_id`, `kind`, `title` and
    `snippet`. Leave out items whose `held` is true: another run has them.
-2. Group the items by topic. This is a small judgment, so give it to a helper
-   on a small model: in Claude Code, start an `Agent` with `model: "haiku"`,
-   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it
-   to reply with only JSON: `[{"topic": "...", "item_ids": ["..."]}]`. Each
-   group is one subject a person would look up as one page; an item belongs
-   to at most one group; items that fit no group are left out. A group may be
-   a single item only when that item is long on its own (a whole note, a long
-   chat). Never group with your main model: when you cannot start a helper on
-   a small model, write no new pages this run and say that Automatic mode
-   will do it.
+2. Group the items by topic with the helper: hand it every item's `item_id`,
+   `kind`, `title` and `snippet`, and ask it to reply with only JSON:
+   `[{"topic": "...", "item_ids": ["..."]}]`. Each group is one subject a
+   person would look up as one page; an item belongs to at most one group;
+   items that fit no group are left out. A group may be a single item only
+   when that item is long on its own (a whole note, a long chat).
 3. Biggest groups first, at most 8 pages this run. For each group:
    1. Call `steep` with `action: "claim_new"` and its `item_ids`. The answer
       has the items' text numbered `[1]` to `[n]`, a `token` and a `note`. A
       refusal (too little text, already taken) means skip the group.
    2. When the answer has `organize`, organize the sources before writing,
       the way Wenlan's own model would: their type and tags, and the people,
-      projects and tools they mention. This is small work, so give it to a
-      helper on a small model: in Claude Code, start an `Agent` with
-      `model: "haiku"`, hand it `organize.stages` and `organize.tasks`, and
-      ask it to answer every task with its stage's `instructions` as the
-      system prompt and the task's `prompt` as the message, and to reply
-      with only JSON: `[{"n": 1, "answer": "..."}]`, each answer exactly what
-      the instructions ask for. Call `steep` with `action: "organize"`, the
-      token and those `answers`, each passed back unchanged. Never organize
-      with your main model: when you cannot start a helper on a small model,
-      skip this step and write the page.
+      projects and tools they mention. Hand the helper `organize.stages` and
+      `organize.tasks`, and ask it to answer every task with its stage's
+      `instructions` as the system prompt and the task's `prompt` as the
+      message, and to reply with only JSON: `[{"n": 1, "answer": "..."}]`,
+      each answer exactly what the instructions ask for. Call `steep` with
+      `action: "organize"`, the token and those `answers`, each passed back
+      unchanged.
    3. Write the page yourself, with your main model. Never let the small
       model write it. Title: short, names the topic, in the sources'
       language. Open with one plain sentence that says what the page is
@@ -160,7 +161,8 @@ get from your own claim.
 
 A few short lines, no ids: the titles of the new pages written, how many of
 their sources were organized and how many of the people, projects and tools
-found there earned a Wiki page (`confirmed`), how many pages were updated, how many wait for the
+found there earned a Wiki page (`confirmed`), whether you grouped and organized
+them yourself because no cheaper helper could start, how many pages were updated, how many wait for the
 user as revision cards, how many still hold, how many code changes were
 checked and found harmless, and for each `needs_you` page its
 title and the reason from its `note`. If more new material or more than 10

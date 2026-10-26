@@ -366,3 +366,17 @@ test("real tree: generated skills carry the pins the validators and Rust tests r
   assert.match(codex("setup"), new RegExp(`/v${pin.replaceAll(".", "\\.")}/install\\.sh`));
   assert.match(JSON.stringify(overlay), new RegExp(`npx -y wenlan@${pin.replaceAll(".", "\\.")} setup`));
 });
+
+test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helper first", () => {
+  const steep = readFileSync(join(repo, "plugin-codex/skills/wenlan/references/steep.md"), "utf8");
+  const newPages = steep.slice(steep.indexOf("## 2. New pages"), steep.indexOf("## 3."));
+  for (const needle of [
+    "Spawn a subagent on\n`gpt-6-luna`",
+    "`codex exec -m gpt-6-luna \"<the task>\"`",
+    "Only when no helper on a cheaper model can start at all, do the grouping and\norganizing yourself, for this run only and at most 8 pages",
+  ]) {
+    assert.ok(newPages.includes(needle), needle);
+  }
+  assert.ok(!/haiku|Agent`/.test(newPages), "no Claude Code helper wording in Codex");
+  assert.ok(claudeSkill("steep").includes("`Agent` with `model: \"haiku\"`"), "Claude keeps Haiku");
+});

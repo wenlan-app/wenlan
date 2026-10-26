@@ -122,22 +122,15 @@
         },
         {
           "from": [
-            "   on a small model: in Claude Code, start an `Agent` with `model: \"haiku\"`,",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+            "model, so they do not spend your main model. In Claude Code, start an",
+            "`Agent` with `model: \"haiku\"`."
           ],
           "to": [
-            "   on a small model when you can start one (a subagent on a smaller model):",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
-          ]
-        },
-        {
-          "from": [
-            "      helper on a small model: in Claude Code, start an `Agent` with",
-            "      `model: \"haiku\"`, hand it `organize.stages` and `organize.tasks`, and"
-          ],
-          "to": [
-            "      helper on a small model when you can start one (a subagent on a",
-            "      smaller model): hand it `organize.stages` and `organize.tasks`, and"
+            "model, so they do not spend your main model. Start a subagent or helper on",
+            "your tool's smallest or cheapest model, for example Gemini Flash in",
+            "Antigravity, Composer in Cursor, or Haiku or Luna in GitHub Copilot. In",
+            "Antigravity and Cursor, use the `wenlan-helper` agent when Wenlan installed",
+            "it. Kimi Code has no cheaper helper, so the next rule applies there."
           ]
         }
       ]
