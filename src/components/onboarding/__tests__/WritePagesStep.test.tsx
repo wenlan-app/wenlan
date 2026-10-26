@@ -109,7 +109,7 @@ describe("WritePagesStep", () => {
   it("after a run, offers the next batch while material still waits", () => {
     const written = Array.from({ length: 8 }, (_, i) => page(`w${i}`));
     const done = state(
-      { kind: "done", written, minutes: 4, left: 9943 },
+      { kind: "done", written, updated: [], minutes: 4, left: 9943 },
       { waitingTotal: 9943, waiting: "9,943 notes", run: { startedAt: Date.parse("2026-10-22T10:00:00Z"), tool: "Claude Code" } },
     );
     renderStep({ state: done, pages: written, done: true, onSelectPage: vi.fn() });
@@ -120,7 +120,7 @@ describe("WritePagesStep", () => {
 
   it("after a run, still offers the next batch with no tool known, by copying the command", () => {
     const written = [page("a")];
-    const done = state({ kind: "done", written, minutes: 2, left: 40 }, { tool: null, waiting: "40 notes" });
+    const done = state({ kind: "done", written, updated: [], minutes: 2, left: 40 }, { tool: null, waiting: "40 notes" });
     renderStep({ state: done, pages: written, done: true });
     fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
     expect(done.start).toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe("WritePagesStep", () => {
 
   it("after a run with nothing left, offers nothing more", () => {
     const written = [page("a")];
-    renderStep({ state: state({ kind: "done", written, minutes: 2, left: 0 }, { waitingTotal: 0 }), pages: written, done: true });
+    renderStep({ state: state({ kind: "done", written, updated: [], minutes: 2, left: 0 }, { waitingTotal: 0 }), pages: written, done: true });
     expect(screen.queryByTestId("getting-started-pages-more")).toBeNull();
   });
 

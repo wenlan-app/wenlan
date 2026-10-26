@@ -14,7 +14,7 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { listParts, pageCreatedMs, useWritePages, WritePagesLine, writePagesView } from "./WritePages";
+import { doneLine, listParts, pageCreatedMs, pagesUpdatedSince, useWritePages, WritePagesLine, writePagesView } from "./WritePages";
 
 vi.mock("../../../lib/tauri", () => ({
   PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
@@ -118,6 +118,28 @@ describe("writePagesView", () => {
 
     const done = writePagesView({ ...base, run, pages, list: material(9), now: START + 400_000, lastChangeAt: START + 200_000 });
     expect(done).toMatchObject({ kind: "done", minutes: 3, left: 9 });
+  });
+
+  it("counts the pages a run updated, and its minutes to the last change", () => {
+    const run = { startedAt: START, tool: "Claude Code" };
+    const changed = (id: string, born: string, modified: string): Page =>
+      ({ ...page(id, born), last_modified: modified }) as Page;
+    const pages = [
+      page("a", "2026-10-22T10:01:00Z"),
+      page("b", "2026-10-22T10:06:00Z"),
+      changed("kitchen", "2026-10-01T09:00:00Z", "2026-10-22T10:09:00Z"),
+      changed("recipes", "2026-10-02T09:00:00Z", "2026-10-22T10:04:00Z"),
+      changed("untouched", "2026-10-02T09:00:00Z", "2026-10-20T10:04:00Z"),
+    ];
+    expect(pagesUpdatedSince(pages, START).map((p) => p.id)).toEqual(["recipes", "kitchen"]);
+    const done = writePagesView({ ...base, run, pages, list: material(9), now: START + 900_000, lastChangeAt: START + 540_000 });
+    expect(done).toMatchObject({ kind: "done", minutes: 9, left: 9 });
+    if (done.kind !== "done") throw new Error("done");
+    expect(done.written.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(doneLine(done, i18n.t)).toBe("Wrote 2 pages and updated 2 in 9 min.");
+    expect(doneLine({ ...done, written: [] }, i18n.t)).toBe("Updated 2 pages in 9 min.");
+    expect(doneLine({ ...done, updated: [] }, i18n.t)).toBe("Wrote 2 pages in 9 min.");
+    expect(doneLine({ ...done, written: done.written.slice(0, 1) }, i18n.t)).toBe("Wrote 1 page and updated 2 in 9 min.");
   });
 
   it("says the tool may be waiting when nothing happens", () => {

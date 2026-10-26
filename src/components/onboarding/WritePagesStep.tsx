@@ -6,6 +6,7 @@ import type { Page } from "../../lib/tauri";
 import {
   copyAgainLabel,
   pagesWrittenSince,
+  doneLine,
   waitingLine,
   workingHeadline,
   WrittenPages,
@@ -132,7 +133,7 @@ export function WritePagesStep({
       <div className="getting-started-copy">
         {title}
         <p className="getting-started-step-body">
-          {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
+          {doneLine(view, t)}
         </p>
         {list(false)}
         {/* The run is over but most material may still wait: offer the next

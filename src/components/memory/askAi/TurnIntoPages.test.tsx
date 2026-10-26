@@ -191,7 +191,7 @@ describe("TurnIntoPagesView", () => {
   it("says what is ready and what still waits, with one press for more", () => {
     const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
     const s = state(
-      { kind: "done", written, minutes: 3, left: 12 },
+      { kind: "done", written, updated: [], minutes: 3, left: 12 },
       { run: { startedAt: Date.now(), tool: "Codex", handedOver: "opened" } },
     );
     render(wrap(<TurnIntoPagesView state={s} hasPages />));
@@ -203,7 +203,7 @@ describe("TurnIntoPagesView", () => {
   it("offers the next batch after a run started outside the app, with no tool known", () => {
     const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
     const s = state(
-      { kind: "done", written, minutes: 3, left: 9943 },
+      { kind: "done", written, updated: [], minutes: 3, left: 9943 },
       { tool: null, opensTool: false, waiting: "9,943 notes", run: { startedAt: Date.now(), tool: null } },
     );
     render(wrap(<TurnIntoPagesView state={s} hasPages />));
@@ -216,7 +216,7 @@ describe("TurnIntoPagesView", () => {
     const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
     render(wrap(
       <TurnIntoPagesView
-        state={state({ kind: "done", written, minutes: 3, left: 0 }, { waitingTotal: 0, run: { startedAt: Date.now(), tool: "Codex" } })}
+        state={state({ kind: "done", written, updated: [], minutes: 3, left: 0 }, { waitingTotal: 0, run: { startedAt: Date.now(), tool: "Codex" } })}
         hasPages
       />,
     ));
@@ -284,7 +284,7 @@ describe("turnIntoPagesKind", () => {
 
   it("offers the new material instead of a run that finished long before the import", () => {
     const earlier = { startedAt: START - 2 * 60 * 60_000, tool: "Codex" };
-    const done: WritePagesView = { kind: "done", written: [page("a")], minutes: 2, left: 4 };
+    const done: WritePagesView = { kind: "done", written: [page("a")], updated: [], minutes: 2, left: 4 };
     expect(turnIntoPagesKind({ ...base, run: earlier, cardView: done }, START)).toBe("ready");
     expect(turnIntoPagesKind({ ...base, run: { ...earlier, startedAt: START - 5 * 60_000 }, cardView: done }, START)).toBe("done");
   });

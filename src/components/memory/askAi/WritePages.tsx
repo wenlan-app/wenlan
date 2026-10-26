@@ -67,12 +67,30 @@ export type WritePagesView =
   | { readonly kind: "hidden" }
   | { readonly kind: "ready"; readonly list: NewMaterialList }
   | { readonly kind: "working"; readonly written: Page[]; readonly writing: boolean; readonly stuck: boolean }
-  | { readonly kind: "done"; readonly written: Page[]; readonly minutes: number; readonly left: number };
+  | {
+      readonly kind: "done";
+      readonly written: Page[];
+      /** Pages that were there before the run and changed in it: they took
+       *  new sources, or were brought up to date. */
+      readonly updated: Page[];
+      /** From the start to the run's last page change. */
+      readonly minutes: number;
+      readonly left: number;
+    };
 
 /** A page's birth time in ms. The daemon writes RFC 3339 or SQLite's
  *  `YYYY-MM-DD HH:MM:SS` (UTC); epoch numbers are accepted too. */
 export function pageCreatedMs(page: Pick<Page, "created_at">): number | null {
-  const raw = page.created_at?.trim() ?? "";
+  return timeMs(page.created_at);
+}
+
+/** A page's last change in ms, read as `pageCreatedMs` reads its birth. */
+export function pageModifiedMs(page: Pick<Page, "last_modified">): number | null {
+  return timeMs(page.last_modified);
+}
+
+function timeMs(value: string | null | undefined): number | null {
+  const raw = value?.trim() ?? "";
   if (/^\d+$/.test(raw)) {
     const n = Number(raw);
     return n < 1e12 ? n * 1000 : n;
@@ -90,6 +108,39 @@ export function pagesWrittenSince(pages: readonly Page[], startedAt: number): Pa
     .filter((entry): entry is { page: Page; at: number } => entry.at !== null && entry.at >= startedAt - CLOCK_SLACK_MS)
     .sort((a, b) => a.at - b.at)
     .map((entry) => entry.page);
+}
+
+/** Pages that were there before the run started and changed during it,
+ *  oldest change first: a run adds sources to the page on a subject instead
+ *  of writing a second one, and brings out-of-date pages up to date. */
+export function pagesUpdatedSince(pages: readonly Page[], startedAt: number): Page[] {
+  const written = new Set(pagesWrittenSince(pages, startedAt).map((page) => page.id));
+  return pages
+    .filter((page) => !written.has(page.id) && page.creation_kind !== "entity")
+    .map((page) => ({ page, born: pageCreatedMs(page), at: pageModifiedMs(page) }))
+    .filter(
+      (entry): entry is { page: Page; born: number | null; at: number } =>
+        entry.at !== null && entry.at >= startedAt && (entry.born === null || entry.born < startedAt - CLOCK_SLACK_MS),
+    )
+    .sort((a, b) => a.at - b.at)
+    .map((entry) => entry.page);
+}
+
+/** The run's last page change in ms: the newest page born or changed in it. */
+export function lastPageChangeMs(written: readonly Page[], updated: readonly Page[], startedAt: number): number {
+  return Math.max(
+    startedAt,
+    ...written.map((page) => pageCreatedMs(page) ?? startedAt),
+    ...updated.map((page) => pageModifiedMs(page) ?? startedAt),
+  );
+}
+
+/** The finished run in one line: the pages written, and those updated. */
+export function doneLine(view: { readonly written: readonly Page[]; readonly updated: readonly Page[]; readonly minutes: number }, t: TFunction): string {
+  const { written, updated, minutes } = view;
+  if (updated.length === 0) return t("askAi.writePages.done", { count: written.length, minutes });
+  if (written.length === 0) return t("askAi.writePages.doneUpdatedOnly", { count: updated.length, minutes });
+  return t("askAi.writePages.doneAndUpdated", { count: written.length, updated: updated.length, minutes });
 }
 
 /** What the offer shows. On demand only: in Automatic mode Wenlan writes the
@@ -118,13 +169,15 @@ export function writePagesView({
   if (onDemand !== true || !list) return { kind: "hidden" };
   if (run) {
     const written = pagesWrittenSince(pages, run.startedAt);
+    const updated = pagesUpdatedSince(pages, run.startedAt);
     const writing = (list.held ?? 0) > 0;
     const quiet = now - lastChangeAt;
-    if (!writing && written.length > 0 && (quiet >= QUIET_DONE_MS || list.total < minItems)) {
-      const last = Math.max(...written.map((page) => pageCreatedMs(page) ?? run.startedAt));
+    if (!writing && written.length + updated.length > 0 && (quiet >= QUIET_DONE_MS || list.total < minItems)) {
+      const last = lastPageChangeMs(written, updated, run.startedAt);
       return {
         kind: "done",
         written,
+        updated,
         minutes: Math.max(1, Math.round((last - run.startedAt) / 60_000)),
         left: list.total,
       };
@@ -249,7 +302,8 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   // the run), so reopening the home later does not restart the quiet clock.
   // Only a change counts: a tool killed mid-run holds its material until the
   // claim runs out, and all that time nothing is being written.
-  const lastChangeAt = Math.max(run?.startedAt ?? 0, run?.claim?.at ?? 0, ...written.map((page) => pageCreatedMs(page) ?? 0));
+  const updated = run ? pagesUpdatedSince(pages, run.startedAt) : [];
+  const lastChangeAt = Math.max(run?.claim?.at ?? 0, run ? lastPageChangeMs(written, updated, run.startedAt) : 0);
 
   const material = list.data;
   useEffect(() => {
@@ -589,7 +643,7 @@ export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }:
       <div className="write-pages-line-row">
         <CheckCircle aria-hidden="true" weight="fill" className="write-pages-icon write-pages-icon--done" />
         <p className="write-pages-text">
-          {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
+          {doneLine(view, t)}
         </p>
         <div className="write-pages-actions">
           {view.left >= WRITE_PAGES_MIN_ITEMS && state.tool ? (
