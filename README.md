@@ -67,7 +67,7 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 ### 1. Download and open Wenlan
 
-[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon or Windows x64), install it, and open it.
+[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS 11 or later on Apple Silicon, or Windows x64), install it, and open it.
 
 The app is in English, 简体中文, and 繁體中文.
 
