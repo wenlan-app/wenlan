@@ -56088,42 +56088,34 @@ impl MemoryDB {
         title.trim().to_lowercase()
     }
 
-    /// One scope scan folding every active non-entity page title. Value is
-    /// the unique owning page id, or `None` when two pages fold to the same
-    /// key — the resolver's ambiguity contract. Callers resolving many labels
-    /// (a page's wikilinks, the orphan sweep) build this once per scope
-    /// instead of scanning per label.
-    pub(crate) async fn folded_title_owners_scoped(
+    /// One scan folding every active non-entity page title, grouped by Space
+    /// (`None` is the no-Space scope). Used when wikilinks need to prove a
+    /// title has exactly one owner outside the linking page's own scope.
+    pub(crate) async fn folded_title_owners_by_scope(
         &self,
-        scope: Option<&str>,
-    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+    ) -> Result<crate::synthesis::wikilinks::OwnersBySpace, WenlanError> {
         let conn = self.conn.lock().await;
-        Self::folded_title_owners_scoped_on_conn(&conn, scope).await
+        Self::folded_title_owners_by_scope_on_conn(&conn).await
     }
 
-    /// [`Self::folded_title_owners_scoped`] on an already-held connection
-    /// guard, for callers whose resolution decisions must share one
-    /// snapshot/transaction with the writes they gate (the orphan sweep).
-    async fn folded_title_owners_scoped_on_conn(
+    /// [`Self::folded_title_owners_by_scope`] on an already-held connection.
+    async fn folded_title_owners_by_scope_on_conn(
         conn: &libsql::Connection,
-        scope: Option<&str>,
-    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+    ) -> Result<crate::synthesis::wikilinks::OwnersBySpace, WenlanError> {
         let mut rows = conn
             .query(
-                "SELECT id, title FROM pages
+                "SELECT id, title, space FROM pages
                  WHERE status = 'active'
-                   AND COALESCE(kind, 'concept') != 'entity'
-                   AND space = COALESCE(?1, '00000000-0000-4000-8000-000000000001')",
-                libsql::params![scope],
+                   AND COALESCE(kind, 'concept') != 'entity'",
+                (),
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_scoped: {e}")))?;
-        let mut owners: std::collections::HashMap<String, Option<String>> =
-            std::collections::HashMap::new();
+            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_by_scope: {e}")))?;
+        let mut owners = crate::synthesis::wikilinks::OwnersBySpace::new();
         while let Some(row) = rows
             .next()
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_scoped row: {e}")))?
+            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_by_scope row: {e}")))?
         {
             let id: String = row
                 .get::<String>(0)
@@ -56131,7 +56123,13 @@ impl MemoryDB {
             let title: String = row
                 .get::<String>(1)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let scope = row
+                .get::<Option<String>>(2)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+                .filter(|space| space != UNFILED_SPACE_ID);
             owners
+                .entry(scope)
+                .or_default()
                 .entry(Self::page_title_key(&title))
                 .and_modify(|slot| *slot = None)
                 .or_insert(Some(id));
@@ -56179,6 +56177,9 @@ impl MemoryDB {
         Ok(names)
     }
 
+    /// Resolve one bare title with `scope` as its priority scope. One owner in
+    /// that scope wins; two make it ambiguous and block fallback. With no
+    /// owner there, exactly one owner across all other scopes wins.
     pub async fn find_unique_active_page_id_by_title_scoped(
         &self,
         label: &str,
@@ -56188,23 +56189,25 @@ impl MemoryDB {
         if wanted.is_empty() {
             return Ok(None);
         }
-        // Single-label shape: scan the scope like the map builder above, but
-        // keep nothing — fold each title, compare, and stop at the second
-        // match (ambiguous). Same identity fold, none of the map's retained
-        // allocations; the second match ends the row walk early exactly like
-        // the old `LIMIT 2` SQL did.
+        // Single-label shape: scan every eligible title once without retaining
+        // the all-scope maps. Same identity fold and ambiguity contract as
+        // `resolve_label`; a later own-scope match still outranks any earlier
+        // elsewhere match, so the full row walk is intentional.
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title FROM pages
+                "SELECT id, title, space FROM pages
                  WHERE status = 'active'
-                   AND COALESCE(kind, 'concept') != 'entity'
-                   AND space = COALESCE(?1, '00000000-0000-4000-8000-000000000001')",
-                libsql::params![scope],
+                   AND COALESCE(kind, 'concept') != 'entity'",
+                (),
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("find_unique_page_by_title: {e}")))?;
-        let mut owner: Option<String> = None;
+        let own_scope = scope.unwrap_or(UNFILED_SPACE_ID);
+        let mut own_owner: Option<String> = None;
+        let mut own_ambiguous = false;
+        let mut elsewhere_owner: Option<String> = None;
+        let mut elsewhere_ambiguous = false;
         while let Some(row) = rows
             .next()
             .await
@@ -56216,15 +56219,29 @@ impl MemoryDB {
             if Self::page_title_key(&title) != wanted {
                 continue;
             }
-            if owner.is_some() {
-                return Ok(None);
+            let owner = row
+                .get::<String>(0)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let page_scope = row
+                .get::<Option<String>>(2)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+                .unwrap_or_else(|| UNFILED_SPACE_ID.to_string());
+            if page_scope == own_scope {
+                if own_owner.is_some() {
+                    own_ambiguous = true;
+                } else {
+                    own_owner = Some(owner);
+                }
+            } else if elsewhere_owner.is_some() {
+                elsewhere_ambiguous = true;
+            } else {
+                elsewhere_owner = Some(owner);
             }
-            owner = Some(
-                row.get::<String>(0)
-                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
-            );
         }
-        Ok(owner)
+        if own_owner.is_some() {
+            return Ok((!own_ambiguous).then_some(own_owner).flatten());
+        }
+        Ok((!elsewhere_ambiguous).then_some(elsewhere_owner).flatten())
     }
 
     /// Replace the entire outbound-link set for a page in one BEGIN/COMMIT.
@@ -56588,10 +56605,13 @@ impl MemoryDB {
 
             let mut resolved_labels = std::collections::BTreeSet::new();
             let mut failed_rows: Vec<(String, String, String)> = Vec::new();
-            // One folded-title scan per distinct source scope, built inside
-            // this same transaction — the maps read the exact snapshot the
-            // deletes and edge mints below write into.
-            let mut owner_maps = crate::synthesis::wikilinks::OwnersBySpace::new();
+            // One all-scope folded-title scan inside this transaction: the
+            // maps read the exact snapshot the deletes and edge mints write.
+            let owner_maps = if orphan_rows.is_empty() {
+                crate::synthesis::wikilinks::OwnersBySpace::new()
+            } else {
+                Self::folded_title_owners_by_scope_on_conn(&conn).await?
+            };
             // Read once, and only when some orphan could name another Space.
             let mut space_names: Option<crate::synthesis::wikilinks::TitleOwners> = None;
             let no_space_names = crate::synthesis::wikilinks::TitleOwners::new();
@@ -56600,26 +56620,10 @@ impl MemoryDB {
                 if trimmed.is_empty() {
                     continue;
                 }
-                if !owner_maps.contains_key(&scope) {
-                    let owners =
-                        Self::folded_title_owners_scoped_on_conn(&conn, scope.as_deref()).await?;
-                    owner_maps.insert(scope.clone(), owners);
-                }
                 if trimmed.contains('/') && space_names.is_none() {
                     space_names = Some(Self::folded_space_names_on_conn(&conn).await?);
                 }
                 let space_names_ref = space_names.as_ref().unwrap_or(&no_space_names);
-                for (space, _) in
-                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_names_ref)
-                {
-                    if let std::collections::hash_map::Entry::Vacant(slot) =
-                        owner_maps.entry(Some(space.clone()))
-                    {
-                        slot.insert(
-                            Self::folded_title_owners_scoped_on_conn(&conn, Some(&space)).await?,
-                        );
-                    }
-                }
                 let Some(target) = crate::synthesis::wikilinks::resolve_label(
                     trimmed,
                     scope.as_deref(),

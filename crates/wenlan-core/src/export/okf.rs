@@ -570,32 +570,63 @@ pub(crate) fn plan_page_filenames(pages: &[Page]) -> Vec<(String, String)> {
     planned
 }
 
-/// `(space, folded title)` -> owning page id, or `None` when ambiguous.
-pub(crate) type TitleOwners = HashMap<(Option<String>, String), Option<String>>;
+/// Exported title owners plus the Space-name readings needed by the shared
+/// wikilink resolver.
+pub(crate) struct TitleOwners {
+    by_space: crate::synthesis::wikilinks::OwnersBySpace,
+    space_names: crate::synthesis::wikilinks::TitleOwners,
+}
 
 /// Fold every exported page title through `MemoryDB::page_title_key` to its
-/// owning page id, resolved per Space like
-/// `MemoryDB::folded_title_owners_scoped` (`None` = uncategorized): the key
-/// is `(space, folded title)`, and the value is `None` when two exported
-/// pages in the same Space fold to the same title (the ambiguous-title
-/// contract, scoped: such targets stay unresolved).
+/// owning page id, grouped per Space (`None` = uncategorized). The shared
+/// resolver then applies the runtime rule: own Space, explicit `Space/Title`,
+/// then exactly one owner across every other scope.
 pub(crate) fn title_owner_map(pages: &[Page]) -> TitleOwners {
-    let mut map: TitleOwners = HashMap::new();
-    for page in pages {
-        let key = (
-            page.space.clone(),
-            crate::db::MemoryDB::page_title_key(&page.title),
-        );
-        match map.get_mut(&key) {
+    let mut by_space = crate::synthesis::wikilinks::OwnersBySpace::new();
+    let mut space_names = crate::synthesis::wikilinks::TitleOwners::new();
+    for page in pages
+        .iter()
+        .filter(|page| page.status == "active" && page.kind != "entity")
+    {
+        let titles = by_space.entry(page.space.clone()).or_default();
+        let key = crate::db::MemoryDB::page_title_key(&page.title);
+        match titles.get_mut(&key) {
             None => {
-                map.insert(key, Some(page.id.clone()));
+                titles.insert(key, Some(page.id.clone()));
             }
             Some(slot) => {
                 *slot = None;
             }
         }
+        let Some(space) = page.space.as_ref() else {
+            continue;
+        };
+        let key = crate::db::MemoryDB::page_title_key(space);
+        match space_names.get_mut(&key) {
+            None => {
+                space_names.insert(key, Some(space.clone()));
+            }
+            Some(Some(owner)) if owner == space => {}
+            Some(slot) => *slot = None,
+        }
     }
-    map
+    TitleOwners {
+        by_space,
+        space_names,
+    }
+}
+
+fn resolve_exported_label(
+    label: &str,
+    page_space: Option<&str>,
+    owners: &TitleOwners,
+) -> Option<String> {
+    crate::synthesis::wikilinks::resolve_label(
+        label,
+        page_space,
+        &owners.by_space,
+        &owners.space_names,
+    )
 }
 
 /// Byte ranges of inline code spans outside the fenced ranges, using
@@ -874,9 +905,9 @@ fn convert_markdown_link(
 }
 
 /// Convert one page body to bundle links. `page_id` and `page_space` are the
-/// linking page's id and Space: `[[Target]]` resolves only against exported
-/// pages in the same Space (see [`title_owner_map`]), and an imported page's
-/// own links resolve against its original bundle (see [`ConceptPathMap`]).
+/// linking page's id and Space: `[[Target]]` follows [`title_owner_map`]'s
+/// runtime-matching scope precedence, and an imported page's own links resolve
+/// against its original bundle (see [`ConceptPathMap`]).
 /// `id_to_file` maps exported page ids to bundle files, and `source_ids` is
 /// this page's cited memory ids.
 ///
@@ -944,12 +975,8 @@ pub(crate) fn convert_body(
             let label = escape_index_link_text(target);
             return format!("[{label}](/sources/{stub})");
         }
-        let key = (
-            page_space.map(|space| space.to_owned()),
-            crate::db::MemoryDB::page_title_key(target),
-        );
-        let owner = title_owner.get(&key).and_then(|o| o.as_ref());
-        match owner.and_then(|id| id_to_file.get(id)) {
+        let owner = resolve_exported_label(target, page_space, title_owner);
+        match owner.as_ref().and_then(|id| id_to_file.get(id)) {
             Some(file) => {
                 let label = escape_index_link_text(display.unwrap_or(target));
                 match heading {
@@ -1137,13 +1164,9 @@ fn linked_sections(page: &Page, owners: &TitleOwners) -> Vec<(bool, Vec<String>)
             if !cap[1].is_empty() {
                 continue;
             }
-            let key = (
-                page.space.clone(),
-                crate::db::MemoryDB::page_title_key(cap[2].trim()),
-            );
-            if let Some(Some(id)) = owners.get(&key) {
-                if *id != page.id && !linked.contains(id) {
-                    linked.push(id.clone());
+            if let Some(id) = resolve_exported_label(cap[2].trim(), page.space.as_deref(), owners) {
+                if id != page.id && !linked.contains(&id) {
+                    linked.push(id);
                 }
             }
         }
@@ -2998,26 +3021,39 @@ mod tests {
     }
 
     #[test]
-    fn wikilinks_resolve_within_the_linking_page_space() {
+    fn wikilinks_use_own_space_then_one_owner_in_other_scopes() {
         let alpha_a = test_page_in_space("page_alpha_a", "Alpha", "A", Some("a"));
         let alpha_b = test_page_in_space("page_alpha_b", "Alpha", "B", Some("b"));
         let beta_a = test_page_in_space("page_beta_a", "Beta", "C", Some("a"));
+        let gamma_a = test_page_in_space("page_gamma_a", "Gamma", "D", Some("a"));
+        let gamma_c = test_page_in_space("page_gamma_c", "Gamma", "E", Some("c"));
         let linker_a = test_page_in_space("page_linker_a", "Linker A", "see [[Alpha]]", Some("a"));
         let linker_b = test_page_in_space(
             "page_linker_b",
             "Linker B",
-            "see [[Alpha]] and [[Beta]]",
+            "see [[Alpha]], [[Beta]], and [[Gamma]]",
             Some("b"),
         );
-        let pages = vec![alpha_a, alpha_b, beta_a, linker_a.clone(), linker_b.clone()];
+        let pages = vec![
+            alpha_a,
+            alpha_b,
+            beta_a,
+            gamma_a,
+            gamma_c,
+            linker_a.clone(),
+            linker_b.clone(),
+        ];
         // Globally "Alpha" is ambiguous, but per Space each linker sees one.
         let body_a = convert(&pages, &linker_a);
         assert!(body_a.contains("[Alpha](/pages/alpha.md)"), "{body_a}");
         let body_b = convert(&pages, &linker_b);
         assert!(body_b.contains("[Alpha](/pages/alpha-2.md)"), "{body_b}");
-        // Beta lives only in space `a`, so the space-`b` link stays plain.
-        assert!(body_b.contains("and Beta"), "{body_b}");
-        assert!(!body_b.contains("/pages/beta.md"), "{body_b}");
+        assert!(
+            body_b.contains("[Beta](/pages/beta.md)"),
+            "one owner in another Space uses the same bare-link fallback as the runtime: {body_b}"
+        );
+        assert!(body_b.contains("and Gamma"), "{body_b}");
+        assert!(!body_b.contains("[Gamma]("), "{body_b}");
     }
 
     #[test]

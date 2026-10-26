@@ -982,9 +982,9 @@ pub async fn links_new(db: &MemoryDB, token: &str) -> Result<SteepNewLinksRespon
 /// sources (the note is about one, or cites memories that mention one).
 /// `existing` (the claim's existing page, which the sources go into) is
 /// never one. Each comes as the label a `[[link]]` in a note born in `space`
-/// resolves with: its title, or `Space/Title` for a note in another Space.
-/// Entity pages are not offered: a wikilink never resolves to one. Best
-/// effort: a failed read offers none.
+/// resolves with: the bare title when that reaches this exact note, otherwise
+/// `Space/Title` for a note in a named Space. Entity pages are not offered: a
+/// wikilink never resolves to one. Best effort: a failed read offers none.
 async fn link_targets(
     db: &MemoryDB,
     scope: &ReadScope,
@@ -1052,7 +1052,21 @@ async fn link_targets(
         {
             continue;
         }
-        let label = if page_space.as_deref() == space {
+        let bare_resolves = if page_space.as_deref() == space {
+            true
+        } else {
+            crate::synthesis::wikilinks::resolve_against_pages(
+                db,
+                std::slice::from_ref(&title),
+                space,
+            )
+            .await
+            .ok()
+            .and_then(|links| links.into_iter().next())
+            .and_then(|link| link.target_page_id)
+            .is_some_and(|resolved| resolved == page_id)
+        };
+        let label = if bare_resolves {
             title
         } else if let Some(other) = page_space.as_deref() {
             format!("{other}/{title}")

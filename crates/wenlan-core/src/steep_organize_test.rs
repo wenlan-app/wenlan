@@ -1259,9 +1259,8 @@ async fn a_write_under_an_existing_title_in_another_space_goes_into_that_note() 
     crate::steep_new::release_new(&named.token).unwrap();
 }
 
-/// `link_targets` holds the notes the sources' text names, as the label a
-/// link in the new note resolves with: the bare title in the claim's Space,
-/// `Space/Title` in another.
+/// `link_targets` holds the notes the sources' text names, as the shortest
+/// label that resolves from the new note's Space.
 #[tokio::test]
 async fn link_targets_are_the_notes_the_sources_name() {
     let (db, _dir) = crate::db::tests::test_db().await;
@@ -1270,6 +1269,9 @@ async fn link_targets_are_the_notes_the_sources_name() {
     authored_note(&db, "Sourdough", None).await;
     memory(&db, "lt_a", MIRA_NOTE).await;
     memory(&db, "lt_b", KILN_NOTE).await;
+    db.create_space("Studio", None, false).await.unwrap();
+    db.update_memory_space("lt_a", "Studio").await.unwrap();
+    db.update_memory_space("lt_b", "Studio").await.unwrap();
     let claim = claim_new(
         &db,
         &ReadScope::Global,
@@ -1282,9 +1284,10 @@ async fn link_targets_are_the_notes_the_sources_name() {
     targets.sort();
     assert_eq!(
         targets,
-        vec!["Glaze recipes".to_string(), "Travel/Oslo".to_string()]
+        vec!["Glaze recipes".to_string(), "Oslo".to_string()],
+        "the unfiled note and the uniquely titled note in another Space both use bare labels"
     );
-    let body = "Mira fires the kiln in [[Travel/Oslo]] every Sunday [1]. Mira says the \
+    let body = "Mira fires the kiln in [[Oslo]] every Sunday [1]. Mira says the \
                 kiln needs eight hours to cool before anyone opens it [2]. See \
                 [[Glaze recipes]].";
     let written = commit_new(&db, &claim.token, "Kiln cooling", body, "test", None)
@@ -1494,7 +1497,8 @@ async fn a_note_in_another_space_that_shares_an_entity_is_a_link_target() {
         .unwrap();
     assert_eq!(
         links.link_targets,
-        vec!["Studio/Firing schedule".to_string()]
+        vec!["Firing schedule".to_string()],
+        "the unique title in another Space resolves without qualification"
     );
     crate::steep_new::release_new(&claim.token).unwrap();
 }

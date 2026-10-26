@@ -21371,6 +21371,104 @@ async fn page_links_resolve_against_existing_titles() {
 }
 
 #[tokio::test]
+async fn bare_wikilinks_reach_unique_pages_in_other_scopes() {
+    let (db, _dir) = test_db().await;
+    db.insert_page(
+        "kitchen-renovation",
+        "Kitchen Renovation",
+        None,
+        "kitchen body",
+        None,
+        None,
+        &[],
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    .unwrap();
+    insert_scoped_wikilink_page(
+        &db,
+        "lisbon-and-porto",
+        "Lisbon and Porto",
+        "travel body",
+        "travel",
+    )
+    .await;
+    insert_scoped_wikilink_page(
+        &db,
+        "recipes",
+        "Recipes",
+        "see [[Kitchen Renovation]] and [[Lisbon and Porto]]",
+        "recipe",
+    )
+    .await;
+
+    assert_eq!(
+        outbound_target(&db, "recipes", "Kitchen Renovation", &ReadScope::Global)
+            .await
+            .0
+            .as_deref(),
+        Some("kitchen-renovation"),
+        "a Space page reaches the one unfiled page with the bare title"
+    );
+    assert_eq!(
+        outbound_target(&db, "recipes", "Lisbon and Porto", &ReadScope::Global)
+            .await
+            .0
+            .as_deref(),
+        Some("lisbon-and-porto"),
+        "the same multi-label resolution reaches another named Space"
+    );
+}
+
+#[tokio::test]
+async fn bare_wikilink_from_unfiled_reaches_one_named_space() {
+    let (db, _dir) = test_db().await;
+    insert_scoped_wikilink_page(&db, "work-plan", "Work Plan", "plan body", "work").await;
+    db.insert_page(
+        "unfiled-source",
+        "Unfiled Source",
+        None,
+        "see [[Work Plan]]",
+        None,
+        None,
+        &[],
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        outbound_target(&db, "unfiled-source", "Work Plan", &ReadScope::Global)
+            .await
+            .0
+            .as_deref(),
+        Some("work-plan")
+    );
+}
+
+#[tokio::test]
+async fn bare_wikilink_with_two_other_scope_owners_stays_unresolved() {
+    let (db, _dir) = test_db().await;
+    insert_scoped_wikilink_page(&db, "work-shared", "Shared Topic", "work", "work").await;
+    insert_scoped_wikilink_page(&db, "travel-shared", "Shared Topic", "travel", "travel").await;
+    insert_scoped_wikilink_page(
+        &db,
+        "personal-source",
+        "Personal Source",
+        "see [[Shared Topic]]",
+        "personal",
+    )
+    .await;
+
+    assert_eq!(
+        outbound_target(&db, "personal-source", "Shared Topic", &ReadScope::Global)
+            .await
+            .0,
+        None
+    );
+}
+
+#[tokio::test]
 async fn wikilink_resolution_uses_the_source_page_scope() {
     let (db, _dir) = test_db().await;
     insert_scoped_wikilink_page(
@@ -21410,6 +21508,14 @@ async fn wikilink_same_scope_duplicate_titles_remain_unresolved() {
     insert_scoped_wikilink_page(&db, "duplicate-b", "Ambiguous", "body b", "work").await;
     insert_scoped_wikilink_page(
         &db,
+        "duplicate-elsewhere",
+        "Ambiguous",
+        "body elsewhere",
+        "travel",
+    )
+    .await;
+    insert_scoped_wikilink_page(
+        &db,
         "source-ambiguous",
         "Ambiguous Source",
         "see [[Ambiguous]]",
@@ -21424,12 +21530,12 @@ async fn wikilink_same_scope_duplicate_titles_remain_unresolved() {
     assert_eq!(links.len(), 1);
     assert_eq!(
         links[0].target_page_id, None,
-        "same-scope ambiguity must remain visible as an orphan"
+        "same-scope ambiguity must remain an orphan instead of falling back elsewhere"
     );
 }
 
 #[tokio::test]
-async fn orphan_wikilink_repair_is_scoped_per_source_page() {
+async fn orphan_wikilink_repair_prefers_own_scope_and_rejects_other_scope_ambiguity() {
     let (db, _dir) = test_db().await;
     insert_scoped_wikilink_page(
         &db,
@@ -21455,6 +21561,14 @@ async fn orphan_wikilink_repair_is_scoped_per_source_page() {
         "work",
     )
     .await;
+    insert_scoped_wikilink_page(
+        &db,
+        "future-home",
+        "Future Topic",
+        "future home body",
+        "home",
+    )
+    .await;
 
     assert_eq!(db.resolve_orphan_page_links().await.unwrap(), 1);
     let work_links = db
@@ -21468,7 +21582,58 @@ async fn orphan_wikilink_repair_is_scoped_per_source_page() {
     assert_eq!(work_links[0].target_page_id.as_deref(), Some("future-work"));
     assert_eq!(
         personal_links[0].target_page_id, None,
-        "a work target must not repair the personal source's orphan"
+        "two owners in other scopes must not repair the personal source's orphan"
+    );
+}
+
+#[tokio::test]
+async fn orphan_sweep_repairs_one_bare_target_in_another_scope() {
+    let (db, _dir) = test_db().await;
+    insert_scoped_wikilink_page(
+        &db,
+        "travel-source",
+        "Travel Source",
+        "see [[Kitchen Renovation]]",
+        "travel",
+    )
+    .await;
+    assert_eq!(
+        outbound_target(
+            &db,
+            "travel-source",
+            "Kitchen Renovation",
+            &ReadScope::Global,
+        )
+        .await
+        .0,
+        None
+    );
+
+    db.insert_page(
+        "unfiled-kitchen",
+        "Kitchen Renovation",
+        None,
+        "kitchen body",
+        None,
+        None,
+        &[],
+        &chrono::Utc::now().to_rfc3339(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(db.resolve_orphan_page_links().await.unwrap(), 1);
+    assert_eq!(
+        outbound_target(
+            &db,
+            "travel-source",
+            "Kitchen Renovation",
+            &ReadScope::Global,
+        )
+        .await
+        .0
+        .as_deref(),
+        Some("unfiled-kitchen")
     );
 }
 
@@ -49475,7 +49640,7 @@ async fn find_unique_folds_untrimmed_stored_titles() {
 }
 
 /// Manual perf receipt, not a CI gate: the Unicode-correct Rust-side fold
-/// must scan every same-scope title because SQLite's LOWER() is ASCII-only.
+/// must scan every eligible title because SQLite's LOWER() is ASCII-only.
 /// This measures that scan against the old LOWER() SQL shape it replaced so
 /// the cost claim stays a number, not an argument.
 #[tokio::test]
@@ -49515,9 +49680,8 @@ async fn find_unique_scan_cost_receipt() {
             .query(
                 "SELECT id FROM pages WHERE status = 'active' \
                  AND COALESCE(kind, 'concept') != 'entity' \
-                 AND space = COALESCE(?1, '00000000-0000-4000-8000-000000000001') \
-                 AND LOWER(title) = LOWER(?2) LIMIT 2",
-                libsql::params![Option::<String>::None, "bench title 01234"],
+                 AND LOWER(title) = LOWER(?1) LIMIT 2",
+                libsql::params!["bench title 01234"],
             )
             .await
             .unwrap();

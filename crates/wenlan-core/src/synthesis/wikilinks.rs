@@ -8,7 +8,10 @@
 //!      trimmed). No fuzzy matching in v1 — the LLM's job is to use exact
 //!      titles, and the orphan-by-label feed surfaces drift. A label first
 //!      names a note in the linking page's own Space; only when none carries
-//!      that title does `[[Space/Title]]` name a note in another Space.
+//!      that title does `[[Space/Title]]` name a note in another Space. When
+//!      neither reading resolves, a bare title reaches the one note with that
+//!      title across all other Spaces plus the no-Space scope; two owners
+//!      elsewhere leave it unresolved.
 //!   3. Persist resolved/unresolved pairs into the `page_links` table so the
 //!      refinery can re-resolve later (when a target page is created) and
 //!      emergence can mine repeated orphan labels as topic candidates.
@@ -66,8 +69,8 @@ pub fn extract_wikilinks(content: &str) -> Vec<String> {
     out
 }
 
-/// Folded title to its unique owner page (`None`: ambiguous), as built by
-/// `MemoryDB::folded_title_owners_scoped`.
+/// Folded title to its unique owner page (`None`: ambiguous), as built by the
+/// database's active non-entity owner scan.
 pub(crate) type TitleOwners = HashMap<String, Option<String>>;
 
 /// Title owners keyed by Space scope (`None`: the pages in no Space).
@@ -108,22 +111,24 @@ pub(crate) fn label_names_space_note(label: &str, space_name: &str, title: &str)
 
 /// Resolve `label` written in a page whose Space is `scope`. A title in the
 /// page's own Space wins, even an ambiguous one; otherwise the first
-/// `[[Space/Title]]` reading that names a unique note in that Space. Every
-/// Space a reading names must already be loaded into `owners`; a missing map
-/// reads as no match.
+/// `[[Space/Title]]` reading that names a unique note in that Space. Last, the
+/// literal label resolves when exactly one note across every other scope owns
+/// it. `owners` must contain every scope for that fallback; a missing map for
+/// a named Space reading reads as no match.
 pub(crate) fn resolve_label(
     label: &str,
     scope: Option<&str>,
     owners: &OwnersBySpace,
     space_names: &TitleOwners,
 ) -> Option<String> {
-    if let Some(owner) = owners
-        .get(&scope.map(str::to_string))
-        .and_then(|own| own.get(&MemoryDB::page_title_key(label)))
-    {
+    let own_scope = scope
+        .filter(|space| *space != crate::db::UNFILED_SPACE_ID)
+        .map(str::to_string);
+    let label_key = MemoryDB::page_title_key(label);
+    if let Some(owner) = owners.get(&own_scope).and_then(|own| own.get(&label_key)) {
         return owner.clone();
     }
-    space_qualified_readings(label, space_names)
+    if let Some(owner) = space_qualified_readings(label, space_names)
         .into_iter()
         .find_map(|(space, title)| {
             owners
@@ -131,6 +136,22 @@ pub(crate) fn resolve_label(
                 .get(&MemoryDB::page_title_key(title))?
                 .clone()
         })
+    {
+        return Some(owner);
+    }
+
+    let mut elsewhere = None;
+    for (candidate_scope, titles) in owners {
+        if candidate_scope == &own_scope {
+            continue;
+        }
+        match titles.get(&label_key) {
+            Some(Some(owner)) if elsewhere.is_none() => elsewhere = Some(owner.clone()),
+            Some(_) => return None,
+            None => {}
+        }
+    }
+    elsewhere
 }
 
 /// Resolve each extracted label against the current `pages` table.
@@ -156,31 +177,14 @@ pub async fn resolve_against_pages(
                 .await?,
         }]);
     }
-    // One scope scan for the whole label set — the fold and the ambiguity
-    // contract live in `folded_title_owners_scoped`.
-    let mut owners = OwnersBySpace::new();
-    let own_scope = scope.map(str::to_string);
-    owners.insert(
-        own_scope.clone(),
-        db.folded_title_owners_scoped(scope).await?,
-    );
+    // One all-scope scan for the whole label set — the fold and both the
+    // same-scope and elsewhere ambiguity contracts live in the owner maps.
+    let owners = db.folded_title_owners_by_scope().await?;
     let space_names = if qualified {
         db.folded_space_names().await?
     } else {
         TitleOwners::new()
     };
-    for label in labels {
-        if owners[&own_scope].contains_key(&MemoryDB::page_title_key(label)) {
-            continue;
-        }
-        for (space, _) in space_qualified_readings(label, &space_names) {
-            if let std::collections::hash_map::Entry::Vacant(slot) =
-                owners.entry(Some(space.clone()))
-            {
-                slot.insert(db.folded_title_owners_scoped(Some(&space)).await?);
-            }
-        }
-    }
     Ok(labels
         .iter()
         .map(|label| Wikilink {
