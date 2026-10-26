@@ -3620,7 +3620,10 @@ export type McpRepairReason =
   | "command_missing"
   | "command_not_found"
   | "command_not_runnable"
-  | "args_invalid";
+  | "args_invalid"
+  // The daemon can add a more specific diagnostic without making an older
+  // frontend fail to recognize that the row needs the generic repair flow.
+  | (string & {});
 
 /** Whether the raw `wenlan` entry in the client's own config would launch.
  *  `needs_repair` is fixed by the existing `write_mcp_config` command. */

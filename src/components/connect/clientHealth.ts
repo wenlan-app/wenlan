@@ -7,9 +7,9 @@
 // described exactly as it was before they existed: every helper here answers
 // "nothing to say" for a missing field.
 //
-// The Rust side's `detail` and `error` strings are English-only, so none of
-// these helpers hands them to the UI. The line a user reads is chosen by the
-// `reason` / `kind` and localized here.
+// The Rust side's `detail` and `error` strings are English-only. Settings maps
+// every repair reason, including reasons added by newer daemons, to one generic
+// localized status and keeps the raw detail behind Copy details.
 
 import type { McpClient, McpRepairReason } from "../../lib/tauri";
 
@@ -31,12 +31,3 @@ export function entryUnreadable(client: Pick<McpClient, "entry_health">): boolea
 export function isConfigOnly(client: Pick<McpClient, "install_state">): boolean {
   return client.install_state?.kind === "config_only";
 }
-
-/** One key per reason. Flat on purpose: `connectMatrix` is scanned
- *  string-by-string in a test, so it cannot hold nested objects. */
-export const REPAIR_REASON_KEYS = {
-  command_missing: "connectMatrix.repairCommandMissing",
-  command_not_found: "connectMatrix.repairCommandNotFound",
-  command_not_runnable: "connectMatrix.repairCommandNotRunnable",
-  args_invalid: "connectMatrix.repairArgsInvalid",
-} as const satisfies Record<McpRepairReason, string>;

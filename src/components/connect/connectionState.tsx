@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// One definition of "added" and "connected" for every surface that lists the
-// user's AI tools (Settings > Connections and the setup wizard).
+// Shared definitions for the setup wizard and Settings > Connections.
 //
 //   added      Wenlan wrote the plugin or MCP entry. The tool may not even be
 //              running with it yet, so this claims nothing about a link.
@@ -20,6 +19,9 @@ import { clientTypeFamily, toolFamilyOf } from "../../lib/agents";
 import { StatusChip } from "../memory/settings/primitives";
 
 export type ConnectionStatus = "added" | "connected";
+
+/** Both Connections sections use the same quiet disclosure threshold. */
+export const CONNECTION_ROW_LIMIT = 5;
 
 /** The tool family an MCP client belongs to: the same key `toolFamilyOf` gives
  *  its agent identities, so the two sides of the comparison always agree. A
@@ -66,8 +68,7 @@ export function seenFamiliesOf(
   return seen;
 }
 
-/** Added reads as an open dot, because it asserts nothing about a link;
- *  Connected is the filled success dot, because a call was observed. */
+/** The wizard keeps its compact chips; Settings uses sentence statuses. */
 export function ConnectionChip({ status }: { status: ConnectionStatus }) {
   const { t } = useTranslation();
   return status === "connected" ? (

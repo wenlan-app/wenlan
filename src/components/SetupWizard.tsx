@@ -829,6 +829,7 @@ function ConnectStep({
                         })
                       : null
                   }
+                  technicalDetails={[duplicateRiskError]}
                   leading={
                     <input
                       type="checkbox"
