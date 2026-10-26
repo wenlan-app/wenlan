@@ -1692,7 +1692,7 @@ export default function ReviewDialog({
                           <button key={source.source.memory_source_id} type="button" style={evidenceRowStyle}
                             disabled={!onOpenMemory || !source.memory}
                             onClick={() => onOpenMemory?.(source.source.memory_source_id)}>
-                            {source.memory?.title || truncateReviewText(source.memory?.content ?? source.source.memory_source_id, 100)}
+                            {source.memory ? source.memory.title || truncateReviewText(source.memory.content ?? "", 100) || t("citation.untitledMemory") : t("citation.missingTitle")}
                           </button>
                         ))}
                       </div>

@@ -40,7 +40,7 @@ describe("PageLinkPreview", () => {
     expect(dialog).not.toHaveTextContent("# Target page");
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toContain("get_page");
     expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).not.toContain("get_page_explicit_browse");
-    fireEvent.click(screen.getByRole("button", { name: "Open Target page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open →" }));
     expect(onDismiss).toHaveBeenCalledOnce();
     expect(onOpen).toHaveBeenCalledWith("target-1");
     expect(anchor.isConnected).toBe(true);

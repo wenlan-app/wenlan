@@ -132,7 +132,7 @@ test("resolved wikilink previews on hover and opens from the preview card", asyn
   await preview.hover();
   await page.waitForTimeout(250);
   await expect(preview).toBeVisible();
-  await preview.getByRole("button", { name: "Open Target Link", exact: true }).click();
+  await preview.getByRole("button", { name: "Open →", exact: true }).click();
   await expect(page.locator(".page-detail")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Page editor", exact: true })).toBeVisible();
   await expect.poll(() => editorSource(page.getByRole("textbox", { name: "Page editor", exact: true })))
@@ -208,7 +208,7 @@ test("Escape from the keyboard preview returns to the same editable source link"
   const preview = page.getByRole("dialog", { name: /Target Link/ });
   await expect(preview).toBeVisible();
   await page.keyboard.press("Tab");
-  const open = preview.getByRole("button", { name: "Open Target Link", exact: true });
+  const open = preview.getByRole("button", { name: "Open →", exact: true });
   await expect(open).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(preview).toHaveCount(0);

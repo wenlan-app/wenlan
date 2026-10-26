@@ -125,7 +125,7 @@ test.describe('touch reference opening', () => {
     const preview = page.getByRole('dialog', { name: '討論記憶', exact: true });
     await expect(preview).toContainText('Keep the original evidence');
     await expect(editor).toBeVisible();
-    await preview.getByRole('button', { name: 'Open 討論記憶', exact: true }).tap();
+    await preview.getByRole('button', { name: 'Open →', exact: true }).tap();
     await expect(page.locator('.memory-detail-reading')).toContainText('Keep the original evidence');
   });
   test('touch in a source body previews before opening the linked memory', async ({ page }) => {

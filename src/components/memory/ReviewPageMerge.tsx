@@ -94,11 +94,11 @@ export function deriveMergeLedger(
   };
 }
 
-function sourceLabel(entry: PageSourceWithMemory): string {
+function sourceLabel(entry: PageSourceWithMemory, untitled: string): string {
   const label =
     entry.memory?.title ||
     truncateReviewText(entry.memory?.content ?? "", 40) ||
-    entry.source.memory_source_id;
+    untitled;
   return truncateReviewText(label, 40);
 }
 
@@ -280,6 +280,7 @@ function SourceChip({
   entry: PageSourceWithMemory;
   onOpenMemory: (memorySourceId: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
@@ -296,7 +297,7 @@ function SourceChip({
         cursor: "pointer",
       }}
     >
-      {sourceLabel(entry)}
+      {sourceLabel(entry, t(entry.memory ? "citation.untitledMemory" : "citation.missingTitle"))}
     </button>
   );
 }

@@ -309,6 +309,9 @@ export default function PageInfo({
               {visibleRows.map((row, idx) => {
                 const mem = row.memory!;
                 const locator = row.source.memory_source_id;
+                // A note-app source shows its file name; a plain memory ID means nothing to a reader.
+                const fileLabel = sourceLocatorLabel(locator);
+                const rowTitle = mem.title || mem.content?.replace(/\s+/g, " ").trim().slice(0, 60) || t("citation.untitledMemory");
                 return (
                   <li
                     key={locator}
@@ -325,7 +328,7 @@ export default function PageInfo({
                     <button type="button" className="page-info-source-button" onClick={() => onMemoryClick(locator)}
                       aria-label={t("knowledgeContext.openMemory", { title: mem.title || t("knowledgeContext.untitled") })}>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span
+                      {fileLabel !== locator && <span
                         style={{
                           fontFamily: "var(--mem-font-mono)",
                           fontSize: "10px",
@@ -336,9 +339,9 @@ export default function PageInfo({
                           whiteSpace: "nowrap",
                         }}
                       >
-                        {sourceLocatorLabel(locator)}
-                      </span>
-                      {mem.title && (
+                        {fileLabel}
+                      </span>}
+                      {rowTitle && (
                         <span
                           className="truncate"
                           style={{
@@ -348,7 +351,7 @@ export default function PageInfo({
                             color: "var(--mem-text)",
                           }}
                         >
-                          {mem.title}
+                          {rowTitle}
                         </span>
                       )}
                     </div>

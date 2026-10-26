@@ -131,9 +131,18 @@ export function processCitations(
     if (inCode(at)) return; // counted, but displayed raw
     const k = i + 1;
     const c = byOccurrence.get(k);
+    const end = at + m[0].length;
+    // A sentence the reader wrote themselves has no source to show, so its marker is
+    // dropped from the reading view rather than drawn as a chip that points nowhere.
+    if (c?.source_kind === "authored") {
+      const before = content.slice(last, at);
+      out += /^[.,;:!?]/.test(content.slice(end)) ? before.replace(/ +$/, "") : before;
+      last = end;
+      return;
+    }
     if (c) shown.push(c);
     out += content.slice(last, at) + `[${k}](${CITATION_ANCHOR_PREFIX}${k})`;
-    last = at + m[0].length;
+    last = end;
   });
   out += content.slice(last);
   // Numbered over the chips a reader sees: a marker left raw in code takes no

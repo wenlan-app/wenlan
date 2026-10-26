@@ -157,7 +157,7 @@ describe("PageDetail citations", () => {
     // than the separate information dialog's source list.
     const popover = await screen.findByRole("tooltip");
     expect(within(popover).getByText("Local-first decision")).toBeInTheDocument();
-    await user.click(within(popover).getByRole("button", { name: /Open memory/ }));
+    await user.click(within(popover).getByRole("button", { name: /^Open →$/ }));
     expect(props.onMemoryClick).toHaveBeenCalledWith("mem-1");
   });
 
@@ -165,7 +165,7 @@ describe("PageDetail citations", () => {
     renderPage();
     const chip = await screen.findByRole("button", { name: /Memory 2/ });
     fireEvent.focus(chip);
-    expect(await screen.findByText(/no longer exists/i)).toBeInTheDocument();
+    expect(await screen.findByText("Source removed")).toBeInTheDocument();
   });
 
   it("display-strips markers when citations were cleared by an edit", async () => {

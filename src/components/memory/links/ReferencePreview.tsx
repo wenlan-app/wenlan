@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { getMemoryDetail, getPage, type MemoryItem, type Page, type PageCitation } from "../../../lib/tauri";
-import { citationDisplayLabel } from "../../../lib/pageCitations";
+import { citationDisplayLabel, citationExternalDetail } from "../../../lib/pageCitations";
 import { ReferenceTypeIcon, citationReferenceKind, citationSourceApp, type ReferenceKind } from "./ReferenceTypeIcon";
 import { sourceAppName } from "../sources/sourcePresentation";
 import type { NavigableReferenceTarget, ReferencePreviewRequest } from "./referenceTypes";
@@ -42,11 +42,13 @@ export function referenceExcerpt(raw: string): string {
     .replace(/<[^>]*>/g, " ")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g, (_all, target: string, alias?: string) => alias?.trim() || target.trim())
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    // A heading becomes its own sentence, so it does not run into the paragraph under it.
+    .replace(/^\s{0,3}#{1,6}\s+(.+?)\s*$/gm, (_all, heading: string) => /[.!?:;。！？：；]$/.test(heading) ? heading : `${heading}${/[\u3000-\u9fff]$/.test(heading) ? "。" : "."}`)
     .replace(/^\s{0,3}(?:[-*+]\s+|\d+\.\s+)/gm, "")
     .replace(/[`*_>#~]/g, "")
     .replace(/<[^>\n]*>/g, " ")
     .replace(/\s+/g, " ")
+    .replace(/([。！？；：]) /g, "$1")
     .trim()
     .slice(0, 240);
 }
@@ -150,7 +152,10 @@ export function ReferencePreview({
   const fallbackCitationLabel = citation ? appName ?? citationDisplayLabel(citation, {
     memory: t("citation.kind.memory"), external_file: t("citation.kind.file"), external_url: t("citation.kind.url"), authored: t("citation.kind.authored"),
   }) : "";
-  const title = page?.title ?? memory?.title ?? (citation ? fallbackCitationLabel : anchorLabel);
+  // The card's header already names the kind, so an external source's title is just its file or host name.
+  const citationTitle = citation ? citationExternalDetail(citation) ?? fallbackCitationLabel : "";
+  const memoryCitationGone = citation?.source_kind === "memory" && !memory && !citationTarget?.sourcesLoading;
+  const title = page?.title ?? memory?.title ?? (memoryCitationGone ? t("citation.missingTitle") : citation ? citationTitle : anchorLabel);
   const citationLocation = citation?.source_kind === "external_file" ? citationFilePath(citation.locator) : citation?.locator;
   const query = pageId ? pageQuery : memoryId ? memoryQuery : null;
   const content = page?.summary || (page ? page.content : memory?.summary || memory?.content) || "";
@@ -184,6 +189,7 @@ export function ReferencePreview({
     : target?.kind === "page" || target?.kind === "memory"
     ? t(`${copyPrefix}.open`, { title })
     : citation?.source_kind === "external_file" ? t("citation.openFile") : citation?.source_kind === "external_url" ? (appName ? t("citation.openInApp", { app: appName }) : t("citation.openLink")) : "";
+  const modifiedAgo = citationTarget?.sourceMemory?.last_modified ? relativeMs(citationTarget.sourceMemory.last_modified * 1000, relativeLocale) : "";
   const activeOpenFailure = openFailure?.key === requestKey && openFailure.anchor === request.anchor ? openFailure.message : null;
   const preview = (
     <div
@@ -192,6 +198,7 @@ export function ReferencePreview({
       data-reference-owner={request.anchor.closest('[role="dialog"], [role="complementary"]')?.getAttribute("aria-labelledby") ?? undefined}
       data-page-link-preview={dataPageLinkPreview ? "true" : undefined}
       data-citation-popover={dataCitationPopover ? "true" : undefined}
+      data-missing-source={memoryCitationGone ? citation?.locator : undefined}
       id={id}
       role={role}
       aria-label={title}
@@ -232,16 +239,15 @@ export function ReferencePreview({
         <button type="button" onClick={() => void query?.refetch()} style={{ color: "var(--mem-accent-indigo)" }}>{t(`${copyPrefix}.retry`)}</button>
       </div>}
       {unavailable && <p role="status" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)" }}>{citation?.source_kind === "memory" ? t("citation.missingMemory") : t(`${copyPrefix}.unavailable`)}</p>}
-      {excerpt && <p style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)", lineHeight: 1.5, overflowWrap: "anywhere" }}>{excerpt}</p>}
-      {citation?.source_kind === "memory" && <details>
-        <summary style={{ color: "var(--mem-accent-indigo)", cursor: "pointer", fontSize: "var(--mem-text-xs)" }}>{t("pageDetail.editor.technicalDetails")}</summary>
-        <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>
-      </details>}
-      {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", overflowWrap: "anywhere" }}>{citationLocation}</p>}
-      {citationTarget?.sourceMemory?.last_modified && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{relativeMs(citationTarget.sourceMemory.last_modified * 1000, relativeLocale)}</p>}
+      {/* Three lines are enough to recognise the source; the card is for a glance, not for reading. */}
+      {excerpt && <p data-reference-excerpt="true" style={{ margin: 0, color: "var(--mem-text-secondary)", fontSize: "var(--mem-text-xs)", lineHeight: 1.5, overflowWrap: "anywhere", display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 3, overflow: "hidden" }}>{excerpt}</p>}
+      {citation && citation.source_kind !== "memory" && citation.source_kind !== "authored" && <p title={citationLocation} style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{citationLocation}</p>}
+      {modifiedAgo && !canOpen && <p style={{ margin: 0, color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{modifiedAgo}</p>}
       {/* Pinned to the card's bottom edge so a long excerpt or link never scrolls the open action out of view. */}
-      {canOpen && <div data-reference-preview-actions="true" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "6px 12px 12px", background: "var(--mem-surface)" }}>
-        <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)" }}>{action}</button>
+      {/* The age shares the action's row so the card ends on one line instead of a stray link under a gap. */}
+      {canOpen && <div data-reference-preview-actions="true" className="flex items-baseline justify-between gap-3" style={{ position: "sticky", bottom: "-12px", margin: "0 -12px -12px", padding: "2px 12px 12px", background: "var(--mem-surface)" }}>
+        <span style={{ color: "var(--mem-text-tertiary)", fontSize: "10px" }}>{modifiedAgo}</span>
+        <button type="button" onClick={open} style={{ color: "var(--mem-accent-indigo)", background: "none", border: 0, padding: 0, cursor: "pointer", font: "inherit", fontSize: "var(--mem-text-xs)", whiteSpace: "nowrap", flexShrink: 0 }}>{action}</button>
       </div>}
     </div>
   );

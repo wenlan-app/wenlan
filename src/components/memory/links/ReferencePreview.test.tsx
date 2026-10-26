@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { invoke } from "@tauri-apps/api/core";
 import type { MemoryItem, PageCitation } from "../../../lib/tauri";
 import { i18n } from "../../../i18n";
-import { ReferencePreview } from "./ReferencePreview";
+import { ReferencePreview, referenceExcerpt } from "./ReferencePreview";
 
 afterEach(() => { cleanup(); vi.mocked(invoke).mockReset(); });
 
@@ -58,7 +58,7 @@ describe("ReferencePreview citation targets", () => {
     expect(preview).toHaveTextContent("/notes/original.md");
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open file/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open →$/ }));
     expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_file", { path: "/notes/original.md" });
   });
 
@@ -83,13 +83,13 @@ describe("ReferencePreview citation targets", () => {
     </QueryClientProvider>;
     const view = render(renderPreview(citation, anchorA));
 
-    fireEvent.click(screen.getByRole("button", { name: /^Open file/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open →$/ }));
     await waitFor(() => expect(rejectOpen).toBeTypeOf("function"));
     view.rerender(renderPreview(citation, anchorB));
     await act(async () => { rejectOpen(new Error("old target could not open")); });
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "File · original.md" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "original.md" })).toBeInTheDocument();
   });
 });
 
@@ -173,6 +173,20 @@ describe("ReferencePreview citation time", () => {
     expect(renderTimed()).toHaveTextContent("15h ago");
   });
 
+  it("puts the age and a plain Open action on one footer row", () => {
+    const preview = renderTimed();
+    const actions = screen.getByRole("button", { name: "Open →" }).closest<HTMLElement>('[data-reference-preview-actions="true"]');
+    expect(actions).toHaveTextContent("15h ago");
+    expect(preview).not.toHaveTextContent(/Open memory/);
+  });
+
+  it("clamps the source excerpt to three lines so the card stays a glance", () => {
+    const excerpt = renderTimed().querySelector<HTMLElement>('[data-reference-excerpt="true"]');
+    expect(excerpt).not.toBeNull();
+    expect(excerpt!.style.webkitLineClamp).toBe("3");
+    expect(excerpt!.style.overflow).toBe("hidden");
+  });
+
   it.each(["zh-Hans", "zh-Hant"])("shows the source's age in %s, not in English", async (lng) => {
     await i18n.changeLanguage(lng);
     try {
@@ -183,5 +197,13 @@ describe("ReferencePreview citation time", () => {
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+});
+
+describe("referenceExcerpt", () => {
+  it("ends a heading as a sentence so it does not run into the next paragraph", () => {
+    expect(referenceExcerpt("## Ask before changing the plan\nIf proceeding, say so.")).toBe("Ask before changing the plan. If proceeding, say so.");
+    expect(referenceExcerpt("## 何時求助\n先說明情況。")).toBe("何時求助。先說明情況。");
+    expect(referenceExcerpt("## Already done?\nYes.")).toBe("Already done? Yes.");
   });
 });

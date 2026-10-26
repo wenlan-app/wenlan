@@ -63,7 +63,7 @@ function CanonicalReferenceLink({
         data-reference-navigation="true"
         data-reference-link="true"
         aria-label={ariaLabel}
-        title={`${typeLabel}: ${label ?? referenceTarget.id}`}
+        title={label ? `${typeLabel}: ${label}` : typeLabel}
         style={props.style}
         onPointerDown={(event) => {
           touchTap.current = event.pointerType === "touch";
