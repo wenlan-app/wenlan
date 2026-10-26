@@ -50,25 +50,30 @@ yourself.
    person would look up as one page; an item belongs to at most one group;
    items that fit no group are left out. A group may be a single item only
    when that item is long on its own (a whole note, a long chat).
-3. Biggest groups first, at most 8 pages this run. For each group:
+3. Biggest groups first, at most 8 pages this run. Finish each group, from
+   its claim to its page, before you claim the next, so the first page lands
+   within a few minutes. For each group:
    1. Call `steep` with `action: "claim_new"` and its `item_ids`. The answer
       has the items' text numbered `[1]` to `[n]`, a `token` and a `note`. A
       refusal (too little text, already taken) means skip the group.
-   2. When the answer has `organize`, organize the sources before writing,
-      the way Wenlan's own model would: their type and tags, and the people,
-      projects and tools they mention. Hand the helper `organize.stages` and
-      `organize.tasks`, and ask it to answer every task with its stage's
-      `instructions` as the system prompt and the task's `prompt` as the
-      message, and to reply with only JSON: `[{"n": 1, "answer": "..."}]`,
-      each answer exactly what the instructions ask for. Call `steep` with
-      `action: "organize"`, the token and those `answers`, each passed back
-      unchanged.
+   2. When the answer has `organize`, the helper organizes the sources before
+      you write, the way Wenlan's own model would: their type and tags, and
+      the people, projects and tools they mention. Hand the helper the
+      `token`, `organize.stages` and `organize.tasks`. Ask it to answer every
+      task with its stage's `instructions` as the system prompt and the
+      task's `prompt` as the message, each answer exactly what the
+      instructions ask for; then to call `steep` itself with
+      `action: "organize"`, the token and `answers` as
+      `[{"n": 1, "answer": "..."}]`; and to reply with only one line: the
+      counts and the `link_targets` that call returned. Never pass the
+      answers on yourself. Only when you organize yourself (no helper could
+      start) do you call `organize` with your own answers.
    3. Write the page yourself, with your main model. Never let the small
       model write it. Title: short, names the topic, in the sources'
       language. Open with one plain sentence that says what the page is
       about, then short paragraphs or lists. Use only what the sources say
       and cite every claim with its number, like `[2]`. When the organize
-      answer (or else the claim) has `link_targets`, link each of those pages
+      result (or else the claim) has `link_targets`, link each of those pages
       the text talks about once as `[[Title]]`, with the title exactly as
       given. Link no other titles.
    4. Call `steep` with `action: "write"`, the token, `title` and the body as
@@ -77,6 +82,12 @@ yourself.
       the sources turn out not to belong together, `release` the token.
    5. `created`: a new page. `merged`: a page on that topic already existed
       and took the sources.
+
+   The helper for the next group may organize while you write a page, when
+   your tool runs helpers in the background: after the page's organize line
+   is back, claim the next group and start its helper in the background,
+   then write the page.
+   Otherwise take the groups one after another.
 
 ## 3. Pages that went out of date
 

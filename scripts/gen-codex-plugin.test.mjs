@@ -374,9 +374,17 @@ test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helpe
     "Spawn a subagent on\n`gpt-6-luna`",
     "`codex exec -m gpt-6-luna \"<the task>\"`",
     "Only when no helper on a cheaper model can start at all, do the grouping and\norganizing yourself, for this run only and at most 8 pages",
+    "Finish each group, from\n   its claim to its page, before you claim the next",
+    "then to call `steep` itself with",
+    "Never pass the\n      answers on yourself",
+    "start its helper in the background",
   ]) {
     assert.ok(newPages.includes(needle), needle);
   }
   assert.ok(!/haiku|Agent`/.test(newPages), "no Claude Code helper wording in Codex");
   assert.ok(claudeSkill("steep").includes("`Agent` with `model: \"haiku\"`"), "Claude keeps Haiku");
+  assert.ok(
+    claudeSkill("steep").includes("as an `Agent` with `run_in_background: true`"),
+    "Claude organizes the next group in the background",
+  );
 });

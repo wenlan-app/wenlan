@@ -69,11 +69,13 @@ impl OrganizeTask {
 /// How to answer, for the caller.
 pub const ORGANIZE_NOTE: &str = "Before writing the page, organize its sources the way \
 Wenlan's own model would. Give these tasks to a helper on your tool's cheapest model, not \
-your main model. For each task, use the instructions of its stage as the system prompt and \
-the task's prompt as the user message, and reply with only what those instructions ask for. \
-Then call organize with the token and the answers as [{n, answer}], each reply passed back \
-unchanged. Only if no helper on a cheaper model can start at all, answer the tasks yourself \
-for this run and say so in your report.";
+your main model, with the token. For each task the helper uses the instructions of its \
+stage as the system prompt and the task's prompt as the user message, and answers with only \
+what those instructions ask for. The helper itself then calls organize with the token and \
+its answers as [{n, answer}], and reports back one line: the counts and link_targets that \
+call returned. Never pass the answers on through your main model. Only if no helper on a \
+cheaper model can start at all, answer the tasks yourself for this run and say so in your \
+report.";
 
 /// Plan the organize work for `source_ids`, in that order: for each memory
 /// still waiting on classification or on entity detection, the request the

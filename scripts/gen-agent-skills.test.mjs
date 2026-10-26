@@ -451,6 +451,10 @@ test("real tree: steep names each host's cheap helper and the one-run fallback",
     "Kimi Code has no cheaper helper",
     "for this run only and at most 8 pages",
     "say in the\nreport that no cheaper helper was available",
+    "Finish each group, from\n   its claim to its page, before you claim the next",
+    "then to call `steep` itself with",
+    "Never pass the\n      answers on yourself",
+    "start its helper in the background",
   ]) {
     assert.ok(newPages.includes(needle), needle);
   }

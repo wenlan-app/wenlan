@@ -132,6 +132,18 @@
             "Antigravity and Cursor, use the `wenlan-helper` agent when Wenlan installed",
             "it. Kimi Code has no cheaper helper, so the next rule applies there."
           ]
+        },
+        {
+          "from": [
+            "   your tool runs helpers in the background. In Claude Code, after the",
+            "   page's organize line is back, claim the next group and start its helper",
+            "   as an `Agent` with `run_in_background: true`, then write the page."
+          ],
+          "to": [
+            "   your tool runs helpers in the background: after the page's organize line",
+            "   is back, claim the next group and start its helper in the background,",
+            "   then write the page."
+          ]
         }
       ]
     },
