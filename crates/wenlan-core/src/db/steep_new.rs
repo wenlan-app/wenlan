@@ -57,6 +57,47 @@ fn unpaged_where() -> String {
     )
 }
 
+fn unpaged_columns(head_chars: usize) -> String {
+    format!(
+        "m.source_id, m.chunk_index, m.title, substr(m.content, 1, {head_chars}), \
+         length(m.content), m.source_agent, m.content_hash IS NOT NULL, m.space, \
+         m.last_modified"
+    )
+}
+
+async fn read_unpaged_rows(
+    rows: &mut libsql::Rows,
+    out: &mut Vec<UnpagedRow>,
+) -> Result<(), WenlanError> {
+    while let Some(row) = rows
+        .next()
+        .await
+        .map_err(|e| WenlanError::VectorDb(format!("list_unpaged_memory_rows row: {e}")))?
+    {
+        let space: Option<String> = row
+            .get::<Option<String>>(7)
+            .unwrap_or(None)
+            .filter(|s| s != super::UNFILED_SPACE_ID);
+        out.push(UnpagedRow {
+            source_id: row
+                .get(0)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+            chunk_index: row.get(1).unwrap_or(0),
+            title: row.get(2).unwrap_or(None),
+            head: row
+                .get::<Option<String>>(3)
+                .unwrap_or(None)
+                .unwrap_or_default(),
+            chars: row.get(4).unwrap_or(0),
+            source_agent: row.get(5).unwrap_or(None),
+            has_file_hash: row.get::<i64>(6).unwrap_or(0) != 0,
+            space,
+            last_modified: row.get(8).unwrap_or(0),
+        });
+    }
+    Ok(())
+}
+
 impl MemoryDB {
     /// The memory source ids some note cites. A note citing part of a file or
     /// a chat has taken that item in, even where it skipped a chunk.
@@ -94,11 +135,9 @@ impl MemoryDB {
         head_chars: usize,
     ) -> Result<Vec<UnpagedRow>, WenlanError> {
         let sql = format!(
-            "SELECT m.source_id, m.chunk_index, m.title, substr(m.content, 1, {head_chars}), \
-                    length(m.content), m.source_agent, m.content_hash IS NOT NULL, m.space, \
-                    m.last_modified \
-             FROM memories m WHERE {} \
+            "SELECT {} FROM memories m WHERE {} \
              ORDER BY m.last_modified DESC, m.source_id ASC, m.chunk_index ASC",
+            unpaged_columns(head_chars),
             unpaged_where()
         );
         let conn = self.conn.lock().await;
@@ -107,32 +146,43 @@ impl MemoryDB {
             .await
             .map_err(|e| WenlanError::VectorDb(format!("list_unpaged_memory_rows: {e}")))?;
         let mut out = Vec::new();
-        while let Some(row) = rows
-            .next()
-            .await
-            .map_err(|e| WenlanError::VectorDb(format!("list_unpaged_memory_rows row: {e}")))?
-        {
-            let space: Option<String> = row
-                .get::<Option<String>>(7)
-                .unwrap_or(None)
-                .filter(|s| s != super::UNFILED_SPACE_ID);
-            out.push(UnpagedRow {
-                source_id: row
-                    .get(0)
-                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
-                chunk_index: row.get(1).unwrap_or(0),
-                title: row.get(2).unwrap_or(None),
-                head: row
-                    .get::<Option<String>>(3)
-                    .unwrap_or(None)
-                    .unwrap_or_default(),
-                chars: row.get(4).unwrap_or(0),
-                source_agent: row.get(5).unwrap_or(None),
-                has_file_hash: row.get::<i64>(6).unwrap_or(0) != 0,
-                space,
-                last_modified: row.get(8).unwrap_or(0),
-            });
+        read_unpaged_rows(&mut rows, &mut out).await?;
+        Ok(out)
+    }
+
+    /// [`Self::list_unpaged_memory_rows`] for the items `keys` only: the rows
+    /// whose source id is a key or starts with it (a note's chunks are
+    /// `<key>::<n>`), read through the source id index. The caller keeps the
+    /// rows that belong to a key; a few others sharing its start may come
+    /// back too. Newest first.
+    pub(crate) async fn unpaged_memory_rows_of(
+        &self,
+        head_chars: usize,
+        keys: &[String],
+    ) -> Result<Vec<UnpagedRow>, WenlanError> {
+        // `[key, key;)`: the key, then anything after it that starts with a
+        // character up to ':', so every `<key>::<n>`.
+        let sql = format!(
+            "SELECT {} FROM memories m \
+             WHERE m.source_id >= ?1 AND m.source_id < ?2 AND {}",
+            unpaged_columns(head_chars),
+            unpaged_where()
+        );
+        let conn = self.conn.lock().await;
+        let mut out = Vec::new();
+        for key in keys {
+            let mut rows = conn
+                .query(&sql, libsql::params![key.as_str(), format!("{key};")])
+                .await
+                .map_err(|e| WenlanError::VectorDb(format!("unpaged_memory_rows_of: {e}")))?;
+            read_unpaged_rows(&mut rows, &mut out).await?;
         }
+        out.sort_by(|a, b| {
+            b.last_modified
+                .cmp(&a.last_modified)
+                .then_with(|| a.source_id.cmp(&b.source_id))
+                .then_with(|| a.chunk_index.cmp(&b.chunk_index))
+        });
         Ok(out)
     }
 
@@ -322,6 +372,100 @@ impl MemoryDB {
                     .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
                 title,
                 space,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Notes (not entity or source pages, not the Overview) citing a memory
+    /// whose source id, lowercased, holds one of `probes`, newest first, as
+    /// `(page id, title, space, cited source id)`: one row per citation.
+    pub(crate) async fn notes_citing_sources_with(
+        &self,
+        probes: &[String],
+    ) -> Result<Vec<(String, String, Option<String>, String)>, WenlanError> {
+        self.notes_citing_where(probes, "c.source_id", "").await
+    }
+
+    /// Notes (not entity or source pages, not the Overview) citing a memory
+    /// whose text, lowercased (ASCII), holds one of `probes`, newest first,
+    /// as `(page id, title, space, that memory's text)`: one row per cited
+    /// memory row.
+    pub(crate) async fn notes_citing_text_with(
+        &self,
+        probes: &[String],
+    ) -> Result<Vec<(String, String, Option<String>, String)>, WenlanError> {
+        self.notes_citing_where(
+            probes,
+            "m.content",
+            "CROSS JOIN memories m ON m.source = 'memory' AND m.source_id = c.source_id",
+        )
+        .await
+    }
+
+    /// The rows of [`Self::notes_citing_sources_with`] and
+    /// [`Self::notes_citing_text_with`]: `column` holds one of `probes`.
+    async fn notes_citing_where(
+        &self,
+        probes: &[String],
+        column: &str,
+        join: &str,
+    ) -> Result<Vec<(String, String, Option<String>, String)>, WenlanError> {
+        if probes.is_empty() {
+            return Ok(Vec::new());
+        }
+        // The citations lead (CROSS JOIN keeps that order): read through
+        // every memory instead, the text test would cost seconds.
+        let holds = (1..=probes.len())
+            .map(|i| format!("instr(lower({column}), ?{i}) > 0"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let sql = format!(
+            "SELECT p.id, p.title, COALESCE(p.workspace, p.space), {column} FROM ( \
+               SELECT pe.page_id AS page_id, pe.locator AS source_id FROM page_evidence pe \
+               WHERE pe.locator IS NOT NULL \
+               UNION \
+               SELECT e.src_id, e.dst_id FROM edges e \
+               WHERE e.edge_type = 'cites' AND e.dst_kind IN ('memory', 'external') \
+                 AND e.valid_until IS NULL \
+             ) c CROSS JOIN pages p ON p.id = c.page_id {join} \
+             WHERE {ORGANIZING} AND LOWER(p.title) <> 'overview' AND ({holds}) \
+             ORDER BY p.last_modified DESC, p.id ASC LIMIT 500"
+        );
+        let params: Vec<libsql::Value> = probes
+            .iter()
+            .map(|probe| libsql::Value::Text(probe.clone()))
+            .collect();
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, params)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("notes_citing_where: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("notes_citing_where row: {e}")))?
+        {
+            let title = row
+                .get::<Option<String>>(1)
+                .unwrap_or(None)
+                .unwrap_or_default();
+            if title.trim().is_empty() {
+                continue;
+            }
+            let space: Option<String> = row
+                .get::<Option<String>>(2)
+                .unwrap_or(None)
+                .filter(|s| s != super::UNFILED_SPACE_ID);
+            out.push((
+                row.get(0)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                title,
+                space,
+                row.get::<Option<String>>(3)
+                    .unwrap_or(None)
+                    .unwrap_or_default(),
             ));
         }
         Ok(out)

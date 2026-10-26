@@ -92,7 +92,7 @@ mod source_sync;
 mod space_context;
 mod space_rename;
 mod steep;
-mod steep_new;
+pub(crate) mod steep_new;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -41650,10 +41650,18 @@ impl MemoryDB {
         &self,
         only_source_id: Option<&str>,
     ) -> Result<Option<EntityEnrichmentCandidate>, WenlanError> {
+        // One named memory is found by its source id, through the index:
+        // `?2 IS NULL OR m.source_id = ?2` would read every memory row.
+        let only = if only_source_id.is_some() {
+            "m.source_id = ?2"
+        } else {
+            "?2 IS NULL"
+        };
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT m.source_id, \
+                &format!(
+                    "SELECT m.source_id, \
                             CASE WHEN es.status = 'skipped' \
                                       OR es.input_version IS NULL \
                                       OR es.input_version <> m.version \
@@ -41679,7 +41687,7 @@ impl MemoryDB {
                        ON es.source_id = m.source_id \
                       AND es.step_name = 'entity_extract' \
                      WHERE m.source = 'memory' AND m.chunk_index = 0 \
-                       AND (?2 IS NULL OR m.source_id = ?2) \
+                       AND {only} \
                        AND COALESCE(m.pending_revision, 0) = 0 \
                        AND NOT EXISTS ( \
                            SELECT 1 FROM memories superseder \
@@ -41702,7 +41710,8 @@ impl MemoryDB {
                      ORDER BY CASE WHEN m.supersedes IS NOT NULL THEN 0 ELSE 1 END, \
                               COALESCE(eo.service_class, 2) ASC, \
                               COALESCE(es.updated_at, m.last_modified) ASC, m.source_id ASC \
-                     LIMIT 1",
+                     LIMIT 1"
+                ),
                 libsql::params![Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS as i64, only_source_id],
             )
             .await
@@ -49336,10 +49345,18 @@ impl MemoryDB {
         max_attempts: u32,
         only_source_id: Option<&str>,
     ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
+        // One named memory is found by its source id, through the index:
+        // `?2 IS NULL OR m.source_id = ?2` would read every memory row.
+        let only = if only_source_id.is_some() {
+            "m.source_id = ?2"
+        } else {
+            "?2 IS NULL"
+        };
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT m.source_id, m.content, m.version, m.memory_type, m.space,
+                &format!(
+                    "SELECT m.source_id, m.content, m.version, m.memory_type, m.space,
                         COALESCE(eo.memory_type_explicit, 1),
                         COALESCE(eo.structured_fields_explicit, 1),
                         COALESCE(eo.space_rejected, 1),
@@ -49354,7 +49371,7 @@ impl MemoryDB {
                  LEFT JOIN enrichment_steps es
                    ON es.source_id=m.source_id AND es.step_name='classify'
                  WHERE m.source='memory' AND m.chunk_index=0
-                   AND (?2 IS NULL OR m.source_id=?2)
+                   AND {only}
                    AND COALESCE(m.pending_revision, 0)=0
                    AND NOT EXISTS (
                        SELECT 1 FROM memories superseder
@@ -49377,7 +49394,8 @@ impl MemoryDB {
                           COALESCE(eo.service_class, 2) ASC,
                           COALESCE(es.updated_at, m.last_modified) ASC,
                           m.source_id ASC
-                 LIMIT 1",
+                 LIMIT 1"
+                ),
                 libsql::params![i64::from(max_attempts), only_source_id],
             )
             .await

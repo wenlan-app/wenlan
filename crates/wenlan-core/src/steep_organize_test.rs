@@ -774,7 +774,11 @@ async fn a_group_about_a_subject_with_a_note_attaches_to_it() {
     let links = crate::steep_new::links_new(&db, &claim.token)
         .await
         .unwrap();
-    assert_eq!(links.link_targets, vec!["About Mira".to_string()]);
+    assert!(
+        links.link_targets.is_empty(),
+        "the note the sources go into is no link target: {:?}",
+        links.link_targets
+    );
     let existing = links.existing_page.expect("the note about Mira");
     assert_eq!(existing.page_id, note);
     assert_eq!(existing.title, "About Mira");

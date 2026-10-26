@@ -209,6 +209,75 @@ pub async fn new_material(
     scope: &ReadScope,
 ) -> Result<Vec<NewMaterial>, WenlanError> {
     let rows = db.list_unpaged_memory_rows(SNIPPET_CHARS + 40).await?;
+    let material = fold_material(db, scope, rows).await?;
+    remember_short_ids(&material);
+    Ok(material)
+}
+
+/// Item ids by the short id a compact list shows them under
+/// ([`wenlan_types::steep_short_id`]), as the lists handed them out, so a
+/// claim finds its items without reading every item again.
+static SHORT_IDS: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Most short ids remembered; past it the map starts over.
+const MAX_SHORT_IDS: usize = 200_000;
+
+fn remember_short_ids(material: &[NewMaterial]) {
+    let mut ids = SHORT_IDS
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if ids.len() + material.len() > MAX_SHORT_IDS {
+        ids.clear();
+    }
+    for m in material {
+        ids.insert(
+            wenlan_types::steep_short_id(&m.item.item_id),
+            m.item.item_id.clone(),
+        );
+    }
+}
+
+/// The new material of the items `wanted` names (item ids, or the short ids
+/// a list showed), read through the source id index; `None` when some id
+/// names nothing this way (a short id no list in this run of the daemon
+/// handed out), and the caller reads all of it.
+async fn material_of(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    wanted: &[String],
+) -> Result<Option<Vec<NewMaterial>>, WenlanError> {
+    let keys: Vec<String> = {
+        let ids = SHORT_IDS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        wanted
+            .iter()
+            .map(|id| ids.get(id).cloned().unwrap_or_else(|| id.clone()))
+            .collect()
+    };
+    let rows = db
+        .unpaged_memory_rows_of(SNIPPET_CHARS + 40, &keys)
+        .await?
+        .into_iter()
+        .filter(|row| keys.iter().any(|key| item_key(&row.source_id) == key))
+        .collect();
+    let material = fold_material(db, scope, rows).await?;
+    let found = |key: &String| material.iter().any(|m| &m.item.item_id == key);
+    if keys.iter().all(found) {
+        Ok(Some(material))
+    } else {
+        Ok(None)
+    }
+}
+
+/// `rows` (newest first) folded into items, leaving out items a note drew on
+/// and rows outside `scope`.
+async fn fold_material(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    rows: Vec<crate::db::steep_new::UnpagedRow>,
+) -> Result<Vec<NewMaterial>, WenlanError> {
     // An item a note already drew on is done, even if the note left out a
     // chunk (a heading-only chunk of a file, a greeting in a chat): offering
     // the rest again would ask for the same page twice.
@@ -415,7 +484,12 @@ pub async fn claim_new_on(
     if wanted.is_empty() {
         return Err(SteepError::Invalid("item_ids is empty".into()));
     }
-    let material = new_material(db, scope).await?;
+    let started = Instant::now();
+    let material = match material_of(db, scope, &wanted).await? {
+        Some(material) => material,
+        None => new_material(db, scope).await?,
+    };
+    let read_items = started.elapsed();
     let by_id: HashMap<&str, &NewMaterial> = material
         .iter()
         .map(|m| (m.item.item_id.as_str(), m))
@@ -567,6 +641,7 @@ pub async fn claim_new_on(
     // Planning runs after the hold, so no other run can claim these sources
     // while their model-free entity steps commit. A failure leaves the claim
     // as it was before organizing existed: the page can still be written.
+    let read_sources = started.elapsed();
     let mut organize_work = None;
     if let Some(options) = organize {
         match crate::steep_organize::plan(db, options, &source_ids).await {
@@ -579,9 +654,25 @@ pub async fn claim_new_on(
             Err(error) => log::warn!("[steep-new] organize planning failed: {error}"),
         }
     }
-    let link_targets = link_targets(db, scope, space.as_deref(), &sources).await;
+    let planned = started.elapsed();
     let existing_page =
         existing_page(db, scope, space.as_deref(), &source_ids, topic.as_deref()).await;
+    let link_targets = link_targets(
+        db,
+        scope,
+        space.as_deref(),
+        &sources,
+        existing_page.as_ref().map(|page| page.page_id.as_str()),
+    )
+    .await;
+    log::info!(
+        "[steep-new] claim of {} sources: items {:?}, sources {:?}, organize {:?}, total {:?}",
+        sources.len(),
+        read_items,
+        read_sources,
+        planned,
+        started.elapsed()
+    );
     Ok(NewPageClaim {
         token,
         held_until,
@@ -904,25 +995,38 @@ pub async fn links_new(db: &MemoryDB, token: &str) -> Result<SteepNewLinksRespon
     let claim = renew(token)?;
     let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
     let space = claim.space.as_deref();
+    let existing_page =
+        existing_page(db, &claim.scope, space, &source_ids, claim.topic.as_deref()).await;
+    let link_targets = link_targets(
+        db,
+        &claim.scope,
+        space,
+        &claim.sources,
+        existing_page.as_ref().map(|page| page.page_id.as_str()),
+    )
+    .await;
     Ok(SteepNewLinksResponse {
-        link_targets: link_targets(db, &claim.scope, space, &claim.sources).await,
-        existing_page: existing_page(db, &claim.scope, space, &source_ids, claim.topic.as_deref())
-            .await,
+        link_targets,
+        existing_page,
     })
 }
 
 /// Existing pages a note from `sources` (`(memory id, text)`) may link,
-/// best first: notes whose title the sources' text names, then notes that
-/// share the most entities with the sources (the note is about one, or cites
-/// memories that mention one). Each comes as the label a `[[link]]` in a
-/// note born in `space` resolves with: its title, or `Space/Title` for a
-/// note in another Space. Entity pages are not offered: a wikilink never
-/// resolves to one. Best effort: a failed read offers none.
+/// best first: notes written from vault notes that the sources' vault notes
+/// link to as `[[Note]]` or are linked from, then notes whose title the
+/// sources' text names, then notes that share the most entities with the
+/// sources (the note is about one, or cites memories that mention one).
+/// `existing` (the claim's existing page, which the sources go into) is
+/// never one. Each comes as the label a `[[link]]` in a note born in `space`
+/// resolves with: its title, or `Space/Title` for a note in another Space.
+/// Entity pages are not offered: a wikilink never resolves to one. Best
+/// effort: a failed read offers none.
 async fn link_targets(
     db: &MemoryDB,
     scope: &ReadScope,
     space: Option<&str>,
     sources: &[(String, String)],
+    existing: Option<&str>,
 ) -> Vec<String> {
     let source_ids: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
     let raw: String = sources
@@ -931,14 +1035,21 @@ async fn link_targets(
         .collect::<Vec<_>>()
         .join("\n");
     let text = raw.to_lowercase();
-    let mut candidates: Vec<(String, String, Option<String>)> = Vec::new();
+    let mut candidates: Vec<(String, String, Option<String>)> = vault_linked_notes(db, sources)
+        .await
+        .unwrap_or_else(|error| {
+            log::warn!("[steep-new] link targets: {error}");
+            Vec::new()
+        });
+    let mut named = 0;
     match db.recent_notes(TITLE_MATCH_NOTES).await {
         Ok(notes) => {
             for (page_id, title, page_space) in notes {
-                if candidates.len() < MAX_LINK_TARGETS * 2
+                if named < MAX_LINK_TARGETS * 2
                     && names_in_text(&text, &title)
                     && !named_only_in_passing(&raw, &title)
                 {
+                    named += 1;
                     candidates.push((page_id, title, page_space));
                 }
             }
@@ -971,7 +1082,10 @@ async fn link_targets(
         if out.len() >= MAX_LINK_TARGETS {
             break;
         }
-        if !seen.insert(page_id.clone()) || !scope.matches(page_space.as_deref()) {
+        if existing == Some(page_id.as_str())
+            || !seen.insert(page_id.clone())
+            || !scope.matches(page_space.as_deref())
+        {
             continue;
         }
         let label = if page_space.as_deref() == space {
@@ -996,6 +1110,130 @@ async fn link_targets(
         }
     }
     out
+}
+
+/// The name a vault note goes by in `[[links]]`: the file name of the note
+/// a memory's source id comes from (`<source>::<path>::<n>`), without
+/// `.md`. `None` for a memory that is no vault note.
+fn vault_note_name(source_id: &str) -> Option<&str> {
+    let (_, path) = item_key(source_id).rsplit_once("::")?;
+    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let stem = file.get(..file.len().checked_sub(3)?)?;
+    let name = stem.trim();
+    (file[stem.len()..].eq_ignore_ascii_case(".md") && !name.is_empty()).then_some(name)
+}
+
+/// The vault note names `text` links to as `[[Note]]`, `[[folder/Note]]`,
+/// `[[Note#Heading]]` or `[[Note|shown]]`.
+fn linked_note_names(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for label in crate::synthesis::wikilinks::extract_wikilinks(text) {
+        let file = label.rsplit(['/', '\\']).next().unwrap_or(&label).trim();
+        let name = match file.len().checked_sub(3) {
+            Some(cut) if file.is_char_boundary(cut) && file[cut..].eq_ignore_ascii_case(".md") => {
+                file[..cut].trim()
+            }
+            _ => file,
+        };
+        if !name.is_empty() && !out.iter().any(|n| same_note_name(n, name)) {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// Whether two vault note names name one note: Obsidian matches them case
+/// aside.
+fn same_note_name(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
+}
+
+/// Most vault note names one claim looks up links for, each way.
+const MAX_LINKED_NAMES: usize = 200;
+
+/// Notes written from vault notes that are linked with the claim's vault
+/// notes: a note one of `sources` links to as `[[Note]]`, or a note whose
+/// own text links to one of the sources' notes. The note with the most such
+/// links comes first, then the newest. The strongest sign two pages belong
+/// together: the user linked their notes by hand.
+async fn vault_linked_notes(
+    db: &MemoryDB,
+    sources: &[(String, String)],
+) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+    let mut own: Vec<String> = Vec::new();
+    for (source_id, _) in sources {
+        if let Some(name) = vault_note_name(source_id) {
+            if !own.iter().any(|n| same_note_name(n, name)) {
+                own.push(name.to_string());
+            }
+        }
+    }
+    let mut linked: Vec<String> = Vec::new();
+    for (_, text) in sources {
+        for name in linked_note_names(text) {
+            let known = |n: &String| same_note_name(n, &name);
+            if !own.iter().any(known) && !linked.iter().any(known) {
+                linked.push(name);
+            }
+        }
+    }
+    own.truncate(MAX_LINKED_NAMES);
+    linked.truncate(MAX_LINKED_NAMES);
+    // (page id, title, space, links), newest first as found.
+    let mut found: Vec<(String, String, Option<String>, usize)> = Vec::new();
+    let mut add = |page_id: &str, title: &str, page_space: &Option<String>| match found
+        .iter_mut()
+        .find(|(id, ..)| id == page_id)
+    {
+        Some(entry) => entry.3 += 1,
+        None => found.push((
+            page_id.to_string(),
+            title.to_string(),
+            page_space.clone(),
+            1,
+        )),
+    };
+    // The notes the sources link to: pages citing a memory of that note.
+    if !linked.is_empty() {
+        let probes: Vec<String> = linked
+            .iter()
+            .map(|name| format!("{}.md::", name.to_ascii_lowercase()))
+            .collect();
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        for (page_id, title, page_space, source_id) in db.notes_citing_sources_with(&probes).await?
+        {
+            let Some(name) = vault_note_name(&source_id) else {
+                continue;
+            };
+            if linked.iter().any(|n| same_note_name(n, name))
+                && seen.insert((page_id.clone(), name.to_lowercase()))
+            {
+                add(&page_id, &title, &page_space);
+            }
+        }
+    }
+    // The notes that link to the sources' notes: pages citing a memory
+    // whose text links to one.
+    if !own.is_empty() {
+        // The name alone: a link can name the note's folder first.
+        let probes: Vec<String> = own.iter().map(|name| name.to_ascii_lowercase()).collect();
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        for (page_id, title, page_space, text) in db.notes_citing_text_with(&probes).await? {
+            for name in linked_note_names(&text) {
+                if own.iter().any(|n| same_note_name(n, &name))
+                    && seen.insert((page_id.clone(), name.to_lowercase()))
+                {
+                    add(&page_id, &title, &page_space);
+                }
+            }
+        }
+    }
+    // Stable: equally linked notes keep the newest-first order they came in.
+    found.sort_by_key(|entry| std::cmp::Reverse(entry.3));
+    Ok(found
+        .into_iter()
+        .map(|(page_id, title, page_space, _)| (page_id, title, page_space))
+        .collect())
 }
 
 /// Whether lowercased `text` names the page `title` as a whole phrase. A
@@ -1207,13 +1445,20 @@ pub async fn organize_new(
         out.remaining = u32::try_from(claim.organize.len()).unwrap_or(u32::MAX);
         claim.space.clone()
     };
-    out.link_targets = link_targets(db, &scope, space_now.as_deref(), &sources).await;
     out.existing_page = existing_page(
         db,
         &scope,
         space_now.as_deref(),
         &source_ids,
         topic.as_deref(),
+    )
+    .await;
+    out.link_targets = link_targets(
+        db,
+        &scope,
+        space_now.as_deref(),
+        &sources,
+        out.existing_page.as_ref().map(|page| page.page_id.as_str()),
     )
     .await;
     log::info!(
