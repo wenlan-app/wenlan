@@ -1,4 +1,4 @@
-use crate::client::{WenlanClient, WenlanError};
+use crate::client::{AgentIdentity, WenlanClient, WenlanError};
 use crate::query_output;
 use crate::types::*;
 use rmcp::{
@@ -450,9 +450,9 @@ pub struct WenlanMcpServer {
     client: WenlanClient,
     transport: TransportMode,
     tool_profile: ToolProfile,
-    agent_name: String,
-    /// Client name from MCP initialize handshake (e.g., "Claude Code", "Claude Desktop")
-    client_name: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// One connection identity shared with `client`, so the request header and
+    /// stored `source_agent` always resolve to the same tool name.
+    agent_identity: AgentIdentity,
     agent_work_cache: std::sync::Arc<std::sync::Mutex<LintAgentWorkCache>>,
     lint_report_cache: std::sync::Arc<std::sync::Mutex<LintReportCache>>,
     user_id: Option<String>,
@@ -2187,22 +2187,16 @@ fn visible_page_sources_for_standard(
 
 impl WenlanMcpServer {
     /// Resolve the source_agent for a write operation.
-    /// Priority: explicit param > MCP client name (from initialize) > configured agent_name.
+    /// Priority: explicit tool param > resolved connection identity. The
+    /// connection identity itself is an explicit configured name when one was
+    /// supplied, otherwise the MCP client name or the transport fallback.
     fn resolve_source_agent(&self, param_agent: Option<String>) -> Option<String> {
-        // 1. Explicit param from tool call
         if let Some(ref agent) = param_agent {
             if !agent.is_empty() {
                 return param_agent;
             }
         }
-        // 2. Client name captured from MCP initialize handshake
-        if let Ok(guard) = self.client_name.lock() {
-            if let Some(ref name) = *guard {
-                return Some(name.clone());
-            }
-        }
-        // 3. Configured --agent-name flag
-        Some(self.agent_name.clone())
+        Some(self.agent_identity.current())
     }
 
     /// Resolve a local user_id for logging or future use.
@@ -4256,7 +4250,7 @@ impl WenlanMcpServer {
         let client = self.session_client(params.session.as_deref()).await;
         let request = wenlan_types::brief::BriefUpdateRequest {
             space,
-            caller_id: self.agent_name.clone(),
+            caller_id: self.agent_identity.current(),
             operation_id: params
                 .operation_id
                 .filter(|id| !id.trim().is_empty())
@@ -4575,13 +4569,21 @@ impl WenlanMcpServer {
         agent_name: String,
         user_id: Option<String>,
     ) -> Self {
+        Self::new_with_identity(client, transport, AgentIdentity::from(agent_name), user_id)
+    }
+
+    pub fn new_with_identity(
+        client: WenlanClient,
+        transport: TransportMode,
+        agent_identity: AgentIdentity,
+        user_id: Option<String>,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            client,
+            client: client.with_agent_identity(agent_identity.clone()),
             transport,
             tool_profile: ToolProfile::Standard,
-            agent_name,
-            client_name: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            agent_identity,
             agent_work_cache: std::sync::Arc::new(std::sync::Mutex::new(
                 LintAgentWorkCache::default(),
             )),
@@ -5438,14 +5440,16 @@ impl ServerHandler for WenlanMcpServer {
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
-        // Capture client name from MCP initialize handshake
         if let Some(client_info) = context.peer.peer_info() {
             let name = &client_info.client_info.name;
-            if !name.is_empty() {
-                if let Ok(mut guard) = self.client_name.lock() {
-                    tracing::info!("MCP client identified: {}", name);
-                    *guard = Some(name.clone());
-                }
+            if self.agent_identity.observe_mcp_client(name) {
+                tracing::info!("MCP client identity resolved from initialize: {}", name);
+            } else if !name.is_empty() {
+                tracing::info!(
+                    "MCP client identified as {}; using configured identity {}",
+                    name,
+                    self.agent_identity.current()
+                );
             }
         }
     }
@@ -5795,9 +5799,40 @@ mod tests {
     #[test]
     fn test_stdio_mode_falls_back_to_agent_name() {
         let server = make_server(TransportMode::Stdio, "fallback", None);
-        // No param, no client_name → falls back to configured agent_name
+        // No handshake replacement → keeps the configured identity.
         let result = server.resolve_source_agent(None);
         assert_eq!(result, Some("fallback".into()));
+    }
+
+    #[test]
+    fn configured_agent_name_wins_over_conflicting_handshake() {
+        let identity = AgentIdentity::new("kimi-desktop".into(), true);
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Stdio,
+            identity.clone(),
+            None,
+        );
+        identity.observe_mcp_client("kimi-code");
+
+        assert_eq!(
+            server.resolve_source_agent(None),
+            Some("kimi-desktop".into())
+        );
+    }
+
+    #[test]
+    fn implicit_agent_name_yields_to_handshake() {
+        let identity = AgentIdentity::new("claude-code".into(), false);
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Stdio,
+            identity.clone(),
+            None,
+        );
+        identity.observe_mcp_client("kimi-code");
+
+        assert_eq!(server.resolve_source_agent(None), Some("kimi-code".into()));
     }
 
     #[test]
@@ -10055,7 +10090,7 @@ mod tests {
         assert_eq!(json["space"], "work");
         assert_eq!(json["entity"], "Alice");
         assert!(json["confidence"].as_f64().unwrap() > 0.89);
-        // stdio mode: no param, no client_name → falls back to agent_name "claude"
+        // stdio mode: no replacement → keeps the configured identity "claude"
         assert_eq!(json["source_agent"], "claude");
     }
 

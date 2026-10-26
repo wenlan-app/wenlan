@@ -465,8 +465,12 @@ def validate_runner(root: Path, surface: str, config: dict[str, Any]) -> None:
         if '--agent-name "${agent_name}"' not in runner:
             fail(f"{rel(root, runner_path)} must pass --agent-name through the runner")
     elif agent["mode"] == "wenlan_mcp_stdio_default":
-        if "--agent-name" in runner:
-            fail(f"{rel(root, runner_path)} must rely on the wenlan-mcp stdio default agent")
+        env = "WENLAN_MCP_AGENT_NAME"
+        value = agent["value"]
+        if f'{env}:-{value}' not in runner:
+            fail(f"{rel(root, runner_path)} must default {env} to {value}")
+        if '--agent-name "${agent_name}"' not in runner:
+            fail(f"{rel(root, runner_path)} must pass --agent-name through the runner")
         source = read_text(root, root / "crates" / "wenlan-mcp" / "src" / "main.rs")
         pattern = re.compile(
             r"if\s+serve_args\.is_some\(\)\s*\{.*?\"remote-mcp\"\.into\(\).*?\}"

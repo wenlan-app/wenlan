@@ -110,6 +110,8 @@ fn plugin_manifest_and_mcp_launcher_stay_in_sync() {
     );
     assert!(!runner.contains("wenlan-mcp@latest"));
     assert!(!runner.contains("wenlan-mcp@^"));
+    assert!(runner.contains("WENLAN_MCP_AGENT_NAME:-claude-code"));
+    assert!(runner.contains("--agent-name \"${agent_name}\""));
 }
 
 #[test]
