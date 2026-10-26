@@ -1097,7 +1097,7 @@ describe("liveInvoke wire_state (setup wizard daemon row)", () => {
     // double-register the server since their plugins declare their own.
     expect(codex?.route).toBe("plugin");
     expect(claudeCode?.route).toBe("plugin");
-    // Matches detect_mcp_clients_cmd's fixture: Codex CLI is the one already
+    // Matches detect_mcp_clients_cmd's fixture: ChatGPT / Codex is already
     // configured client.
     expect(codex?.has_plugin).toEqual({ kind: "yes" });
   });
