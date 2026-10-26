@@ -890,8 +890,9 @@ async fn the_helper_fetches_the_open_tasks_with_the_token_alone() {
 }
 
 /// A note titled like an entity its sources mention becomes that entity's
-/// page: about it, under its exact title, and the Wiki lists one page with
-/// that title, not the note and the entity side by side.
+/// page: about it, under the entity's title in the caller's capitals, and
+/// the Wiki lists one page with that title, not the note and the entity
+/// side by side.
 #[tokio::test]
 async fn a_note_titled_like_an_entity_becomes_its_page() {
     let (db, _dir) = crate::db::tests::test_db().await;
@@ -924,9 +925,14 @@ async fn a_note_titled_like_an_entity_becomes_its_page() {
         .await
         .unwrap();
     assert_eq!(written.outcome, "created");
-    assert_eq!(written.title.as_deref(), Some("kiln"), "the entity's title");
+    assert_eq!(
+        written.title.as_deref(),
+        Some("Kiln"),
+        "the entity's title, capitalized as the caller wrote it"
+    );
     let page_id = written.page_id.unwrap();
     let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.title, "Kiln");
     assert_eq!(page.entity_id.as_deref(), Some(kiln.as_str()));
     let established = db
         .source_entity_links(&["stub_b".to_string()])

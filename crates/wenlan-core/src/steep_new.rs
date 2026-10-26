@@ -1043,6 +1043,22 @@ async fn entity_titled(
         .find(|(_, entity_title)| title_key(entity_title) == key))
 }
 
+/// `name` with each word written as `title` writes it, ASCII case aside:
+/// ("kitchen renovation", "Kitchen Renovation 2023") gives "Kitchen
+/// Renovation". Only ASCII case changes, so the result still equals `name`
+/// to SQL `LOWER`.
+fn cased_like(name: &str, title: &str) -> String {
+    name.split(' ')
+        .map(|word| {
+            title
+                .split(|c: char| c.is_whitespace())
+                .find(|t| t.eq_ignore_ascii_case(word))
+                .unwrap_or(word)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The entities most of `source_ids` mention: each linked to more than half
 /// of them, the most-linked first.
 async fn majority_entities(
@@ -1402,14 +1418,16 @@ pub async fn commit_new(
     //
     // An entity the sources mention whose own entity page carries this
     // title (years and versions aside) is this subject already: the note
-    // becomes its page, about it and under its exact title, so the Wiki
-    // lists one page (see `entity_row_browse_predicate`), not two.
+    // becomes its page, about it and under its title, so the Wiki lists one
+    // page (see `entity_row_browse_predicate`, which ignores ASCII case), not
+    // two. The entity's words keep the caller's capitals: entity names are
+    // often stored lowercase.
     let mut title = title.to_string();
     let mut entity_id = None;
     if let Some((entity, entity_title)) = entity_titled(db, &ids, &title).await? {
         if !db.entity_has_note(&entity).await? {
             entity_id = Some(entity);
-            title = entity_title;
+            title = cased_like(&entity_title, &title);
         }
     }
     if entity_id.is_none() {
@@ -1570,6 +1588,20 @@ mod tests {
             item_title(None, "mem_1", "\n# Kyoto trip\nday one"),
             "Kyoto trip"
         );
+    }
+
+    #[test]
+    fn an_entity_title_keeps_the_callers_capitals() {
+        assert_eq!(
+            cased_like("kitchen renovation", "Kitchen Renovation 2023"),
+            "Kitchen Renovation"
+        );
+        assert_eq!(cased_like("garden", "Garden"), "Garden");
+        assert_eq!(cased_like("garden", "garden"), "garden");
+        assert_eq!(cased_like("Mira Chen", "mira chen"), "mira chen");
+        // A word the title does not write as such keeps the entity's spelling.
+        assert_eq!(cased_like("rock-n-roll", "Rock N Roll"), "rock-n-roll");
+        assert_eq!(cased_like("廚房裝修", "廚房裝修2023"), "廚房裝修");
     }
 
     #[test]
