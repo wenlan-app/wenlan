@@ -8,6 +8,8 @@
 //   multi      On demand, three tools connected (Codex most recent): tool picker
 //   writing    Codex is writing: 3 of 8 pages landed, more held
 //   done       8 pages written a few minutes ago, 12 notes still waiting
+//   held       Codex took 12 notes 4 minutes ago and nothing has come of it
+//   stopped    The last run let its 12 notes go without writing a page
 //   none       On demand, no AI tool connected
 //   automatic  Automatic, a local model writes pages
 //   chats      Checklist chat import: nothing waits until the chats land
@@ -74,9 +76,14 @@ export function seedOrganizeRun(): void {
   try {
     if (organizeScenario === "writing" || organizeScenario === "done") {
       localStorage.setItem(RUN_KEY, JSON.stringify({ startedAt: runStartedAt, tool: "Codex", handedOver: "opened" }));
+    } else if (organizeScenario === "held" || organizeScenario === "stopped") {
+      // The tool claimed all 12 a while ago; "stopped" then finds them back.
+      const claim = { held: 12, total: 12, at: now - 4 * 60_000 };
+      localStorage.setItem(RUN_KEY, JSON.stringify({ startedAt: now - 5 * 60_000, tool: "Codex", handedOver: "opened", claim }));
     } else if (organizeScenario) {
       localStorage.removeItem(RUN_KEY);
     }
+    if (organizeScenario) localStorage.removeItem("askAi:writePages:stopped");
     // What the add flow leaves behind once the vault is added.
     if (organizeScenario === "folder") rememberAddedFolder(folderSource);
   } catch {
@@ -100,7 +107,7 @@ export function organizeInvoke(command: string, args: Record<string, unknown> | 
       if (scenario === "chats") {
         return { value: chatsLanded ? { items: [], total: 24, kinds: { chat: 24 }, held: 0 } : { items: [], total: 0, kinds: {}, held: 0 } };
       }
-      return { value: { items: [], total: 12, kinds: { note: 12 }, held: scenario === "writing" ? 5 : 0 } };
+      return { value: { items: [], total: 12, kinds: { note: 12 }, held: scenario === "writing" ? 5 : scenario === "held" ? 12 : 0 } };
     }
     case "list_pages":
     case "list_pages_explicit_browse": {

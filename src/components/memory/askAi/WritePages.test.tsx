@@ -109,7 +109,7 @@ describe("writePagesView", () => {
       page("a", "2026-10-22T10:01:00Z"),
       page("b", "2026-10-22T10:03:00Z"),
     ];
-    const writing = writePagesView({ ...base, run, pages, list: material(9, { held: 2 }), now: START + 200_000, lastChangeAt: START });
+    const writing = writePagesView({ ...base, run, pages, list: material(9, { held: 2 }), now: START + 200_000, lastChangeAt: START + 180_000 });
     expect(writing).toMatchObject({ kind: "working", writing: true, stuck: false });
     expect(writing.kind === "working" && writing.written.map((p: Page) => p.id)).toEqual(["a", "b"]);
 
@@ -124,6 +124,15 @@ describe("writePagesView", () => {
     const run = { startedAt: START, tool: "Codex" };
     const view = writePagesView({ ...base, run, list: material(12), now: START + 130_000, lastChangeAt: START });
     expect(view).toMatchObject({ kind: "working", writing: false, stuck: true });
+  });
+
+  it("says so too while the tool holds material but nothing comes of it", () => {
+    // A tool killed right after claiming keeps its claim until it runs out.
+    const run = { startedAt: START, tool: "Claude Code" };
+    const held = writePagesView({ ...base, run, list: material(16, { held: 12 }), now: START + 130_000, lastChangeAt: START + 5_000 });
+    expect(held).toMatchObject({ kind: "working", writing: true, stuck: true });
+    const busy = writePagesView({ ...base, run, list: material(16, { held: 12 }), now: START + 60_000, lastChangeAt: START + 5_000 });
+    expect(busy).toMatchObject({ kind: "working", writing: true, stuck: false });
   });
 });
 
@@ -244,6 +253,50 @@ describe("WritePagesLine", () => {
     const line = await screen.findByTestId("write-pages-line");
     expect(line).toHaveAttribute("data-state", "done");
     expect(screen.queryByRole("button", { name: "Page a" })).toBeNull();
+  });
+
+  it("says the last run stopped when its material came back with no page", async () => {
+    localStorage.setItem(
+      "askAi:writePages:run",
+      JSON.stringify({ startedAt: Date.now() - 900_000, tool: "Claude Code", handedOver: "opened", claim: { held: 12, total: 16, at: Date.now() - 60_000 } }),
+    );
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(16));
+    vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
+    wrap(<Line pages={[]} />);
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "ready"));
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("The last run stopped before writing pages.");
+    expect(localStorage.getItem("askAi:writePages:run")).toBeNull();
+    // A new run starts clean.
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
+    expect(screen.getByTestId("write-pages-line")).not.toHaveTextContent("The last run stopped");
+  });
+
+  it("says the tool may be waiting when it has held the same material for minutes with no page", async () => {
+    localStorage.setItem(
+      "askAi:writePages:run",
+      JSON.stringify({ startedAt: Date.now() - 300_000, tool: "Claude Code", handedOver: "opened", claim: { held: 12, total: 16, at: Date.now() - 200_000 } }),
+    );
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(16, { held: 12 }));
+    wrap(<Line pages={[]} />);
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Claude Code is writing pages"));
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
+  });
+
+  it("does not call a run stopped when its material was written up", async () => {
+    localStorage.setItem(
+      "askAi:writePages:run",
+      JSON.stringify({ startedAt: Date.now() - 60_000, tool: "Claude Code", handedOver: "opened", claim: { held: 12, total: 16, at: Date.now() - 60_000 } }),
+    );
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    // Twelve left the list: pages were written, the page list just has not caught up.
+    vi.mocked(listNewMaterial).mockResolvedValue(material(4));
+    wrap(<Line pages={[]} />);
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
+    expect(screen.getByTestId("write-pages-line")).not.toHaveTextContent("The last run stopped");
+    expect(localStorage.getItem("askAi:writePages:run")).not.toBeNull();
   });
 
   it("follows the run in one line", async () => {

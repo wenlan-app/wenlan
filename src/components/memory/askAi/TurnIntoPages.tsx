@@ -355,6 +355,9 @@ export function TurnIntoPagesView({
   if (kind === "ready") {
     return shell(
       <>
+        {/* The last run let its material go without a page: say so, rather
+            than quietly offering the same button again. */}
+        {state.stopped ? <p className="turn-pages-body" data-testid="turn-into-pages-stopped">{t("askAi.writePages.stopped")}</p> : null}
         <p className="turn-pages-body">
           {t(hasPages ? "askAi.writePages.importCard.bodyMore" : "askAi.writePages.importCard.body", {
             tool: toolName,

@@ -138,6 +138,20 @@ describe("WritePagesStep", () => {
     expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("2 notes aren't in any page yet.");
   });
 
+  it("says the last run stopped before writing pages, over the same button", () => {
+    const ready = state({ kind: "ready", list: { items: [], total: 16 } }, { stopped: true });
+    renderStep({ state: ready });
+    expect(screen.getByTestId("getting-started-pages-stopped")).toHaveTextContent("The last run stopped before writing pages.");
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(ready.start).toHaveBeenCalled();
+  });
+
+  it("says the tool may be waiting while it holds material and nothing lands", () => {
+    renderStep({ state: state({ kind: "working", written: [], writing: true, stuck: true }, { run: { startedAt: Date.now(), tool: "Claude Code", handedOver: "opened" } }) });
+    expect(screen.getByTestId("row")).toHaveTextContent("Claude Code is writing pages");
+    expect(screen.getByTestId("row")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
+  });
+
   it("says Wenlan does it in Automatic mode", () => {
     renderStep({ state: state({ kind: "hidden" }, { onDemand: false }) });
     expect(screen.getByTestId("row")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.automatic"));

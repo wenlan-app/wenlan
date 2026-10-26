@@ -2446,6 +2446,7 @@ const en = {
       pasteIt: "Paste the command into {{tool}} and press Enter.",
       writingNext: "Writing the next page…",
       stuck: "Nothing happening? Check whether {{tool}} is waiting for you.",
+      stopped: "The last run stopped before writing pages.",
       done_one: "Wrote 1 page in {{minutes}} min.",
       done_other: "Wrote {{count}} pages in {{minutes}} min.",
       sources_one: "{{count}} source",
@@ -5373,6 +5374,8 @@ const zhHans = {
       pasteIt: "把指令贴到 {{tool}}，再按 Enter。",
       writingNext: "正在写下一篇…",
       stuck: "{{tool}} 没动静？回去看看它是不是在等你。",
+      // zh: needs native review
+      stopped: "上次整理还没写出笔记就停了。",
       done_one: "整理好 {{count}} 篇笔记，用了 {{minutes}} 分钟。",
       done_other: "整理好 {{count}} 篇笔记，用了 {{minutes}} 分钟。",
       sources_one: "{{count}} 个来源",
@@ -8291,6 +8294,8 @@ const zhHant = {
       pasteIt: "把指令貼到 {{tool}}，再按 Enter。",
       writingNext: "正在寫下一篇…",
       stuck: "{{tool}} 沒動靜？回去看看它是不是在等你。",
+      // zh: needs native review
+      stopped: "上次整理還沒寫出筆記就停了。",
       done_one: "整理好 {{count}} 篇筆記，用了 {{minutes}} 分鐘。",
       done_other: "整理好 {{count}} 篇筆記，用了 {{minutes}} 分鐘。",
       sources_one: "{{count}} 個來源",

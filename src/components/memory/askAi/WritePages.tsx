@@ -30,7 +30,8 @@ export const PAGES_PER_RUN = 8;
 const SHOW_AGAIN_AFTER = 10;
 /** No claim held and nothing new for this long: the run is over. */
 const QUIET_DONE_MS = 90_000;
-/** Nothing at all for this long: the tool may be waiting for the user. */
+/** No page and no change in what the tool holds for this long: the tool may
+ *  be waiting for the user, or it stopped and its claim has not run out. */
 const STUCK_MS = 120_000;
 /** A page born this long before the button was pressed still counts; the
  *  daemon's clock and the app's can differ a little. */
@@ -43,6 +44,8 @@ const RUN_KEY = "askAi:writePages:run";
 /** The tool the user picked for writing pages, when more than one is connected. */
 const TOOL_KEY = "askAi:writePages:tool";
 const DISMISSED_KEY = "askAi:writePages:dismissedTotal";
+/** The last run let its material go without writing a page. */
+const STOPPED_KEY = "askAi:writePages:stopped";
 
 /** One press of "Ask AI to write pages", remembered per viewer. */
 export interface WritePagesRun {
@@ -53,6 +56,11 @@ export interface WritePagesRun {
    *  user to paste. Kept with the run so a remount (a language switch, a new
    *  window) still says the right thing. */
   readonly handedOver?: "opened" | "copied";
+  /** What the tool last held, how much material was waiting then, and when
+   *  what it held last changed. Kept with the run so a remount does not
+   *  restart the quiet clock, and so material let go with none of it gone
+   *  and no page written reads as a stopped run. */
+  readonly claim?: { readonly held: number; readonly total: number; readonly at: number };
 }
 
 export type WritePagesView =
@@ -121,7 +129,9 @@ export function writePagesView({
         left: list.total,
       };
     }
-    return { kind: "working", written, writing, stuck: !writing && quiet >= STUCK_MS };
+    // Holding material is not progress by itself: a tool that was stopped
+    // keeps its claim until the claim runs out.
+    return { kind: "working", written, writing, stuck: quiet >= STUCK_MS };
   }
   if (list.total < minItems) return { kind: "hidden" };
   if (dismissedTotal !== null && list.total < dismissedTotal + SHOW_AGAIN_AFTER) return { kind: "hidden" };
@@ -206,6 +216,8 @@ export interface WritePagesState {
   readonly copyCommand: () => Promise<boolean>;
   /** Hides the home line until much more material arrives, and ends the run. */
   readonly close: () => void;
+  /** The last run ended without a page: its material came back untouched. */
+  readonly stopped?: boolean;
 }
 
 export function useWritePages(pages: readonly Page[]): WritePagesState {
@@ -220,6 +232,7 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const [run, setRunState] = useState<WritePagesRun | null>(() => readJson<WritePagesRun>(RUN_KEY));
   const [dismissedTotal, setDismissedTotal] = useState<number | null>(() => readJson<number>(DISMISSED_KEY));
   const [copied, setCopied] = useState(false);
+  const [stopped, setStoppedState] = useState(() => readJson<boolean>(STOPPED_KEY) === true);
   const [now, setNow] = useState(() => Date.now());
   const list = useQuery({
     queryKey: ["newMaterial"],
@@ -232,14 +245,37 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
 
   const written = run ? pagesWrittenSince(pages, run.startedAt) : [];
   // When the tool last did something: the newest page it wrote, by that
-  // page's own birth time (so reopening the home later does not restart the
-  // quiet clock), or the last time it was seen holding material.
-  const held = list.data?.held ?? 0;
-  const [heldSeenAt, setHeldSeenAt] = useState(0);
+  // page's own birth time, or the last time what it holds changed (kept with
+  // the run), so reopening the home later does not restart the quiet clock.
+  // Only a change counts: a tool killed mid-run holds its material until the
+  // claim runs out, and all that time nothing is being written.
+  const lastChangeAt = Math.max(run?.startedAt ?? 0, run?.claim?.at ?? 0, ...written.map((page) => pageCreatedMs(page) ?? 0));
+
+  const material = list.data;
   useEffect(() => {
-    if (held > 0) setHeldSeenAt(Date.now());
-  }, [held, list.dataUpdatedAt]);
-  const lastChangeAt = Math.max(run?.startedAt ?? 0, heldSeenAt, ...written.map((page) => pageCreatedMs(page) ?? 0));
+    if (!run || !material) return;
+    const held = material.held ?? 0;
+    const claim = run.claim;
+    const keep = (next: WritePagesRun | null) => {
+      writeJson(RUN_KEY, next);
+      setRunState(next);
+    };
+    if (held > 0) {
+      if (claim?.held !== held) keep({ ...run, claim: { held, total: material.total, at: Date.now() } });
+      else if (claim.total !== material.total) keep({ ...run, claim: { ...claim, total: material.total } });
+      return;
+    }
+    if (!claim || claim.held === 0) return;
+    // The tool let its material go with none of it written up (nothing left
+    // the list, no page landed): the run stopped. End it; the offer says so.
+    if (written.length === 0 && material.total >= claim.total) {
+      keep(null);
+      writeJson(STOPPED_KEY, true);
+      setStoppedState(true);
+      return;
+    }
+    keep({ ...run, claim: { held: 0, total: material.total, at: Date.now() } });
+  }, [run, material, written.length]);
   const lastTotal = useRef(list.data?.total);
 
   // A page the tool wrote takes its material out of the list, whether or not
@@ -291,7 +327,12 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     writeJson(TOOL_KEY, family);
     setPicked(family);
   };
+  const clearStopped = () => {
+    writeJson(STOPPED_KEY, null);
+    setStoppedState(false);
+  };
   const close = () => {
+    clearStopped();
     writeJson(DISMISSED_KEY, total);
     setDismissedTotal(total);
     setRun(null);
@@ -306,6 +347,7 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     if (command === null) return;
     const startedAt = Date.now();
     setNow(startedAt);
+    clearStopped();
     const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null };
     setRun(begun);
     if (opensTool && tool) {
@@ -340,6 +382,7 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     start,
     copyCommand,
     close,
+    stopped,
   };
 }
 
@@ -472,6 +515,7 @@ export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }:
         <div className="write-pages-line-row">
           <Sparkle aria-hidden="true" weight="regular" className="write-pages-icon" />
           <p className="write-pages-text">
+            {state.stopped ? <span className="write-pages-stopped">{t("askAi.writePages.stopped")}</span> : null}
             {waitingLine(state, pages, t)}
             {pasteHint ? <span className="write-pages-hint">{pasteHint}</span> : null}
           </p>

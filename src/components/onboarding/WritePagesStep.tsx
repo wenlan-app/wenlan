@@ -91,6 +91,11 @@ export function WritePagesStep({
       </button>
     </div>
   ) : null;
+  // A run that let its material go without a page says so over the offer,
+  // rather than the step quietly going back to it.
+  const stopped = state?.stopped
+    ? <p className="getting-started-step-body" data-testid="getting-started-pages-stopped">{t("askAi.writePages.stopped")}</p>
+    : null;
   // A tool the app cannot open gets the command to paste, and says so.
   const pasteHint = state?.tool && !state.opensTool
     ? <p className="getting-started-step-hint">{t("askAi.writePages.copiesCommand", { tool: state.tool.name })}</p>
@@ -145,6 +150,7 @@ export function WritePagesStep({
       <div className="getting-started-copy">
         {title}
         {list(false)}
+        {stopped}
         {more(view.kind === "ready" || (view.kind === "hidden" && state?.onDemand === true && state.waitingTotal > 0))}
       </div>
     );
@@ -156,6 +162,7 @@ export function WritePagesStep({
       <>
         <div className="getting-started-copy">
           {title}
+          {stopped}
           <p className="getting-started-step-body">
             {state.tool ? waitingLine(state, pages, t) : t("askAi.writePages.noTool")}
           </p>

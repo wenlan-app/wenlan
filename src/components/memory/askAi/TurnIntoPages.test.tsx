@@ -105,6 +105,27 @@ describe("TurnIntoPagesView", () => {
     expect(card.textContent).not.toMatch(/Claude|steep/i);
   });
 
+  it("says the last run stopped before writing pages, over the same button", () => {
+    const s = state(ready, { stopped: true });
+    render(wrap(<TurnIntoPagesView state={s} hasPages={false} />));
+    expect(screen.getByTestId("turn-into-pages-stopped")).toHaveTextContent("The last run stopped before writing pages.");
+    fireEvent.click(screen.getByRole("button", { name: "Write pages with Codex" }));
+    expect(s.start).toHaveBeenCalled();
+  });
+
+  it("says the tool may be waiting while it holds notes and nothing lands", () => {
+    render(wrap(
+      <TurnIntoPagesView
+        state={state(
+          { kind: "working", written: [], writing: true, stuck: true },
+          { run: { startedAt: Date.now(), tool: "Codex", handedOver: "opened" } },
+        )}
+        hasPages={false}
+      />,
+    ));
+    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Nothing happening? Check whether Codex is waiting for you.");
+  });
+
   it("copies the command for a tool with no prompt link, and says where to paste it", () => {
     render(wrap(
       <TurnIntoPagesView
