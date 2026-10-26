@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=3a95752465490c70992a0f96d45ad43e53ec4c2a0f36b233214dc8f0d771b73c -->
+<!-- README_SYNC: source=README.md sha256=53a9f8bbdc76d0aa5f8cb64ebb238af69be837c9ee77966ad86aeb8d554122f7 -->
 
 <p align="center">
   <picture>
@@ -265,7 +265,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 
 **檢索與連接方式：** 插件引導 AI 取用與保存知識；MCP 連接提供可供 AI 呼叫的工具。
 
-- **[本地混合檢索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同詞句、BGE 向量找出相近語意，再以加權 RRF 合併排名；基礎搜尋不需 API key。
+- **[本地混合檢索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同詞句、BGE 向量找出相近語意（libSQL 的 DiskANN 向量索引），再以加權 RRF 合併排名；基礎搜尋不需 API key。
 - **圖譜輔助排序**：沿共同實體提高相關記憶的排名，即使用詞不同也能建立關聯；另可啟用 cross-encoder reranking，逐一比對問題與候選內容，精排結果。
 - **Spaces 範圍檢索**：選定 Space，將回傳的知識限制在相關專案或個人資料集合內。
 
