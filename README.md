@@ -16,17 +16,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
-  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/wenlan-app/wenlan?label=release"></a>
-  <a href="#license"><img alt="License: Apache-2.0 and AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
-</p>
-
-<p align="center">
   <a href="https://github.com/wenlan-app/wenlan/releases/latest"><strong>Download</strong></a> ·
   <a href="#start-in-30-seconds">Get&nbsp;started</a> ·
   <a href="#what-can-i-bring-in">Sources</a> ·
   <a href="#learn-more">Docs</a> ·
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
+  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/wenlan-app/wenlan?label=release"></a>
+  <a href="#license"><img alt="License: Apache-2.0 and AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
 </p>
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
@@ -41,19 +41,13 @@
 
 ## Why Wenlan
 
-I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI chats scattered everywhere, always changing. Keeping an Obsidian vault from rotting within three months took plugins, a workflow, and constant upkeep, and LLM-wiki setups weren't much easier day to day. I wanted an AI-native knowledge base app that stays useful without the hassle.
+I started Wenlan because my notes, documents, and AI chats were scattered and always changing, and keeping a vault from rotting took constant upkeep. I wanted an AI-native knowledge base that stays useful without the hassle.
 
 - **Your AI writes it and keeps it current:** The AI tool you already use, such as Claude Code, Codex, or Cursor, turns your notes, files, and AI chats into pages and updates them later. No extra model needed.
 - **It tells you what it can't back up:** When an AI saves a page, Wenlan compares its citations with the original sources. A page is refused when most of its citations don't match the source, and the AI is told why. Each citation opens the original.
 - **It flags what changed:** Pages remember the sources, other pages, and code lines they rely on. When those change, only the affected pages are flagged for an update.
 - **What you write stays yours:** Pages you wrote or edited are set to **Ask me first**, so AI changes wait for your OK, and you see what each change removes and adds. Wenlan never edits your existing notes without your OK, Obsidian notes included.
 - **Bring what you have, keep it when you switch tools:** Obsidian, Logseq, folders, documents, web links, and chat exports come in as they are ([full list](#what-can-i-bring-in)). Pages are local Markdown, and the same pages work in the AI tools you pick.
-
-<a id="if-you-already-use-claude-code-on-your-notes"></a>
-
-### If you already use Claude Code or Codex on your notes
-
-Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: a page refused when most of its citations don't match the source, flags when sources change, review for AI edits to pages you wrote, and it never edits your existing notes without your OK.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -247,6 +241,12 @@ Simplified workflow. Plugin commands and page organization are optional, with no
 ## Put your knowledge to work with AI
 
 Once your material is in Wenlan, your AI tools can build on it: retrieve earlier decisions with their supporting material, save new work, and keep using it as the evidence changes.
+
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+### If you already use Claude Code or Codex on your notes
+
+Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: a page refused when most of its citations don't match the source, flags when sources change, review for AI edits to pages you wrote, and it never edits your existing notes without your OK.
 
 **Use it for:**
 

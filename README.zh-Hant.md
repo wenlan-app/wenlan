@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6dfc4615c1d0356740566f5e80c3a1900746a1e5374c66911657fc5c9ada171a -->
+<!-- README_SYNC: source=README.md sha256=24d7a2bfcab534fe15117f7e5d69d61d92768496b9066a8199b589d789659368 -->
 
 <p align="center">
   <picture>
@@ -18,17 +18,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
-  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/wenlan-app/wenlan?label=release"></a>
-  <a href="#license"><img alt="授權：Apache-2.0 與 AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
-</p>
-
-<p align="center">
   <a href="https://github.com/wenlan-app/wenlan/releases/latest"><strong>下&#8288;載</strong></a> ·
   <a href="#start-in-30-seconds">開&#8288;始&#8288;使&#8288;用</a> ·
   <a href="#what-can-i-bring-in">來&#8288;源</a> ·
   <a href="#learn-more">文&#8288;件</a> ·
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
+  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><img alt="最新版本" src="https://img.shields.io/github/v/release/wenlan-app/wenlan?label=release"></a>
+  <a href="#license"><img alt="授權：Apache-2.0 與 AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
 </p>
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
@@ -43,19 +43,13 @@
 
 ## 為什麼用文瀾
 
-我做文瀾，是因為對自己的知識一直有種焦慮：筆記、文件和 AI 對話散落各處，又一直在變。要讓 Obsidian vault 三個月後不荒廢，得裝外掛、設計流程、不停維護；LLM wiki 那類做法，日常用起來也不輕鬆。我想要一個 AI 原生、不用費心照顧的知識庫 App。
+我做文瀾，是因為筆記、文件和 AI 對話散落各處又一直在變，要讓筆記庫不荒廢得不停維護。我想要一個 AI 原生、不用費心照顧的知識庫。
 
 - **你的 AI 幫你寫、幫你維護：** 你平常用的 AI 工具，例如 Claude Code、Codex 或 Cursor，會把你的文件、舊筆記和 AI 對話寫成新的筆記，之後也由它更新。不需要另外裝模型。
 - **撐不住的會告訴你：** AI 存筆記時，文瀾會拿它的引用對照原始來源。一篇筆記的引用大多對不上時就不會存下，AI 也會知道原因。每個引用都能點回原文。
 - **變了會標出來：** 筆記記得它依靠哪些來源、哪些筆記、哪幾行程式碼。那些東西變了，只有受影響的筆記會被標出來等更新。
 - **你寫的還是你的：** 你寫過或改過的筆記設成「先問我」，AI 要改會先等你同意，每次修改都看得到刪了什麼、加了什麼。沒有你同意，不會改動你原有的筆記，Obsidian 筆記也一樣。
 - **帶進現有資料，換工具也不怕：** Obsidian、Logseq、資料夾、文件、網頁連結和對話匯出都能直接帶進來（[完整清單](#what-can-i-bring-in)）。筆記是本地 Markdown，你選的 AI 工具都能用同一份。
-
-<a id="if-you-already-use-claude-code-on-your-notes"></a>
-
-### 如果你已經用 Claude Code 或 Codex 管筆記
-
-繼續用就好。文瀾接上同一個 AI 工具，補上一個 Markdown 資料夾自己做不到的檢查：引用大多和來源對不上的筆記不會存下，來源變了會標記，AI 改你寫的筆記先等你審核，而且沒有你同意，不會改動你原有的筆記。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -254,6 +248,12 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 ## 讓知識活用起來
 
 資料放進文瀾後，AI 就能接著用：找回先前的決定與依據，保存新的成果，並隨依據變動繼續使用。
+
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+### 如果你已經用 Claude Code 或 Codex 管筆記
+
+繼續用就好。文瀾接上同一個 AI 工具，補上一個 Markdown 資料夾自己做不到的檢查：引用大多和來源對不上的筆記不會存下，來源變了會標記，AI 改你寫的筆記先等你審核，而且沒有你同意，不會改動你原有的筆記。
 
 **可以用在：**
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=6dfc4615c1d0356740566f5e80c3a1900746a1e5374c66911657fc5c9ada171a -->
+<!-- README_SYNC: source=README.md sha256=24d7a2bfcab534fe15117f7e5d69d61d92768496b9066a8199b589d789659368 -->
 
 <p align="center">
   <picture>
@@ -18,17 +18,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
-  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><img alt="Última versión" src="https://img.shields.io/github/v/release/wenlan-app/wenlan?label=release"></a>
-  <a href="#license"><img alt="Licencia: Apache-2.0 y AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
-</p>
-
-<p align="center">
   <a href="https://github.com/wenlan-app/wenlan/releases/latest"><strong>Descargar</strong></a> ·
   <a href="#start-in-30-seconds">Primeros&nbsp;pasos</a> ·
   <a href="#what-can-i-bring-in">Fuentes</a> ·
   <a href="#learn-more">Docs</a> ·
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI" src="https://github.com/wenlan-app/wenlan/actions/workflows/ci.yml/badge.svg?branch=main&event=push"></a>
+  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><img alt="Última versión" src="https://img.shields.io/github/v/release/wenlan-app/wenlan?label=release"></a>
+  <a href="#license"><img alt="Licencia: Apache-2.0 y AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
 </p>
 
 <!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
@@ -48,14 +48,6 @@
 - **Marca lo que cambió:** las páginas recuerdan las fuentes, otras páginas y las líneas de código en las que se basan. Cuando cambian, solo se marcan para actualizar las páginas afectadas.
 - **Lo que escribes sigue siendo tuyo:** las páginas que escribiste o editaste quedan en **Ask me first**, así que los cambios de la IA esperan tu visto bueno, y ves qué quita y qué añade cada cambio. Wenlan nunca edita tus notas existentes sin tu permiso, tampoco las de Obsidian.
 - **Trae lo que ya tienes y consérvalo al cambiar de herramienta:** Obsidian, Logseq, carpetas, documentos, enlaces web y exportaciones de chats entran tal como están ([lista completa](#what-can-i-bring-in)). Las páginas son Markdown local y sirven en las herramientas de IA que elijas.
-
-<a id="if-you-already-use-claude-code-on-your-notes"></a>
-
-<br>
-
-## Si ya usas Claude Code o Codex con tus notas
-
-Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes sin tu permiso.
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -250,6 +242,12 @@ Flujo simplificado. Los comandos del plugin y la organización de páginas son o
 ## Pon tu conocimiento a trabajar con IA
 
 Un agente puede leer archivos y escribir texto. Wenlan añade una **base de conocimiento compartida y mantenida entre tareas y herramientas de IA**: recupera decisiones anteriores con sus fuentes, guarda el trabajo nuevo y sigue usándolo a medida que cambia la evidencia.
+
+<a id="if-you-already-use-claude-code-on-your-notes"></a>
+
+### Si ya usas Claude Code o Codex con tus notas
+
+Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes sin tu permiso.
 
 **Úsala para:**
 
