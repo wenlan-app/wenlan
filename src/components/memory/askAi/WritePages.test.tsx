@@ -226,6 +226,14 @@ describe("WritePagesLine", () => {
     expect(line).toHaveTextContent("2 notes, 4 chats, and 4 files aren't in any page yet.");
   });
 
+  it("groups the digits of a big count", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(9962));
+    wrap(<Line pages={[page("a", "2026-10-22T10:01:00Z")]} />);
+    const line = await screen.findByTestId("write-pages-line");
+    expect(line).toHaveTextContent("9,962 notes aren't in any page yet.");
+  });
+
   it("copies the command when the tool cannot be opened", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));

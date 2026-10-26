@@ -315,6 +315,20 @@ describe("ImportOrganize", () => {
     ]);
   });
 
+  it("writes big counts with the locale's grouping", async () => {
+    const { unmount } = render(wrap(<ImportedLead count={10000} kind="note" />));
+    expect(screen.getByTestId("import-lead")).toHaveTextContent("10,000 notes imported. You can search them now.");
+    unmount();
+    const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
+    render(wrap(<TurnIntoPagesView state={state({ kind: "done", written, updated: [], minutes: 3, left: 9962 }, { waiting: i18n.t("askAi.writePages.kinds.note", { count: 9962 }) })} hasPages />));
+    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("8 pages ready. 9,962 notes still waiting.");
+    for (const lng of ["zh-Hans", "zh-Hant"]) {
+      await i18n.changeLanguage(lng);
+      expect(i18n.t("askAi.writePages.kinds.note", { count: 10000 })).toContain("10,000");
+      expect(i18n.t("askAi.writePages.importCard.done", { count: 1200 })).toContain("1,200");
+    }
+  });
+
   it("says only the second half under a heading that already gives the count", () => {
     render(wrap(<ImportedLead count={12} kind="note" short />));
     expect(screen.getByTestId("import-lead")).toHaveTextContent(/^You can search them now\.$/);
