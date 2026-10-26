@@ -297,12 +297,15 @@ export default function ClientRow({
   // whole row (name and the lines under it), the way a settings list reads.
   if (bare) {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3">
+      <div
+        data-connection-row
+        className="flex items-center justify-between gap-3 rounded-[var(--mem-radius-md)] px-3 py-2.5"
+      >
         <div className="flex flex-col gap-1 min-w-0">
           {nameBadges}
           {bodyBlock}
         </div>
-        {trailing && <div className="shrink-0">{trailing}</div>}
+        {trailing && <div className="flex h-7 shrink-0 items-center">{trailing}</div>}
       </div>
     );
   }

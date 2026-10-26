@@ -121,6 +121,22 @@ describe("Connections settings layout", () => {
     expect(within(section("connected")).queryByText("Cursor")).not.toBeInTheDocument();
   });
 
+  it("uses the same row geometry in Connected and On this computer", async () => {
+    mocks.listAgents.mockResolvedValue([agent("cursor")]);
+    mocks.detectMcpClients.mockResolvedValue([
+      client("cursor", "Cursor", true),
+      client("claude_desktop", "Claude Desktop"),
+    ]);
+    renderSection();
+
+    await screen.findByText("Claude Desktop");
+    const connectedRow = section("connected").querySelector<HTMLElement>("[data-connection-row]");
+    const availableRow = section("available").querySelector<HTMLElement>("[data-connection-row]");
+    expect(connectedRow).toHaveClass("px-3", "py-2.5");
+    expect(availableRow).toHaveClass("px-3", "py-2.5");
+    expect(availableRow?.lastElementChild).toHaveClass("flex", "h-7", "items-center");
+  });
+
   it("collapses both sections at five rows with one shared limit", async () => {
     mocks.listAgents.mockResolvedValue([
       agent("codex"), agent("claude-code"), agent("cursor"), agent("claude-desktop"),

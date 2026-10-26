@@ -322,6 +322,7 @@ function ToolFamilyRow({
 
   return (
     <div
+      data-connection-row
       data-family={row.family}
       data-status={row.status}
       className="rounded-[var(--mem-radius-md)] px-3 py-2.5 hover:bg-[var(--mem-hover)]"
