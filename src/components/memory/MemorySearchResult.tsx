@@ -3,6 +3,7 @@ import type { SearchResult } from "../../lib/tauri";
 import { FACET_COLORS } from "../../lib/tauri";
 import { highlightTerms, hasKeywordMatch, relevanceLabel } from "../../lib/highlight";
 import { formatTimeAgo } from "../../lib/dateFormat";
+import { resolveAgentDisplayName } from "../../lib/agents";
 
 interface MemorySearchResultProps {
   result: SearchResult;
@@ -89,7 +90,7 @@ export default function MemorySearchResult({
         {/* Source agent */}
         {result.source_agent && (
           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-cyan-500/10 text-cyan-400">
-            {result.source_agent}
+            {resolveAgentDisplayName(result.source_agent)}
           </span>
         )}
 

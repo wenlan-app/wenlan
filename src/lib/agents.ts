@@ -8,10 +8,8 @@
 // Resolution order:
 //   1. User registration (`agent_connections.display_name` via listAgents).
 //   2. Built-in `KNOWN_CLIENT_DISPLAY_NAMES` registry (mirrors origin-core's `KNOWN_CLIENTS`).
-//   3. The raw canonical ID, prettified into a readable title (word-split on
+//   3. The canonical ID prettified into a readable title (word-split on
 //      `-`/`_`, title-case each word, acronym map for mcp/cli/api/ai/vscode).
-//      Every row still shows the raw ID as a mono subtitle underneath, so
-//      this never hides the real value — it's the same string, reformatted.
 //
 // **Keep in sync with `crates/origin-core/src/db.rs::KNOWN_CLIENTS`.**
 
@@ -20,11 +18,14 @@ import type { AgentConnection } from "./tauri";
 export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
   "antigravity": "Antigravity",
   "chatgpt": "ChatGPT",
+  "chatgpt-mcp": "ChatGPT",
+  "claude": "Claude",
+  "claude-ai": "Claude",
   "claude-code": "Claude Code",
   "claude-desktop": "Claude Desktop",
-  "codex": "Codex",
+  "codex": "ChatGPT / Codex",
   "continue": "Continue",
-  "copilot-cli": "GitHub Copilot",
+  "copilot-cli": "GitHub Copilot CLI",
   "cursor": "Cursor",
   "gemini-cli": "Gemini CLI",
   "kimi-code": "Kimi Code",
@@ -38,6 +39,8 @@ export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
   "raycast": "Raycast",
   "vscode": "VS Code",
   "windsurf": "Windsurf",
+  "wenlan": "Wenlan",
+  "wenlan-app": "Wenlan",
   "zed": "Zed",
 };
 
@@ -82,23 +85,24 @@ export function resolveAgentDisplayName(
   canonicalId: string,
   connections?: AgentConnection[],
 ): string {
-  if (!canonicalId) return canonicalId;
+  const normalized = canonicalId.trim().toLowerCase();
+  if (!normalized) return "";
 
   // 1. User override via registration.
   if (connections) {
-    const match = connections.find((c) => c.name === canonicalId);
+    const match = connections.find((c) => c.name.trim().toLowerCase() === normalized);
     if (match?.display_name) {
       return match.display_name;
     }
   }
 
   // 2. Built-in registry.
-  const known = KNOWN_CLIENT_DISPLAY_NAMES[canonicalId];
+  const known = KNOWN_CLIENT_DISPLAY_NAMES[normalized];
   if (known) return known;
 
-  // 3. Prettify the raw slug. The raw ID stays visible via the row's mono
-  //    subtitle, so this fabricates nothing — same string, reformatted.
-  return prettifySlug(canonicalId);
+  // 3. Prettify the slug so an unknown integration never leaks a raw ID into
+  //    visible copy.
+  return prettifySlug(normalized);
 }
 
 // ── Tool families ──────────────────────────────────────────────────────
@@ -172,6 +176,10 @@ export function toolFamilyOf(agent: { name: string; agent_type: string }): strin
 
   const name = agent.name;
 
+  // The setup probe deliberately stays outside Wenlan's own family even
+  // though `wenlan` is a known display-name key.
+  if (name === "wenlan-setup") return "wenlan-setup";
+
   // (b) exact canonical ID in the registry.
   if (name in KNOWN_CLIENT_DISPLAY_NAMES) return aliasFamily(name);
 
@@ -183,8 +191,7 @@ export function toolFamilyOf(agent: { name: string; agent_type: string }): strin
   }
   if (best) return aliasFamily(best);
 
-  // (d) the wizard's own probe identity, then a bare passthrough.
-  if (name === "wenlan-setup") return "wenlan-setup";
+  // (d) bare passthrough.
   return name;
 }
 

@@ -23,12 +23,12 @@ const session = (over: Partial<AgentSession> = {}): AgentSession => ({
 describe("sessionToolLabel", () => {
   it.each([
     ["claude-code", "Claude Code"],
-    ["codex", "Codex"],
+    ["codex", "ChatGPT / Codex"],
     ["opencode", "OpenCode"],
     ["gemini-cli", "Gemini CLI"],
     ["chatgpt", "ChatGPT"],
     ["claude-ai", "Claude"],
-    ["some-new-tool", "some-new-tool"],
+    ["some-new-tool", "Some New Tool"],
   ])("%s shows as %s", (tool, label) => {
     expect(sessionToolLabel(tool)).toBe(label);
   });

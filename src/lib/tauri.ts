@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { daemonStartupWait } from "./daemonStartup";
+import { KNOWN_CLIENT_DISPLAY_NAMES, resolveAgentDisplayName } from "./agents";
 import type {
   ApplyRepairRequest, PrepareRepairRequest, PrepareCurrentRepairRequest, RepairApplyReceipt, RepairLintQuery,
   RepairLintReport, RepairManifest, RepairOperationStatus, RepairPrepareOperationRequest, RepairPrepareOperationStatus, RepairPlanEntriesPage, RepairPlanEntriesRequest, RepairRecovery,
@@ -1228,33 +1229,11 @@ export const FACET_COLORS: Record<string, string> = {
 };
 
 // One agent-slug prettifier for every surface (list row, card, detail).
-export const AGENT_DISPLAY: Record<string, string> = {
-  antigravity: "Antigravity",
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  claude: "Claude",
-  chatgpt: "ChatGPT",
-  "chatgpt-mcp": "ChatGPT",
-  codex: "Codex",
-  "copilot-cli": "GitHub Copilot",
-  cursor: "Cursor",
-  "gemini-cli": "Gemini CLI",
-  "kimi-code": "Kimi Code",
-  "kimi-desktop": "Kimi",
-  kiro: "Kiro",
-  "muse-code": "Muse Code",
-  opencode: "OpenCode",
-  vscode: "VS Code",
-  windsurf: "Windsurf",
-  zed: "Zed",
-  wenlan: "Wenlan",
-  // The desktop app's own writer id (`callerId` on its saves and rebuilds).
-  "wenlan-app": "Wenlan",
-};
+export const AGENT_DISPLAY: Record<string, string> = KNOWN_CLIENT_DISPLAY_NAMES;
 
 export function agentDisplayName(slug: string | null | undefined): string | null {
   if (!slug) return null;
-  return AGENT_DISPLAY[slug.trim().toLowerCase()] ?? slug;
+  return resolveAgentDisplayName(slug);
 }
 
 export type StabilityTier = "protected" | "standard" | "ephemeral";

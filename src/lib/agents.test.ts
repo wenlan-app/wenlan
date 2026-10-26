@@ -11,7 +11,11 @@ import type { AgentConnection } from "./tauri";
 describe("resolveAgentDisplayName", () => {
   it("uses the built-in registry for known IDs", () => {
     expect(resolveAgentDisplayName("claude-code")).toBe("Claude Code");
-    expect(resolveAgentDisplayName("codex")).toBe("Codex");
+    expect(resolveAgentDisplayName("codex")).toBe("ChatGPT / Codex");
+    expect(resolveAgentDisplayName("openai-mcp")).toBe("ChatGPT");
+    expect(resolveAgentDisplayName("chatgpt-mcp")).toBe("ChatGPT");
+    expect(resolveAgentDisplayName("claude-ai")).toBe("Claude");
+    expect(resolveAgentDisplayName("copilot-cli")).toBe("GitHub Copilot CLI");
   });
 
   it("prefers a user's registered display_name over the registry", () => {
@@ -95,7 +99,7 @@ describe("toolFamilyOf", () => {
 
 describe("familyDisplayName", () => {
   it("uses the registry for a known family, prettifies an unknown one", () => {
-    expect(familyDisplayName("codex")).toBe("Codex");
+    expect(familyDisplayName("codex")).toBe("ChatGPT / Codex");
     expect(familyDisplayName("claude-code")).toBe("Claude Code");
     expect(familyDisplayName("my-custom-bot")).toBe("My Custom Bot");
   });

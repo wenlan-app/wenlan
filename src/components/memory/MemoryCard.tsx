@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { FACET_COLORS, STABILITY_TIERS, agentDisplayName, type MemoryItem, type MemoryVersionItem, type PendingRevision, getPendingRevision, acceptPendingRevision, dismissPendingRevision } from "../../lib/tauri";
+import { FACET_COLORS, STABILITY_TIERS, type MemoryItem, type MemoryVersionItem, type PendingRevision, getPendingRevision, acceptPendingRevision, dismissPendingRevision } from "../../lib/tauri";
 import { formatTimeAgo } from "../../lib/dateFormat";
+import { resolveAgentDisplayName } from "../../lib/agents";
 import ContentRenderer from "./ContentRenderer";
 import MemoryListRow from "./MemoryListRow";
 import { ARCHIVED_MEMORY_OPACITY } from "./archivedMemoryOpacity";
@@ -199,7 +200,7 @@ export default function MemoryCard({
               </span>
             )}
             {memory.source_agent && (
-              <span>via {agentDisplayName(memory.source_agent)}</span>
+              <span>via {resolveAgentDisplayName(memory.source_agent ?? "")}</span>
             )}
             {/* Extract memory count from content header */}
             {memory.content?.match(/(\d+) memories/)?.[0] && (
@@ -336,7 +337,7 @@ export default function MemoryCard({
                 }}
               >
                 <span>
-                  From {agentDisplayName(memory.source_agent) ?? "Manual"}
+                  From {memory.source_agent ? resolveAgentDisplayName(memory.source_agent) : t("memoryList.manual")}
                 </span>
                 {isConfirmed && (
                   <>
@@ -443,7 +444,7 @@ export default function MemoryCard({
                 }}
               >
                 <div className="font-medium mb-1">
-                  Proposed update{pendingRevision.source_agent ? ` from ${pendingRevision.source_agent}` : ""}
+                  Proposed update{pendingRevision.source_agent ? ` from ${resolveAgentDisplayName(pendingRevision.source_agent)}` : ""}
                 </div>
                 <p className="line-clamp-2 mb-2" style={{ color: "var(--mem-text-secondary)" }}>
                   {pendingRevision.content}

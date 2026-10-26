@@ -1297,7 +1297,7 @@ export const DEFAULTS: Record<string, unknown> = {
     { name: "Cursor", client_type: "cursor", config_path: "~/.cursor/mcp.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
     { name: "Claude Desktop", client_type: "claude_desktop", config_path: "~/Library/Application Support/Claude/claude_desktop_config.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
     { name: "Gemini CLI", client_type: "gemini_cli", config_path: "~/.gemini/settings.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
-    { name: "Codex CLI", client_type: "codex_cli", config_path: "~/.codex/config.toml", detected: YES, already_configured: YES, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES },
+    { name: "ChatGPT / Codex", client_type: "codex_cli", config_path: "~/.codex/config.toml", detected: YES, already_configured: YES, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES },
     { name: "Claude Code", client_type: "claude_code", config_path: "~/.claude.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
   ],
   // WireState (src/lib/tauri.ts) — the "setting up" step's daemon row reads
@@ -1334,7 +1334,7 @@ export const DEFAULTS: Record<string, unknown> = {
       { client_type: "cursor", name: "Cursor", detected: YES, config_path: "~/.cursor/mcp.json", has_raw_entry: YES, has_raw_duplicate: YES, has_plugin: NO, route: "config" },
       { client_type: "claude_desktop", name: "Claude Desktop", detected: YES, config_path: "~/Library/Application Support/Claude/claude_desktop_config.json", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, route: "config" },
       { client_type: "gemini_cli", name: "Gemini CLI", detected: YES, config_path: "~/.gemini/settings.json", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, route: "config" },
-      { client_type: "codex_cli", name: "Codex CLI", detected: YES, config_path: "~/.codex/config.toml", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES, route: "plugin" },
+      { client_type: "codex_cli", name: "ChatGPT / Codex", detected: YES, config_path: "~/.codex/config.toml", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES, route: "plugin" },
       { client_type: "claude_code", name: "Claude Code", detected: YES, config_path: "~/.claude.json", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, route: "plugin" },
     ],
   },
