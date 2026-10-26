@@ -925,16 +925,20 @@ async fn link_targets(
     sources: &[(String, String)],
 ) -> Vec<String> {
     let source_ids: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
-    let text: String = sources
+    let raw: String = sources
         .iter()
-        .map(|(_, text)| text.to_lowercase())
+        .map(|(_, text)| text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    let text = raw.to_lowercase();
     let mut candidates: Vec<(String, String, Option<String>)> = Vec::new();
     match db.recent_notes(TITLE_MATCH_NOTES).await {
         Ok(notes) => {
             for (page_id, title, page_space) in notes {
-                if candidates.len() < MAX_LINK_TARGETS * 2 && names_in_text(&text, &title) {
+                if candidates.len() < MAX_LINK_TARGETS * 2
+                    && names_in_text(&text, &title)
+                    && !named_only_in_passing(&raw, &title)
+                {
                     candidates.push((page_id, title, page_space));
                 }
             }
@@ -1002,19 +1006,48 @@ fn names_in_text(text: &str, title: &str) -> bool {
     if wanted.chars().count() < 4 {
         return false;
     }
+    !whole_phrase_starts(text, &wanted).is_empty()
+}
+
+/// Where `wanted` stands in `text` as a whole phrase, by byte offset.
+fn whole_phrase_starts(text: &str, wanted: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    if wanted.is_empty() {
+        return out;
+    }
     let mut from = 0;
-    while let Some(at) = text[from..].find(&wanted) {
+    while let Some(at) = text[from..].find(wanted) {
         let start = from + at;
         let end = start + wanted.len();
         let before = text[..start].chars().next_back();
         let after = text[end..].chars().next();
         let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric() || !c.is_ascii());
         if edge(before) && edge(after) {
-            return true;
+            out.push(start);
         }
         from = start + wanted.chars().next().map_or(1, char::len_utf8);
     }
-    false
+    out
+}
+
+/// Whether the sources' `raw` text names the one-word English page `title`
+/// only in passing: once, and in lower case, as a common word ("bought a
+/// garden hose" in a note on finances) rather than a name ("Oslo"). Such a
+/// page is still offered when it shares an entity with the sources.
+fn named_only_in_passing(raw: &str, title: &str) -> bool {
+    let title = title.trim();
+    if !title.is_ascii() || title.contains(|c: char| !c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    // ASCII lowercasing keeps every byte offset, so a mention found in the
+    // lowered text sits at the same place in `raw`.
+    let lowered = raw.to_ascii_lowercase();
+    let starts = whole_phrase_starts(&lowered, &title.to_ascii_lowercase());
+    starts.len() == 1
+        && !raw[starts[0]..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_uppercase())
 }
 
 /// An entity `source_ids` mention whose entity page has `title`, years,
@@ -1540,6 +1573,26 @@ mod tests {
         assert!(!names_in_text(text, "Glaze recipe book"));
         assert!(!names_in_text(text, "Kil"), "under four characters");
         assert!(!names_in_text("oslofjord trips", "Oslo"));
+    }
+
+    #[test]
+    fn a_one_word_title_named_once_in_lower_case_is_only_in_passing() {
+        let finances = "Paid the water bill. Bought a garden hose on the card.";
+        assert!(named_only_in_passing(finances, "garden"));
+        assert!(named_only_in_passing(finances, "Garden"));
+        assert!(!named_only_in_passing(
+            "The garden needs mulch. Garden beds go in by May; the garden faces south.",
+            "Garden"
+        ));
+        assert!(!named_only_in_passing(
+            "Mira fires the kiln in Oslo.",
+            "Oslo"
+        ));
+        assert!(!named_only_in_passing(finances, "Water bill"), "two words");
+        assert!(
+            !named_only_in_passing("走過花園 garden", "花園"),
+            "not English"
+        );
     }
 
     #[test]
