@@ -59,7 +59,7 @@ export function askAiTasksFor(tool: AskAiTool): AskAiTask[] {
   return ASK_AI_TASKS.filter((task) => tool !== "other" || !task.skillOnly);
 }
 
-function toolOfFamily(family: string): AskAiTool {
+export function toolOfFamily(family: string): AskAiTool {
   if (family === "claude-code") return "claude";
   if (family === "codex") return "codex";
   return "other";

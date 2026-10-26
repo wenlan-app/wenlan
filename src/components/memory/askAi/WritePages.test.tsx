@@ -158,6 +158,24 @@ describe("WritePagesLine", () => {
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
+  it("hands pages to the tool the user picked, worded for that tool, and remembers it", async () => {
+    vi.mocked(listAgents).mockResolvedValue([{ ...agent("claude-code"), last_seen_at: 20 }, { ...agent("codex"), last_seen_at: 10 }]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(5));
+    vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
+    localStorage.setItem("askAi:writePages:tool", JSON.stringify("codex"));
+    wrap(<Line pages={[]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
+    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("codex", "$wenlan steep"));
+  });
+
+  it("uses the most recent tool when the picked one is no longer connected", async () => {
+    vi.mocked(listAgents).mockResolvedValue([{ ...agent("claude-code"), last_seen_at: 20 }, { ...agent("codex"), last_seen_at: 10 }]);
+    vi.mocked(listNewMaterial).mockResolvedValue(material(5));
+    localStorage.setItem("askAi:writePages:tool", JSON.stringify("cursor"));
+    wrap(<Line pages={[]} />);
+    expect(await screen.findByRole("button", { name: "Have Claude Code write pages" })).toBeInTheDocument();
+  });
+
   it("says where to paste before copying for a tool it cannot open", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));

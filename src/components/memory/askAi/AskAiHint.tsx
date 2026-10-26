@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Check, Copy, Sparkle, X } from "@phosphor-icons/react";
 import { useLiveAgents } from "../../connect/connectionState";
 import { writeClipboard } from "../page/codeBasisShared";
-import { ASK_AI_TASKS, askAiCommand, defaultAskAiTool, type AskAiTaskId } from "./askAiCommands";
+import { ASK_AI_TASKS, askAiCommand, defaultAskAiTool, toolOfFamily, type AskAiTaskId } from "./askAiCommands";
 import "./askAiHint.css";
 
 const COPIED_MS = 2_000;
@@ -12,13 +12,14 @@ const COPIED_MS = 2_000;
 /** The text to type for one task in the user's own tool, or null when that
  *  tool cannot do it (a skill-only task in a tool without the plugin), or
  *  while the connected tools are still being read. */
-export function useAskAiCommand(taskId: AskAiTaskId): string | null {
+export function useAskAiCommand(taskId: AskAiTaskId, family?: string | null): string | null {
   const { t } = useTranslation();
   const agents = useLiveAgents();
   // Until the roster is read the tool is unknown; naming Claude Code's command
   // first and swapping it a moment later would be worse than waiting.
   if (!agents.isSuccess) return null;
-  const { tool } = defaultAskAiTool(agents.data);
+  // A tool the user picked words the command its own way.
+  const tool = family ? toolOfFamily(family) : defaultAskAiTool(agents.data).tool;
   const task = ASK_AI_TASKS.find((candidate) => candidate.id === taskId);
   if (!task || (tool === "other" && task.skillOnly)) return null;
   return askAiCommand(task, tool, {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SearchModal } from "./SearchModal";
 import { RecentlyOpened, type RecentSearchItem } from "./RecentlyOpened";
 import { ArrowLeft, ArrowRight, X } from "@phosphor-icons/react";
@@ -39,6 +39,7 @@ import PageDetail from "./PageDetail";
 import DistillReviewPanel from "./DistillReviewPanel";
 import SettingsPage from "./SettingsPage";
 import { ImportView } from "./ImportView";
+import { OrganizeActionsContext, type OrganizeActions } from "./askAi/TurnIntoPages";
 import { SetupWizard } from "../SetupWizard";
 import Sidebar, { SidebarToggleButton } from "./Sidebar";
 import SettingsSidebar from "./settings/SettingsSidebar";
@@ -799,6 +800,16 @@ export default function Main({
   const navigateSpaces = (create: boolean) => navigateTo(create
     ? { kind: "spaces", create: true } : { kind: "spaces" });
   const navigatePages = () => navigateTo({ kind: "pages" });
+  // Every import finish inside this window hands new material on through
+  // these. Stable, so the cards under it do not re-render with the shell.
+  const navigateToRef = useRef(navigateTo);
+  navigateToRef.current = navigateTo;
+  const organizeActions = useMemo<OrganizeActions>(() => ({
+    onConnectTool: () => navigateToRef.current({ kind: "connect-agent" }),
+    onOpenIntelligence: () => navigateToRef.current({ kind: "settings", section: "intelligence" }),
+    onOpenActivity: () => navigateToRef.current({ kind: "activity" }),
+    onSelectPage: (pageId) => navigateToRef.current({ kind: "page", pageId }),
+  }), []);
   const navigateSettingsHome = () => {
     navigatePages();
     if (responsiveSidebar.presentation === "overlay") responsiveSidebar.close();
@@ -1268,6 +1279,7 @@ export default function Main({
     <WorkspacePaneHostContext.Provider value={workspacePaneHost}>
     <WorkspaceDocumentToolsHostContext.Provider value={documentToolsHost}>
     <WorkspaceDemandContext.Provider value={autoSidebar.demand}>
+    <OrganizeActionsContext.Provider value={organizeActions}>
     <div
       className="memory-shell h-screen w-full"
       data-sidebar-layout={sidebarLayout}
@@ -1742,6 +1754,7 @@ export default function Main({
       </SearchModal>
       <NoteTabDragProvider onDrop={dropNoteTab} disabled={movingNote || !isWikiWorkspaceView || mobileSearchOpen} />
     </div>
+    </OrganizeActionsContext.Provider>
     </WorkspaceDemandContext.Provider>
     </WorkspaceDocumentToolsHostContext.Provider>
     </WorkspacePaneHostContext.Provider>

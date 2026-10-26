@@ -23,6 +23,8 @@ import "./writePages.css";
 /** The offer shows from this much material, the same floor at which the AI
  *  tool's replies start naming `/wenlan steep`. */
 export const WRITE_PAGES_MIN_ITEMS = 3;
+/** How many pages one press asks the AI tool for, from the newest topics. */
+export const PAGES_PER_RUN = 8;
 /** After the user closes the home line it comes back only once this much
  *  more material has arrived. */
 const SHOW_AGAIN_AFTER = 10;
@@ -38,6 +40,8 @@ const POLL_RUNNING_MS = 4_000;
 const MAX_LISTED = 8;
 
 const RUN_KEY = "askAi:writePages:run";
+/** The tool the user picked for writing pages, when more than one is connected. */
+const TOOL_KEY = "askAi:writePages:tool";
 const DISMISSED_KEY = "askAi:writePages:dismissedTotal";
 
 /** One press of "Ask AI to write pages", remembered per viewer. */
@@ -90,6 +94,7 @@ export function writePagesView({
   dismissedTotal,
   now,
   lastChangeAt,
+  minItems = WRITE_PAGES_MIN_ITEMS,
 }: {
   readonly onDemand: boolean | undefined;
   readonly list: NewMaterialList | undefined;
@@ -98,13 +103,16 @@ export function writePagesView({
   readonly dismissedTotal: number | null;
   readonly now: number;
   readonly lastChangeAt: number;
+  /** The least material worth an offer. The import finish asks from one
+   *  item: the user just brought it in and is looking at it. */
+  readonly minItems?: number;
 }): WritePagesView {
   if (onDemand !== true || !list) return { kind: "hidden" };
   if (run) {
     const written = pagesWrittenSince(pages, run.startedAt);
     const writing = (list.held ?? 0) > 0;
     const quiet = now - lastChangeAt;
-    if (!writing && written.length > 0 && (quiet >= QUIET_DONE_MS || list.total < WRITE_PAGES_MIN_ITEMS)) {
+    if (!writing && written.length > 0 && (quiet >= QUIET_DONE_MS || list.total < minItems)) {
       const last = Math.max(...written.map((page) => pageCreatedMs(page) ?? run.startedAt));
       return {
         kind: "done",
@@ -115,7 +123,7 @@ export function writePagesView({
     }
     return { kind: "working", written, writing, stuck: !writing && quiet >= STUCK_MS };
   }
-  if (list.total < WRITE_PAGES_MIN_ITEMS) return { kind: "hidden" };
+  if (list.total < minItems) return { kind: "hidden" };
   if (dismissedTotal !== null && list.total < dismissedTotal + SHOW_AGAIN_AFTER) return { kind: "hidden" };
   return { kind: "ready", list };
 }
@@ -123,12 +131,18 @@ export function writePagesView({
 /** The tool used most recently, the same one `useAskAiCommand` words the
  *  command for. */
 export function recentTool(agents: readonly AgentConnection[]): { family: string; name: string } | null {
-  const tools = agents
+  return connectedTools(agents)[0] ?? null;
+}
+
+/** Every connected AI tool, one per family, most recently used first. */
+export function connectedTools(agents: readonly AgentConnection[]): { family: string; name: string }[] {
+  const seen = new Set<string>();
+  return agents
     .filter((agent) => !OWN_IDENTITY.test(toolFamilyOf(agent)))
-    .sort((a, b) => (b.last_seen_at ?? b.created_at) - (a.last_seen_at ?? a.created_at));
-  if (tools.length === 0) return null;
-  const family = toolFamilyOf(tools[0]);
-  return { family, name: resolveAgentDisplayName(family, [...agents]) };
+    .sort((a, b) => (b.last_seen_at ?? b.created_at) - (a.last_seen_at ?? a.created_at))
+    .map((agent) => toolFamilyOf(agent))
+    .filter((family) => (seen.has(family) ? false : (seen.add(family), true)))
+    .map((family) => ({ family, name: resolveAgentDisplayName(family, [...agents]) }));
 }
 
 const KIND_ORDER = ["note", "chat", "file", "capture"] as const;
@@ -167,12 +181,21 @@ export interface WritePagesState {
   readonly view: WritePagesView;
   /** For the checklist step, which has no close of its own. */
   readonly stepView: WritePagesView;
+  /** For the import finish: offered from the first item. */
+  readonly cardView: WritePagesView;
+  /** How much material has no page yet. */
+  readonly waitingTotal: number;
   readonly onDemand: boolean | undefined;
   /** False until the connected tools are known; nothing shows before. */
   readonly loaded: boolean;
   readonly run: WritePagesRun | null;
-  /** The tool the button opens or copies the command for. */
+  /** The tool the button opens or copies the command for: the one the user
+   *  picked, else the one used most recently. */
   readonly tool: { family: string; name: string } | null;
+  /** Every connected tool, most recently used first. */
+  readonly tools: readonly { family: string; name: string }[];
+  /** Use this tool for writing pages from now on (remembered per viewer). */
+  readonly chooseTool: (family: string) => void;
   readonly toolName: string;
   readonly opensTool: boolean;
   readonly command: string | null;
@@ -190,7 +213,10 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const queryClient = useQueryClient();
   const onDemand = useSteepOnDemand();
   const agents = useLiveAgents();
-  const command = useAskAiCommand("steep");
+  const [picked, setPicked] = useState<string | null>(() => readJson<string>(TOOL_KEY));
+  const tools = agents.isSuccess ? connectedTools(agents.data) : [];
+  const tool = tools.find((candidate) => candidate.family === picked) ?? tools[0] ?? null;
+  const command = useAskAiCommand("steep", tool?.family);
   const [run, setRunState] = useState<WritePagesRun | null>(() => readJson<WritePagesRun>(RUN_KEY));
   const [dismissedTotal, setDismissedTotal] = useState<number | null>(() => readJson<number>(DISMISSED_KEY));
   const [copied, setCopied] = useState(false);
@@ -242,8 +268,8 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const inputs = { onDemand, list: list.data, pages, run, now, lastChangeAt };
   const view = writePagesView({ ...inputs, dismissedTotal });
   const stepView = writePagesView({ ...inputs, dismissedTotal: null });
+  const cardView = writePagesView({ ...inputs, dismissedTotal: null, minItems: 1 });
 
-  const tool = agents.isSuccess ? recentTool(agents.data) : null;
   const toolName = run?.tool ?? tool?.name ?? t("askAi.writePages.yourTool");
   const opensTool = tool !== null && PROMPT_LINK_FAMILIES.includes(tool.family);
 
@@ -260,6 +286,10 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const setRun = (next: WritePagesRun | null) => {
     writeJson(RUN_KEY, next);
     setRunState(next);
+  };
+  const chooseTool = (family: string) => {
+    writeJson(TOOL_KEY, family);
+    setPicked(family);
   };
   const close = () => {
     writeJson(DISMISSED_KEY, total);
@@ -294,10 +324,14 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   return {
     view,
     stepView,
+    cardView,
+    waitingTotal: total,
     onDemand,
     loaded: agents.isSuccess,
     run,
     tool,
+    tools,
+    chooseTool,
     toolName,
     opensTool,
     command,
@@ -323,9 +357,13 @@ export function workingHeadline(
   state: WritePagesState,
   view: Extract<WritePagesView, { kind: "working" }>,
   t: TFunction,
+  /** How many pages the run asked for, for "3 of 8 ready". */
+  of?: number,
 ): string {
   if (view.written.length > 0) {
-    return t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
+    return of !== undefined && view.written.length <= of
+      ? t("askAi.writePages.workingCountOf", { tool: state.toolName, count: view.written.length, total: of })
+      : t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
   }
   if (view.writing) return t("askAi.writePages.working", { tool: state.toolName });
   return state.run?.handedOver === "opened"
