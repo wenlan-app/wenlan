@@ -1892,6 +1892,7 @@ fn steep_new_compact(list: &wenlan_types::SteepNewListResponse) -> serde_json::V
         "items": items,
         "total": list.total,
         "page_titles": list.page_titles,
+        "next_step": list.next_step,
     });
     if let Some(cursor) = &list.next_cursor {
         out["next_cursor"] = serde_json::json!(cursor);
@@ -4594,7 +4595,21 @@ fn format_update_page_response(
     append_citations(&mut text, resp.citations.as_deref());
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
+    append_link_targets(&mut text, &resp.link_targets);
+    if !resp.next_step.is_empty() {
+        text.push_str("\nnext_step: ");
+        text.push_str(&resp.next_step);
+    }
     text
+}
+
+fn append_link_targets(text: &mut String, link_targets: &[String]) {
+    if let Ok(json) = serde_json::to_string(link_targets) {
+        if !link_targets.is_empty() {
+            text.push_str("\nlink_targets not yet used: ");
+            text.push_str(&json);
+        }
+    }
 }
 
 /// How the `[n]` citations in a write checked out, as one line. Nothing when
@@ -4631,13 +4646,17 @@ fn append_basis(text: &mut String, basis: &[wenlan_types::BasisRef]) {
 }
 
 fn format_create_page_response(resp: CreatePageResponse) -> String {
-    let mut text = match resp.attached_to {
-        Some(page_id) => format!(
+    let mut text = match (resp.attached_to, resp.write_outcome) {
+        (Some(page_id), _) => format!(
             "Attached to existing page {page_id}. Your sources now back that page, but \
              your prose was not saved. To merge it, read_page {page_id} and call \
              write_page with page_id={page_id}."
         ),
-        None => format!("Created page {}", resp.id),
+        (None, Some(wenlan_types::WriteOutcome::ResolvedExisting)) => format!(
+            "Page {} already exists; no duplicate was created. Read that page before deciding whether to update it.",
+            resp.id
+        ),
+        (None, _) => format!("Created page {}", resp.id),
     };
     append_write_receipt(
         &mut text,
@@ -4651,6 +4670,11 @@ fn format_create_page_response(resp: CreatePageResponse) -> String {
     append_citations(&mut text, resp.citations.as_deref());
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
+    append_link_targets(&mut text, &resp.link_targets);
+    if !resp.next_step.is_empty() {
+        text.push_str("\nnext_step: ");
+        text.push_str(&resp.next_step);
+    }
     text
 }
 
@@ -8744,6 +8768,8 @@ mod tests {
             space_source: Some(wenlan_types::WriteSpaceSource::Existing),
             write_outcome: Some(wenlan_types::WriteOutcome::AttachedExisting),
             citations: None,
+            link_targets: Vec::new(),
+            next_step: "Read the existing page.".into(),
         });
 
         assert!(
@@ -9977,6 +10003,8 @@ mod tests {
                 gated: true,
                 revision_card_id: Some("mem_page_card_1".to_string()),
                 citations: None,
+                link_targets: Vec::new(),
+                next_step: "Wait for review.".into(),
             },
         );
         assert!(
@@ -10260,6 +10288,7 @@ mod tests {
             page_titles: (0..50)
                 .map(|i| format!("An existing page title {i:02}"))
                 .collect(),
+            next_step: "Claim one coherent group.".into(),
         };
         let out = steep_new_compact(&list);
         let text = out.to_string();

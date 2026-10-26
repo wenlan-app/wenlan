@@ -55,6 +55,14 @@ pub const EXISTING_PAGE_NOTE: &str = "A page on this subject already exists: exi
 Do not write a second page. Commit with action \"attach\" and the token: the sources go \
 into that page, which then waits to be rewritten with all its sources.";
 
+const NEXT_LIST: &str =
+    "Call steep with action \"claim_new\" for one coherent group of related item_ids.";
+const NEXT_ORGANIZE_TASKS: &str = "Call steep with action \"organize_tasks\" and this token; answer the returned tasks, then call action \"organize\".";
+const NEXT_LINKS: &str =
+    "Call steep with action \"links\" and this token immediately before writing.";
+const NEXT_GROUP: &str =
+    "Call steep with action \"new\", claim the next coherent group with action \"claim_new\", and repeat.";
+
 #[derive(Debug, Deserialize)]
 pub struct SteepNewListQuery {
     #[serde(default)]
@@ -100,6 +108,7 @@ pub async fn handle_steep_new_list(
         kinds: list.kinds,
         held: u32::try_from(list.held).unwrap_or(u32::MAX),
         page_titles: list.page_titles,
+        next_step: NEXT_LIST.to_string(),
     }))
 }
 
@@ -141,6 +150,17 @@ pub async fn handle_steep_new_claim(
     if claim.existing_page.is_some() {
         note = format!("{EXISTING_PAGE_NOTE} {note}");
     }
+    let warnings = claim.thin_group.then(|| {
+        format!(
+            "Thin group: only {} sources were claimed while plenty of material is still waiting. Continue if they form a real topic; otherwise release and regroup.",
+            claim.sources.len()
+        )
+    });
+    let next_step = if claim.organize.is_some() {
+        NEXT_ORGANIZE_TASKS
+    } else {
+        NEXT_LINKS
+    };
     Ok(Json(SteepNewClaimResponse {
         token: claim.token,
         held_until: claim.held_until,
@@ -150,6 +170,8 @@ pub async fn handle_steep_new_claim(
         organize: claim.organize,
         link_targets: claim.link_targets,
         existing_page: claim.existing_page,
+        warnings: warnings.into_iter().collect(),
+        next_step: next_step.to_string(),
     }))
 }
 
@@ -167,9 +189,15 @@ pub async fn handle_steep_new_organize(
         .db
         .clone()
         .ok_or(ServerError::DbNotInitialized)?;
-    let done = wenlan_core::steep_new::organize_new(&db, &req.token, &req.answers)
+    let mut done = wenlan_core::steep_new::organize_new(&db, &req.token, &req.answers)
         .await
         .map_err(steep_error)?;
+    done.next_step = if done.remaining > 0 {
+        NEXT_ORGANIZE_TASKS
+    } else {
+        NEXT_LINKS
+    }
+    .to_string();
     Ok(Json(done))
 }
 
@@ -188,9 +216,15 @@ pub async fn handle_steep_new_links(
         .db
         .clone()
         .ok_or(ServerError::DbNotInitialized)?;
-    let links = wenlan_core::steep_new::links_new(&db, &req.token)
+    let mut links = wenlan_core::steep_new::links_new(&db, &req.token)
         .await
         .map_err(steep_error)?;
+    links.next_step = if links.existing_page.is_some() {
+        "Call steep with action \"attach\" and this token; do not write a duplicate page."
+    } else {
+        "Write one cited page, using relevant link_targets once, then call steep with action \"write\", this token, title, and content."
+    }
+    .to_string();
     Ok(Json(links))
 }
 
@@ -213,7 +247,15 @@ pub async fn handle_steep_new_tasks(
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
     let organize =
         wenlan_core::steep_new::organize_tasks_new(&req.token, &scope).map_err(steep_error)?;
-    Ok(Json(SteepNewTasksResponse { organize }))
+    let next_step = if organize.is_some() {
+        "Answer these tasks, then call steep with action \"organize\", this token, and the answers."
+    } else {
+        NEXT_LINKS
+    };
+    Ok(Json(SteepNewTasksResponse {
+        organize,
+        next_step: next_step.to_string(),
+    }))
 }
 
 /// POST /api/steep/new/commit
@@ -324,5 +366,7 @@ pub async fn handle_steep_new_commit(
         title: done.title,
         citations: done.citations,
         warnings,
+        link_targets: done.link_targets,
+        next_step: NEXT_GROUP.to_string(),
     }))
 }

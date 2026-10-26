@@ -200,6 +200,7 @@ pub async fn handle_steep_claim(
 pub async fn handle_steep_commit(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(req): Json<SteepCommitRequest>,
 ) -> Result<Json<SteepCommitResponse>, ServerError> {
     let (db, page_root) = {
@@ -260,6 +261,32 @@ pub async fn handle_steep_commit(
         }
         _ => Vec::new(),
     };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let link_targets = match db.get_page(&done.page_id).await? {
+        Some(page)
+            if scope.matches(page.workspace.as_deref().or(page.space.as_deref()))
+                && done.outcome != "released" =>
+        {
+            let sources = db
+                .get_memory_contents_by_ids(&page.source_memory_ids)
+                .await?;
+            wenlan_core::steep_new::unused_link_targets(
+                &db,
+                &scope,
+                page.workspace.as_deref().or(page.space.as_deref()),
+                &sources,
+                &page.id,
+                &page.content,
+            )
+            .await
+        }
+        _ => Vec::new(),
+    };
+    let next_step = if done.outcome == "review_card" {
+        "Wait for the revision card to be reviewed, then call steep with action \"list\"."
+    } else {
+        "Call steep with action \"list\" and continue with the next waiting page."
+    };
     Ok(Json(SteepCommitResponse {
         page_id: done.page_id,
         outcome: done.outcome.to_string(),
@@ -268,5 +295,7 @@ pub async fn handle_steep_commit(
         judged: done.judged,
         replayed: done.replayed,
         warnings,
+        link_targets,
+        next_step: next_step.to_string(),
     }))
 }
