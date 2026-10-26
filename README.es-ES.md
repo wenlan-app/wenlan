@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=84327bb545a4bea700e51ee66d07020a0132585c755b8ab85b6203a5b5bd2f92 -->
+<!-- README_SYNC: source=README.md sha256=0b0c0fb47de260fde51035d93109740761fc848cb73689a88ffaca9d2cc3aad6 -->
 
 <p align="center">
   <picture>
@@ -243,6 +243,7 @@ Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan 
 | Gmail, Notion, Google Drive, Slack, GitHub | Tu herramienta de IA los lee con sus propios conectores y guarda en Wenlan lo importante con un enlace al original. |
 | Un repositorio de código | `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan. [Wiki de código](#code-repository-wiki). |
 | Un paquete OKF | Conecta como fuente una carpeta Open Knowledge Format, como una OpenWiki o una exportación de Wenlan. |
+| Tus chats de IA mientras trabajas | Claude Code, Codex y tus otras herramientas de IA guardan como memorias las decisiones, hallazgos y avances de cada conversación, y las páginas las citan. No se importan las transcripciones completas. |
 | ZIP de exportación de ChatGPT o Claude | Recupera conversaciones anteriores, incluido un último mensaje que no obtuvo respuesta, y cítalas como contexto; la importación es una instantánea, no una conexión activa a la cuenta. |
 | Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
 

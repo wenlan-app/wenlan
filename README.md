@@ -220,6 +220,7 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 | Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
 | A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
 | An OKF bundle | Connect an Open Knowledge Format folder, such as an OpenWiki or a Wenlan export, as a source. |
+| Your AI chats as you work | Claude Code, Codex, and your other AI tools save the decisions, findings, and progress from each conversation as memories, and pages cite them. Full transcripts are not imported. |
 | ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
 | Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
 

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=84327bb545a4bea700e51ee66d07020a0132585c755b8ab85b6203a5b5bd2f92 -->
+<!-- README_SYNC: source=README.md sha256=0b0c0fb47de260fde51035d93109740761fc848cb73689a88ffaca9d2cc3aad6 -->
 
 <p align="center">
   <picture>
@@ -224,6 +224,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 | Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的連接器讀取，把重要的內容存進文瀾，並附上原文連結。 |
 | 程式碼儲存庫 | `/wenlan wiki` 寫出對應到程式碼行數的筆記。[程式碼 wiki](#code-repository-wiki)。 |
 | OKF 資料夾 | 把 Open Knowledge Format 資料夾（例如 OpenWiki 或文瀾的匯出）連接成來源。 |
+| 工作中的 AI 對話 | Claude Code、Codex 和你的其他 AI 工具，會把每次對話裡的決定、發現和進度存成記憶，筆記再引用它們。不會匯入完整對話紀錄。 |
 | ChatGPT 或 Claude 匯出的 ZIP | 找回先前對話文字（包括最後一則沒有得到回覆的訊息），作為可引用的脈絡；保留匯入當時的紀錄，不持續連接帳戶。 |
 | 既有記憶文字 | 將偏好、決定或心得保存為獨立記憶。 |
 
