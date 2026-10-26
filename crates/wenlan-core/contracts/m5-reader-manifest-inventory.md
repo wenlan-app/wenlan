@@ -680,9 +680,10 @@ load-bearing: the shape gate holds even when this one is bypassed.
 | `GET` | `/api/steep/worklist` | main | yes | automatic | `none` | `handle_steep_worklist` | SteepWorkItem.title: visible_ids filter on the waiting notes before list and count |
 | `POST` | `/api/steep/claim` | main | yes | automatic | `none` | `handle_steep_claim` | SteepClaimResponse.current_content, SteepSource.text: visible_ids on the one note before the claim reads it |
 | `POST` | `/api/steep/commit` | main | no | not_applicable | `none` | — | receipt only: outcome, card id and citation counts, no prose; the token was issued by a visibility-checked claim |
-| `GET` | `/api/steep/new` | main | no | not_applicable | `none` | — | SteepNewItem.title/snippet: memory rows no note cites, staged revisions left out (distillation_row_is_reviewed); no page prose |
-| `POST` | `/api/steep/new/claim` | main | no | not_applicable | `none` | — | SteepSource.text and SteepOrganizeTask.prompt: the same uncited, reviewed memory rows as /api/steep/new; link_targets: titles only; no page prose |
+| `GET` | `/api/steep/new` | main | no | not_applicable | `none` | — | SteepNewItem.title/snippet: memory rows no note cites, staged revisions left out (distillation_row_is_reviewed); page_titles: titles only, filtered to the caller's scope; no page prose |
+| `POST` | `/api/steep/new/claim` | main | no | not_applicable | `none` | — | SteepSource.text and SteepOrganizeTask.prompt: the same uncited, reviewed memory rows as /api/steep/new; link_targets and existing_page: titles only; no page prose |
 | `POST` | `/api/steep/new/organize` | main | no | not_applicable | `none` | — | receipt only: organize counts and the titles of notes the claim's note may link, filtered to the claim's Space; no page prose |
+| `POST` | `/api/steep/new/links` | main | no | not_applicable | `none` | — | titles only: the notes the claim's note may link and the one note on its subject, filtered to the claim's Space; no page prose |
 | `POST` | `/api/steep/new/commit` | main | no | not_applicable | `none` | — | receipt only: outcome, new note id and title, citation counts; the token was issued by a Space-scoped claim |
 | `POST` | `/api/pages/{id}/code-basis/confirm` | main | no | not_applicable | `none` | — | receipt only: CodeBasisRef carries file path, lines and state, no note prose |
 | `DELETE` | `/api/pages/{id}/code-basis` | main | no | not_applicable | `none` | — | receipt only: removed flag, no prose |
@@ -1077,7 +1078,9 @@ carrying the authority of agreement.
 | `core/db/sessions.rs::get_session_detail` | `pub` | no | **yes** | `server/session_routes.rs::handle_get_session` | — |
 | `core/db/steep.rs::list_steep_code_pages` | `pub(crate)` | no | no | — | — |
 | `core/db/steep.rs::list_steep_pages` | `pub(crate)` | no | no | — | — |
+| `core/db/steep_new.rs::notes_about_entity` | `pub(crate)` | no | no | — | — |
 | `core/db/steep_new.rs::pages_related_to_entities` | `pub(crate)` | no | no | — | — |
+| `core/db/steep_new.rs::recent_notes` | `pub(crate)` | no | no | — | — |
 | `core/db/truth_exposure.rs::conflict_identity_snapshot` | `pub` | no | **yes** | `server/page_routes.rs::visible_conflict_identity` | — |
 | `core/db/truth_exposure.rs::page_truth_states_on_conn` | `private` | no | no | — | — |
 | `core/lint/deep.rs::observation_duplicates` | `private` | no | no | — | — |
@@ -1194,7 +1197,9 @@ carrying the authority of agreement.
 | `core/steep.rs::steep_work` | `private` | no | no | — | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
+| `core/steep_new.rs::existing_page` | `private` | no | no | — | `core/db/steep_new.rs::notes_about_entity`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db.rs::find_unique_active_page_id_by_title_scoped`, `core/db/steep_new.rs::pages_related_to_entities` |
+| `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::build_refresh_titles_hint` | `private` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::list_basis_context` |
@@ -1356,9 +1361,11 @@ carrying the authority of agreement.
 | `core/steep.rs::claim_as` | `private` | no | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::commit` | `pub` | yes | no | — | `core/db.rs::get_page` |
 | `core/steep.rs::list_work` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/steep.rs::steep_work` |
-| `core/steep_new.rs::claim_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_claim` | `core/steep_new.rs::link_targets` |
+| `core/steep_new.rs::attach_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/steep_new.rs::existing_page` |
+| `core/steep_new.rs::claim_new_on` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_claim` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
 | `core/steep_new.rs::commit_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::get_page` |
-| `core/steep_new.rs::organize_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_organize` | `core/steep_new.rs::link_targets` |
+| `core/steep_new.rs::links_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_links` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
+| `core/steep_new.rs::organize_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_organize` | `core/steep_new.rs::existing_page`, `core/steep_new.rs::link_targets` |
 | `core/steep_organize.rs::apply` | `pub` | yes | no | — | `core/db.rs::apply_entity_extraction` |
 | `core/synthesis/detect.rs::detect_page_candidates` | `pub` | no | no | — | `core/db.rs::find_distillation_clusters_scoped`, `core/db.rs::find_matching_page_scoped` |
 | `core/synthesis/distill.rs::build_page_compile_user_prompt` | `pub(crate)` | no | no | — | `core/synthesis/distill.rs::build_existing_titles_hint` |
@@ -1395,6 +1402,7 @@ carrying the authority of agreement.
 | `server/routes.rs::handle_search_inner` | `private` | no | no | `server/routes.rs::handle_search` | `core/db.rs::search_memory` |
 | `server/scheduler.rs::fire_maintenance_stage_safe` | `private` | no | no | `server/scheduler.rs::spawn_scheduler` | `core/maintenance.rs::run_maintenance_stage_slice` |
 | `server/steep_new_routes.rs::handle_steep_new_commit` | `pub` | no | no | — | `core/db.rs::get_page`, `core/onboarding.rs::check_first_page` |
+| `server/steep_new_routes.rs::handle_steep_new_list` | `pub` | no | no | — | `core/steep_new.rs::list_new` |
 | `server/steep_routes.rs::handle_steep_commit` | `pub` | no | no | — | `core/db.rs::get_page` |
 | `server/steep_routes.rs::handle_steep_worklist` | `pub` | no | no | — | `core/steep.rs::waiting_page_ids` |
 
@@ -1480,6 +1488,7 @@ carrying the authority of agreement.
 | `core/repair_plan/deterministic.rs::resolve_page_projections` | `private` | no | no | — | `core/repair.rs::capture_page_projection_rollback` |
 | `core/sources/page_watcher.rs::sync_pass` | `private` | no | no | — | `core/sources/page_watcher.rs::sync_one_file` |
 | `core/steep.rs::claim` | `pub` | yes | no | — | `core/steep.rs::claim_as` |
+| `core/steep_new.rs::claim_new` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
 | `core/steep_organize.rs::plan` | `pub` | no | no | — | `core/db.rs::entity_enrichment_for` |
 | `core/synthesis/distill.rs::distill_one_cluster` | `pub` | no | no | — | `core/synthesis/distill.rs::distill_one_cluster_with_tuning` |
 | `core/synthesis/distill.rs::distill_pages_scoped` | `pub` | no | **yes** | `server/routes.rs::handle_distill_inner` | `core/synthesis/distill.rs::distill_pages_scoped_gated` |
@@ -1521,7 +1530,8 @@ carrying the authority of agreement.
 | `server/scheduler/ambient.rs::run_ambient_job` | `pub(super)` | no | no | `server/scheduler/ambient.rs::run_ambient_job_safe` | `core/post_ingest.rs::run_page_growth_slice` |
 | `server/source_routes.rs::sync_directory_source` | `pub(crate)` | no | no | `server/scheduler.rs::sync_directory_sources_in_scope`, `server/source_routes.rs::handle_sync_source` | `core/db.rs::rebind_source_id_with_source_page` |
 | `server/source_routes/okf_sync.rs::sync_okf_source_in_batches` | `pub(super)` | no | no | `server/source_routes/okf_sync.rs::sync_okf_source` | `core/db.rs::rebind_source_id_with_source_page`, `core/db/okf_concepts.rs::refresh_okf_concept_linkers` |
-| `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new` |
+| `server/steep_new_routes.rs::handle_steep_new_claim` | `pub` | no | no | — | `core/steep_new.rs::claim_new_on` |
+| `server/steep_new_routes.rs::handle_steep_new_links` | `pub` | no | no | — | `core/steep_new.rs::links_new` |
 | `server/steep_new_routes.rs::handle_steep_new_organize` | `pub` | no | no | — | `core/steep_new.rs::organize_new` |
 
 <!-- m5-reader-sweep:end -->

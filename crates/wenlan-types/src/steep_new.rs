@@ -55,6 +55,11 @@ pub struct SteepNewListResponse {
     /// How many of `total` a claim holds right now.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub held: u32,
+    /// Titles of the newest existing pages in the caller's scope (at most
+    /// 50), so grouping can name a group after the page it belongs to. On
+    /// the first page of the list only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub page_titles: Vec<String>,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -65,6 +70,18 @@ fn is_zero(n: &u32) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteepNewClaimRequest {
     pub item_ids: Vec<String>,
+    /// The group's topic. When it names an existing page in the claim's
+    /// Space, the claim offers that page as `existing_page`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<String>,
+}
+
+/// An existing page on a claim's subject, in the claim's Space: the claim's
+/// sources go into it (commit action `attach`) instead of a second page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepExistingPage {
+    pub page_id: String,
+    pub title: String,
 }
 
 /// What a new-page claim hands the caller.
@@ -92,6 +109,10 @@ pub struct SteepNewClaimResponse {
     /// `[[Title]]` where it talks about them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_targets: Vec<String>,
+    /// A page on this subject already exists: attach the sources to it
+    /// (commit action `attach`) instead of writing another page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_page: Option<SteepExistingPage>,
 }
 
 /// `organize.tasks[].stage`: memory type, quality, importance and tags.
@@ -160,13 +181,33 @@ pub struct SteepOrganizeCommitResponse {
     /// As in the claim, now that the sources are organized.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub link_targets: Vec<String>,
+    /// As in the claim, now that the sources are organized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_page: Option<SteepExistingPage>,
+}
+
+/// `POST /api/steep/new/links`: a claim's `link_targets` and
+/// `existing_page` as they are now, read just before the page is written
+/// (pages written since the claim count). Needs no model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepNewLinksRequest {
+    pub token: String,
+}
+
+/// What `POST /api/steep/new/links` returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SteepNewLinksResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_page: Option<SteepExistingPage>,
 }
 
 /// `POST /api/steep/new/commit`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteepNewCommitRequest {
     pub token: String,
-    /// `write` or `release`.
+    /// `write`, `attach` or `release`.
     pub action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -177,6 +218,9 @@ pub struct SteepNewCommitRequest {
 
 /// `action` of a new-page commit: write the page.
 pub const STEEP_NEW_ACTION_WRITE: &str = "write";
+/// `action` of a new-page commit: add the claim's sources to its
+/// `existing_page`, which then waits to be rewritten with all its sources.
+pub const STEEP_NEW_ACTION_ATTACH: &str = "attach";
 /// `action` of a new-page commit: give the items back without a page.
 pub const STEEP_NEW_ACTION_RELEASE: &str = "release";
 
@@ -184,7 +228,8 @@ pub const STEEP_NEW_ACTION_RELEASE: &str = "release";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SteepNewCommitResponse {
     /// `created`, `merged` (a page on the same topic already existed and took
-    /// the sources) or `released`.
+    /// the sources), `attached` (the claim's `existing_page` took them) or
+    /// `released`.
     pub outcome: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_id: Option<String>,

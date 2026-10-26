@@ -32,8 +32,9 @@ use wenlan_types::space_context::WriteSpaceTarget;
 use wenlan_types::steep::SteepCodeAnswer;
 use wenlan_types::steep::SteepSource;
 use wenlan_types::steep_new::{
-    SteepNewItem, SteepOrganizeCommitResponse, SteepOrganizeWork, STEEP_NEW_KIND_CAPTURE,
-    STEEP_NEW_KIND_CHAT, STEEP_NEW_KIND_FILE, STEEP_NEW_KIND_NOTE,
+    SteepExistingPage, SteepNewItem, SteepNewLinksResponse, SteepOrganizeCommitResponse,
+    SteepOrganizeWork, STEEP_NEW_KIND_CAPTURE, STEEP_NEW_KIND_CHAT, STEEP_NEW_KIND_FILE,
+    STEEP_NEW_KIND_NOTE,
 };
 
 use crate::db::MemoryDB;
@@ -71,6 +72,12 @@ const MAX_TITLE_CHARS: usize = 120;
 /// Most existing pages a claim offers as `[[links]]`.
 const MAX_LINK_TARGETS: usize = 20;
 
+/// Most existing page titles the list hands to grouping.
+pub const MAX_PAGE_TITLES: usize = 50;
+
+/// How many of the newest notes a topic is matched against by title.
+const TITLE_MATCH_NOTES: usize = 2_000;
+
 /// One claim, as handed out.
 #[derive(Debug, Clone)]
 struct NewClaim {
@@ -82,6 +89,8 @@ struct NewClaim {
     until: Instant,
     /// Organize tasks still without an answer ([`organize_new`]).
     organize: Vec<OrganizeTask>,
+    /// The group's topic, as the caller named it.
+    topic: Option<String>,
 }
 
 #[derive(Default)]
@@ -306,12 +315,30 @@ pub async fn list_new(
     for m in &all {
         *kinds.entry(m.item.kind.clone()).or_default() += 1;
     }
+    // On the first page only: grouping reads them once.
+    let mut page_titles: Vec<String> = Vec::new();
+    if total > 0 && start == 0 {
+        match db.recent_notes(MAX_PAGE_TITLES * 4).await {
+            Ok(notes) => {
+                for (_, title, space) in notes {
+                    if page_titles.len() < MAX_PAGE_TITLES
+                        && scope.matches(space.as_deref())
+                        && !page_titles.contains(&title)
+                    {
+                        page_titles.push(title);
+                    }
+                }
+            }
+            Err(error) => log::warn!("[steep-new] page titles: {error}"),
+        }
+    }
     Ok(NewList {
         items: all[start..end].iter().map(|m| m.item.clone()).collect(),
         total,
         next_cursor: (end < total).then(|| end.to_string()),
         kinds,
         held: all.iter().filter(|m| m.item.held).count(),
+        page_titles,
     })
 }
 
@@ -325,6 +352,8 @@ pub struct NewList {
     pub kinds: BTreeMap<String, u32>,
     /// How many items a claim holds now.
     pub held: usize,
+    /// The newest existing page titles in scope, for grouping.
+    pub page_titles: Vec<String>,
 }
 
 /// What a claim hands out.
@@ -338,6 +367,9 @@ pub struct NewPageClaim {
     pub organize: Option<SteepOrganizeWork>,
     /// Existing pages the page may link as `[[Title]]`.
     pub link_targets: Vec<String>,
+    /// An existing page on this subject: the sources go into it
+    /// ([`attach_new`]) instead of a second page.
+    pub existing_page: Option<SteepExistingPage>,
 }
 
 /// Hold `item_ids` (one topic) for one note and number their text.
@@ -352,6 +384,23 @@ pub async fn claim_new(
     item_ids: &[String],
     organize: Option<&OrganizeOptions>,
 ) -> Result<NewPageClaim, SteepError> {
+    claim_new_on(db, scope, item_ids, organize, None).await
+}
+
+/// [`claim_new`] for a group the caller named `topic`: when an existing
+/// page in the claim's Space has that title (years and version numbers
+/// aside), the claim offers it as `existing_page`.
+pub async fn claim_new_on(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    item_ids: &[String],
+    organize: Option<&OrganizeOptions>,
+    topic: Option<&str>,
+) -> Result<NewPageClaim, SteepError> {
+    let topic = topic
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
     let mut wanted: Vec<String> = Vec::new();
     for id in item_ids {
         let id = id.trim();
@@ -491,6 +540,7 @@ pub async fn claim_new(
                 scope: scope.clone(),
                 until,
                 organize: Vec::new(),
+                topic: topic.clone(),
             },
         );
     }
@@ -512,6 +562,8 @@ pub async fn claim_new(
         }
     }
     let link_targets = link_targets(db, scope, space.as_deref(), &source_ids).await;
+    let existing_page =
+        existing_page(db, scope, space.as_deref(), &source_ids, topic.as_deref()).await;
     Ok(NewPageClaim {
         token,
         held_until,
@@ -527,6 +579,163 @@ pub async fn claim_new(
         skipped,
         organize: organize_work,
         link_targets,
+        existing_page,
+    })
+}
+
+/// The key two titles share when they name the same subject: lowercase
+/// words, with years, dates and version numbers left out ("Kitchen
+/// Renovation 2023" and "kitchen renovation" share one).
+fn title_key(title: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    for word in title.split(|c: char| !c.is_alphanumeric()) {
+        let letters: String = word
+            .chars()
+            .filter(|c| !c.is_numeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        let had_digits = letters.chars().count() < word.chars().count();
+        // "v2", "q3": what is left of a version or quarter is no word.
+        if letters.is_empty() || (had_digits && letters.chars().count() <= 1) {
+            continue;
+        }
+        words.push(letters);
+    }
+    words.join(" ")
+}
+
+/// Words too common to tell two titles apart.
+const TITLE_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "the", "of", "in", "on", "for", "to", "with", "my", "our", "notes", "note",
+    "about", "&", "和", "與", "的", "筆記",
+];
+
+/// How close two titles are, 0 to 1, from their [`title_key`] words: 1 when
+/// they share every word, else the share of words in common, counted only
+/// when they have at least two in common or one title's words are all in
+/// the other ("Portugal trip" and "Portugal trip and food"). A one-word
+/// title in a script without spaces matches a title that contains it.
+fn title_closeness(a: &str, b: &str) -> f64 {
+    let (ka, kb) = (title_key(a), title_key(b));
+    if ka.is_empty() || kb.is_empty() {
+        return 0.0;
+    }
+    if ka == kb {
+        return 1.0;
+    }
+    let words = |key: &str| -> std::collections::BTreeSet<String> {
+        key.split(' ')
+            .filter(|w| !TITLE_STOPWORDS.contains(w))
+            .map(str::to_string)
+            .collect()
+    };
+    let (wa, wb) = (words(&ka), words(&kb));
+    if wa.is_empty() || wb.is_empty() {
+        return 0.0;
+    }
+    if wa == wb {
+        return 1.0;
+    }
+    let shared = wa.intersection(&wb).count();
+    let (small, large) = if wa.len() <= wb.len() {
+        (&wa, &wb)
+    } else {
+        (&wb, &wa)
+    };
+    if small.len() == 1 && shared == 0 {
+        let only = small.iter().next().map(String::as_str).unwrap_or("");
+        if !only.is_ascii() && only.chars().count() >= 2 && large.iter().any(|w| w.contains(only)) {
+            return 0.8;
+        }
+        return 0.0;
+    }
+    let union = wa.union(&wb).count();
+    let jaccard = shared as f64 / union as f64;
+    if (small.len() >= 2 && shared == small.len()) || shared >= 2 {
+        jaccard.max(if shared == small.len() { 0.75 } else { 0.0 })
+    } else {
+        0.0
+    }
+}
+
+/// Least [`title_closeness`] for a topic to name an existing page.
+const TITLE_CLOSE_ENOUGH: f64 = 0.6;
+
+/// An existing note on a claim's subject, in the claim's Space (`space`)
+/// and the caller's scope: the note about the first entity a strict majority
+/// of the sources mention that has one, else a note whose title matches
+/// `topic` ([`title_closeness`], the closest, newest first). Best effort: a failed read offers none.
+async fn existing_page(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    space: Option<&str>,
+    source_ids: &[String],
+    topic: Option<&str>,
+) -> Option<SteepExistingPage> {
+    let fits = |page_space: &Option<String>| {
+        page_space.as_deref() == space && scope.matches(page_space.as_deref())
+    };
+    let entities = majority_entities(db, source_ids)
+        .await
+        .unwrap_or_else(|error| {
+            log::warn!("[steep-new] existing page: {error}");
+            Vec::new()
+        });
+    for entity_id in entities {
+        match db.notes_about_entity(&entity_id).await {
+            Ok(notes) => {
+                if let Some((page_id, title, _)) = notes
+                    .into_iter()
+                    .find(|(_, _, page_space)| fits(page_space))
+                {
+                    return Some(SteepExistingPage { page_id, title });
+                }
+            }
+            Err(error) => log::warn!("[steep-new] existing page: {error}"),
+        }
+    }
+    let topic = topic?;
+    if title_key(topic).is_empty() {
+        return None;
+    }
+    match db.recent_notes(TITLE_MATCH_NOTES).await {
+        Ok(notes) => {
+            let mut best: Option<(f64, String, String)> = None;
+            for (page_id, title, page_space) in notes {
+                if !fits(&page_space) {
+                    continue;
+                }
+                let close = title_closeness(topic, &title);
+                // Newest first: an equally close older note does not win.
+                if close >= TITLE_CLOSE_ENOUGH && best.as_ref().is_none_or(|(b, _, _)| close > *b) {
+                    best = Some((close, page_id, title));
+                }
+            }
+            best.map(|(_, page_id, title)| SteepExistingPage { page_id, title })
+        }
+        Err(error) => {
+            log::warn!("[steep-new] existing page: {error}");
+            None
+        }
+    }
+}
+
+/// A held claim's `link_targets` and `existing_page` as they are now: pages
+/// written since the claim (by this run's earlier groups) count. Needs no
+/// model, and leaves the claim as it is.
+pub async fn links_new(db: &MemoryDB, token: &str) -> Result<SteepNewLinksResponse, SteepError> {
+    let claim = {
+        let mut holds = holds();
+        holds.expire(Instant::now());
+        holds.by_token.get(token).cloned()
+    }
+    .ok_or(SteepError::TokenGone)?;
+    let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
+    let space = claim.space.as_deref();
+    Ok(SteepNewLinksResponse {
+        link_targets: link_targets(db, &claim.scope, space, &source_ids).await,
+        existing_page: existing_page(db, &claim.scope, space, &source_ids, claim.topic.as_deref())
+            .await,
     })
 }
 
@@ -615,7 +824,7 @@ pub async fn organize_new(
     token: &str,
     answers: &[SteepCodeAnswer],
 ) -> Result<SteepOrganizeCommitResponse, SteepError> {
-    let (taken, unknown, source_ids, scope) = {
+    let (taken, unknown, source_ids, scope, topic) = {
         let mut holds = holds();
         holds.expire(Instant::now());
         let claim = holds.by_token.get_mut(token).ok_or(SteepError::TokenGone)?;
@@ -628,7 +837,13 @@ pub async fn organize_new(
             }
         }
         let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
-        (taken, unknown, source_ids, claim.scope.clone())
+        (
+            taken,
+            unknown,
+            source_ids,
+            claim.scope.clone(),
+            claim.topic.clone(),
+        )
     };
 
     // The answers may create the very entities they confirm, so compare
@@ -690,6 +905,14 @@ pub async fn organize_new(
         claim.space.clone()
     };
     out.link_targets = link_targets(db, &scope, space_now.as_deref(), &source_ids).await;
+    out.existing_page = existing_page(
+        db,
+        &scope,
+        space_now.as_deref(),
+        &source_ids,
+        topic.as_deref(),
+    )
+    .await;
     log::info!(
         "[steep-new] organized {} classified, {} detected, {} unreadable, {} stale, {} linked of {} sources",
         out.classified,
@@ -705,7 +928,7 @@ pub async fn organize_new(
 /// What a new-page commit did.
 #[derive(Debug, Clone)]
 pub struct NewPageCommit {
-    /// `created`, `merged` or `released`.
+    /// `created`, `merged`, `attached` or `released`.
     pub outcome: &'static str,
     pub page_id: Option<String>,
     pub title: Option<String>,
@@ -723,6 +946,103 @@ pub fn release_new(token: &str) -> Result<NewPageCommit, SteepError> {
         }),
         None => Err(SteepError::TokenGone),
     }
+}
+
+/// The claim's source ids, once every source reads as it did at the claim
+/// and is still in no note. Otherwise the claim is dropped.
+async fn sources_as_claimed(
+    db: &MemoryDB,
+    token: &str,
+    claim: &NewClaim,
+) -> Result<Vec<String>, SteepError> {
+    let ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
+    let mut now_texts: HashMap<String, String> = HashMap::new();
+    for (source_id, _, text) in db.unpaged_texts(&ids).await? {
+        let slot = now_texts.entry(source_id).or_default();
+        if !slot.is_empty() {
+            slot.push_str("\n\n");
+        }
+        slot.push_str(text.trim());
+    }
+    for (id, text) in &claim.sources {
+        let now: Option<String> = now_texts
+            .get(id)
+            .map(|t| t.chars().take(SOURCE_CHAR_CAP).collect());
+        if now.as_deref() != Some(text.as_str()) {
+            holds().drop_token(token);
+            return Err(SteepError::Changed(
+                "a source changed, was removed, or went into another note since the claim. \
+                 Nothing was written; list again and claim again"
+                    .into(),
+            ));
+        }
+    }
+    Ok(ids)
+}
+
+/// Add a claim's sources to its `existing_page` instead of writing a second
+/// page on the same subject. The page then waits, out of date with its
+/// sources, for a rewrite that uses all of them (steep's own worklist, or
+/// Automatic mode). The claim ends either way but on a refusal for no
+/// existing page, which keeps it so the caller writes the page instead.
+pub async fn attach_new(
+    db: &MemoryDB,
+    token: &str,
+    agent: &str,
+) -> Result<NewPageCommit, SteepError> {
+    let claim = {
+        let mut holds = holds();
+        holds.expire(Instant::now());
+        holds.by_token.get(token).cloned()
+    }
+    .ok_or(SteepError::TokenGone)?;
+    let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
+    let Some(page) = existing_page(
+        db,
+        &claim.scope,
+        claim.space.as_deref(),
+        &source_ids,
+        claim.topic.as_deref(),
+    )
+    .await
+    else {
+        return Err(SteepError::Invalid(
+            "no page on this subject exists in this Space: write the page with action \
+             \"write\" and the same token"
+                .into(),
+        ));
+    };
+    let ids = sources_as_claimed(db, token, &claim).await?;
+    let result = page_write(
+        db,
+        PageWrite::Attach {
+            page_id: &page.page_id,
+            source_memory_ids: &ids,
+            link_reason: "steep_attach",
+            agent,
+        },
+    )
+    .await;
+    holds().drop_token(token);
+    result?;
+    if let Err(error) = db
+        .stamp_last_distilled_at(&ids, chrono::Utc::now().timestamp())
+        .await
+    {
+        log::warn!("[steep-new] stamp last_distilled_at failed: {error}");
+    }
+    log::info!(
+        "[steep-new] attached {} sources to note {} '{}'",
+        ids.len(),
+        page.page_id,
+        page.title
+    );
+    Ok(NewPageCommit {
+        outcome: "attached",
+        page_id: Some(page.page_id),
+        title: Some(page.title),
+        citations: None,
+    })
 }
 
 /// Write one note from a claim. The hold is kept when the citation check
@@ -756,30 +1076,7 @@ pub async fn commit_new(
         return Err(SteepError::Invalid("content is empty".into()));
     }
     crate::export::provenance::validate_canonical_page_content(content)?;
-
-    // Every source must read as it did at the claim and still be in no note.
-    let ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
-    let mut now_texts: HashMap<String, String> = HashMap::new();
-    for (source_id, _, text) in db.unpaged_texts(&ids).await? {
-        let slot = now_texts.entry(source_id).or_default();
-        if !slot.is_empty() {
-            slot.push_str("\n\n");
-        }
-        slot.push_str(text.trim());
-    }
-    for (id, text) in &claim.sources {
-        let now: Option<String> = now_texts
-            .get(id)
-            .map(|t| t.chars().take(SOURCE_CHAR_CAP).collect());
-        if now.as_deref() != Some(text.as_str()) {
-            holds().drop_token(token);
-            return Err(SteepError::Changed(
-                "a source changed, was removed, or went into another note since the claim. \
-                 Nothing was written; list again and claim again"
-                    .into(),
-            ));
-        }
-    }
+    let ids = sources_as_claimed(db, token, &claim).await?;
 
     let kinds = db.resolve_source_kinds(&ids).await.unwrap_or_default();
     let numbered: Vec<crate::citations::NumberedSource> = claim
@@ -956,6 +1253,21 @@ mod tests {
             item_title(None, "mem_1", "\n# Kyoto trip\nday one"),
             "Kyoto trip"
         );
+    }
+
+    #[test]
+    fn close_titles_name_one_subject() {
+        assert_eq!(title_key("Kitchen Renovation 2023"), "kitchen renovation");
+        assert_eq!(title_key("Wenlan v2 notes"), "wenlan notes");
+        assert_eq!(title_key("廚房裝修2023"), "廚房裝修");
+        let close = |a, b| title_closeness(a, b) >= TITLE_CLOSE_ENOUGH;
+        assert!(close("Kitchen Renovation 2023", "Kitchen renovation"));
+        assert!(close("Portugal Trip", "Portugal trip and food"));
+        assert!(close("Lisbon and Porto trip", "Porto and Lisbon"));
+        assert!(close("廚房裝修", "廚房裝修筆記 2024"));
+        assert!(!close("Kiln glazes", "Kiln renovation"));
+        assert!(!close("Portugal Trip and Food", "Lisbon and Porto"));
+        assert!(!close("Notes", "My notes"));
     }
 
     #[test]

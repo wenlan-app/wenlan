@@ -1108,8 +1108,12 @@ pub enum SteepAction {
     ClaimNew,
     /// The small model's answers to a claim_new's organize tasks.
     Organize,
+    /// A claim_new's link_targets and existing_page as they are now.
+    Links,
     /// Save the new page a claim_new was for.
     Write,
+    /// Add a claim_new's sources to its existing_page instead of writing.
+    Attach,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1123,13 +1127,13 @@ pub struct SteepAnswer {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SteepParams {
     #[schemars(
-        description = "new | claim_new (item_ids) | organize (token, answers) | write (token, title, content) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
+        description = "new | claim_new (item_ids, title) | organize (token, answers) | links (token) | write (token, title, content) | attach (token) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
     )]
     pub action: SteepAction,
     #[schemars(description = "claim_new: the item_ids of one topic, from new.")]
     #[serde(default)]
     pub item_ids: Option<Vec<String>>,
-    #[schemars(description = "write: the new page's title.")]
+    #[schemars(description = "write: the new page's title. claim_new: the group's topic.")]
     #[serde(default)]
     pub title: Option<String>,
     #[schemars(description = "claim: the page to take, from list.")]
@@ -1859,7 +1863,11 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
         } => {
             let text = if matches!(
                 action,
-                SteepAction::List | SteepAction::Claim | SteepAction::New | SteepAction::ClaimNew
+                SteepAction::List
+                    | SteepAction::Claim
+                    | SteepAction::New
+                    | SteepAction::ClaimNew
+                    | SteepAction::Links
             ) {
                 format!("steep refused: {reason}")
             } else {
@@ -3700,7 +3708,10 @@ impl WenlanMcpServer {
                 self.client
                     .post::<_, wenlan_types::SteepNewClaimResponse>(
                         "/api/steep/new/claim",
-                        &wenlan_types::SteepNewClaimRequest { item_ids },
+                        &wenlan_types::SteepNewClaimRequest {
+                            item_ids,
+                            topic: params.title.filter(|t| !t.trim().is_empty()),
+                        },
                     )
                     .await
                     .map(|claim| serde_json::to_value(&claim).map_err(encode))
@@ -3725,6 +3736,35 @@ impl WenlanMcpServer {
                     .post::<_, wenlan_types::SteepOrganizeCommitResponse>(
                         "/api/steep/new/organize",
                         &wenlan_types::SteepOrganizeCommitRequest { token, answers },
+                    )
+                    .await
+                    .map(|done| serde_json::to_value(&done).map_err(encode))
+            }
+            SteepAction::Links => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                self.client
+                    .post::<_, wenlan_types::SteepNewLinksResponse>(
+                        "/api/steep/new/links",
+                        &wenlan_types::SteepNewLinksRequest { token },
+                    )
+                    .await
+                    .map(|links| serde_json::to_value(&links).map_err(encode))
+            }
+            SteepAction::Attach => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                self.client
+                    .post::<_, wenlan_types::SteepNewCommitResponse>(
+                        "/api/steep/new/commit",
+                        &wenlan_types::SteepNewCommitRequest {
+                            token,
+                            action: wenlan_types::steep_new::STEEP_NEW_ACTION_ATTACH.to_string(),
+                            title: None,
+                            content: None,
+                        },
                     )
                     .await
                     .map(|done| serde_json::to_value(&done).map_err(encode))
@@ -5017,7 +5057,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: write pages from unpaged material, then update pages whose sources or code changed. `new`: the items; a small model groups them by topic. `claim_new` (item_ids): their text as [1]..[n], a token. `write` (token, title, content): the page, cited [n]. `list`: pages waiting, and new_total. `claim` (page_id): page, sources [1]..[n] (and current code), token, plan: rewrite; review_card (user-written; your rewrite becomes a card); judge (give each code check to a small model, pass replies to `judge`); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]; refused if anything changed since. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
+        description = "Steep on demand: write pages from unpaged material, then update pages whose sources or code changed. `new`: the items; a small model groups them by topic. `claim_new` (item_ids, title: the topic): their text as [1]..[n], a token. `links` (token): fresh link_targets, right before writing. `write` (token, title, content): the page, cited [n]. `attach` (token): when the claim has existing_page, its sources go into that page instead. `list`: pages waiting, and new_total. `claim` (page_id): page, sources [1]..[n] (and current code), token, plan: rewrite; review_card (user-written; your rewrite becomes a card); judge (give each code check to a small model, pass replies to `judge`); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]; refused if anything changed since. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
         annotations(
             title = "Steep",
             read_only_hint = false,
@@ -10018,7 +10058,9 @@ mod tests {
             SteepAction::Release,
             SteepAction::ClaimNew,
             SteepAction::Organize,
+            SteepAction::Links,
             SteepAction::Write,
+            SteepAction::Attach,
         ] {
             let result = server
                 .steep_impl(SteepParams {
@@ -10100,6 +10142,64 @@ mod tests {
         assert_eq!(body["classified"], 1);
         assert_eq!(body["remaining"], 1);
         assert_eq!(body["link_targets"][0], "Kiln care");
+    }
+
+    #[tokio::test]
+    async fn steep_links_and_attach_post_the_token() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/links"))
+            .and(body_json(serde_json::json!({"token": "tok_1"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "link_targets": ["Kiln care"],
+                "existing_page": {"page_id": "page_k", "title": "Kiln days"}
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/commit"))
+            .and(body_json(
+                serde_json::json!({"token": "tok_1", "action": "attach"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "outcome": "attached", "page_id": "page_k", "title": "Kiln days"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |action: SteepAction| SteepParams {
+            action,
+            page_id: None,
+            item_ids: None,
+            token: Some("tok_1".into()),
+            title: None,
+            content: None,
+            answers: None,
+            limit: None,
+            cursor: None,
+            space: None,
+            session: None,
+        };
+        let links = server.steep_impl(params(SteepAction::Links)).await.unwrap();
+        let body = links.structured_content.expect("links");
+        assert_eq!(body["link_targets"][0], "Kiln care");
+        assert_eq!(body["existing_page"]["title"], "Kiln days");
+        let attached = server
+            .steep_impl(params(SteepAction::Attach))
+            .await
+            .unwrap();
+        let body = attached.structured_content.expect("a receipt");
+        assert_eq!(body["outcome"], "attached");
     }
 
     // ===== Remember request construction =====

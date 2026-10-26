@@ -13,10 +13,13 @@ use axum::Json;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use wenlan_types::steep_new::{STEEP_NEW_ACTION_RELEASE, STEEP_NEW_ACTION_WRITE};
+use wenlan_types::steep_new::{
+    STEEP_NEW_ACTION_ATTACH, STEEP_NEW_ACTION_RELEASE, STEEP_NEW_ACTION_WRITE,
+};
 use wenlan_types::{
     SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest, SteepNewCommitResponse,
-    SteepNewListResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
+    SteepNewLinksRequest, SteepNewLinksResponse, SteepNewListResponse, SteepOrganizeCommitRequest,
+    SteepOrganizeCommitResponse,
 };
 
 use crate::error::ServerError;
@@ -29,6 +32,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/steep/new", get(handle_steep_new_list))
         .route("/api/steep/new/claim", post(handle_steep_new_claim))
         .route("/api/steep/new/organize", post(handle_steep_new_organize))
+        .route("/api/steep/new/links", post(handle_steep_new_links))
         .route("/api/steep/new/commit", post(handle_steep_new_commit))
 }
 
@@ -44,6 +48,11 @@ sources do not belong together, commit with action \"release\" instead.";
 pub const LINK_TARGETS_NOTE: &str = "Where the note talks about one of the pages in \
 link_targets, link it once as [[Title]], with the title exactly as given. Link no other \
 titles.";
+
+/// Added to the note when a page on the subject already exists.
+pub const EXISTING_PAGE_NOTE: &str = "A page on this subject already exists: existing_page. \
+Do not write a second page. Commit with action \"attach\" and the token: the sources go \
+into that page, which then waits to be rewritten with all its sources.";
 
 #[derive(Debug, Deserialize)]
 pub struct SteepNewListQuery {
@@ -89,6 +98,7 @@ pub async fn handle_steep_new_list(
         next_cursor: list.next_cursor,
         kinds: list.kinds,
         held: u32::try_from(list.held).unwrap_or(u32::MAX),
+        page_titles: list.page_titles,
     }))
 }
 
@@ -114,21 +124,31 @@ pub async fn handle_steep_new_claim(
         (db, organize)
     };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let claim = wenlan_core::steep_new::claim_new(&db, &scope, &req.item_ids, organize.as_ref())
-        .await
-        .map_err(steep_error)?;
+    let claim = wenlan_core::steep_new::claim_new_on(
+        &db,
+        &scope,
+        &req.item_ids,
+        organize.as_ref(),
+        req.topic.as_deref(),
+    )
+    .await
+    .map_err(steep_error)?;
+    let mut note = NEW_PAGE_NOTE.to_string();
+    if !claim.link_targets.is_empty() {
+        note = format!("{note} {LINK_TARGETS_NOTE}");
+    }
+    if claim.existing_page.is_some() {
+        note = format!("{EXISTING_PAGE_NOTE} {note}");
+    }
     Ok(Json(SteepNewClaimResponse {
         token: claim.token,
         held_until: claim.held_until,
         sources: claim.sources,
         skipped: claim.skipped,
-        note: if claim.link_targets.is_empty() {
-            NEW_PAGE_NOTE.to_string()
-        } else {
-            format!("{NEW_PAGE_NOTE} {LINK_TARGETS_NOTE}")
-        },
+        note,
         organize: claim.organize,
         link_targets: claim.link_targets,
+        existing_page: claim.existing_page,
     }))
 }
 
@@ -152,6 +172,27 @@ pub async fn handle_steep_new_organize(
     Ok(Json(done))
 }
 
+/// POST /api/steep/new/links
+///
+/// A claim's `link_targets` and `existing_page` as they are now, read just
+/// before its page is written: pages this run wrote since the claim count.
+/// Needs no model.
+pub async fn handle_steep_new_links(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Json(req): Json<SteepNewLinksRequest>,
+) -> Result<Json<SteepNewLinksResponse>, ServerError> {
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let links = wenlan_core::steep_new::links_new(&db, &req.token)
+        .await
+        .map_err(steep_error)?;
+    Ok(Json(links))
+}
+
 /// POST /api/steep/new/commit
 ///
 /// Write the note a claim was for, or give the items back.
@@ -170,6 +211,18 @@ pub async fn handle_steep_new_commit(
     let done = match req.action.as_str() {
         STEEP_NEW_ACTION_RELEASE => {
             wenlan_core::steep_new::release_new(&req.token).map_err(steep_error)?
+        }
+        STEEP_NEW_ACTION_ATTACH => {
+            let agent = headers
+                .get("x-agent-name")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("steep")
+                .to_string();
+            wenlan_core::steep_new::attach_new(&db, &req.token, &agent)
+                .await
+                .map_err(steep_error)?
         }
         STEEP_NEW_ACTION_WRITE => {
             let named = headers
@@ -233,11 +286,11 @@ pub async fn handle_steep_new_commit(
         }
         other => {
             return Err(ServerError::BadRequest(format!(
-                "steep_invalid: action must be \"write\" or \"release\", not \"{other}\""
-            )))
+            "steep_invalid: action must be \"write\", \"attach\" or \"release\", not \"{other}\""
+        )))
         }
     };
-    let warnings = if done.page_id.is_some() {
+    let warnings = if done.page_id.is_some() && done.outcome != "attached" {
         wenlan_core::diagrams::diagram_warnings(req.content.as_deref().unwrap_or(""))
     } else {
         Vec::new()

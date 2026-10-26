@@ -293,6 +293,79 @@ impl MemoryDB {
         Ok(out)
     }
 
+    /// Notes (not entity or source pages, not the Overview) about
+    /// `entity_id`, newest first, as `(page id, title, space)`. The space is
+    /// the page's workspace, else its space; unfiled reads as `None`.
+    pub(crate) async fn notes_about_entity(
+        &self,
+        entity_id: &str,
+    ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+        self.note_rows(
+            &format!(
+                "SELECT p.id, p.title, COALESCE(p.workspace, p.space) FROM pages p \
+                 WHERE p.entity_id = ?1 AND {ORGANIZING} AND LOWER(p.title) <> 'overview' \
+                 ORDER BY p.last_modified DESC, p.id ASC LIMIT 20"
+            ),
+            vec![libsql::Value::Text(entity_id.to_string())],
+        )
+        .await
+    }
+
+    /// The newest `limit` notes (not entity or source pages, not the
+    /// Overview), as `(page id, title, space)`, as in
+    /// [`Self::notes_about_entity`].
+    pub(crate) async fn recent_notes(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+        self.note_rows(
+            &format!(
+                "SELECT p.id, p.title, COALESCE(p.workspace, p.space) FROM pages p \
+                 WHERE {ORGANIZING} AND LOWER(p.title) <> 'overview' \
+                 ORDER BY p.last_modified DESC, p.id ASC LIMIT {limit}"
+            ),
+            Vec::new(),
+        )
+        .await
+    }
+
+    async fn note_rows(
+        &self,
+        sql: &str,
+        params: Vec<libsql::Value>,
+    ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(sql, params)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("steep notes: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("steep notes row: {e}")))?
+        {
+            let title = row
+                .get::<Option<String>>(1)
+                .unwrap_or(None)
+                .unwrap_or_default();
+            if title.trim().is_empty() {
+                continue;
+            }
+            let space: Option<String> = row
+                .get::<Option<String>>(2)
+                .unwrap_or(None)
+                .filter(|s| s != super::UNFILED_SPACE_ID);
+            out.push((
+                row.get(0)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                title,
+                space,
+            ));
+        }
+        Ok(out)
+    }
+
     /// Every entity whose Wiki page is confirmed. An organize run compares
     /// it before and after, so it reports only the entities it confirmed.
     pub(crate) async fn confirmed_entity_ids(

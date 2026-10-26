@@ -432,6 +432,9 @@ const NON_SENSITIVE_PATHS: &[&str] = &[
     // the claim's own note may link, filtered to the Space the claim was
     // made in; the claim that hands out the text is in the sensitive catalog.
     "/api/steep/new/organize",
+    // A claim's fresh link targets and existing page: titles and one page
+    // id, filtered to the Space the claim was made in; no page text.
+    "/api/steep/new/links",
     // A repository-bound Space names its Space in the path; the binding,
     // suggest, publish and run routes return paths, counts and links, no
     // page text. The docs route returns one doc fix (text of a file in the

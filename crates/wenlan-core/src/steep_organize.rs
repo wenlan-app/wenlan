@@ -72,8 +72,9 @@ Wenlan's own model would. Give these tasks to a helper on your tool's cheapest m
 your main model, with the token. For each task the helper uses the instructions of its \
 stage as the system prompt and the task's prompt as the user message, and answers with only \
 what those instructions ask for. The helper itself then calls organize with the token and \
-its answers as [{n, answer}], and reports back one line: the counts and link_targets that \
-call returned. Never pass the answers on through your main model. Only if no helper on a \
+its answers as [{n, answer}], and reports back one line: the counts that call returned. \
+Right before writing the page, call links with the token for the pages to link and any \
+existing page on this subject. Never pass the answers on through your main model. Only if no helper on a \
 cheaper model can start at all, answer the tasks yourself for this run and say so in your \
 report.";
 

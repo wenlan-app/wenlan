@@ -111,8 +111,9 @@ pub use steep::{
     SteepWorkItem, SteepWorklistResponse,
 };
 pub use steep_new::{
-    SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest, SteepNewCommitResponse,
-    SteepNewItem, SteepNewListResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
+    SteepExistingPage, SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest,
+    SteepNewCommitResponse, SteepNewItem, SteepNewLinksRequest, SteepNewLinksResponse,
+    SteepNewListResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
     SteepOrganizeStage, SteepOrganizeTask, SteepOrganizeWork,
 };
 

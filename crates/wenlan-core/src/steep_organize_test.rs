@@ -688,3 +688,149 @@ async fn a_folder_file_is_organized_for_entities_only() {
     assert_eq!(done.detected, 2);
     assert_eq!(done.linked, 2);
 }
+
+/// An authored note in the unfiled Space, about `entity_id` when given.
+async fn authored_note(db: &MemoryDB, title: &str, entity_id: Option<String>) -> String {
+    crate::post_write::page_write(
+        db,
+        crate::post_write::PageWrite::Create {
+            page_id: None,
+            req: wenlan_types::requests::CreateConceptRequest {
+                title: title.into(),
+                content: format!("{title} is a subject of these notes."),
+                summary: None,
+                entity_id,
+                space: wenlan_types::WriteSpaceTarget::Uncategorized,
+                source_memory_ids: Vec::new(),
+                creation_kind: Some("authored".into()),
+                workspace: None,
+            },
+            agent: "test",
+            knowledge_path: None,
+            page_min_cluster_size: 0,
+            page_match_threshold: 2.0,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: None,
+        },
+    )
+    .await
+    .unwrap()
+    .id
+}
+
+/// A group whose sources are mostly about an entity that already has a note
+/// goes into that note instead of a second one: `links` sees the note
+/// written after the claim, and `attach` adds the sources to it and leaves
+/// it waiting for a rewrite that uses them.
+#[tokio::test]
+async fn a_group_about_a_subject_with_a_note_attaches_to_it() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(&db, "att_a", MIRA_NOTE).await;
+    memory(&db, "att_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["att_a".into(), "att_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    assert!(claim.existing_page.is_none(), "nothing organized yet");
+    let work = claim.organize.clone().unwrap();
+    let done = organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    assert!(done.existing_page.is_none(), "no note about Mira yet");
+
+    // An earlier group of this run writes the note about Mira meanwhile.
+    let mira = db
+        .search_entities_by_name("Mira")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.name == "Mira")
+        .unwrap()
+        .id;
+    let note = authored_note(&db, "About Mira", Some(mira)).await;
+    let links = crate::steep_new::links_new(&db, &claim.token)
+        .await
+        .unwrap();
+    assert_eq!(links.link_targets, vec!["About Mira".to_string()]);
+    let existing = links.existing_page.expect("the note about Mira");
+    assert_eq!(existing.page_id, note);
+    assert_eq!(existing.title, "About Mira");
+
+    let attached = crate::steep_new::attach_new(&db, &claim.token, "test")
+        .await
+        .unwrap();
+    assert_eq!(attached.outcome, "attached");
+    assert_eq!(attached.title.as_deref(), Some("About Mira"));
+    let page = db.get_page(&note).await.unwrap().unwrap();
+    for id in ["att_a", "att_b"] {
+        assert!(
+            page.source_memory_ids.iter().any(|s| s == id),
+            "{id} is a source of the note now: {:?}",
+            page.source_memory_ids
+        );
+    }
+    assert_eq!(
+        page.stale_reason.as_deref(),
+        Some("source_updated"),
+        "the note waits for a rewrite with its new sources"
+    );
+    let left = crate::steep_new::new_material(&db, &ReadScope::Global)
+        .await
+        .unwrap();
+    assert!(
+        !left
+            .iter()
+            .any(|m| m.source_ids.iter().any(|s| s.starts_with("att_"))),
+        "the attached sources are in a page now"
+    );
+    assert!(matches!(
+        crate::steep_new::links_new(&db, &claim.token).await,
+        Err(crate::steep::SteepError::TokenGone)
+    ));
+}
+
+/// A topic that names an existing note, years and versions aside, offers
+/// that note. Without one, `attach` refuses and keeps the claim, so the
+/// page can still be written.
+#[tokio::test]
+async fn a_topic_naming_an_existing_note_offers_it() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    let note = authored_note(&db, "Kiln renovation", None).await;
+    memory(&db, "topic_a", MIRA_NOTE).await;
+    memory(&db, "topic_b", KILN_NOTE).await;
+    let claim = crate::steep_new::claim_new_on(
+        &db,
+        &ReadScope::Global,
+        &["topic_a".into(), "topic_b".into()],
+        None,
+        Some("Kiln Renovation 2024 (v2)"),
+    )
+    .await
+    .unwrap();
+    let existing = claim.existing_page.expect("the title matches");
+    assert_eq!(existing.page_id, note);
+    crate::steep_new::release_new(&claim.token).unwrap();
+
+    let other = crate::steep_new::claim_new_on(
+        &db,
+        &ReadScope::Global,
+        &["topic_a".into(), "topic_b".into()],
+        None,
+        Some("Kiln glazes"),
+    )
+    .await
+    .unwrap();
+    assert!(other.existing_page.is_none());
+    let refused = crate::steep_new::attach_new(&db, &other.token, "test").await;
+    assert!(matches!(refused, Err(crate::steep::SteepError::Invalid(_))));
+    assert!(
+        crate::steep_new::links_new(&db, &other.token).await.is_ok(),
+        "the claim is kept for the write"
+    );
+    crate::steep_new::release_new(&other.token).unwrap();
+}

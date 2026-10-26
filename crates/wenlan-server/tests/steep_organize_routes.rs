@@ -140,3 +140,93 @@ async fn organize_with_a_lost_token_is_refused() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
 }
+
+/// A group whose topic names an existing page goes into it: the list offers
+/// the page's title for grouping, the claim names it, `links` reads it
+/// fresh, and the `attach` commit adds the sources to it.
+#[tokio::test]
+async fn a_group_named_after_an_existing_page_attaches_to_it() {
+    let (app, _dir, db) = common::test_app().await;
+    let now = chrono::Utc::now().timestamp();
+    for (id, text) in [("att_mira", MIRA), ("att_kiln", KILN)] {
+        common::insert_memory(&db, id, text, "memory", Some("obsidian"), None, false, now).await;
+    }
+    let page = wenlan_core::post_write::page_write(
+        &db,
+        wenlan_core::post_write::PageWrite::Create {
+            page_id: None,
+            req: wenlan_types::requests::CreateConceptRequest {
+                title: "Kiln Renovation".into(),
+                content: "The kiln was rebuilt.".into(),
+                summary: None,
+                entity_id: None,
+                space: wenlan_types::WriteSpaceTarget::Uncategorized,
+                source_memory_ids: Vec::new(),
+                creation_kind: Some("authored".into()),
+                workspace: None,
+            },
+            agent: "test",
+            knowledge_path: None,
+            page_min_cluster_size: 0,
+            page_match_threshold: 2.0,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let (status, body) = send(&app, Method::GET, "/api/steep/new", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["page_titles"], json!(["Kiln Renovation"]), "{body}");
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        "/api/steep/new/claim",
+        Some(json!({"item_ids": ["att_mira", "att_kiln"], "topic": "Kiln renovation 2024"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let claim: SteepNewClaimResponse = serde_json::from_value(body).unwrap();
+    let existing = claim.existing_page.expect("the topic names the page");
+    assert_eq!(existing.page_id, page.id);
+    assert!(claim.note.contains("\"attach\""), "{}", claim.note);
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        "/api/steep/new/links",
+        Some(json!({"token": claim.token})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["existing_page"]["title"], "Kiln Renovation", "{body}");
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        "/api/steep/new/commit",
+        Some(json!({"token": claim.token, "action": "attach"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["outcome"], "attached", "{body}");
+    assert_eq!(body["title"], "Kiln Renovation", "{body}");
+    let attached = db.get_page(&page.id).await.unwrap().unwrap();
+    assert_eq!(attached.stale_reason.as_deref(), Some("source_updated"));
+
+    let (status, body) = send(&app, Method::GET, "/api/steep/new", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 0, "{body}");
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        "/api/steep/new/links",
+        Some(json!({"token": claim.token})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "the claim ended: {body}");
+}
