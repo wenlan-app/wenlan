@@ -11,6 +11,7 @@ import {
 } from "../../lib/tauri";
 import ContentRenderer from "./ContentRenderer";
 import { ARCHIVED_MEMORY_OPACITY } from "./archivedMemoryOpacity";
+import { resolveAgentDisplayName } from "../../lib/agents";
 import "./memoryListReading.css";
 
 interface MemoryListRowProps {
@@ -159,7 +160,7 @@ export default function MemoryListRow({
             <div>
               <span className="memory-list-row-update-label">
                 {pendingRevision.source_agent
-                  ? t("memoryList.proposedUpdateFrom", { agent: pendingRevision.source_agent })
+                  ? t("memoryList.proposedUpdateFrom", { agent: resolveAgentDisplayName(pendingRevision.source_agent) })
                   : t("memoryList.proposedUpdate")}
               </span>
               <p>{pendingRevision.content}</p>

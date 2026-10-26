@@ -110,6 +110,28 @@ fn plugin_manifest_and_mcp_launcher_stay_in_sync() {
     );
     assert!(!runner.contains("wenlan-mcp@latest"));
     assert!(!runner.contains("wenlan-mcp@^"));
+    assert!(runner.contains("WENLAN_MCP_AGENT_NAME:-claude-code"));
+    assert!(runner.contains("--agent-name \"${agent_name}\""));
+}
+
+#[test]
+fn plugin_runners_prefer_the_bundled_mcp_binary_to_the_home_install() {
+    for relative in [
+        "plugin/scripts/wenlan-mcp-runner.sh",
+        "plugin-codex/bin/wenlan-mcp-runner.sh",
+    ] {
+        let runner = fs::read_to_string(repo_root().join(relative)).expect("read MCP runner");
+        let bundled = runner
+            .find("candidates+=(\"${app_dir}/Wenlan.app/Contents/MacOS/wenlan-mcp\")")
+            .expect("bundled candidate");
+        let installed = runner
+            .find("candidates+=(\"${HOME}/.wenlan/bin/wenlan-mcp\"")
+            .expect("home-installed candidate");
+        assert!(
+            bundled < installed,
+            "{relative} must try the app-bundled binary before ~/.wenlan/bin"
+        );
+    }
 }
 
 #[test]

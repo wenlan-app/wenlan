@@ -13,10 +13,10 @@
 #      survives plugin reloads that don't re-read settings.json env.
 #   3. An installed binary, in this order (mirrors the order the Wenlan app
 #      uses when it writes its own MCP entry, app/src/mcp_config.rs):
-#        a. ~/.wenlan/bin/wenlan-mcp — the path install.sh places binaries at.
-#        b. The Wenlan desktop app's bundled copy:
+#        a. The Wenlan desktop app's bundled copy:
 #           Wenlan.app/Contents/MacOS/wenlan-mcp under /Applications or
 #           ~/Applications (WENLAN_APP_DIRS, colon-separated, overrides both).
+#        b. ~/.wenlan/bin/wenlan-mcp — the path install.sh places binaries at.
 #        c. ~/.cargo/bin/wenlan-mcp — `cargo install`.
 #        d. `wenlan-mcp` on PATH, for example from a package manager.
 #      Preferred over npx because (a) it's already on disk so MCP host
@@ -35,29 +35,31 @@
 # before we even get to the npx fallback. Fall back to $0 instead.
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd -P)"
 local_bin="${here}/wenlan-mcp.local"
+agent_name="${WENLAN_MCP_AGENT_NAME:-claude-code}"
 
 dev_bin="${WENLAN_MCP_DEV_BIN:-${ORIGIN_MCP_DEV_BIN:-}}"
 if [ -n "${dev_bin}" ] && [ -f "${dev_bin}" ] && [ -x "${dev_bin}" ]; then
-  exec "${dev_bin}" "$@"
+  exec "${dev_bin}" --agent-name "${agent_name}" "$@"
 fi
 
 if [ -f "${local_bin}" ] && [ -x "${local_bin}" ]; then
-  exec "${local_bin}" "$@"
+  exec "${local_bin}" --agent-name "${agent_name}" "$@"
 fi
 
 # Installed binaries. `-f` as well as `-x`: a directory is "executable" too.
 app_dirs="${WENLAN_APP_DIRS:-/Applications:${HOME}/Applications}"
-candidates=("${HOME}/.wenlan/bin/wenlan-mcp" "${HOME}/.wenlan/bin/wenlan-mcp.exe")
+candidates=()
 IFS=":" read -r -a app_dir_list <<< "${app_dirs}"
 for app_dir in "${app_dir_list[@]}"; do
   if [ -n "${app_dir}" ]; then
     candidates+=("${app_dir}/Wenlan.app/Contents/MacOS/wenlan-mcp")
   fi
 done
+candidates+=("${HOME}/.wenlan/bin/wenlan-mcp" "${HOME}/.wenlan/bin/wenlan-mcp.exe")
 candidates+=("${HOME}/.cargo/bin/wenlan-mcp" "${HOME}/.cargo/bin/wenlan-mcp.exe")
 for candidate in "${candidates[@]}"; do
   if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then
-    exec "${candidate}" "$@"
+    exec "${candidate}" --agent-name "${agent_name}" "$@"
   fi
 done
 
@@ -67,10 +69,10 @@ path_bin="$(command -v wenlan-mcp 2>/dev/null || true)"
 case "${path_bin}" in
   /*)
     if [ -f "${path_bin}" ] && [ -x "${path_bin}" ]; then
-      exec "${path_bin}" "$@"
+      exec "${path_bin}" --agent-name "${agent_name}" "$@"
     fi
     ;;
 esac
 
 # wenlan-mcp-pin: kept in lockstep by scripts/bump-version.sh
-exec npx -y wenlan-mcp@0.20.1 "$@"
+exec npx -y wenlan-mcp@0.20.1 --agent-name "${agent_name}" "$@"

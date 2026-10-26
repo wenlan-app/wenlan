@@ -153,6 +153,7 @@ import {
   getMemoryDetail,
   deleteMemory,
   startDaemonSidecar,
+  clipboardWrite,
 } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-dialog";
 import { DoneStep } from "./SetupWizard";
@@ -518,8 +519,9 @@ describe("SetupWizard", () => {
     expect(await screen.findByLabelText("Cursor")).toBeInTheDocument();
     // With the reason, so the row is not silently indistinguishable from a
     // tool that was found.
-    expect(screen.getByText(/could not check whether this is installed/i)).toBeInTheDocument();
-    expect(screen.getByText(/Access is denied/)).toBeInTheDocument();
+    expect(screen.getByText(/could not check whether this tool is installed/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Access is denied/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy details" })).toBeInTheDocument();
     // A MEASURED absence is still invisible - that behaviour is unchanged.
     expect(screen.queryByLabelText("Claude Code")).not.toBeInTheDocument();
   });
@@ -600,8 +602,11 @@ describe("SetupWizard", () => {
       "client-row-desc-claude_desktop",
     );
     expect(document.getElementById("client-row-desc-claude_desktop")).toHaveTextContent(
-      /second registration/i,
+      /may add Wenlan twice/i,
     );
+    expect(screen.queryByText(/Access is denied/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Copy details" }));
+    expect(clipboardWrite).toHaveBeenCalledWith("Access is denied. (os error 5)");
   });
 
   // A leftover settings folder is not an installed app. Preselecting it made
@@ -3439,6 +3444,12 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("You're all set.")).not.toBeInTheDocument();
     expect(screen.queryByText(i18n.t("setup.done.allSetBody1"))).not.toBeInTheDocument();
+  });
+
+  it("names either shared ChatGPT / Codex client in its single-tool restart sentence", async () => {
+    renderDoneWith(["codex_cli"], NOW());
+
+    expect(await screen.findByText("Restart ChatGPT or Codex to finish")).toBeInTheDocument();
   });
 
   it("once a tool is Connected it keeps the all-set title and one line of body", async () => {

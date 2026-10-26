@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { AppLocale } from "../../src/i18n/locales";
-import type { MemoryItem, PageChange, PageReviewAvailability, PageReviewOutcome } from "../../src/lib/tauri";
+import type { AgentConnection, MemoryItem, PageChange, PageReviewAvailability, PageReviewOutcome } from "../../src/lib/tauri";
 import type { SpacesNavigationFixture } from "../fixtures/spacesNavigation";
 import type { TauriMockBasisScenario } from "./pageBasis";
 import type { TauriMockCodeBasisScenario } from "./pageCodeBasis";
@@ -58,6 +58,8 @@ export type InstallTauriMockOptions = {
   readonly gettingStarted?: boolean;
   readonly locale: AppLocale;
   readonly rawActions: readonly string[];
+  /** Override registered tools for journeys whose real entry point depends on connection state. */
+  readonly agents?: readonly AgentConnection[];
   readonly memories?: readonly MemoryItem[];
   readonly fixture?: SpacesNavigationFixture;
   readonly failures?: readonly MockFailure[];

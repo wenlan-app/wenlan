@@ -9,10 +9,10 @@
 #   2. Sibling file `bin/wenlan-mcp.local` next to this script.
 #   3. An installed binary, in this order (mirrors the order the Wenlan app
 #      uses when it writes its own MCP entry, app/src/mcp_config.rs):
-#        a. ~/.wenlan/bin/wenlan-mcp, installed by install.sh.
-#        b. The Wenlan desktop app's bundled copy:
+#        a. The Wenlan desktop app's bundled copy:
 #           Wenlan.app/Contents/MacOS/wenlan-mcp under /Applications or
 #           ~/Applications (WENLAN_APP_DIRS, colon-separated, overrides both).
+#        b. ~/.wenlan/bin/wenlan-mcp, installed by install.sh.
 #        c. ~/.cargo/bin/wenlan-mcp — `cargo install`.
 #        d. `wenlan-mcp` on PATH, for example from a package manager.
 #      Preferred over npx: already on disk (instant MCP handshake) and it
@@ -42,13 +42,14 @@ fi
 
 # Installed binaries. `-f` as well as `-x`: a directory is "executable" too.
 app_dirs="${WENLAN_APP_DIRS:-/Applications:${HOME}/Applications}"
-candidates=("${HOME}/.wenlan/bin/wenlan-mcp" "${HOME}/.wenlan/bin/wenlan-mcp.exe")
+candidates=()
 IFS=":" read -r -a app_dir_list <<< "${app_dirs}"
 for app_dir in "${app_dir_list[@]}"; do
   if [ -n "${app_dir}" ]; then
     candidates+=("${app_dir}/Wenlan.app/Contents/MacOS/wenlan-mcp")
   fi
 done
+candidates+=("${HOME}/.wenlan/bin/wenlan-mcp" "${HOME}/.wenlan/bin/wenlan-mcp.exe")
 candidates+=("${HOME}/.cargo/bin/wenlan-mcp" "${HOME}/.cargo/bin/wenlan-mcp.exe")
 for candidate in "${candidates[@]}"; do
   if [ -f "${candidate}" ] && [ -x "${candidate}" ]; then

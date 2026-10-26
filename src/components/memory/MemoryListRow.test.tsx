@@ -167,7 +167,7 @@ describe("MemoryListRow reading and operations", () => {
     try {
       render(<MemoryListRow memory={makeMemory({ memory_type: "preference", confirmed: true })} {...callbacks()} />);
       expect(await screen.findByText("New captured preference.")).toBeVisible();
-      expect(screen.getByText("Proposed update from codex")).toBeVisible();
+      expect(screen.getByText("Proposed update from ChatGPT / Codex")).toBeVisible();
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       await userEvent.click(screen.getByRole("button", { name: "Accept update" }));
       await waitFor(() => expect(acceptPendingRevision).toHaveBeenCalledWith("memory-1"));

@@ -27,6 +27,45 @@ describe("translation resources", () => {
     expect(resources.en.translation.settings.language.label).toBe("Language");
   });
 
+  it("keeps the Connections subtitles and concise status copy exact in every locale", () => {
+    const copy = supportedAppLocales.map((locale) => resources[locale].translation.connectMatrix);
+    expect(copy.map((locale) => locale.subtitleCodex)).toEqual([
+      "ChatGPT desktop and Codex CLI share one setup",
+      "ChatGPT 桌面版和 Codex CLI 共用一份设置",
+      "ChatGPT 桌面版和 Codex CLI 共用一份設定",
+    ]);
+    expect(copy.map((locale) => locale.subtitleKimiDesktop)).toEqual([
+      "Kimi desktop app",
+      "Kimi 桌面版",
+      "Kimi 桌面版",
+    ]);
+    expect(copy.map((locale) => locale.subtitleKimiCode)).toEqual([
+      "Coding CLI and the Kimi Code app",
+      "写代码用的 CLI 和 Kimi Code App",
+      "寫程式用的 CLI 和 Kimi Code App",
+    ]);
+    expect(copy.map((locale) => locale.needsRepair)).toEqual([
+      "Needs a quick fix",
+      "需要修一下",
+      "需要修一下",
+    ]);
+    expect(copy.map((locale) => locale.restartNameCodex)).toEqual([
+      "ChatGPT or Codex",
+      "ChatGPT 或 Codex",
+      "ChatGPT 或 Codex",
+    ]);
+    expect(copy.map((locale) => locale.restartToFinish.replace("{{name}}", locale.restartNameCodex))).toEqual([
+      "Restart ChatGPT or Codex to finish",
+      "重新启动 ChatGPT 或 Codex 即可完成",
+      "重新啟動 ChatGPT 或 Codex 即可完成",
+    ]);
+    expect(copy.map((locale) => locale.showMore)).toEqual([
+      "Show {{count}} more",
+      "再显示 {{count}} 个",
+      "再顯示 {{count}} 個",
+    ]);
+  });
+
   it("explains the page-review requirement before rename in every locale", () => {
     expect(supportedAppLocales.map((locale) => resources[locale].translation.pageDetail.renameReviewRequired)).toEqual([
       "Review this page before renaming it.",

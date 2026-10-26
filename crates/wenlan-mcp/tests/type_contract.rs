@@ -9,7 +9,7 @@
 //! the same JSON origin-server would emit for that shape.
 
 use rmcp::model::{CallToolResult, ContentBlock};
-use wenlan_mcp::client::WenlanClient;
+use wenlan_mcp::client::{AgentIdentity, WenlanClient};
 use wenlan_mcp::tools::{
     CaptureParams, CreateRelationParams, ListPendingImportsParams, ListPendingParams,
     ListRejectionsParams, RecallParams, TransportMode, WenlanMcpServer,
@@ -875,9 +875,12 @@ async fn t12_forward_compat_response_missing_extraction_method() {
 }
 
 #[tokio::test]
-async fn origin_client_sends_x_agent_name_header() {
+async fn explicit_identity_wins_over_handshake_for_header_and_source() {
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
     let mock = MockServer::start().await;
-    let client = WenlanClient::new(mock.uri()).with_agent_name("claude-code".into());
+    let identity = AgentIdentity::new("kimi-desktop".into(), true);
+    identity.observe_mcp_client("kimi-code");
 
     let response = StoreMemoryResponse {
         source_id: "mem_xan1".into(),
@@ -901,7 +904,12 @@ async fn origin_client_sends_x_agent_name_header() {
         .mount(&mock)
         .await;
 
-    let server = make_server(client);
+    let server = WenlanMcpServer::new_with_identity(
+        WenlanClient::new(mock.uri()),
+        TransportMode::Stdio,
+        identity,
+        None,
+    );
     server
         .capture_impl(CaptureParams {
             content: "header test".into(),
@@ -927,9 +935,11 @@ async fn origin_client_sends_x_agent_name_header() {
         .expect("x-agent-name header must be present");
     assert_eq!(
         value.to_str().expect("header value is valid utf-8"),
-        "claude-code",
-        "x-agent-name header must equal the configured agent name"
+        "kimi-desktop",
+        "x-agent-name must keep the explicit configured identity"
     );
+    let body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+    assert_eq!(body["source_agent"], "kimi-desktop");
 }
 
 #[tokio::test]
@@ -958,10 +968,59 @@ async fn origin_client_omits_x_agent_name_when_unset() {
         .mount(&mock)
         .await;
 
-    let server = make_server(client);
+    let _: StoreMemoryResponse = client
+        .post("/api/memory/store", &serde_json::json!({}))
+        .await
+        .expect("raw client post failed");
+
+    let received = requests(&mock).await;
+    assert_eq!(received.len(), 1, "expected exactly 1 request");
+    let headers = &received[0].headers;
+    assert!(
+        headers.get("x-agent-name").is_none(),
+        "x-agent-name header must be absent when agent_name is not set"
+    );
+}
+
+#[tokio::test]
+async fn handshake_identity_replaces_implicit_default_for_header_and_source() {
+    std::env::remove_var("WENLAN_SESSION");
+    std::env::remove_var("CODEX_THREAD_ID");
+    let mock = MockServer::start().await;
+    let identity = AgentIdentity::new("claude-code".into(), false);
+    identity.observe_mcp_client("kimi-code");
+
+    let response = StoreMemoryResponse {
+        source_id: "mem_xan3".into(),
+        chunks_created: 1,
+        memory_type: "fact".into(),
+        entity_id: None,
+        quality: None,
+        warnings: vec![],
+        near_duplicate: None,
+        gated: false,
+        extraction_method: "none".into(),
+        enrichment: String::new(),
+        hint: String::new(),
+        space: None,
+        space_source: None,
+        write_outcome: None,
+    };
+    Mock::given(method("POST"))
+        .and(path("/api/memory/store"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&mock)
+        .await;
+
+    let server = WenlanMcpServer::new_with_identity(
+        WenlanClient::new(mock.uri()),
+        TransportMode::Stdio,
+        identity,
+        None,
+    );
     server
         .capture_impl(CaptureParams {
-            content: "no header test".into(),
+            content: "handshake fallback test".into(),
             memory_type: None,
             space: None,
             entity: None,
@@ -977,12 +1036,18 @@ async fn origin_client_omits_x_agent_name_when_unset() {
         .expect("capture_impl failed");
 
     let received = requests(&mock).await;
-    assert_eq!(received.len(), 1, "expected exactly 1 request");
-    let headers = &received[0].headers;
-    assert!(
-        headers.get("x-agent-name").is_none(),
-        "x-agent-name header must be absent when agent_name is not set"
+    assert_eq!(received.len(), 1);
+    assert_eq!(
+        received[0]
+            .headers
+            .get("x-agent-name")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        "kimi-code"
     );
+    let body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+    assert_eq!(body["source_agent"], "kimi-code");
 }
 
 // ===== list_pending_imports =====

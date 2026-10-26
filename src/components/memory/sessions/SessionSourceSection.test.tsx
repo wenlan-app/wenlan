@@ -62,13 +62,13 @@ describe("SessionSourceSection", () => {
     renderWithClient(
       <SessionSourceSection wrote={[codexSession, { ...codexSession, id: "ses_bare", space: null }]} />,
     );
-    expect(screen.getByRole("button", { name: "From Codex · Oct 20 · Research" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "From Codex · Oct 20" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "From ChatGPT / Codex · Oct 20 · Research" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "From ChatGPT / Codex · Oct 20" })).toBeInTheDocument();
   });
 
-  it("maps unknown tools to their raw name", () => {
+  it("prettifies unknown tool IDs", () => {
     renderWithClient(<SessionSourceSection wrote={[{ ...codexSession, tool: "future-agent", space: null }]} />);
-    expect(screen.getByRole("button", { name: "From future-agent · Oct 20" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "From Future Agent · Oct 20" })).toBeInTheDocument();
   });
 
   it("counts the conversations a note only cites, and expands them on click", async () => {
@@ -78,12 +78,12 @@ describe("SessionSourceSection", () => {
         cited={[codexSession, { ...codexSession, id: "ses_two", tool: "opencode" }]}
       />,
     );
-    expect(screen.queryByRole("button", { name: /From Codex/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /From ChatGPT \/ Codex/ })).not.toBeInTheDocument();
     const more = screen.getByRole("button", { name: "Also cites 2 conversations" });
     expect(more).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(more);
     expect(more).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("button", { name: "From Codex · Oct 20 · Research" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "From ChatGPT / Codex · Oct 20 · Research" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "From OpenCode · Oct 20 · Research" })).toBeInTheDocument();
   });
 

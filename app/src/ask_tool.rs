@@ -88,6 +88,7 @@ mod tests {
             "kiro",
             "opencode",
             "kimi-code",
+            "kimi-desktop",
         ] {
             assert_eq!(prompt_link(family, "hi"), None, "{family}");
         }

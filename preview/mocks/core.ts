@@ -368,6 +368,22 @@ export async function invoke(
           on_device: { selected: "qwen3-4b", loaded: true },
         },
       };
+    case "list_agents":
+      return [
+        {
+          id: "preview-cursor",
+          name: "cursor",
+          display_name: null,
+          agent_type: "mcp",
+          description: null,
+          enabled: true,
+          trust_level: "full",
+          last_seen_at: Math.floor(Date.now() / 1000) - 180,
+          memory_count: 14,
+          created_at: Math.floor(Date.now() / 1000) - 86_400,
+          updated_at: Math.floor(Date.now() / 1000) - 180,
+        },
+      ];
     case "set_source_pin":
       return undefined;
     default:

@@ -175,7 +175,7 @@ describe("EntityDetail characterization", () => {
     await user.click(screen.getByRole("button", { name: "Info" }));
     expect(screen.getByRole("combobox", { name: "Type" })).toHaveValue("person");
     expect(screen.getAllByText("History of Computing").length).toBeGreaterThan(0);
-    expect(screen.getByText("research-agent")).toBeInTheDocument();
+    expect(screen.getByText("Research Agent")).toBeInTheDocument();
     expect(screen.getByText("0.87")).toBeInTheDocument();
     expect(screen.getByText("Wrote the first published algorithm")).toBeInTheDocument();
     expect(screen.getAllByText("Charles Babbage").length).toBeGreaterThan(0);

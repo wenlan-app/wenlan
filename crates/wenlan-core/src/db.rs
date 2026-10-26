@@ -2084,8 +2084,9 @@ pub(crate) fn embedder_init_error(
 /// clients display nicely out of the box — users don't have to manually
 /// register `openai-mcp` to see it labeled `ChatGPT`.
 ///
-/// User-set overrides (via `agent_connections.display_name`) always win over
-/// entries here — see `row_to_agent`.
+/// User-set overrides (via `agent_connections.display_name`) win over entries
+/// here. Exact former stock defaults are recognized and follow the current
+/// registry without rewriting the stored row — see `row_to_agent`.
 ///
 /// Keep this sorted by canonical ID.
 pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
@@ -2093,12 +2094,13 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("chatgpt", "ChatGPT"),
     ("claude-code", "Claude Code"),
     ("claude-desktop", "Claude Desktop"),
-    ("codex", "Codex"),
+    ("codex", "ChatGPT / Codex"),
     ("continue", "Continue"),
-    ("copilot-cli", "GitHub Copilot"),
+    ("copilot-cli", "GitHub Copilot CLI"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
     ("kimi-code", "Kimi Code"),
+    ("kimi-desktop", "Kimi"),
     ("kiro", "Kiro"),
     ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
@@ -2131,6 +2133,20 @@ fn new_agent_display_name(raw_label: &str, canonical: &str) -> Option<String> {
     } else {
         known_client_display_name(canonical).map(|s| s.to_string())
     }
+}
+
+/// Resolve a persisted display name without rewriting the database. Exact
+/// former stock defaults follow the current registry, while every other
+/// stored value remains a user override.
+fn resolved_agent_display_name(canonical: &str, stored: Option<String>) -> Option<String> {
+    let is_old_stock = matches!(
+        (canonical, stored.as_deref()),
+        ("codex", Some("Codex")) | ("copilot-cli", Some("GitHub Copilot"))
+    );
+    if is_old_stock {
+        return known_client_display_name(canonical).map(str::to_string);
+    }
+    stored.or_else(|| known_client_display_name(canonical).map(str::to_string))
 }
 
 /// Normalize an agent name into its canonical technical form.
@@ -2202,6 +2218,7 @@ mod agent_id_tests {
     #[test]
     fn known_clients_lookup() {
         assert_eq!(known_client_display_name("openai-mcp"), Some("ChatGPT"));
+        assert_eq!(known_client_display_name("codex"), Some("ChatGPT / Codex"));
         assert_eq!(
             known_client_display_name("claude-code"),
             Some("Claude Code")
@@ -2213,14 +2230,31 @@ mod agent_id_tests {
         );
         assert_eq!(
             known_client_display_name("copilot-cli"),
-            Some("GitHub Copilot")
+            Some("GitHub Copilot CLI")
         );
         assert_eq!(known_client_display_name("kiro"), Some("Kiro"));
         assert_eq!(known_client_display_name("opencode"), Some("OpenCode"));
         assert_eq!(known_client_display_name("kimi-code"), Some("Kimi Code"));
+        assert_eq!(known_client_display_name("kimi-desktop"), Some("Kimi"));
         assert_eq!(known_client_display_name("vscode"), Some("VS Code"));
         assert_eq!(known_client_display_name("windsurf"), Some("Windsurf"));
         assert_eq!(known_client_display_name("unknown-tool"), None);
+    }
+
+    #[test]
+    fn former_stock_names_follow_new_defaults_but_custom_names_survive() {
+        assert_eq!(
+            resolved_agent_display_name("codex", Some("Codex".into())),
+            Some("ChatGPT / Codex".into())
+        );
+        assert_eq!(
+            resolved_agent_display_name("copilot-cli", Some("GitHub Copilot".into())),
+            Some("GitHub Copilot CLI".into())
+        );
+        assert_eq!(
+            resolved_agent_display_name("codex", Some("My Coding Agent".into())),
+            Some("My Coding Agent".into())
+        );
     }
 }
 
@@ -44643,10 +44677,11 @@ impl MemoryDB {
         .await
         .map_err(|e| WenlanError::VectorDb(format!("register_agent insert: {}", e)))?;
 
+        let display_name = resolved_agent_display_name(&canonical, display_name_to_store);
         Ok(AgentConnection {
             id,
             name: canonical,
-            display_name: display_name_to_store,
+            display_name,
             agent_type: "api".to_string(),
             description: None,
             enabled: true,
@@ -44818,14 +44853,11 @@ impl MemoryDB {
 
     fn row_to_agent(row: &libsql::Row) -> AgentConnection {
         let raw_name = row.get::<String>(1).unwrap_or_default();
-        // Column 2 is display_name (nullable). If the DB doesn't set one,
-        // fall back to the KNOWN_CLIENTS registry so well-known technical IDs
-        // (e.g. `openai-mcp`) surface with their friendly name (`ChatGPT`)
-        // without requiring the user to explicitly register them.
-        let display_name = row
-            .get::<Option<String>>(2)
-            .unwrap_or(None)
-            .or_else(|| known_client_display_name(&raw_name).map(|s| s.to_string()));
+        // Column 2 is display_name (nullable). Missing names and exact former
+        // stock defaults follow KNOWN_CLIENTS; every other stored value is a
+        // user override and remains untouched.
+        let display_name =
+            resolved_agent_display_name(&raw_name, row.get::<Option<String>>(2).unwrap_or(None));
         AgentConnection {
             id: row.get::<String>(0).unwrap_or_default(),
             name: raw_name,

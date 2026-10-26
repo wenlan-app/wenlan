@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use rmcp::ServiceExt;
-use wenlan_mcp::client::{discover_origin_url, WenlanClient};
+use wenlan_mcp::client::{discover_origin_url, AgentIdentity, WenlanClient};
 use wenlan_mcp::stdio::stdio;
 use wenlan_mcp::tools::{ToolProfile, TransportMode, WenlanMcpServer};
 use wenlan_mcp::{serve, token};
@@ -144,21 +144,46 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-fn effective_agent_name(agent_name: Option<String>, serve_args: Option<&ServeArgs>) -> String {
-    agent_name.unwrap_or_else(|| {
-        if serve_args.is_some() {
-            "remote-mcp".into()
-        } else {
-            "claude-code".into()
-        }
-    })
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveAgentName {
+    name: String,
+    explicit: bool,
 }
 
-async fn run_stdio(origin_url: Option<String>, agent_name: String) -> anyhow::Result<()> {
+impl EffectiveAgentName {
+    fn into_identity(self) -> AgentIdentity {
+        AgentIdentity::new(self.name, self.explicit)
+    }
+}
+
+fn effective_agent_name(
+    agent_name: Option<String>,
+    serve_args: Option<&ServeArgs>,
+) -> EffectiveAgentName {
+    match agent_name {
+        Some(name) => EffectiveAgentName {
+            name,
+            explicit: true,
+        },
+        None => EffectiveAgentName {
+            name: if serve_args.is_some() {
+                "remote-mcp".into()
+            } else {
+                "claude-code".into()
+            },
+            explicit: false,
+        },
+    }
+}
+
+async fn run_stdio(
+    origin_url: Option<String>,
+    agent_name: EffectiveAgentName,
+) -> anyhow::Result<()> {
     let base_url = discover_origin_url(origin_url);
     tracing::info!("Connecting to Wenlan at {}", base_url);
 
-    let client = WenlanClient::new(base_url).with_agent_name(agent_name.clone());
+    let client = WenlanClient::new(base_url);
 
     if let Some(msg) = client.version_handshake().await {
         tracing::warn!("{msg}");
@@ -172,7 +197,12 @@ async fn run_stdio(origin_url: Option<String>, agent_name: String) -> anyhow::Re
         }
     });
 
-    let server = WenlanMcpServer::new(client, TransportMode::Stdio, agent_name, None);
+    let server = WenlanMcpServer::new_with_identity(
+        client,
+        TransportMode::Stdio,
+        agent_name.into_identity(),
+        None,
+    );
     let service = server
         .serve(stdio())
         .await
@@ -186,7 +216,7 @@ async fn run_stdio(origin_url: Option<String>, agent_name: String) -> anyhow::Re
 async fn run_serve(
     args: ServeArgs,
     origin_url: Option<String>,
-    agent_name: String,
+    agent_name: EffectiveAgentName,
 ) -> anyhow::Result<()> {
     let connector_profile = serve::is_connector_profile(args.tool_profile);
     if connector_profile && args.no_auth {
@@ -258,7 +288,8 @@ async fn run_serve(
         host: args.host,
         origin_url: base_url,
         token: resolved_token,
-        agent_name,
+        agent_name: agent_name.name,
+        agent_name_explicit: agent_name.explicit,
         user_id: args.user_id,
         allowed_origins,
         whole_library: args.whole_library,
@@ -343,6 +374,13 @@ mod tests {
     use super::*;
     use clap::Parser;
 
+    fn explicit_agent(name: &str) -> EffectiveAgentName {
+        EffectiveAgentName {
+            name: name.to_string(),
+            explicit: true,
+        }
+    }
+
     #[test]
     fn parses_stdio_agent_name_override() {
         let cli = Cli::try_parse_from(["wenlan-mcp", "--agent-name", "codex"])
@@ -350,6 +388,17 @@ mod tests {
 
         assert_eq!(cli.agent_name.as_deref(), Some("codex"));
         assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn stdio_default_agent_name_is_implicit() {
+        assert_eq!(
+            effective_agent_name(None, None),
+            EffectiveAgentName {
+                name: "claude-code".into(),
+                explicit: false,
+            }
+        );
     }
 
     #[test]
@@ -363,7 +412,10 @@ mod tests {
 
         assert_eq!(
             effective_agent_name(cli.agent_name, Some(&args)),
-            "remote-mcp"
+            EffectiveAgentName {
+                name: "remote-mcp".into(),
+                explicit: false,
+            }
         );
     }
 
@@ -382,7 +434,10 @@ mod tests {
             panic!("expected serve command");
         };
 
-        assert_eq!(effective_agent_name(cli.agent_name, Some(&args)), "chatgpt");
+        assert_eq!(
+            effective_agent_name(cli.agent_name, Some(&args)),
+            explicit_agent("chatgpt")
+        );
     }
 
     #[test]
@@ -435,7 +490,10 @@ mod tests {
         };
 
         assert_eq!(args.tool_profile, ToolProfile::WebWrite);
-        assert_eq!(effective_agent_name(cli.agent_name, Some(&args)), "web-ai");
+        assert_eq!(
+            effective_agent_name(cli.agent_name, Some(&args)),
+            explicit_agent("web-ai")
+        );
     }
 
     #[test]
@@ -460,9 +518,13 @@ mod tests {
             whole_library: false,
         };
 
-        let error = run_serve(args, Some("http://127.0.0.1:19999".into()), "test".into())
-            .await
-            .expect_err("query-only --no-auth must be rejected");
+        let error = run_serve(
+            args,
+            Some("http://127.0.0.1:19999".into()),
+            explicit_agent("test"),
+        )
+        .await
+        .expect_err("query-only --no-auth must be rejected");
         assert_eq!(error.to_string(), serve::QUERY_ONLY_AUTH_ERROR);
     }
 
@@ -482,9 +544,13 @@ mod tests {
                 whole_library: false,
             };
 
-            let error = run_serve(args, Some("http://127.0.0.1:19999".into()), "test".into())
-                .await
-                .expect_err("web-write without a bearer token must be rejected");
+            let error = run_serve(
+                args,
+                Some("http://127.0.0.1:19999".into()),
+                explicit_agent("test"),
+            )
+            .await
+            .expect_err("web-write without a bearer token must be rejected");
             assert_eq!(error.to_string(), serve::WEB_WRITE_AUTH_ERROR);
         }
     }
@@ -504,9 +570,13 @@ mod tests {
             whole_library: false,
         };
 
-        let error = run_serve(args, Some("http://127.0.0.1:19999".into()), "test".into())
-            .await
-            .expect_err("web-write without a strict Space pin must be rejected");
+        let error = run_serve(
+            args,
+            Some("http://127.0.0.1:19999".into()),
+            explicit_agent("test"),
+        )
+        .await
+        .expect_err("web-write without a strict Space pin must be rejected");
         assert_eq!(error.to_string(), serve::WEB_WRITE_SPACE_ERROR);
     }
 
@@ -525,9 +595,13 @@ mod tests {
             whole_library: false,
         };
 
-        let error = run_serve(args, Some("http://127.0.0.1:19999".into()), "test".into())
-            .await
-            .expect_err("query-only without a strict Space pin must be rejected");
+        let error = run_serve(
+            args,
+            Some("http://127.0.0.1:19999".into()),
+            explicit_agent("test"),
+        )
+        .await
+        .expect_err("query-only without a strict Space pin must be rejected");
         assert_eq!(error.to_string(), serve::QUERY_ONLY_SPACE_ERROR);
     }
 

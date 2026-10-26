@@ -1287,29 +1287,35 @@ export const DEFAULTS: Record<string, unknown> = {
   // no relay to page through here; the empty RemoteGrantPage keeps the shape
   // without claiming any grant was read.
   list_remote_grants: { items: [], cursor: null },
-  // The five clients a real machine actually reports (this is verbatim what
-  // detect_mcp_clients_cmd returns on the maintainer's Mac, incl. one already
-  // configured). This used to be `[]`, which meant the preview only ever showed
-  // the wizard's EMPTY state — so the redesigned common case, which IS the
-  // screen, could not be pixel-reviewed at all. An empty fixture doesn't render
-  // "nothing to see"; it renders a different, misleading screen.
+  // A deterministic spread of installed plugin clients, configured raw
+  // entries, a repair row, detected clients, and one absent client so the
+  // Connections layout can be pixel-reviewed without the maintainer's daemon.
   detect_mcp_clients_cmd: [
-    { name: "Cursor", client_type: "cursor", config_path: "~/.cursor/mcp.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
-    { name: "Claude Desktop", client_type: "claude_desktop", config_path: "~/Library/Application Support/Claude/claude_desktop_config.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
-    { name: "Gemini CLI", client_type: "gemini_cli", config_path: "~/.gemini/settings.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
-    { name: "Codex CLI", client_type: "codex_cli", config_path: "~/.codex/config.toml", detected: YES, already_configured: YES, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES },
-    { name: "Claude Code", client_type: "claude_code", config_path: "~/.claude.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Claude Code", client_type: "claude_code", config_path: "~/.claude.json", detected: YES, already_configured: YES, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES },
+    { name: "ChatGPT / Codex", client_type: "codex_cli", config_path: "~/.codex/config.toml", detected: YES, already_configured: YES, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES },
+    { name: "Kimi", client_type: "kimi_desktop", config_path: "~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/mcp.json", detected: YES, already_configured: YES, has_raw_entry: YES, has_raw_duplicate: NO, has_plugin: NO, entry_health: { kind: "needs_repair", reason: "command_not_preferred", detail: "preview-only non-preferred command" } },
+    { name: "Cursor", client_type: "cursor", config_path: "~/.cursor/mcp.json", detected: YES, already_configured: YES, has_raw_entry: YES, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Claude Desktop", client_type: "claude_desktop", config_path: "~/Library/Application Support/Claude/claude_desktop_config.json", detected: YES, already_configured: YES, has_raw_entry: YES, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "OpenCode", client_type: "opencode", config_path: "~/.config/opencode/opencode.json", detected: YES, already_configured: YES, has_raw_entry: YES, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Gemini CLI", client_type: "gemini_cli", config_path: "~/.gemini/settings.json", detected: YES, already_configured: YES, has_raw_entry: YES, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Kimi Code", client_type: "kimi_code", config_path: "~/.kimi-code/mcp.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "GitHub Copilot CLI", client_type: "copilot_cli", config_path: "~/.copilot/mcp-config.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "VS Code", client_type: "vscode", config_path: "~/Library/Application Support/Code/User/mcp.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Antigravity", client_type: "antigravity", config_path: "~/.gemini/config/mcp_config.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Muse Code", client_type: "muse_code", config_path: "~/.config/muse/settings.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Kiro", client_type: "kiro", config_path: "~/.kiro/settings/mcp.json", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
+    { name: "Windsurf", client_type: "windsurf", config_path: "~/.codeium/windsurf/mcp_config.json", detected: NO, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
   ],
   // WireState (src/lib/tauri.ts) — the "setting up" step's daemon row reads
   // `wire.daemon.reachable` unguarded (app/src/wire_state.rs never returns
   // null, so the frontend never null-checks it either); a stub that omits
   // the field crashes the step instead of rendering it. `mcp_binary` and
-  // `clients` mirror a real resolved machine: an installed binary (plus the
-  // rest of app/src/mcp_config.rs's candidate trail, missing paths included
-  // per wire_state.rs's own docs), and the same 5 clients as
-  // `detect_mcp_clients_cmd` above, routed the way app/src/wire_state.rs's
-  // `route_for` actually routes them (`claude_code`/`codex_cli` always to
-  // "plugin", the rest to "config" unless already configured).
+  // `clients` mirror a resolved five-client diagnostic sample: an installed
+  // binary (plus the rest of app/src/mcp_config.rs's candidate trail, missing
+  // paths included per wire_state.rs's own docs), routed the way
+  // app/src/wire_state.rs's `route_for` actually routes them
+  // (`claude_code`/`codex_cli` always to "plugin", the rest to "config"
+  // unless already configured).
   wire_state: {
     daemon: {
       base_url: "http://127.0.0.1:7878",
@@ -1334,7 +1340,7 @@ export const DEFAULTS: Record<string, unknown> = {
       { client_type: "cursor", name: "Cursor", detected: YES, config_path: "~/.cursor/mcp.json", has_raw_entry: YES, has_raw_duplicate: YES, has_plugin: NO, route: "config" },
       { client_type: "claude_desktop", name: "Claude Desktop", detected: YES, config_path: "~/Library/Application Support/Claude/claude_desktop_config.json", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, route: "config" },
       { client_type: "gemini_cli", name: "Gemini CLI", detected: YES, config_path: "~/.gemini/settings.json", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, route: "config" },
-      { client_type: "codex_cli", name: "Codex CLI", detected: YES, config_path: "~/.codex/config.toml", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES, route: "plugin" },
+      { client_type: "codex_cli", name: "ChatGPT / Codex", detected: YES, config_path: "~/.codex/config.toml", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: YES, route: "plugin" },
       { client_type: "claude_code", name: "Claude Code", detected: YES, config_path: "~/.claude.json", has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO, route: "plugin" },
     ],
   },

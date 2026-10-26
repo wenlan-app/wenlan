@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { McpClient } from "../../lib/tauri";
+import { clipboardWrite, type McpClient } from "../../lib/tauri";
+import { familyDisplayName } from "../../lib/agents";
 import type { Reading } from "../../lib/reading";
 import { StatusChip } from "../memory/settings/primitives";
 import { ConnectionChip, type ConnectionStatus } from "./connectionState";
-import { REPAIR_REASON_KEYS, entryUnreadable, isConfigOnly, repairReasonOf } from "./clientHealth";
+import { entryUnreadable, isConfigOnly, repairReasonOf } from "./clientHealth";
+import { familyOfClient } from "./connectionState";
 
 interface ClientRowProps {
   client: McpClient;
@@ -25,9 +27,11 @@ interface ClientRowProps {
   children?: ReactNode;
   /** The failure sentence, already localized by the caller. */
   error?: string | null;
-  /** The raw failure text under `error`, verbatim. It is the only thing a bug
-   *  report can use, so it is demoted below the sentence, never dropped. */
+  /** The raw failure text copied by the row's Copy details action. */
   errorDetail?: string | null;
+  /** Other raw diagnostics that must remain available without appearing in
+   *  the row's visible copy. */
+  technicalDetails?: readonly (string | null | undefined)[];
   /** Non-fatal, and rendered in the BODY the row's `descId` covers, so a
    *  caller can point its button's `aria-describedby` at it.
    *
@@ -77,6 +81,7 @@ export default function ClientRow({
   children,
   error,
   errorDetail,
+  technicalDetails = [],
   warning,
   configured,
   status,
@@ -84,6 +89,7 @@ export default function ClientRow({
   bare = false,
 }: ClientRowProps) {
   const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
   // Deterministic (not useId-generated) so the caller's `leading` checkbox —
   // built independently, before this component ever renders it — can wire
   // aria-describedby to the same id without a prop round-trip.
@@ -98,15 +104,32 @@ export default function ClientRow({
   const repairReason = repairReasonOf(client);
   const entryCannotBeRead = entryUnreadable(client);
   const configOnly = isConfigOnly(client);
+  const displayName = familyDisplayName(familyOfClient(client.client_type));
+  const subtitleKey =
+    client.client_type === "codex_cli"
+      ? "connectMatrix.subtitleCodex"
+      : client.client_type === "kimi_desktop"
+        ? "connectMatrix.subtitleKimiDesktop"
+        : client.client_type === "kimi_code"
+          ? "connectMatrix.subtitleKimiCode"
+          : null;
+  const rawDetails = [
+    detectionFailed,
+    client.already_configured.kind === "unreadable" ? client.already_configured.error : null,
+    client.entry_health?.kind === "unreadable" ? client.entry_health.error : null,
+    errorDetail,
+    ...technicalDetails,
+  ].filter((detail, index, all): detail is string => Boolean(detail) && all.indexOf(detail) === index);
   const hasBody = Boolean(
     showConfigPath ||
+      subtitleKey ||
       children ||
       error ||
       warning ||
       detectionFailed ||
-      repairReason ||
       entryCannotBeRead ||
-      configOnly,
+      configOnly ||
+      rawDetails.length > 0,
   );
 
   const nameBadges = (
@@ -120,7 +143,7 @@ export default function ClientRow({
           color: "var(--mem-text)",
         }}
       >
-        {client.name}
+        {displayName}
       </span>
       {repairReason ? (
         // The entry is there but would not start, so "Added" (restart to
@@ -147,7 +170,7 @@ export default function ClientRow({
         <StatusChip
           state={{
             kind: "unknown",
-            detail: entryCannotBeRead ? undefined : configured.error,
+            detail: undefined,
           }}
           label={t("connectMatrix.configuredUnknown")}
         />
@@ -178,6 +201,18 @@ export default function ClientRow({
           {client.config_path}
         </p>
       )}
+      {subtitleKey && (
+        <p
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-xs)",
+            color: "var(--mem-text-tertiary)",
+            margin: 0,
+          }}
+        >
+          {t(subtitleKey)}
+        </p>
+      )}
       {detectionFailed && (
         <p
           style={{
@@ -187,7 +222,7 @@ export default function ClientRow({
             margin: 0,
           }}
         >
-          {t("connectMatrix.detectionUnknown", { error: detectionFailed })}
+          {t("connectMatrix.detectionUnknown")}
         </p>
       )}
       {configOnly && (
@@ -201,19 +236,6 @@ export default function ClientRow({
           }}
         >
           {t("connectMatrix.configOnly")}
-        </p>
-      )}
-      {repairReason && (
-        <p
-          data-testid={`client-row-repair-${client.client_type}`}
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "var(--mem-text-xs)",
-            color: "var(--mem-status-warning-text)",
-            margin: 0,
-          }}
-        >
-          {t(REPAIR_REASON_KEYS[repairReason], { name: client.name })}
         </p>
       )}
       {entryCannotBeRead && (
@@ -253,19 +275,20 @@ export default function ClientRow({
           }}
         >
           <p style={{ margin: 0 }}>{error}</p>
-          {errorDetail && (
-            <p
-              data-testid={`client-row-error-detail-${client.client_type}`}
-              style={{
-                color: "var(--mem-text-tertiary)",
-                margin: "2px 0 0",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {errorDetail}
-            </p>
-          )}
         </div>
+      )}
+      {rawDetails.length > 0 && (
+        <button
+          type="button"
+          className="w-fit text-[length:var(--mem-text-xs)] text-[var(--mem-text-secondary)] hover:text-[var(--mem-text)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] focus-visible:outline-offset-2 rounded-[var(--mem-radius-sm)]"
+          onClick={() => {
+            void clipboardWrite(rawDetails.join("\n\n"))
+              .then(() => setCopied(true))
+              .catch(() => setCopied(false));
+          }}
+        >
+          {copied ? t("connectMatrix.copied") : t("connectMatrix.copyDetails")}
+        </button>
       )}
     </div>
   ) : null;
@@ -274,12 +297,15 @@ export default function ClientRow({
   // whole row (name and the lines under it), the way a settings list reads.
   if (bare) {
     return (
-      <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3">
+      <div
+        data-connection-row
+        className="flex items-center justify-between gap-3 rounded-[var(--mem-radius-md)] px-3 py-2.5"
+      >
         <div className="flex flex-col gap-1 min-w-0">
           {nameBadges}
           {bodyBlock}
         </div>
-        {trailing && <div className="shrink-0">{trailing}</div>}
+        {trailing && <div className="flex h-7 shrink-0 items-center">{trailing}</div>}
       </div>
     );
   }

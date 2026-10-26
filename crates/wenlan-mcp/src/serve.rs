@@ -16,7 +16,7 @@ use rmcp::transport::streamable_http_server::{
 use tower_http::cors::CorsLayer;
 
 use crate::auth;
-use crate::client::WenlanClient;
+use crate::client::{AgentIdentity, WenlanClient};
 use crate::lock_state;
 use crate::tools::{ToolProfile, TransportMode, WenlanMcpServer};
 
@@ -52,6 +52,9 @@ pub struct ServeConfig {
     pub origin_url: String,
     pub token: Option<String>,
     pub agent_name: String,
+    /// Whether `agent_name` came from explicit configuration. Only an
+    /// implicit transport default may yield to MCP `clientInfo.name`.
+    pub agent_name_explicit: bool,
     pub user_id: Option<String>,
     pub allowed_origins: Vec<String>,
     /// Query-only: search the whole library instead of one pinned Space.
@@ -142,9 +145,9 @@ pub async fn run_serve_with_profile(
         lock_state::clear_default_space();
     }
 
-    let client =
-        WenlanClient::new(config.origin_url.clone()).with_agent_name(config.agent_name.clone());
+    let origin_url = config.origin_url.clone();
     let agent_name = config.agent_name.clone();
+    let agent_name_explicit = config.agent_name_explicit;
     let user_id = config.user_id.clone();
     let token = config.token.clone();
     let allowed_origins = config.allowed_origins.clone();
@@ -165,10 +168,11 @@ pub async fn run_serve_with_profile(
 
     let mcp_service = StreamableHttpService::new(
         move || {
-            Ok(WenlanMcpServer::new(
-                client.clone(),
+            let identity = AgentIdentity::new(agent_name.clone(), agent_name_explicit);
+            Ok(WenlanMcpServer::new_with_identity(
+                WenlanClient::new(origin_url.clone()),
                 TransportMode::Http,
-                agent_name.clone(),
+                identity,
                 user_id.clone(),
             )
             .with_tool_profile(tool_profile))

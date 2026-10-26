@@ -235,6 +235,7 @@ async fn test_rejects_disallowed_origin() {
         origin_url: "http://127.0.0.1:19999".into(),
         token: Some("test-token".into()),
         agent_name: "test-agent".into(),
+        agent_name_explicit: true,
         user_id: None,
         allowed_origins: vec!["https://claude.ai".into()],
         whole_library: false,
@@ -992,6 +993,7 @@ fn test_config(port: u16, token: Option<String>) -> wenlan_mcp::serve::ServeConf
         origin_url: "http://127.0.0.1:19999".into(), // non-existent, OK for these tests
         token,
         agent_name: "test-agent".into(),
+        agent_name_explicit: true,
         user_id: None,
         allowed_origins: vec!["*".into()],
         whole_library: false,

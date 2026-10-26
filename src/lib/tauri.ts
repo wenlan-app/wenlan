@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { daemonStartupWait } from "./daemonStartup";
+import { KNOWN_CLIENT_DISPLAY_NAMES, resolveAgentDisplayName } from "./agents";
 import type {
   ApplyRepairRequest, PrepareRepairRequest, PrepareCurrentRepairRequest, RepairApplyReceipt, RepairLintQuery,
   RepairLintReport, RepairManifest, RepairOperationStatus, RepairPrepareOperationRequest, RepairPrepareOperationStatus, RepairPlanEntriesPage, RepairPlanEntriesRequest, RepairRecovery,
@@ -1228,32 +1229,11 @@ export const FACET_COLORS: Record<string, string> = {
 };
 
 // One agent-slug prettifier for every surface (list row, card, detail).
-export const AGENT_DISPLAY: Record<string, string> = {
-  antigravity: "Antigravity",
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  claude: "Claude",
-  chatgpt: "ChatGPT",
-  "chatgpt-mcp": "ChatGPT",
-  codex: "Codex",
-  "copilot-cli": "GitHub Copilot",
-  cursor: "Cursor",
-  "gemini-cli": "Gemini CLI",
-  "kimi-code": "Kimi Code",
-  kiro: "Kiro",
-  "muse-code": "Muse Code",
-  opencode: "OpenCode",
-  vscode: "VS Code",
-  windsurf: "Windsurf",
-  zed: "Zed",
-  wenlan: "Wenlan",
-  // The desktop app's own writer id (`callerId` on its saves and rebuilds).
-  "wenlan-app": "Wenlan",
-};
+export const AGENT_DISPLAY: Record<string, string> = KNOWN_CLIENT_DISPLAY_NAMES;
 
 export function agentDisplayName(slug: string | null | undefined): string | null {
   if (!slug) return null;
-  return AGENT_DISPLAY[slug.trim().toLowerCase()] ?? slug;
+  return resolveAgentDisplayName(slug);
 }
 
 export type StabilityTier = "protected" | "standard" | "ephemeral";
@@ -3640,7 +3620,10 @@ export type McpRepairReason =
   | "command_missing"
   | "command_not_found"
   | "command_not_runnable"
-  | "args_invalid";
+  | "args_invalid"
+  // The daemon can add a more specific diagnostic without making an older
+  // frontend fail to recognize that the row needs the generic repair flow.
+  | (string & {});
 
 /** Whether the raw `wenlan` entry in the client's own config would launch.
  *  `needs_repair` is fixed by the existing `write_mcp_config` command. */
