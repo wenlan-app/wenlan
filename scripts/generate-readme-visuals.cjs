@@ -266,7 +266,24 @@ async function renderSvgToPng(asset, pngPath) {
         }
       }
       for (const node of svg.querySelectorAll("text")) {
-        const box = node.getBBox();
+        // getBBox is in the text's own coordinates; map it through the parent transforms
+        // (the desktop banner's translate) so the check measures where it is drawn.
+        const local = node.getBBox();
+        const ctm = node.getCTM();
+        const corners = [
+          [local.x, local.y],
+          [local.x + local.width, local.y],
+          [local.x, local.y + local.height],
+          [local.x + local.width, local.y + local.height],
+        ].map(([x, y]) => new DOMPoint(x, y).matrixTransform(ctm));
+        const xs = corners.map((point) => point.x);
+        const ys = corners.map((point) => point.y);
+        const box = {
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        };
         if (
           box.x < -tolerance
           || box.y < -tolerance
