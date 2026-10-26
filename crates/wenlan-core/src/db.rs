@@ -4272,6 +4272,35 @@ pub struct MemoryEnrichmentInput {
     pub prior_attempts: u32,
 }
 
+/// One memory the entity stage selected, before its model-free steps.
+#[derive(Debug, Clone)]
+struct EntityEnrichmentCandidate {
+    source_id: String,
+    prior_attempts: u32,
+    expected_version: i64,
+    existing_entity_id: Option<String>,
+}
+
+/// What is left of the entity stage once its model-free steps ran.
+#[derive(Debug, Clone)]
+pub enum EntityEnrichmentPrep {
+    /// A link repair or the vector auto-link finished it (or found it stale).
+    Settled,
+    /// Only an extraction can finish it.
+    NeedsExtraction(EntityExtractionPending),
+}
+
+/// A memory waiting for an entity extraction, as of `expected_version`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityExtractionPending {
+    pub source_id: String,
+    pub expected_version: i64,
+    pub prior_attempts: u32,
+    /// The exact text the extraction reads; the commit locates relation
+    /// spans against it.
+    pub content: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TitleEnrichmentInput {
     pub source_id: String,
@@ -41528,15 +41557,8 @@ impl MemoryDB {
             .await
     }
 
-    /// G6 Stage 2 PR 2c sub-step 3 item 1 (entity-sweep selector): the
-    /// `existing_entity_id` existence checks now require a live
-    /// `kind='entity'` shadow page via `entity_page_map`/`pages`, not just an
-    /// `entities` row. This is a discovery/visibility change -- a linked
-    /// entity that somehow lacks a shadow page becomes invisible to this
-    /// selector's linkage detection (same class as
-    /// `community_discovery_surfaces_shadow_only_entity`'s shadow-page
-    /// dependency), so it carries the RED-control test
-    /// `entity_enrichment_selector_requires_shadow_page_for_linkage`.
+    /// One entity-stage slice: select, the model-free steps, then at most
+    /// one extraction through `extract_fn`.
     async fn run_entity_enrichment_slice_inner<F, Fut>(
         &self,
         entity_link_distance: Option<f32>,
@@ -41548,22 +41570,74 @@ impl MemoryDB {
             Output = Result<Vec<crate::extract::KgExtractionResult>, WenlanError>,
         >,
     {
-        struct EntityEnrichmentCandidate {
-            source_id: String,
-            prior_attempts: u32,
-            prior_status: Option<String>,
-            expected_version: i64,
-            existing_entity_id: Option<String>,
+        let Some(candidate) = self.select_entity_enrichment_candidate(None).await? else {
+            return Ok(0);
+        };
+        if candidate.source_id.is_empty() {
+            return Ok(0);
         }
+        match self
+            .prepare_entity_enrichment(candidate, entity_link_distance)
+            .await?
+        {
+            EntityEnrichmentPrep::Settled => {}
+            EntityEnrichmentPrep::NeedsExtraction(pending) => {
+                let result = extract_fn(pending.content.clone())
+                    .await
+                    .map_err(|error| error.to_string());
+                self.apply_entity_extraction(&pending, result).await?;
+            }
+        }
+        Ok(1)
+    }
 
-        // The authoritative linkage is the junction table; `entity_id` is a
-        // legacy one-to-one mirror. Terminal step outcomes exclude valid
-        // no-entity memories and poison rows even though they remain unlinked.
-        let candidate: Option<EntityEnrichmentCandidate> = {
-            let conn = self.conn.lock().await;
-            let mut rows = conn
-                .query(
-                    "SELECT m.source_id, \
+    /// The entity stage for one named memory, with the ambient lane's own
+    /// eligibility and model-free steps (a link repair, the vector auto-link).
+    /// `None` when that memory is not waiting for the entity stage;
+    /// `NeedsExtraction` when only a model can finish it. An on-demand
+    /// organize run hands that extraction to the user's AI tool and lands the
+    /// answer through [`Self::apply_entity_extraction`].
+    pub async fn entity_enrichment_for(
+        &self,
+        source_id: &str,
+        entity_link_distance: f32,
+    ) -> Result<Option<EntityEnrichmentPrep>, WenlanError> {
+        let Some(candidate) = self
+            .select_entity_enrichment_candidate(Some(source_id))
+            .await?
+        else {
+            return Ok(None);
+        };
+        if candidate.source_id.is_empty() {
+            return Ok(None);
+        }
+        self.prepare_entity_enrichment(candidate, Some(entity_link_distance))
+            .await
+            .map(Some)
+    }
+
+    /// G6 Stage 2 PR 2c sub-step 3 item 1 (entity-sweep selector): the
+    /// `existing_entity_id` existence checks now require a live
+    /// `kind='entity'` shadow page via `entity_page_map`/`pages`, not just an
+    /// `entities` row. This is a discovery/visibility change -- a linked
+    /// entity that somehow lacks a shadow page becomes invisible to this
+    /// selector's linkage detection (same class as
+    /// `community_discovery_surfaces_shadow_only_entity`'s shadow-page
+    /// dependency), so it carries the RED-control test
+    /// `entity_enrichment_selector_requires_shadow_page_for_linkage`.
+    ///
+    /// The authoritative linkage is the junction table; `entity_id` is a
+    /// legacy one-to-one mirror. Terminal step outcomes exclude valid
+    /// no-entity memories and poison rows even though they remain unlinked.
+    /// `only_source_id` narrows the same selection to one memory.
+    async fn select_entity_enrichment_candidate(
+        &self,
+        only_source_id: Option<&str>,
+    ) -> Result<Option<EntityEnrichmentCandidate>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT m.source_id, \
                             CASE WHEN es.status = 'skipped' \
                                       OR es.input_version IS NULL \
                                       OR es.input_version <> m.version \
@@ -41589,6 +41663,7 @@ impl MemoryDB {
                        ON es.source_id = m.source_id \
                       AND es.step_name = 'entity_extract' \
                      WHERE m.source = 'memory' AND m.chunk_index = 0 \
+                       AND (?2 IS NULL OR m.source_id = ?2) \
                        AND COALESCE(m.pending_revision, 0) = 0 \
                        AND NOT EXISTS ( \
                            SELECT 1 FROM memories superseder \
@@ -41612,43 +41687,39 @@ impl MemoryDB {
                               COALESCE(eo.service_class, 2) ASC, \
                               COALESCE(es.updated_at, m.last_modified) ASC, m.source_id ASC \
                      LIMIT 1",
-                    libsql::params![Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS as i64],
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("run_entity_enrichment_slice query: {e}"))
-                })?;
-            rows.next()
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("run_entity_enrichment_slice row: {e}"))
-                })?
-                .map(|row| EntityEnrichmentCandidate {
-                    source_id: row.get::<String>(0).unwrap_or_default(),
-                    prior_attempts: row.get::<u32>(1).unwrap_or(0),
-                    prior_status: row.get::<Option<String>>(2).unwrap_or(None),
-                    expected_version: row.get::<i64>(3).unwrap_or(1),
-                    existing_entity_id: row.get::<Option<String>>(4).unwrap_or(None),
-                })
-        };
+                libsql::params![Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS as i64, only_source_id],
+            )
+            .await
+            .map_err(|e| {
+                WenlanError::VectorDb(format!("run_entity_enrichment_slice query: {e}"))
+            })?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("run_entity_enrichment_slice row: {e}")))?
+            .map(|row| EntityEnrichmentCandidate {
+                source_id: row.get::<String>(0).unwrap_or_default(),
+                prior_attempts: row.get::<u32>(1).unwrap_or(0),
+                expected_version: row.get::<i64>(3).unwrap_or(1),
+                existing_entity_id: row.get::<Option<String>>(4).unwrap_or(None),
+            }))
+    }
 
-        let Some(candidate) = candidate else {
-            return Ok(0);
-        };
+    /// The model-free part of the entity stage. A historical `skipped`
+    /// receipt and a receipt from an older source generation both start a
+    /// fresh retry budget; the guarded upserts reset their attempt count
+    /// without an eager delete race.
+    async fn prepare_entity_enrichment(
+        &self,
+        candidate: EntityEnrichmentCandidate,
+        entity_link_distance: Option<f32>,
+    ) -> Result<EntityEnrichmentPrep, WenlanError> {
         let EntityEnrichmentCandidate {
             source_id,
             prior_attempts,
-            prior_status,
             expected_version,
             existing_entity_id,
         } = candidate;
-        if source_id.is_empty() {
-            return Ok(0);
-        }
-        // A historical `skipped` receipt and a receipt from an older source
-        // generation both start a fresh retry budget. The guarded upsert below
-        // resets their attempt count without an eager delete race.
-        let _ = prior_status;
 
         if let Some(entity_id) = existing_entity_id {
             if !self
@@ -41659,7 +41730,7 @@ impl MemoryDB {
                     "[entity_enrichment_slice] dropped stale linked-receipt repair for {source_id}"
                 );
             }
-            return Ok(1);
+            return Ok(EntityEnrichmentPrep::Settled);
         }
 
         let content = {
@@ -41684,7 +41755,7 @@ impl MemoryDB {
                                 "[entity_enrichment_slice] dropped stale auto-link for {source_id}"
                             );
                         }
-                        return Ok(1);
+                        return Ok(EntityEnrichmentPrep::Settled);
                     }
                     if !self
                         .record_enrichment_step_at_version(
@@ -41696,7 +41767,7 @@ impl MemoryDB {
                         )
                         .await?
                     {
-                        return Ok(1);
+                        return Ok(EntityEnrichmentPrep::Settled);
                     }
                 }
                 Err(error) => {
@@ -41707,46 +41778,67 @@ impl MemoryDB {
             }
         }
 
-        match extract_fn(content.clone()).await {
+        Ok(EntityEnrichmentPrep::NeedsExtraction(
+            EntityExtractionPending {
+                source_id,
+                expected_version,
+                prior_attempts,
+                content,
+            },
+        ))
+    }
+
+    /// Land one entity extraction for `pending`: the parsed result commits
+    /// as one source-guarded transaction, a failed model call (`Err`, its
+    /// message) records a retry or abandon receipt. A memory that changed
+    /// since `pending` was read commits nothing. Returns whether anything
+    /// was committed.
+    pub async fn apply_entity_extraction(
+        &self,
+        pending: &EntityExtractionPending,
+        result: Result<Vec<crate::extract::KgExtractionResult>, String>,
+    ) -> Result<bool, WenlanError> {
+        let source_id = pending.source_id.as_str();
+        match result {
             Ok(kg_results) => {
-                if !self
+                let committed = self
                     .commit_entity_enrichment_at_version(
-                        &source_id,
-                        expected_version,
+                        source_id,
+                        pending.expected_version,
                         &kg_results,
-                        &content,
+                        &pending.content,
                     )
-                    .await?
-                {
+                    .await?;
+                if !committed {
                     log::info!("[entity_enrichment_slice] dropped stale result for {source_id}");
                 }
+                Ok(committed)
             }
             Err(error) => {
-                let next_attempt = prior_attempts.saturating_add(1);
+                let next_attempt = pending.prior_attempts.saturating_add(1);
                 let status = if next_attempt >= Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS {
                     "abandoned"
                 } else {
                     "needs_retry"
                 };
-                if self
+                let committed = self
                     .record_entity_enrichment_failure_at_version(
-                        &source_id,
-                        expected_version,
+                        source_id,
+                        pending.expected_version,
                         status,
-                        &error.to_string(),
+                        &error,
                     )
-                    .await?
-                {
+                    .await?;
+                if committed {
                     log::warn!(
                         "[entity_enrichment_slice] extraction failed for {source_id}: {error}"
                     );
                 } else {
                     log::info!("[entity_enrichment_slice] dropped stale failure for {source_id}");
                 }
+                Ok(committed)
             }
         }
-
-        Ok(1)
     }
 
     /// Get the entity_id for a memory (by source_id, chunk_index=0).
@@ -49206,6 +49298,28 @@ impl MemoryDB {
         &self,
         max_attempts: u32,
     ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
+        self.get_classification_candidate_filtered(max_attempts, None)
+            .await
+    }
+
+    /// [`Self::get_classification_candidate`] for one named memory: the same
+    /// eligibility, so an on-demand organize run hands out exactly the work
+    /// the ambient lane would select for it. `None` when that memory is not
+    /// waiting for classification.
+    pub async fn get_classification_candidate_for(
+        &self,
+        source_id: &str,
+        max_attempts: u32,
+    ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
+        self.get_classification_candidate_filtered(max_attempts, Some(source_id))
+            .await
+    }
+
+    async fn get_classification_candidate_filtered(
+        &self,
+        max_attempts: u32,
+        only_source_id: Option<&str>,
+    ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
@@ -49224,6 +49338,7 @@ impl MemoryDB {
                  LEFT JOIN enrichment_steps es
                    ON es.source_id=m.source_id AND es.step_name='classify'
                  WHERE m.source='memory' AND m.chunk_index=0
+                   AND (?2 IS NULL OR m.source_id=?2)
                    AND COALESCE(m.pending_revision, 0)=0
                    AND NOT EXISTS (
                        SELECT 1 FROM memories superseder
@@ -49247,7 +49362,7 @@ impl MemoryDB {
                           COALESCE(es.updated_at, m.last_modified) ASC,
                           m.source_id ASC
                  LIMIT 1",
-                [i64::from(max_attempts)],
+                libsql::params![i64::from(max_attempts), only_source_id],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("classification candidate: {e}")))?;

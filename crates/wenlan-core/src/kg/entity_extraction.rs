@@ -131,23 +131,32 @@ pub async fn extract_kg(
     prompts: &PromptRegistry,
     content: &str,
 ) -> Result<Vec<crate::extract::KgExtractionResult>, WenlanError> {
-    let truncated: String = content.chars().take(500).collect();
-    let numbered = format!("1. {}", truncated);
-
     let response = llm
-        .generate(LlmRequest {
-            system_prompt: Some(prompts.extract_knowledge_graph.clone()),
-            user_prompt: numbered,
-            max_tokens: 512,
-            temperature: 0.3,
-            label: Some("extract".into()),
-            timeout_secs: None,
-        })
+        .generate(kg_extraction_request(prompts, content))
         .await
         .map_err(|e| WenlanError::Llm(format!("entity extraction: {}", e)))?;
+    Ok(parse_kg_output(content, &response))
+}
 
+/// The one model request entity extraction spends on `content`. An
+/// on-demand organize run hands this same request to the user's AI tool.
+pub fn kg_extraction_request(prompts: &PromptRegistry, content: &str) -> LlmRequest {
+    let truncated: String = content.chars().take(500).collect();
+    LlmRequest {
+        system_prompt: Some(prompts.extract_knowledge_graph.clone()),
+        user_prompt: format!("1. {}", truncated),
+        max_tokens: 512,
+        temperature: 0.3,
+        label: Some("extract".into()),
+        timeout_secs: None,
+    }
+}
+
+/// Parse a reply to [`kg_extraction_request`] for `content`. Never fails: an
+/// unreadable reply is an empty result, as it always was.
+pub fn parse_kg_output(content: &str, response: &str) -> Vec<crate::extract::KgExtractionResult> {
     let batch = [(0usize, content.to_string())];
-    Ok(crate::extract::parse_kg_response(&response, &batch))
+    crate::extract::parse_kg_response(response, &batch)
 }
 
 /// Serial DB-write half: commit a parsed KG result set to the DB and link
