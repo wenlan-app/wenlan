@@ -63,6 +63,8 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
   const { t } = useTranslation();
   const onDemand = useSteepOnDemand() === true;
   const organize = useOrganizeActions() !== null;
+  // The finish card shows a button: "View memories" steps back to secondary.
+  const [cardAction, setCardAction] = useState(false);
   const [phase, setPhaseRaw] = useState<Phase>("input");
   const setPhase = useCallback((p: Phase) => {
     setPhaseRaw(p);
@@ -539,10 +541,12 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
               told was done. Stored and searchable is the promise the import
               actually keeps, and the toolbar Activity button carries the rest. */}
           {handOn ? (
+            // The heading above already gives the count.
             <ImportedLead
               count={storedCount}
               kind="note"
               className="turn-pages-lead"
+              short
             />
           ) : batchStatus && (
             <p
@@ -563,14 +567,21 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
           )}
         </div>
 
-        {handOn ? <ImportOrganize count={storedCount} kind="note" lead="none" /> : null}
+        {handOn ? <ImportOrganize count={storedCount} kind="note" lead="none" onActionChange={setCardAction} /> : null}
 
         {/* Actions */}
         <div className={`flex items-center gap-3 ${wizardMode ? "justify-center" : ""}`}>
           <button
             onClick={() => onComplete(source, result!)}
-            className="px-6 py-2 rounded-lg text-sm font-medium transition-colors duration-150"
-            style={{
+            data-emphasis={handOn && cardAction ? "secondary" : "primary"}
+            className={`${handOn && cardAction ? "px-4" : "px-6"} py-2 rounded-lg text-sm font-medium transition-colors duration-150`}
+            style={handOn && cardAction ? {
+              // The card's button is the next step; this one steps back.
+              fontFamily: "var(--mem-font-body)",
+              backgroundColor: "var(--mem-hover)",
+              color: "var(--mem-text-secondary)",
+              border: "1px solid var(--mem-border)",
+            } : {
               fontFamily: "var(--mem-font-body)",
               backgroundColor: "var(--mem-accent-indigo)",
               color: "white",

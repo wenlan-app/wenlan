@@ -2458,6 +2458,7 @@ const en = {
       askIn: "Have {{tool}} write pages",
       importCard: {
         lead: "{{items}} imported. You can search them now.",
+        leadShort: "You can search them now.",
         title: "Turn them into pages",
         body: "{{tool}} writes your first {{pages}} pages from your newest topics, with people, projects and links filled in. About 3 minutes, on your {{tool}} plan.",
         bodyMore: "{{tool}} writes {{pages}} more pages from your newest topics, with people, projects and links filled in. About 3 minutes, on your {{tool}} plan.",
@@ -5384,6 +5385,7 @@ const zhHans = {
       askIn: "请 {{tool}} 整理",
       importCard: {
         lead: "已导入 {{items}}，现在就能搜索。",
+        leadShort: "现在就能搜索。",
         title: "整理成页面",
         body: "{{tool}} 会从你最新的主题写出前 {{pages}} 个页面，人物、项目和链接都会补上。约 3 分钟，用你自己的 {{tool}} 套餐。",
         bodyMore: "{{tool}} 会从你最新的主题再写 {{pages}} 个页面，人物、项目和链接都会补上。约 3 分钟，用你自己的 {{tool}} 套餐。",
@@ -8301,6 +8303,7 @@ const zhHant = {
       askIn: "請 {{tool}} 整理",
       importCard: {
         lead: "已匯入 {{items}}，現在就能搜尋。",
+        leadShort: "現在就能搜尋。",
         title: "整理成頁面",
         body: "{{tool}} 會從你最新的主題寫出前 {{pages}} 個頁面，人物、專案和連結都會補上。約 3 分鐘，用你自己的 {{tool}} 方案。",
         bodyMore: "{{tool}} 會從你最新的主題再寫 {{pages}} 個頁面，人物、專案和連結都會補上。約 3 分鐘，用你自己的 {{tool}} 方案。",

@@ -214,6 +214,25 @@ describe("TurnIntoPagesView", () => {
     expect(fillUnsetPinsWithRetry).toHaveBeenCalled();
   });
 
+  it("tells the screen when it shows a button, so the screen's own primary steps back", () => {
+    const onActionChange = vi.fn();
+    const { unmount } = render(wrap(<TurnIntoPagesView state={state(ready)} hasPages={false} onActionChange={onActionChange} />));
+    expect(onActionChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    expect(onActionChange).toHaveBeenLastCalledWith(false);
+    unmount();
+
+    const working = vi.fn();
+    render(wrap(
+      <TurnIntoPagesView
+        state={state({ kind: "working", written: [page("a")], writing: true, stuck: false }, { run: { startedAt: Date.now(), tool: "Codex", handedOver: "opened" } })}
+        hasPages
+        onActionChange={working}
+      />,
+    ));
+    expect(working).toHaveBeenLastCalledWith(false);
+  });
+
   it("goes away on Later", () => {
     render(wrap(<TurnIntoPagesView state={state(ready)} hasPages={false} />));
     fireEvent.click(screen.getByRole("button", { name: "Later" }));
@@ -261,6 +280,11 @@ describe("ImportOrganize", () => {
       "1 chat imported. You can search them now.",
       "3 files imported. You can search them now.",
     ]);
+  });
+
+  it("says only the second half under a heading that already gives the count", () => {
+    render(wrap(<ImportedLead count={12} kind="note" short />));
+    expect(screen.getByTestId("import-lead")).toHaveTextContent(/^You can search them now\.$/);
   });
 
   it("in Automatic, names the model writing pages and links to Activity, with no button", async () => {

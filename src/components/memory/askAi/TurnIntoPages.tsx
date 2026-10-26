@@ -53,14 +53,30 @@ interface ImportOrganizeProps {
   readonly bare?: boolean;
   /** Where the lead line goes when the caller places it itself. */
   readonly lead?: "inline" | "none";
+  /** Told whether the card shows a button to press, so the screen's own
+   *  primary button can step back while it does. */
+  readonly onActionChange?: (hasAction: boolean) => void;
 }
 
-/** "12 notes imported. You can search them now." */
-export function ImportedLead({ count, kind, className }: { readonly count: number; readonly kind: ImportedKind; readonly className?: string }) {
+/** "12 notes imported. You can search them now." Under a heading that
+ *  already gives the count, `short` says only the second half. */
+export function ImportedLead({
+  count,
+  kind,
+  className,
+  short = false,
+}: {
+  readonly count: number;
+  readonly kind: ImportedKind;
+  readonly className?: string;
+  readonly short?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <p className={className ?? "turn-pages-lead"} data-testid="import-lead">
-      {t("askAi.writePages.importCard.lead", { items: t(`askAi.writePages.kinds.${kind}`, { count }) })}
+      {short
+        ? t("askAi.writePages.importCard.leadShort")
+        : t("askAi.writePages.importCard.lead", { items: t(`askAi.writePages.kinds.${kind}`, { count }) })}
     </p>
   );
 }
@@ -71,12 +87,16 @@ export function ImportedLead({ count, kind, className }: { readonly count: numbe
  * Automatic, one line names the model doing it. Until the mode is read, only
  * the lead line shows, so nothing claims the wrong mode.
  */
-export function ImportOrganize({ count, kind, onLeave, bare = false, lead = "inline" }: ImportOrganizeProps) {
+export function ImportOrganize({ count, kind, onLeave, bare = false, lead = "inline", onActionChange }: ImportOrganizeProps) {
   const onDemand = useSteepOnDemand();
+  // Automatic (or not yet known) has no button of its own.
+  useEffect(() => {
+    if (onDemand !== true) onActionChange?.(false);
+  }, [onDemand, onActionChange]);
   return (
     <div className="turn-pages-finish" data-testid="import-organize">
       {lead === "inline" ? <ImportedLead count={count} kind={kind} /> : null}
-      {onDemand === true ? <TurnIntoPagesCard onLeave={onLeave} bare={bare} /> : null}
+      {onDemand === true ? <TurnIntoPagesCard onLeave={onLeave} bare={bare} onActionChange={onActionChange} /> : null}
       {onDemand === false ? <AutomaticLine onLeave={onLeave} /> : null}
     </div>
   );
@@ -165,6 +185,7 @@ export function turnIntoPagesKind(
 interface TurnIntoPagesCardProps {
   readonly onLeave?: () => void;
   readonly bare?: boolean;
+  readonly onActionChange?: (hasAction: boolean) => void;
 }
 
 /**
@@ -173,11 +194,11 @@ interface TurnIntoPagesCardProps {
  * (`useWritePages`), so a press here is the run those follow, and the pages
  * land in its list as the tool writes them.
  */
-export function TurnIntoPagesCard({ onLeave, bare = false }: TurnIntoPagesCardProps) {
+export function TurnIntoPagesCard({ onLeave, bare = false, onActionChange }: TurnIntoPagesCardProps) {
   const { pages } = useLibraryInventory();
   const state = useWritePages(pages);
   const hasPages = pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft");
-  return <TurnIntoPagesView state={state} hasPages={hasPages} onLeave={onLeave} bare={bare} />;
+  return <TurnIntoPagesView state={state} hasPages={hasPages} onLeave={onLeave} bare={bare} onActionChange={onActionChange} />;
 }
 
 export function TurnIntoPagesView({
@@ -185,11 +206,13 @@ export function TurnIntoPagesView({
   hasPages,
   onLeave,
   bare = false,
+  onActionChange,
 }: {
   readonly state: WritePagesState;
   readonly hasPages: boolean;
   readonly onLeave?: () => void;
   readonly bare?: boolean;
+  readonly onActionChange?: (hasAction: boolean) => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -202,6 +225,19 @@ export function TurnIntoPagesView({
   const [switchFailed, setSwitchFailed] = useState(false);
 
   const kind = turnIntoPagesKind(state, openedAt);
+  // A face with a primary button: the offer, the Automatic explanation, the
+  // connect prompt, and "Write 8 more" while notes still wait.
+  const view = state.cardView;
+  const hasAction = !later && kind !== "hidden" && (
+    explaining
+    || kind === "ready"
+    || (kind === "noTool" && actions !== null)
+    || (kind === "done" && view.kind === "done" && view.left > 0 && state.tool !== null)
+  );
+  useEffect(() => {
+    onActionChange?.(hasAction);
+  }, [hasAction, onActionChange]);
+  useEffect(() => () => onActionChange?.(false), [onActionChange]);
   if (kind === "hidden" || later) return null;
 
   const go = (action: (() => void) | undefined) => () => {
@@ -336,7 +372,6 @@ export function TurnIntoPagesView({
     );
   }
 
-  const view = state.cardView;
   if (view.kind === "working") {
     const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
     const copyAgain = copyAgainLabel(state, view.written.length, t);
