@@ -273,6 +273,9 @@ pub enum RepairReason {
     /// `args` is not a list of strings, or an `npx` entry does not ask for the
     /// Wenlan package.
     ArgsInvalid,
+    /// The entry runs a different `wenlan-mcp` path than the resolver would
+    /// write now (for example an older home install instead of the app bundle).
+    CommandNotPreferred,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -870,6 +873,9 @@ pub(crate) struct DetectProbes<'a> {
     pub which: &'a dyn Fn(&str) -> Option<PathBuf>,
     /// What a command path is, for entry validation.
     pub probe_command: &'a dyn Fn(&Path) -> CandidateProbe,
+    /// The local `wenlan-mcp` path the writer would choose now, when one was
+    /// measured. Existing absolute Wenlan commands must match it exactly.
+    pub preferred_mcp_command: Option<PathBuf>,
 }
 
 /// What the per-user program folder lookup contributes before any candidate
@@ -1625,6 +1631,23 @@ fn entry_health_of(spec: EntrySpec, probes: &DetectProbes) -> EntryHealth {
                 .to_string(),
         );
     }
+    // Policy: once the resolver has a preferred local binary, an existing
+    // absolute wenlan-mcp command is current only when its path is exactly the
+    // preferred path. This deliberately repairs parallel stale installs
+    // without adding a second, fallible version-execution probe.
+    if command_stem(&command) == "wenlan-mcp"
+        && Path::new(&command).is_absolute()
+        && probes
+            .preferred_mcp_command
+            .as_deref()
+            .is_some_and(|preferred| preferred != Path::new(&command))
+    {
+        return needs_repair(
+            RepairReason::CommandNotPreferred,
+            "The entry points to a different wenlan-mcp binary than Wenlan currently prefers."
+                .to_string(),
+        );
+    }
     EntryHealth::Healthy
 }
 
@@ -1685,6 +1708,10 @@ pub fn detect_mcp_clients() -> Vec<McpClient> {
     let local_data_dir = dirs::data_local_dir();
     let program_files = program_files_dirs();
     let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
+    let preferred_mcp_command = match find_wenlan_mcp_binary_with_trail().resolution {
+        McpBinaryResolution::Found { path, .. } => Some(path),
+        McpBinaryResolution::NoneInstalled | McpBinaryResolution::Unresolved(_) => None,
+    };
     detect_mcp_clients_with(
         home.as_deref(),
         config_dir.as_deref(),
@@ -1696,6 +1723,7 @@ pub fn detect_mcp_clients() -> Vec<McpClient> {
             list_dir: &list_child_paths,
             which: &crate::plugin_install::resolve_binary_no_shell,
             probe_command: &probe_candidate,
+            preferred_mcp_command,
         },
     )
 }
@@ -1726,6 +1754,7 @@ pub(crate) fn detect_mcp_clients_from(
             list_dir: &|_| Vec::new(),
             which: &|_| None,
             probe_command: &probe_candidate,
+            preferred_mcp_command: None,
         },
     )
 }
@@ -1854,8 +1883,8 @@ fn with_exe_suffix(mut bin: PathBuf, host: HostKind) -> PathBuf {
     bin
 }
 
-/// Each `wenlan-mcp` candidate paired with where it came from, most-specific
-/// first — the single source of truth the plain path list and `wire_state`'s
+/// Each `wenlan-mcp` candidate paired with where it came from, preferred first
+/// — the single source of truth the plain path list and `wire_state`'s
 /// candidate trail both derive from, so the two can never disagree about what
 /// was tried. Mirrors the plugin's own `wenlan-mcp-runner.sh` resolution order.
 ///
@@ -1881,16 +1910,14 @@ pub(crate) fn wenlan_mcp_candidate_sources_for(
     if let Some(dev_bin) = dev_bin.filter(|p| !p.trim().is_empty()) {
         candidates.push((PathBuf::from(dev_bin), "WENLAN_MCP_DEV_BIN"));
     }
+    if let Some(exe_dir) = exe_dir {
+        candidates.push((with_exe_suffix(exe_dir.join("wenlan-mcp"), host), "bundled"));
+    }
     if let Some(home) = home {
         candidates.push((
             with_exe_suffix(home.join(".wenlan/bin/wenlan-mcp"), host),
             "installed",
         ));
-    }
-    if let Some(exe_dir) = exe_dir {
-        candidates.push((with_exe_suffix(exe_dir.join("wenlan-mcp"), host), "bundled"));
-    }
-    if let Some(home) = home {
         candidates.push((
             with_exe_suffix(home.join(".cargo/bin/wenlan-mcp"), host),
             "cargo",
@@ -3662,6 +3689,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn bundled_wenlan_mcp_outranks_an_older_home_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp.path().join("Wenlan.app").join("Contents").join("MacOS");
+        let installed = installed_wenlan_mcp(&home.join(".wenlan/bin"));
+        let bundled = installed_wenlan_mcp(&exe_dir);
+        std::fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        write_binary_fixture(&installed);
+        write_binary_fixture(&bundled);
+
+        assert_eq!(
+            resolve_wenlan_mcp(Some(home.as_path()), None, Some(&exe_dir), probe_candidate),
+            McpBinaryResolution::Found {
+                path: bundled,
+                undetermined: Vec::new(),
+            }
+        );
+    }
+
     /// A directory named `wenlan-mcp[.exe]` is not the binary. `Path::exists()`
     /// said it was, and the resolver wrote that directory into the user's MCP
     /// client config as the command to run.
@@ -4156,7 +4204,7 @@ mod tests {
             let labels: Vec<&str> = sources.iter().map(|(_, source)| *source).collect();
             assert_eq!(
                 labels,
-                ["WENLAN_MCP_DEV_BIN", "installed", "bundled", "cargo"],
+                ["WENLAN_MCP_DEV_BIN", "bundled", "installed", "cargo"],
                 "{host:?}"
             );
             for (path, source) in sources {
@@ -4221,11 +4269,11 @@ mod tests {
         assert_eq!(candidates[0], PathBuf::from("/tmp/dev/wenlan-mcp"));
         assert_eq!(
             candidates[1],
-            installed_wenlan_mcp(&home.join(".wenlan/bin"))
+            installed_wenlan_mcp(Path::new("/Applications/Wenlan.app/Contents/MacOS"))
         );
         assert_eq!(
             candidates[2],
-            installed_wenlan_mcp(Path::new("/Applications/Wenlan.app/Contents/MacOS"))
+            installed_wenlan_mcp(&home.join(".wenlan/bin"))
         );
     }
 
@@ -5811,6 +5859,7 @@ args = ["-y", "wenlan-mcp"]
         listings: Vec<(PathBuf, Vec<PathBuf>)>,
         on_path: Vec<&'static str>,
         unreadable: Vec<PathBuf>,
+        preferred_mcp_command: Option<PathBuf>,
     }
 
     impl Machine {
@@ -5823,6 +5872,7 @@ args = ["-y", "wenlan-mcp"]
                 listings: Vec::new(),
                 on_path: Vec::new(),
                 unreadable: Vec::new(),
+                preferred_mcp_command: None,
             }
         }
 
@@ -5858,6 +5908,7 @@ args = ["-y", "wenlan-mcp"]
                     list_dir: &list_dir,
                     which: &which,
                     probe_command: &probe_candidate,
+                    preferred_mcp_command: self.preferred_mcp_command.clone(),
                 },
             )
         }
@@ -6241,6 +6292,7 @@ args = ["-y", "wenlan-mcp"]
             list_dir: &nothing_to_list,
             which,
             probe_command,
+            preferred_mcp_command: None,
         }
     }
 
@@ -6400,6 +6452,26 @@ args = ["-y", "wenlan-mcp"]
             );
             assert!(detail.contains("full path"), "{command}: {detail}");
         }
+    }
+
+    #[test]
+    fn a_different_wenlan_mcp_path_than_the_preferred_binary_needs_repair() {
+        let configured = PathBuf::from("/Users/a/.wenlan/bin/wenlan-mcp");
+        let preferred = PathBuf::from("/Applications/Wenlan.app/Contents/MacOS/wenlan-mcp");
+        let body = serde_json::json!({
+            "mcpServers": {
+                "wenlan": {"command": configured, "args": ["--agent-name", "cursor"]}
+            }
+        })
+        .to_string();
+        let which = resolves(&[]);
+        let mut probes = health_probes(HostKind::MacOs, &which, &is_a_file);
+        probes.preferred_mcp_command = Some(preferred);
+
+        assert_repair(
+            entry_health_reading("cursor", &ConfigRead::Contents(body), &probes),
+            RepairReason::CommandNotPreferred,
+        );
     }
 
     #[test]
@@ -6782,6 +6854,65 @@ args = ["-y", "wenlan-mcp"]
         );
     }
 
+    #[test]
+    fn repairing_an_old_home_binary_rewrites_to_the_bundled_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp.path().join("Wenlan.app").join("Contents").join("MacOS");
+        let old_home_binary = installed_wenlan_mcp(&home.join(".wenlan/bin"));
+        let bundled = installed_wenlan_mcp(&exe_dir);
+        std::fs::create_dir_all(old_home_binary.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        write_binary_fixture(&old_home_binary);
+        write_binary_fixture(&bundled);
+
+        let config_path = home.join(".cursor").join("mcp.json");
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "mcpServers": {
+                    "wenlan": {
+                        "command": old_home_binary,
+                        "args": ["--agent-name", "cursor"]
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut machine = Machine::new(HostKind::MacOs);
+        machine.preferred_mcp_command = Some(bundled.clone());
+        assert_repair(
+            row(&machine.detect(&home), "cursor").entry_health.clone(),
+            RepairReason::CommandNotPreferred,
+        );
+
+        let resolution =
+            resolve_wenlan_mcp(Some(home.as_path()), None, Some(&exe_dir), probe_candidate);
+        write_wenlan_entry_with(
+            &config_path,
+            false,
+            with_agent_name(
+                wenlan_mcp_entry_for(resolution, "wenlan-mcp@^9.9.9"),
+                Some("cursor"),
+            ),
+        )
+        .unwrap();
+
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(
+            Path::new(written["mcpServers"]["wenlan"]["command"].as_str().unwrap()),
+            bundled
+        );
+        assert_eq!(
+            row(&machine.detect(&home), "cursor").entry_health,
+            EntryHealth::Healthy
+        );
+    }
+
     /// Same for Codex's TOML, where comments and unrelated tables must survive.
     #[test]
     fn repairing_a_stale_codex_entry_keeps_the_rest_of_the_toml() {
@@ -6866,6 +6997,7 @@ args = ["-y", "wenlan-mcp"]
             (RepairReason::CommandNotFound, "command_not_found"),
             (RepairReason::CommandNotRunnable, "command_not_runnable"),
             (RepairReason::ArgsInvalid, "args_invalid"),
+            (RepairReason::CommandNotPreferred, "command_not_preferred"),
         ] {
             assert_eq!(
                 json(&EntryHealth::NeedsRepair {

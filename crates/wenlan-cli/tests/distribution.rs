@@ -115,6 +115,26 @@ fn plugin_manifest_and_mcp_launcher_stay_in_sync() {
 }
 
 #[test]
+fn plugin_runners_prefer_the_bundled_mcp_binary_to_the_home_install() {
+    for relative in [
+        "plugin/scripts/wenlan-mcp-runner.sh",
+        "plugin-codex/bin/wenlan-mcp-runner.sh",
+    ] {
+        let runner = fs::read_to_string(repo_root().join(relative)).expect("read MCP runner");
+        let bundled = runner
+            .find("candidates+=(\"${app_dir}/Wenlan.app/Contents/MacOS/wenlan-mcp\")")
+            .expect("bundled candidate");
+        let installed = runner
+            .find("candidates+=(\"${HOME}/.wenlan/bin/wenlan-mcp\"")
+            .expect("home-installed candidate");
+        assert!(
+            bundled < installed,
+            "{relative} must try the app-bundled binary before ~/.wenlan/bin"
+        );
+    }
+}
+
+#[test]
 fn npm_package_allowlists_match_release_generated_files() {
     // The wenlan CLI wrapper currently ships a macOS-arm64-only
     // `run.js`. Linux/Windows users install via the Docker image, the tar/zip
