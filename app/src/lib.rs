@@ -20,6 +20,7 @@ pub mod events;
 pub mod global_shortcuts;
 #[cfg(target_os = "macos")]
 mod handover;
+mod helper_agent;
 mod identity_paths;
 mod indexer;
 mod lifecycle;

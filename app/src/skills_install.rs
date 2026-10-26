@@ -179,6 +179,10 @@ fn skills_reading_for(
 /// Install the bundle for `client_type` into its skills folder under the
 /// AI-tool home (the dev-state stand-in in an isolated dev run). Returns the
 /// skills folder.
+///
+/// For a tool that needs an agent file to start a helper on its cheap model
+/// (Cursor, Antigravity), also writes `wenlan-helper` there
+/// ([`crate::helper_agent`]). That is best effort: it never fails the skills.
 pub fn install_skills(client_type: &str) -> Result<PathBuf, SkillsInstallError> {
     let (home, _) = crate::identity_paths::ai_tool_dirs();
     let Some(home) = home else {
@@ -199,6 +203,16 @@ pub fn install_skills(client_type: &str) -> Result<PathBuf, SkillsInstallError> 
         crate::agent_skills_bundle::FILES,
         crate::agent_skills_bundle::BUNDLE_VERSION,
     )?;
+    match crate::helper_agent::install_helper_agent(client_type, &home) {
+        Ok(crate::helper_agent::HelperInstall::LeftAlone(path)) => log::info!(
+            "[skills] {} is not Wenlan's, so the helper agent was left alone",
+            path.display()
+        ),
+        Ok(_) => {}
+        Err(error) => {
+            log::warn!("[skills] could not write the {client_type} helper agent: {error}")
+        }
+    }
     Ok(dir)
 }
 
@@ -721,6 +735,25 @@ mod tests {
         for (path, _) in crate::agent_skills_bundle::FILES {
             assert!(dir.join(path).is_file(), "{path}");
         }
+        // OpenCode gets no helper agent; Cursor gets one next to its skills.
+        assert!(!tmp
+            .path()
+            .join("ai-tools")
+            .join("home")
+            .join(".cursor")
+            .exists());
+        install_skills("cursor").unwrap();
+        let helper = tmp
+            .path()
+            .join("ai-tools")
+            .join("home")
+            .join(".cursor")
+            .join("agents")
+            .join("wenlan-helper.md");
+        assert_eq!(
+            std::fs::read_to_string(&helper).unwrap(),
+            crate::helper_agent::helper_agent_text("cursor").unwrap()
+        );
         assert_eq!(
             install_skills("claude_desktop"),
             Err(SkillsInstallError::NoSkillsFolder {
