@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import "../../i18n";
+import { i18n } from "../../i18n";
 import type { McpClient } from "../../lib/tauri";
 import { NO, YES } from "../../test/readings";
 
@@ -89,6 +89,21 @@ describe("ClientSetupList", () => {
 
     expect(await screen.findByText("Also works with Windsurf and Kiro, not installed here.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Connect Windsurf/ })).not.toBeInTheDocument();
+  });
+
+  it("lists not-installed tools with 、 in Chinese", async () => {
+    mocks.detectMcpClients.mockResolvedValue([
+      client("windsurf", "Windsurf", false),
+      client("kiro", "Kiro", false),
+      client("kimi_code", "Kimi Code", false),
+    ]);
+    await i18n.changeLanguage("zh-Hant");
+    try {
+      renderList();
+      expect(await screen.findByText("也支援 Windsurf、Kiro、Kimi Code（這台電腦沒裝）")).toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage("en");
+    }
   });
 
   it("connects every safe row from the heading action", async () => {

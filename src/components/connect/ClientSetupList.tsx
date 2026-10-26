@@ -73,9 +73,12 @@ export default function ClientSetupList({
   const notInstalledNames = (clients ?? [])
     .filter((client) => client.detected.kind === "no")
     .map((client) => familyDisplayName(familyOfClient(client.client_type)));
-  const notInstalledList = notInstalledNames.length > 0
-    ? new Intl.ListFormat(i18n.language, { style: "long", type: "conjunction" }).format(notInstalledNames)
-    : "";
+  // Chinese ListFormat glues "和" to Latin names ("Kiro和Kimi Code"); the 、 list reads cleanly.
+  const notInstalledList = notInstalledNames.length === 0
+    ? ""
+    : i18n.language.startsWith("zh")
+      ? notInstalledNames.join("、")
+      : new Intl.ListFormat(i18n.language, { style: "long", type: "conjunction" }).format(notInstalledNames);
 
   const setUp = async (client: McpClient) => {
     const clientType = client.client_type;
