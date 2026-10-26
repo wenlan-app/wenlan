@@ -1906,7 +1906,8 @@ fn steep_new_compact(list: &wenlan_types::SteepNewListResponse) -> serde_json::V
 const STEEP_ORGANIZE_WAITING_NOTE: &str = "Organize tasks wait for these sources. Start a helper \
 on your cheapest model and give it only the token: it calls steep organize_tasks with the \
 token, answers each task, calls organize with the answers, and replies with the counts. \
-Never copy source text to it.";
+Never copy source text to it. Start the helpers of all your claims at once, and write each \
+page as soon as its helper reports.";
 
 /// A `steep` call the daemon refused. Its reasons are already plain words
 /// that say what to do next, so they lead the message.
@@ -5144,7 +5145,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: write pages from unpaged material, then update out-of-date pages. `new`: items for a small model to group by topic. `claim_new` (item_ids, title=topic): text as [1]..[n], token. `links` (token): fresh link_targets before writing. `write` (token, title, content): the page, cited [n]; or `attach` (token) when the claim has existing_page. `list`: pages waiting, new_total. `claim` (page_id): page, sources [1]..[n], token, plan: rewrite; review_card (your rewrite becomes a card); judge (a small model answers code_checks); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
+        description = "Steep on demand: write pages from unpaged material, then update out-of-date pages. `new`: items for a small model to group by topic. `claim_new` (item_ids, title=topic), all at once: text as [1]..[n], token. `links` (token): fresh link_targets before writing. `write` (token, title, content): the page, cited [n]; or `attach` (token) when the claim has existing_page. `list`: pages waiting, new_total. `claim` (page_id): page, sources [1]..[n], token, plan: rewrite; review_card (your rewrite becomes a card); judge (a small model answers code_checks); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
         annotations(
             title = "Steep",
             read_only_hint = false,

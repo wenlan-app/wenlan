@@ -75,11 +75,12 @@ items, sources or tasks to a helper.
    alone. An item belongs to at most one group; items that fit no group
    are left out. A group may be a single item only when that item is long
    on its own (`n` over 1500: a whole note, a long chat).
-2. Claim the groups, biggest first, at most 8 this run: for each, call
-   `steep` with `action: "claim_new"`, its `item_ids` and its topic as
-   `title`. The answer has the items' text numbered `[1]` to `[n]`, a
-   `token` and a `note`; a claim holds its items for 45 minutes. A refusal
-   (too little text, already taken) means skip the group.
+2. Claim the groups, the biggest 8 at most this run, all at once: send
+   every `claim_new` call in one message, each with one group's `item_ids`
+   and its topic as `title`. Never claim one group after another. Each
+   answer has the items' text numbered `[1]` to `[n]`, a `token` and a
+   `note`; a claim holds its items for 45 minutes. A refusal (too little
+   text, already taken) means skip the group.
 3. Start a helper for every claim whose answer has `organize`, all at once.
    It organizes the sources the way Wenlan's own model would: their type
    and tags, and the people, projects and tools they mention. Hand it only
@@ -95,26 +96,31 @@ items, sources or tasks to a helper.
    claim, each with `model: "haiku"` and `run_in_background: true`.
    Otherwise start them one after another. Only when no helper could start
    do you call `organize_tasks` and `organize` yourself.
-4. Write each page as soon as its helper reports, in the order they finish;
-   a claim without `organize` is ready at once. For each:
+4. Write each page as soon as its helper reports, in the order they finish,
+   without waiting for the other helpers; a claim without `organize` is
+   ready at once. For each:
    1. Right before you write, call `steep` with `action: "links"` and the
-      token. It returns `link_targets` and `existing_page` as they are now,
-      counting the pages this run wrote since the claim.
+      token (for helpers that finished together, all their `links` calls in
+      one message). It returns `link_targets` and `existing_page` as they
+      are now, counting the pages this run wrote since the claim.
    2. When it has `existing_page`, a page on this subject already exists: do
       not write a second one. Call `steep` with `action: "attach"` and the
       token. The sources go into that page, which then waits to be rewritten
       with all of them (section 3). Go on to the next page.
    3. Otherwise write the page yourself, with your main model. Never let the
       small model write it. Title: a short heading that names the topic, in
-      the sources' language; in English, in title case ("Sourdough", not
-      "sourdough"), with proper names kept as written. Open with one plain sentence that says what the page is
-      about, then short paragraphs or lists. Use only what the sources say
-      and cite every claim with its number, like `[2]`. Link every page in
-      `link_targets` that the text talks about, each as `[[Title]]` at its
-      first mention, with the title exactly as given. Link no other titles.
-   4. Call `steep` with `action: "write"`, the token, `title` and the body as
-      `content`. A citation refusal: fix the sentences it points at and write
-      again with the same token, once; still refused, `release` the token. If
+      the sources' language; in English, in title case, every main word
+      capitalized ("Household Finances", not "Household finances"), with
+      proper names kept as written. Open with one plain sentence that says
+      what the page is about, then short paragraphs or lists. Use only what
+      the sources say and cite every claim with its number, like `[2]`. Link
+      every page in `link_targets` that the text talks about, each as
+      `[[Title]]` at its first mention, with the title exactly as given.
+      Link no other titles.
+   4. Call `steep` with `action: "write"`, the token, `title` (English in
+      title case: "Kitchen Renovation") and the body as `content`. A
+      citation refusal: fix the sentences it points at and write again with
+      the same token, once; still refused, `release` the token. If
       the sources turn out not to belong together, `release` the token.
    5. `created`: a new page. `merged`: a page on that topic already existed
       and took the sources. `attached`: the existing page took them.
