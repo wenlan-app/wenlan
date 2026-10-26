@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=1b4d754473a5c3b209934dea7d8e6c5c2d7eb2261276cc475e612fb736e396c1 -->
+<!-- README_SYNC: source=README.md sha256=80961dae786df638c5a12ac479764bf2d58791de706122bba2e190aca9f8dd0a -->
 
 <p align="center">
   <picture>
@@ -71,7 +71,9 @@
 
 [下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon、Windows x64），安裝後開啟。
 
-偏好終端機？[透過 CLI 或 AI 工具使用 Wenlan](docs/setup-and-data.zh-Hant.md#installation)。
+App 介面有英文、简体中文和繁體中文。
+
+偏好終端機？在 Mac 上執行 `npx -y wenlan setup`，或用 Homebrew 執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。
 
 ### 2. 建立筆記或匯入既有資料
 
@@ -276,6 +278,8 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我�
 ## 系統架構
 
 **共用本地知識庫。** App、CLI 與 AI 工具透過 Wenlan 本地服務讀寫。筆記以 Markdown 保存；記憶、關係與搜尋索引由本地 libSQL 管理。
+
+**技術：** 本地服務、CLI 和 MCP server 用 Rust 寫成；桌面 app 用 Tauri，介面是 React 和 TypeScript。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hant.png" alt="架構示意：App 與 AI 工具共用本地知識庫，背景整理模型為選配。" width="100%">

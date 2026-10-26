@@ -69,7 +69,9 @@ Save your material in Wenlan so your everyday AI tools can use it to answer ques
 
 [Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon or Windows x64), install it, and open it.
 
-Prefer the terminal? [Use Wenlan through the CLI or AI tools](docs/setup-and-data.md#installation).
+The app is in English, 简体中文, and 繁體中文.
+
+Prefer the terminal? On a Mac, run `npx -y wenlan setup`, or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. For Linux and Windows, see the [CLI install guide](docs/setup-and-data.md#installation).
 
 ### 2. Create a page or import existing material
 
@@ -269,6 +271,8 @@ Turn on **Web access** in Settings to let supported web AI clients such as Claud
 ## Architecture
 
 **One local knowledge base.** App, CLI, and connected AI tools read and write through Wenlan’s local service. Pages are Markdown files; memories, relationships, and search indexes live in local libSQL.
+
+**Built with** Rust for the local service, CLI, and MCP server, and Tauri with React and TypeScript for the desktop app.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture.png" alt="Architecture overview: App and AI tools share a local knowledge base, with optional background enrichment models." width="100%">
