@@ -366,6 +366,54 @@ impl MemoryDB {
         Ok(out)
     }
 
+    /// The titles of the live entity pages of `entity_ids`, as
+    /// `(entity id, title)`.
+    pub(crate) async fn entity_page_titles(
+        &self,
+        entity_ids: &[String],
+    ) -> Result<Vec<(String, String)>, WenlanError> {
+        if entity_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let marks = (1..=entity_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT epm.entity_id, p.title FROM entity_page_map epm \
+             JOIN pages p ON p.id = epm.page_id AND p.kind = 'entity' AND p.status = 'active' \
+             WHERE epm.entity_id IN ({marks}) ORDER BY epm.entity_id ASC"
+        );
+        let params: Vec<libsql::Value> = entity_ids
+            .iter()
+            .map(|id| libsql::Value::Text(id.clone()))
+            .collect();
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, params)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_page_titles: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_page_titles row: {e}")))?
+        {
+            let title = row
+                .get::<Option<String>>(1)
+                .unwrap_or(None)
+                .unwrap_or_default();
+            if !title.trim().is_empty() {
+                out.push((
+                    row.get(0)
+                        .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                    title,
+                ));
+            }
+        }
+        Ok(out)
+    }
+
     /// Every entity whose Wiki page is confirmed. An organize run compares
     /// it before and after, so it reports only the entities it confirmed.
     pub(crate) async fn confirmed_entity_ids(

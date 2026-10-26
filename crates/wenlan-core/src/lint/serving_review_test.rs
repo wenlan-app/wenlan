@@ -137,6 +137,7 @@ fn route_catalog_freezes_exact_global_and_scoped_keys() {
         (Method::Post, "/api/steep/claim"),
         (Method::Get, "/api/steep/new"),
         (Method::Post, "/api/steep/new/claim"),
+        (Method::Post, "/api/steep/new/tasks"),
         (Method::Get, "/api/pages/{id}/map"),
         (Method::Post, "/api/memory/entities/list"),
         (Method::Post, "/api/memory/entities/query"),

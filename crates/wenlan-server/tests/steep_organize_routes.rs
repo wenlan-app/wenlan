@@ -103,6 +103,21 @@ async fn a_new_page_claim_hands_out_organizing_and_takes_the_answers() {
     let classify_tasks = work.tasks.iter().filter(|t| t.stage == "classify").count();
     assert_eq!(classify_tasks, 2, "{:?}", work.tasks);
 
+    // The helper fetches the same tasks with only the token.
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        "/api/steep/new/tasks",
+        Some(json!({"token": claim.token})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["organize"]["tasks"].as_array().map(Vec::len),
+        Some(work.tasks.len()),
+        "{body}"
+    );
+
     let (status, body) = send(
         &app,
         Method::POST,
@@ -126,6 +141,19 @@ async fn a_new_page_claim_hands_out_organizing_and_takes_the_answers() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["unknown"], json!([1]));
+
+    let (status, body) = send(
+        &app,
+        Method::POST,
+        "/api/steep/new/tasks",
+        Some(json!({"token": claim.token})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body.get("organize").is_none(),
+        "every task answered: {body}"
+    );
 }
 
 #[tokio::test]

@@ -194,6 +194,21 @@ pub struct SteepNewLinksRequest {
     pub token: String,
 }
 
+/// `POST /api/steep/new/tasks`: a claim's organize tasks still without an
+/// answer, fetched by the helper that answers them with only the token, so
+/// the main model never passes source text on. Needs no model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepNewTasksRequest {
+    pub token: String,
+}
+
+/// What `POST /api/steep/new/tasks` returns: `None` when nothing is left.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SteepNewTasksResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize: Option<SteepOrganizeWork>,
+}
+
 /// What `POST /api/steep/new/links` returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SteepNewLinksResponse {

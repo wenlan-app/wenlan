@@ -113,8 +113,8 @@ pub use steep::{
 pub use steep_new::{
     SteepExistingPage, SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest,
     SteepNewCommitResponse, SteepNewItem, SteepNewLinksRequest, SteepNewLinksResponse,
-    SteepNewListResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
-    SteepOrganizeStage, SteepOrganizeTask, SteepOrganizeWork,
+    SteepNewListResponse, SteepNewTasksRequest, SteepNewTasksResponse, SteepOrganizeCommitRequest,
+    SteepOrganizeCommitResponse, SteepOrganizeStage, SteepOrganizeTask, SteepOrganizeWork,
 };
 
 use serde::{Deserialize, Serialize};

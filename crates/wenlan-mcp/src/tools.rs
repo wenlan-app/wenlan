@@ -1106,6 +1106,8 @@ pub enum SteepAction {
     New,
     /// Take one topic's items from `new`: their text numbered and a token.
     ClaimNew,
+    /// A claim_new's organize tasks, fetched by the helper that answers them.
+    OrganizeTasks,
     /// The small model's answers to a claim_new's organize tasks.
     Organize,
     /// A claim_new's link_targets and existing_page as they are now.
@@ -1127,7 +1129,7 @@ pub struct SteepAnswer {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SteepParams {
     #[schemars(
-        description = "new | claim_new (item_ids, title) | organize (token, answers) | links (token) | write (token, title, content) | attach (token) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
+        description = "new | claim_new (item_ids, title) | organize_tasks (token) | organize (token, answers) | links (token) | write (token, title, content) | attach (token) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
     )]
     pub action: SteepAction,
     #[schemars(description = "claim_new: the item_ids of one topic, from new.")]
@@ -1153,7 +1155,7 @@ pub struct SteepParams {
     #[serde(default)]
     pub answers: Option<Vec<SteepAnswer>>,
     #[schemars(
-        description = "list: how many pages (default 20). new: how many items (default 100)."
+        description = "list: how many pages (default 20). new: how many items (default 70)."
     )]
     #[serde(default)]
     pub limit: Option<u32>,
@@ -1853,6 +1855,48 @@ fn page_code_basis_error_result(error: WenlanError, action: PageCodeBasisAction)
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
+/// Items one `new` call lists unless asked for another number: with
+/// [`steep_new_compact`], about 25k characters at most, inside an AI tool's
+/// tool-result limit.
+const STEEP_NEW_DEFAULT_LIMIT: u32 = 70;
+
+/// A `new` page as a grouping model reads it: per item only its id, title
+/// (`t`), snippet (`s`) and length in characters (`n`), and no item another
+/// run holds. The daemon's list carries more (Space, kind, time) for the app.
+fn steep_new_compact(list: &wenlan_types::SteepNewListResponse) -> serde_json::Value {
+    let items: Vec<serde_json::Value> = list
+        .items
+        .iter()
+        .filter(|item| !item.held)
+        .map(|item| {
+            serde_json::json!({
+                "id": item.item_id,
+                "t": item.title,
+                "s": item.snippet,
+                "n": item.chars,
+            })
+        })
+        .collect();
+    let mut out = serde_json::json!({
+        "items": items,
+        "total": list.total,
+        "page_titles": list.page_titles,
+    });
+    if let Some(cursor) = &list.next_cursor {
+        out["next_cursor"] = serde_json::json!(cursor);
+    }
+    if list.held > 0 {
+        out["held"] = serde_json::json!(list.held);
+    }
+    out
+}
+
+/// What a claim_new tells the main model in place of its organize tasks.
+const STEEP_ORGANIZE_WAITING_NOTE: &str = "Organize tasks wait for these sources. Start a helper \
+on your cheapest model and give it only the token: it calls steep organize_tasks with the \
+token, answers each task, calls organize with the answers, and replies with the counts. \
+Never copy source text to it.";
+
 /// A `steep` call the daemon refused. Its reasons are already plain words
 /// that say what to do next, so they lead the message.
 fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult {
@@ -1868,6 +1912,7 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
                     | SteepAction::New
                     | SteepAction::ClaimNew
                     | SteepAction::Links
+                    | SteepAction::OrganizeTasks
             ) {
                 format!("steep refused: {reason}")
             } else {
@@ -3688,7 +3733,10 @@ impl WenlanMcpServer {
                     .map(|claim| serde_json::to_value(&claim).map_err(encode))
             }
             SteepAction::New => {
-                let mut path = format!("/api/steep/new?limit={}", params.limit.unwrap_or(100));
+                let mut path = format!(
+                    "/api/steep/new?limit={}",
+                    params.limit.unwrap_or(STEEP_NEW_DEFAULT_LIMIT)
+                );
                 if let Some(cursor) = params.cursor.as_deref().filter(|c| !c.is_empty()) {
                     path.push_str(&format!("&cursor={}", url_encode_simple(cursor)));
                 }
@@ -3698,7 +3746,7 @@ impl WenlanMcpServer {
                 self.client
                     .get::<wenlan_types::SteepNewListResponse>(&path)
                     .await
-                    .map(|list| serde_json::to_value(&list).map_err(encode))
+                    .map(|list| Ok(steep_new_compact(&list)))
             }
             SteepAction::ClaimNew => {
                 let item_ids = params.item_ids.unwrap_or_default();
@@ -3714,7 +3762,23 @@ impl WenlanMcpServer {
                         },
                     )
                     .await
-                    .map(|claim| serde_json::to_value(&claim).map_err(encode))
+                    .map(|claim| {
+                        // The organize tasks repeat the sources' text. The
+                        // helper fetches them itself (`organize_tasks`), so
+                        // the main model gets only how many wait.
+                        let waiting = claim.organize.as_ref().map(|work| work.tasks.len());
+                        let mut value = serde_json::to_value(&claim).map_err(encode)?;
+                        if let (Some(waiting), Some(object)) = (waiting, value.as_object_mut()) {
+                            object.insert(
+                                "organize".to_string(),
+                                serde_json::json!({
+                                    "waiting": waiting,
+                                    "note": STEEP_ORGANIZE_WAITING_NOTE,
+                                }),
+                            );
+                        }
+                        Ok(value)
+                    })
             }
             SteepAction::Organize => {
                 let Some(token) = params.token else {
@@ -3739,6 +3803,18 @@ impl WenlanMcpServer {
                     )
                     .await
                     .map(|done| serde_json::to_value(&done).map_err(encode))
+            }
+            SteepAction::OrganizeTasks => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                self.client
+                    .post::<_, wenlan_types::SteepNewTasksResponse>(
+                        "/api/steep/new/tasks",
+                        &wenlan_types::SteepNewTasksRequest { token },
+                    )
+                    .await
+                    .map(|tasks| serde_json::to_value(&tasks).map_err(encode))
             }
             SteepAction::Links => {
                 let Some(token) = params.token else {
@@ -10057,6 +10133,7 @@ mod tests {
             SteepAction::Judge,
             SteepAction::Release,
             SteepAction::ClaimNew,
+            SteepAction::OrganizeTasks,
             SteepAction::Organize,
             SteepAction::Links,
             SteepAction::Write,
@@ -10142,6 +10219,124 @@ mod tests {
         assert_eq!(body["classified"], 1);
         assert_eq!(body["remaining"], 1);
         assert_eq!(body["link_targets"][0], "Kiln care");
+    }
+
+    #[test]
+    fn a_full_new_page_stays_inside_a_tool_result() {
+        // Long vault ids, titles and full snippets: the worst ordinary case.
+        let items: Vec<wenlan_types::SteepNewItem> = (0..STEEP_NEW_DEFAULT_LIMIT)
+            .map(|i| wenlan_types::SteepNewItem {
+                item_id: format!(
+                    "{:0>36}::Projects/Home/Kitchen renovation notes {i:03}.md",
+                    i
+                ),
+                kind: "note".into(),
+                title: format!("Kitchen renovation notes, part {i:03} of the year"),
+                snippet: "x".repeat(160),
+                space: Some("home".into()),
+                chars: 12_345,
+                last_modified: 1_700_000_000,
+                held: i == 0,
+            })
+            .collect();
+        let list = wenlan_types::SteepNewListResponse {
+            items,
+            total: 9_850,
+            next_cursor: Some("70".into()),
+            kinds: Default::default(),
+            held: 1,
+            page_titles: (0..50)
+                .map(|i| format!("An existing page title {i:02}"))
+                .collect(),
+        };
+        let out = steep_new_compact(&list);
+        let text = out.to_string();
+        assert!(
+            text.chars().count() < 25_000,
+            "{} characters",
+            text.chars().count()
+        );
+        let items = out["items"].as_array().unwrap();
+        assert_eq!(
+            items.len(),
+            STEEP_NEW_DEFAULT_LIMIT as usize - 1,
+            "the held item is left out"
+        );
+        assert!(items[0].get("id").is_some() && items[0].get("s").is_some());
+        assert!(items[0].get("space").is_none() && items[0].get("last_modified").is_none());
+        assert_eq!(out["total"], 9_850);
+        assert_eq!(out["page_titles"].as_array().unwrap().len(), 50);
+    }
+
+    #[tokio::test]
+    async fn steep_claim_new_hands_the_main_model_no_tasks_and_the_helper_fetches_them() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let work = serde_json::json!({
+            "stages": [{"stage": "classify", "instructions": "Classify."}],
+            "tasks": [{"n": 1, "stage": "classify", "memory_id": "m1", "prompt": "SOURCE TEXT"}],
+            "note": "Answer each task."
+        });
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/claim"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "token": "tok_1", "held_until": 1, "note": "Write.",
+                "sources": [{"n": 1, "memory_id": "m1", "text": "SOURCE TEXT"}],
+                "organize": work.clone()
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/tasks"))
+            .and(body_json(serde_json::json!({"token": "tok_1"})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"organize": work})),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |action: SteepAction| SteepParams {
+            action,
+            page_id: None,
+            item_ids: Some(vec!["m1".into()]),
+            token: Some("tok_1".into()),
+            title: Some("Kilns".into()),
+            content: None,
+            answers: None,
+            limit: None,
+            cursor: None,
+            space: None,
+            session: None,
+        };
+        let claim = server
+            .steep_impl(params(SteepAction::ClaimNew))
+            .await
+            .unwrap();
+        let body = claim.structured_content.expect("a claim");
+        assert_eq!(body["organize"]["waiting"], 1);
+        assert!(body["organize"].get("tasks").is_none(), "{body}");
+        assert!(
+            body["organize"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("organize_tasks"),
+            "{body}"
+        );
+        let tasks = server
+            .steep_impl(params(SteepAction::OrganizeTasks))
+            .await
+            .unwrap();
+        let body = tasks.structured_content.expect("the tasks");
+        assert_eq!(body["organize"]["tasks"][0]["prompt"], "SOURCE TEXT");
     }
 
     #[tokio::test]

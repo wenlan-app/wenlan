@@ -766,11 +766,27 @@ pub(crate) fn page_entity_id_column(page_alias: &str) -> String {
 ///
 /// The fenced (non-browse) twin uses the stricter `kind != 'entity'` instead;
 /// this is only for the surfaces that were showing shadow rows.
+///
+/// An established entity whose subject a note of the same title is about
+/// (the note was written as that entity's page, as steep does) is left out
+/// too: the note stands for it, so a list never shows the title twice.
 pub(crate) fn entity_row_browse_predicate(page_alias: &str) -> String {
+    // Inside the subquery an empty alias would bind to the inner `pages`.
+    let outer = if page_alias.is_empty() {
+        "pages."
+    } else {
+        page_alias
+    };
     format!(
         "(COALESCE({page_alias}kind, 'concept') != 'entity' \
           OR (COALESCE({page_alias}entity_confirmed, 0) = 1 \
-              AND {page_alias}status = 'active'))"
+              AND {page_alias}status = 'active' \
+              AND NOT EXISTS (SELECT 1 FROM entity_page_map browse_epm \
+                  JOIN pages browse_note ON browse_note.entity_id = browse_epm.entity_id \
+                  WHERE browse_epm.page_id = {outer}id \
+                    AND browse_note.status = 'active' \
+                    AND COALESCE(browse_note.kind, 'concept') != 'entity' \
+                    AND LOWER(TRIM(browse_note.title)) = LOWER(TRIM({outer}title)))))"
     )
 }
 

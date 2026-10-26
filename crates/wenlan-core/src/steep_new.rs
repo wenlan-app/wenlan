@@ -45,13 +45,15 @@ use crate::steep::SteepError;
 use crate::steep_organize::{OrganizeOptions, OrganizeTask};
 
 /// How long a claim holds its items: long enough for a main model to write one
-/// note.
-pub const NEW_PAGE_HOLD: Duration = Duration::from_secs(15 * 60);
+/// note, after every other group of the run was claimed with it (a run claims
+/// its groups together and writes them as their helpers finish). Reading a
+/// claim's tasks or links, or landing its answers, renews it.
+pub const NEW_PAGE_HOLD: Duration = Duration::from_secs(45 * 60);
 
 /// Characters of an item's text the list shows: with the title, enough for
 /// a small model to group items by topic, and small enough that one run's
 /// list of the newest items stays a few thousand tokens.
-pub const SNIPPET_CHARS: usize = 200;
+pub const SNIPPET_CHARS: usize = 160;
 
 /// Most items one claim takes. A topic bigger than this is written from its
 /// first items; the rest stay on the list for the next note.
@@ -585,6 +587,30 @@ pub async fn claim_new_on(
     })
 }
 
+/// A held claim, its hold renewed for another [`NEW_PAGE_HOLD`].
+fn renew(token: &str) -> Result<NewClaim, SteepError> {
+    let mut holds = holds();
+    holds.expire(Instant::now());
+    let claim = holds.by_token.get_mut(token).ok_or(SteepError::TokenGone)?;
+    claim.until = Instant::now() + NEW_PAGE_HOLD;
+    Ok(claim.clone())
+}
+
+/// A held claim's organize tasks still without an answer, as a helper on a
+/// small model fetches them with nothing but the token: the main model never
+/// passes source text on. `scope` is the caller's: a Space-locked caller
+/// reads only a claim made in its Space. Needs no model.
+pub fn organize_tasks_new(
+    token: &str,
+    scope: &ReadScope,
+) -> Result<Option<SteepOrganizeWork>, SteepError> {
+    let claim = renew(token)?;
+    if *scope != ReadScope::Global && claim.scope != *scope {
+        return Err(SteepError::TokenGone);
+    }
+    Ok(crate::steep_organize::work(&claim.organize))
+}
+
 /// The key two titles share when they name the same subject: lowercase
 /// words, with years, dates and version numbers left out ("Kitchen
 /// Renovation 2023" and "kitchen renovation" share one).
@@ -660,6 +686,29 @@ fn title_closeness(a: &str, b: &str) -> f64 {
     }
 }
 
+/// Whether `title` names the entity called `name`: close to it, or holding
+/// every word of it ("Mira's kiln" names Mira; "Billing migration" does not
+/// name "Onboarding v2 setup checklist").
+fn names_subject(name: &str, title: &str) -> bool {
+    if title_closeness(name, title) >= TITLE_CLOSE_ENOUGH {
+        return true;
+    }
+    let words = |text: &str| -> Vec<String> {
+        title_key(text)
+            .split(' ')
+            .filter(|w| !w.is_empty() && !TITLE_STOPWORDS.contains(w))
+            .map(str::to_string)
+            .collect()
+    };
+    let (name_words, title_words) = (words(name), words(title));
+    !name_words.is_empty()
+        && name_words.iter().all(|w| {
+            title_words.iter().any(|t| {
+                t == w || (!w.is_ascii() && w.chars().count() >= 2 && t.contains(w.as_str()))
+            })
+        })
+}
+
 /// Least [`title_closeness`] for a topic to name an existing page.
 const TITLE_CLOSE_ENOUGH: f64 = 0.6;
 
@@ -683,12 +732,29 @@ async fn existing_page(
             log::warn!("[steep-new] existing page: {error}");
             Vec::new()
         });
+    // A note about an entity the sources mention is this group's page only
+    // when that entity is the subject of both: named by the note's title and
+    // by the group's topic. A note can carry an entity that is not its
+    // subject (most of its sources mentioned it in passing).
+    let names = db
+        .entity_page_titles(&entities)
+        .await
+        .unwrap_or_else(|error| {
+            log::warn!("[steep-new] existing page: {error}");
+            Vec::new()
+        });
     for entity_id in entities {
+        let Some((_, name)) = names.iter().find(|(id, _)| *id == entity_id) else {
+            continue;
+        };
+        if topic.is_some_and(|topic| !names_subject(name, topic)) {
+            continue;
+        }
         match db.notes_about_entity(&entity_id).await {
             Ok(notes) => {
                 if let Some((page_id, title, _)) = notes
                     .into_iter()
-                    .find(|(_, _, page_space)| fits(page_space))
+                    .find(|(_, title, page_space)| fits(page_space) && names_subject(name, title))
                 {
                     return Some(SteepExistingPage { page_id, title });
                 }
@@ -726,12 +792,7 @@ async fn existing_page(
 /// written since the claim (by this run's earlier groups) count. Needs no
 /// model, and leaves the claim as it is.
 pub async fn links_new(db: &MemoryDB, token: &str) -> Result<SteepNewLinksResponse, SteepError> {
-    let claim = {
-        let mut holds = holds();
-        holds.expire(Instant::now());
-        holds.by_token.get(token).cloned()
-    }
-    .ok_or(SteepError::TokenGone)?;
+    let claim = renew(token)?;
     let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
     let space = claim.space.as_deref();
     Ok(SteepNewLinksResponse {
@@ -792,6 +853,32 @@ async fn link_targets(
     out
 }
 
+/// An entity `source_ids` mention whose entity page has `title`, years,
+/// versions and case aside ([`title_key`]), as `(entity id, its title)`.
+async fn entity_titled(
+    db: &MemoryDB,
+    source_ids: &[String],
+    title: &str,
+) -> Result<Option<(String, String)>, WenlanError> {
+    let key = title_key(title);
+    if key.is_empty() {
+        return Ok(None);
+    }
+    let mut entity_ids: Vec<String> = db
+        .source_entity_links(source_ids)
+        .await?
+        .into_iter()
+        .map(|(_, entity, _)| entity)
+        .collect();
+    entity_ids.sort();
+    entity_ids.dedup();
+    Ok(db
+        .entity_page_titles(&entity_ids)
+        .await?
+        .into_iter()
+        .find(|(_, entity_title)| title_key(entity_title) == key))
+}
+
 /// The entities most of `source_ids` mention: each linked to more than half
 /// of them, the most-linked first.
 async fn majority_entities(
@@ -830,6 +917,7 @@ pub async fn organize_new(
         let mut holds = holds();
         holds.expire(Instant::now());
         let claim = holds.by_token.get_mut(token).ok_or(SteepError::TokenGone)?;
+        claim.until = Instant::now() + NEW_PAGE_HOLD;
         let mut taken: Vec<(OrganizeTask, String)> = Vec::new();
         let mut unknown: Vec<u32> = Vec::new();
         for answer in answers {
@@ -1015,11 +1103,22 @@ pub async fn attach_new(
         ));
     };
     let ids = sources_as_claimed(db, token, &claim).await?;
+    attach_sources(db, token, &ids, page, agent).await
+}
+
+/// Add `ids` to `page`, end the claim, and say so.
+async fn attach_sources(
+    db: &MemoryDB,
+    token: &str,
+    ids: &[String],
+    page: SteepExistingPage,
+    agent: &str,
+) -> Result<NewPageCommit, SteepError> {
     let result = page_write(
         db,
         PageWrite::Attach {
             page_id: &page.page_id,
-            source_memory_ids: &ids,
+            source_memory_ids: ids,
             link_reason: "steep_attach",
             agent,
         },
@@ -1028,7 +1127,7 @@ pub async fn attach_new(
     holds().drop_token(token);
     result?;
     if let Err(error) = db
-        .stamp_last_distilled_at(&ids, chrono::Utc::now().timestamp())
+        .stamp_last_distilled_at(ids, chrono::Utc::now().timestamp())
         .await
     {
         log::warn!("[steep-new] stamp last_distilled_at failed: {error}");
@@ -1080,6 +1179,24 @@ pub async fn commit_new(
     crate::export::provenance::validate_canonical_page_content(content)?;
     let ids = sources_as_claimed(db, token, &claim).await?;
 
+    // A note with this title already in the claim's Space is this subject's
+    // page: the sources go into it, as `attach` does, instead of a second
+    // page under the same title.
+    let key = title_key(title);
+    if !key.is_empty() {
+        let same = db.recent_notes(TITLE_MATCH_NOTES).await?.into_iter().find(
+            |(_, note_title, page_space)| {
+                page_space.as_deref() == claim.space.as_deref()
+                    && claim.scope.matches(page_space.as_deref())
+                    && title_key(note_title) == key
+            },
+        );
+        if let Some((page_id, title, _)) = same {
+            return attach_sources(db, token, &ids, SteepExistingPage { page_id, title }, agent)
+                .await;
+        }
+    }
+
     let kinds = db.resolve_source_kinds(&ids).await.unwrap_or_default();
     let numbered: Vec<crate::citations::NumberedSource> = claim
         .sources
@@ -1128,11 +1245,32 @@ pub async fn commit_new(
     // note about the same entity, which would drop the text just written. A
     // later note links that one through `link_targets` instead, and is about
     // the next majority entity that has no note yet, if any.
+    //
+    // An entity the sources mention whose own entity page carries this
+    // title (years and versions aside) is this subject already: the note
+    // becomes its page, about it and under its exact title, so the Wiki
+    // lists one page (see `entity_row_browse_predicate`), not two.
+    let mut title = title.to_string();
     let mut entity_id = None;
-    for candidate in majority_entities(db, &ids).await? {
-        if !db.entity_has_note(&candidate).await? {
-            entity_id = Some(candidate);
-            break;
+    if let Some((entity, entity_title)) = entity_titled(db, &ids, &title).await? {
+        if !db.entity_has_note(&entity).await? {
+            entity_id = Some(entity);
+            title = entity_title;
+        }
+    }
+    if entity_id.is_none() {
+        // Most sources mentioning an entity does not make it the subject:
+        // the title must name it too, or the note stays about no entity.
+        let majority = majority_entities(db, &ids).await?;
+        let names = db.entity_page_titles(&majority).await?;
+        for candidate in majority {
+            let named = names
+                .iter()
+                .any(|(id, name)| *id == candidate && names_subject(name, &title));
+            if named && !db.entity_has_note(&candidate).await? {
+                entity_id = Some(candidate);
+                break;
+            }
         }
     }
     let result = page_write(
@@ -1140,7 +1278,7 @@ pub async fn commit_new(
         PageWrite::Create {
             page_id: None,
             req: CreateConceptRequest {
-                title: title.to_string(),
+                title: title.clone(),
                 content: body,
                 summary,
                 entity_id: entity_id.clone(),

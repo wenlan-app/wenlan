@@ -834,3 +834,220 @@ async fn a_topic_naming_an_existing_note_offers_it() {
     );
     crate::steep_new::release_new(&other.token).unwrap();
 }
+
+/// The helper needs only the token: it fetches the claim's open tasks
+/// itself, and none are left once their answers land. A caller locked to
+/// another Space reads nothing.
+#[tokio::test]
+async fn the_helper_fetches_the_open_tasks_with_the_token_alone() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(&db, "tasks_a", MIRA_NOTE).await;
+    memory(&db, "tasks_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["tasks_a".into(), "tasks_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let fetched = crate::steep_new::organize_tasks_new(&claim.token, &ReadScope::Global)
+        .unwrap()
+        .expect("tasks wait");
+    assert_eq!(Some(&fetched), claim.organize.as_ref());
+    assert!(matches!(
+        crate::steep_new::organize_tasks_new(&claim.token, &ReadScope::Space("elsewhere".into())),
+        Err(crate::steep::SteepError::TokenGone)
+    ));
+    organize_new(&db, &claim.token, &answers(&fetched))
+        .await
+        .unwrap();
+    assert!(
+        crate::steep_new::organize_tasks_new(&claim.token, &ReadScope::Global)
+            .unwrap()
+            .is_none(),
+        "every task was answered"
+    );
+    crate::steep_new::release_new(&claim.token).unwrap();
+}
+
+/// A note titled like an entity its sources mention becomes that entity's
+/// page: about it, under its exact title, and the Wiki lists one page with
+/// that title, not the note and the entity side by side.
+#[tokio::test]
+async fn a_note_titled_like_an_entity_becomes_its_page() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(&db, "stub_a", MIRA_NOTE).await;
+    memory(&db, "stub_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["stub_a".into(), "stub_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().unwrap();
+    organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    let kiln = db
+        .search_entities_by_name("kiln")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.name == "kiln")
+        .unwrap()
+        .id;
+
+    let body = "Mira fires the kiln in Oslo every Sunday [1]. Mira says the kiln needs \
+                eight hours to cool before anyone opens it [2].";
+    let written = commit_new(&db, &claim.token, "Kiln 2024", body, "test", None)
+        .await
+        .unwrap();
+    assert_eq!(written.outcome, "created");
+    assert_eq!(written.title.as_deref(), Some("kiln"), "the entity's title");
+    let page_id = written.page_id.unwrap();
+    let page = db.get_page(&page_id).await.unwrap().unwrap();
+    assert_eq!(page.entity_id.as_deref(), Some(kiln.as_str()));
+    let established = db
+        .source_entity_links(&["stub_b".to_string()])
+        .await
+        .unwrap()
+        .into_iter()
+        .any(|(_, entity, confirmed)| entity == kiln && confirmed);
+    assert!(
+        established,
+        "the entity is in the Wiki, so it could show twice"
+    );
+
+    let listed: Vec<_> = db
+        .list_pages_browse("active", 500, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|p| p.title.eq_ignore_ascii_case("kiln"))
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(listed, vec![page_id], "one page titled kiln, the note");
+}
+
+const ONBOARDING_A: &str = "The onboarding v2 setup checklist now asks new staff to enable \
+two-factor sign-in on day one and to book a laptop pickup before the first standup.";
+const ONBOARDING_B: &str = "Week two of the onboarding v2 setup checklist covers the billing \
+dashboard tour and a shadowing session with the support rotation lead.";
+
+/// Answers naming one entity, "Onboarding v2 - Setup Checklist".
+fn onboarding_answers(work: &SteepOrganizeWork) -> Vec<SteepCodeAnswer> {
+    work.tasks
+        .iter()
+        .map(|task| SteepCodeAnswer {
+            n: task.n,
+            answer: if task.stage == STEEP_ORGANIZE_STAGE_CLASSIFY {
+                CLASSIFY_REPLY.to_string()
+            } else {
+                let fact: String = task
+                    .prompt
+                    .trim_start_matches("1. ")
+                    .chars()
+                    .take(40)
+                    .collect();
+                serde_json::json!([{
+                    "i": 1,
+                    "entities": [{"name": "Onboarding v2 - Setup Checklist", "type": "project"}],
+                    "observations": [{"entity": "Onboarding v2 - Setup Checklist", "content": fact}],
+                    "relations": []
+                }])
+                .to_string()
+            },
+        })
+        .collect()
+}
+
+/// A page that carries an entity it is not about (most of its sources
+/// mentioned it in passing) is no home for that entity's material: the
+/// onboarding notes do not go into "Billing Migration" just because that
+/// page is tagged with the onboarding checklist.
+#[tokio::test]
+async fn a_page_tagged_with_an_entity_it_is_not_about_takes_none_of_its_material() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    memory(&db, "onb_a", ONBOARDING_A).await;
+    memory(&db, "onb_b", ONBOARDING_B).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["onb_a".into(), "onb_b".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().unwrap();
+    organize_new(&db, &claim.token, &onboarding_answers(&work))
+        .await
+        .unwrap();
+    let onboarding = db
+        .search_entities_by_name("Onboarding v2 - Setup Checklist")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|e| e.name == "Onboarding v2 - Setup Checklist")
+        .unwrap()
+        .id;
+    let billing = authored_note(&db, "Billing Migration", Some(onboarding)).await;
+
+    let links = crate::steep_new::links_new(&db, &claim.token)
+        .await
+        .unwrap();
+    assert!(
+        links.existing_page.is_none(),
+        "Billing Migration is not about onboarding: {:?}",
+        links.existing_page
+    );
+    let body = "The onboarding v2 setup checklist now asks new staff to enable two-factor \
+                sign-in on day one [1]. Week two of the onboarding v2 setup checklist covers \
+                the billing dashboard tour [2].";
+    let written = commit_new(
+        &db,
+        &claim.token,
+        "Onboarding checklist",
+        body,
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(written.outcome, "created");
+    assert_ne!(written.page_id.as_deref(), Some(billing.as_str()));
+    let page = db
+        .get_page(written.page_id.as_deref().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(page.entity_id, None, "the entity already has a page");
+}
+
+/// A note written under the title of a note already in the Space goes into
+/// that note: one "Recipes", not two.
+#[tokio::test]
+async fn a_note_under_an_existing_title_goes_into_that_note() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    let recipes = authored_note(&db, "Recipes", None).await;
+    memory(&db, "rec_a", MIRA_NOTE).await;
+    memory(&db, "rec_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["rec_a".into(), "rec_b".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    let body = "Mira fires the kiln in Oslo every Sunday [1]. Mira says the kiln needs \
+                eight hours to cool before anyone opens it [2].";
+    let written = commit_new(&db, &claim.token, "recipes", body, "test", None)
+        .await
+        .unwrap();
+    assert_eq!(written.outcome, "attached");
+    assert_eq!(written.page_id.as_deref(), Some(recipes.as_str()));
+    assert_eq!(written.title.as_deref(), Some("Recipes"));
+}

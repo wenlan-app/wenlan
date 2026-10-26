@@ -389,7 +389,7 @@ async fn a_limited_list_is_the_newest_items_with_short_snippets() {
     let got: Vec<&str> = list.items.iter().map(|i| i.item_id.as_str()).collect();
     assert_eq!(got, vec!["lim_4", "lim_3"], "newest first");
     assert_eq!(list.next_cursor.as_deref(), Some("2"));
-    assert_eq!(SNIPPET_CHARS, 200);
+    assert_eq!(SNIPPET_CHARS, 160);
     for item in &list.items {
         assert!(
             item.snippet.chars().count() <= SNIPPET_CHARS + 1,

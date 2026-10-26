@@ -18,8 +18,8 @@ use wenlan_types::steep_new::{
 };
 use wenlan_types::{
     SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest, SteepNewCommitResponse,
-    SteepNewLinksRequest, SteepNewLinksResponse, SteepNewListResponse, SteepOrganizeCommitRequest,
-    SteepOrganizeCommitResponse,
+    SteepNewLinksRequest, SteepNewLinksResponse, SteepNewListResponse, SteepNewTasksRequest,
+    SteepNewTasksResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
 };
 
 use crate::error::ServerError;
@@ -33,6 +33,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/steep/new/claim", post(handle_steep_new_claim))
         .route("/api/steep/new/organize", post(handle_steep_new_organize))
         .route("/api/steep/new/links", post(handle_steep_new_links))
+        .route("/api/steep/new/tasks", post(handle_steep_new_tasks))
         .route("/api/steep/new/commit", post(handle_steep_new_commit))
 }
 
@@ -191,6 +192,28 @@ pub async fn handle_steep_new_links(
         .await
         .map_err(steep_error)?;
     Ok(Json(links))
+}
+
+/// POST /api/steep/new/tasks
+///
+/// A claim's organize tasks still without an answer, for the helper that
+/// answers them: it needs only the token. A Space-locked caller reads only a
+/// claim made in its Space. Needs no model.
+pub async fn handle_steep_new_tasks(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    Json(req): Json<SteepNewTasksRequest>,
+) -> Result<Json<SteepNewTasksResponse>, ServerError> {
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let organize =
+        wenlan_core::steep_new::organize_tasks_new(&req.token, &scope).map_err(steep_error)?;
+    Ok(Json(SteepNewTasksResponse { organize }))
 }
 
 /// POST /api/steep/new/commit
