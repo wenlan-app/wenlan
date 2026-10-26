@@ -237,7 +237,7 @@ export function TurnIntoPagesView({
     explaining
     || kind === "ready"
     || (kind === "noTool" && actions !== null)
-    || (kind === "done" && view.kind === "done" && view.left > 0 && state.tool !== null)
+    || (kind === "done" && view.kind === "done" && view.left > 0 && state.command !== null)
   );
   useEffect(() => {
     onActionChange?.(hasAction);
@@ -420,7 +420,9 @@ export function TurnIntoPagesView({
           : t("askAi.writePages.importCard.done", { count: view.written.length })}
       </p>
       <WrittenPages rows={view.written} writing={false} onSelectPage={selectPage} />
-      {waiting && state.tool ? (
+      {/* While anything waits, the next batch is one press away, even when
+          the run was started outside the app and no tool is known. */}
+      {waiting && state.command !== null ? (
         <div className="turn-pages-actions">
           <button
             type="button"

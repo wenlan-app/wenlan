@@ -106,6 +106,38 @@ describe("WritePagesStep", () => {
     expect(ready.start).toHaveBeenCalled();
   });
 
+  it("after a run, offers the next batch while material still waits", () => {
+    const written = Array.from({ length: 8 }, (_, i) => page(`w${i}`));
+    const done = state(
+      { kind: "done", written, minutes: 4, left: 9943 },
+      { waitingTotal: 9943, waiting: "9,943 notes", run: { startedAt: Date.parse("2026-10-22T10:00:00Z"), tool: "Claude Code" } },
+    );
+    renderStep({ state: done, pages: written, done: true, onSelectPage: vi.fn() });
+    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("9,943 notes aren't in any page yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(done.start).toHaveBeenCalled();
+  });
+
+  it("after a run, still offers the next batch with no tool known, by copying the command", () => {
+    const written = [page("a")];
+    const done = state({ kind: "done", written, minutes: 2, left: 40 }, { tool: null, waiting: "40 notes" });
+    renderStep({ state: done, pages: written, done: true });
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    expect(done.start).toHaveBeenCalled();
+  });
+
+  it("after a run with nothing left, offers nothing more", () => {
+    const written = [page("a")];
+    renderStep({ state: state({ kind: "done", written, minutes: 2, left: 0 }, { waitingTotal: 0 }), pages: written, done: true });
+    expect(screen.queryByTestId("getting-started-pages-more")).toBeNull();
+  });
+
+  it("once done, offers even a little material still waiting", () => {
+    const ready = state({ kind: "hidden" }, { waitingTotal: 2, waiting: "2 notes" });
+    renderStep({ state: ready, pages: [page("a")], done: true });
+    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("2 notes aren't in any page yet.");
+  });
+
   it("says Wenlan does it in Automatic mode", () => {
     renderStep({ state: state({ kind: "hidden" }, { onDemand: false }) });
     expect(screen.getByTestId("row")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.automatic"));

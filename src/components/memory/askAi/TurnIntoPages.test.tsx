@@ -179,6 +179,18 @@ describe("TurnIntoPagesView", () => {
     expect(s.start).toHaveBeenCalled();
   });
 
+  it("offers the next batch after a run started outside the app, with no tool known", () => {
+    const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
+    const s = state(
+      { kind: "done", written, minutes: 3, left: 9943 },
+      { tool: null, opensTool: false, waiting: "9,943 notes", run: { startedAt: Date.now(), tool: null } },
+    );
+    render(wrap(<TurnIntoPagesView state={s} hasPages />));
+    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("8 pages ready. 9,943 notes still waiting.");
+    fireEvent.click(screen.getByRole("button", { name: "Write 8 more" }));
+    expect(s.start).toHaveBeenCalled();
+  });
+
   it("drops the waiting half when nothing waits", () => {
     const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
     render(wrap(
