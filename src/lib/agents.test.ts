@@ -78,6 +78,15 @@ describe("toolFamilyOf", () => {
     expect(toolFamilyOf({ name: "claude-code-x", agent_type: "" })).toBe("claude-code");
   });
 
+  it("keeps Kimi (the desktop app) and Kimi Code apart", () => {
+    expect(clientTypeFamily("kimi_desktop")).toBe("kimi-desktop");
+    expect(clientTypeFamily("kimi_code")).toBe("kimi-code");
+    expect(toolFamilyOf({ name: "kimi-desktop", agent_type: "" })).toBe("kimi-desktop");
+    expect(toolFamilyOf({ name: "kimi-code", agent_type: "" })).toBe("kimi-code");
+    expect(familyDisplayName("kimi-desktop")).toBe("Kimi");
+    expect(familyDisplayName("kimi-code")).toBe("Kimi Code");
+  });
+
   it("(d) keeps the wizard probe as its own family, then passes names through", () => {
     expect(toolFamilyOf({ name: "wenlan-setup", agent_type: "" })).toBe("wenlan-setup");
     expect(toolFamilyOf({ name: "my-custom-bot", agent_type: "" })).toBe("my-custom-bot");

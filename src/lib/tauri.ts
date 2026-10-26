@@ -1240,6 +1240,7 @@ export const AGENT_DISPLAY: Record<string, string> = {
   cursor: "Cursor",
   "gemini-cli": "Gemini CLI",
   "kimi-code": "Kimi Code",
+  "kimi-desktop": "Kimi",
   kiro: "Kiro",
   "muse-code": "Muse Code",
   opencode: "OpenCode",

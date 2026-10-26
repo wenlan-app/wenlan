@@ -7,6 +7,7 @@ const TOOL_LABELS: Readonly<Record<string, string>> = {
   opencode: "OpenCode",
   "gemini-cli": "Gemini CLI",
   "kimi-code": "Kimi Code",
+  "kimi-desktop": "Kimi",
   chatgpt: "ChatGPT",
   "claude-ai": "Claude",
 };

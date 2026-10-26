@@ -28,6 +28,7 @@ export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
   "cursor": "Cursor",
   "gemini-cli": "Gemini CLI",
   "kimi-code": "Kimi Code",
+  "kimi-desktop": "Kimi",
   "kiro": "Kiro",
   "logseq": "Logseq",
   "muse-code": "Muse Code",
@@ -139,6 +140,8 @@ export function clientTypeFamily(clientType: string): string {
       return "opencode";
     case "kimi_code":
       return "kimi-code";
+    case "kimi_desktop":
+      return "kimi-desktop";
     default:
       return "";
   }

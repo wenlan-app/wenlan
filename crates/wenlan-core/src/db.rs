@@ -2083,6 +2083,7 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
     ("kimi-code", "Kimi Code"),
+    ("kimi-desktop", "Kimi"),
     ("kiro", "Kiro"),
     ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
@@ -2202,6 +2203,7 @@ mod agent_id_tests {
         assert_eq!(known_client_display_name("kiro"), Some("Kiro"));
         assert_eq!(known_client_display_name("opencode"), Some("OpenCode"));
         assert_eq!(known_client_display_name("kimi-code"), Some("Kimi Code"));
+        assert_eq!(known_client_display_name("kimi-desktop"), Some("Kimi"));
         assert_eq!(known_client_display_name("vscode"), Some("VS Code"));
         assert_eq!(known_client_display_name("windsurf"), Some("Windsurf"));
         assert_eq!(known_client_display_name("unknown-tool"), None);

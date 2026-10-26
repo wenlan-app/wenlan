@@ -8,9 +8,9 @@
 //! `.wenlan-managed` marker holding the bundle version, and a same-named folder
 //! WITHOUT the marker is the user's: it is never overwritten.
 //!
-//! Paths come from [`crate::identity_paths::ai_tool_dirs`], the same home the
-//! MCP config writer uses, so an isolated dev run installs into its stand-in
-//! home and never into the user's real tool folders.
+//! Paths come from [`crate::identity_paths::ai_tool_dirs`], the same home and
+//! config dir the MCP config writer uses, so an isolated dev run installs into
+//! its stand-ins and never into the user's real tool folders.
 
 use crate::mcp_config::Reading;
 use std::fmt;
@@ -23,13 +23,21 @@ pub(crate) const MANAGED_MARKER: &str = ".wenlan-managed";
 /// skill can name its own scripts (`{{WENLAN_SKILLS_DIR}}/wenlan/scripts/..`).
 pub(crate) const SKILLS_DIR_PLACEHOLDER: &str = "{{WENLAN_SKILLS_DIR}}";
 
-/// The skills folder `client_type` reads, under `home`. `None` for a client
-/// whose skills arrive another way (the Claude Code and Codex plugins) or that
-/// has no skills surface (Claude Desktop, Muse Code).
+/// The platform folder a client's skills folder hangs off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkillsBase {
+    Home,
+    /// The application-configuration folder (`dirs::config_dir()`).
+    ConfigDir,
+}
+
+/// Where `client_type`'s skills folder is, as a base and a relative tail.
+/// `None` for a client whose skills arrive another way (the Claude Code and
+/// Codex plugins) or that has no skills surface (Claude Desktop, Muse Code).
 ///
 /// Several clients share a folder: Antigravity reads Gemini CLI's
 /// `~/.gemini/skills`, and VS Code reads Copilot's `~/.copilot/skills`.
-pub(crate) fn skills_dir_for(client_type: &str, home: &Path) -> Option<PathBuf> {
+fn skills_location(client_type: &str) -> Option<(SkillsBase, PathBuf)> {
     let tail: &[&str] = match client_type {
         "cursor" => &[".cursor", "skills"],
         "gemini_cli" | "antigravity" => &[".gemini", "skills"],
@@ -40,12 +48,44 @@ pub(crate) fn skills_dir_for(client_type: &str, home: &Path) -> Option<PathBuf> 
         // Kimi Code also reads the shared `~/.agents/skills`; its own folder
         // keeps Wenlan's copy next to the MCP entry it pairs with.
         "kimi_code" => &[".kimi-code", "skills"],
+        // Kimi, the desktop app: its daemon hands its embedded Kimi Code one
+        // skills folder, `<config dir>/kimi-desktop/daimon-share/daimon/skills`
+        // (measured on macOS, Kimi 3.2.21), and reads neither `~/.agents/skills`
+        // nor a `skills` folder in its Kimi Code home. The app's own built-in
+        // skills live there too, listed in its
+        // `.daimon-managed-builtin-skills.json`; Wenlan's carry
+        // [`MANAGED_MARKER`] like everywhere else, so neither is mistaken for
+        // the other.
+        "kimi_desktop" => {
+            let tail = crate::mcp_config::KIMI_DESKTOP_DAIMON
+                .iter()
+                .chain(&["skills"])
+                .collect::<PathBuf>();
+            return Some((SkillsBase::ConfigDir, tail));
+        }
         _ => return None,
     };
-    Some(
-        tail.iter()
-            .fold(home.to_path_buf(), |acc, part| acc.join(part)),
-    )
+    Some((SkillsBase::Home, tail.iter().collect()))
+}
+
+/// The skills folder `client_type` reads, under `home` or the platform
+/// `config_dir` (whichever that client's folder hangs off). `None` for a
+/// client with no skills folder; `Some(Err(what))` when the directory it
+/// needs could not be determined, naming that directory.
+pub(crate) fn skills_dir_for(
+    client_type: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+) -> Option<Result<PathBuf, &'static str>> {
+    let (base, tail) = skills_location(client_type)?;
+    Some(match base {
+        SkillsBase::Home => home
+            .map(|home| home.join(&tail))
+            .ok_or("the home directory"),
+        SkillsBase::ConfigDir => config_dir
+            .map(|config_dir| config_dir.join(&tail))
+            .ok_or("the application-configuration directory"),
+    })
 }
 
 /// Why an install did not happen. Every variant is raised before anything is
@@ -56,8 +96,11 @@ pub enum SkillsInstallError {
     NoSkillsFolder {
         client_type: String,
     },
-    /// The platform would not report a home directory.
-    HomeUndetermined,
+    /// The platform would not report the directory the skills folder hangs
+    /// off (the home directory, or the application-configuration directory).
+    DirUndetermined {
+        what: &'static str,
+    },
     /// A skill folder of the same name is there and Wenlan did not write it.
     Unmanaged {
         dir: PathBuf,
@@ -82,10 +125,10 @@ impl fmt::Display for SkillsInstallError {
             SkillsInstallError::NoSkillsFolder { client_type } => {
                 write!(f, "{client_type} has no skills folder Wenlan installs into")
             }
-            SkillsInstallError::HomeUndetermined => write!(
+            SkillsInstallError::DirUndetermined { what } => write!(
                 f,
-                "Could not determine the home directory, so there is no skills folder to \
-                 install into. Nothing was written."
+                "Could not determine {what}, so there is no skills folder to install into. \
+                 Nothing was written."
             ),
             SkillsInstallError::Unmanaged { dir } => write!(
                 f,
@@ -144,26 +187,35 @@ fn top_level_dirs(files: &[(&str, &str)]) -> Vec<String> {
 pub(crate) fn skills_reading(
     client_type: &str,
     home: Option<&Path>,
+    config_dir: Option<&Path>,
     exists: &dyn Fn(&Path) -> Reading,
 ) -> Option<Reading> {
-    skills_reading_for(client_type, home, exists, crate::agent_skills_bundle::FILES)
+    skills_reading_for(
+        client_type,
+        home,
+        config_dir,
+        exists,
+        crate::agent_skills_bundle::FILES,
+    )
 }
 
 fn skills_reading_for(
     client_type: &str,
     home: Option<&Path>,
+    config_dir: Option<&Path>,
     exists: &dyn Fn(&Path) -> Reading,
     files: &[(&str, &str)],
 ) -> Option<Reading> {
-    // Answer "has a skills folder" from a stand-in home first, so a client's
-    // `Some`/`None` never depends on whether the home could be found.
-    skills_dir_for(client_type, Path::new(""))?;
-    let Some(home) = home else {
-        return Some(Reading::Unreadable {
-            error: "could not determine the home directory".to_string(),
-        });
+    // A client's `Some`/`None` never depends on whether its directory could
+    // be found: that is `Some(Unreadable)`.
+    let dir = match skills_dir_for(client_type, home, config_dir)? {
+        Ok(dir) => dir,
+        Err(what) => {
+            return Some(Reading::Unreadable {
+                error: format!("could not determine {what}"),
+            })
+        }
     };
-    let dir = skills_dir_for(client_type, home)?;
     let skills = top_level_dirs(files);
     if skills.is_empty() {
         return Some(Reading::No);
@@ -177,23 +229,19 @@ fn skills_reading_for(
 }
 
 /// Install the bundle for `client_type` into its skills folder under the
-/// AI-tool home (the dev-state stand-in in an isolated dev run). Returns the
-/// skills folder.
+/// AI-tool home or config dir (the dev-state stand-ins in an isolated dev
+/// run). Returns the skills folder.
 pub fn install_skills(client_type: &str) -> Result<PathBuf, SkillsInstallError> {
-    let (home, _) = crate::identity_paths::ai_tool_dirs();
-    let Some(home) = home else {
-        // Not-a-skills-client first, so that error is not masked by this one.
-        return Err(match skills_dir_for(client_type, Path::new("")) {
-            Some(_) => SkillsInstallError::HomeUndetermined,
-            None => SkillsInstallError::NoSkillsFolder {
+    let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
+    let dir = match skills_dir_for(client_type, home.as_deref(), config_dir.as_deref()) {
+        Some(Ok(dir)) => dir,
+        Some(Err(what)) => return Err(SkillsInstallError::DirUndetermined { what }),
+        None => {
+            return Err(SkillsInstallError::NoSkillsFolder {
                 client_type: client_type.to_string(),
-            },
-        });
+            })
+        }
     };
-    let dir =
-        skills_dir_for(client_type, &home).ok_or_else(|| SkillsInstallError::NoSkillsFolder {
-            client_type: client_type.to_string(),
-        })?;
     install_skills_into(
         &dir,
         crate::agent_skills_bundle::FILES,
@@ -437,6 +485,7 @@ mod tests {
     #[test]
     fn skills_dir_for_every_skills_client() {
         let home = PathBuf::from("/fixture/home");
+        let config = PathBuf::from("/fixture/config");
         for (client_type, tail) in [
             ("cursor", [".cursor", "skills"].as_slice()),
             ("gemini_cli", &[".gemini", "skills"]),
@@ -450,11 +499,37 @@ mod tests {
         ] {
             let expected = tail.iter().fold(home.clone(), |acc, part| acc.join(part));
             assert_eq!(
-                skills_dir_for(client_type, &home),
-                Some(expected),
+                skills_dir_for(client_type, Some(&home), Some(&config)),
+                Some(Ok(expected)),
+                "{client_type}"
+            );
+            // A home-based folder never needs the config dir.
+            assert!(
+                matches!(skills_dir_for(client_type, Some(&home), None), Some(Ok(_))),
+                "{client_type}"
+            );
+            assert_eq!(
+                skills_dir_for(client_type, None, Some(&config)),
+                Some(Err("the home directory")),
                 "{client_type}"
             );
         }
+        // Kimi (the desktop app) is under the config dir, and only that.
+        let kimi = ["kimi-desktop", "daimon-share", "daimon", "skills"]
+            .iter()
+            .fold(config.clone(), |acc, part| acc.join(part));
+        assert_eq!(
+            skills_dir_for("kimi_desktop", Some(&home), Some(&config)),
+            Some(Ok(kimi.clone()))
+        );
+        assert_eq!(
+            skills_dir_for("kimi_desktop", None, Some(&config)),
+            Some(Ok(kimi))
+        );
+        assert_eq!(
+            skills_dir_for("kimi_desktop", Some(&home), None),
+            Some(Err("the application-configuration directory"))
+        );
         for client_type in [
             "claude_code",
             "codex_cli",
@@ -462,7 +537,16 @@ mod tests {
             "muse_code",
             "unknown",
         ] {
-            assert_eq!(skills_dir_for(client_type, &home), None, "{client_type}");
+            assert_eq!(
+                skills_dir_for(client_type, Some(&home), Some(&config)),
+                None,
+                "{client_type}"
+            );
+            assert_eq!(
+                skills_dir_for(client_type, None, None),
+                None,
+                "{client_type}"
+            );
         }
     }
 
@@ -611,10 +695,11 @@ mod tests {
     fn has_skills_is_yes_only_when_every_skill_is_marked() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
-        let reading = |client: &str| skills_reading_for(client, Some(home), &real_exists, BUNDLE);
+        let reading =
+            |client: &str| skills_reading_for(client, Some(home), Some(home), &real_exists, BUNDLE);
 
         assert_eq!(reading("kiro"), Some(Reading::No));
-        let dir = skills_dir_for("kiro", home).unwrap();
+        let dir = skills_dir_for("kiro", Some(home), None).unwrap().unwrap();
         install_skills_into(&dir, BUNDLE, "v1").unwrap();
         assert_eq!(reading("kiro"), Some(Reading::Yes));
 
@@ -623,10 +708,21 @@ mod tests {
         assert_eq!(reading("kiro"), Some(Reading::No));
 
         // Shared folders answer for both clients that read them.
-        let copilot = skills_dir_for("copilot_cli", home).unwrap();
+        let copilot = skills_dir_for("copilot_cli", Some(home), None)
+            .unwrap()
+            .unwrap();
         install_skills_into(&copilot, BUNDLE, "v1").unwrap();
         assert_eq!(reading("copilot_cli"), Some(Reading::Yes));
         assert_eq!(reading("vscode"), Some(Reading::Yes));
+
+        // Kimi's folder is its own, under the config dir.
+        assert_eq!(reading("kimi_desktop"), Some(Reading::No));
+        let kimi = skills_dir_for("kimi_desktop", None, Some(home))
+            .unwrap()
+            .unwrap();
+        install_skills_into(&kimi, BUNDLE, "v1").unwrap();
+        assert_eq!(reading("kimi_desktop"), Some(Reading::Yes));
+        assert_eq!(reading("kimi_code"), Some(Reading::No));
 
         // Clients with no skills folder have no reading at all.
         assert_eq!(reading("claude_code"), None);
@@ -640,7 +736,7 @@ mod tests {
             error: "Access is denied. (os error 5)".to_string(),
         };
         assert!(matches!(
-            skills_reading_for("cursor", Some(&home), &refused, BUNDLE),
+            skills_reading_for("cursor", Some(&home), None, &refused, BUNDLE),
             Some(Reading::Unreadable { .. })
         ));
         // A measured absence beside an unread one is a measured no: "every
@@ -660,16 +756,21 @@ mod tests {
             }
         };
         assert_eq!(
-            skills_reading_for("cursor", Some(&home), &mixed, BUNDLE),
+            skills_reading_for("cursor", Some(&home), None, &mixed, BUNDLE),
             Some(Reading::No)
         );
         // No home: unknown, but still a skills client.
         assert!(matches!(
-            skills_reading_for("cursor", None, &refused, BUNDLE),
+            skills_reading_for("cursor", None, Some(&home), &refused, BUNDLE),
+            Some(Reading::Unreadable { .. })
+        ));
+        // No config dir: unknown for Kimi, whose folder hangs off it.
+        assert!(matches!(
+            skills_reading_for("kimi_desktop", Some(&home), None, &real_exists, BUNDLE),
             Some(Reading::Unreadable { .. })
         ));
         assert_eq!(
-            skills_reading_for("claude_desktop", None, &refused, BUNDLE),
+            skills_reading_for("claude_desktop", None, None, &refused, BUNDLE),
             None
         );
     }
@@ -721,6 +822,19 @@ mod tests {
         for (path, _) in crate::agent_skills_bundle::FILES {
             assert!(dir.join(path).is_file(), "{path}");
         }
+        // Kimi (the desktop app) lands under the dev-state config dir.
+        let kimi = install_skills("kimi_desktop").unwrap();
+        assert_eq!(
+            kimi,
+            tmp.path()
+                .join("ai-tools")
+                .join("config")
+                .join("kimi-desktop")
+                .join("daimon-share")
+                .join("daimon")
+                .join("skills")
+        );
+        assert!(kimi.join("wenlan").join("SKILL.md").is_file());
         assert_eq!(
             install_skills("claude_desktop"),
             Err(SkillsInstallError::NoSkillsFolder {
