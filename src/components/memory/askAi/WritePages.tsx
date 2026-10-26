@@ -61,6 +61,9 @@ export interface WritePagesRun {
    *  restart the quiet clock, and so material let go with none of it gone
    *  and no page written reads as a stopped run. */
   readonly claim?: { readonly held: number; readonly total: number; readonly at: number };
+  /** How many sources each page had when the run started, so a page the
+   *  run added sources to counts as updated before (or without) a rewrite. */
+  readonly sources?: Readonly<Record<string, number>>;
 }
 
 export type WritePagesView =
@@ -110,19 +113,38 @@ export function pagesWrittenSince(pages: readonly Page[], startedAt: number): Pa
     .map((entry) => entry.page);
 }
 
+/** Each page's source count, for `WritePagesRun.sources`. */
+export function sourceCounts(pages: readonly Page[]): Record<string, number> {
+  return Object.fromEntries(
+    pages.filter((page) => page.creation_kind !== "entity").map((page) => [page.id, page.source_memory_ids?.length ?? 0]),
+  );
+}
+
 /** Pages that were there before the run started and changed during it,
  *  oldest change first: a run adds sources to the page on a subject instead
- *  of writing a second one, and brings out-of-date pages up to date. */
-export function pagesUpdatedSince(pages: readonly Page[], startedAt: number): Page[] {
+ *  of writing a second one, and brings out-of-date pages up to date. A page
+ *  counts once it has more sources than at the start (`sourcesAtStart`), as
+ *  soon as they are added: its rewrite may come later, after the page list
+ *  was last read. */
+export function pagesUpdatedSince(
+  pages: readonly Page[],
+  startedAt: number,
+  sourcesAtStart?: Readonly<Record<string, number>>,
+): Page[] {
   const written = new Set(pagesWrittenSince(pages, startedAt).map((page) => page.id));
+  const gained = (page: Page) => {
+    const before = sourcesAtStart?.[page.id];
+    return before !== undefined && (page.source_memory_ids?.length ?? 0) > before;
+  };
   return pages
     .filter((page) => !written.has(page.id) && page.creation_kind !== "entity")
     .map((page) => ({ page, born: pageCreatedMs(page), at: pageModifiedMs(page) }))
     .filter(
-      (entry): entry is { page: Page; born: number | null; at: number } =>
-        entry.at !== null && entry.at >= startedAt && (entry.born === null || entry.born < startedAt - CLOCK_SLACK_MS),
+      (entry) =>
+        gained(entry.page) ||
+        (entry.at !== null && entry.at >= startedAt && (entry.born === null || entry.born < startedAt - CLOCK_SLACK_MS)),
     )
-    .sort((a, b) => a.at - b.at)
+    .sort((a, b) => Math.max(a.at ?? startedAt, startedAt) - Math.max(b.at ?? startedAt, startedAt))
     .map((entry) => entry.page);
 }
 
@@ -169,7 +191,7 @@ export function writePagesView({
   if (onDemand !== true || !list) return { kind: "hidden" };
   if (run) {
     const written = pagesWrittenSince(pages, run.startedAt);
-    const updated = pagesUpdatedSince(pages, run.startedAt);
+    const updated = pagesUpdatedSince(pages, run.startedAt, run.sources);
     const writing = (list.held ?? 0) > 0;
     const quiet = now - lastChangeAt;
     if (!writing && written.length + updated.length > 0 && (quiet >= QUIET_DONE_MS || list.total < minItems)) {
@@ -302,7 +324,7 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   // the run), so reopening the home later does not restart the quiet clock.
   // Only a change counts: a tool killed mid-run holds its material until the
   // claim runs out, and all that time nothing is being written.
-  const updated = run ? pagesUpdatedSince(pages, run.startedAt) : [];
+  const updated = run ? pagesUpdatedSince(pages, run.startedAt, run.sources) : [];
   const lastChangeAt = Math.max(run?.claim?.at ?? 0, run ? lastPageChangeMs(written, updated, run.startedAt) : 0);
 
   const material = list.data;
@@ -402,7 +424,7 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     const startedAt = Date.now();
     setNow(startedAt);
     clearStopped();
-    const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null };
+    const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null, sources: sourceCounts(pages) };
     setRun(begun);
     if (opensTool && tool) {
       try {

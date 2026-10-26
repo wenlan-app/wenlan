@@ -14,7 +14,7 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { doneLine, listParts, pageCreatedMs, pagesUpdatedSince, useWritePages, WritePagesLine, writePagesView } from "./WritePages";
+import { doneLine, listParts, pageCreatedMs, pagesUpdatedSince, sourceCounts, useWritePages, WritePagesLine, writePagesView } from "./WritePages";
 
 vi.mock("../../../lib/tauri", () => ({
   PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
@@ -142,6 +142,38 @@ describe("writePagesView", () => {
     expect(doneLine({ ...done, written: done.written.slice(0, 1) }, i18n.t)).toBe("Wrote 1 page and updated 2 in 9 min.");
   });
 
+  it("counts every page the run added sources to, rewritten yet or not", () => {
+    // Four claims went into pages written before the run; the list was last
+    // read before three of them were rewritten.
+    const before = [
+      { ...page("kitchen", "2026-10-01T09:00:00Z", "distilled", 3), last_modified: "2026-10-01T09:00:00Z" },
+      { ...page("garden", "2026-10-01T09:00:00Z", "distilled", 2), last_modified: "2026-10-01T09:00:00Z" },
+      { ...page("money", "2026-10-01T09:00:00Z", "distilled", 4), last_modified: "2026-10-01T09:00:00Z" },
+      { ...page("trip", "2026-10-01T09:00:00Z", "distilled", 5), last_modified: "2026-10-01T09:00:00Z" },
+      { ...page("quiet", "2026-10-01T09:00:00Z", "distilled", 2), last_modified: "2026-10-01T09:00:00Z" },
+      page("person", "2026-10-01T09:00:00Z", "entity", 2),
+    ] as Page[];
+    const sources = sourceCounts(before);
+    expect(sources).toEqual({ kitchen: 3, garden: 2, money: 4, trip: 5, quiet: 2 });
+    const grow = (p: Page, n: number, modified?: string): Page =>
+      ({ ...p, source_memory_ids: Array.from({ length: n }, (_, i) => `m${i}`), ...(modified ? { last_modified: modified } : {}) }) as Page;
+    const after = [
+      grow(before[0], 5, "2026-10-22T10:06:00Z"),
+      grow(before[1], 4),
+      grow(before[2], 6),
+      grow(before[3], 7),
+      before[4],
+      grow(before[5], 4),
+      page("new", "2026-10-22T10:02:00Z"),
+    ];
+    expect(pagesUpdatedSince(after, START).map((p) => p.id)).toEqual(["kitchen"]);
+    expect(pagesUpdatedSince(after, START, sources).map((p) => p.id).sort()).toEqual(["garden", "kitchen", "money", "trip"]);
+    const run = { startedAt: START, tool: "Codex", sources };
+    const done = writePagesView({ ...base, run, pages: after, list: material(9), now: START + 900_000, lastChangeAt: START + 360_000 });
+    if (done.kind !== "done") throw new Error("done");
+    expect(doneLine(done, i18n.t)).toBe("Wrote 1 page and updated 4 in 6 min.");
+  });
+
   it("says the tool may be waiting when nothing happens", () => {
     const run = { startedAt: START, tool: "Codex" };
     const view = writePagesView({ ...base, run, list: material(12), now: START + 130_000, lastChangeAt: START });
@@ -238,13 +270,13 @@ describe("WritePagesLine", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(5));
     vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
-    wrap(<Line pages={[]} />);
+    wrap(<Line pages={[page("a", "2026-10-21T10:01:00Z", "distilled", 2)]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
     await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Paste the command into Codex and press Enter."));
     // Said once, on the button that copied it.
     expect(screen.getByTestId("write-pages-line").textContent?.match(/Copied/g)).toHaveLength(1);
-    expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied" });
+    expect(JSON.parse(localStorage.getItem("askAi:writePages:run") ?? "{}")).toMatchObject({ handedOver: "copied", sources: { a: 2 } });
   });
 
   it("offers to connect a tool or use the local model when no tool is connected", async () => {
