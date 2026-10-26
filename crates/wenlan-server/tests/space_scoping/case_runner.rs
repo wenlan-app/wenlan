@@ -382,9 +382,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // the basis-pending list and basis diff add two more, the code basis
     // recheck and cited-blob reads two, the session detail and page
     // sessions reads two, the steep worklist and claim two, and steep's new
-    // material list and claim two. The vault note setting and the note
-    // proposal list and detail add three Global readers.
-    assert_eq!(rows.len(), 87);
+    // material list, claim and organize tasks three. The vault note setting
+    // and the note proposal list and detail add three Global readers.
+    assert_eq!(rows.len(), 88);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -395,7 +395,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        64
+        65
     );
     assert_eq!(
         rows.iter()
