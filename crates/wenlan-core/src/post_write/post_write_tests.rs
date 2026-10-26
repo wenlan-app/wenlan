@@ -1630,24 +1630,35 @@ async fn create_page_strict_same_title_in_another_visible_space_attaches() {
     )
     .await
     .unwrap();
-    let req = CreateConceptRequest {
+    let request = |space: Option<&str>| CreateConceptRequest {
         title: "  travel   checklist.  ".into(),
         content: "A durable packing checklist".into(),
         summary: None,
         entity_id: None,
-        space: wenlan_types::WriteSpaceTarget::Named("Home".into()),
+        space: match space {
+            Some(name) => wenlan_types::WriteSpaceTarget::Named(name.into()),
+            None => (None).into(),
+        },
         source_memory_ids: vec!["same-title-visible-source".into()],
         creation_kind: Some("research".into()),
-        workspace: Some("Home".into()),
+        workspace: space.map(str::to_string),
     };
 
-    let result = create_page(&db, req, "test", None).await.unwrap();
-
+    // No Space named: the one readable page with that title is the page.
+    let result = create_page(&db, request(None), "test", None).await.unwrap();
     assert_eq!(
         result.attached_to.as_deref(),
         Some("same-title-visible-page")
     );
     assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 1);
+
+    // A write that names another Space means that Space's own page.
+    let home = create_page(&db, request(Some("Home")), "test", None)
+        .await
+        .unwrap();
+    assert!(home.attached_to.is_none());
+    assert_ne!(home.id, "same-title-visible-page");
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
 }
 
 #[tokio::test]

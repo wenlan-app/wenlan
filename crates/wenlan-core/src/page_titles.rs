@@ -50,13 +50,14 @@ pub fn loose_title_key(title: &str) -> String {
 
 /// Give an all-lowercase ASCII title ordinary title casing. Mixed-case and
 /// non-ASCII titles are left byte-for-byte alone because their casing carries
-/// information the daemon cannot safely reconstruct.
+/// information the daemon cannot safely reconstruct, and so are titles with
+/// characters that mark code or names (`wenlan-core`, `main.rs`, `snake_case`).
 pub fn title_case_if_lowercase_ascii(title: &str) -> String {
     let has_ascii_letter = title.chars().any(|c| c.is_ascii_alphabetic());
-    if !has_ascii_letter
-        || title.chars().any(|c| c.is_ascii_uppercase())
-        || title.chars().any(|c| c.is_alphabetic() && !c.is_ascii())
-    {
+    let plain_words = title
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || " ',&:!?".contains(c));
+    if !has_ascii_letter || !plain_words || title.chars().any(|c| c.is_ascii_uppercase()) {
         return title.to_string();
     }
 
@@ -93,9 +94,11 @@ pub fn title_case_if_lowercase_ascii(title: &str) -> String {
     out
 }
 
-/// The visible note whose strict title a new note would repeat. Prefer the
-/// destination Space. Automatic writers can decline human-edited or
-/// review-locked matches instead of mutating their sources.
+/// The visible note whose strict title a new note would repeat. A write that
+/// names a Space matches only inside it, since "Ideas" in two Spaces are two
+/// different pages; a write with no Space matches any readable one. Automatic
+/// writers can decline human-edited or review-locked matches instead of
+/// mutating their sources.
 pub async fn strict_same_title_note(
     db: &MemoryDB,
     scope: &ReadScope,
@@ -116,6 +119,7 @@ pub async fn strict_same_title_note(
     for (page_id, note_title, page_space) in notes {
         if !seen.insert(page_id.clone())
             || !scope.matches(page_space.as_deref())
+            || space.is_some_and(|wanted| page_space.as_deref() != Some(wanted))
             || strict_title_key(&note_title) != key
         {
             continue;
@@ -168,9 +172,19 @@ mod tests {
             "Notes from the Road"
         );
         assert_eq!(
-            title_case_if_lowercase_ascii("state-of-the-art"),
-            "State-of-the-Art"
+            title_case_if_lowercase_ascii("running plan 2026"),
+            "Running Plan 2026"
         );
+        assert_eq!(
+            title_case_if_lowercase_ascii("state-of-the-art"),
+            "state-of-the-art"
+        );
+        assert_eq!(title_case_if_lowercase_ascii("wenlan-core"), "wenlan-core");
+        assert_eq!(
+            title_case_if_lowercase_ascii("main.rs notes"),
+            "main.rs notes"
+        );
+        assert_eq!(title_case_if_lowercase_ascii("snake_case"), "snake_case");
         assert_eq!(title_case_if_lowercase_ascii("don't panic"), "Don't Panic");
         assert_eq!(
             title_case_if_lowercase_ascii("iPhone setup"),

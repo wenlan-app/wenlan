@@ -776,9 +776,9 @@ async fn handle_create_page_inner(
             persisted_page.id
         )
     } else if link_targets.is_empty() {
-        "Review the saved page, then continue with the next group.".to_string()
+        "Review the saved page.".to_string()
     } else {
-        "Add only relevant link_targets with write_page, then continue with the next group."
+        "If any link_targets fit, add them as [[links]] with write_page and this page's id."
             .to_string()
     };
     Ok(Json(CreatePageResponse {
@@ -2121,9 +2121,9 @@ async fn handle_refresh_page_inner(
     let next_step = if result.gated {
         "Wait for the revision card to be reviewed before writing this page again."
     } else if link_targets.is_empty() {
-        "Continue with the next group."
+        "Nothing else is needed for this page."
     } else {
-        "Add only relevant link_targets with write_page, then continue with the next group."
+        "If any link_targets fit, add them as [[links]] in this page's next write."
     };
     Ok((
         result.outcome,
