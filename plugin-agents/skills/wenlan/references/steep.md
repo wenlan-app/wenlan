@@ -37,8 +37,11 @@ organizing yourself, for this run only and at most 8 pages, and say in the
 report that no cheaper helper was available. You always write the pages
 yourself.
 
-1. Call `steep` with `action: "new"` (and `space`). Each item is one imported
-   note, chat, file or saved memory, with `item_id`, `kind`, `title` and
+1. Call `steep` with `action: "new"`, `limit: 150` (and `space`), once.
+   The answer is the newest material, newest first; `total` counts all of
+   it. Do not fetch more with `next_cursor`: a run writes at most 8 pages,
+   and the rest waits for the next run. Each item is one imported note,
+   chat, file or saved memory, with `item_id`, `kind`, `title` and
    `snippet`. Leave out items whose `held` is true: another run has them.
 2. Group the items by topic with the helper: hand it every item's `item_id`,
    `kind`, `title` and `snippet`, and the answer's `page_titles` (the pages
@@ -177,5 +180,7 @@ found there earned a Wiki page (`confirmed`), whether you grouped and organized
 them yourself because no cheaper helper could start, how many pages were updated, how many wait for the
 user as revision cards, how many still hold, how many code changes were
 checked and found harmless, and for each `needs_you` page its
-title and the reason from its `note`. If more new material or more than 10
-pages were left, say so and that `/wenlan steep` again continues.
+title and the reason from its `note`. If new material is left, say how many
+items still wait (the `new` answer's `total` less the items this run used,
+like "9,850 more waiting"); if it or more than 10 pages were left, say that
+`/wenlan steep` again continues.

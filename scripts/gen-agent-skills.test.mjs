@@ -461,10 +461,13 @@ test("real tree: steep names each host's cheap helper and the one-run fallback",
     "the topic is that page's title, exactly as given",
     "its topic\n      as `title`",
     "Right before you write, call `steep` with `action: \"links\"`",
+    "`action: \"new\"`, `limit: 150`",
+    "Do not fetch more with `next_cursor`",
     "Call `steep` with `action: \"attach\"` and the\n      token",
   ]) {
     assert.ok(newPages.includes(needle), needle);
   }
   assert.ok(steep.includes('attach "added N sources to <title>"'), "the report names attaches");
+  assert.ok(steep.includes('"9,850 more waiting"'), "the report says how much new material waits");
   assert.ok(!/model: "haiku"/.test(steep), "no Claude Code helper call in the shared copy");
 });

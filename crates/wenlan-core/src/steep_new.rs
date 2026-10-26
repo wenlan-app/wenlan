@@ -48,8 +48,10 @@ use crate::steep_organize::{OrganizeOptions, OrganizeTask};
 /// note.
 pub const NEW_PAGE_HOLD: Duration = Duration::from_secs(15 * 60);
 
-/// Characters of an item's text the list shows.
-pub const SNIPPET_CHARS: usize = 280;
+/// Characters of an item's text the list shows: with the title, enough for
+/// a small model to group items by topic, and small enough that one run's
+/// list of the newest items stays a few thousand tokens.
+pub const SNIPPET_CHARS: usize = 200;
 
 /// Most items one claim takes. A topic bigger than this is written from its
 /// first items; the rest stay on the list for the next note.

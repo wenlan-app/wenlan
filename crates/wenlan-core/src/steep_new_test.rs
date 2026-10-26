@@ -24,6 +24,22 @@ async fn row(
     space: &str,
 ) {
     let now = chrono::Utc::now().timestamp();
+    row_at(db, id, source_id, chunk, title, content, agent, space, now).await;
+}
+
+/// [`row`], last changed at `now` (unix seconds).
+#[allow(clippy::too_many_arguments)]
+async fn row_at(
+    db: &MemoryDB,
+    id: &str,
+    source_id: &str,
+    chunk: i64,
+    title: &str,
+    content: &str,
+    agent: &str,
+    space: &str,
+    now: i64,
+) {
     let conn = db.test_primary_session().await;
     conn.execute(
         "INSERT INTO memories (id, source_id, title, content, chunk_index, chunk_type, memory_type, space, source_agent, created_at, last_modified, confirmed, stability, source) \
@@ -344,4 +360,41 @@ async fn a_space_locked_claim_cannot_take_material_from_another_space() {
     )
     .await
     .is_err());
+}
+
+/// One run groups only the newest page of the list: `limit` items, newest
+/// first, each with a short snippet, and `total` counts everything left for
+/// the next run.
+#[tokio::test]
+async fn a_limited_list_is_the_newest_items_with_short_snippets() {
+    let (db, _dir) = test_db().await;
+    let long = "The kiln cools for eight hours before anyone opens it. ".repeat(20);
+    for i in 0..5_i64 {
+        let id = format!("lim_{i}");
+        row_at(
+            &db,
+            &id,
+            &id,
+            0,
+            &id,
+            &long,
+            "claude-code",
+            "test",
+            1_700_000_000 + i,
+        )
+        .await;
+    }
+    let list = list_new(&db, &ReadScope::Global, 2, None).await.unwrap();
+    assert_eq!(list.total, 5);
+    let got: Vec<&str> = list.items.iter().map(|i| i.item_id.as_str()).collect();
+    assert_eq!(got, vec!["lim_4", "lim_3"], "newest first");
+    assert_eq!(list.next_cursor.as_deref(), Some("2"));
+    assert_eq!(SNIPPET_CHARS, 200);
+    for item in &list.items {
+        assert!(
+            item.snippet.chars().count() <= SNIPPET_CHARS + 1,
+            "{}",
+            item.snippet
+        );
+    }
 }
