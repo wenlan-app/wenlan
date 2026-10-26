@@ -1191,7 +1191,7 @@ carrying the authority of agreement.
 | `core/maintenance.rs::run_maintenance_stage_slice` | `pub` | no | **yes** | `server/scheduler.rs::fire_maintenance_stage_safe` | `core/db.rs::get_stale_page_after`, `core/db/maintenance_duplicate_reads.rs::scan_near_duplicate_slice`, `core/db/maintenance_retro_scan.rs::scan_automatic_retro_stub_slice` |
 | `core/onboarding.rs::check_first_page` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db.rs::oldest_active_page` |
 | `core/page_map_improve.rs::source_suggestions` | `private` | no | no | — | `core/db.rs::find_active_page_id_by_title` |
-| `core/page_titles.rs::same_title_note` | `pub` | no | no | — | `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
+| `core/page_titles.rs::strict_same_title_note` | `pub` | no | no | — | `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
 | `core/post_ingest.rs::run_post_ingest_enrichment` | `pub` | no | no | — | `core/db.rs::get_entity_detail` |
 | `core/post_write.rs::rename_page_title_cas` | `pub(crate)` | no | no | — | `core/db/repair_page_rename.rs::rename_page_title_cas_inner` |
 | `core/refinery/mod.rs::run_redistill_page_slice` | `pub` | no | no | — | `core/db.rs::get_stale_page_after` |
@@ -1205,10 +1205,10 @@ carrying the authority of agreement.
 | `core/steep.rs::waiting_page_ids` | `pub` | no | **yes** | `server/steep_routes.rs::handle_steep_worklist` | `core/db/steep.rs::list_steep_code_pages`, `core/db/steep.rs::list_steep_pages` |
 | `core/steep_automatic.rs::rewrite_one_code_page` | `pub` | no | no | — | `core/db/steep.rs::list_steep_code_pages` |
 | `core/steep_new.rs::commit_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_commit` | `core/db/steep_new.rs::entity_page_titles` |
-| `core/steep_new.rs::entity_titled` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles` |
 | `core/steep_new.rs::existing_page` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles`, `core/db/steep_new.rs::notes_about_entity`, `core/db/steep_new.rs::notes_titled`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::link_targets` | `private` | no | no | — | `core/db/steep_new.rs::notes_sharing_entities`, `core/db/steep_new.rs::recent_notes` |
 | `core/steep_new.rs::list_new` | `pub` | no | **yes** | `server/steep_new_routes.rs::handle_steep_new_list` | `core/db/steep_new.rs::recent_notes` |
+| `core/steep_new.rs::strict_entity_titled` | `private` | no | no | — | `core/db/steep_new.rs::entity_page_titles` |
 | `core/synthesis/distill.rs::build_existing_titles_hint` | `pub(crate)` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::build_refresh_titles_hint` | `private` | no | no | — | `core/db.rs::list_active_page_titles_scoped`, `core/db.rs::list_relevant_active_page_titles` |
 | `core/synthesis/distill.rs::refresh_page_with_candidate_sources` | `pub(crate)` | no | no | — | `core/db/page_basis.rs::list_basis_context` |
@@ -1353,7 +1353,7 @@ carrying the authority of agreement.
 | `core/post_ingest.rs::grow_page` | `pub(crate)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::get_page` |
 | `core/post_ingest.rs::run_page_growth_slice` | `pub` | no | **yes** | `server/scheduler/ambient.rs::run_ambient_job` | `core/db.rs::find_growable_page_scoped`, `core/db.rs::get_page` |
 | `core/post_write/entity_graph.rs::create_entity` | `pub` | yes | no | — | `core/db.rs::resolve_or_create_entity` |
-| `core/post_write/page_create.rs::create_page_impl` | `pub(super)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::insert_page_with_basis`, `core/db.rs::resolve_orphan_page_links`, `core/page_titles.rs::same_title_note` |
+| `core/post_write/page_create.rs::create_page_impl` | `pub(super)` | no | no | — | `core/db.rs::find_matching_page_scoped`, `core/db.rs::insert_page_with_basis`, `core/db.rs::resolve_orphan_page_links`, `core/page_titles.rs::strict_same_title_note` |
 | `core/post_write/page_create.rs::replace_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::get_page` |
 | `core/post_write/page_create.rs::write_document_source_page_impl` | `pub(super)` | no | no | — | `core/db.rs::insert_document_source_page_at_hash` |
 | `core/post_write/page_revision.rs::accept_page_revision_card` | `pub(super)` | no | no | — | `core/db.rs::get_page` |

@@ -1605,7 +1605,7 @@ async fn create_page_does_not_attach_different_space_candidate() {
 }
 
 #[tokio::test]
-async fn create_page_same_title_in_another_visible_space_attaches() {
+async fn create_page_strict_same_title_in_another_visible_space_attaches() {
     let (db, _dir) = test_db().await;
     seed_memory(
         &db,
@@ -1616,7 +1616,7 @@ async fn create_page_same_title_in_another_visible_space_attaches() {
     let now = chrono::Utc::now().to_rfc3339();
     db.insert_page_with_kind(
         "same-title-visible-page",
-        "Travel Checklist 2026",
+        "Travel Checklist",
         None,
         "The durable travel checklist.",
         None,
@@ -1631,7 +1631,7 @@ async fn create_page_same_title_in_another_visible_space_attaches() {
     .await
     .unwrap();
     let req = CreateConceptRequest {
-        title: "travel checklist".into(),
+        title: "  travel   checklist.  ".into(),
         content: "A durable packing checklist".into(),
         summary: None,
         entity_id: None,
@@ -1648,6 +1648,50 @@ async fn create_page_same_title_in_another_visible_space_attaches() {
         Some("same-title-visible-page")
     );
     assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn create_page_keeps_dated_titles_separate() {
+    let (db, _dir) = test_db().await;
+    let first = create_page(
+        &db,
+        CreateConceptRequest {
+            title: "Standup 2026-10-26".into(),
+            content: "Standup notes for October 26.".into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: None,
+        },
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+    let second = create_page(
+        &db,
+        CreateConceptRequest {
+            title: "Standup 2026-10-27".into(),
+            content: "Standup notes for October 27.".into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: None,
+        },
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.attached_to, None);
+    assert_eq!(second.attached_to, None);
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
 }
 
 #[tokio::test]

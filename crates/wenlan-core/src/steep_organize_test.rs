@@ -937,12 +937,10 @@ async fn the_helper_fetches_the_open_tasks_with_the_token_alone() {
     crate::steep_new::release_new(&claim.token).unwrap();
 }
 
-/// A note titled like an entity its sources mention becomes that entity's
-/// page: about it, under the entity's title in the caller's capitals, and
-/// the Wiki lists one page with that title, not the note and the entity
-/// side by side.
+/// A dated note about an entity its sources mention becomes that entity's
+/// page without losing the date from its strict title.
 #[tokio::test]
-async fn a_note_titled_like_an_entity_becomes_its_page() {
+async fn a_dated_note_about_an_entity_keeps_its_strict_title() {
     let (db, _dir) = crate::db::tests::test_db().await;
     memory(&db, "stub_a", MIRA_NOTE).await;
     memory(&db, "stub_b", KILN_NOTE).await;
@@ -975,12 +973,12 @@ async fn a_note_titled_like_an_entity_becomes_its_page() {
     assert_eq!(written.outcome, "created");
     assert_eq!(
         written.title.as_deref(),
-        Some("Kiln"),
-        "the entity's title, capitalized as the caller wrote it"
+        Some("Kiln 2024"),
+        "the loose entity match must not rewrite committed title digits"
     );
     let page_id = written.page_id.unwrap();
     let page = db.get_page(&page_id).await.unwrap().unwrap();
-    assert_eq!(page.title, "Kiln");
+    assert_eq!(page.title, "Kiln 2024");
     assert_eq!(page.entity_id.as_deref(), Some(kiln.as_str()));
     let established = db
         .source_entity_links(&["stub_b".to_string()])
@@ -990,18 +988,17 @@ async fn a_note_titled_like_an_entity_becomes_its_page() {
         .any(|(_, entity, confirmed)| entity == kiln && confirmed);
     assert!(
         established,
-        "the entity is in the Wiki, so it could show twice"
+        "the dated note still establishes the entity it is about"
     );
 
     let listed: Vec<_> = db
-        .list_pages_browse("active", 500, 0)
+        .notes_titled("Kiln 2024")
         .await
         .unwrap()
         .into_iter()
-        .filter(|p| p.title.eq_ignore_ascii_case("kiln"))
-        .map(|p| p.id)
+        .map(|(id, ..)| id)
         .collect();
-    assert_eq!(listed, vec![page_id], "one page titled kiln, the note");
+    assert_eq!(listed, vec![page_id], "one note keeps the dated title");
 }
 
 const ONBOARDING_A: &str = "The onboarding v2 setup checklist now asks new staff to enable \
@@ -1152,7 +1149,57 @@ async fn a_note_under_an_existing_title_goes_into_that_note() {
     );
 }
 
-/// What Codex did when it wrote "Running" next to an existing "Running": it
+#[tokio::test]
+async fn organize_commit_keeps_dated_titles_separate() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    let earlier = authored_note(&db, "Standup 2026-10-26", None).await;
+    memory(&db, "dated_commit_a", MIRA_NOTE).await;
+    memory(&db, "dated_commit_b", KILN_NOTE).await;
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["dated_commit_a".into(), "dated_commit_b".into()],
+        None,
+    )
+    .await
+    .unwrap();
+    let body = "Mira fires the kiln in Oslo every Sunday [1]. Mira says the kiln needs \
+                eight hours to cool before anyone opens it [2].";
+
+    let written = commit_new(&db, &claim.token, "Standup 2026-10-27", body, "test", None)
+        .await
+        .unwrap();
+
+    assert_eq!(written.outcome, "created");
+    assert_ne!(written.page_id.as_deref(), Some(earlier.as_str()));
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn claim_time_suggestion_still_uses_the_loose_title_match() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    let lisbon = authored_note(&db, "Lisbon trip 2026", None).await;
+    memory(&db, "loose_suggestion_a", MIRA_NOTE).await;
+    memory(&db, "loose_suggestion_b", KILN_NOTE).await;
+
+    let claim = crate::steep_new::claim_new_on(
+        &db,
+        &ReadScope::Global,
+        &["loose_suggestion_a".into(), "loose_suggestion_b".into()],
+        None,
+        Some("Lisbon trip 2025"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        claim.existing_page.map(|page| page.page_id).as_deref(),
+        Some(lisbon.as_str())
+    );
+    crate::steep_new::release_new(&claim.token).unwrap();
+}
+
+/// A host wrote "Running" next to an existing "Running": it
 /// claimed a group without naming its topic, called `links`, and wrote
 /// under the existing note's title. The note is in another Space than the
 /// claim (its sources are unfiled), so a same-Space check missed it. The

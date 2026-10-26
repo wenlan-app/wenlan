@@ -13,9 +13,25 @@ pub struct SameTitlePage {
     pub protected: bool,
 }
 
-/// The key two titles share when they name the same subject: lowercase
-/// words, with years, dates and version numbers left out.
-pub fn title_key(title: &str) -> String {
+/// The key two titles share only when their words, including every number,
+/// are the same. Case, whitespace and punctuation do not distinguish them.
+pub fn strict_title_key(title: &str) -> String {
+    title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            word.chars()
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The key two titles share when they may name the same subject: lowercase
+/// words, with years, dates and version numbers left out. This is only for a
+/// claim-time suggestion the caller can accept or ignore, never a write guard.
+pub fn loose_title_key(title: &str) -> String {
     let mut words: Vec<String> = Vec::new();
     for word in title.split(|c: char| !c.is_alphanumeric()) {
         let letters: String = word
@@ -77,17 +93,17 @@ pub fn title_case_if_lowercase_ascii(title: &str) -> String {
     out
 }
 
-/// The visible note whose title (years and versions aside) a new note would
-/// repeat. Prefer the destination Space. Automatic writers can decline
-/// human-edited or review-locked matches instead of mutating their sources.
-pub async fn same_title_note(
+/// The visible note whose strict title a new note would repeat. Prefer the
+/// destination Space. Automatic writers can decline human-edited or
+/// review-locked matches instead of mutating their sources.
+pub async fn strict_same_title_note(
     db: &MemoryDB,
     scope: &ReadScope,
     space: Option<&str>,
     title: &str,
     skip_protected: bool,
 ) -> Result<Option<SameTitlePage>, WenlanError> {
-    let key = title_key(title);
+    let key = strict_title_key(title);
     if key.is_empty() {
         return Ok(None);
     }
@@ -100,7 +116,7 @@ pub async fn same_title_note(
     for (page_id, note_title, page_space) in notes {
         if !seen.insert(page_id.clone())
             || !scope.matches(page_space.as_deref())
-            || title_key(&note_title) != key
+            || strict_title_key(&note_title) != key
         {
             continue;
         }
@@ -164,8 +180,28 @@ mod tests {
     }
 
     #[test]
-    fn title_keys_ignore_case_years_and_versions() {
-        assert_eq!(title_key("Kitchen Renovation 2023"), "kitchen renovation");
-        assert_eq!(title_key("kitchen renovation v2"), "kitchen renovation");
+    fn strict_title_keys_keep_dates_years_and_versions() {
+        assert_eq!(
+            strict_title_key("Kitchen  Renovation."),
+            strict_title_key("kitchen renovation")
+        );
+        assert_ne!(
+            strict_title_key("Standup 2026-10-26"),
+            strict_title_key("Standup 2026-10-27")
+        );
+        assert_ne!(strict_title_key("Plan 2023"), strict_title_key("Plan 2024"));
+        assert_ne!(strict_title_key("v1 Design"), strict_title_key("v2 Design"));
+    }
+
+    #[test]
+    fn loose_title_keys_ignore_case_years_and_versions() {
+        assert_eq!(
+            loose_title_key("Kitchen Renovation 2023"),
+            "kitchen renovation"
+        );
+        assert_eq!(
+            loose_title_key("kitchen renovation v2"),
+            "kitchen renovation"
+        );
     }
 }

@@ -39,7 +39,7 @@ use wenlan_types::steep_new::{
 
 use crate::db::MemoryDB;
 use crate::error::WenlanError;
-use crate::page_titles::{same_title_note, title_key};
+use crate::page_titles::{loose_title_key, strict_same_title_note, strict_title_key};
 use crate::post_write::{page_write, PageWrite};
 use crate::read_scope::ReadScope;
 use crate::steep::SteepError;
@@ -736,13 +736,13 @@ const TITLE_STOPWORDS: &[&str] = &[
     "about", "&", "和", "與", "的", "筆記",
 ];
 
-/// How close two titles are, 0 to 1, from their [`title_key`] words: 1 when
+/// How close two titles are, 0 to 1, from their normalized words: 1 when
 /// they share every word, else the share of words in common, counted only
 /// when they have at least two in common or one title's words are all in
 /// the other ("Portugal trip" and "Portugal trip and food"). A one-word
 /// title in a script without spaces matches a title that contains it.
-fn title_closeness(a: &str, b: &str) -> f64 {
-    let (ka, kb) = (title_key(a), title_key(b));
+fn title_closeness_with(a: &str, b: &str, key: fn(&str) -> String) -> f64 {
+    let (ka, kb) = (key(a), key(b));
     if ka.is_empty() || kb.is_empty() {
         return 0.0;
     }
@@ -784,15 +784,21 @@ fn title_closeness(a: &str, b: &str) -> f64 {
     }
 }
 
+/// Subject closeness for the claim-time existing-page suggestion. Dates,
+/// years and versions do not prevent the caller from seeing a possible match.
+fn loose_title_closeness(a: &str, b: &str) -> f64 {
+    title_closeness_with(a, b, loose_title_key)
+}
+
 /// Whether `title` names the entity called `name`: close to it, or holding
 /// every word of it ("Mira's kiln" names Mira; "Billing migration" does not
 /// name "Onboarding v2 setup checklist").
-fn names_subject(name: &str, title: &str) -> bool {
-    if title_closeness(name, title) >= TITLE_CLOSE_ENOUGH {
+fn names_subject_with(name: &str, title: &str, key: fn(&str) -> String) -> bool {
+    if title_closeness_with(name, title, key) >= TITLE_CLOSE_ENOUGH {
         return true;
     }
     let words = |text: &str| -> Vec<String> {
-        title_key(text)
+        key(text)
             .split(' ')
             .filter(|w| !w.is_empty() && !TITLE_STOPWORDS.contains(w))
             .map(str::to_string)
@@ -808,24 +814,24 @@ fn names_subject(name: &str, title: &str) -> bool {
 }
 
 /// Whether `title` names the entity called `name` as its only subject:
-/// [`names_subject`], and the title does not join the name to another thing
+/// [`names_subject_with`], and the title does not join the name to another thing
 /// of the same rank ("Lisbon and Porto 2026", "Billing & Onboarding"): such
 /// a note is about both, and so about neither one entity. What a title
 /// joins counts as another thing when it starts with a capital letter or is
 /// in a script without capitals; "Portugal trip and food" is still about
 /// Portugal.
-fn names_sole_subject(name: &str, title: &str) -> bool {
-    if !names_subject(name, title) {
+fn names_sole_subject_with(name: &str, title: &str, key: fn(&str) -> String) -> bool {
+    if !names_subject_with(name, title, key) {
         return false;
     }
     // "Rock and Roll" for the entity Rock and Roll.
-    if title_closeness(name, title) >= TITLE_CLOSE_ENOUGH {
+    if title_closeness_with(name, title, key) >= TITLE_CLOSE_ENOUGH {
         return true;
     }
     const JOINS: &[&str] = &[
         "and", "&", "+", "vs", "vs.", "versus", "or", "/", "和", "與", "与", "及", "跟",
     ];
-    let name_key = title_key(name);
+    let name_key = key(name);
     let mut sides: Vec<Vec<&str>> = vec![Vec::new()];
     for word in title.split_whitespace() {
         if JOINS.contains(&word.to_lowercase().as_str()) {
@@ -837,12 +843,12 @@ fn names_sole_subject(name: &str, title: &str) -> bool {
     let sides: Vec<String> = sides
         .into_iter()
         .map(|side| side.join(" "))
-        .filter(|side| !title_key(side).is_empty())
+        .filter(|side| !key(side).is_empty())
         .collect();
     if sides.len() < 2 {
         return true;
     }
-    let is_name = |side: &str| names_subject(name, side) || title_key(side) == name_key;
+    let is_name = |side: &str| names_subject_with(name, side, key) || key(side) == name_key;
     sides.iter().filter(|side| !is_name(side)).all(|side| {
         let first = side.chars().find(|c| c.is_alphabetic());
         // Another thing of the same rank: a proper name, or a word in a
@@ -851,13 +857,13 @@ fn names_sole_subject(name: &str, title: &str) -> bool {
     })
 }
 
-/// Least [`title_closeness`] for a topic to name an existing page.
+/// Least title closeness for a topic to name an existing page.
 const TITLE_CLOSE_ENOUGH: f64 = 0.6;
 
 /// An existing note on a claim's subject in the caller's scope: the note in
 /// the claim's Space (`space`) about the first entity a strict majority of
 /// the sources mention that has one, else a note whose title matches `topic`
-/// ([`title_closeness`], the closest, newest first), in the claim's Space
+/// ([`loose_title_closeness`], the closest, newest first), in the claim's Space
 /// before any other. Best effort: a failed read offers none.
 async fn existing_page(
     db: &MemoryDB,
@@ -890,14 +896,14 @@ async fn existing_page(
         let Some((_, name)) = names.iter().find(|(id, _)| *id == entity_id) else {
             continue;
         };
-        if topic.is_some_and(|topic| !names_sole_subject(name, topic)) {
+        if topic.is_some_and(|topic| !names_sole_subject_with(name, topic, loose_title_key)) {
             continue;
         }
         match db.notes_about_entity(&entity_id).await {
             Ok(notes) => {
                 if let Some((page_id, title, _)) =
                     notes.into_iter().find(|(_, title, page_space)| {
-                        fits(page_space) && names_sole_subject(name, title)
+                        fits(page_space) && names_sole_subject_with(name, title, loose_title_key)
                     })
                 {
                     return Some(SteepExistingPage { page_id, title });
@@ -907,7 +913,7 @@ async fn existing_page(
         }
     }
     let topic = topic?;
-    if title_key(topic).is_empty() {
+    if loose_title_key(topic).is_empty() {
         return None;
     }
     let mut notes = db.notes_titled(topic).await.unwrap_or_else(|error| {
@@ -927,7 +933,7 @@ async fn existing_page(
         if !scope.matches(page_space.as_deref()) {
             continue;
         }
-        let close = title_closeness(topic, &title);
+        let close = loose_title_closeness(topic, &title);
         if close < TITLE_CLOSE_ENOUGH {
             continue;
         }
@@ -1297,14 +1303,14 @@ fn named_only_in_passing(raw: &str, title: &str) -> bool {
             .is_some_and(|c| c.is_ascii_uppercase())
 }
 
-/// An entity `source_ids` mention whose entity page has `title`, years,
-/// versions and case aside ([`title_key`]), as `(entity id, its title)`.
-async fn entity_titled(
+/// An entity `source_ids` mention whose entity page has the same strict title,
+/// as `(entity id, its title)`.
+async fn strict_entity_titled(
     db: &MemoryDB,
     source_ids: &[String],
     title: &str,
 ) -> Result<Option<(String, String)>, WenlanError> {
-    let key = title_key(title);
+    let key = strict_title_key(title);
     if key.is_empty() {
         return Ok(None);
     }
@@ -1320,7 +1326,7 @@ async fn entity_titled(
         .entity_page_titles(&entity_ids)
         .await?
         .into_iter()
-        .find(|(_, entity_title)| title_key(entity_title) == key))
+        .find(|(_, entity_title)| strict_title_key(entity_title) == key))
 }
 
 /// `name` with each word written as `title` writes it, ASCII case aside:
@@ -1685,7 +1691,7 @@ pub async fn commit_new(
     // title. The claim's Space first; else another Space the caller reads
     // (a claim whose sources classification filed apart has no Space).
     if let Some(page) =
-        same_title_note(db, &claim.scope, claim.space.as_deref(), title, false).await?
+        strict_same_title_note(db, &claim.scope, claim.space.as_deref(), title, false).await?
     {
         return attach_sources(
             db,
@@ -1750,14 +1756,14 @@ pub async fn commit_new(
     // the next majority entity that has no note yet, if any.
     //
     // An entity the sources mention whose own entity page carries this
-    // title (years and versions aside) is this subject already: the note
+    // strict title is this subject already: the note
     // becomes its page, about it and under its title, so the Wiki lists one
     // page (see `entity_row_browse_predicate`, which ignores ASCII case), not
     // two. The entity's words keep the caller's capitals: entity names are
     // often stored lowercase.
     let mut title = title.to_string();
     let mut entity_id = None;
-    if let Some((entity, entity_title)) = entity_titled(db, &ids, &title).await? {
+    if let Some((entity, entity_title)) = strict_entity_titled(db, &ids, &title).await? {
         if !db.entity_has_note(&entity).await? {
             entity_id = Some(entity);
             title = cased_like(&entity_title, &title);
@@ -1770,9 +1776,9 @@ pub async fn commit_new(
         let majority = majority_entities(db, &ids).await?;
         let names = db.entity_page_titles(&majority).await?;
         for candidate in majority {
-            let named = names
-                .iter()
-                .any(|(id, name)| *id == candidate && names_sole_subject(name, &title));
+            let named = names.iter().any(|(id, name)| {
+                *id == candidate && names_sole_subject_with(name, &title, strict_title_key)
+            });
             if named && !db.entity_has_note(&candidate).await? {
                 entity_id = Some(candidate);
                 break;
@@ -1884,14 +1890,15 @@ mod tests {
 
     #[test]
     fn a_title_joining_two_names_has_no_sole_subject() {
-        assert!(!names_sole_subject("Lisbon", "Lisbon and Porto 2026"));
-        assert!(!names_sole_subject("Billing", "Billing & Onboarding"));
-        assert!(!names_sole_subject("里斯本", "里斯本 和 波爾圖"));
-        assert!(names_sole_subject("Lisbon", "Lisbon 2026"));
-        assert!(names_sole_subject("Portugal", "Portugal trip and food"));
-        assert!(names_sole_subject("Mira", "Mira's kiln"));
-        assert!(names_sole_subject("Rock and Roll", "Rock and Roll"));
-        assert!(!names_sole_subject("Lisbon", "Porto"));
+        let names = |name, title| names_sole_subject_with(name, title, strict_title_key);
+        assert!(!names("Lisbon", "Lisbon and Porto 2026"));
+        assert!(!names("Billing", "Billing & Onboarding"));
+        assert!(!names("里斯本", "里斯本 和 波爾圖"));
+        assert!(names("Lisbon", "Lisbon 2026"));
+        assert!(names("Portugal", "Portugal trip and food"));
+        assert!(names("Mira", "Mira's kiln"));
+        assert!(names("Rock and Roll", "Rock and Roll"));
+        assert!(!names("Lisbon", "Porto"));
     }
 
     #[test]
@@ -1988,10 +1995,13 @@ mod tests {
 
     #[test]
     fn close_titles_name_one_subject() {
-        assert_eq!(title_key("Kitchen Renovation 2023"), "kitchen renovation");
-        assert_eq!(title_key("Wenlan v2 notes"), "wenlan notes");
-        assert_eq!(title_key("廚房裝修2023"), "廚房裝修");
-        let close = |a, b| title_closeness(a, b) >= TITLE_CLOSE_ENOUGH;
+        assert_eq!(
+            loose_title_key("Kitchen Renovation 2023"),
+            "kitchen renovation"
+        );
+        assert_eq!(loose_title_key("Wenlan v2 notes"), "wenlan notes");
+        assert_eq!(loose_title_key("廚房裝修2023"), "廚房裝修");
+        let close = |a, b| loose_title_closeness(a, b) >= TITLE_CLOSE_ENOUGH;
         assert!(close("Kitchen Renovation 2023", "Kitchen renovation"));
         assert!(close("Portugal Trip", "Portugal trip and food"));
         assert!(close("Lisbon and Porto trip", "Porto and Lisbon"));

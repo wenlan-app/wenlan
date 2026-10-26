@@ -374,7 +374,7 @@ pub(super) async fn create_page_impl(
             .cloned()
             .unwrap_or(crate::read_scope::ReadScope::Global);
         let space = req.workspace.as_deref().or(req.space.named());
-        if let Some(existing) = crate::page_titles::same_title_note(
+        if let Some(existing) = crate::page_titles::strict_same_title_note(
             db,
             &scope,
             space,
