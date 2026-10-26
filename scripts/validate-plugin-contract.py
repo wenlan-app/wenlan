@@ -473,8 +473,8 @@ def validate_runner(root: Path, surface: str, config: dict[str, Any]) -> None:
             fail(f"{rel(root, runner_path)} must pass --agent-name through the runner")
         source = read_text(root, root / "crates" / "wenlan-mcp" / "src" / "main.rs")
         pattern = re.compile(
-            r"if\s+serve_args\.is_some\(\)\s*\{.*?\"remote-mcp\"\.into\(\).*?\}"
-            r"\s*else\s*\{.*?\"" + re.escape(agent["value"]) + r"\"\.into\(\).*?\}",
+            r"if\s+serve_args\.is_some\(\)\s*\{[^{}]*?\"remote-mcp\"\.into\(\)[^{}]*?\}"
+            r"\s*else\s*\{[^{}]*?\"" + re.escape(agent["value"]) + r"\"\.into\(\)[^{}]*?\}",
             re.DOTALL,
         )
         if not pattern.search(source):
