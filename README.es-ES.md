@@ -3,13 +3,13 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-es-ES-mobile.png">
-    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: Una wiki personal viva" width="100%">
+    <img src="./docs/assets/readme-banner-es-ES.png" alt="Wenlan: Tu wiki viva. Gratis, de código abierto y local-first." width="100%">
   </picture>
 </p>
 
 <p align="center">
   <strong>Notas, código y chats de IA en una wiki, contrastada con sus fuentes.</strong><br>
-  Gratis, de código abierto y local. Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.<br>
+  Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.<br>
   App de escritorio para Mac (Apple silicon) y Windows. CLI y servicio local en Linux.
 </p>
 
@@ -67,9 +67,11 @@ Guarda tu material en Wenlan para que tus herramientas de IA habituales lo usen 
 
 ### 1. Descarga y abre Wenlan
 
-[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) (macOS Apple Silicon o Windows x64), instálala y ábrela.
+[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) (macOS 11 o posterior en Apple Silicon, o Windows x64), instálala y ábrela.
 
-¿Prefieres el terminal? [Usa Wenlan desde la CLI o con herramientas de IA](docs/setup-and-data.es-ES.md#installation).
+La app está en inglés, chino simplificado y chino tradicional.
+
+¿Prefieres el terminal? En un Mac, ejecuta `npx -y wenlan setup`, o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. Para Linux y Windows, consulta la [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation).
 
 ### 2. Crea una página o importa material existente
 
@@ -257,7 +259,7 @@ Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las c
 
 **Recuperación y conexiones:** Los plugins orientan la recuperación y el guardado; las conexiones MCP exponen las herramientas para que las use tu IA.
 
-- **[Búsqueda híbrida local](docs/technical-foundations.md#retrieval-pipeline):** Encuentra términos exactos y significados similares con SQLite FTS5 y embeddings BGE, combinados mediante Reciprocal Rank Fusion (RRF) ponderado; la búsqueda base no requiere clave API.
+- **[Búsqueda híbrida local](docs/technical-foundations.md#retrieval-pipeline):** Encuentra términos exactos y significados similares con SQLite FTS5 y embeddings BGE en un índice vectorial DiskANN de libSQL, combinados mediante Reciprocal Rank Fusion (RRF) ponderado; la búsqueda base no requiere clave API.
 - **Clasificación asistida por el grafo:** Los enlaces entre entidades compartidas elevan memorias relacionadas aunque usen palabras distintas. El reranking opcional con cross-encoder compara cada candidato con la pregunta para ajustar el orden.
 - **Recuperación limitada a un Espacio:** Selecciona un Espacio para limitar el conocimiento devuelto al proyecto o colección personal pertinente.
 
@@ -270,6 +272,8 @@ Activa el interruptor **Web access** en Settings para que clientes web de IA com
 ## Arquitectura
 
 **Una base local compartida.** La app, la CLI y las herramientas de IA conectadas leen y escriben mediante el servicio local de Wenlan. Las páginas son archivos Markdown; memorias, relaciones e índices de búsqueda residen en libSQL local.
+
+**Hecho con** Rust para el servicio local, la CLI y el servidor MCP, y Tauri con React y TypeScript para la app de escritorio.
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-es-ES.png" alt="Vista de la arquitectura: la app y las herramientas de IA comparten una base de conocimiento local, con modelos opcionales para la organización en segundo plano." width="100%">

@@ -1,14 +1,15 @@
 <svg width="720" height="256" viewBox="0 0 720 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan README banner</title>
-  <desc id="desc">Wenlan: 持续更新的个人知识库</desc>
+  <desc id="desc">Wenlan: 持续更新的知识库</desc>
   <rect width="720" height="256" fill="#151D2B"/>
-  <g transform="translate(320 32) scale(0.15625)">
+  <g transform="translate(320 20) scale(0.15625)">
     <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-zh-Hans-mobile-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-zh-Hans-mobile-orb)"/>
   </g>
-  <text x="360" y="150" fill="#93E3F2" font-size="29.12" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="12" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文澜</tspan></text>
-  <text x="360" y="195" fill="#F7F8FF" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="32" font-weight="500" text-anchor="middle">持续更新的个人知识库</text>
+  <text x="360" y="136" fill="#93E3F2" font-size="29.12" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="12" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文澜</tspan></text>
+  <text x="360" y="180" fill="#F7F8FF" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="32" font-weight="500" text-anchor="middle">持续更新的知识库</text>
+  <text x="360" y="220" fill="#BAC4D2" font-family="&quot;PingFang SC&quot;, &quot;Noto Sans SC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="21" font-weight="400" text-anchor="middle">免费 · 开源 · 本地优先</text>
   <defs>
     <linearGradient id="banner-zh-Hans-mobile-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>

@@ -21,8 +21,8 @@ test("borderless banners preserve four-locale copy in desktop and mobile layouts
   const expected = {
     en: ["Your living wiki", "AI organizes. You stay in control."],
     "zh-Hant": ["持續更新的知識庫", "AI 幫你整理，你保有主導權"],
-    "zh-Hans": ["持续更新的个人知识库", "AI 帮你整理，你保有主导权"],
-    "es-ES": ["Una wiki personal viva", "La IA organiza. Tú tienes el control."],
+    "zh-Hans": ["持续更新的知识库", "AI 帮你整理，你保有主导权"],
+    "es-ES": ["Tu wiki viva", "La IA organiza. Tú tienes el control."],
   };
 
   for (const [locale, lines] of Object.entries(expected)) {

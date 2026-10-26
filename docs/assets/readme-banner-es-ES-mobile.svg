@@ -1,14 +1,15 @@
 <svg width="720" height="256" viewBox="0 0 720 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">Wenlan README banner</title>
-  <desc id="desc">Wenlan: Una wiki personal viva</desc>
+  <desc id="desc">Wenlan: Tu wiki viva</desc>
   <rect width="720" height="256" fill="#151D2B"/>
-  <g transform="translate(320 32) scale(0.15625)">
+  <g transform="translate(320 20) scale(0.15625)">
     <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-es-ES-mobile-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-es-ES-mobile-orb)"/>
   </g>
-  <text x="360" y="150" fill="#93E3F2" font-size="30.24" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
-  <text x="360" y="195" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="32" font-weight="500" text-anchor="middle">Una wiki personal viva</text>
+  <text x="360" y="136" fill="#93E3F2" font-size="30.24" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
+  <text x="360" y="180" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="32" font-weight="500" text-anchor="middle">Tu wiki viva</text>
+  <text x="360" y="220" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="21" font-weight="400" text-anchor="middle">Gratis · Código abierto · Local-first</text>
   <defs>
     <linearGradient id="banner-es-ES-mobile-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>

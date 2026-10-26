@@ -44,11 +44,13 @@ const BANNER_COPY = {
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
-    title: ["持续更新的个人知识库"],
+    title: ["持续更新的知识库"],
+    tagline: "免费 · 开源 · 本地优先",
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "es-ES": {
-    title: ["Una wiki personal viva"],
+    title: ["Tu wiki viva"],
+    tagline: "Gratis · Código abierto · Local-first",
     font: BANNER.latin,
   },
 };

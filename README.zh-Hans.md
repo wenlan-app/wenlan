@@ -3,13 +3,13 @@
 <p align="center">
   <picture>
     <source media="(max-width: 600px)" srcset="./docs/assets/readme-banner-zh-Hans-mobile.png">
-    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="Wenlan: 持续更新的个人知识库" width="100%">
+    <img src="./docs/assets/readme-banner-zh-Hans.png" alt="Wenlan：持续更新的知识库。免费、开源、本地优先。" width="100%">
   </picture>
 </p>
 
 <p align="center">
   <strong>笔记、代码、AI 对话整理成知识库，对照过来源。</strong><br>
-  免费、开源、在本机运行。你的笔记留在你的电脑上，只会发给你选的 AI 工具。<br>
+  你的笔记留在你的电脑上，只会发给你选的 AI 工具。<br>
   桌面版支持 Mac（Apple 芯片）和 Windows；Linux 可用 CLI 和本机服务。
 </p>
 
@@ -69,9 +69,11 @@
 
 ### 1. 下载并打开 Wenlan
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS Apple Silicon 或 Windows x64），安装并打开。
+[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS 11 以上的 Apple Silicon，或 Windows x64），安装并打开。
 
-更喜欢终端？[通过 CLI 或 AI 工具使用 Wenlan](docs/setup-and-data.zh-Hans.md#installation)。
+App 界面有英文、简体中文和繁體中文。
+
+更喜欢终端？在 Mac 上运行 `npx -y wenlan setup`，或用 Homebrew 运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。
 
 ### 2. 新建笔记或导入现有资料
 
@@ -263,7 +265,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 **检索与连接：** 插件会引导检索和保存；MCP 连接则提供工具供 AI 调用。
 
-- **[本地混合检索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义，再以加权 RRF 合并排名；基础搜索无需 API key。
+- **[本地混合检索（Hybrid Retrieval）](docs/technical-foundations.md#retrieval-pipeline)**：用 SQLite FTS5 找出相同词句、BGE 向量找出相近语义（libSQL 的 DiskANN 向量索引），再以加权 RRF 合并排名；基础搜索无需 API key。
 - **图谱辅助排序：** 共享实体链接可提升相关记忆的排名，即使措辞不同也能关联。可选的 cross-encoder 重排会比较每条候选内容与问题，以调整顺序。
 - **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
 
@@ -276,6 +278,8 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 ## 系统架构
 
 **共用本地知识库。** App、CLI 与 AI 工具通过 Wenlan 本地服务读写。笔记以 Markdown 保存；记忆、关系与搜索索引由本地 libSQL 管理。
+
+**技术：** 本地服务、CLI 和 MCP server 用 Rust 写成；桌面 app 用 Tauri，界面是 React 和 TypeScript。
 
 <p align="center">
   <img src="./docs/assets/wenlan-architecture-zh-Hans.png" alt="架构示意：App 与 AI 工具共用本地知识库，后台整理模型为可选项。" width="100%">
