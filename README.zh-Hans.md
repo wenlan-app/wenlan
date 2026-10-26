@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=0b0c0fb47de260fde51035d93109740761fc848cb73689a88ffaca9d2cc3aad6 -->
+<!-- README_SYNC: source=README.md sha256=6dfc4615c1d0356740566f5e80c3a1900746a1e5374c66911657fc5c9ada171a -->
 
 <p align="center">
   <picture>
@@ -24,8 +24,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><strong>下&#8288;载</strong></a> ·
   <a href="#start-in-30-seconds">开&#8288;始&#8288;使&#8288;用</a> ·
-  <a href="#what-can-i-bring-in">功&#8288;能</a> ·
+  <a href="#what-can-i-bring-in">来&#8288;源</a> ·
   <a href="#learn-more">文&#8288;档</a> ·
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
 </p>
@@ -55,24 +56,6 @@
 ### 如果你已经用 Claude Code 或 Codex 管笔记
 
 继续用就好。文澜接上同一个 AI 工具，补上一个 Markdown 文件夹自己做不到的检查：引用大多和来源对不上的笔记不会保存，来源变了会标记，AI 改你写的笔记先等你审核，而且没有你同意，不会改动你原有的笔记。
-
-<a id="whats-new"></a>
-
-<br>
-
-## 最近新增
-
-0.19 以来：
-
-- **沉淀有两种方式：**“随叫”用你自己的 AI 工具更新笔记，“自动”用你选的本地或云端模型在后台更新。
-- **保存时对照引用：**引用大多和来源对不上的笔记不会保存，Mermaid 图表也会检查有没有写错。
-- **笔记跟着它依靠的东西：**其他笔记和代码行数都追得到，行数移动或文件改名也跟得上。
-- **先问我：**笔记用一个“AI 修改”设置；AI 也可以建议修改你的 Obsidian 笔记，你点接受才会写进文件。Obsidian 笔记默认“不能改”，只会被引用。每次修改都看得到删了什么、加了什么。
-- **为代码建 wiki：**`/wenlan wiki` 写出对应到代码行数的笔记，用 pull request 放进你的仓库，也能每天在你的电脑或 GitHub Actions 上更新，可用你的 AI 工具、Cursor 或 GitHub Copilot。
-- **能带进来的更多：**粘贴的链接会存成来源，显示成卡片、可播放的 YouTube 视频，或 X、Threads、Instagram 的原始帖子。新增 Logseq 图谱、DOCX 和持续同步的文件夹，笔记里也能放图片和视频。第一次导入大型 Obsidian 仓库，几分钟内就能搜索；AI 工具也找得到大型资料库里的罕见字词。
-- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro、OpenCode、Muse Code 和 Kimi Code 都能从设置里的“添加工具”连上；网页版 AI 也能通过“网页访问”搜索，经你允许还能写入。
-
-每次发布的完整记录见[更新日志](CHANGELOG.md)。
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -122,6 +105,26 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 想把导入的资料整理成带引用的笔记，运行 `/wenlan steep`（Codex 中为 `$wenlan steep`）。新安装默认以“随叫”方式[沉淀](#steep沉淀让知识跟上新发现)，由你的 AI 工具完成；也可以改成“自动”，用[模型](docs/steep.md#enable-steep)在后台整理记忆、更新笔记。
 
 不知道该问什么？在 App 中打开“AI 能做什么”，查看要在 AI 工具里输入的确切文字。
+
+<a id="what-can-i-bring-in"></a>
+
+<br>
+
+## 来源与导入
+
+| 导入内容 | 用途 |
+| --- | --- |
+| Markdown、文本、文本型 PDF、DOCX 或文件夹 | 搜索和引用导入文本。文件夹可以只导入一次，也可以持续同步文件的变化。 |
+| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。没有你同意，不会改动你原有的笔记：在 Obsidian 仓库里，设成“先问我”的笔记会收到 AI 的修改建议，由你接受或不要。 |
+| 网页链接 | 在笔记里粘贴链接，就会存成来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。也可以粘贴文本与 URL，保存那段摘录。 |
+| Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的连接器读取，把重要的内容存进文澜，并附上原文链接。 |
+| 代码仓库 | `/wenlan wiki` 写出对应到代码行数的笔记。[代码 wiki](#code-repository-wiki)。 |
+| OKF 文件夹 | 把 Open Knowledge Format 文件夹（例如 OpenWiki 或文澜的导出）连接成来源。 |
+| 工作中的 AI 对话 | Claude Code、Codex 和你的其他 AI 工具，会把每次对话里的决定、发现和进度存成记忆，笔记再引用它们。不会导入完整对话记录。 |
+| ChatGPT 或 Claude 导出 ZIP | 检索过去的对话文本（包括最后一条没有得到回复的消息）并作为上下文引用；导入是快照，不会连接实时账户。 |
+| 文本形式的现有记忆 | 将偏好、决定或经验保存为单条记忆。 |
+
+扫描版 PDF 需先提取文本；聊天附件不会导入。[导入指南（英文）](docs/import-guide.md)。
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -190,7 +193,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 <a id="what-is-this"></a>
 <a id="what-you-get"></a>
 <a id="what-can-it-do"></a>
-<a id="what-can-i-bring-in"></a>
 <a id="knowledge-graph"></a>
 
 <a id="浏览和整理个人知识"></a>
@@ -213,22 +215,6 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - **原子记忆：** 遵循 [Zettelkasten 的原子性原则](https://zettelkasten.de/posts/create-zettel-from-reading-notes/)，让每条发现都能独立检索和重用，无需加载整段对话或笔记。
 - **共享主题：** 配置整理模型后，LLM 实体提取与实体消歧会将文档和对话中对同一人物、项目或概念的提及关联起来，并保留其记忆与来源。
 - **知识群集：** 将相连主题分组，发现资料中的相关知识。默认使用 Label Propagation；Leiden 可作为选配算法。[图谱详情](docs/technical-foundations.md#graph-data-and-entity-resolution)。
-
-### 来源与导入
-
-| 导入内容 | 用途 |
-| --- | --- |
-| Markdown、文本、文本型 PDF、DOCX 或文件夹 | 搜索和引用导入文本。文件夹可以只导入一次，也可以持续同步文件的变化。 |
-| Obsidian 仓库或 Logseq 图谱 | 搜索和引用现有笔记。选择持续同步，在后台跟上变化；或只导入一次。没有你同意，不会改动你原有的笔记：在 Obsidian 仓库里，设成“先问我”的笔记会收到 AI 的修改建议，由你接受或不要。 |
-| 网页链接 | 在笔记里粘贴链接，就会存成来源。YouTube、X、Threads、Instagram 和小红书的链接会显示成卡片、可播放的视频或原始帖子。也可以粘贴文本与 URL，保存那段摘录。 |
-| Gmail、Notion、Google Drive、Slack、GitHub | 你的 AI 工具用它自己的连接器读取，把重要的内容存进文澜，并附上原文链接。 |
-| 代码仓库 | `/wenlan wiki` 写出对应到代码行数的笔记。[代码 wiki](#code-repository-wiki)。 |
-| OKF 文件夹 | 把 Open Knowledge Format 文件夹（例如 OpenWiki 或文澜的导出）连接成来源。 |
-| 工作中的 AI 对话 | Claude Code、Codex 和你的其他 AI 工具，会把每次对话里的决定、发现和进度存成记忆，笔记再引用它们。不会导入完整对话记录。 |
-| ChatGPT 或 Claude 导出 ZIP | 检索过去的对话文本（包括最后一条没有得到回复的消息）并作为上下文引用；导入是快照，不会连接实时账户。 |
-| 文本形式的现有记忆 | 将偏好、决定或经验保存为单条记忆。 |
-
-扫描版 PDF 需先提取文本；聊天附件不会导入。[导入指南（英文）](docs/import-guide.md)。
 
 <a id="daily-workflow"></a>
 
@@ -282,6 +268,24 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - **按 Space 限定检索：** 选择 Space，将返回的知识限制在相关项目或个人资料集合内。
 
 在“设置”中开启“网页访问”开关，即可让 Claude、ChatGPT 或 Muse 等受支持的网页 AI 客户端，在你的电脑保持联网时搜索整个资料库或指定空间。允许应用时可以选“只能搜索”或“搜索和写入”；可以写入的应用还能新增、修改和删除内容，AI 应用可以在每次改动前先问你。此功能仍处于实验阶段；查询与结果会经过中继服务，详见[隐私边界](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector)。
+
+<a id="whats-new"></a>
+
+<br>
+
+## 最近新增
+
+0.19 以来：
+
+- **沉淀有两种方式：**“随叫”用你自己的 AI 工具更新笔记，“自动”用你选的本地或云端模型在后台更新。
+- **保存时对照引用：**引用大多和来源对不上的笔记不会保存，Mermaid 图表也会检查有没有写错。
+- **笔记跟着它依靠的东西：**其他笔记和代码行数都追得到，行数移动或文件改名也跟得上。
+- **先问我：**笔记用一个“AI 修改”设置；AI 也可以建议修改你的 Obsidian 笔记，你点接受才会写进文件。Obsidian 笔记默认“不能改”，只会被引用。每次修改都看得到删了什么、加了什么。
+- **为代码建 wiki：**`/wenlan wiki` 写出对应到代码行数的笔记，用 pull request 放进你的仓库，也能每天在你的电脑或 GitHub Actions 上更新，可用你的 AI 工具、Cursor 或 GitHub Copilot。
+- **能带进来的更多：**粘贴的链接会存成来源，显示成卡片、可播放的 YouTube 视频，或 X、Threads、Instagram 的原始帖子。新增 Logseq 图谱、DOCX 和持续同步的文件夹，笔记里也能放图片和视频。第一次导入大型 Obsidian 仓库，几分钟内就能搜索；AI 工具也找得到大型资料库里的罕见字词。
+- **更多 AI 工具：**GitHub Copilot、Antigravity、Windsurf、Kiro、OpenCode、Muse Code 和 Kimi Code 都能从设置里的“添加工具”连上；网页版 AI 也能通过“网页访问”搜索，经你允许还能写入。
+
+每次发布的完整记录见[更新日志](CHANGELOG.md)。
 
 <a id="architecture"></a>
 

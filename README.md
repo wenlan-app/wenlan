@@ -22,8 +22,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><strong>Download</strong></a> ·
   <a href="#start-in-30-seconds">Get&nbsp;started</a> ·
-  <a href="#what-can-i-bring-in">Capabilities</a> ·
+  <a href="#what-can-i-bring-in">Sources</a> ·
   <a href="#learn-more">Docs</a> ·
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
 </p>
@@ -53,24 +54,6 @@ I started Wenlan out of anxiety about my own knowledge: notes, documents, and AI
 ### If you already use Claude Code or Codex on your notes
 
 Keep doing that. Wenlan connects to the same AI tool and adds the checks a folder of Markdown can't do by itself: a page refused when most of its citations don't match the source, flags when sources change, review for AI edits to pages you wrote, and it never edits your existing notes without your OK.
-
-<a id="whats-new"></a>
-
-<br>
-
-## What's new
-
-Since 0.19:
-
-- **Steep, your way:** keep pages current On demand with your own AI tool, or Automatic with a local or cloud model you pick.
-- **Citations checked on save:** a page whose citations mostly don't match their sources is refused, and Mermaid diagrams are checked for mistakes.
-- **Pages follow what they rely on:** other pages and code lines, even when the lines move or the file is renamed.
-- **Ask me first:** one **AI changes** setting for pages, and AI can suggest changes to your Obsidian notes that are written only when you accept. Notes start at **Never**, cited only. Each change shows what it removes and adds.
-- **A wiki for your code:** `/wenlan wiki` writes pages tied to the code lines they rely on and offers them to your repository as a pull request, updated daily on your computer or on GitHub Actions with your AI tool, Cursor, or GitHub Copilot.
-- **More to bring in:** a pasted link is saved as a source and shows as a card, a playable YouTube video, or the original X, Threads, or Instagram post. Logseq graphs, DOCX, and folders kept in sync are new imports, and images and videos can go in pages. A big first vault import is searchable in minutes, and AI tools now find rare words in a large library.
-- **More AI tools:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, Muse Code, and Kimi Code connect from **Add a tool** in Settings, and web AI apps can search, and with your permission write, through **Web access**.
-
-Every release is in the [changelog](CHANGELOG.md).
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -120,6 +103,26 @@ In Codex, use `$recall`. With an MCP-only tool, just ask: “Check Wenlan for my
 To turn imported material into cited pages, run `/wenlan steep` (`$wenlan steep` in Codex). New installs [steep](#steep-keep-knowledge-useful-as-it-changes) On demand, with your AI tool; switch to Automatic with a [model](docs/steep.md#enable-steep) to organize memories and update pages in the background.
 
 Not sure what to ask? Open **What your AI can do** in the App for the exact text to type in your AI tool.
+
+<a id="what-can-i-bring-in"></a>
+
+<br>
+
+## Sources and imports
+
+| Bring in | How you can use it |
+| --- | --- |
+| Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
+| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Wenlan never edits your existing notes without your OK: in an Obsidian vault, notes you set to **Ask me first** get AI suggestions you accept or decline. |
+| Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. Or paste text with its URL to save that excerpt. |
+| Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
+| A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
+| An OKF bundle | Connect an Open Knowledge Format folder, such as an OpenWiki or a Wenlan export, as a source. |
+| Your AI chats as you work | Claude Code, Codex, and your other AI tools save the decisions, findings, and progress from each conversation as memories, and pages cite them. Full transcripts are not imported. |
+| ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
+| Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
+
+Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -186,7 +189,6 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 <a id="what-is-this"></a>
 <a id="what-you-get"></a>
 <a id="what-can-it-do"></a>
-<a id="what-can-i-bring-in"></a>
 <a id="knowledge-graph"></a>
 
 <a id="browse-and-organize-your-knowledge"></a>
@@ -209,22 +211,6 @@ Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans
 - **Atomic memories:** Following [Zettelkasten’s principle of atomicity](https://zettelkasten.de/posts/create-zettel-from-reading-notes/), keep findings independently retrievable and reusable without loading an entire conversation or page.
 - **Shared topics:** With an enrichment model configured, LLM entity extraction and entity resolution link mentions of the same person, project, or concept across documents and conversations, retaining their memories and sources.
 - **Knowledge communities:** Group connected topics to reveal related knowledge across your material. Label Propagation runs by default; Leiden is available as an opt-in algorithm. [Graph details](docs/technical-foundations.md#graph-data-and-entity-resolution).
-
-### Sources and imports
-
-| Bring in | How you can use it |
-| --- | --- |
-| Markdown, text, text-based PDFs, DOCX, or a folder | Search and cite the imported text. Import a folder once, or keep it in sync as its files change. |
-| An Obsidian vault or a Logseq graph | Search and cite existing notes. Keep it in sync to follow changes in the background, or import it once. Wenlan never edits your existing notes without your OK: in an Obsidian vault, notes you set to **Ask me first** get AI suggestions you accept or decline. |
-| Web links | Paste a link into a page and it is saved as a source. YouTube, X, Threads, Instagram, and RedNote links show as a card, a playable video, or the original post. Or paste text with its URL to save that excerpt. |
-| Gmail, Notion, Google Drive, Slack, GitHub | Your AI tool reads them with its own connectors and saves what matters to Wenlan with a link to the original. |
-| A code repository | `/wenlan wiki` writes pages tied to the code lines they rely on. [Code wiki](#code-repository-wiki). |
-| An OKF bundle | Connect an Open Knowledge Format folder, such as an OpenWiki or a Wenlan export, as a source. |
-| Your AI chats as you work | Claude Code, Codex, and your other AI tools save the decisions, findings, and progress from each conversation as memories, and pages cite them. Full transcripts are not imported. |
-| ChatGPT or Claude export ZIPs | Retrieve earlier conversation text, including a last message that got no reply, and cite it as context; imports are snapshots, not live account connections. |
-| Existing memories as text | Save preferences, decisions, or lessons as individual memories. |
-
-Scanned PDFs need text extraction first; chat attachments are not imported. [Import guide](docs/import-guide.md).
 
 <a id="daily-workflow"></a>
 
@@ -275,6 +261,24 @@ Once your material is in Wenlan, your AI tools can build on it: retrieve earlier
 - **Space-scoped retrieval:** Select a Space to limit returned knowledge to the relevant project or personal collection.
 
 Turn on **Web access** in Settings to let supported web AI clients such as Claude, ChatGPT, or Muse search your library or a chosen Space while your computer is online. When you allow an app, choose search only or search and write; a write app can also add, edit and delete, and AI apps can ask you before each change. This feature is experimental; queries and results pass through a relay. See the [privacy limits](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
+
+<a id="whats-new"></a>
+
+<br>
+
+## What's new
+
+Since 0.19:
+
+- **Steep, your way:** keep pages current On demand with your own AI tool, or Automatic with a local or cloud model you pick.
+- **Citations checked on save:** a page whose citations mostly don't match their sources is refused, and Mermaid diagrams are checked for mistakes.
+- **Pages follow what they rely on:** other pages and code lines, even when the lines move or the file is renamed.
+- **Ask me first:** one **AI changes** setting for pages, and AI can suggest changes to your Obsidian notes that are written only when you accept. Notes start at **Never**, cited only. Each change shows what it removes and adds.
+- **A wiki for your code:** `/wenlan wiki` writes pages tied to the code lines they rely on and offers them to your repository as a pull request, updated daily on your computer or on GitHub Actions with your AI tool, Cursor, or GitHub Copilot.
+- **More to bring in:** a pasted link is saved as a source and shows as a card, a playable YouTube video, or the original X, Threads, or Instagram post. Logseq graphs, DOCX, and folders kept in sync are new imports, and images and videos can go in pages. A big first vault import is searchable in minutes, and AI tools now find rare words in a large library.
+- **More AI tools:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, Muse Code, and Kimi Code connect from **Add a tool** in Settings, and web AI apps can search, and with your permission write, through **Web access**.
+
+Every release is in the [changelog](CHANGELOG.md).
 
 <a id="architecture"></a>
 

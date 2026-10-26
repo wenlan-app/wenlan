@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=0b0c0fb47de260fde51035d93109740761fc848cb73689a88ffaca9d2cc3aad6 -->
+<!-- README_SYNC: source=README.md sha256=6dfc4615c1d0356740566f5e80c3a1900746a1e5374c66911657fc5c9ada171a -->
 
 <p align="center">
   <picture>
@@ -24,8 +24,9 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/wenlan-app/wenlan/releases/latest"><strong>Descargar</strong></a> ·
   <a href="#start-in-30-seconds">Primeros&nbsp;pasos</a> ·
-  <a href="#what-can-i-bring-in">Funciones</a> ·
+  <a href="#what-can-i-bring-in">Fuentes</a> ·
   <a href="#learn-more">Docs</a> ·
   <a href="https://discord.gg/nmzVTTU3HG">Discord</a>
 </p>
@@ -55,24 +56,6 @@
 ## Si ya usas Claude Code o Codex con tus notas
 
 Sigue haciéndolo. Wenlan se conecta a la misma herramienta de IA y añade las comprobaciones que una carpeta de Markdown no hace por sí sola: rechaza una página cuando la mayoría de sus citas no coinciden con la fuente, marca las páginas cuando cambian sus fuentes, deja para tu revisión las ediciones de IA en páginas que escribiste y nunca edita tus notas existentes sin tu permiso.
-
-<a id="whats-new"></a>
-
-<br>
-
-## Novedades
-
-Desde 0.19:
-
-- **Steep a tu manera:** mantén las páginas al día en modo **On demand** con tu propia herramienta de IA, o en **Automatic** con un modelo local o en la nube que elijas.
-- **Citas comprobadas al guardar:** se rechaza una página cuyas citas en su mayoría no coinciden con sus fuentes, y se revisan los errores de los diagramas Mermaid.
-- **Las páginas siguen aquello en lo que se basan:** otras páginas y líneas de código, aunque las líneas se muevan o el archivo cambie de nombre.
-- **Ask me first:** un solo ajuste **AI changes** para las páginas, y la IA puede sugerir cambios en tus notas de Obsidian que solo se escriben cuando aceptas. Las notas empiezan en **Never**, solo se citan. Cada cambio muestra qué quita y qué añade.
-- **Una wiki para tu código:** `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan y las propone a tu repositorio como pull request, actualizadas cada día en tu ordenador o en GitHub Actions con tu herramienta de IA, Cursor o GitHub Copilot.
-- **Más cosas que traer:** un enlace pegado se guarda como fuente y se muestra como tarjeta, como vídeo de YouTube reproducible o como la publicación original de X, Threads o Instagram. Los grafos de Logseq, DOCX y las carpetas sincronizadas son importaciones nuevas, y las páginas admiten imágenes y vídeos. Una primera importación grande de una bóveda se puede buscar en minutos, y las herramientas de IA ya encuentran palabras raras en una biblioteca grande.
-- **Más herramientas de IA:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, Muse Code y Kimi Code se conectan desde **Add a tool** en los ajustes, y las apps de IA web pueden buscar y, con tu permiso, escribir mediante **Web access**.
-
-Todas las versiones están en el [registro de cambios](CHANGELOG.md).
 
 <a id="quickstart"></a>
 <a id="start-in-30-seconds"></a>
@@ -120,6 +103,26 @@ El material importado ya está listo para usar; no hace falta crear una página 
 Para convertir el material importado en páginas con citas, ejecuta `/wenlan steep` (`$wenlan steep` en Codex). Las instalaciones nuevas hacen Steep en modo **On demand**, con tu herramienta de IA; cambia a **Automatic** con un [modelo](docs/steep.md#enable-steep) para organizar memorias y actualizar páginas en segundo plano.
 
 ¿No sabes qué pedir? Abre **What your AI can do** en la aplicación para ver el texto exacto que debes escribir en tu herramienta de IA.
+
+<a id="what-can-i-bring-in"></a>
+
+<br>
+
+## Fuentes e importaciones
+
+| Qué puedes importar | Para qué sirve |
+| --- | --- |
+| Markdown, texto, PDF con texto, DOCX o una carpeta | Busca y cita el texto importado. Importa una carpeta una vez o mantenla sincronizada cuando cambien sus archivos. |
+| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita notas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez. Wenlan nunca edita tus notas existentes sin tu permiso: en una bóveda de Obsidian, las notas en **Ask me first** reciben sugerencias de la IA que aceptas o rechazas. |
+| Enlaces web | Pega un enlace en una página y se guarda como fuente. Los enlaces de YouTube, X, Threads, Instagram y RedNote se muestran como tarjeta, vídeo reproducible o la publicación original. También puedes pegar un texto con su URL para guardar ese extracto. |
+| Gmail, Notion, Google Drive, Slack, GitHub | Tu herramienta de IA los lee con sus propios conectores y guarda en Wenlan lo importante con un enlace al original. |
+| Un repositorio de código | `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan. [Wiki de código](#code-repository-wiki). |
+| Un paquete OKF | Conecta como fuente una carpeta Open Knowledge Format, como una OpenWiki o una exportación de Wenlan. |
+| Tus chats de IA mientras trabajas | Claude Code, Codex y tus otras herramientas de IA guardan como memorias las decisiones, hallazgos y avances de cada conversación, y las páginas las citan. No se importan las transcripciones completas. |
+| ZIP de exportación de ChatGPT o Claude | Recupera conversaciones anteriores, incluido un último mensaje que no obtuvo respuesta, y cítalas como contexto; la importación es una instantánea, no una conexión activa a la cuenta. |
+| Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
+
+Los PDF escaneados necesitan extracción de texto; los adjuntos de chats no se importan. [Guía de importación (en inglés)](docs/import-guide.md).
 
 <a id="what-makes-wenlan-distinct"></a>
 <a id="why-is-wenlan-different"></a>
@@ -182,34 +185,12 @@ Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramien
 - **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria: usa tu propia herramienta de IA en tu ordenador, o se ejecuta en GitHub Actions con la clave de tu herramienta de IA guardada como secret del repositorio, así tu ordenador puede estar apagado. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
 - **Tus ediciones se conservan:** Una página de la wiki que alguien editó en el repositorio conserva esa edición. Las páginas que citan tus memorias o chats no entran en el repositorio.
 
-<a id="daily-workflow"></a>
-
-<br>
-
-## Uso diario
-
-Guarda los nuevos hallazgos y avances mientras trabajas y empieza la próxima sesión con ellos.
-
-<p align="center">
-  <img src="./docs/assets/wenlan-daily-workflow-es-ES.png" alt="Las fuentes y memorias previas se acumulan en Wenlan; úsalas en la aplicación o con IA y guarda nuevas memorias y el progreso para continuar después." width="100%">
-</p>
-
-Flujo simplificado. Los comandos del plugin y la organización de páginas son opcionales, sin un orden fijo.
-
-- **Trabaja en la aplicación.** Añade material, escribe o edita páginas, consulta las citas y revisa los cambios propuestos sin conectar una IA. El icono de la barra de menús (o de la bandeja) abre un panel pequeño con lo que necesita tu atención, tus páginas recientes y Quick capture.
-- **Usa tu conocimiento y escribe páginas nuevas.** Pide a tu IA que recupere fuentes y memorias relevantes para la tarea (`/recall`). También puede escribir una página con citas o actualizar una existente a partir de su versión actual y guardarla en Wenlan. Cuando una página cita sus fuentes como `[n]`, Wenlan compara cada frase citada con su fuente y rechaza la página cuando la mayoría de sus citas no coinciden.
-- **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o a través de tu IA (`/capture`).
-- **Pausa y retoma.** Guarda hallazgos y un registro de la sesión, actualiza las páginas afectadas y anota el progreso y los siguientes pasos en el Brief del proyecto (`/handoff`). La próxima vez, recupera ese contexto para continuar (`/brief`).
-
-**Organiza las memorias acumuladas cuando lo necesites:** Sintetiza o actualiza páginas con citas a partir de memorias relacionadas (`/wenlan distill`); no es necesario para escribir una página nueva. [Comandos del plugin](plugin/skills/README.md).
-
 <a id="what-does-wenlan-build"></a>
 <a id="why-it-compounds"></a>
 <a id="qué-es-esto"></a>
 <a id="what-is-this"></a>
 <a id="what-you-get"></a>
 <a id="what-can-it-do"></a>
-<a id="what-can-i-bring-in"></a>
 <a id="knowledge-graph"></a>
 
 <a id="explora-y-organiza-tu-conocimiento"></a>
@@ -233,21 +214,26 @@ Las **fuentes** conservan documentos y conversaciones; las **memorias** guardan 
 - **Temas compartidos:** Con un modelo de enriquecimiento configurado, la extracción y resolución de entidades mediante LLM vinculan menciones de la misma persona, proyecto o concepto en documentos y conversaciones, conservando sus memorias y fuentes.
 - **Comunidades de conocimiento:** Agrupa temas conectados para descubrir relaciones en tu material. Label Propagation se ejecuta de forma predeterminada; Leiden está disponible como algoritmo opcional. [Detalles del grafo](docs/technical-foundations.md#graph-data-and-entity-resolution).
 
-### Fuentes e importaciones
+<a id="daily-workflow"></a>
 
-| Qué puedes importar | Para qué sirve |
-| --- | --- |
-| Markdown, texto, PDF con texto, DOCX o una carpeta | Busca y cita el texto importado. Importa una carpeta una vez o mantenla sincronizada cuando cambien sus archivos. |
-| Una bóveda de Obsidian o un grafo de Logseq | Busca y cita notas existentes. Mantenla sincronizada para seguir los cambios en segundo plano, o impórtala una vez. Wenlan nunca edita tus notas existentes sin tu permiso: en una bóveda de Obsidian, las notas en **Ask me first** reciben sugerencias de la IA que aceptas o rechazas. |
-| Enlaces web | Pega un enlace en una página y se guarda como fuente. Los enlaces de YouTube, X, Threads, Instagram y RedNote se muestran como tarjeta, vídeo reproducible o la publicación original. También puedes pegar un texto con su URL para guardar ese extracto. |
-| Gmail, Notion, Google Drive, Slack, GitHub | Tu herramienta de IA los lee con sus propios conectores y guarda en Wenlan lo importante con un enlace al original. |
-| Un repositorio de código | `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan. [Wiki de código](#code-repository-wiki). |
-| Un paquete OKF | Conecta como fuente una carpeta Open Knowledge Format, como una OpenWiki o una exportación de Wenlan. |
-| Tus chats de IA mientras trabajas | Claude Code, Codex y tus otras herramientas de IA guardan como memorias las decisiones, hallazgos y avances de cada conversación, y las páginas las citan. No se importan las transcripciones completas. |
-| ZIP de exportación de ChatGPT o Claude | Recupera conversaciones anteriores, incluido un último mensaje que no obtuvo respuesta, y cítalas como contexto; la importación es una instantánea, no una conexión activa a la cuenta. |
-| Memorias existentes como texto | Guarda preferencias, decisiones o aprendizajes como memorias individuales. |
+<br>
 
-Los PDF escaneados necesitan extracción de texto; los adjuntos de chats no se importan. [Guía de importación (en inglés)](docs/import-guide.md).
+## Uso diario
+
+Guarda los nuevos hallazgos y avances mientras trabajas y empieza la próxima sesión con ellos.
+
+<p align="center">
+  <img src="./docs/assets/wenlan-daily-workflow-es-ES.png" alt="Las fuentes y memorias previas se acumulan en Wenlan; úsalas en la aplicación o con IA y guarda nuevas memorias y el progreso para continuar después." width="100%">
+</p>
+
+Flujo simplificado. Los comandos del plugin y la organización de páginas son opcionales, sin un orden fijo.
+
+- **Trabaja en la aplicación.** Añade material, escribe o edita páginas, consulta las citas y revisa los cambios propuestos sin conectar una IA. El icono de la barra de menús (o de la bandeja) abre un panel pequeño con lo que necesita tu atención, tus páginas recientes y Quick capture.
+- **Usa tu conocimiento y escribe páginas nuevas.** Pide a tu IA que recupere fuentes y memorias relevantes para la tarea (`/recall`). También puede escribir una página con citas o actualizar una existente a partir de su versión actual y guardarla en Wenlan. Cuando una página cita sus fuentes como `[n]`, Wenlan compara cada frase citada con su fuente y rechaza la página cuando la mayoría de sus citas no coinciden.
+- **Conserva lo que aprendes.** Guarda una decisión o lección, junto con sus motivos y fuentes, en la aplicación o a través de tu IA (`/capture`).
+- **Pausa y retoma.** Guarda hallazgos y un registro de la sesión, actualiza las páginas afectadas y anota el progreso y los siguientes pasos en el Brief del proyecto (`/handoff`). La próxima vez, recupera ese contexto para continuar (`/brief`).
+
+**Organiza las memorias acumuladas cuando lo necesites:** Sintetiza o actualiza páginas con citas a partir de memorias relacionadas (`/wenlan distill`); no es necesario para escribir una página nueva. [Comandos del plugin](plugin/skills/README.md).
 
 <a id="how-wenlan-works"></a>
 <a id="how-does-it-work"></a>
@@ -278,6 +264,24 @@ Un agente puede leer archivos y escribir texto. Wenlan añade una **base de cono
 - **Recuperación limitada a un Espacio:** Selecciona un Espacio para limitar el conocimiento devuelto al proyecto o colección personal pertinente.
 
 Activa el interruptor **Web access** en Settings para que clientes web de IA compatibles, como Claude, ChatGPT o Muse, puedan buscar en toda la biblioteca o en un Espacio elegido mientras el ordenador con Wenlan esté conectado. Al permitir una app eliges solo búsqueda o búsqueda y escritura; una app con escritura también puede añadir, editar y borrar, y las apps de IA pueden pedirte confirmación antes de cada cambio. Esta función es experimental; las consultas y los resultados pasan por un relay. Consulta los [límites de privacidad](docs/PRIVACY.md#pre-release-standalone-wenlan-relay-connector).
+
+<a id="whats-new"></a>
+
+<br>
+
+## Novedades
+
+Desde 0.19:
+
+- **Steep a tu manera:** mantén las páginas al día en modo **On demand** con tu propia herramienta de IA, o en **Automatic** con un modelo local o en la nube que elijas.
+- **Citas comprobadas al guardar:** se rechaza una página cuyas citas en su mayoría no coinciden con sus fuentes, y se revisan los errores de los diagramas Mermaid.
+- **Las páginas siguen aquello en lo que se basan:** otras páginas y líneas de código, aunque las líneas se muevan o el archivo cambie de nombre.
+- **Ask me first:** un solo ajuste **AI changes** para las páginas, y la IA puede sugerir cambios en tus notas de Obsidian que solo se escriben cuando aceptas. Las notas empiezan en **Never**, solo se citan. Cada cambio muestra qué quita y qué añade.
+- **Una wiki para tu código:** `/wenlan wiki` escribe páginas vinculadas a las líneas de código en las que se basan y las propone a tu repositorio como pull request, actualizadas cada día en tu ordenador o en GitHub Actions con tu herramienta de IA, Cursor o GitHub Copilot.
+- **Más cosas que traer:** un enlace pegado se guarda como fuente y se muestra como tarjeta, como vídeo de YouTube reproducible o como la publicación original de X, Threads o Instagram. Los grafos de Logseq, DOCX y las carpetas sincronizadas son importaciones nuevas, y las páginas admiten imágenes y vídeos. Una primera importación grande de una bóveda se puede buscar en minutos, y las herramientas de IA ya encuentran palabras raras en una biblioteca grande.
+- **Más herramientas de IA:** GitHub Copilot, Antigravity, Windsurf, Kiro, OpenCode, Muse Code y Kimi Code se conectan desde **Add a tool** en los ajustes, y las apps de IA web pueden buscar y, con tu permiso, escribir mediante **Web access**.
+
+Todas las versiones están en el [registro de cambios](CHANGELOG.md).
 
 <a id="architecture"></a>
 
