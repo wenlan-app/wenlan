@@ -11,7 +11,11 @@
 //   none       On demand, no AI tool connected
 //   automatic  Automatic, a local model writes pages
 //   chats      Checklist chat import: nothing waits until the chats land
-import type { Page } from "../../src/lib/tauri";
+//   folder     An Obsidian vault was just added and its first read stored
+//              12 notes: the folder import's finish, On demand, Codex
+//              connected. `view=sources` opens the Sources library.
+import type { Page, RegisteredSource } from "../../src/lib/tauri";
+import { rememberAddedFolder } from "../../src/components/memory/sources/FolderImportOrganize";
 
 const params = new URLSearchParams(location.search);
 export const organizeScenario = params.get("organize");
@@ -57,6 +61,13 @@ function agent(name: string, displayName: string) {
 
 let chatsLanded = false;
 
+const FOLDER_PATH = "/Users/preview/Notes";
+const folderSource: RegisteredSource = {
+  id: "obsidian-notes", source_type: "obsidian", path: FOLDER_PATH, status: "Active",
+  last_sync: Math.floor(now / 1000) - 20, file_count: 12, memory_count: 31,
+};
+const FOLDER_NOTES = TITLES.slice(0, 6).map((title) => `${title}.md`);
+
 /** Seed the run the writing/done states follow, as a press of the button
  *  would have left it. */
 export function seedOrganizeRun(): void {
@@ -66,6 +77,8 @@ export function seedOrganizeRun(): void {
     } else if (organizeScenario) {
       localStorage.removeItem(RUN_KEY);
     }
+    // What the add flow leaves behind once the vault is added.
+    if (organizeScenario === "folder") rememberAddedFolder(folderSource);
   } catch {
     // Storage blocked: the states without a run still render.
   }
@@ -111,6 +124,19 @@ export function organizeInvoke(command: string, args: Record<string, unknown> | 
       return { value: { import_id: "preview-chat-import", vendor: "ChatGPT", conversations_total: 24, conversations_new: 24, conversations_skipped_existing: 0, memories_stored: 96 } };
     }
     case "list_pending_imports": return { value: [] };
+    case "list_registered_sources": return { value: scenario === "folder" ? [folderSource] : [] };
+    case "read_source_dir": {
+      if (scenario !== "folder") return undefined;
+      return { value: FOLDER_NOTES.map((name) => ({ name, isDirectory: false })) };
+    }
+    case "list_indexed_files": {
+      if (scenario !== "folder") return undefined;
+      return { value: FOLDER_NOTES.map((name, i) => ({
+        source: "obsidian", source_id: `${folderSource.id}::${FOLDER_PATH}/${name}::0`, title: name.replace(/\.md$/, ""),
+        chunk_count: 2, last_modified: Math.floor(now / 1000) - 60 * (i + 1), source_agent: "obsidian",
+      })) };
+    }
+    case "detect_obsidian_vaults": return { value: [] };
     default: return undefined;
   }
 }

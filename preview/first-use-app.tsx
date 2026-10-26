@@ -14,6 +14,12 @@ document.documentElement.lang = locale;
 const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
 void initializeI18n(undefined, { storage: { getItem: () => locale, setItem: () => {} }, systemLanguages: [locale] }).then(() => {
   // `view=import` opens straight on the Import page, for the import finish states.
-  const initialView = params.get("view") === "import" ? { kind: "import" as const } : undefined;
+  // `view=sources` opens the Sources library and `view=settings-sources`
+  // Settings → Sources, for the folder import's finish.
+  const view = params.get("view");
+  const initialView = view === "import" ? { kind: "import" as const }
+    : view === "sources" ? { kind: "sources" as const }
+      : view === "settings-sources" ? { kind: "settings" as const, section: "sources" as const }
+        : undefined;
   createRoot(document.getElementById("root")!).render(<React.StrictMode><QueryClientProvider client={client}><Main initialView={initialView} /></QueryClientProvider></React.StrictMode>);
 });
