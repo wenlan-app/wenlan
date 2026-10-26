@@ -640,3 +640,51 @@ async fn a_note_is_about_the_next_majority_entity_when_the_first_has_a_note() {
         "Mira has a note, so this one is about the kiln both sources also mention"
     );
 }
+
+/// A plain-folder file is never classified by the memory lane, in Automatic
+/// mode either (the document lane owns it), so organizing hands out only its
+/// entity task, and `classified` stays 0 while its entities still land.
+#[tokio::test]
+async fn a_folder_file_is_organized_for_entities_only() {
+    let (db, _dir) = crate::db::tests::test_db().await;
+    for (id, content) in [
+        ("orgf::notes/mira.md", MIRA_NOTE),
+        ("orgf::notes/kiln.md", KILN_NOTE),
+    ] {
+        db.upsert_documents(vec![RawDocument {
+            source: "memory".to_string(),
+            source_id: id.to_string(),
+            title: id.to_string(),
+            content: content.to_string(),
+            last_modified: chrono::Utc::now().timestamp(),
+            source_agent: Some("folder".to_string()),
+            content_hash: Some(format!("hash-{id}")),
+            ..Default::default()
+        }])
+        .await
+        .unwrap();
+    }
+    let claim = claim_new(
+        &db,
+        &ReadScope::Global,
+        &["orgf::notes/mira.md".into(), "orgf::notes/kiln.md".into()],
+        Some(&options(NO_AUTO_LINK)),
+    )
+    .await
+    .unwrap();
+    let work = claim.organize.clone().expect("entity detection waits");
+    assert!(
+        work.tasks
+            .iter()
+            .all(|task| task.stage == STEEP_ORGANIZE_STAGE_ENTITIES),
+        "no classification task for a folder file: {:?}",
+        work.tasks
+    );
+    assert_eq!(work.tasks.len(), 2);
+    let done = organize_new(&db, &claim.token, &answers(&work))
+        .await
+        .unwrap();
+    assert_eq!(done.classified, 0);
+    assert_eq!(done.detected, 2);
+    assert_eq!(done.linked, 2);
+}
