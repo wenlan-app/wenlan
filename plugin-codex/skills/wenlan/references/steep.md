@@ -49,16 +49,31 @@ Skip this section when `new_total` is 0.
    1. Call `steep` with `action: "claim_new"` and its `item_ids`. The answer
       has the items' text numbered `[1]` to `[n]`, a `token` and a `note`. A
       refusal (too little text, already taken) means skip the group.
-   2. Write the page yourself, with your main model. Never let the small
+   2. When the answer has `organize`, organize the sources before writing,
+      the way Wenlan's own model would: their type and tags, and the people,
+      projects and tools they mention. This is small work, so give it to a
+      helper on a small model when you can start one (a subagent on a
+      smaller model): hand it `organize.stages` and `organize.tasks`, and
+      ask it to answer every task with its stage's `instructions` as the
+      system prompt and the task's `prompt` as the message, and to reply
+      with only JSON: `[{"n": 1, "answer": "..."}]`, each answer exactly what
+      the instructions ask for. Call `steep` with `action: "organize"`, the
+      token and those `answers`, each passed back unchanged. Never organize
+      with your main model: when you cannot start a helper on a small model,
+      skip this step and write the page.
+   3. Write the page yourself, with your main model. Never let the small
       model write it. Title: short, names the topic, in the sources'
       language. Open with one plain sentence that says what the page is
       about, then short paragraphs or lists. Use only what the sources say
-      and cite every claim with its number, like `[2]`.
-   3. Call `steep` with `action: "write"`, the token, `title` and the body as
+      and cite every claim with its number, like `[2]`. When the organize
+      answer (or else the claim) has `link_targets`, link each of those pages
+      the text talks about once as `[[Title]]`, with the title exactly as
+      given. Link no other titles.
+   4. Call `steep` with `action: "write"`, the token, `title` and the body as
       `content`. A citation refusal: fix the sentences it points at and write
       again with the same token, once; still refused, `release` the token. If
       the sources turn out not to belong together, `release` the token.
-   4. `created`: a new page. `merged`: a page on that topic already existed
+   5. `created`: a new page. `merged`: a page on that topic already existed
       and took the sources.
 
 ## 3. Pages that went out of date
@@ -131,7 +146,9 @@ get from your own claim.
 
 ## 4. Report
 
-A few short lines, no ids: the titles of the new pages written, how many pages were updated, how many wait for the
+A few short lines, no ids: the titles of the new pages written, how many of
+their sources were organized and how many of the people, projects and tools
+found there earned a Wiki page (`confirmed`), how many pages were updated, how many wait for the
 user as revision cards, how many still hold, how many code changes were
 checked and found harmless, and for each `needs_you` page its
 title and the reason from its `note`. If more new material or more than 10
