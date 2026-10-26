@@ -10,6 +10,7 @@ import { describeSetupError, type DescribedSetupError } from "../../lib/setupErr
 import { connectClient, needsSkillsOnly } from "./connectClient";
 import { unreadPluginWriteRisk } from "./setupRisk";
 import ClientRow, { clientRowDescId } from "./ClientRow";
+import ConnectionListDisclosure from "./ConnectionListDisclosure";
 import { CONNECTION_ROW_LIMIT, familyOfClient } from "./connectionState";
 import { isConfigOnly, repairReasonOf } from "./clientHealth";
 import { Button, Card, SectionHeader, Toggle } from "../memory/settings/primitives";
@@ -200,27 +201,32 @@ export default function ClientSetupList({
                         : successfulWarning?.message ?? null
                     }
                     trailing={(
-                      <Toggle
-                        enabled={false}
-                        valueUnknown={busy === clientType || connectingAll}
-                        unknownState="saving"
-                        onToggle={() => void setUp(client)}
-                        aria-label={t("connectMatrix.connectTool", { name: displayName })}
-                        aria-describedby={clientRowDescId(clientType)}
-                      />
+                      <div className="flex items-center gap-2">
+                        <Toggle
+                          enabled={false}
+                          valueUnknown={busy === clientType || connectingAll}
+                          unknownState="saving"
+                          onToggle={() => void setUp(client)}
+                          aria-label={t("connectMatrix.connectTool", { name: displayName })}
+                          aria-describedby={clientRowDescId(clientType)}
+                        />
+                        <span
+                          aria-hidden="true"
+                          data-connection-chevron-slot
+                          className="block h-7 w-7 shrink-0"
+                        />
+                      </div>
                     )}
                   />
                 </div>
               );
             })}
             {(hiddenCount > 0 || showAll) && !firstRun && (
-              <button
-                type="button"
-                className="w-fit px-2 py-1.5 text-[length:var(--mem-text-xs)] text-[var(--mem-text-secondary)] hover:text-[var(--mem-text)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] focus-visible:outline-offset-2 rounded-[var(--mem-radius-sm)]"
-                onClick={() => setShowAll((value) => !value)}
-              >
-                {showAll ? t("connectMatrix.showLess") : t("connectMatrix.showMore", { count: hiddenCount })}
-              </button>
+              <ConnectionListDisclosure
+                expanded={showAll}
+                hiddenCount={hiddenCount}
+                onToggle={() => setShowAll((value) => !value)}
+              />
             )}
           </div>
         </Card>

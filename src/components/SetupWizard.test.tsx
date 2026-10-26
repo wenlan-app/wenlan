@@ -3446,6 +3446,12 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
     expect(screen.queryByText(i18n.t("setup.done.allSetBody1"))).not.toBeInTheDocument();
   });
 
+  it("names either shared ChatGPT / Codex client in its single-tool restart sentence", async () => {
+    renderDoneWith(["codex_cli"], NOW());
+
+    expect(await screen.findByText("Restart ChatGPT or Codex to finish")).toBeInTheDocument();
+  });
+
   it("once a tool is Connected it keeps the all-set title and one line of body", async () => {
     (listAgents as ReturnType<typeof vi.fn>).mockResolvedValue([
       { name: "cursor", agent_type: "", last_seen_at: FRESH(), memory_count: 0 },

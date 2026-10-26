@@ -49,6 +49,21 @@ describe("translation resources", () => {
       "需要修一下",
       "需要修一下",
     ]);
+    expect(copy.map((locale) => locale.restartNameCodex)).toEqual([
+      "ChatGPT or Codex",
+      "ChatGPT 或 Codex",
+      "ChatGPT 或 Codex",
+    ]);
+    expect(copy.map((locale) => locale.restartToFinish.replace("{{name}}", locale.restartNameCodex))).toEqual([
+      "Restart ChatGPT or Codex to finish",
+      "重新启动 ChatGPT 或 Codex 即可完成",
+      "重新啟動 ChatGPT 或 Codex 即可完成",
+    ]);
+    expect(copy.map((locale) => locale.showMore)).toEqual([
+      "Show {{count}} more",
+      "再显示 {{count}} 个",
+      "再顯示 {{count}} 個",
+    ]);
   });
 
   it("explains the page-review requirement before rename in every locale", () => {

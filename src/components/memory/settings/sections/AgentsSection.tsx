@@ -26,9 +26,11 @@ import { Button, Card, ConfirmActionButton, SectionHeader, Select, Toggle } from
 import ClientSetupList from "../../../connect/ClientSetupList";
 import { connectClient, needsSkillsOnly } from "../../../connect/connectClient";
 import { repairReasonOf } from "../../../connect/clientHealth";
+import ConnectionListDisclosure from "../../../connect/ConnectionListDisclosure";
 import {
   CONNECTION_ROW_LIMIT,
   familyOfClient,
+  restartNameForClient,
   seenFamiliesOf,
   useLiveAgents,
 } from "../../../connect/connectionState";
@@ -260,13 +262,11 @@ export default function AgentsSection({
               />
             ))}
             {(hiddenCount > 0 || showAll) && rows.length > CONNECTION_ROW_LIMIT && (
-              <button
-                type="button"
-                className="w-fit px-2 py-1.5 text-[length:var(--mem-text-xs)] text-[var(--mem-text-secondary)] hover:text-[var(--mem-text)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] focus-visible:outline-offset-2 rounded-[var(--mem-radius-sm)]"
-                onClick={() => setShowAll((value) => !value)}
-              >
-                {showAll ? t("connectMatrix.showLess") : t("connectMatrix.showMore", { count: hiddenCount })}
-              </button>
+              <ConnectionListDisclosure
+                expanded={showAll}
+                hiddenCount={hiddenCount}
+                onToggle={() => setShowAll((value) => !value)}
+              />
             )}
           </div>
         </Card>
@@ -335,7 +335,14 @@ function ToolFamilyRow({
             </span>
             <ConnectionStatus row={row} locale={i18n.language} />
             {row.status === "repair" && (
-              <Button type="button" variant="ghost" size="sm" onClick={onRepair} disabled={busy}>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                style={{ height: "30px", paddingInline: "12px", borderRadius: "8px", fontSize: "13px" }}
+                onClick={onRepair}
+                disabled={busy}
+              >
                 {t("connectMatrix.repair")}
               </Button>
             )}
@@ -452,10 +459,16 @@ function ConnectionStatus({ row, locale }: { row: FamilyRow; locale: string }) {
     );
   }
   if (row.status === "restart") {
+    const displayName = familyDisplayName(row.family);
+    const restartName = restartNameForClient(
+      row.client?.client_type ?? row.family,
+      displayName,
+      t,
+    );
     return (
       <span className="inline-flex shrink-0 items-center gap-1.5 text-[length:var(--mem-text-xs)] text-[var(--mem-status-warning-text)]">
         <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full border border-[var(--mem-accent-amber)]" />
-        {t("connectMatrix.restartToFinish", { name: familyDisplayName(row.family) })}
+        {t("connectMatrix.restartToFinish", { name: restartName })}
       </span>
     );
   }

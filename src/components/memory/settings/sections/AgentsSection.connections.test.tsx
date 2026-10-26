@@ -135,6 +135,9 @@ describe("Connections settings layout", () => {
     expect(connectedRow).toHaveClass("px-3", "py-2.5");
     expect(availableRow).toHaveClass("px-3", "py-2.5");
     expect(availableRow?.lastElementChild).toHaveClass("flex", "h-7", "items-center");
+    const reservedChevronSlot = availableRow?.querySelector("[data-connection-chevron-slot]");
+    expect(reservedChevronSlot).toHaveAttribute("aria-hidden", "true");
+    expect(reservedChevronSlot).toHaveClass("h-7", "w-7", "shrink-0");
   });
 
   it("collapses both sections at five rows with one shared limit", async () => {
@@ -149,7 +152,7 @@ describe("Connections settings layout", () => {
     ]);
     renderSection();
 
-    expect(await screen.findAllByRole("button", { name: "Show 1 more ⌄" })).toHaveLength(2);
+    expect(await screen.findAllByRole("button", { name: "Show 1 more" })).toHaveLength(2);
     expect(section("connected").querySelectorAll("[data-family]")).toHaveLength(5);
     expect(section("available").querySelectorAll("[data-family]")).toHaveLength(5);
   });
@@ -205,9 +208,14 @@ describe("Connections settings layout", () => {
     renderSection();
 
     expect(await screen.findByText("Connected · used 3m ago")).toBeInTheDocument();
-    expect(screen.getByText("Restart ChatGPT / Codex to finish")).toBeInTheDocument();
+    expect(screen.getByText("Restart ChatGPT or Codex to finish")).toBeInTheDocument();
     expect(screen.getByText("Needs a quick fix")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Fix" })).toBeInTheDocument();
+    const repairButton = screen.getByRole("button", { name: "Fix" });
+    expect(repairButton).toHaveClass("border", "border-[var(--mem-border)]");
+    expect(repairButton.style.height).toBe("30px");
+    expect(repairButton.style.paddingInline).toBe("12px");
+    expect(repairButton.style.borderRadius).toBe("8px");
+    expect(repairButton.style.fontSize).toBe("13px");
     expect(screen.queryByText("Added")).not.toBeInTheDocument();
   });
 });

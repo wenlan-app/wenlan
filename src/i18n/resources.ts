@@ -2763,6 +2763,7 @@ const en = {
     // "Added" is Wenlan's side only; the tool has to be restarted before it can
     // call Wenlan, and the row flips to Connected when it first does.
     addedRestart: "Added. Restart {{name}} to finish.",
+    restartNameCodex: "ChatGPT or Codex",
     restartToFinish: "Restart {{name}} to finish",
     connectedUsed: "Connected · used {{time}}",
     connectedHint: "Connected. {{name}} has reached Wenlan.",
@@ -2803,7 +2804,7 @@ const en = {
     addsSkills: "Connects and adds skills",
     needsSkills: "No skills yet",
     alsoWorksWith: "Also works with {{names}}, not installed here.",
-    showMore: "Show {{count}} more ⌄",
+    showMore: "Show {{count}} more",
     showLess: "Show less",
     detailsLabel: "{{name}} details",
     disconnectTool: "Disconnect {{name}}",
@@ -5669,6 +5670,7 @@ const zhHans = {
     added: "已添加",
     connected: "已连接",
     addedRestart: "已添加。重启 {{name}} 即可完成。",
+    restartNameCodex: "ChatGPT 或 Codex",
     restartToFinish: "重新启动 {{name}} 即可完成",
     connectedUsed: "已连接 · {{time}}用过",
     connectedHint: "已连接。{{name}} 已连上文澜。",
@@ -8569,6 +8571,7 @@ const zhHant = {
     added: "已新增",
     connected: "已連接",
     addedRestart: "已新增。重新啟動 {{name}} 即可完成。",
+    restartNameCodex: "ChatGPT 或 Codex",
     restartToFinish: "重新啟動 {{name}} 即可完成",
     connectedUsed: "已連線 · {{time}}用過",
     connectedHint: "已連接。{{name}} 已連上文瀾。",

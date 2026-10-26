@@ -14,6 +14,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { listAgents, type AgentConnection } from "../../lib/tauri";
 import { clientTypeFamily, toolFamilyOf } from "../../lib/agents";
 import { StatusChip } from "../memory/settings/primitives";
@@ -34,6 +35,20 @@ export function familyOfClient(clientType: string): string {
  *  agent name (`codex-mcp-client`). The wizard's connected list mixes both. */
 export function familyOfAnyId(id: string): string {
   return clientTypeFamily(id) || toolFamilyOf({ name: id, agent_type: "" });
+}
+
+/** The label that belongs inside a restart instruction. Most tools restart as
+ *  the same product name the row displays. The shared ChatGPT / Codex config
+ *  is the exception: either client can load it, so the action copy names both
+ *  choices instead of reading the display-name slash aloud. */
+export function restartNameForClient(
+  clientTypeOrFamily: string,
+  displayName: string,
+  t: TFunction,
+): string {
+  return familyOfAnyId(clientTypeOrFamily) === "codex"
+    ? t("connectMatrix.restartNameCodex")
+    : displayName;
 }
 
 /** Whether an agent identity called Wenlan at or after `since` (epoch seconds).
