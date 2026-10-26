@@ -378,9 +378,17 @@ test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helpe
     "then to call `steep` itself with",
     "Never pass the\n      answers on yourself",
     "start its helper in the background",
+    "the answer's `page_titles` (the pages\n   that already exist)",
+    "Material on one subject from different\n   years or versions is one group",
+    "If the material belongs under an existing\n   page",
+    "the topic is that page's title, exactly as given",
+    "its topic\n      as `title`",
+    "Right before you write, call `steep` with `action: \"links\"`",
+    "Call `steep` with `action: \"attach\"` and the\n      token",
   ]) {
     assert.ok(newPages.includes(needle), needle);
   }
+  assert.ok(steep.includes('attach "added N sources to <title>"'), "the report names attaches");
   assert.ok(!/haiku|Agent`/.test(newPages), "no Claude Code helper wording in Codex");
   assert.ok(claudeSkill("steep").includes("`Agent` with `model: \"haiku\"`"), "Claude keeps Haiku");
   assert.ok(

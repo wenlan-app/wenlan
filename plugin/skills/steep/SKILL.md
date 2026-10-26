@@ -56,17 +56,23 @@ yourself.
    note, chat, file or saved memory, with `item_id`, `kind`, `title` and
    `snippet`. Leave out items whose `held` is true: another run has them.
 2. Group the items by topic with the helper: hand it every item's `item_id`,
-   `kind`, `title` and `snippet`, and ask it to reply with only JSON:
+   `kind`, `title` and `snippet`, and the answer's `page_titles` (the pages
+   that already exist), and ask it to reply with only JSON:
    `[{"topic": "...", "item_ids": ["..."]}]`. Each group is one subject a
-   person would look up as one page; an item belongs to at most one group;
-   items that fit no group are left out. A group may be a single item only
-   when that item is long on its own (a whole note, a long chat).
+   person would look up as one page. Material on one subject from different
+   years or versions is one group. If the material belongs under an existing
+   page, even one whose title words differ (a trip to Porto under "Lisbon
+   and Porto"), the topic is that page's title, exactly as given. An item
+   belongs to at most one group; items that fit no group are left out. A
+   group may be a single item only when that item is long on its own (a
+   whole note, a long chat).
 3. Biggest groups first, at most 8 pages this run. Finish each group, from
    its claim to its page, before you claim the next, so the first page lands
    within a few minutes. For each group:
-   1. Call `steep` with `action: "claim_new"` and its `item_ids`. The answer
-      has the items' text numbered `[1]` to `[n]`, a `token` and a `note`. A
-      refusal (too little text, already taken) means skip the group.
+   1. Call `steep` with `action: "claim_new"`, its `item_ids` and its topic
+      as `title`. The answer has the items' text numbered `[1]` to `[n]`, a
+      `token` and a `note`. A refusal (too little text, already taken) means
+      skip the group.
    2. When the answer has `organize`, the helper organizes the sources before
       you write, the way Wenlan's own model would: their type and tags, and
       the people, projects and tools they mention. Hand the helper the
@@ -76,23 +82,29 @@ yourself.
       instructions ask for; then to call `steep` itself with
       `action: "organize"`, the token and `answers` as
       `[{"n": 1, "answer": "..."}]`; and to reply with only one line: the
-      counts and the `link_targets` that call returned. Never pass the
+      counts that call returned. Never pass the
       answers on yourself. Only when you organize yourself (no helper could
       start) do you call `organize` with your own answers.
-   3. Write the page yourself, with your main model. Never let the small
-      model write it. Title: short, names the topic, in the sources'
+   3. Right before you write, call `steep` with `action: "links"` and the
+      token. It returns `link_targets` and `existing_page` as they are now,
+      counting the pages this run wrote since the claim.
+   4. When it has `existing_page`, a page on this subject already exists: do
+      not write a second one. Call `steep` with `action: "attach"` and the
+      token. The sources go into that page, which then waits to be rewritten
+      with all of them (section 3). Go on to the next group.
+   5. Otherwise write the page yourself, with your main model. Never let the
+      small model write it. Title: short, names the topic, in the sources'
       language. Open with one plain sentence that says what the page is
       about, then short paragraphs or lists. Use only what the sources say
-      and cite every claim with its number, like `[2]`. When the organize
-      result (or else the claim) has `link_targets`, link each of those pages
-      the text talks about once as `[[Title]]`, with the title exactly as
-      given. Link no other titles.
-   4. Call `steep` with `action: "write"`, the token, `title` and the body as
+      and cite every claim with its number, like `[2]`. Link each page in
+      `link_targets` the text talks about once as `[[Title]]`, with the
+      title exactly as given. Link no other titles.
+   6. Call `steep` with `action: "write"`, the token, `title` and the body as
       `content`. A citation refusal: fix the sentences it points at and write
       again with the same token, once; still refused, `release` the token. If
       the sources turn out not to belong together, `release` the token.
-   5. `created`: a new page. `merged`: a page on that topic already existed
-      and took the sources.
+   7. `created`: a new page. `merged`: a page on that topic already existed
+      and took the sources. `attached`: the existing page took them.
 
    The helper for the next group may organize while you write a page, when
    your tool runs helpers in the background. In Claude Code, after the
@@ -102,7 +114,9 @@ yourself.
 
 ## 3. Pages that went out of date
 
-Skip this section when `total` is 0.
+Skip this section when `total` is 0 and nothing was attached in section 2.
+When something was attached, call `list` again first: the pages that took
+sources now wait here.
 
 Work through at most 10 pages this run, newest first. Skip a page whose
 `leased_by` is set: another run has it. Page the ones with `needs_you`; they
@@ -133,7 +147,8 @@ For each page:
    sources, yes or no. When it says yes, call `steep` with
    `action: "still_accurate"` and the token. When it says no, or you cannot
    start a helper on a small model, rewrite. A page whose `stale_reason` is
-   `source_removed` is always rewritten.
+   `source_removed` is always rewritten, and so is a page you attached
+   sources to in section 2, with no check.
    When `stale_reason` is `code_changed`, the claim's `code` shows the lines
    as they read now and `what_changed` says what the page should now say.
    An entry with `deleted: true` is a file that was deleted from the
@@ -165,12 +180,13 @@ For each page:
      Otherwise move on.
 
 Never call `write_page` on a claimed page or for a claim_new's items; the
-commit and the write are the only writes. Never release a token you did not
+commit, the write and the attach are the only writes. Never release a token you did not
 get from your own claim.
 
 ## 4. Report
 
-A few short lines, no ids: the titles of the new pages written, how many of
+A few short lines, no ids: the titles of the new pages written, for each
+attach "added N sources to <title>", how many of
 their sources were organized and how many of the people, projects and tools
 found there earned a Wiki page (`confirmed`), whether you grouped and organized
 them yourself because no cheaper helper could start, how many pages were updated, how many wait for the
