@@ -4312,6 +4312,9 @@ pub struct EntityExtractionPending {
     pub source_id: String,
     pub expected_version: i64,
     pub prior_attempts: u32,
+    /// Claim planning skipped or could not finish the vector-link step. A
+    /// successful extraction settles that step in the same transaction.
+    pub complete_entity_link: bool,
     /// The exact text the extraction reads; the commit locates relation
     /// spans against it.
     pub content: String,
@@ -25996,6 +25999,52 @@ impl MemoryDB {
         Ok(embedding)
     }
 
+    /// Get a cached embedding or compute it only when the shared embedder is
+    /// immediately available. Claim planning uses this so it cannot queue
+    /// behind the import/background embedding worker.
+    fn get_or_compute_embedding_if_ready(
+        &self,
+        text: &str,
+    ) -> Result<Option<Vec<f32>>, WenlanError> {
+        {
+            let mut cache = self.embedding_cache.lock().unwrap();
+            if let Some(cached) = cache.get(text) {
+                return Ok(Some(cached));
+            }
+        }
+        let Some(embedder) = self.embedder.as_ref() else {
+            return Ok(None);
+        };
+        let mut embedder = match embedder.try_lock() {
+            Ok(embedder) => embedder,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Ok(None),
+        };
+        let embeddings = embedder
+            .embed(vec![text], None)
+            .map_err(|e| WenlanError::Embedding(e.to_string()))?;
+        let embedding = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| WenlanError::Embedding("No embedding generated".into()))?;
+        drop(embedder);
+        self.embedding_cache
+            .lock()
+            .unwrap()
+            .put(text, embedding.clone());
+        Ok(Some(embedding))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shared_embedder_for_test(&self) -> Option<Arc<std::sync::Mutex<TextEmbedding>>> {
+        self.embedder.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_embedding_cache_for_test(&self) {
+        *self.embedding_cache.lock().unwrap() = EmbeddingCache::new(200);
+    }
+
     /// Generate embeddings for a batch of texts.
     pub fn generate_embeddings(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, WenlanError> {
         if texts.is_empty() {
@@ -31654,7 +31703,15 @@ impl MemoryDB {
         limit: usize,
     ) -> Result<Vec<EntitySearchResult>, WenlanError> {
         let embedding = self.get_or_compute_embedding(query)?;
-        let vec_str = Self::vec_to_sql(&embedding);
+        self.search_entities_by_embedding(&embedding, limit).await
+    }
+
+    async fn search_entities_by_embedding(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<EntitySearchResult>, WenlanError> {
+        let vec_str = Self::vec_to_sql(embedding);
 
         let conn = self.conn.lock().await;
 
@@ -40464,12 +40521,31 @@ impl MemoryDB {
     /// threaded through (never re-fetched) so each relation's `span` quote is
     /// located against the string the model actually saw, matching
     /// `create_relation_with_span`'s contract.
+    #[cfg(test)]
     async fn commit_entity_enrichment_at_version(
         &self,
         source_id: &str,
         expected_version: i64,
         kg_results: &[crate::extract::KgExtractionResult],
         content: &str,
+    ) -> Result<bool, WenlanError> {
+        self.commit_entity_enrichment_at_version_with_link_receipt(
+            source_id,
+            expected_version,
+            kg_results,
+            content,
+            false,
+        )
+        .await
+    }
+
+    async fn commit_entity_enrichment_at_version_with_link_receipt(
+        &self,
+        source_id: &str,
+        expected_version: i64,
+        kg_results: &[crate::extract::KgExtractionResult],
+        content: &str,
+        complete_entity_link: bool,
     ) -> Result<bool, WenlanError> {
         // Avoid CPU-heavy embedding/minhash preparation when inference already
         // returned after the source became stale. The transaction below still
@@ -41325,25 +41401,32 @@ impl MemoryDB {
                 })?;
             }
 
-            conn.execute(
-                "INSERT INTO enrichment_steps
-                     (source_id, step_name, status, error, attempts, updated_at, input_version)
-                 VALUES (?1, 'entity_extract', 'ok', NULL, 1, ?2, ?3)
-                 ON CONFLICT(source_id, step_name) DO UPDATE SET
-                     status = 'ok', error = NULL,
-                     attempts = CASE
-                         WHEN enrichment_steps.input_version = excluded.input_version
-                              AND enrichment_steps.status <> 'skipped'
-                         THEN enrichment_steps.attempts + 1
-                         ELSE 1
-                     END,
-                     updated_at = ?2, input_version = ?3",
-                libsql::params![source_id, now, expected_version],
-            )
-            .await
-            .map_err(|e| {
-                WenlanError::VectorDb(format!("entity enrichment receipt: {e}"))
-            })?;
+            let steps: &[&str] = if complete_entity_link {
+                &["entity_link", "entity_extract"]
+            } else {
+                &["entity_extract"]
+            };
+            for step in steps {
+                conn.execute(
+                    "INSERT INTO enrichment_steps
+                         (source_id, step_name, status, error, attempts, updated_at, input_version)
+                     VALUES (?1, ?2, 'ok', NULL, 1, ?3, ?4)
+                     ON CONFLICT(source_id, step_name) DO UPDATE SET
+                         status = 'ok', error = NULL,
+                         attempts = CASE
+                             WHEN enrichment_steps.input_version = excluded.input_version
+                                  AND enrichment_steps.status <> 'skipped'
+                             THEN enrichment_steps.attempts + 1
+                             ELSE 1
+                         END,
+                         updated_at = ?3, input_version = ?4",
+                    libsql::params![source_id, *step, now, expected_version],
+                )
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("entity enrichment receipt: {e}"))
+                })?;
+            }
 
             Ok(true)
         }
@@ -41593,7 +41676,7 @@ impl MemoryDB {
             return Ok(0);
         }
         match self
-            .prepare_entity_enrichment(candidate, entity_link_distance)
+            .prepare_entity_enrichment(candidate, entity_link_distance, false)
             .await?
         {
             EntityEnrichmentPrep::Settled => {}
@@ -41627,7 +41710,29 @@ impl MemoryDB {
         if candidate.source_id.is_empty() {
             return Ok(None);
         }
-        self.prepare_entity_enrichment(candidate, Some(entity_link_distance))
+        self.prepare_entity_enrichment(candidate, Some(entity_link_distance), false)
+            .await
+            .map(Some)
+    }
+
+    /// Claim planning runs alongside import embedding and must never wait for
+    /// the shared embedder. If it is busy, leave the entity step pending for
+    /// the caller's extraction task; do not write an `entity_link=ok` receipt.
+    pub async fn entity_enrichment_for_claim(
+        &self,
+        source_id: &str,
+        entity_link_distance: f32,
+    ) -> Result<Option<EntityEnrichmentPrep>, WenlanError> {
+        let Some(candidate) = self
+            .select_entity_enrichment_candidate(Some(source_id))
+            .await?
+        else {
+            return Ok(None);
+        };
+        if candidate.source_id.is_empty() {
+            return Ok(None);
+        }
+        self.prepare_entity_enrichment(candidate, Some(entity_link_distance), true)
             .await
             .map(Some)
     }
@@ -41738,6 +41843,7 @@ impl MemoryDB {
         &self,
         candidate: EntityEnrichmentCandidate,
         entity_link_distance: Option<f32>,
+        nonblocking_embedder: bool,
     ) -> Result<EntityEnrichmentPrep, WenlanError> {
         let EntityEnrichmentCandidate {
             source_id,
@@ -41763,8 +41869,37 @@ impl MemoryDB {
             Self::load_memory_enrichment_content(&conn, &source_id, expected_version).await?
         };
 
+        let mut complete_entity_link = false;
         if let Some(distance) = entity_link_distance {
-            match self.search_entities_by_vector(&content, 3).await {
+            let search = if nonblocking_embedder {
+                let embedding = match self.get_or_compute_embedding_if_ready(&content) {
+                    Ok(embedding) => embedding,
+                    Err(error) => {
+                        log::warn!(
+                            "[entity_enrichment_claim] vector auto-link unavailable for {source_id}: {error}; leaving extraction pending"
+                        );
+                        None
+                    }
+                };
+                match embedding {
+                    Some(embedding) => Some(self.search_entities_by_embedding(&embedding, 3).await),
+                    None => None,
+                }
+            } else {
+                Some(self.search_entities_by_vector(&content, 3).await)
+            };
+            let Some(search) = search else {
+                return Ok(EntityEnrichmentPrep::NeedsExtraction(
+                    EntityExtractionPending {
+                        source_id,
+                        expected_version,
+                        prior_attempts,
+                        complete_entity_link: true,
+                        content,
+                    },
+                ));
+            };
+            match search {
                 Ok(entities) => {
                     if let Some(entity) = entities.iter().find(|entity| entity.distance < distance)
                     {
@@ -41799,6 +41934,7 @@ impl MemoryDB {
                     log::warn!(
                         "[entity_enrichment_slice] vector auto-link failed for {source_id}: {error}; falling back to extraction"
                     );
+                    complete_entity_link = true;
                 }
             }
         }
@@ -41808,6 +41944,7 @@ impl MemoryDB {
                 source_id,
                 expected_version,
                 prior_attempts,
+                complete_entity_link,
                 content,
             },
         ))
@@ -41827,11 +41964,12 @@ impl MemoryDB {
         match result {
             Ok(kg_results) => {
                 let committed = self
-                    .commit_entity_enrichment_at_version(
+                    .commit_entity_enrichment_at_version_with_link_receipt(
                         source_id,
                         pending.expected_version,
                         &kg_results,
                         &pending.content,
+                        pending.complete_entity_link,
                     )
                     .await?;
                 if !committed {

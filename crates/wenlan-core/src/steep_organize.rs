@@ -112,7 +112,7 @@ pub async fn plan(
             continue;
         }
         if let Some(EntityEnrichmentPrep::NeedsExtraction(pending)) = db
-            .entity_enrichment_for(source_id, options.entity_link_distance)
+            .entity_enrichment_for_claim(source_id, options.entity_link_distance)
             .await?
         {
             let request = crate::kg::entity_extraction::kg_extraction_request(
