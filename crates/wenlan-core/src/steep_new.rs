@@ -29,10 +29,11 @@ use std::time::{Duration, Instant};
 
 use wenlan_types::requests::CreateConceptRequest;
 use wenlan_types::space_context::WriteSpaceTarget;
+use wenlan_types::steep::SteepCodeAnswer;
 use wenlan_types::steep::SteepSource;
 use wenlan_types::steep_new::{
-    SteepNewItem, STEEP_NEW_KIND_CAPTURE, STEEP_NEW_KIND_CHAT, STEEP_NEW_KIND_FILE,
-    STEEP_NEW_KIND_NOTE,
+    SteepNewItem, SteepOrganizeCommitResponse, SteepOrganizeWork, STEEP_NEW_KIND_CAPTURE,
+    STEEP_NEW_KIND_CHAT, STEEP_NEW_KIND_FILE, STEEP_NEW_KIND_NOTE,
 };
 
 use crate::db::MemoryDB;
@@ -40,6 +41,7 @@ use crate::error::WenlanError;
 use crate::post_write::{page_write, PageWrite};
 use crate::read_scope::ReadScope;
 use crate::steep::SteepError;
+use crate::steep_organize::{OrganizeOptions, OrganizeTask};
 
 /// How long a claim holds its items: long enough for a main model to write one
 /// note.
@@ -66,6 +68,9 @@ pub const MIN_SINGLE_SOURCE_CHARS: usize = 800;
 /// Longest title a note may get.
 const MAX_TITLE_CHARS: usize = 120;
 
+/// Most existing pages a claim offers as `[[links]]`.
+const MAX_LINK_TARGETS: usize = 20;
+
 /// One claim, as handed out.
 #[derive(Debug, Clone)]
 struct NewClaim {
@@ -75,6 +80,8 @@ struct NewClaim {
     space: Option<String>,
     scope: ReadScope,
     until: Instant,
+    /// Organize tasks still without an answer ([`organize_new`]).
+    organize: Vec<OrganizeTask>,
 }
 
 #[derive(Default)]
@@ -327,13 +334,23 @@ pub struct NewPageClaim {
     pub held_until: i64,
     pub sources: Vec<SteepSource>,
     pub skipped: Vec<String>,
+    /// Organizing the sources still need, when `organize` options were given.
+    pub organize: Option<SteepOrganizeWork>,
+    /// Existing pages the page may link as `[[Title]]`.
+    pub link_targets: Vec<String>,
 }
 
 /// Hold `item_ids` (one topic) for one note and number their text.
+///
+/// With `organize` (the caller's AI tool does the model work, no background
+/// model does), the claim also plans the classification and entity
+/// detection its sources still need ([`crate::steep_organize`]); the answers
+/// land through [`organize_new`] before the page is written.
 pub async fn claim_new(
     db: &MemoryDB,
     scope: &ReadScope,
     item_ids: &[String],
+    organize: Option<&OrganizeOptions>,
 ) -> Result<NewPageClaim, SteepError> {
     let mut wanted: Vec<String> = Vec::new();
     for id in item_ids {
@@ -470,13 +487,31 @@ pub async fn claim_new(
             NewClaim {
                 item_ids: claimed_items,
                 sources: sources.clone(),
-                space,
+                space: space.clone(),
                 scope: scope.clone(),
                 until,
+                organize: Vec::new(),
             },
         );
     }
     let held_until = chrono::Utc::now().timestamp() + NEW_PAGE_HOLD.as_secs() as i64;
+    let source_ids: Vec<String> = sources.iter().map(|(id, _)| id.clone()).collect();
+    // Planning runs after the hold, so no other run can claim these sources
+    // while their model-free entity steps commit. A failure leaves the claim
+    // as it was before organizing existed: the page can still be written.
+    let mut organize_work = None;
+    if let Some(options) = organize {
+        match crate::steep_organize::plan(db, options, &source_ids).await {
+            Ok(tasks) => {
+                organize_work = crate::steep_organize::work(&tasks);
+                if let Some(claim) = holds().by_token.get_mut(&token) {
+                    claim.organize = tasks;
+                }
+            }
+            Err(error) => log::warn!("[steep-new] organize planning failed: {error}"),
+        }
+    }
+    let link_targets = link_targets(db, scope, space.as_deref(), &source_ids).await;
     Ok(NewPageClaim {
         token,
         held_until,
@@ -490,7 +525,181 @@ pub async fn claim_new(
             })
             .collect(),
         skipped,
+        organize: organize_work,
+        link_targets,
     })
+}
+
+/// Existing pages a note from `source_ids` may link: notes about, or citing
+/// memories about, the entities those sources mention, that a `[[Title]]`
+/// in a note born in `space` resolves to. Entity pages are not offered: a
+/// wikilink never resolves to one. Best effort: a failed read offers none.
+async fn link_targets(
+    db: &MemoryDB,
+    scope: &ReadScope,
+    space: Option<&str>,
+    source_ids: &[String],
+) -> Vec<String> {
+    let links = match db.source_entity_links(source_ids).await {
+        Ok(links) => links,
+        Err(error) => {
+            log::warn!("[steep-new] link targets: {error}");
+            return Vec::new();
+        }
+    };
+    let mut entity_ids: Vec<String> = links.into_iter().map(|(_, entity, _)| entity).collect();
+    entity_ids.sort();
+    entity_ids.dedup();
+    let pages = match db
+        .pages_related_to_entities(&entity_ids, MAX_LINK_TARGETS * 2)
+        .await
+    {
+        Ok(pages) => pages,
+        Err(error) => {
+            log::warn!("[steep-new] link targets: {error}");
+            return Vec::new();
+        }
+    };
+    let mut out: Vec<String> = Vec::new();
+    for (page_id, title, page_space) in pages {
+        if out.len() >= MAX_LINK_TARGETS || title.trim().is_empty() {
+            continue;
+        }
+        if !scope.matches(page_space.as_deref()) || out.contains(&title) {
+            continue;
+        }
+        let resolves = db
+            .find_unique_active_page_id_by_title_scoped(&title, space)
+            .await
+            .ok()
+            .flatten()
+            .is_some_and(|resolved| resolved == page_id);
+        if resolves {
+            out.push(title);
+        }
+    }
+    out
+}
+
+/// The entities most of `source_ids` mention: each linked to more than half
+/// of them, the most-linked first.
+async fn majority_entities(
+    db: &MemoryDB,
+    source_ids: &[String],
+) -> Result<Vec<String>, WenlanError> {
+    if source_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for (_, entity_id, _) in db.source_entity_links(source_ids).await? {
+        *counts.entry(entity_id).or_default() += 1;
+    }
+    let mut majority: Vec<(String, usize)> = counts
+        .into_iter()
+        .filter(|(_, count)| count * 2 > source_ids.len())
+        .collect();
+    majority.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(majority
+        .into_iter()
+        .map(|(entity_id, _)| entity_id)
+        .collect())
+}
+
+/// Land a small model's answers to a claim's organize tasks, each through
+/// the lane's own parser and version-checked commit. Answered tasks leave
+/// the claim; a repeated or unknown `n` is reported, never applied twice.
+/// When the claim is not Space-locked and classification filed every source
+/// into one Space, the page is born there, as when the sources already were.
+pub async fn organize_new(
+    db: &MemoryDB,
+    token: &str,
+    answers: &[SteepCodeAnswer],
+) -> Result<SteepOrganizeCommitResponse, SteepError> {
+    let (taken, unknown, source_ids, scope) = {
+        let mut holds = holds();
+        holds.expire(Instant::now());
+        let claim = holds.by_token.get_mut(token).ok_or(SteepError::TokenGone)?;
+        let mut taken: Vec<(OrganizeTask, String)> = Vec::new();
+        let mut unknown: Vec<u32> = Vec::new();
+        for answer in answers {
+            match claim.organize.iter().position(|task| task.n == answer.n) {
+                Some(index) => taken.push((claim.organize.remove(index), answer.answer.clone())),
+                None => unknown.push(answer.n),
+            }
+        }
+        let source_ids: Vec<String> = claim.sources.iter().map(|(id, _)| id.clone()).collect();
+        (taken, unknown, source_ids, claim.scope.clone())
+    };
+
+    // The answers may create the very entities they confirm, so compare
+    // against every entity confirmed before them.
+    let confirmed_before: HashSet<String> = db.confirmed_entity_ids().await?;
+    let mut out = SteepOrganizeCommitResponse {
+        unknown,
+        ..Default::default()
+    };
+    for (task, answer) in &taken {
+        match crate::steep_organize::apply(db, task, answer).await? {
+            crate::steep_organize::Applied::Saved => match task.input {
+                crate::steep_organize::OrganizeInput::Classify(_) => out.classified += 1,
+                crate::steep_organize::OrganizeInput::Entities(_) => out.detected += 1,
+            },
+            crate::steep_organize::Applied::Unreadable => out.failed += 1,
+            crate::steep_organize::Applied::Stale => out.stale += 1,
+        }
+    }
+    let links = db.source_entity_links(&source_ids).await?;
+    let linked: HashSet<&str> = links.iter().map(|(memory, _, _)| memory.as_str()).collect();
+    out.linked = u32::try_from(linked.len()).unwrap_or(u32::MAX);
+    let confirmed_after: HashSet<&str> = links
+        .iter()
+        .filter(|(_, _, confirmed)| *confirmed)
+        .map(|(_, entity, _)| entity.as_str())
+        .collect();
+    out.confirmed = u32::try_from(
+        confirmed_after
+            .iter()
+            .filter(|entity| !confirmed_before.contains(**entity))
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
+
+    // Classification may file unfiled sources into a Space. A claim that is
+    // not Space-locked follows its sources, as it would have if they had
+    // been filed before the claim.
+    let mut space = None;
+    if scope == ReadScope::Global {
+        let mut spaces = Vec::with_capacity(source_ids.len());
+        for id in &source_ids {
+            spaces.push(db.get_memory_space(id).await?);
+        }
+        let first = spaces.first().cloned().flatten();
+        space = Some(if spaces.iter().all(|s| *s == first) {
+            first
+        } else {
+            None
+        });
+    }
+    let space_now = {
+        let mut holds = holds();
+        let claim = holds.by_token.get_mut(token).ok_or(SteepError::TokenGone)?;
+        if let Some(space) = space {
+            claim.space = space;
+        }
+        out.remaining = u32::try_from(claim.organize.len()).unwrap_or(u32::MAX);
+        claim.space.clone()
+    };
+    out.link_targets = link_targets(db, &scope, space_now.as_deref(), &source_ids).await;
+    log::info!(
+        "[steep-new] organized {} classified, {} detected, {} unreadable, {} stale, {} linked of {} sources",
+        out.classified,
+        out.detected,
+        out.failed,
+        out.stale,
+        out.linked,
+        source_ids.len()
+    );
+    Ok(out)
 }
 
 /// What a new-page commit did.
@@ -614,6 +823,19 @@ pub async fn commit_new(
         Some(space) => WriteSpaceTarget::Named(space.to_string()),
         None => WriteSpaceTarget::Uncategorized,
     };
+    // A note most of whose sources mention one entity is about it, as an
+    // automatic note from an entity's memories is. Only the first note about
+    // an entity says so: the page match folds a new note into an existing
+    // note about the same entity, which would drop the text just written. A
+    // later note links that one through `link_targets` instead, and is about
+    // the next majority entity that has no note yet, if any.
+    let mut entity_id = None;
+    for candidate in majority_entities(db, &ids).await? {
+        if !db.entity_has_note(&candidate).await? {
+            entity_id = Some(candidate);
+            break;
+        }
+    }
     let result = page_write(
         db,
         PageWrite::Create {
@@ -622,7 +844,7 @@ pub async fn commit_new(
                 title: title.to_string(),
                 content: body,
                 summary,
-                entity_id: None,
+                entity_id: entity_id.clone(),
                 space: space_target,
                 source_memory_ids: ids.clone(),
                 creation_kind: Some("distilled".to_string()),
@@ -642,6 +864,18 @@ pub async fn commit_new(
     .await;
     holds().drop_token(token);
     let result = result?;
+    // A note written about an entity cites it, and a cited entity has earned
+    // its Wiki page, as for an automatic note (`synthesis::distill`). Runs for
+    // a merge too: the page that took the sources cites the entity as much.
+    if let Some(entity_id) = entity_id.as_deref() {
+        match db.establish_entity_by_citation(entity_id).await {
+            Ok(true) => log::info!("[steep-new] established entity {entity_id} by citation"),
+            Ok(false) => {}
+            Err(error) => {
+                log::warn!("[steep-new] establish by citation failed for {entity_id}: {error}")
+            }
+        }
+    }
     if let Err(error) = db
         .stamp_last_distilled_at(&ids, chrono::Utc::now().timestamp())
         .await

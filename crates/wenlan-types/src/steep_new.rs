@@ -81,6 +81,85 @@ pub struct SteepNewClaimResponse {
     pub skipped: Vec<String>,
     /// Plain words on what to write.
     pub note: String,
+    /// Organizing the claimed sources still need before the page is written
+    /// (the same steps Wenlan's own model runs in Automatic mode). Present
+    /// only when the caller's AI tool does that work: hand it to a small
+    /// model and pass the answers to `POST /api/steep/new/organize`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organize: Option<SteepOrganizeWork>,
+    /// Titles of existing pages these sources relate to (through the people,
+    /// projects and tools they mention). The page may link them as
+    /// `[[Title]]` where it talks about them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
+}
+
+/// `organize.tasks[].stage`: memory type, quality, importance and tags.
+pub const STEEP_ORGANIZE_STAGE_CLASSIFY: &str = "classify";
+/// `organize.tasks[].stage`: the people, projects and tools a memory mentions.
+pub const STEEP_ORGANIZE_STAGE_ENTITIES: &str = "entities";
+
+/// The organizing a new-page claim hands out, one small-model call per task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepOrganizeWork {
+    /// The system prompt of each stage present in `tasks`, once.
+    pub stages: Vec<SteepOrganizeStage>,
+    pub tasks: Vec<SteepOrganizeTask>,
+    /// Plain words on how to answer.
+    pub note: String,
+}
+
+/// One stage's instructions: the system prompt for every task of `stage`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepOrganizeStage {
+    pub stage: String,
+    pub instructions: String,
+}
+
+/// One small-model call: answer `prompt` under the instructions of `stage`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepOrganizeTask {
+    pub n: u32,
+    pub stage: String,
+    pub memory_id: String,
+    pub prompt: String,
+}
+
+/// `POST /api/steep/new/organize`: the small model's replies to a claim's
+/// organize tasks, each passed back unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteepOrganizeCommitRequest {
+    pub token: String,
+    pub answers: Vec<crate::steep::SteepCodeAnswer>,
+}
+
+/// What an organize commit did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct SteepOrganizeCommitResponse {
+    /// Memories whose type, quality and tags were saved.
+    pub classified: u32,
+    /// Memories whose entity detection was saved.
+    pub detected: u32,
+    /// Of the claim's sources, how many are now linked to an entity.
+    pub linked: u32,
+    /// Entities that earned their Wiki page from these answers.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub confirmed: u32,
+    /// Answers that could not be read; Wenlan retries the step later.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub failed: u32,
+    /// Answers for a memory that changed since the claim; nothing was saved.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub stale: u32,
+    /// Task numbers this claim has no open task for (unknown or answered).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unknown: Vec<u32>,
+    /// Tasks of the claim still without an answer.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub remaining: u32,
+    /// As in the claim, now that the sources are organized.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
 }
 
 /// `POST /api/steep/new/commit`.

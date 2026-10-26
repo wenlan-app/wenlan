@@ -208,13 +208,17 @@ async fn claim_then_write_creates_a_cited_note_and_the_items_leave_the_list() {
     capture(&db, "w_b", BREAD_2).await;
     let items = vec!["w_a".to_string(), "w_b".to_string()];
 
-    let claim = claim_new(&db, &ReadScope::Global, &items).await.unwrap();
+    let claim = claim_new(&db, &ReadScope::Global, &items, None)
+        .await
+        .unwrap();
     assert_eq!(claim.sources.len(), 2);
     assert_eq!(claim.sources[0].n, 1);
     assert!(claim.skipped.is_empty());
 
     // A second run cannot take the same items while the first holds them.
-    assert!(claim_new(&db, &ReadScope::Global, &items).await.is_err());
+    assert!(claim_new(&db, &ReadScope::Global, &items, None)
+        .await
+        .is_err());
     let listed = new_material(&db, &ReadScope::Global).await.unwrap();
     assert!(listed
         .iter()
@@ -251,7 +255,7 @@ async fn a_citation_out_of_range_is_refused_and_the_hold_kept() {
     let (db, _dir) = test_db().await;
     capture(&db, "r_a", BREAD_1).await;
     capture(&db, "r_b", BREAD_2).await;
-    let claim = claim_new(&db, &ReadScope::Global, &["r_a".into(), "r_b".into()])
+    let claim = claim_new(&db, &ReadScope::Global, &["r_a".into(), "r_b".into()], None)
         .await
         .unwrap();
     let bad = format!("{BODY} It is also great toast [7].");
@@ -270,7 +274,7 @@ async fn a_source_edited_after_the_claim_refuses_the_commit() {
     let (db, _dir) = test_db().await;
     capture(&db, "e_a", BREAD_1).await;
     capture(&db, "e_b", BREAD_2).await;
-    let claim = claim_new(&db, &ReadScope::Global, &["e_a".into(), "e_b".into()])
+    let claim = claim_new(&db, &ReadScope::Global, &["e_a".into(), "e_b".into()], None)
         .await
         .unwrap();
     {
@@ -288,7 +292,7 @@ async fn a_source_edited_after_the_claim_refuses_the_commit() {
     ));
     // The refused claim let go of its items: they can be claimed again.
     assert!(
-        claim_new(&db, &ReadScope::Global, &["e_a".into(), "e_b".into()])
+        claim_new(&db, &ReadScope::Global, &["e_a".into(), "e_b".into()], None)
             .await
             .is_ok()
     );
@@ -300,9 +304,13 @@ async fn release_gives_the_items_back() {
     capture(&db, "x_a", BREAD_1).await;
     capture(&db, "x_b", BREAD_2).await;
     let items = vec!["x_a".to_string(), "x_b".to_string()];
-    let claim = claim_new(&db, &ReadScope::Global, &items).await.unwrap();
+    let claim = claim_new(&db, &ReadScope::Global, &items, None)
+        .await
+        .unwrap();
     assert_eq!(release_new(&claim.token).unwrap().outcome, "released");
-    assert!(claim_new(&db, &ReadScope::Global, &items).await.is_ok());
+    assert!(claim_new(&db, &ReadScope::Global, &items, None)
+        .await
+        .is_ok());
 }
 
 #[tokio::test]
@@ -310,7 +318,7 @@ async fn one_short_item_is_too_little_for_a_note_but_one_long_one_is_enough() {
     let (db, _dir) = test_db().await;
     capture(&db, "t_short", BREAD_1).await;
     let Err(SteepError::Invalid(message)) =
-        claim_new(&db, &ReadScope::Global, &["t_short".into()]).await
+        claim_new(&db, &ReadScope::Global, &["t_short".into()], None).await
     else {
         panic!("one short item must be refused as too little");
     };
@@ -319,7 +327,7 @@ async fn one_short_item_is_too_little_for_a_note_but_one_long_one_is_enough() {
         "the refusal must read with single spaces: {message:?}"
     );
     capture(&db, "t_long", &BREAD_1.repeat(20)).await;
-    assert!(claim_new(&db, &ReadScope::Global, &["t_long".into()])
+    assert!(claim_new(&db, &ReadScope::Global, &["t_long".into()], None)
         .await
         .is_ok());
 }
@@ -328,9 +336,12 @@ async fn one_short_item_is_too_little_for_a_note_but_one_long_one_is_enough() {
 async fn a_space_locked_claim_cannot_take_material_from_another_space() {
     let (db, _dir) = test_db().await;
     capture(&db, "s_a", BREAD_1).await;
-    assert!(
-        claim_new(&db, &ReadScope::Space("other".into()), &["s_a".into()])
-            .await
-            .is_err()
-    );
+    assert!(claim_new(
+        &db,
+        &ReadScope::Space("other".into()),
+        &["s_a".into()],
+        None
+    )
+    .await
+    .is_err());
 }

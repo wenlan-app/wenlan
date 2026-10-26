@@ -182,4 +182,162 @@ impl MemoryDB {
         }
         Ok(out)
     }
+
+    /// The entities each of `source_ids` is linked to that have a live
+    /// entity page, as `(memory source id, entity id, confirmed)`. Reads the
+    /// junction table and the legacy one-to-one mirror, as the graph does.
+    pub(crate) async fn source_entity_links(
+        &self,
+        source_ids: &[String],
+    ) -> Result<Vec<(String, String, bool)>, WenlanError> {
+        if source_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let marks = (1..=source_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT x.memory_id, x.entity_id, MAX(COALESCE(p.entity_confirmed, 0)) \
+             FROM (SELECT memory_id, entity_id FROM memory_entities \
+                   UNION \
+                   SELECT source_id AS memory_id, entity_id FROM memories \
+                    WHERE entity_id IS NOT NULL AND source = 'memory' AND chunk_index = 0) x \
+             JOIN entity_page_map epm ON epm.entity_id = x.entity_id \
+             JOIN pages p ON p.id = epm.page_id AND p.kind = 'entity' AND p.status = 'active' \
+             WHERE x.memory_id IN ({marks}) \
+             GROUP BY x.memory_id, x.entity_id \
+             ORDER BY x.memory_id ASC, x.entity_id ASC"
+        );
+        let params: Vec<libsql::Value> = source_ids
+            .iter()
+            .map(|id| libsql::Value::Text(id.clone()))
+            .collect();
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, params)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("source_entity_links: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("source_entity_links row: {e}")))?
+        {
+            out.push((
+                row.get(0)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                row.get(1)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                row.get::<i64>(2).unwrap_or(0) != 0,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Notes (not entity or source pages) about one of `entity_ids`, or citing
+    /// a memory linked to one, newest first, as `(page id, title, space)`.
+    /// The space is the page's workspace, else its space.
+    pub(crate) async fn pages_related_to_entities(
+        &self,
+        entity_ids: &[String],
+        limit: usize,
+    ) -> Result<Vec<(String, String, Option<String>)>, WenlanError> {
+        if entity_ids.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let marks = (1..=entity_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT p.id, p.title, COALESCE(p.workspace, p.space) FROM pages p \
+             WHERE {ORGANIZING} \
+               AND (p.entity_id IN ({marks}) \
+                    OR EXISTS (SELECT 1 FROM edges e \
+                               JOIN memory_entities me ON me.memory_id = e.dst_id \
+                               WHERE e.src_id = p.id AND e.edge_type = 'cites' \
+                                 AND e.dst_kind = 'memory' AND e.valid_until IS NULL \
+                                 AND me.entity_id IN ({marks}))) \
+             ORDER BY p.last_modified DESC, p.id ASC \
+             LIMIT {limit}"
+        );
+        let params: Vec<libsql::Value> = entity_ids
+            .iter()
+            .map(|id| libsql::Value::Text(id.clone()))
+            .collect();
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(&sql, params)
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("pages_related_to_entities: {e}")))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("pages_related_to_entities row: {e}")))?
+        {
+            let space: Option<String> = row
+                .get::<Option<String>>(2)
+                .unwrap_or(None)
+                .filter(|s| s != super::UNFILED_SPACE_ID);
+            out.push((
+                row.get(0)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+                row.get::<Option<String>>(1)
+                    .unwrap_or(None)
+                    .unwrap_or_default(),
+                space,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Every entity whose Wiki page is confirmed. An organize run compares
+    /// it before and after, so it reports only the entities it confirmed.
+    pub(crate) async fn confirmed_entity_ids(
+        &self,
+    ) -> Result<std::collections::HashSet<String>, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                "SELECT DISTINCT epm.entity_id FROM entity_page_map epm \
+                 JOIN pages p ON p.id = epm.page_id AND p.kind = 'entity' \
+                  AND p.status = 'active' \
+                 WHERE COALESCE(p.entity_confirmed, 0) <> 0",
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("confirmed_entity_ids: {e}")))?;
+        let mut out = std::collections::HashSet::new();
+        while let Some(row) = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("confirmed_entity_ids row: {e}")))?
+        {
+            out.insert(
+                row.get::<String>(0)
+                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
+            );
+        }
+        Ok(out)
+    }
+
+    /// Whether a note (not an entity or source page) about `entity_id`
+    /// already exists, in any Space.
+    pub(crate) async fn entity_has_note(&self, entity_id: &str) -> Result<bool, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &format!("SELECT 1 FROM pages p WHERE p.entity_id = ?1 AND {ORGANIZING} LIMIT 1"),
+                libsql::params![entity_id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_has_note: {e}")))?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("entity_has_note row: {e}")))?
+            .is_some())
+    }
 }

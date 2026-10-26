@@ -1106,6 +1106,8 @@ pub enum SteepAction {
     New,
     /// Take one topic's items from `new`: their text numbered and a token.
     ClaimNew,
+    /// The small model's answers to a claim_new's organize tasks.
+    Organize,
     /// Save the new page a claim_new was for.
     Write,
 }
@@ -1121,7 +1123,7 @@ pub struct SteepAnswer {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SteepParams {
     #[schemars(
-        description = "new | claim_new (item_ids) | write (token, title, content) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
+        description = "new | claim_new (item_ids) | organize (token, answers) | write (token, title, content) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
     )]
     pub action: SteepAction,
     #[schemars(description = "claim_new: the item_ids of one topic, from new.")]
@@ -1141,7 +1143,9 @@ pub struct SteepParams {
     )]
     #[serde(default)]
     pub content: Option<String>,
-    #[schemars(description = "judge: one answer per code check of the claim.")]
+    #[schemars(
+        description = "judge: one answer per code check of the claim. organize: one answer per organize task of the claim_new."
+    )]
     #[serde(default)]
     pub answers: Option<Vec<SteepAnswer>>,
     #[schemars(
@@ -3700,6 +3704,30 @@ impl WenlanMcpServer {
                     )
                     .await
                     .map(|claim| serde_json::to_value(&claim).map_err(encode))
+            }
+            SteepAction::Organize => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                let answers: Vec<wenlan_types::steep::SteepCodeAnswer> = params
+                    .answers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| wenlan_types::steep::SteepCodeAnswer {
+                        n: a.n,
+                        answer: a.answer,
+                    })
+                    .collect();
+                if answers.is_empty() {
+                    return missing("answers");
+                }
+                self.client
+                    .post::<_, wenlan_types::SteepOrganizeCommitResponse>(
+                        "/api/steep/new/organize",
+                        &wenlan_types::SteepOrganizeCommitRequest { token, answers },
+                    )
+                    .await
+                    .map(|done| serde_json::to_value(&done).map_err(encode))
             }
             SteepAction::Write => {
                 let Some(token) = params.token else {
@@ -9989,6 +10017,7 @@ mod tests {
             SteepAction::Judge,
             SteepAction::Release,
             SteepAction::ClaimNew,
+            SteepAction::Organize,
             SteepAction::Write,
         ] {
             let result = server
@@ -10010,6 +10039,67 @@ mod tests {
             assert_eq!(result.is_error, Some(true));
             assert!(text_of(&result).contains("not available over remote connections"));
         }
+    }
+
+    #[tokio::test]
+    async fn steep_organize_posts_the_answers_and_reads_the_receipt() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/organize"))
+            .and(body_json(serde_json::json!({
+                "token": "tok_1",
+                "answers": [{"n": 1, "answer": "{\"memory_type\": \"fact\"}"}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "classified": 1, "detected": 0, "linked": 0, "remaining": 1,
+                "link_targets": ["Kiln care"]
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |answers: Option<Vec<SteepAnswer>>| SteepParams {
+            action: SteepAction::Organize,
+            page_id: None,
+            item_ids: None,
+            token: Some("tok_1".into()),
+            title: None,
+            content: None,
+            answers,
+            limit: None,
+            cursor: None,
+            space: None,
+            session: None,
+        };
+
+        let missing = server.steep_impl(params(None)).await.unwrap();
+        assert_eq!(missing.is_error, Some(true));
+        assert!(
+            text_of(&missing).contains("pass answers"),
+            "{}",
+            text_of(&missing)
+        );
+
+        let done = server
+            .steep_impl(params(Some(vec![SteepAnswer {
+                n: 1,
+                answer: "{\"memory_type\": \"fact\"}".into(),
+            }])))
+            .await
+            .unwrap();
+        assert_ne!(done.is_error, Some(true));
+        let body = done.structured_content.expect("a structured receipt");
+        assert_eq!(body["classified"], 1);
+        assert_eq!(body["remaining"], 1);
+        assert_eq!(body["link_targets"][0], "Kiln care");
     }
 
     // ===== Remember request construction =====

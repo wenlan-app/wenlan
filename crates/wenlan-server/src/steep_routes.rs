@@ -58,6 +58,14 @@ pub(crate) fn steep_error(error: SteepError) -> ServerError {
 /// gate: background AI on and an everyday model there). When none does, steep
 /// hands that judging to the caller's small model.
 fn background_judges_code(state: &ServerState) -> bool {
+    background_does_everyday(state)
+}
+
+/// Whether Wenlan's own everyday model does the background work (background
+/// AI on and an everyday model there): the same gate decides who judges
+/// changed code and who organizes new material. When none does, steep hands
+/// that work to the caller's small model.
+pub(crate) fn background_does_everyday(state: &ServerState) -> bool {
     let config = wenlan_core::config::load_config();
     if !config.background_ai_enabled() {
         return false;

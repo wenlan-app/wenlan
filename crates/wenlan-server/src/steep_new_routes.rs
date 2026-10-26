@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use wenlan_types::steep_new::{STEEP_NEW_ACTION_RELEASE, STEEP_NEW_ACTION_WRITE};
 use wenlan_types::{
     SteepNewClaimRequest, SteepNewClaimResponse, SteepNewCommitRequest, SteepNewCommitResponse,
-    SteepNewListResponse,
+    SteepNewListResponse, SteepOrganizeCommitRequest, SteepOrganizeCommitResponse,
 };
 
 use crate::error::ServerError;
@@ -28,6 +28,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
     router
         .route("/api/steep/new", get(handle_steep_new_list))
         .route("/api/steep/new/claim", post(handle_steep_new_claim))
+        .route("/api/steep/new/organize", post(handle_steep_new_organize))
         .route("/api/steep/new/commit", post(handle_steep_new_commit))
 }
 
@@ -38,6 +39,11 @@ the note is about, then a few short paragraphs or lists. Use only what the numbe
 sources say and cite every claim with its number, like [2]. Write in the language of the \
 sources. Then commit with action \"write\", the token, the title and the body. If the \
 sources do not belong together, commit with action \"release\" instead.";
+
+/// Added to the note when the claim offers existing pages to link.
+pub const LINK_TARGETS_NOTE: &str = "Where the note talks about one of the pages in \
+link_targets, link it once as [[Title]], with the title exactly as given. Link no other \
+titles.";
 
 #[derive(Debug, Deserialize)]
 pub struct SteepNewListQuery {
@@ -94,14 +100,21 @@ pub async fn handle_steep_new_claim(
     crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(req): Json<SteepNewClaimRequest>,
 ) -> Result<Json<SteepNewClaimResponse>, ServerError> {
-    let db = state
-        .read()
-        .await
-        .db
-        .clone()
-        .ok_or(ServerError::DbNotInitialized)?;
+    let (db, organize) = {
+        let s = state.read().await;
+        let db = s.db.clone().ok_or(ServerError::DbNotInitialized)?;
+        // The caller's AI tool organizes the sources only when no background
+        // model would: the two never spend twice on one memory.
+        let organize = (!crate::steep_routes::background_does_everyday(&s)).then(|| {
+            wenlan_core::steep_organize::OrganizeOptions {
+                prompts: s.prompts.clone(),
+                entity_link_distance: s.tuning.refinery.entity_link_distance as f32,
+            }
+        });
+        (db, organize)
+    };
     let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
-    let claim = wenlan_core::steep_new::claim_new(&db, &scope, &req.item_ids)
+    let claim = wenlan_core::steep_new::claim_new(&db, &scope, &req.item_ids, organize.as_ref())
         .await
         .map_err(steep_error)?;
     Ok(Json(SteepNewClaimResponse {
@@ -109,8 +122,34 @@ pub async fn handle_steep_new_claim(
         held_until: claim.held_until,
         sources: claim.sources,
         skipped: claim.skipped,
-        note: NEW_PAGE_NOTE.to_string(),
+        note: if claim.link_targets.is_empty() {
+            NEW_PAGE_NOTE.to_string()
+        } else {
+            format!("{NEW_PAGE_NOTE} {LINK_TARGETS_NOTE}")
+        },
+        organize: claim.organize,
+        link_targets: claim.link_targets,
     }))
+}
+
+/// POST /api/steep/new/organize
+///
+/// Land the small model's answers to a claim's organize tasks through the
+/// same parsers and version-checked writes Wenlan's own model's answers take.
+pub async fn handle_steep_new_organize(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    Json(req): Json<SteepOrganizeCommitRequest>,
+) -> Result<Json<SteepOrganizeCommitResponse>, ServerError> {
+    let db = state
+        .read()
+        .await
+        .db
+        .clone()
+        .ok_or(ServerError::DbNotInitialized)?;
+    let done = wenlan_core::steep_new::organize_new(&db, &req.token, &req.answers)
+        .await
+        .map_err(steep_error)?;
+    Ok(Json(done))
 }
 
 /// POST /api/steep/new/commit
