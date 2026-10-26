@@ -32,6 +32,7 @@ import { getSourceAppFromUrl, getSourcePresentation, isNoteApp } from "./sourceP
 import { SourceCollection, SourceCollectionBreadcrumbs, SourceCollectionToolbar, type SourceCollectionItem } from "./SourceCollection";
 import { SourceTypeIcon } from "./SourceTypeIcon";
 import { VaultPagesFolder } from "./VaultPagesFolder";
+import { FolderImportOrganize } from "./FolderImportOrganize";
 import type { SourceLibraryFilter } from "./SourceLibrary";
 import { NoteAiChangesSection, NoteProposalNotice, VaultSuggestions, inPagesFolder, usePagesFolder } from "./VaultNotes";
 import "./SourceContainer.css";
@@ -269,6 +270,7 @@ export default function SourceContainer({ location, search, filter, lens, onSear
         </SourceCollectionBreadcrumbs>
         <SourceCollectionToolbar search={search} filter={filter} lens={lens} onSearchChange={onSearchChange} onFilterChange={onFilterChange}
           onLensChange={onLensChange} onAdd={onAdd} trailing={<InfoToggle ref={infoToggleRef} open={infoState.open} onClick={infoState.toggle} />} />
+        <FolderImportOrganize sourceId={source.id} className="source-folder-finish" />
         <div className="source-container-notices">
           {dirQuery.isPending && <p role="status">{t("sourceContainer.loading")}</p>}
           {dirQuery.isError && <div role="alert"><span>{t("sourceContainer.folderReadError")}</span><button type="button" onClick={() => void dirQuery.refetch()}>{t("sourceContainer.retryFolder")}</button></div>}

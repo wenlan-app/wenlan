@@ -8,6 +8,7 @@ import {
   clipboardWrite,
   getBackgroundAiEnabled,
   listAgents,
+  listNewMaterial,
   listOnboardingMilestones,
   listPagesExplicitBrowse,
   listRegisteredSources,
@@ -19,6 +20,8 @@ import {
 } from "../../../lib/tauri";
 import type { WritePagesState } from "../../memory/askAi/WritePages";
 import { GettingStarted } from "../GettingStarted";
+import { OrganizeActionsContext } from "../../memory/askAi/TurnIntoPages";
+import { forgetAddedFolder, rememberAddedFolder } from "../../memory/sources/FolderImportOrganize";
 import {
   ESTABLISHED_LIBRARY_PAGES,
   gettingStartedProgress,
@@ -28,7 +31,10 @@ import {
 vi.mock("../../../lib/tauri", () => ({
   clipboardWrite: vi.fn(),
   getBackgroundAiEnabled: vi.fn(),
+  getOnDeviceModel: vi.fn(),
+  getResolvedRouting: vi.fn(async () => null),
   listAgents: vi.fn(),
+  listNewMaterial: vi.fn(async () => ({ items: [], total: 0 })),
   listOnboardingMilestones: vi.fn(),
   listPagesExplicitBrowse: vi.fn(),
   listRegisteredSources: vi.fn(),
@@ -314,6 +320,59 @@ describe("GettingStarted", () => {
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
     expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
     expect(screen.queryByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeNull();
+  });
+
+  it("after a folder import, its finish card is the pages step and the step's own offer steps aside", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    vi.mocked(listAgents).mockResolvedValue([agent("codex", { display_name: "Codex", last_seen_at: now })]);
+    vi.mocked(getBackgroundAiEnabled).mockResolvedValue(false);
+    vi.mocked(listRegisteredSources).mockResolvedValue([{ ...folder, status: "Active", last_sync: now, file_count: 12, memory_count: 12 }]);
+    vi.mocked(listNewMaterial).mockResolvedValue({ items: [], total: 12, kinds: { file: 12 } });
+    const ready = {
+      view: { kind: "ready", list: { items: [], total: 12 } },
+      stepView: { kind: "ready", list: { items: [], total: 12 } },
+      cardView: { kind: "ready", list: { items: [], total: 12 } },
+      waitingTotal: 12,
+      onDemand: true,
+      loaded: true,
+      run: null,
+      tool: { family: "codex", name: "Codex" },
+      tools: [{ family: "codex", name: "Codex" }],
+      chooseTool: vi.fn(),
+      toolName: "Codex",
+      opensTool: true,
+      command: "$wenlan steep",
+      copied: false,
+      waiting: "12 files",
+      start: vi.fn(),
+      copyCommand: vi.fn(),
+      close: vi.fn(),
+    } as unknown as WritePagesState;
+    rememberAddedFolder(folder);
+    try {
+      mockLibrary([]);
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <OrganizeActionsContext.Provider value={{ onConnectTool: vi.fn(), onOpenIntelligence: vi.fn(), onOpenActivity: vi.fn(), onSelectPage: vi.fn() }}>
+            <GettingStarted onWriteNote={vi.fn()} onConnectTool={vi.fn()} onAddSources={vi.fn()} onSeeExample={vi.fn()} writePages={ready} />
+          </OrganizeActionsContext.Provider>
+        </QueryClientProvider>,
+      );
+      await screen.findByRole("heading", { name: title() });
+      await waitFor(() => expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-finish", "folder"));
+      const step = screen.getByTestId("getting-started-pages");
+      expect(step).toHaveTextContent("12 files imported. You can search them now.");
+      expect(await screen.findByRole("button", { name: "Write pages with Codex" })).toBeInTheDocument();
+      // The checklist's own "Ask in Codex" offer is not shown beside it.
+      expect(screen.queryByRole("button", { name: i18n.t("askAi.writePages.askIn", { tool: "Codex" }) })).toBeNull();
+      // "Later" puts the card away and the step's own offer comes back.
+      fireEvent.click(screen.getByRole("button", { name: "Later" }));
+      await waitFor(() => expect(screen.getByTestId("getting-started-pages")).not.toHaveAttribute("data-finish"));
+      expect(screen.getByRole("button", { name: i18n.t("askAi.writePages.askIn", { tool: "Codex" }) })).toBeInTheDocument();
+    } finally {
+      forgetAddedFolder();
+    }
   });
 
   it("can skip the pages step when there is nothing to bring in", async () => {

@@ -56,6 +56,8 @@ interface ImportOrganizeProps {
   /** Told whether the card shows a button to press, so the screen's own
    *  primary button can step back while it does. */
   readonly onActionChange?: (hasAction: boolean) => void;
+  /** Called when the user puts the card away with "Later". */
+  readonly onLater?: () => void;
 }
 
 /** "12 notes imported. You can search them now." Under a heading that
@@ -87,7 +89,7 @@ export function ImportedLead({
  * Automatic, one line names the model doing it. Until the mode is read, only
  * the lead line shows, so nothing claims the wrong mode.
  */
-export function ImportOrganize({ count, kind, onLeave, bare = false, lead = "inline", onActionChange }: ImportOrganizeProps) {
+export function ImportOrganize({ count, kind, onLeave, bare = false, lead = "inline", onActionChange, onLater }: ImportOrganizeProps) {
   const onDemand = useSteepOnDemand();
   // Automatic (or not yet known) has no button of its own.
   useEffect(() => {
@@ -96,7 +98,7 @@ export function ImportOrganize({ count, kind, onLeave, bare = false, lead = "inl
   return (
     <div className="turn-pages-finish" data-testid="import-organize">
       {lead === "inline" ? <ImportedLead count={count} kind={kind} /> : null}
-      {onDemand === true ? <TurnIntoPagesCard onLeave={onLeave} bare={bare} onActionChange={onActionChange} /> : null}
+      {onDemand === true ? <TurnIntoPagesCard onLeave={onLeave} bare={bare} onActionChange={onActionChange} onLater={onLater} /> : null}
       {onDemand === false ? <AutomaticLine onLeave={onLeave} /> : null}
     </div>
   );
@@ -186,6 +188,7 @@ interface TurnIntoPagesCardProps {
   readonly onLeave?: () => void;
   readonly bare?: boolean;
   readonly onActionChange?: (hasAction: boolean) => void;
+  readonly onLater?: () => void;
 }
 
 /**
@@ -194,11 +197,11 @@ interface TurnIntoPagesCardProps {
  * (`useWritePages`), so a press here is the run those follow, and the pages
  * land in its list as the tool writes them.
  */
-export function TurnIntoPagesCard({ onLeave, bare = false, onActionChange }: TurnIntoPagesCardProps) {
+export function TurnIntoPagesCard({ onLeave, bare = false, onActionChange, onLater }: TurnIntoPagesCardProps) {
   const { pages } = useLibraryInventory();
   const state = useWritePages(pages);
   const hasPages = pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft");
-  return <TurnIntoPagesView state={state} hasPages={hasPages} onLeave={onLeave} bare={bare} onActionChange={onActionChange} />;
+  return <TurnIntoPagesView state={state} hasPages={hasPages} onLeave={onLeave} bare={bare} onActionChange={onActionChange} onLater={onLater} />;
 }
 
 export function TurnIntoPagesView({
@@ -207,12 +210,14 @@ export function TurnIntoPagesView({
   onLeave,
   bare = false,
   onActionChange,
+  onLater,
 }: {
   readonly state: WritePagesState;
   readonly hasPages: boolean;
   readonly onLeave?: () => void;
   readonly bare?: boolean;
   readonly onActionChange?: (hasAction: boolean) => void;
+  readonly onLater?: () => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -311,7 +316,14 @@ export function TurnIntoPagesView({
       <button type="button" className="turn-pages-link" onClick={() => setExplaining(true)}>
         {t("askAi.writePages.importCard.switchToAutomatic")}
       </button>
-      <button type="button" className="turn-pages-link" onClick={() => setLater(true)}>
+      <button
+        type="button"
+        className="turn-pages-link"
+        onClick={() => {
+          setLater(true);
+          onLater?.();
+        }}
+      >
         {t("askAi.writePages.importCard.later")}
       </button>
     </>

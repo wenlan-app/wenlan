@@ -53,6 +53,7 @@ import { Button, Tag, SectionHeader } from "./memory/settings/primitives";
 import { OWN_IDENTITY, resolveAgentDisplayName } from "../lib/agents";
 import { PlugsConnected } from "@phosphor-icons/react";
 import { ConnectedHint } from "./memory/askAi/ConnectedHint";
+import { rememberAddedFolder } from "./memory/sources/FolderImportOrganize";
 
 // Module-level so each is a stable reference across renders — AnyProviderCard
 // memoizes its preset list on these, and a fresh array literal per render
@@ -1365,7 +1366,12 @@ function SettingUpStep({
       if (row.kind === "import") {
         if (!pendingImportPick) return;
         addSource(pendingImportPick.sourceType, pendingImportPick.path)
-          .then((source) => syncRegisteredSource(source.id))
+          .then((source) => {
+            // The home's checklist shows the import finish once this read
+            // has stored something.
+            rememberAddedFolder(source);
+            return syncRegisteredSource(source.id);
+          })
           .then((stats) => {
             setImportStats(stats);
             setStatuses((prev) => ({ ...prev, [row.id]: "done" }));

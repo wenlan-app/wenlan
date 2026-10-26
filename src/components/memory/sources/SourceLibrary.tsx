@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { SourceImportProgress } from "./SourceImportProgress";
+import { FolderImportOrganize } from "./FolderImportOrganize";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -169,6 +170,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
         onLensChange={(value) => updateState({ lens: value })} onAdd={onAdd} />
 
       <SourceImportProgress />
+      <FolderImportOrganize className="source-folder-finish" />
 
       <div className="source-library-notices">
         {foldersQuery.isPending && <p role="status">{t("sourceLibrary.loadingFolders")}</p>}

@@ -10,6 +10,7 @@ import {
 } from "../../../lib/tauri";
 import { folderName } from "../../../lib/dateFormat";
 import AddSourceDialog from "./AddSourceDialog";
+import { FolderImportOrganize } from "./FolderImportOrganize";
 import { Button } from "../settings/primitives";
 
 function relativeTime(ts: number | null): string {
@@ -98,6 +99,8 @@ export default function SourcesSection() {
 
   return (
     <section className="space-y-3">
+      {/* A folder added here finishes like every other import. */}
+      <FolderImportOrganize />
       {sources.length === 0 ? (
         <div className="rounded-[var(--mem-radius-lg)] border border-dashed border-[var(--mem-border)] p-8 text-center">
           <p className="text-sm text-[var(--mem-text-secondary)] mb-3">

@@ -14,6 +14,7 @@ import {
 } from "../../../lib/tauri";
 import { detectVault, type VaultDetection } from "../../../lib/vaultDetection";
 import { Button } from "../settings/primitives";
+import { rememberAddedFolder } from "./FolderImportOrganize";
 
 /** A recorded choice, not yet acted on. The wizard variant reports this
  *  upward on every change instead of calling addSource/syncRegisteredSource
@@ -112,6 +113,7 @@ export default function VaultConnectCard({ variant, onConnected, onPick }: Props
     try {
       const sourceType = pickedVault ? "obsidian" : (detection?.sourceType ?? "directory");
       const source = await addSource(sourceType, path);
+      rememberAddedFolder(source);
       queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
       // Kick the vault's (or graph's) first import now; the daemon's 30s
       // scheduler follows later changes (same rationale as AddSourceDialog).

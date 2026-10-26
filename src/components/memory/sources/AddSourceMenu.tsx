@@ -18,6 +18,7 @@ import AddWebSourceDialog from "./AddWebSourceDialog";
 import { ImportFlow } from "../../ChatImport/ImportFlow";
 import SourceDialog from "./SourceDialog";
 import { SourceTypeIcon } from "./SourceTypeIcon";
+import { rememberAddedFolder } from "./FolderImportOrganize";
 import { useTranslation } from "react-i18next";
 
 type ConnectKind = "obsidian" | "logseq" | "folder";
@@ -94,6 +95,9 @@ export default function AddSourceMenu({ onClose, start = "menu" }: {
       addSource(folder.sourceType, folder.path, followChanges),
     onSuccess: (source) => {
       refreshSources();
+      // Where the user lands next shows the import finish once the first
+      // read has stored something.
+      rememberAddedFolder(source);
       // A failed first read updates this same toast instead of stacking a second.
       const toastId = `source-connected-${source.id}`;
       toast(t("sourceAccess.connected"), { id: toastId, description: source.path });

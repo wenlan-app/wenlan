@@ -22,6 +22,8 @@ import {
   type GettingStartedStepId,
 } from "./useGettingStartedState";
 import { WritePagesStep } from "./WritePagesStep";
+import { ImportOrganize, useOrganizeActions } from "../memory/askAi/TurnIntoPages";
+import { forgetAddedFolder, useFolderImportFinish } from "../memory/sources/FolderImportOrganize";
 import "./gettingStarted.css";
 
 const COPIED_MS = 2_000;
@@ -87,6 +89,10 @@ export function GettingStarted({
     agents,
     compact,
   } = useGettingStartedState();
+  // A folder, vault or graph added from here (or anywhere this session) whose
+  // first read has stored something: its import finish takes the pages step.
+  const folderFinish = useFolderImportFinish();
+  const organize = useOrganizeActions() !== null;
   // Same key as the Intelligence settings, so turning it on there hides the line here.
   const backgroundAi = useQuery({
     queryKey: ["backgroundAiEnabled"],
@@ -219,6 +225,27 @@ export function GettingStarted({
               {done ? <CheckCircle weight="fill" /> : step.icon}
             </span>
           );
+          if (id === "pages" && folderFinish !== null && organize) {
+            // The import just finished: its finish card is this step, in
+            // place of the step's own offer, so only one asks to write pages.
+            return (
+              <li key={id} data-testid="getting-started-pages" data-done={done ? "true" : "false"} data-finish="folder">
+                {icon}
+                <div className="getting-started-copy">
+                  <p className="getting-started-step-title">
+                    {t("firstUse.checklist.steps.pages.title")}
+                    {done ? <span className="sr-only">{` ${t("firstUse.checklist.done")}`}</span> : null}
+                  </p>
+                  <ImportOrganize
+                    count={folderFinish.count}
+                    kind={folderFinish.kind}
+                    bare
+                    onLater={() => forgetAddedFolder(folderFinish.id)}
+                  />
+                </div>
+              </li>
+            );
+          }
           if (id === "pages") {
             return (
               <li key={id} data-testid="getting-started-pages" data-done={done ? "true" : "false"}>
