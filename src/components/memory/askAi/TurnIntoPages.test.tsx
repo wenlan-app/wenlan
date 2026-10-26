@@ -96,7 +96,7 @@ describe("TurnIntoPagesView", () => {
     expect(card).toHaveAttribute("data-state", "ready");
     expect(screen.getByRole("heading", { name: "Turn them into pages" })).toBeInTheDocument();
     expect(card).toHaveTextContent(
-      "Codex writes your first 8 pages from your newest topics, with people, projects and links filled in. About 3 minutes, on your Codex plan.",
+      "Codex writes your first 8 pages from your newest topics, with people, projects and links filled in. About 5 minutes, on your Codex plan.",
     );
     fireEvent.click(screen.getByRole("button", { name: "Write pages with Codex" }));
     expect(s.start).toHaveBeenCalled();
