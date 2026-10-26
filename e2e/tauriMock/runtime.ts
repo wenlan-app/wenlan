@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type {
+  AgentConnection,
   ArchiveEntitiesRequest,
   KnowledgeFolder,
   DistillReviewResponse,
@@ -168,6 +169,7 @@ export class TauriMockRuntime {
     rawActions: readonly string[] = [],
     private readonly pageScenario: TauriMockPageScenario = {},
     private readonly delays: Readonly<Record<string, number>> = {},
+    private readonly agents?: readonly AgentConnection[],
   ) {
     this.folders = (fixture.folders ?? []).map(folder => ({...folder}));
     this.spaces = fixture.spaces.map((space) => ({ ...space }));
@@ -215,6 +217,9 @@ export class TauriMockRuntime {
     const configured = this.failures.get(command)?.shift();
     if (configured) throw new ConfiguredTauriFailureError(command, configured);
     if (command.startsWith("plugin:")) return null;
+    if (command === "list_agents" && this.agents !== undefined) {
+      return this.agents.map((agent) => ({ ...agent }));
+    }
     if (command === "get_background_ai_enabled") return this.backgroundAiEnabled;
     if (command === "set_background_ai_enabled") {
       this.backgroundAiEnabled = requiredBoolean(command, args, "enabled");
