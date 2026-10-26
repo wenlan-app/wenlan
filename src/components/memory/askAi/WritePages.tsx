@@ -38,6 +38,8 @@ const STUCK_MS = 120_000;
 const CLOCK_SLACK_MS = 60_000;
 const POLL_IDLE_MS = 15_000;
 const POLL_RUNNING_MS = 4_000;
+/** How often a run reads the pages again while it goes on. */
+export const PAGES_REREAD_MS = 10_000;
 const MAX_LISTED = 8;
 
 const RUN_KEY = "askAi:writePages:run";
@@ -381,6 +383,23 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const view = writePagesView({ ...inputs, dismissedTotal });
   const stepView = writePagesView({ ...inputs, dismissedTotal: null });
   const cardView = writePagesView({ ...inputs, dismissedTotal: null, minItems: 1 });
+
+  // A rewrite, or sources added to the page on a subject, changes a page
+  // without changing how much material waits, so the read above misses it.
+  // While a run goes on, read the pages again every so often, and once more
+  // when the tool lets go of its material and when the run is done, so the
+  // done line counts every page the run changed.
+  const runningSince = run?.startedAt;
+  const finished = view.kind === "done";
+  useEffect(() => {
+    if (runningSince === undefined || finished) return;
+    const timer = setInterval(() => void queryClient.invalidateQueries({ queryKey: ["pages"] }), PAGES_REREAD_MS);
+    return () => clearInterval(timer);
+  }, [runningSince, finished, queryClient]);
+  const letGo = runningSince !== undefined && list.data !== undefined && (list.data.held ?? 0) === 0;
+  useEffect(() => {
+    if (letGo || finished) void queryClient.invalidateQueries({ queryKey: ["pages"] });
+  }, [letGo, finished, queryClient]);
 
   const toolName = run?.tool ?? tool?.name ?? t("askAi.writePages.yourTool");
   const opensTool = tool !== null && PROMPT_LINK_FAMILIES.includes(tool.family);

@@ -2,7 +2,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import {
   clipboardWrite,
@@ -14,7 +15,17 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { doneLine, listParts, pageCreatedMs, pagesUpdatedSince, sourceCounts, useWritePages, WritePagesLine, writePagesView } from "./WritePages";
+import {
+  doneLine,
+  listParts,
+  pageCreatedMs,
+  PAGES_REREAD_MS,
+  pagesUpdatedSince,
+  sourceCounts,
+  useWritePages,
+  WritePagesLine,
+  writePagesView,
+} from "./WritePages";
 
 vi.mock("../../../lib/tauri", () => ({
   PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
@@ -191,6 +202,10 @@ describe("writePagesView", () => {
 });
 
 describe("WritePagesLine", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(async () => {
     localStorage.clear();
     vi.mocked(listAgents).mockReset();
@@ -359,6 +374,35 @@ describe("WritePagesLine", () => {
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
     expect(screen.getByTestId("write-pages-line")).not.toHaveTextContent("The last run stopped");
     expect(localStorage.getItem("askAi:writePages:run")).not.toBeNull();
+  });
+
+  it("reads the pages again while the run goes on and when the tool lets go, though no material left", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    localStorage.setItem("askAi:writePages:run", JSON.stringify({ startedAt: Date.now() - 60_000, tool: "Claude Code", handedOver: "opened" }));
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    // Rewrites and added sources leave the waiting count where it is.
+    vi.mocked(listNewMaterial).mockResolvedValue(material(9, { held: 3 }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const rereads = () => invalidate.mock.calls.filter(([filters]) => JSON.stringify(filters?.queryKey) === '["pages"]').length;
+    render(
+      <QueryClientProvider client={client}>
+        <Line pages={[]} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Claude Code is writing pages"));
+    const before = rereads();
+    await act(async () => {
+      vi.advanceTimersByTime(PAGES_REREAD_MS);
+    });
+    expect(rereads()).toBe(before + 1);
+
+    // The tool lets go of its last material: read once more at once.
+    vi.mocked(listNewMaterial).mockResolvedValue(material(9, { held: 0 }));
+    await act(async () => {
+      vi.advanceTimersByTime(4_000);
+    });
+    await waitFor(() => expect(rereads()).toBeGreaterThanOrEqual(before + 2));
   });
 
   it("follows the run in one line", async () => {
