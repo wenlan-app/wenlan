@@ -12,7 +12,7 @@
 
 /// First 16 hex digits of the SHA-256 over every file's path and contents in
 /// `FILES`, sorted by path. Changes whenever any installed skill changes.
-pub const BUNDLE_VERSION: &str = "0610aefa33415a39";
+pub const BUNDLE_VERSION: &str = "1db10c04afd50adc";
 
 /// Every file of the bundle as (path relative to the skills folder, contents),
 /// sorted by path.

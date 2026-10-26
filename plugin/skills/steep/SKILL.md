@@ -52,68 +52,69 @@ organizing yourself, for this run only and at most 8 pages, and say in the
 report that no cheaper helper was available. You always write the pages
 yourself.
 
-1. Call `steep` with `action: "new"`, `limit: 150` (and `space`), once.
-   The answer is the newest material, newest first; `total` counts all of
-   it. Do not fetch more with `next_cursor`: a run writes at most 8 pages,
-   and the rest waits for the next run. Each item is one imported note,
-   chat, file or saved memory, with `item_id`, `kind`, `title` and
-   `snippet`. Leave out items whose `held` is true: another run has them.
-2. Group the items by topic with the helper: hand it every item's `item_id`,
-   `kind`, `title` and `snippet`, and the answer's `page_titles` (the pages
-   that already exist), and ask it to reply with only JSON:
-   `[{"topic": "...", "item_ids": ["..."]}]`. Each group is one subject a
-   person would look up as one page. Material on one subject from different
-   years or versions is one group. If the material belongs under an existing
-   page, even one whose title words differ (a trip to Porto under "Lisbon
-   and Porto"), the topic is that page's title, exactly as given. An item
-   belongs to at most one group; items that fit no group are left out. A
-   group may be a single item only when that item is long on its own (a
-   whole note, a long chat).
-3. Biggest groups first, at most 8 pages this run. Finish each group, from
-   its claim to its page, before you claim the next, so the first page lands
-   within a few minutes. For each group:
-   1. Call `steep` with `action: "claim_new"`, its `item_ids` and its topic
-      as `title`. The answer has the items' text numbered `[1]` to `[n]`, a
-      `token` and a `note`. A refusal (too little text, already taken) means
-      skip the group.
-   2. When the answer has `organize`, the helper organizes the sources before
-      you write, the way Wenlan's own model would: their type and tags, and
-      the people, projects and tools they mention. Hand the helper the
-      `token`, `organize.stages` and `organize.tasks`. Ask it to answer every
-      task with its stage's `instructions` as the system prompt and the
-      task's `prompt` as the message, each answer exactly what the
-      instructions ask for; then to call `steep` itself with
-      `action: "organize"`, the token and `answers` as
-      `[{"n": 1, "answer": "..."}]`; and to reply with only one line: the
-      counts that call returned. Never pass the
-      answers on yourself. Only when you organize yourself (no helper could
-      start) do you call `organize` with your own answers.
-   3. Right before you write, call `steep` with `action: "links"` and the
+Helpers fetch their own work from Wenlan with the `steep` tool: hand a
+helper only its instructions below and, for organizing, a token. Never copy
+items, sources or tasks to a helper.
+
+1. Group with the helper. Ask it to call `steep` with `action: "new"`,
+   `limit: 70` (and `space`), once. The answer is the newest material,
+   newest first, each item with its `id`, title `t`, snippet `s` and length
+   in characters `n`; `total` counts all of it. Do not fetch more with
+   `next_cursor`: a run writes at most 8 pages, and the rest waits for the
+   next run. The helper groups the items by topic from their titles and
+   snippets and the answer's `page_titles` (the pages that already exist),
+   and replies with only JSON:
+   `{"total": 0, "groups": [{"topic": "...", "item_ids": ["..."]}]}`, each
+   item by its `id`.
+   Each group is one subject a person would look up as one page. Material
+   on one subject from different years or versions is one group. If the
+   material belongs under an existing page, even one whose title words
+   differ (a trip to Porto under "Lisbon and Porto"), the topic is that
+   page's title, exactly as given. An item belongs to at most one group;
+   items that fit no group are left out. A group may be a single item only
+   when that item is long on its own (a whole note, a long chat).
+2. Claim the groups, biggest first, at most 8 this run: for each, call
+   `steep` with `action: "claim_new"`, its `item_ids` and its topic as
+   `title`. The answer has the items' text numbered `[1]` to `[n]`, a
+   `token` and a `note`; a claim holds its items for 45 minutes. A refusal
+   (too little text, already taken) means skip the group.
+3. Start a helper for every claim whose answer has `organize`, all at once.
+   It organizes the sources the way Wenlan's own model would: their type
+   and tags, and the people, projects and tools they mention. Hand it only
+   the claim's `token`, and ask it to call `steep` with
+   `action: "organize_tasks"` and the token; to answer every task with its
+   stage's `instructions` as the system prompt and the task's `prompt` as
+   the message, each answer exactly what the instructions ask for; then to
+   call `steep` itself with `action: "organize"`, the token and `answers` as
+   `[{"n": 1, "answer": "..."}]`; and to reply with only one line: the
+   counts that call returned. Never pass the answers on yourself.
+   The helpers run at the same time when your tool runs helpers in the
+   background. In Claude Code, send one message with one `Agent` call per
+   claim, each with `model: "haiku"` and `run_in_background: true`.
+   Otherwise start them one after another. Only when no helper could start
+   do you call `organize_tasks` and `organize` yourself.
+4. Write each page as soon as its helper reports, in the order they finish;
+   a claim without `organize` is ready at once. For each:
+   1. Right before you write, call `steep` with `action: "links"` and the
       token. It returns `link_targets` and `existing_page` as they are now,
       counting the pages this run wrote since the claim.
-   4. When it has `existing_page`, a page on this subject already exists: do
+   2. When it has `existing_page`, a page on this subject already exists: do
       not write a second one. Call `steep` with `action: "attach"` and the
       token. The sources go into that page, which then waits to be rewritten
-      with all of them (section 3). Go on to the next group.
-   5. Otherwise write the page yourself, with your main model. Never let the
+      with all of them (section 3). Go on to the next page.
+   3. Otherwise write the page yourself, with your main model. Never let the
       small model write it. Title: short, names the topic, in the sources'
       language. Open with one plain sentence that says what the page is
       about, then short paragraphs or lists. Use only what the sources say
-      and cite every claim with its number, like `[2]`. Link each page in
-      `link_targets` the text talks about once as `[[Title]]`, with the
-      title exactly as given. Link no other titles.
-   6. Call `steep` with `action: "write"`, the token, `title` and the body as
+      and cite every claim with its number, like `[2]`. Link every page in
+      `link_targets` that the text talks about, each as `[[Title]]` at its
+      first mention, with the title exactly as given. Link no other titles.
+   4. Call `steep` with `action: "write"`, the token, `title` and the body as
       `content`. A citation refusal: fix the sentences it points at and write
       again with the same token, once; still refused, `release` the token. If
       the sources turn out not to belong together, `release` the token.
-   7. `created`: a new page. `merged`: a page on that topic already existed
+   5. `created`: a new page. `merged`: a page on that topic already existed
       and took the sources. `attached`: the existing page took them.
-
-   The helper for the next group may organize while you write a page, when
-   your tool runs helpers in the background. In Claude Code, after the
-   page's organize line is back, claim the next group and start its helper
-   as an `Agent` with `run_in_background: true`, then write the page.
-   Otherwise take the groups one after another.
 
 ## 3. Pages that went out of date
 
@@ -196,6 +197,6 @@ them yourself because no cheaper helper could start, how many pages were updated
 user as revision cards, how many still hold, how many code changes were
 checked and found harmless, and for each `needs_you` page its
 title and the reason from its `note`. If new material is left, say how many
-items still wait (the `new` answer's `total` less the items this run used,
+items still wait (the grouping helper's `total` less the items this run used,
 like "9,850 more waiting"); if it or more than 10 pages were left, say that
 `/wenlan steep` again continues.

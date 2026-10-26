@@ -374,19 +374,24 @@ test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helpe
     "Spawn a subagent on\n`gpt-6-luna`",
     "`codex exec -m gpt-6-luna \"<the task>\"`",
     "Only when no helper on a cheaper model can start at all, do the grouping and\norganizing yourself, for this run only and at most 8 pages",
-    "Finish each group, from\n   its claim to its page, before you claim the next",
-    "then to call `steep` itself with",
-    "Never pass the\n      answers on yourself",
-    "start its helper in the background",
-    "the answer's `page_titles` (the pages\n   that already exist)",
-    "Material on one subject from different\n   years or versions is one group",
-    "If the material belongs under an existing\n   page",
-    "the topic is that page's title, exactly as given",
-    "its topic\n      as `title`",
+    "Never copy\nitems, sources or tasks to a helper",
+    "`action: \"organize_tasks\"` and the token",
+    "then to\n   call `steep` itself with",
+    "Never pass the answers on yourself",
+    "`page_titles` (the pages that already exist)",
+    "Material\n   on one subject from different years or versions is one group",
+    "If the\n   material belongs under an existing page",
+    "page's title, exactly as given",
+    "its topic as\n   `title`",
+    "a claim holds its items for 45 minutes",
+    "Write each page as soon as its helper reports, in the order they finish",
     "Right before you write, call `steep` with `action: \"links\"`",
-    "`action: \"new\"`, `limit: 150`",
-    "Do not fetch more with `next_cursor`",
     "Call `steep` with `action: \"attach\"` and the\n      token",
+    "`action: \"new\"`,\n   `limit: 70`",
+    "Do not fetch more with\n   `next_cursor`",
+    "title `t`, snippet `s`",
+    "Link every page in\n      `link_targets` that the text talks about, each as `[[Title]]` at its\n      first mention",
+    "spawn one subagent per claim, all in\n   parallel",
   ]) {
     assert.ok(newPages.includes(needle), needle);
   }
@@ -395,7 +400,7 @@ test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helpe
   assert.ok(!/haiku|Agent`/.test(newPages), "no Claude Code helper wording in Codex");
   assert.ok(claudeSkill("steep").includes("`Agent` with `model: \"haiku\"`"), "Claude keeps Haiku");
   assert.ok(
-    claudeSkill("steep").includes("as an `Agent` with `run_in_background: true`"),
-    "Claude organizes the next group in the background",
+    claudeSkill("steep").includes("one `Agent` call per\n   claim, each with `model: \"haiku\"` and `run_in_background: true`"),
+    "Claude starts every organize helper at once in the background",
   );
 });
