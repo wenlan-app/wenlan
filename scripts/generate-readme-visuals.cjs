@@ -94,7 +94,7 @@ function makeSimpleBanner(viewport, locale) {
     `<text x="${x}" y="${y}" fill="${color}" font-family="${esc(copy.font)}" font-size="${size}" font-weight="${weight}" text-anchor="${anchor}"${letterSpacing === null ? "" : ` letter-spacing="${letterSpacing}"`}>${esc(value)}</text>`;
   const chineseName = locale === "zh-Hant" ? "文瀾" : locale === "zh-Hans" ? "文澜" : "";
   const brand = (x, y, size, anchor) =>
-    `<text x="${x}" y="${y}" fill="${BANNER.accent}" font-size="${size}" font-weight="500" text-anchor="${anchor}"><tspan font-family="${esc(BANNER.latin)}">Wenlan</tspan>${chineseName ? `<tspan dx="12" font-family="${esc(copy.font)}">${chineseName}</tspan>` : ""}</text>`;
+    `<text x="${x}" y="${y}" fill="${BANNER.accent}" font-size="${size}" font-weight="500" text-anchor="${anchor}"><tspan font-family="${esc(BANNER.latin)}">Wenlan</tspan>${chineseName ? `<tspan dx="${+(size * 0.25).toFixed(2)}" font-family="${esc(copy.font)}">${chineseName}</tspan>` : ""}</text>`;
   const tagline = copy.tagline ?? null;
   // With a tagline the three lines stay centred on the logo, and the tagline sits above the
   // ring's lower edge: the dark tile blends into the background, so the ring is what reads.
