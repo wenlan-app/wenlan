@@ -299,6 +299,8 @@ These LongMemEval (LME) snapshots measure retrieval of saved knowledge, not AI a
 
 On a 10,000-page test (generated pages, M2 Pro with 16 GB, v0.20.0), App search answered in 11 to 50 ms, restart took under 0.3 s, and memory peaked at about 1.2 GB. With the search fix in 0.20.1, AI-tool search found all 30 rare test words in that library.
 
+Importing a 10,000-note Obsidian vault in 0.20.2 (invented notes, M2 Pro Mac with 16 GB, debug build, Claude Code writing the pages): searchable in 15 s, the first page in about 2 minutes, and 8 cited pages in about 4 minutes.
+
 [Evaluation method and benchmark details](docs/eval/README.md).
 
 <a id="learn-more"></a>

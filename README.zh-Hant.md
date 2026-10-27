@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=9626d29fc1b041c53f29fc03ebb28e0827c1c5e67ac24b40f4f90c76da97bfba -->
+<!-- README_SYNC: source=README.md sha256=51a95b2103002be792aa2bb8b7946373a7bcd5bf31489bacca847da7bf0115f1 -->
 
 <p align="center">
   <picture>
@@ -305,6 +305,8 @@ Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。
 <!-- EVAL_SNAPSHOT_END -->
 
 一萬篇筆記的測試（產生的測試筆記，M2 Pro 16 GB，v0.20.0）：App 搜尋 11 到 50 毫秒，重新啟動不到 0.3 秒，記憶體峰值約 1.2 GB。0.20.1 修好搜尋後，AI 工具在同一個資料庫裡找到了全部 30 個罕見測試字詞。
+
+在 0.20.2 匯入一萬篇筆記的 Obsidian vault（虛構的筆記，M2 Pro Mac 16 GB，debug build，由 Claude Code 寫筆記）：15 秒後可以搜尋，約 2 分鐘寫出第一篇筆記，約 4 分鐘寫出 8 篇帶引用的筆記。
 
 [評估方法與基準詳情](docs/eval/README.md)。
 
