@@ -42,6 +42,9 @@ export function baseResponse(command: string, args: unknown, context: BaseRespon
   switch (command) {
     // The early-open path stays off here so specs keep the daemon-backed gate.
     case "should_show_wizard": case "local_setup_completed": case "get_clipboard_enabled": return false;
+    // The fixture has no native startup service to repair; shared shell chrome
+    // can proceed as if preflight succeeded.
+    case "get_startup_preflight_status": return "ready";
     case "get_remote_access_profile": return null;
     case "get_remote_access_status": return { status: "off" };
     case "set_traffic_lights_visible": case "set_setup_completed": return null;

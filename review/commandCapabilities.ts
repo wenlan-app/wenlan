@@ -12,6 +12,9 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "local_setup_completed",
     "set_traffic_lights_visible",
     "set_setup_completed",
+    // Shared app shell preflight status; the Review fixture has no OS service
+    // manager, so it reports the ordinary ready state.
+    "get_startup_preflight_status",
     "search",
     "search_pages",
     "search_entities_cmd",
