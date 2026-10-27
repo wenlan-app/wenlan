@@ -9,7 +9,7 @@
   </g>
   <text x="360" y="146" fill="#93E3F2" font-size="29.12" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="12" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文瀾</tspan></text>
   <text x="360" y="186" fill="#F7F8FF" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="30" font-weight="500" text-anchor="middle">持續更新的知識庫</text>
-  <text x="360" y="218" fill="#BAC4D2" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="18" font-weight="400" text-anchor="middle">免費 · 開源 · 本地優先</text>
+  <text x="360" y="218" fill="#BAC4D2" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="18" font-weight="400" text-anchor="middle">免費・開源・本地優先</text>
   <defs>
     <linearGradient id="banner-zh-Hant-mobile-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>

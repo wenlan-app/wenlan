@@ -40,12 +40,12 @@ const BANNER_COPY = {
   },
   "zh-Hant": {
     title: ["持續更新的知識庫"],
-    tagline: "免費 · 開源 · 本地優先",
+    tagline: "免費・開源・本地優先",
     font: '"PingFang TC", "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "zh-Hans": {
     title: ["持续更新的知识库"],
-    tagline: "免费 · 开源 · 本地优先",
+    tagline: "免费・开源・本地优先",
     font: '"PingFang SC", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif',
   },
   "es-ES": {
@@ -101,18 +101,18 @@ function makeSimpleBanner(viewport, locale) {
   // The Wenlan name and the title stay close in size, which reads as one heading.
   const content = mobile
     ? tagline
-      ? `${logoMarkup({ x: 320, y: 32, size: 80, prefix })}
-  ${brand(360, 146, chineseName ? 29.12 : 30.24, "middle")}
-  ${text(360, 186, copy.title[0], 30, BANNER.white, 500, "middle")}
-  ${text(360, 218, tagline, 18, BANNER.secondary, 400, "middle")}`
+      ? `${logoMarkup({ x: 320, y: chineseName ? 32 : 34, size: 80, prefix })}
+  ${brand(360, chineseName ? 146 : 148, chineseName ? 29.12 : 30.24, "middle")}
+  ${text(360, chineseName ? 186 : 183, copy.title[0], 30, BANNER.white, 500, "middle")}
+  ${text(360, chineseName ? 218 : 215, tagline, 18, BANNER.secondary, 400, "middle")}`
       : `${logoMarkup({ x: 320, y: 32, size: 80, prefix })}
   ${brand(360, 150, chineseName ? 29.12 : 30.24, "middle")}
   ${text(360, 195, copy.title[0], 32, BANNER.white, 500, "middle")}`
     : tagline
       ? `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
-  ${brand(300, 140, chineseName ? 41.6 : 43.2, "start")}
-  ${text(300, 197, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}
-  ${text(300, 235, tagline, 20, BANNER.secondary, 400, "start", chineseName ? 0.65 : null)}`
+  ${brand(300, chineseName ? 141 : 146, chineseName ? 41.6 : 43.2, "start")}
+  ${text(300, chineseName ? 196 : 191, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}
+  ${text(300, chineseName ? 234 : 229, tagline, 20, BANNER.secondary, 400, "start", chineseName ? 0.65 : null)}`
       : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
   ${brand(300, 153, chineseName ? 41.6 : 43.2, "start")}
   ${text(300, 219, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}`;
