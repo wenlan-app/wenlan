@@ -441,7 +441,26 @@ fn build_selector_with(
 /// installed from a test copy of the app lands there, not in the user's real
 /// `~/.claude` or `~/.codex`.
 fn client_command(bin: &Path) -> Command {
+    client_command_with_path(bin, std::env::var_os("PATH"))
+}
+
+/// Builds a client command with the selected executable's directory at the
+/// front of its PATH. Some CLI shims use `#!/usr/bin/env node`, so they need
+/// sibling runtimes even when Wenlan itself was launched with a minimal GUI
+/// PATH. Preserve every inherited PATH entry after the executable directory.
+fn client_command_with_path(bin: &Path, inherited_path: Option<OsString>) -> Command {
     let mut command = Command::new(bin);
+    if bin.is_absolute() {
+        if let Some(parent) = bin.parent().filter(|parent| parent.is_absolute()) {
+            let mut paths = vec![parent.to_path_buf()];
+            if let Some(inherited_path) = inherited_path {
+                paths.extend(std::env::split_paths(&inherited_path));
+            }
+            if let Ok(path) = std::env::join_paths(paths) {
+                command.env("PATH", path);
+            }
+        }
+    }
     if crate::identity_paths::isolated_dev_state_dir().is_some() {
         if let (Some(home), _) = crate::identity_paths::ai_tool_dirs() {
             // Codex refuses a CODEX_HOME that does not exist, and in a fresh
@@ -645,6 +664,58 @@ mod tests {
 
     fn no_dirs(_: &Path) -> Vec<PathBuf> {
         Vec::new()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn client_command_finds_sibling_runtime_and_preserves_inherited_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let bin_dir = temp.path().join("nvm-node-bin");
+        std::fs::create_dir(&bin_dir).unwrap();
+        let node = bin_dir.join("node");
+        let shim = bin_dir.join("codex");
+        std::fs::write(&node, "#!/bin/sh\nprintf 'sibling-node-ran\\n'\n").unwrap();
+        std::fs::write(&shim, "#!/usr/bin/env node\n").unwrap();
+        for path in [&node, &shim] {
+            let mut permissions = std::fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(path, permissions).unwrap();
+        }
+
+        let inherited = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let mut command = client_command_with_path(&shim, Some(inherited));
+        let configured_path = command
+            .get_envs()
+            .find(|(name, _)| *name == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, value)| value)
+            .expect("client command should set PATH");
+        assert_eq!(
+            std::env::split_paths(configured_path).collect::<Vec<_>>(),
+            vec![
+                bin_dir.clone(),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin")
+            ],
+            "prepend the selected executable directory and retain inherited entries"
+        );
+
+        let output = command.output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "sibling-node-ran\n"
+        );
+    }
+
+    #[test]
+    fn client_command_leaves_path_inherited_for_nonabsolute_executables() {
+        let inherited = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let command = client_command_with_path(Path::new("codex"), Some(inherited));
+        assert!(command
+            .get_envs()
+            .all(|(name, _)| name != std::ffi::OsStr::new("PATH")));
     }
 
     // ── PATH search ─────────────────────────────────────────────────────
