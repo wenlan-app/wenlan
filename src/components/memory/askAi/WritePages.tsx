@@ -12,7 +12,7 @@ import {
   type NewMaterialList,
   type Page,
 } from "../../../lib/tauri";
-import { OWN_IDENTITY, resolveAgentDisplayName, toolFamilyOf } from "../../../lib/agents";
+import { OWN_IDENTITY, resolveAgentActionName, toolFamilyOf } from "../../../lib/agents";
 import { useSteepOnDemand } from "../../../lib/steepMode";
 import { useLiveAgents } from "../../connect/connectionState";
 import { writeClipboard } from "../page/codeBasisShared";
@@ -23,22 +23,31 @@ import "./writePages.css";
 /** The offer shows from this much material, the same floor at which the AI
  *  tool's replies start naming `/wenlan steep`. */
 export const WRITE_PAGES_MIN_ITEMS = 3;
+/** How many pages one press asks the AI tool for, from the newest topics. */
+export const PAGES_PER_RUN = 8;
 /** After the user closes the home line it comes back only once this much
  *  more material has arrived. */
 const SHOW_AGAIN_AFTER = 10;
 /** No claim held and nothing new for this long: the run is over. */
 const QUIET_DONE_MS = 90_000;
-/** Nothing at all for this long: the tool may be waiting for the user. */
+/** No page and no change in what the tool holds for this long: the tool may
+ *  be waiting for the user, or it stopped and its claim has not run out. */
 const STUCK_MS = 120_000;
 /** A page born this long before the button was pressed still counts; the
  *  daemon's clock and the app's can differ a little. */
 const CLOCK_SLACK_MS = 60_000;
 const POLL_IDLE_MS = 15_000;
 const POLL_RUNNING_MS = 4_000;
+/** How often a run reads the pages again while it goes on. */
+export const PAGES_REREAD_MS = 10_000;
 const MAX_LISTED = 8;
 
 const RUN_KEY = "askAi:writePages:run";
+/** The tool the user picked for writing pages, when more than one is connected. */
+const TOOL_KEY = "askAi:writePages:tool";
 const DISMISSED_KEY = "askAi:writePages:dismissedTotal";
+/** The last run let its material go without writing a page. */
+const STOPPED_KEY = "askAi:writePages:stopped";
 
 /** One press of "Ask AI to write pages", remembered per viewer. */
 export interface WritePagesRun {
@@ -49,18 +58,44 @@ export interface WritePagesRun {
    *  user to paste. Kept with the run so a remount (a language switch, a new
    *  window) still says the right thing. */
   readonly handedOver?: "opened" | "copied";
+  /** What the tool last held, how much material was waiting then, and when
+   *  what it held last changed. Kept with the run so a remount does not
+   *  restart the quiet clock, and so material let go with none of it gone
+   *  and no page written reads as a stopped run. */
+  readonly claim?: { readonly held: number; readonly total: number; readonly at: number };
+  /** How many sources each page had when the run started, so a page the
+   *  run added sources to counts as updated before (or without) a rewrite. */
+  readonly sources?: Readonly<Record<string, number>>;
 }
 
 export type WritePagesView =
   | { readonly kind: "hidden" }
   | { readonly kind: "ready"; readonly list: NewMaterialList }
   | { readonly kind: "working"; readonly written: Page[]; readonly writing: boolean; readonly stuck: boolean }
-  | { readonly kind: "done"; readonly written: Page[]; readonly minutes: number; readonly left: number };
+  | {
+      readonly kind: "done";
+      readonly written: Page[];
+      /** Pages that were there before the run and changed in it: they took
+       *  new sources, or were brought up to date. */
+      readonly updated: Page[];
+      /** From the start to the run's last page change. */
+      readonly minutes: number;
+      readonly left: number;
+    };
 
 /** A page's birth time in ms. The daemon writes RFC 3339 or SQLite's
  *  `YYYY-MM-DD HH:MM:SS` (UTC); epoch numbers are accepted too. */
 export function pageCreatedMs(page: Pick<Page, "created_at">): number | null {
-  const raw = page.created_at?.trim() ?? "";
+  return timeMs(page.created_at);
+}
+
+/** A page's last change in ms, read as `pageCreatedMs` reads its birth. */
+export function pageModifiedMs(page: Pick<Page, "last_modified">): number | null {
+  return timeMs(page.last_modified);
+}
+
+function timeMs(value: string | null | undefined): number | null {
+  const raw = value?.trim() ?? "";
   if (/^\d+$/.test(raw)) {
     const n = Number(raw);
     return n < 1e12 ? n * 1000 : n;
@@ -80,6 +115,58 @@ export function pagesWrittenSince(pages: readonly Page[], startedAt: number): Pa
     .map((entry) => entry.page);
 }
 
+/** Each page's source count, for `WritePagesRun.sources`. */
+export function sourceCounts(pages: readonly Page[]): Record<string, number> {
+  return Object.fromEntries(
+    pages.filter((page) => page.creation_kind !== "entity").map((page) => [page.id, page.source_memory_ids?.length ?? 0]),
+  );
+}
+
+/** Pages that were there before the run started and changed during it,
+ *  oldest change first: a run adds sources to the page on a subject instead
+ *  of writing a second one, and brings out-of-date pages up to date. A page
+ *  counts once it has more sources than at the start (`sourcesAtStart`), as
+ *  soon as they are added: its rewrite may come later, after the page list
+ *  was last read. */
+export function pagesUpdatedSince(
+  pages: readonly Page[],
+  startedAt: number,
+  sourcesAtStart?: Readonly<Record<string, number>>,
+): Page[] {
+  const written = new Set(pagesWrittenSince(pages, startedAt).map((page) => page.id));
+  const gained = (page: Page) => {
+    const before = sourcesAtStart?.[page.id];
+    return before !== undefined && (page.source_memory_ids?.length ?? 0) > before;
+  };
+  return pages
+    .filter((page) => !written.has(page.id) && page.creation_kind !== "entity")
+    .map((page) => ({ page, born: pageCreatedMs(page), at: pageModifiedMs(page) }))
+    .filter(
+      (entry) =>
+        gained(entry.page) ||
+        (entry.at !== null && entry.at >= startedAt && (entry.born === null || entry.born < startedAt - CLOCK_SLACK_MS)),
+    )
+    .sort((a, b) => Math.max(a.at ?? startedAt, startedAt) - Math.max(b.at ?? startedAt, startedAt))
+    .map((entry) => entry.page);
+}
+
+/** The run's last page change in ms: the newest page born or changed in it. */
+export function lastPageChangeMs(written: readonly Page[], updated: readonly Page[], startedAt: number): number {
+  return Math.max(
+    startedAt,
+    ...written.map((page) => pageCreatedMs(page) ?? startedAt),
+    ...updated.map((page) => pageModifiedMs(page) ?? startedAt),
+  );
+}
+
+/** The finished run in one line: the pages written, and those updated. */
+export function doneLine(view: { readonly written: readonly Page[]; readonly updated: readonly Page[]; readonly minutes: number }, t: TFunction): string {
+  const { written, updated, minutes } = view;
+  if (updated.length === 0) return t("askAi.writePages.done", { count: written.length, minutes });
+  if (written.length === 0) return t("askAi.writePages.doneUpdatedOnly", { count: updated.length, minutes });
+  return t("askAi.writePages.doneAndUpdated", { count: written.length, updated: updated.length, minutes });
+}
+
 /** What the offer shows. On demand only: in Automatic mode Wenlan writes the
  *  pages itself. */
 export function writePagesView({
@@ -90,6 +177,7 @@ export function writePagesView({
   dismissedTotal,
   now,
   lastChangeAt,
+  minItems = WRITE_PAGES_MIN_ITEMS,
 }: {
   readonly onDemand: boolean | undefined;
   readonly list: NewMaterialList | undefined;
@@ -98,24 +186,31 @@ export function writePagesView({
   readonly dismissedTotal: number | null;
   readonly now: number;
   readonly lastChangeAt: number;
+  /** The least material worth an offer. The import finish asks from one
+   *  item: the user just brought it in and is looking at it. */
+  readonly minItems?: number;
 }): WritePagesView {
   if (onDemand !== true || !list) return { kind: "hidden" };
   if (run) {
     const written = pagesWrittenSince(pages, run.startedAt);
+    const updated = pagesUpdatedSince(pages, run.startedAt, run.sources);
     const writing = (list.held ?? 0) > 0;
     const quiet = now - lastChangeAt;
-    if (!writing && written.length > 0 && (quiet >= QUIET_DONE_MS || list.total < WRITE_PAGES_MIN_ITEMS)) {
-      const last = Math.max(...written.map((page) => pageCreatedMs(page) ?? run.startedAt));
+    if (!writing && written.length + updated.length > 0 && (quiet >= QUIET_DONE_MS || list.total < minItems)) {
+      const last = lastPageChangeMs(written, updated, run.startedAt);
       return {
         kind: "done",
         written,
+        updated,
         minutes: Math.max(1, Math.round((last - run.startedAt) / 60_000)),
         left: list.total,
       };
     }
-    return { kind: "working", written, writing, stuck: !writing && quiet >= STUCK_MS };
+    // Holding material is not progress by itself: a tool that was stopped
+    // keeps its claim until the claim runs out.
+    return { kind: "working", written, writing, stuck: quiet >= STUCK_MS };
   }
-  if (list.total < WRITE_PAGES_MIN_ITEMS) return { kind: "hidden" };
+  if (list.total < minItems) return { kind: "hidden" };
   if (dismissedTotal !== null && list.total < dismissedTotal + SHOW_AGAIN_AFTER) return { kind: "hidden" };
   return { kind: "ready", list };
 }
@@ -123,12 +218,18 @@ export function writePagesView({
 /** The tool used most recently, the same one `useAskAiCommand` words the
  *  command for. */
 export function recentTool(agents: readonly AgentConnection[]): { family: string; name: string } | null {
-  const tools = agents
+  return connectedTools(agents)[0] ?? null;
+}
+
+/** Every connected AI tool, one per family, most recently used first. */
+export function connectedTools(agents: readonly AgentConnection[]): { family: string; name: string }[] {
+  const seen = new Set<string>();
+  return agents
     .filter((agent) => !OWN_IDENTITY.test(toolFamilyOf(agent)))
-    .sort((a, b) => (b.last_seen_at ?? b.created_at) - (a.last_seen_at ?? a.created_at));
-  if (tools.length === 0) return null;
-  const family = toolFamilyOf(tools[0]);
-  return { family, name: resolveAgentDisplayName(family, [...agents]) };
+    .sort((a, b) => (b.last_seen_at ?? b.created_at) - (a.last_seen_at ?? a.created_at))
+    .map((agent) => toolFamilyOf(agent))
+    .filter((family) => (seen.has(family) ? false : (seen.add(family), true)))
+    .map((family) => ({ family, name: resolveAgentActionName(family, [...agents]) }));
 }
 
 const KIND_ORDER = ["note", "chat", "file", "capture"] as const;
@@ -167,12 +268,21 @@ export interface WritePagesState {
   readonly view: WritePagesView;
   /** For the checklist step, which has no close of its own. */
   readonly stepView: WritePagesView;
+  /** For the import finish: offered from the first item. */
+  readonly cardView: WritePagesView;
+  /** How much material has no page yet. */
+  readonly waitingTotal: number;
   readonly onDemand: boolean | undefined;
   /** False until the connected tools are known; nothing shows before. */
   readonly loaded: boolean;
   readonly run: WritePagesRun | null;
-  /** The tool the button opens or copies the command for. */
+  /** The tool the button opens or copies the command for: the one the user
+   *  picked, else the one used most recently. */
   readonly tool: { family: string; name: string } | null;
+  /** Every connected tool, most recently used first. */
+  readonly tools: readonly { family: string; name: string }[];
+  /** Use this tool for writing pages from now on (remembered per viewer). */
+  readonly chooseTool: (family: string) => void;
   readonly toolName: string;
   readonly opensTool: boolean;
   readonly command: string | null;
@@ -183,6 +293,8 @@ export interface WritePagesState {
   readonly copyCommand: () => Promise<boolean>;
   /** Hides the home line until much more material arrives, and ends the run. */
   readonly close: () => void;
+  /** The last run ended without a page: its material came back untouched. */
+  readonly stopped?: boolean;
 }
 
 export function useWritePages(pages: readonly Page[]): WritePagesState {
@@ -190,10 +302,14 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const queryClient = useQueryClient();
   const onDemand = useSteepOnDemand();
   const agents = useLiveAgents();
-  const command = useAskAiCommand("steep");
+  const [picked, setPicked] = useState<string | null>(() => readJson<string>(TOOL_KEY));
+  const tools = agents.isSuccess ? connectedTools(agents.data) : [];
+  const tool = tools.find((candidate) => candidate.family === picked) ?? tools[0] ?? null;
+  const command = useAskAiCommand("steep", tool?.family);
   const [run, setRunState] = useState<WritePagesRun | null>(() => readJson<WritePagesRun>(RUN_KEY));
   const [dismissedTotal, setDismissedTotal] = useState<number | null>(() => readJson<number>(DISMISSED_KEY));
   const [copied, setCopied] = useState(false);
+  const [stopped, setStoppedState] = useState(() => readJson<boolean>(STOPPED_KEY) === true);
   const [now, setNow] = useState(() => Date.now());
   const list = useQuery({
     queryKey: ["newMaterial"],
@@ -206,14 +322,38 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
 
   const written = run ? pagesWrittenSince(pages, run.startedAt) : [];
   // When the tool last did something: the newest page it wrote, by that
-  // page's own birth time (so reopening the home later does not restart the
-  // quiet clock), or the last time it was seen holding material.
-  const held = list.data?.held ?? 0;
-  const [heldSeenAt, setHeldSeenAt] = useState(0);
+  // page's own birth time, or the last time what it holds changed (kept with
+  // the run), so reopening the home later does not restart the quiet clock.
+  // Only a change counts: a tool killed mid-run holds its material until the
+  // claim runs out, and all that time nothing is being written.
+  const updated = run ? pagesUpdatedSince(pages, run.startedAt, run.sources) : [];
+  const lastChangeAt = Math.max(run?.claim?.at ?? 0, run ? lastPageChangeMs(written, updated, run.startedAt) : 0);
+
+  const material = list.data;
   useEffect(() => {
-    if (held > 0) setHeldSeenAt(Date.now());
-  }, [held, list.dataUpdatedAt]);
-  const lastChangeAt = Math.max(run?.startedAt ?? 0, heldSeenAt, ...written.map((page) => pageCreatedMs(page) ?? 0));
+    if (!run || !material) return;
+    const held = material.held ?? 0;
+    const claim = run.claim;
+    const keep = (next: WritePagesRun | null) => {
+      writeJson(RUN_KEY, next);
+      setRunState(next);
+    };
+    if (held > 0) {
+      if (claim?.held !== held) keep({ ...run, claim: { held, total: material.total, at: Date.now() } });
+      else if (claim.total !== material.total) keep({ ...run, claim: { ...claim, total: material.total } });
+      return;
+    }
+    if (!claim || claim.held === 0) return;
+    // The tool let its material go with none of it written up (nothing left
+    // the list, no page landed): the run stopped. End it; the offer says so.
+    if (written.length === 0 && material.total >= claim.total) {
+      keep(null);
+      writeJson(STOPPED_KEY, true);
+      setStoppedState(true);
+      return;
+    }
+    keep({ ...run, claim: { held: 0, total: material.total, at: Date.now() } });
+  }, [run, material, written.length]);
   const lastTotal = useRef(list.data?.total);
 
   // A page the tool wrote takes its material out of the list, whether or not
@@ -242,8 +382,25 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   const inputs = { onDemand, list: list.data, pages, run, now, lastChangeAt };
   const view = writePagesView({ ...inputs, dismissedTotal });
   const stepView = writePagesView({ ...inputs, dismissedTotal: null });
+  const cardView = writePagesView({ ...inputs, dismissedTotal: null, minItems: 1 });
 
-  const tool = agents.isSuccess ? recentTool(agents.data) : null;
+  // A rewrite, or sources added to the page on a subject, changes a page
+  // without changing how much material waits, so the read above misses it.
+  // While a run goes on, read the pages again every so often, and once more
+  // when the tool lets go of its material and when the run is done, so the
+  // done line counts every page the run changed.
+  const runningSince = run?.startedAt;
+  const finished = view.kind === "done";
+  useEffect(() => {
+    if (runningSince === undefined || finished) return;
+    const timer = setInterval(() => void queryClient.invalidateQueries({ queryKey: ["pages"] }), PAGES_REREAD_MS);
+    return () => clearInterval(timer);
+  }, [runningSince, finished, queryClient]);
+  const letGo = runningSince !== undefined && list.data !== undefined && (list.data.held ?? 0) === 0;
+  useEffect(() => {
+    if (letGo || finished) void queryClient.invalidateQueries({ queryKey: ["pages"] });
+  }, [letGo, finished, queryClient]);
+
   const toolName = run?.tool ?? tool?.name ?? t("askAi.writePages.yourTool");
   const opensTool = tool !== null && PROMPT_LINK_FAMILIES.includes(tool.family);
 
@@ -261,7 +418,16 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     writeJson(RUN_KEY, next);
     setRunState(next);
   };
+  const chooseTool = (family: string) => {
+    writeJson(TOOL_KEY, family);
+    setPicked(family);
+  };
+  const clearStopped = () => {
+    writeJson(STOPPED_KEY, null);
+    setStoppedState(false);
+  };
   const close = () => {
+    clearStopped();
     writeJson(DISMISSED_KEY, total);
     setDismissedTotal(total);
     setRun(null);
@@ -276,7 +442,8 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     if (command === null) return;
     const startedAt = Date.now();
     setNow(startedAt);
-    const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null };
+    clearStopped();
+    const begun: WritePagesRun = { startedAt, tool: tool?.name ?? null, sources: sourceCounts(pages) };
     setRun(begun);
     if (opensTool && tool) {
       try {
@@ -294,10 +461,14 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
   return {
     view,
     stepView,
+    cardView,
+    waitingTotal: total,
     onDemand,
     loaded: agents.isSuccess,
     run,
     tool,
+    tools,
+    chooseTool,
     toolName,
     opensTool,
     command,
@@ -306,6 +477,7 @@ export function useWritePages(pages: readonly Page[]): WritePagesState {
     start,
     copyCommand,
     close,
+    stopped,
   };
 }
 
@@ -323,9 +495,13 @@ export function workingHeadline(
   state: WritePagesState,
   view: Extract<WritePagesView, { kind: "working" }>,
   t: TFunction,
+  /** How many pages the run asked for, for "3 of 8 ready". */
+  of?: number,
 ): string {
   if (view.written.length > 0) {
-    return t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
+    return of !== undefined && view.written.length <= of
+      ? t("askAi.writePages.workingCountOf", { tool: state.toolName, count: view.written.length, total: of })
+      : t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
   }
   if (view.writing) return t("askAi.writePages.working", { tool: state.toolName });
   return state.run?.handedOver === "opened"
@@ -434,6 +610,7 @@ export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }:
         <div className="write-pages-line-row">
           <Sparkle aria-hidden="true" weight="regular" className="write-pages-icon" />
           <p className="write-pages-text">
+            {state.stopped ? <span className="write-pages-stopped">{t("askAi.writePages.stopped")}</span> : null}
             {waitingLine(state, pages, t)}
             {pasteHint ? <span className="write-pages-hint">{pasteHint}</span> : null}
           </p>
@@ -507,7 +684,7 @@ export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }:
       <div className="write-pages-line-row">
         <CheckCircle aria-hidden="true" weight="fill" className="write-pages-icon write-pages-icon--done" />
         <p className="write-pages-text">
-          {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
+          {doneLine(view, t)}
         </p>
         <div className="write-pages-actions">
           {view.left >= WRITE_PAGES_MIN_ITEMS && state.tool ? (

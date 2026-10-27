@@ -36,7 +36,7 @@ describe("revisionWriterLabel", () => {
     expect(revisionWriterLabel(tFor("en"), "agent_refresh", "claude-code")).toBe("Updated by Claude Code");
     expect(revisionWriterLabel(tFor("zh-Hant"), "agent_refresh", "claude-code")).toBe("Claude Code 更新");
     expect(revisionWriterLabel(tFor("zh-Hans"), "agent_refresh", "claude-code")).toBe("Claude Code 更新");
-    expect(revisionWriterLabel(tFor("en"), "agent_refresh", "my-bot")).toBe("Updated by my-bot");
+    expect(revisionWriterLabel(tFor("en"), "agent_refresh", "my-bot")).toBe("Updated by My Bot");
     expect(revisionWriterLabel(tFor("en"), "agent_refresh")).toBe("Updated by an agent");
     expect(revisionWriterLabel(tFor("en"), "agent_refresh", "  ")).toBe("Updated by an agent");
     expect(revisionWriterLabel(tFor("zh-Hant"), "agent_refresh", null)).toBe("Agent 更新");
@@ -91,7 +91,7 @@ describe("prettyAgent", () => {
   it("uses the single agentDisplayName map and keeps its null and unknown behavior", () => {
     expect(prettyAgent("claude-code")).toBe("Claude Code");
     expect(prettyAgent(" Claude-Code ")).toBe("Claude Code");
-    expect(prettyAgent("codex")).toBe("Codex");
+    expect(prettyAgent("codex")).toBe("ChatGPT / Codex");
     expect(prettyAgent("My Bot")).toBe("My Bot");
     expect(prettyAgent(null)).toBe("unknown agent");
     expect(prettyAgent(undefined)).toBe("unknown agent");

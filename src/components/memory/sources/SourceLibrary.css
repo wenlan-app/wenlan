@@ -68,5 +68,6 @@
 }
 
 .source-import-progress { margin-bottom: 20px; }
+.source-folder-finish { margin-bottom: 20px; }
 
 .source-library-empty .source-library-manage { min-height: 36px; padding: 0 12px; }

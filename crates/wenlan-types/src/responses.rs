@@ -447,6 +447,12 @@ pub struct CreatePageResponse {
     /// "N verified, N unverified, N stripped". Absent when it cited nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citations: Option<String>,
+    /// Related pages the saved page could still link but does not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
+    /// The next action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 /// Result of an explicit page-title change. Does not expose page prose.
@@ -772,6 +778,12 @@ pub struct PageWriteResponse {
     /// "N verified, N unverified, N stripped". Absent when it cited nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub citations: Option<String>,
+    /// Related pages the saved page could still link but does not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_targets: Vec<String>,
+    /// The next action, in plain words for hosts with no Wenlan skill.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub next_step: String,
 }
 
 /// Receipt for `PUT /api/pages/{id}/review-required`.

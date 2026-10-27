@@ -5,7 +5,9 @@
 //!
 //! Thin HTTP client: POST /api/sources to register the path as a Directory or
 //! OKF bundle source (idempotent — an already-registered path is treated as
-//! success), then POST /api/sources/{id}/sync, then render the returned stats.
+//! success), then POST /api/sources/{id}/sync, then render the returned stats
+//! and, when the import left material no page uses yet (GET /api/steep/new),
+//! one line naming the next step for the mode Wenlan is in.
 //! An OKF bundle lands in the Space sent by the client's Space header, else
 //! the default Space. No DB access, no new endpoints (per AGENTS.md crate
 //! boundaries).
@@ -201,9 +203,33 @@ pub async fn run(
     }
     match format {
         ResolvedFormat::Json => print_json(&stats)?,
-        ResolvedFormat::Table => print!("{}", format_stats(&id, &stats)),
+        ResolvedFormat::Table => {
+            print!("{}", format_stats(&id, &stats));
+            if stats.ingested > 0 {
+                // Best effort: a failed count prints no hint, never an error.
+                let waiting = client.new_material_total().await.ok();
+                let background = wenlan_core::config::load_config().background_ai_enabled();
+                if let Some(line) = next_step_line(background, waiting) {
+                    println!("{line}");
+                }
+            }
+        }
     }
     Ok(())
+}
+
+/// The step after an import that left material no page uses yet, for the
+/// mode Wenlan is in. `background` is whether Wenlan's own model does the
+/// background work; `waiting` the material waiting for a page, when known.
+fn next_step_line(background: bool, waiting: Option<u32>) -> Option<&'static str> {
+    if waiting.unwrap_or(0) == 0 {
+        return None;
+    }
+    Some(if background {
+        "Wenlan is turning them into pages in the background."
+    } else {
+        "To turn them into pages, run /wenlan steep in your AI tool."
+    })
 }
 
 /// Register `abs_path` as a source of `source_type`, idempotently, returning
@@ -258,6 +284,23 @@ fn format_stats(id: &str, stats: &SyncStats) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn after_an_import_the_next_step_follows_the_mode() {
+        assert_eq!(
+            next_step_line(false, Some(3)),
+            Some("To turn them into pages, run /wenlan steep in your AI tool.")
+        );
+        assert_eq!(
+            next_step_line(true, Some(3)),
+            Some("Wenlan is turning them into pages in the background.")
+        );
+        // Nothing waiting for a page, or the count could not be read: no line.
+        for background in [false, true] {
+            assert_eq!(next_step_line(background, Some(0)), None);
+            assert_eq!(next_step_line(background, None), None);
+        }
+    }
 
     fn stats(found: usize, ingested: usize, skipped: usize, errors: usize) -> SyncStats {
         SyncStats {

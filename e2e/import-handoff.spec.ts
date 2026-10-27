@@ -188,11 +188,14 @@ test("an import hands background work to Activity after returning to the workspa
     window.__releaseHandoffImport = true;
   });
 
-  // ── The handoff sentence, naming the number stored ──
+  // ── The handoff: searchable now, and the next step turns them into pages ──
   await expect(page.getByText(/3 memories imported/i)).toBeVisible();
-  await expect(page.getByText(/3 memories stored and searchable now/)).toBeVisible();
-  // The mock starts On demand, so the handoff names the AI tool, not the background.
-  await expect(page.getByText(/Your AI tool steeps them as it uses Wenlan\. See progress on Activity/)).toBeVisible();
+  await expect(page.getByText("You can search them now.", { exact: true })).toBeVisible();
+  // The next step sits under it. This mock reports no new material waiting,
+  // so the "Turn them into pages" offer stays hidden (TurnIntoPages tests
+  // cover its faces), and nothing here uses the word "steep".
+  await expect(page.getByTestId("import-organize")).toBeAttached();
+  await expect(page.getByRole("main").getByText(/steep/i)).toHaveCount(0);
 
   // One chunk, one batch id.
   const calls = await page.evaluate(() => window.__handoffImportCalls ?? []);

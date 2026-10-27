@@ -8,6 +8,7 @@ import {
   type ImportPhaseState,
   type ImportPhaseStatus,
 } from "../../lib/tauri";
+import { ImportOrganize, useOrganizeActions } from "./askAi/TurnIntoPages";
 
 /** Every phase, in the order a user sees them. Matches ImportPhase::ALL. */
 export const IMPORT_PHASE_ORDER: ImportPhase[] = [
@@ -227,9 +228,10 @@ function PhaseDot({ state }: { state: ImportPhaseState }) {
  * A phase with no known total reads as waiting, never as 0%. `distill` never
  * reports a usable total, so it always renders as a live count with no bar.
  */
-/** `onDemand`: steeping is On demand, so the handoff names the AI tool, not the background. */
+/** `onDemand`: organizing is On demand, so the handoff names the AI tool, not the background. */
 export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPhaseStatus[]; onDemand?: boolean }) {
   const { t } = useTranslation();
+  const organize = useOrganizeActions() !== null;
   const byPhase = new Map<ImportPhase, ImportPhaseStatus>();
   for (const p of phases) byPhase.set(p.phase, p);
 
@@ -334,7 +336,13 @@ export function ImportPhaseList({ phases, onDemand = false }: { phases: ImportPh
           </div>
         );
       })}
-      {handedOff && (
+      {handedOff && organize && (stored?.done ?? 0) > 0 ? (
+        // Inside the main window the handoff is the next step itself: the
+        // shared card that turns the stored material into pages.
+        <div style={{ margin: "8px 14px" }}>
+          <ImportOrganize count={stored?.done ?? 0} kind="note" />
+        </div>
+      ) : handedOff && (
         // The handoff: everything stored is searchable now, and the organizing
         // that follows is reported by the toolbar Activity button, not here.
         <p

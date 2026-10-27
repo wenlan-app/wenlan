@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { clipboardWrite, type AgentSession } from "../../../lib/tauri";
-import { sessionResumeCommand, sessionToolLabel } from "../../../lib/sessionSource";
+import { sessionResumeCommand, sessionToolActionLabel, sessionToolLabel } from "../../../lib/sessionSource";
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -38,6 +38,7 @@ interface SessionResumeActionProps {
 export function SessionResumeAction({ session, transcriptAvailable }: SessionResumeActionProps) {
   const { t } = useTranslation();
   const tool = sessionToolLabel(session.tool);
+  const actionTool = sessionToolActionLabel(session.tool);
   const command = sessionResumeCommand(session.tool, session.external_id);
   const [outcome, setOutcome] = useState<"copied" | "failed" | null>(null);
   const mounted = useRef(true);
@@ -61,7 +62,7 @@ export function SessionResumeAction({ session, transcriptAvailable }: SessionRes
   return (
     <div className="session-card-resume">
       <button type="button" className="session-card-resume-button" onClick={() => { void copy(); }}>
-        {t("sessionSource.continueIn", { tool })}
+        {t("sessionSource.continueIn", { tool: actionTool })}
       </button>
       {outcome && (
         <p role="status" className="session-card-muted">

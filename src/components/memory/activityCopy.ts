@@ -268,13 +268,13 @@ export const enActivityStatus = {
 
   // ── Import handoff ────────────────────────────────────────────────────
   importHandoff_one:
-    "{{count}} memory stored and searchable now. Wenlan keeps steeping it in the background. See further progress on Activity.",
+    "{{count}} memory stored and searchable now. Wenlan keeps organizing it in the background. See further progress on Activity.",
   importHandoff_other:
-    "{{count}} memories stored and searchable now. Wenlan keeps steeping them in the background. See further progress on Activity.",
+    "{{count}} memories stored and searchable now. Wenlan keeps organizing them in the background. See further progress on Activity.",
   importHandoffOnDemand_one:
-    "{{count}} memory stored and searchable now. Your AI tool steeps it as it uses Wenlan. See progress on Activity.",
+    "{{count}} memory stored and searchable now. Your AI tool turns it into pages when you ask. See progress on Activity.",
   importHandoffOnDemand_other:
-    "{{count}} memories stored and searchable now. Your AI tool steeps them as it uses Wenlan. See progress on Activity.",
+    "{{count}} memories stored and searchable now. Your AI tool turns them into pages when you ask. See progress on Activity.",
 
   // ── Settings, Appearance ──────────────────────────────────────────────
   layoutSetting: "Activity summary placement",
@@ -489,13 +489,13 @@ export const hansActivityStatus = {
     notReady_other: "{{count}} 条尚未进入审阅",
   },
   importHandoff_one:
-    "已存入 {{count}} 条记忆，现在即可搜索。文澜会在后台继续沉淀。可在「动态」查看后续进度。",
+    "已存入 {{count}} 条记忆，现在即可搜索。文澜会在后台继续整理。可在「动态」查看后续进度。",
   importHandoff_other:
-    "已存入 {{count}} 条记忆，现在即可搜索。文澜会在后台继续沉淀。可在「动态」查看后续进度。",
+    "已存入 {{count}} 条记忆，现在即可搜索。文澜会在后台继续整理。可在「动态」查看后续进度。",
   importHandoffOnDemand_one:
-    "已存入 {{count}} 条记忆，现在即可搜索。你的 AI 工具用文澜时会顺手沉淀。可在「动态」查看进度。",
+    "已存入 {{count}} 条记忆，现在即可搜索。你请 AI 工具整理时，它会写成页面。可在「动态」查看进度。",
   importHandoffOnDemand_other:
-    "已存入 {{count}} 条记忆，现在即可搜索。你的 AI 工具用文澜时会顺手沉淀。可在「动态」查看进度。",
+    "已存入 {{count}} 条记忆，现在即可搜索。你请 AI 工具整理时，它会写成页面。可在「动态」查看进度。",
   layoutSetting: "动态摘要的位置",
   layoutSettingHelp: "「当前」摘要在动态页面中的位置。仅保存在本设备。",
   layout: {
@@ -707,13 +707,13 @@ export const hantActivityStatus = {
     notReady_other: "{{count}} 則尚未進入審閱",
   },
   importHandoff_one:
-    "已存入 {{count}} 則記憶，現在即可搜尋。文瀾會在背景繼續沉澱。可在「活動」查看後續進度。",
+    "已存入 {{count}} 則記憶，現在即可搜尋。文瀾會在背景繼續整理。可在「活動」查看後續進度。",
   importHandoff_other:
-    "已存入 {{count}} 則記憶，現在即可搜尋。文瀾會在背景繼續沉澱。可在「活動」查看後續進度。",
+    "已存入 {{count}} 則記憶，現在即可搜尋。文瀾會在背景繼續整理。可在「活動」查看後續進度。",
   importHandoffOnDemand_one:
-    "已存入 {{count}} 則記憶，現在即可搜尋。你的 AI 工具用文瀾時會順手沉澱。可在「活動」查看進度。",
+    "已存入 {{count}} 則記憶，現在即可搜尋。你請 AI 工具整理時，它會寫成頁面。可在「活動」查看進度。",
   importHandoffOnDemand_other:
-    "已存入 {{count}} 則記憶，現在即可搜尋。你的 AI 工具用文瀾時會順手沉澱。可在「活動」查看進度。",
+    "已存入 {{count}} 則記憶，現在即可搜尋。你請 AI 工具整理時，它會寫成頁面。可在「活動」查看進度。",
   layoutSetting: "動態摘要的位置",
   layoutSettingHelp: "「目前」摘要在動態頁面中的位置。僅儲存在本裝置。",
   layout: {

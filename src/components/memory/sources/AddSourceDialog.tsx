@@ -5,6 +5,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { addSource, syncRegisteredSource } from "../../../lib/tauri";
 import { detectVault, type VaultDetection } from "../../../lib/vaultDetection";
 import SourceDialog from "./SourceDialog";
+import { rememberAddedFolder } from "./FolderImportOrganize";
 import { toast } from "sonner";
 
 interface Props {
@@ -26,6 +27,7 @@ export default function AddSourceDialog({ onClose, onSuccess }: Props) {
       addSource(sourceType, sourcePath, follow),
     onSuccess: (newSource, { sourceType, follow }) => {
       queryClient.invalidateQueries({ queryKey: ["registeredSources"] });
+      rememberAddedFolder(newSource);
       // The daemon's 30s scheduler follows later vault changes, but it leaves a
       // vault's (or Logseq graph's) first import to us so it starts at once
       // even while the ordinary poll waits for the machine to be idle. An

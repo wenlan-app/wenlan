@@ -58,6 +58,14 @@ pub(crate) fn steep_error(error: SteepError) -> ServerError {
 /// gate: background AI on and an everyday model there). When none does, steep
 /// hands that judging to the caller's small model.
 fn background_judges_code(state: &ServerState) -> bool {
+    background_does_everyday(state)
+}
+
+/// Whether Wenlan's own everyday model does the background work (background
+/// AI on and an everyday model there): the same gate decides who judges
+/// changed code and who organizes new material. When none does, steep hands
+/// that work to the caller's small model.
+pub(crate) fn background_does_everyday(state: &ServerState) -> bool {
     let config = wenlan_core::config::load_config();
     if !config.background_ai_enabled() {
         return false;
@@ -192,6 +200,7 @@ pub async fn handle_steep_claim(
 pub async fn handle_steep_commit(
     State(state): State<Arc<RwLock<ServerState>>>,
     headers: axum::http::HeaderMap,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
     Json(req): Json<SteepCommitRequest>,
 ) -> Result<Json<SteepCommitResponse>, ServerError> {
     let (db, page_root) = {
@@ -252,6 +261,32 @@ pub async fn handle_steep_commit(
         }
         _ => Vec::new(),
     };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    let link_targets = match db.get_page(&done.page_id).await? {
+        Some(page)
+            if scope.matches(page.workspace.as_deref().or(page.space.as_deref()))
+                && done.outcome != "released" =>
+        {
+            let sources = db
+                .get_memory_contents_by_ids(&page.source_memory_ids)
+                .await?;
+            wenlan_core::steep_new::unused_link_targets(
+                &db,
+                &scope,
+                page.workspace.as_deref().or(page.space.as_deref()),
+                &sources,
+                &page.id,
+                &page.content,
+            )
+            .await
+        }
+        _ => Vec::new(),
+    };
+    let next_step = if done.outcome == "review_card" {
+        "Wait for the revision card to be reviewed, then call steep with action \"list\"."
+    } else {
+        "Call steep with action \"list\" and continue with the next waiting page."
+    };
     Ok(Json(SteepCommitResponse {
         page_id: done.page_id,
         outcome: done.outcome.to_string(),
@@ -260,5 +295,7 @@ pub async fn handle_steep_commit(
         judged: done.judged,
         replayed: done.replayed,
         warnings,
+        link_targets,
+        next_step: next_step.to_string(),
     }))
 }

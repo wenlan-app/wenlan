@@ -11,6 +11,7 @@ import {
 import { IMPORT_SOURCE_LABELS, ImportPhaseList, useImportBatchStatus } from "./ImportPhases";
 import { formatImportErrorDetail } from "./importCopy";
 import { useSteepOnDemand } from "../../lib/steepMode";
+import { ImportedLead, ImportOrganize, useOrganizeActions } from "./askAi/TurnIntoPages";
 
 type Source = "chatgpt" | "claude" | "other";
 
@@ -61,6 +62,9 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const onDemand = useSteepOnDemand() === true;
+  const organize = useOrganizeActions() !== null;
+  // The finish card shows a button: "View memories" steps back to secondary.
+  const [cardAction, setCardAction] = useState(false);
   const [phase, setPhaseRaw] = useState<Phase>("input");
   const setPhase = useCallback((p: Phase) => {
     setPhaseRaw(p);
@@ -444,6 +448,10 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
     // must not make while rows are still being written.
     const stored = (batchStatus?.phases ?? []).find((p) => p.phase === "store");
     const storedCount = stored?.state === "complete" ? stored.done : null;
+    const importFailed = (batchStatus?.phases ?? []).some((p) => p.state === "failed");
+    // Stored and searchable, so the next step is turning it into pages: the
+    // shared card (On demand) or the model doing it (Automatic).
+    const handOn = organize && batchStatus !== null && !importFailed && storedCount !== null && storedCount > 0;
 
     return (
       <div className="flex flex-col gap-6 max-w-2xl mx-auto py-4">
@@ -532,7 +540,15 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
               user reads them as an unfinished bill for an import they were
               told was done. Stored and searchable is the promise the import
               actually keeps, and the toolbar Activity button carries the rest. */}
-          {batchStatus && (
+          {handOn ? (
+            // The heading above already gives the count.
+            <ImportedLead
+              count={storedCount}
+              kind="note"
+              className="turn-pages-lead"
+              short
+            />
+          ) : batchStatus && (
             <p
               style={{
                 fontFamily: "var(--mem-font-body)",
@@ -542,7 +558,7 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
                 margin: 0,
               }}
             >
-              {batchStatus.phases.some((p) => p.state === "failed")
+              {importFailed
                 ? t("importBatch.pillFailed")
                 : storedCount === null
                   ? t("importBatch.backgroundRunning")
@@ -551,12 +567,21 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
           )}
         </div>
 
+        {handOn ? <ImportOrganize count={storedCount} kind="note" lead="none" onActionChange={setCardAction} /> : null}
+
         {/* Actions */}
         <div className={`flex items-center gap-3 ${wizardMode ? "justify-center" : ""}`}>
           <button
             onClick={() => onComplete(source, result!)}
-            className="px-6 py-2 rounded-lg text-sm font-medium transition-colors duration-150"
-            style={{
+            data-emphasis={handOn && cardAction ? "secondary" : "primary"}
+            className={`${handOn && cardAction ? "px-4" : "px-6"} py-2 rounded-lg text-sm font-medium transition-colors duration-150`}
+            style={handOn && cardAction ? {
+              // The card's button is the next step; this one steps back.
+              fontFamily: "var(--mem-font-body)",
+              backgroundColor: "var(--mem-hover)",
+              color: "var(--mem-text-secondary)",
+              border: "1px solid var(--mem-border)",
+            } : {
               fontFamily: "var(--mem-font-body)",
               backgroundColor: "var(--mem-accent-indigo)",
               color: "white",

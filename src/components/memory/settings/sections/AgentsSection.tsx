@@ -3,68 +3,74 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
-  updateAgent,
+  clipboardWrite,
   deleteAgent,
   detectMcpClients,
+  removeRawMcpEntry,
+  updateAgent,
   type AgentConnection,
   type McpClient,
 } from "../../../../lib/tauri";
+import { formatTimeAgo } from "../../../../lib/dateFormat";
+import { describeSetupError } from "../../../../lib/setupErrors";
 import { readingIsYes } from "../../../../lib/reading";
 import {
   describeTrustLevel,
   familyDisplayName,
+  OWN_IDENTITY,
   resolveAgentDisplayName,
   toolFamilyOf,
-  TRUST_LEVELS,
 } from "../../../../lib/agents";
 import { RemoteAccessPanel } from "../../RemoteAccessPanel";
-import { SettingsHelp } from "../SettingsHelp";
-import { Button, Card, ConfirmActionButton, SectionHeader, Select, Tag, Toggle } from "../primitives";
+import { Button, Card, ConfirmActionButton, SectionHeader, Select, Toggle } from "../primitives";
 import ClientSetupList from "../../../connect/ClientSetupList";
+import { connectClient, needsSkillsOnly } from "../../../connect/connectClient";
 import { repairReasonOf } from "../../../connect/clientHealth";
+import ConnectionListDisclosure from "../../../connect/ConnectionListDisclosure";
 import {
-  ConnectionChip,
+  CONNECTION_ROW_LIMIT,
   familyOfClient,
+  restartNameForClient,
   seenFamiliesOf,
   useLiveAgents,
 } from "../../../connect/connectionState";
 
 type AgentUpdate = { enabled?: boolean; trustLevel?: string };
+type RowStatus = "repair" | "restart" | "connected";
 
-/** One coalesced tool row: every registered identity of a single physical
- *  tool (Codex's `codex` + `codex-mcp-client` + …) folded together. */
 interface FamilyRow {
   family: string;
+  client?: McpClient;
   identities: AgentConnection[];
-  /** The wizard's internal connection probe — rendered muted, sorted last. */
-  isProbe: boolean;
-  /** A tool Wenlan added whose family has an identity that has not called
-   *  yet: show Added and the restart note in the row meta instead of as a
-   *  separate pending row. */
-  hasPendingNote: boolean;
+  status: RowStatus;
   memoryCount: number;
   latestLastSeen: number | null;
   anyEnabled: boolean;
-  /** The shared trust level when every identity agrees, else `null` (mixed). */
   uniformTrust: string | null;
 }
 
-export default function AgentsSection({ onSetupAgent, currentSpace }: { onSetupAgent?: () => void; currentSpace?: string }) {
+interface RowError {
+  message: string;
+  detail: string;
+}
+
+export default function AgentsSection({
+  currentSpace,
+}: {
+  onSetupAgent?: () => void;
+  currentSpace?: string;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  // Tools the Add a tool list just added. That list keeps their row (with its
-  // switch) until they call, so a pending row here would show them twice.
-  const [listAdded, setListAdded] = useState<Set<string>>(() => new Set());
+  const [showAll, setShowAll] = useState(false);
+  const [locallyAdded, setLocallyAdded] = useState<Set<string>>(() => new Set());
+  const [disconnectedClientTypes, setDisconnectedClientTypes] = useState<Set<string>>(() => new Set());
+  const [repairedClientTypes, setRepairedClientTypes] = useState<Set<string>>(() => new Set());
+  const [busyFamily, setBusyFamily] = useState<string | null>(null);
+  const [rowErrors, setRowErrors] = useState<Record<string, RowError | null>>({});
 
-  // Live: refetched when the window regains focus and every 30 s while
-  // visible, so a tool the user just restarted flips from Added to Connected
-  // without reopening Settings.
   const { data: agents = [] } = useLiveAgents();
-
-  // Focus only. Detection reads config files from disk, so it gets no
-  // interval, and a short staleTime keeps quick window switches from
-  // re-running it.
   const { data: mcpClients = [] } = useQuery({
     queryKey: ["mcp-clients"],
     queryFn: detectMcpClients,
@@ -73,167 +79,206 @@ export default function AgentsSection({ onSetupAgent, currentSpace }: { onSetupA
   });
 
   const updateAgentMut = useMutation({
-    mutationFn: ({ name, updates }: { name: string; updates: AgentUpdate }) =>
-      updateAgent(name, updates),
+    mutationFn: ({ name, updates }: { name: string; updates: AgentUpdate }) => updateAgent(name, updates),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
   });
-
   const deleteAgentMut = useMutation({
     mutationFn: deleteAgent,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
   });
-
-  const updateOne = (name: string, updates: AgentUpdate) =>
-    updateAgentMut.mutate({ name, updates });
   const updateAll = (identities: AgentConnection[], updates: AgentUpdate) =>
-    identities.forEach((a) => updateAgentMut.mutate({ name: a.name, updates }));
+    identities.forEach((identity) => updateAgentMut.mutate({ name: identity.name, updates }));
 
-  // ── Coalesce identities into one row per tool family ─────────────────
   const familyMap = new Map<string, AgentConnection[]>();
   for (const agent of agents) {
     const family = toolFamilyOf(agent);
-    const list = familyMap.get(family);
-    if (list) list.push(agent);
+    if (OWN_IDENTITY.test(family)) continue;
+    const current = familyMap.get(family);
+    if (current) current.push(agent);
     else familyMap.set(family, [agent]);
   }
-  // Every family with an identity has a row. Only the ones that have called
-  // Wenlan are connected: a registered identity that never has is just Added.
-  const connectedFamilies = new Set(familyMap.keys());
-  const seenFamilies = seenFamiliesOf(agents);
 
-  // A client Wenlan added whose family has not called yet is a pending tool
-  // row of its own; one whose family has an identity folds in as an Added note
-  // on that family's row (mockup: Codex). A family that has called is
-  // connected, so the note is gone: "restart to finish" is not true of a tool
-  // that is already talking to Wenlan.
-  const pendingNoteFamilies = new Set<string>();
-  const pendingClients: McpClient[] = [];
+  const clientByFamily = new Map<string, McpClient>();
   for (const client of mcpClients) {
-    // A pending row is a CLAIM that this client was added and is waiting for
-    // a restart. Only a measured yes may make it; a failed read makes no claim
-    // in either direction.
-    if (!readingIsYes(client.already_configured)) continue;
-    // An entry that would not start is not waiting for a restart: restarting
-    // changes nothing. The Add a tool list below owns it, with a Repair button.
-    if (repairReasonOf(client) !== null) continue;
     const family = familyOfClient(client.client_type);
-    if (seenFamilies.has(family)) continue;
-    if (connectedFamilies.has(family)) pendingNoteFamilies.add(family);
-    else if (!listAdded.has(client.client_type)) pendingClients.push(client);
+    const current = clientByFamily.get(family);
+    if (!current || readingIsYes(client.already_configured) || repairReasonOf(client) !== null) {
+      clientByFamily.set(family, client);
+    }
   }
 
-  const familyRows: FamilyRow[] = [...familyMap.entries()].map(([family, identities]) => {
+  const disconnectedFamilies = new Set(
+    [...disconnectedClientTypes].map((clientType) => familyOfClient(clientType)),
+  );
+  const seenFamilies = seenFamiliesOf(agents);
+  const connectedFamilyKeys = new Set<string>();
+  for (const family of familyMap.keys()) {
+    if (!disconnectedFamilies.has(family)) connectedFamilyKeys.add(family);
+  }
+  for (const client of mcpClients) {
+    if (disconnectedClientTypes.has(client.client_type)) continue;
+    if (
+      locallyAdded.has(client.client_type) ||
+      readingIsYes(client.already_configured) ||
+      repairReasonOf(client) !== null ||
+      needsSkillsOnly(client)
+    ) {
+      connectedFamilyKeys.add(familyOfClient(client.client_type));
+    }
+  }
+
+  const rows: FamilyRow[] = [...connectedFamilyKeys].map((family) => {
+    const identities = familyMap.get(family) ?? [];
+    const client = clientByFamily.get(family);
     const firstTrust = identities[0]?.trust_level ?? "unknown";
+    const needsRepair = Boolean(
+      client &&
+      !repairedClientTypes.has(client.client_type) &&
+      repairReasonOf(client) !== null,
+    );
+    const latestLastSeen = identities.reduce<number | null>(
+      (latest, identity) => {
+        const seenAt = identity.last_seen_at ?? (identity.memory_count > 0 ? identity.updated_at : null);
+        return seenAt != null && (latest === null || seenAt > latest)
+          ? seenAt
+          : latest;
+      },
+      null,
+    );
     return {
       family,
+      client,
       identities,
-      isProbe: family === "wenlan-setup",
-      hasPendingNote: pendingNoteFamilies.has(family),
-      memoryCount: identities.reduce((n, a) => n + a.memory_count, 0),
-      latestLastSeen: identities.reduce<number | null>(
-        (max, a) =>
-          a.last_seen_at != null && (max === null || a.last_seen_at > max) ? a.last_seen_at : max,
-        null,
-      ),
-      anyEnabled: identities.some((a) => a.enabled),
-      uniformTrust: identities.every((a) => a.trust_level === firstTrust) ? firstTrust : null,
+      status: needsRepair ? "repair" : seenFamilies.has(family) ? "connected" : "restart",
+      memoryCount: identities.reduce((count, identity) => count + identity.memory_count, 0),
+      latestLastSeen,
+      anyEnabled: identities.length === 0 || identities.some((identity) => identity.enabled),
+      uniformTrust:
+        identities.length > 0 && identities.every((identity) => identity.trust_level === firstTrust)
+          ? firstTrust
+          : null,
     };
   });
 
-  // Sort: pending-only rows first, then connected families by latest activity
-  // (desc), the wizard probe always last.
-  const probeRows = familyRows.filter((r) => r.isProbe);
-  const connectedRows = familyRows
-    .filter((r) => !r.isProbe)
-    .sort((a, b) => (b.latestLastSeen ?? 0) - (a.latestLastSeen ?? 0));
+  rows.sort((left, right) => {
+    const priority = { repair: 0, restart: 1, connected: 2 } satisfies Record<RowStatus, number>;
+    return priority[left.status] - priority[right.status]
+      || (right.latestLastSeen ?? 0) - (left.latestLastSeen ?? 0)
+      || familyDisplayName(left.family).localeCompare(familyDisplayName(right.family));
+  });
 
-  const isEmpty = familyRows.length === 0 && pendingClients.length === 0;
-  const trustLevelDetails = (Object.keys(TRUST_LEVELS) as Array<keyof typeof TRUST_LEVELS>)
-    .map((level) => `${t(`settings.agents.trust.${level}`)}: ${t(`settings.agents.trustSummary.${level}`)}`)
-    .join("\n");
+  const attentionRows = rows.filter((row) => row.status !== "connected");
+  const recentRows = rows.filter((row) => row.status === "connected");
+  const visibleRows = showAll
+    ? rows
+    : [
+        ...attentionRows,
+        ...recentRows.slice(0, Math.max(0, CONNECTION_ROW_LIMIT - attentionRows.length)),
+      ];
+  const hiddenCount = rows.length - visibleRows.length;
+
+  const repair = async (row: FamilyRow) => {
+    if (!row.client) return;
+    setBusyFamily(row.family);
+    setRowErrors((previous) => ({ ...previous, [row.family]: null }));
+    try {
+      await connectClient(row.client, "repair");
+      setRepairedClientTypes((previous) => new Set(previous).add(row.client!.client_type));
+      void queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+    } catch (error) {
+      const described = describeSetupError(error);
+      setRowErrors((previous) => ({
+        ...previous,
+        [row.family]: {
+          message: t("connectMatrix.repairFailed", { name: familyDisplayName(row.family) }),
+          detail: described.detail,
+        },
+      }));
+    } finally {
+      setBusyFamily(null);
+    }
+  };
+
+  const disconnect = async (row: FamilyRow) => {
+    if (!row.client) {
+      updateAll(row.identities, { enabled: !row.anyEnabled });
+      return;
+    }
+    setBusyFamily(row.family);
+    setRowErrors((previous) => ({ ...previous, [row.family]: null }));
+    try {
+      await removeRawMcpEntry(row.client.client_type);
+      setDisconnectedClientTypes((previous) => new Set(previous).add(row.client!.client_type));
+      void queryClient.invalidateQueries({ queryKey: ["mcp-clients"] });
+    } catch (error) {
+      const described = describeSetupError(error);
+      setRowErrors((previous) => ({
+        ...previous,
+        [row.family]: {
+          message: t("connectMatrix.disconnectFailed", { name: familyDisplayName(row.family) }),
+          detail: described.detail,
+        },
+      }));
+    } finally {
+      setBusyFamily(null);
+    }
+  };
+
+  const onClientConnected = (clientType: string) => {
+    setLocallyAdded((previous) => new Set(previous).add(clientType));
+    setDisconnectedClientTypes((previous) => {
+      const next = new Set(previous);
+      next.delete(clientType);
+      return next;
+    });
+  };
 
   return (
     <>
-      {/* ── Recorded tool activity ────────────────────────────────── */}
-      <section className="mem-fade-up" style={{ animationDelay: "0ms" }}>
-        <SectionHeader
-          label={t("settings.agents.connectedAgents")}
-          help={(
-            <SettingsHelp
-              title={t("settings.agents.trustLevels")}
-              details={trustLevelDetails}
-            />
-          )}
-        />
-        <Card padding={isEmpty ? "none" : "rows"}>
-          {isEmpty ? (
-            <div className="px-5 py-6 text-center space-y-3">
-              <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-base)", color: "var(--mem-text-tertiary)" }}>
+      <section data-connection-section="connected" className="mem-fade-up" style={{ animationDelay: "0ms" }}>
+        <SectionHeader label={t("settings.agents.connectedAgents")} />
+        <Card padding="none">
+          <div className="flex flex-col gap-1 p-2">
+            {visibleRows.length === 0 ? (
+              <p className="px-3 py-4 text-[length:var(--mem-text-sm)] text-[var(--mem-text-tertiary)]">
                 {t("settings.agents.noAgents")}
               </p>
-              <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-sm)", color: "var(--mem-text-tertiary)", opacity: 0.7, lineHeight: "1.5" }}>
-                {t("settings.agents.noAgentsDescription")}
-              </p>
-              {onSetupAgent && (
-                <Button variant="primary" size="sm" onClick={onSetupAgent}>
-                  {t("settings.agents.setupTool")}
-                </Button>
-              )}
-            </div>
-          ) : (
-            <>
-              {pendingClients.map((client) => (
-                <PendingClientRow key={client.client_type} client={client} />
-              ))}
-              {connectedRows.map((row) => (
-                <ToolFamilyRow
-                  key={row.family}
-                  row={row}
-                  agents={agents}
-                  expanded={!!expanded[row.family]}
-                  onToggleExpand={() =>
-                    setExpanded((prev) => ({ ...prev, [row.family]: !prev[row.family] }))
-                  }
-                  updateOne={updateOne}
-                  updateAll={updateAll}
-                  onDelete={(name) => deleteAgentMut.mutate(name)}
-                />
-              ))}
-              {probeRows.map((row) => (
-                <ToolFamilyRow
-                  key={row.family}
-                  row={row}
-                  agents={agents}
-                  expanded={!!expanded[row.family]}
-                  onToggleExpand={() =>
-                    setExpanded((prev) => ({ ...prev, [row.family]: !prev[row.family] }))
-                  }
-                  updateOne={updateOne}
-                  updateAll={updateAll}
-                  onDelete={(name) => deleteAgentMut.mutate(name)}
-                />
-              ))}
-              {onSetupAgent && (
-                <div className="px-3 py-2">
-                  <Button variant="ghost" size="sm" onClick={onSetupAgent}>
-                    {t("settings.agents.setupAnotherTool")}
-                  </Button>
-                </div>
-              )}
-            </>
-          )}
+            ) : visibleRows.map((row) => (
+              <ToolFamilyRow
+                key={row.family}
+                row={row}
+                agents={agents}
+                expanded={Boolean(expanded[row.family])}
+                busy={busyFamily === row.family}
+                error={rowErrors[row.family]}
+                onToggleExpand={() => setExpanded((previous) => ({
+                  ...previous,
+                  [row.family]: !previous[row.family],
+                }))}
+                onToggle={() => void disconnect(row)}
+                onRepair={() => void repair(row)}
+                updateAll={updateAll}
+                onDelete={(name) => deleteAgentMut.mutate(name)}
+              />
+            ))}
+            {(hiddenCount > 0 || showAll) && rows.length > CONNECTION_ROW_LIMIT && (
+              <ConnectionListDisclosure
+                expanded={showAll}
+                hiddenCount={hiddenCount}
+                onToggle={() => setShowAll((value) => !value)}
+              />
+            )}
+          </div>
         </Card>
       </section>
 
-      {/* ── Add a tool ────────────────────────────────────────────── */}
       <ClientSetupList
-        connectedFamilies={connectedFamilies}
-        seenFamilies={seenFamilies}
-        hideWhenComplete
-        onAddedChange={setListAdded}
+        connectedFamilies={connectedFamilyKeys}
+        disconnectedClientTypes={disconnectedClientTypes}
+        onAddedChange={setLocallyAdded}
+        onClientConnected={onClientConnected}
       />
 
-      {/* ── Web access ────────────────────────────────────────────── */}
       <section className="mem-fade-up" style={{ animationDelay: "60ms" }}>
         <RemoteAccessPanel currentSpace={currentSpace} />
       </section>
@@ -241,136 +286,90 @@ export default function AgentsSection({ onSetupAgent, currentSpace }: { onSetupA
   );
 }
 
-/** A tool Wenlan added (its MCP config or plugin is written) that has not
- *  called Wenlan yet, and whose family has no identity — a row of its own
- *  until its first call. */
-function PendingClientRow({ client }: { client: McpClient }) {
-  const { t } = useTranslation();
-  return (
-    <div className="px-5 py-3" style={{ opacity: 0.7 }}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>
-          {client.name}
-        </span>
-        <ConnectionChip status="added" />
-      </div>
-      <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)", marginTop: "2px" }}>
-        {t("connectMatrix.restartToFinish", { name: client.name })}
-      </p>
-    </div>
-  );
-}
-
-/** The coalesced tool row plus its per-identity disclosure. Aggregate
- *  controls (trust, enable) drive every identity at once; the disclosure
- *  exposes each identity's own controls unchanged from the v2 row. */
 function ToolFamilyRow({
   row,
   agents,
   expanded,
+  busy,
+  error,
   onToggleExpand,
-  updateOne,
+  onToggle,
+  onRepair,
   updateAll,
   onDelete,
 }: {
   row: FamilyRow;
   agents: AgentConnection[];
   expanded: boolean;
+  busy: boolean;
+  error?: RowError | null;
   onToggleExpand: () => void;
-  updateOne: (name: string, updates: AgentUpdate) => void;
+  onToggle: () => void;
+  onRepair: () => void;
   updateAll: (identities: AgentConnection[], updates: AgentUpdate) => void;
   onDelete: (name: string) => void;
 }) {
-  const { t } = useTranslation();
-  const { family, identities, isProbe, hasPendingNote, memoryCount, latestLastSeen, anyEnabled, uniformTrust } = row;
-  const displayName = isProbe ? t("connections.internalProbe") : familyDisplayName(family);
+  const { t, i18n } = useTranslation();
+  const displayName = familyDisplayName(row.family);
+  const subtitleKey = row.client?.client_type === "codex_cli"
+    ? "connectMatrix.subtitleCodex"
+    : row.client?.client_type === "kimi_desktop"
+      ? "connectMatrix.subtitleKimiDesktop"
+      : row.client?.client_type === "kimi_code"
+        ? "connectMatrix.subtitleKimiCode"
+        : null;
+  const trust = row.uniformTrust ? describeTrustLevel(row.uniformTrust).level : null;
 
   return (
     <div
-      className="px-5 py-3 transition-opacity"
-      style={{ opacity: isProbe ? 0.55 : anyEnabled ? 1 : 0.5 }}
+      data-connection-row
+      data-family={row.family}
+      data-status={row.status}
+      className="rounded-[var(--mem-radius-md)] px-3 py-2.5 hover:bg-[var(--mem-hover)]"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-md)", fontWeight: 500, color: "var(--mem-text)" }}>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[length:var(--mem-text-md)] font-medium text-[var(--mem-text)]">
               {displayName}
             </span>
-            {identities.length > 1 && (
-              <Tag tone="neutral">{t("connections.identities", { count: identities.length })}</Tag>
-            )}
-            {hasPendingNote && <ConnectionChip status="added" />}
-          </div>
-          <div className="flex items-center gap-3 mt-1 flex-wrap">
-            {isProbe && (
-              <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-                {t("connections.internalProbeHint")}
-              </span>
-            )}
-            <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-              {t("settings.agents.memories", { count: memoryCount })}
-            </span>
-            {latestLastSeen != null && (
-              <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-                {t("settings.agents.lastSeen", {
-                  date: new Date(latestLastSeen * 1000).toLocaleDateString(),
-                })}
-              </span>
-            )}
-            {hasPendingNote && (
-              <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-                {t("connectMatrix.restartToFinish", { name: displayName })}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Aggregate controls drive every identity; the probe row keeps its
-              controls inside the disclosure only. */}
-          {!isProbe && (
-            <>
-              <div
-                className="w-fit shrink-0"
-                title={
-                  uniformTrust
-                    ? t(`settings.agents.trustSummary.${describeTrustLevel(uniformTrust).level}`)
-                    : undefined
-                }
+            <ConnectionStatus row={row} locale={i18n.language} />
+            {row.status === "repair" && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                style={{ height: "30px", paddingInline: "12px", borderRadius: "8px", fontSize: "13px" }}
+                onClick={onRepair}
+                disabled={busy}
               >
-                <Select
-                  size="sm"
-                  value={uniformTrust ?? ""}
-                  aria-label={`${t("settings.agents.trustLevels")}: ${displayName}`}
-                  onChange={(e) => {
-                    if (e.target.value) updateAll(identities, { trustLevel: e.target.value });
-                  }}
-                >
-                  {uniformTrust === null && (
-                    <option value="" disabled>
-                      {t("connections.mixed")}
-                    </option>
-                  )}
-                  <option value="full">{t("settings.agents.trust.full")}</option>
-                  <option value="review">{t("settings.agents.trust.review")}</option>
-                  <option value="unknown">{t("settings.agents.trust.unknown")}</option>
-                </Select>
-              </div>
-              <Toggle
-                enabled={anyEnabled}
-                onToggle={() => updateAll(identities, { enabled: !anyEnabled })}
-                aria-label={displayName}
-              />
-            </>
+                {t("connectMatrix.repair")}
+              </Button>
+            )}
+          </div>
+          {subtitleKey && (
+            <p className="mt-0.5 truncate text-[length:var(--mem-text-xs)] text-[var(--mem-text-tertiary)]">
+              {t(subtitleKey)}
+            </p>
           )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Toggle
+            enabled={row.anyEnabled}
+            valueUnknown={busy}
+            unknownState="saving"
+            onToggle={onToggle}
+            aria-label={t("connectMatrix.disconnectTool", { name: displayName })}
+          />
           <button
+            type="button"
             onClick={onToggleExpand}
             aria-expanded={expanded}
-            aria-label={t("connections.showIdentities")}
-            className="flex items-center justify-center rounded-[var(--mem-radius-sm)] p-1 transition-colors focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] focus-visible:outline-offset-2"
-            style={{ color: "var(--mem-text-tertiary)" }}
+            aria-label={t("connectMatrix.detailsLabel", { name: displayName })}
+            className="flex h-7 w-7 items-center justify-center rounded-[var(--mem-radius-sm)] text-[var(--mem-text-tertiary)] hover:text-[var(--mem-text)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] focus-visible:outline-offset-2"
           >
             <svg
-              className="w-3.5 h-3.5 transition-transform"
+              className="h-3.5 w-3.5 transition-transform"
               style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
               fill="none"
               stroke="currentColor"
@@ -383,110 +382,123 @@ function ToolFamilyRow({
         </div>
       </div>
 
+      {error && <InlineError error={error} />}
+
       {expanded && (
-        <div className="mt-2 -mx-5 border-t" style={{ borderColor: "var(--mem-border)" }}>
-          {identities.map((agent) => (
-            <IdentityRow
-              key={agent.id}
-              agent={agent}
-              agents={agents}
-              compact={!isProbe && identities.length === 1}
-              updateOne={updateOne}
-              onDelete={onDelete}
-            />
-          ))}
+        <div className="mt-3 flex flex-col gap-3 pl-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-[length:var(--mem-text-xs)] text-[var(--mem-text-tertiary)]">
+              <span className="mr-2">{t("settings.agents.trustLevels")}</span>
+              <Select
+                size="sm"
+                value={row.identities.length === 0 ? "unknown" : trust ?? ""}
+                disabled={row.identities.length === 0}
+                aria-label={`${t("settings.agents.trustLevels")}: ${displayName}`}
+                onChange={(event) => {
+                  if (event.target.value) updateAll(row.identities, { trustLevel: event.target.value });
+                }}
+              >
+                {row.identities.length > 0 && trust === null && (
+                  <option value="" disabled>{t("connections.mixed")}</option>
+                )}
+                <option value="full">{t("settings.agents.trust.full")}</option>
+                <option value="review">{t("settings.agents.trust.review")}</option>
+                <option value="unknown">{t("settings.agents.trust.unknown")}</option>
+              </Select>
+            </label>
+            <span className="text-[length:var(--mem-text-xs)] text-[var(--mem-text-tertiary)]">
+              {t("settings.agents.memories", { count: row.memoryCount })}
+            </span>
+          </div>
+          {row.client?.config_path && (
+            <code
+              className="truncate text-[length:var(--mem-text-2xs)] text-[var(--mem-text-tertiary)]"
+              style={{ fontFamily: "var(--mem-font-mono)" }}
+            >
+              {row.client.config_path}
+            </code>
+          )}
+          {row.identities.length > 0 && (
+            <ul className="flex flex-col gap-2" aria-label={t("connections.identities", { count: row.identities.length })}>
+              {row.identities.map((identity) => {
+                const identityName = resolveAgentDisplayName(identity.name, agents);
+                return (
+                  <li key={identity.id} className="flex items-center justify-between gap-3">
+                    <span className="truncate text-[length:var(--mem-text-xs)] text-[var(--mem-text-secondary)]">
+                      {identityName}
+                    </span>
+                    <ConfirmActionButton
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("settings.agents.deleteAgent", { name: identityName })}
+                      confirmLabel={t("settings.agents.confirm")}
+                      cancelLabel={t("settings.agents.cancel")}
+                      onConfirm={() => onDelete(identity.name)}
+                    >
+                      {t("settings.agents.deleteIdentity")}
+                    </ConfirmActionButton>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-/** One identity inside a tool family's disclosure — the v2 per-agent row
- *  controls (trust Select, enable Toggle, delete), keyed to a single agent. */
-function IdentityRow({
-  agent,
-  agents,
-  compact,
-  updateOne,
-  onDelete,
-}: {
-  agent: AgentConnection;
-  agents: AgentConnection[];
-  compact: boolean;
-  updateOne: (name: string, updates: AgentUpdate) => void;
-  onDelete: (name: string) => void;
-}) {
+function ConnectionStatus({ row, locale }: { row: FamilyRow; locale: string }) {
   const { t } = useTranslation();
-  const trustLevel = describeTrustLevel(agent.trust_level).level;
+  if (row.status === "repair") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-[length:var(--mem-text-xs)] text-[var(--mem-status-warning-text)]">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--mem-accent-warm)]" />
+        {t("connectMatrix.needsRepair")}
+      </span>
+    );
+  }
+  if (row.status === "restart") {
+    const displayName = familyDisplayName(row.family);
+    const restartName = restartNameForClient(
+      row.client?.client_type ?? row.family,
+      displayName,
+      t,
+    );
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-[length:var(--mem-text-xs)] text-[var(--mem-status-warning-text)]">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full border border-[var(--mem-accent-amber)]" />
+        {t("connectMatrix.restartToFinish", { name: restartName })}
+      </span>
+    );
+  }
+  const timestamp = row.latestLastSeen ?? 0;
+  const time = formatTimeAgo(timestamp, locale.startsWith("en") ? undefined : locale);
   return (
-    <div
-      className="flex items-center justify-between gap-3 px-5 py-2.5 transition-opacity"
-      style={{ opacity: agent.enabled ? 1 : 0.5 }}
-    >
-      <div className="min-w-0 flex-1">
-        <span
-          title={t("settings.agents.canonicalIdTitle")}
-          style={{
-            fontFamily: "var(--mem-font-mono)",
-            fontSize: "var(--mem-text-2xs)",
-            color: "var(--mem-text-tertiary)",
-            opacity: 0.75,
-          }}
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-[length:var(--mem-text-xs)] text-[var(--mem-text-secondary)]">
+      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--mem-accent-sage)]" />
+      {t("connectMatrix.connectedUsed", { time })}
+    </span>
+  );
+}
+
+function InlineError({ error }: { error: RowError }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  return (
+    <div role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-[length:var(--mem-text-xs)] text-[var(--mem-status-danger-text)]">
+      <span>{error.message}</span>
+      {error.detail && (
+        <button
+          type="button"
+          className="rounded-[var(--mem-radius-sm)] text-[var(--mem-text-secondary)] hover:text-[var(--mem-text)] focus-visible:outline-2 focus-visible:outline-[var(--mem-focus-ring)] focus-visible:outline-offset-2"
+          onClick={() => void clipboardWrite(error.detail)
+            .then(() => setCopied(true))
+            .catch(() => setCopied(false))}
         >
-          {agent.name} · {agent.agent_type}
-        </span>
-        {!compact && (
-          <div className="flex items-center gap-3 mt-1 flex-wrap">
-            <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-              {t("settings.agents.memories", { count: agent.memory_count })}
-            </span>
-            {agent.last_seen_at && (
-              <span style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-xs)", color: "var(--mem-text-tertiary)" }}>
-                {t("settings.agents.lastSeen", {
-                  date: new Date(agent.last_seen_at * 1000).toLocaleDateString(),
-                })}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {!compact && (
-          <>
-            <div className="w-fit shrink-0" title={t(`settings.agents.trustSummary.${trustLevel}`)}>
-              <Select
-                size="sm"
-                value={agent.trust_level}
-                aria-label={`${t("settings.agents.trustLevels")}: ${resolveAgentDisplayName(agent.name, agents)}`}
-                onChange={(e) => updateOne(agent.name, { trustLevel: e.target.value })}
-              >
-                <option value="full">{t("settings.agents.trust.full")}</option>
-                <option value="review">{t("settings.agents.trust.review")}</option>
-                <option value="unknown">{t("settings.agents.trust.unknown")}</option>
-              </Select>
-            </div>
-            <Toggle
-              enabled={agent.enabled}
-              onToggle={() => updateOne(agent.name, { enabled: !agent.enabled })}
-              aria-label={agent.name}
-            />
-          </>
-        )}
-        <ConfirmActionButton
-          variant="ghost"
-          size="sm"
-          aria-label={t("settings.agents.deleteAgent", {
-            name: resolveAgentDisplayName(agent.name, agents),
-          })}
-          confirmLabel={t("settings.agents.confirm")}
-          cancelLabel={t("settings.agents.cancel")}
-          onConfirm={() => onDelete(agent.name)}
-        >
-          <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </ConfirmActionButton>
-      </div>
+          {copied ? t("connectMatrix.copied") : t("connectMatrix.copyDetails")}
+        </button>
+      )}
     </div>
   );
 }

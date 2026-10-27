@@ -17,7 +17,7 @@ for (const theme of ['light', 'dark']) {
   test(`settings navigation and embedded connection fit the workspace in ${theme}`, async ({ page }) => {
     const errors = collectBrowserErrors(page);
     await page.setViewportSize({ width: 1280, height: 900 });
-    await installTauriMock(page, { locale: 'en', rawActions: [], localStorage: { 'wenlan-theme': theme } });
+    await installTauriMock(page, { locale: 'en', rawActions: [], agents: [], localStorage: { 'wenlan-theme': theme } });
     await page.goto('/');
     await page.locator('.memory-sidebar').getByRole('button', { name: 'Account menu' }).click();
     await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
@@ -64,7 +64,16 @@ for (const theme of ['light', 'dark']) {
     }
     await toggle.press('Enter');
     await sidebar.getByRole('button', { name: 'Connections', exact: true }).press('Enter');
-    await main.getByRole('button', { name: /Set up.*tool/i }).click();
+    await expect(main.getByRole('heading', { level: 3, name: 'Connected', exact: true })).toBeVisible();
+    expect(await main.evaluate(e => e.scrollWidth-e.clientWidth)).toBeLessThanOrEqual(1);
+    await toggle.press('Enter');
+    await sidebar.getByRole('button', { name: 'Back to home', exact: true }).press('Enter');
+    await toggle.press('Enter');
+    await page.locator('.memory-sidebar').getByRole('button', { name: 'Account menu' }).click();
+    await page.getByRole('menuitem', { name: 'What your AI can do', exact: true }).click();
+    const askAi = page.getByRole('dialog', { name: 'What your AI can do', exact: true });
+    await expect(askAi).toBeVisible();
+    await askAi.getByRole('button', { name: 'Connect a tool', exact: true }).click();
     await expect(page.getByTestId('wizard-action-bar')).toBeInViewport();
     await expect(toggle).toHaveCount(0);
     const bar = await page.getByTestId('wizard-action-bar').boundingBox();
@@ -72,6 +81,7 @@ for (const theme of ['light', 'dark']) {
     await capture(page, `connect-embedded-${theme}-375`);
     await page.setViewportSize({ width:1280,height:900 });
     await expect(page.getByTestId('wizard-action-bar')).toBeInViewport();
+    await expect(toggle).toHaveCount(0);
     await capture(page, `connect-embedded-${theme}-1280`);
     expect(errors.pageErrors).toEqual([]);expect(errors.consoleErrors).toEqual([]);
   });

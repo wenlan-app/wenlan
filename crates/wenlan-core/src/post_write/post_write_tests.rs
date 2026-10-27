@@ -962,6 +962,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await
@@ -1019,6 +1020,7 @@ async fn create_page_db_insert_failure_rolls_back_scratch_projection() {
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     );
     let observe_projection = async {
@@ -1564,11 +1566,12 @@ async fn create_page_does_not_attach_different_space_candidate() {
     )
     .await
     .unwrap();
-    // Same content, but scoped to a DIFFERENT workspace ("personal") — the
+    // Same content, but a distinct title and scoped to a DIFFERENT workspace
+    // ("personal") — the
     // scoped matcher's `space = ?` filter (M1 honest columns) must exclude
     // the "work" page, so this mints a new page rather than attaching.
     let req = CreateConceptRequest {
-        title: "Rust Workspace Operations".to_string(),
+        title: "Rust Workspace Field Guide".to_string(),
         content: "Rust workspaces share Cargo lockfiles, inherited metadata, and all-crate checks"
             .to_string(),
         summary: Some("Rust workspace operations".to_string()),
@@ -1599,6 +1602,279 @@ async fn create_page_does_not_attach_different_space_candidate() {
         2,
         "different-space near-duplicate must mint a second page"
     );
+}
+
+#[tokio::test]
+async fn create_page_strict_same_title_in_another_visible_space_attaches() {
+    let (db, _dir) = test_db().await;
+    seed_memory(
+        &db,
+        "same-title-visible-source",
+        "A durable packing checklist",
+    )
+    .await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "same-title-visible-page",
+        "Travel Checklist",
+        None,
+        "The durable travel checklist.",
+        None,
+        Some("Trips"),
+        &[],
+        &now,
+        "authored",
+        "confirmed",
+        Some("Trips"),
+        None,
+    )
+    .await
+    .unwrap();
+    let request = |space: Option<&str>| CreateConceptRequest {
+        title: "  travel   checklist.  ".into(),
+        content: "A durable packing checklist".into(),
+        summary: None,
+        entity_id: None,
+        space: match space {
+            Some(name) => wenlan_types::WriteSpaceTarget::Named(name.into()),
+            None => (None).into(),
+        },
+        source_memory_ids: vec!["same-title-visible-source".into()],
+        creation_kind: Some("research".into()),
+        workspace: space.map(str::to_string),
+    };
+
+    // No Space named: the one readable page with that title is the page.
+    let result = create_page(&db, request(None), "test", None).await.unwrap();
+    assert_eq!(
+        result.attached_to.as_deref(),
+        Some("same-title-visible-page")
+    );
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 1);
+
+    // A write that names another Space means that Space's own page.
+    let home = create_page(&db, request(Some("Home")), "test", None)
+        .await
+        .unwrap();
+    assert!(home.attached_to.is_none());
+    assert_ne!(home.id, "same-title-visible-page");
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn create_page_keeps_dated_titles_separate() {
+    let (db, _dir) = test_db().await;
+    let first = create_page(
+        &db,
+        CreateConceptRequest {
+            title: "Standup 2026-10-26".into(),
+            content: "Standup notes for October 26.".into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: None,
+        },
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+    let second = create_page(
+        &db,
+        CreateConceptRequest {
+            title: "Standup 2026-10-27".into(),
+            content: "Standup notes for October 27.".into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: None,
+        },
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.attached_to, None);
+    assert_eq!(second.attached_to, None);
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn create_page_same_title_out_of_scope_creates_in_caller_space() {
+    let (db, _dir) = test_db().await;
+    seed_memory(
+        &db,
+        "same-title-private-source",
+        "A private packing checklist",
+    )
+    .await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "same-title-hidden-page",
+        "Travel Checklist",
+        None,
+        "A work travel checklist.",
+        None,
+        Some("Work"),
+        &[],
+        &now,
+        "authored",
+        "confirmed",
+        Some("Work"),
+        None,
+    )
+    .await
+    .unwrap();
+    let result = page_write(
+        &db,
+        PageWrite::Create {
+            page_id: None,
+            req: CreateConceptRequest {
+                title: "travel checklist".into(),
+                content: "A private packing checklist".into(),
+                summary: None,
+                entity_id: None,
+                space: wenlan_types::WriteSpaceTarget::Named("Home".into()),
+                source_memory_ids: vec!["same-title-private-source".into()],
+                creation_kind: Some("research".into()),
+                workspace: Some("Home".into()),
+            },
+            agent: "test",
+            knowledge_path: None,
+            page_min_cluster_size: 1,
+            page_match_threshold: 2.0,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: Some(crate::read_scope::ReadScope::Space("Home".into())),
+            skip_protected_title_match: false,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.attached_to, None);
+    assert_ne!(result.id, "same-title-hidden-page");
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn create_page_title_cases_new_ascii_titles_without_rewriting_existing_case() {
+    let (db, _dir) = test_db().await;
+    let lower = create_page(
+        &db,
+        CreateConceptRequest {
+            title: "the art of rust".into(),
+            content: "A page about Rust craft.".into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: None,
+        },
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+    let mixed = create_page(
+        &db,
+        CreateConceptRequest {
+            title: "iPhone setup".into(),
+            content: "A page about phone setup.".into(),
+            summary: None,
+            entity_id: None,
+            space: wenlan_types::WriteSpaceTarget::Uncategorized,
+            source_memory_ids: Vec::new(),
+            creation_kind: Some("authored".into()),
+            workspace: None,
+        },
+        "test",
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        db.get_page(&lower.id).await.unwrap().unwrap().title,
+        "The Art of Rust"
+    );
+    assert_eq!(
+        db.get_page(&mixed.id).await.unwrap().unwrap().title,
+        "iPhone setup"
+    );
+}
+
+#[tokio::test]
+async fn automatic_same_title_create_skips_a_review_locked_page_without_a_duplicate() {
+    let (db, _dir) = test_db().await;
+    seed_memory(&db, "locked-title-source", "Locked topic evidence").await;
+    let now = chrono::Utc::now().to_rfc3339();
+    db.insert_page_with_kind(
+        "locked-title-page",
+        "Locked Topic",
+        None,
+        "Human-reviewed prose stays intact.",
+        None,
+        None,
+        &[],
+        &now,
+        "distilled",
+        "confirmed",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(db
+        .set_page_review_required("locked-title-page", true)
+        .await
+        .unwrap());
+
+    let result = page_write(
+        &db,
+        PageWrite::Create {
+            page_id: None,
+            req: CreateConceptRequest {
+                title: "locked topic".into(),
+                content: "Locked topic evidence".into(),
+                summary: None,
+                entity_id: None,
+                space: wenlan_types::WriteSpaceTarget::Uncategorized,
+                source_memory_ids: vec!["locked-title-source".into()],
+                creation_kind: Some("distilled".into()),
+                workspace: None,
+            },
+            agent: "system",
+            knowledge_path: None,
+            page_min_cluster_size: 1,
+            page_match_threshold: 2.0,
+            citations_json: None,
+            basis_marks: Vec::new(),
+            basis_space_guard: None,
+            skip_protected_title_match: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert!(!result.wrote);
+    assert_eq!(result.id, "locked-title-page");
+    assert_eq!(result.attached_to, None);
+    assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 1);
+    assert!(db
+        .get_page("locked-title-page")
+        .await
+        .unwrap()
+        .unwrap()
+        .source_memory_ids
+        .is_empty());
 }
 
 // ── update_page ──────────────────────────────────────────────────────────
@@ -2886,6 +3162,7 @@ async fn seed_source_page(db: &MemoryDB, page_id: &'static str) -> (&'static str
             citations_json: None,
             basis_marks: Vec::new(),
             basis_space_guard: None,
+            skip_protected_title_match: false,
         },
     )
     .await

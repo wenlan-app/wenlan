@@ -1,4 +1,4 @@
-use crate::client::{WenlanClient, WenlanError};
+use crate::client::{AgentIdentity, WenlanClient, WenlanError};
 use crate::query_output;
 use crate::types::*;
 use rmcp::{
@@ -450,9 +450,9 @@ pub struct WenlanMcpServer {
     client: WenlanClient,
     transport: TransportMode,
     tool_profile: ToolProfile,
-    agent_name: String,
-    /// Client name from MCP initialize handshake (e.g., "Claude Code", "Claude Desktop")
-    client_name: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// One connection identity shared with `client`, so the request header and
+    /// stored `source_agent` always resolve to the same tool name.
+    agent_identity: AgentIdentity,
     agent_work_cache: std::sync::Arc<std::sync::Mutex<LintAgentWorkCache>>,
     lint_report_cache: std::sync::Arc<std::sync::Mutex<LintReportCache>>,
     user_id: Option<String>,
@@ -1106,8 +1106,16 @@ pub enum SteepAction {
     New,
     /// Take one topic's items from `new`: their text numbered and a token.
     ClaimNew,
+    /// A claim_new's organize tasks, fetched by the helper that answers them.
+    OrganizeTasks,
+    /// The small model's answers to a claim_new's organize tasks.
+    Organize,
+    /// A claim_new's link_targets and existing_page as they are now.
+    Links,
     /// Save the new page a claim_new was for.
     Write,
+    /// Add a claim_new's sources to its existing_page instead of writing.
+    Attach,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -1121,13 +1129,13 @@ pub struct SteepAnswer {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SteepParams {
     #[schemars(
-        description = "new | claim_new (item_ids) | write (token, title, content) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
+        description = "new | claim_new (item_ids, title) | organize_tasks (token) | organize (token, answers) | links (token) | write (token, title, content) | attach (token) | list | claim (page_id) | commit (token, content) | still_accurate (token) | judge (token, answers) | release (token)."
     )]
     pub action: SteepAction,
     #[schemars(description = "claim_new: the item_ids of one topic, from new.")]
     #[serde(default)]
     pub item_ids: Option<Vec<String>>,
-    #[schemars(description = "write: the new page's title.")]
+    #[schemars(description = "write: the new page's title. claim_new: the group's topic.")]
     #[serde(default)]
     pub title: Option<String>,
     #[schemars(description = "claim: the page to take, from list.")]
@@ -1141,11 +1149,13 @@ pub struct SteepParams {
     )]
     #[serde(default)]
     pub content: Option<String>,
-    #[schemars(description = "judge: one answer per code check of the claim.")]
+    #[schemars(
+        description = "judge: one answer per code check of the claim. organize: one answer per organize task of the claim_new."
+    )]
     #[serde(default)]
     pub answers: Option<Vec<SteepAnswer>>,
     #[schemars(
-        description = "list: how many pages (default 20). new: how many items (default 100)."
+        description = "list: how many pages (default 20). new: how many items (default 110)."
     )]
     #[serde(default)]
     pub limit: Option<u32>,
@@ -1845,6 +1855,61 @@ fn page_code_basis_error_result(error: WenlanError, action: PageCodeBasisAction)
     CallToolResult::error(vec![ContentBlock::text(text)])
 }
 
+/// Items one `new` call lists unless asked for another number: with
+/// [`steep_new_compact`], about 25k characters at most, inside an AI tool's
+/// tool-result limit.
+const STEEP_NEW_DEFAULT_LIMIT: u32 = 110;
+
+/// Longest title a compact `new` item shows, in characters.
+const STEEP_NEW_TITLE_CHARS: usize = 44;
+
+/// A `new` page as a grouping model reads it: per item only its short id
+/// ([`wenlan_types::steep_short_id`], which `claim_new` takes), title (`t`,
+/// cut to [`STEEP_NEW_TITLE_CHARS`]), snippet (`s`) and length in characters
+/// (`n`), and no item another run holds. The daemon's list carries more
+/// (Space, kind, time) for the app.
+fn steep_new_compact(list: &wenlan_types::SteepNewListResponse) -> serde_json::Value {
+    let items: Vec<serde_json::Value> = list
+        .items
+        .iter()
+        .filter(|item| !item.held)
+        .map(|item| {
+            let title = if item.title.chars().count() > STEEP_NEW_TITLE_CHARS {
+                let cut: String = item.title.chars().take(STEEP_NEW_TITLE_CHARS - 1).collect();
+                format!("{}…", cut.trim_end())
+            } else {
+                item.title.clone()
+            };
+            serde_json::json!({
+                "id": wenlan_types::steep_short_id(&item.item_id),
+                "t": title,
+                "s": item.snippet,
+                "n": item.chars,
+            })
+        })
+        .collect();
+    let mut out = serde_json::json!({
+        "items": items,
+        "total": list.total,
+        "page_titles": list.page_titles,
+        "next_step": list.next_step,
+    });
+    if let Some(cursor) = &list.next_cursor {
+        out["next_cursor"] = serde_json::json!(cursor);
+    }
+    if list.held > 0 {
+        out["held"] = serde_json::json!(list.held);
+    }
+    out
+}
+
+/// What a claim_new tells the main model in place of its organize tasks.
+const STEEP_ORGANIZE_WAITING_NOTE: &str = "Organize tasks wait for these sources. Start a helper \
+on your cheapest model and give it only the token: it calls steep organize_tasks with the \
+token, answers each task, calls organize with the answers, and replies with the counts. \
+Never copy source text to it. Start the helpers of all your claims at once, and write each \
+page as soon as its helper reports.";
+
 /// A `steep` call the daemon refused. Its reasons are already plain words
 /// that say what to do next, so they lead the message.
 fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult {
@@ -1855,7 +1920,12 @@ fn steep_error_result(error: WenlanError, action: SteepAction) -> CallToolResult
         } => {
             let text = if matches!(
                 action,
-                SteepAction::List | SteepAction::Claim | SteepAction::New | SteepAction::ClaimNew
+                SteepAction::List
+                    | SteepAction::Claim
+                    | SteepAction::New
+                    | SteepAction::ClaimNew
+                    | SteepAction::Links
+                    | SteepAction::OrganizeTasks
             ) {
                 format!("steep refused: {reason}")
             } else {
@@ -2187,22 +2257,16 @@ fn visible_page_sources_for_standard(
 
 impl WenlanMcpServer {
     /// Resolve the source_agent for a write operation.
-    /// Priority: explicit param > MCP client name (from initialize) > configured agent_name.
+    /// Priority: explicit tool param > resolved connection identity. The
+    /// connection identity itself is an explicit configured name when one was
+    /// supplied, otherwise the MCP client name or the transport fallback.
     fn resolve_source_agent(&self, param_agent: Option<String>) -> Option<String> {
-        // 1. Explicit param from tool call
         if let Some(ref agent) = param_agent {
             if !agent.is_empty() {
                 return param_agent;
             }
         }
-        // 2. Client name captured from MCP initialize handshake
-        if let Ok(guard) = self.client_name.lock() {
-            if let Some(ref name) = *guard {
-                return Some(name.clone());
-            }
-        }
-        // 3. Configured --agent-name flag
-        Some(self.agent_name.clone())
+        Some(self.agent_identity.current())
     }
 
     /// Resolve a local user_id for logging or future use.
@@ -3676,7 +3740,10 @@ impl WenlanMcpServer {
                     .map(|claim| serde_json::to_value(&claim).map_err(encode))
             }
             SteepAction::New => {
-                let mut path = format!("/api/steep/new?limit={}", params.limit.unwrap_or(100));
+                let mut path = format!(
+                    "/api/steep/new?limit={}",
+                    params.limit.unwrap_or(STEEP_NEW_DEFAULT_LIMIT)
+                );
                 if let Some(cursor) = params.cursor.as_deref().filter(|c| !c.is_empty()) {
                     path.push_str(&format!("&cursor={}", url_encode_simple(cursor)));
                 }
@@ -3686,7 +3753,7 @@ impl WenlanMcpServer {
                 self.client
                     .get::<wenlan_types::SteepNewListResponse>(&path)
                     .await
-                    .map(|list| serde_json::to_value(&list).map_err(encode))
+                    .map(|list| Ok(steep_new_compact(&list)))
             }
             SteepAction::ClaimNew => {
                 let item_ids = params.item_ids.unwrap_or_default();
@@ -3696,10 +3763,94 @@ impl WenlanMcpServer {
                 self.client
                     .post::<_, wenlan_types::SteepNewClaimResponse>(
                         "/api/steep/new/claim",
-                        &wenlan_types::SteepNewClaimRequest { item_ids },
+                        &wenlan_types::SteepNewClaimRequest {
+                            item_ids,
+                            topic: params.title.filter(|t| !t.trim().is_empty()),
+                        },
                     )
                     .await
-                    .map(|claim| serde_json::to_value(&claim).map_err(encode))
+                    .map(|claim| {
+                        // The organize tasks repeat the sources' text. The
+                        // helper fetches them itself (`organize_tasks`), so
+                        // the main model gets only how many wait.
+                        let waiting = claim.organize.as_ref().map(|work| work.tasks.len());
+                        let mut value = serde_json::to_value(&claim).map_err(encode)?;
+                        if let (Some(waiting), Some(object)) = (waiting, value.as_object_mut()) {
+                            object.insert(
+                                "organize".to_string(),
+                                serde_json::json!({
+                                    "waiting": waiting,
+                                    "note": STEEP_ORGANIZE_WAITING_NOTE,
+                                }),
+                            );
+                        }
+                        Ok(value)
+                    })
+            }
+            SteepAction::Organize => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                let answers: Vec<wenlan_types::steep::SteepCodeAnswer> = params
+                    .answers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|a| wenlan_types::steep::SteepCodeAnswer {
+                        n: a.n,
+                        answer: a.answer,
+                    })
+                    .collect();
+                if answers.is_empty() {
+                    return missing("answers");
+                }
+                self.client
+                    .post::<_, wenlan_types::SteepOrganizeCommitResponse>(
+                        "/api/steep/new/organize",
+                        &wenlan_types::SteepOrganizeCommitRequest { token, answers },
+                    )
+                    .await
+                    .map(|done| serde_json::to_value(&done).map_err(encode))
+            }
+            SteepAction::OrganizeTasks => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                self.client
+                    .post::<_, wenlan_types::SteepNewTasksResponse>(
+                        "/api/steep/new/tasks",
+                        &wenlan_types::SteepNewTasksRequest { token },
+                    )
+                    .await
+                    .map(|tasks| serde_json::to_value(&tasks).map_err(encode))
+            }
+            SteepAction::Links => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                self.client
+                    .post::<_, wenlan_types::SteepNewLinksResponse>(
+                        "/api/steep/new/links",
+                        &wenlan_types::SteepNewLinksRequest { token },
+                    )
+                    .await
+                    .map(|links| serde_json::to_value(&links).map_err(encode))
+            }
+            SteepAction::Attach => {
+                let Some(token) = params.token else {
+                    return missing("token");
+                };
+                self.client
+                    .post::<_, wenlan_types::SteepNewCommitResponse>(
+                        "/api/steep/new/commit",
+                        &wenlan_types::SteepNewCommitRequest {
+                            token,
+                            action: wenlan_types::steep_new::STEEP_NEW_ACTION_ATTACH.to_string(),
+                            title: None,
+                            content: None,
+                        },
+                    )
+                    .await
+                    .map(|done| serde_json::to_value(&done).map_err(encode))
             }
             SteepAction::Write => {
                 let Some(token) = params.token else {
@@ -4256,7 +4407,7 @@ impl WenlanMcpServer {
         let client = self.session_client(params.session.as_deref()).await;
         let request = wenlan_types::brief::BriefUpdateRequest {
             space,
-            caller_id: self.agent_name.clone(),
+            caller_id: self.agent_identity.current(),
             operation_id: params
                 .operation_id
                 .filter(|id| !id.trim().is_empty())
@@ -4438,7 +4589,21 @@ fn format_update_page_response(
     append_citations(&mut text, resp.citations.as_deref());
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
+    append_link_targets(&mut text, &resp.link_targets);
+    if !resp.next_step.is_empty() {
+        text.push_str("\nnext_step: ");
+        text.push_str(&resp.next_step);
+    }
     text
+}
+
+fn append_link_targets(text: &mut String, link_targets: &[String]) {
+    if let Ok(json) = serde_json::to_string(link_targets) {
+        if !link_targets.is_empty() {
+            text.push_str("\nlink_targets not yet used: ");
+            text.push_str(&json);
+        }
+    }
 }
 
 /// How the `[n]` citations in a write checked out, as one line. Nothing when
@@ -4475,13 +4640,17 @@ fn append_basis(text: &mut String, basis: &[wenlan_types::BasisRef]) {
 }
 
 fn format_create_page_response(resp: CreatePageResponse) -> String {
-    let mut text = match resp.attached_to {
-        Some(page_id) => format!(
+    let mut text = match (resp.attached_to, resp.write_outcome) {
+        (Some(page_id), _) => format!(
             "Attached to existing page {page_id}. Your sources now back that page, but \
              your prose was not saved. To merge it, read_page {page_id} and call \
              write_page with page_id={page_id}."
         ),
-        None => format!("Created page {}", resp.id),
+        (None, Some(wenlan_types::WriteOutcome::ResolvedExisting)) => format!(
+            "Page {} already exists; no duplicate was created. Read that page before deciding whether to update it.",
+            resp.id
+        ),
+        (None, _) => format!("Created page {}", resp.id),
     };
     append_write_receipt(
         &mut text,
@@ -4495,6 +4664,11 @@ fn format_create_page_response(resp: CreatePageResponse) -> String {
     append_citations(&mut text, resp.citations.as_deref());
     append_basis(&mut text, &resp.basis);
     append_code_basis(&mut text, &resp.code_basis);
+    append_link_targets(&mut text, &resp.link_targets);
+    if !resp.next_step.is_empty() {
+        text.push_str("\nnext_step: ");
+        text.push_str(&resp.next_step);
+    }
     text
 }
 
@@ -4575,13 +4749,21 @@ impl WenlanMcpServer {
         agent_name: String,
         user_id: Option<String>,
     ) -> Self {
+        Self::new_with_identity(client, transport, AgentIdentity::from(agent_name), user_id)
+    }
+
+    pub fn new_with_identity(
+        client: WenlanClient,
+        transport: TransportMode,
+        agent_identity: AgentIdentity,
+        user_id: Option<String>,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            client,
+            client: client.with_agent_identity(agent_identity.clone()),
             transport,
             tool_profile: ToolProfile::Standard,
-            agent_name,
-            client_name: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            agent_identity,
             agent_work_cache: std::sync::Arc::new(std::sync::Mutex::new(
                 LintAgentWorkCache::default(),
             )),
@@ -4989,7 +5171,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Steep on demand: write pages from unpaged material, then update pages whose sources or code changed. `new`: the items; a small model groups them by topic. `claim_new` (item_ids): their text as [1]..[n], a token. `write` (token, title, content): the page, cited [n]. `list`: pages waiting, and new_total. `claim` (page_id): page, sources [1]..[n] (and current code), token, plan: rewrite; review_card (user-written; your rewrite becomes a card); judge (give each code check to a small model, pass replies to `judge`); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]; refused if anything changed since. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
+        description = "Steep on demand: write pages from unpaged material, then update out-of-date pages. `new`: items for a small model to group by topic. `claim_new` (item_ids, title=topic), all at once: text as [1]..[n], token. `links` (token): fresh link_targets before writing. `write` (token, title, content): the page, cited [n]; or `attach` (token) when the claim has existing_page. `list`: pages waiting, new_total. `claim` (page_id): page, sources [1]..[n], token, plan: rewrite; review_card (your rewrite becomes a card); judge (a small model answers code_checks); needs_you (tell the user). `commit` (token, content): the rewrite, cited [n]. `still_accurate` (token). `judge` (token, answers). `release` (token). Your main model writes; a small one only groups and judges. Remote: `new` and `list` only.",
         annotations(
             title = "Steep",
             read_only_hint = false,
@@ -5438,14 +5620,16 @@ impl ServerHandler for WenlanMcpServer {
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
-        // Capture client name from MCP initialize handshake
         if let Some(client_info) = context.peer.peer_info() {
             let name = &client_info.client_info.name;
-            if !name.is_empty() {
-                if let Ok(mut guard) = self.client_name.lock() {
-                    tracing::info!("MCP client identified: {}", name);
-                    *guard = Some(name.clone());
-                }
+            if self.agent_identity.observe_mcp_client(name) {
+                tracing::info!("MCP client identity resolved from initialize: {}", name);
+            } else if !name.is_empty() {
+                tracing::info!(
+                    "MCP client identified as {}; using configured identity {}",
+                    name,
+                    self.agent_identity.current()
+                );
             }
         }
     }
@@ -5795,9 +5979,40 @@ mod tests {
     #[test]
     fn test_stdio_mode_falls_back_to_agent_name() {
         let server = make_server(TransportMode::Stdio, "fallback", None);
-        // No param, no client_name → falls back to configured agent_name
+        // No handshake replacement → keeps the configured identity.
         let result = server.resolve_source_agent(None);
         assert_eq!(result, Some("fallback".into()));
+    }
+
+    #[test]
+    fn configured_agent_name_wins_over_conflicting_handshake() {
+        let identity = AgentIdentity::new("kimi-desktop".into(), true);
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Stdio,
+            identity.clone(),
+            None,
+        );
+        identity.observe_mcp_client("kimi-code");
+
+        assert_eq!(
+            server.resolve_source_agent(None),
+            Some("kimi-desktop".into())
+        );
+    }
+
+    #[test]
+    fn implicit_agent_name_yields_to_handshake() {
+        let identity = AgentIdentity::new("claude-code".into(), false);
+        let server = WenlanMcpServer::new_with_identity(
+            WenlanClient::new("http://127.0.0.1:19999".into()),
+            TransportMode::Stdio,
+            identity.clone(),
+            None,
+        );
+        identity.observe_mcp_client("kimi-code");
+
+        assert_eq!(server.resolve_source_agent(None), Some("kimi-code".into()));
     }
 
     #[test]
@@ -8588,6 +8803,8 @@ mod tests {
             space_source: Some(wenlan_types::WriteSpaceSource::Existing),
             write_outcome: Some(wenlan_types::WriteOutcome::AttachedExisting),
             citations: None,
+            link_targets: Vec::new(),
+            next_step: "Read the existing page.".into(),
         });
 
         assert!(
@@ -9821,6 +10038,8 @@ mod tests {
                 gated: true,
                 revision_card_id: Some("mem_page_card_1".to_string()),
                 citations: None,
+                link_targets: Vec::new(),
+                next_step: "Wait for review.".into(),
             },
         );
         assert!(
@@ -9989,7 +10208,11 @@ mod tests {
             SteepAction::Judge,
             SteepAction::Release,
             SteepAction::ClaimNew,
+            SteepAction::OrganizeTasks,
+            SteepAction::Organize,
+            SteepAction::Links,
             SteepAction::Write,
+            SteepAction::Attach,
         ] {
             let result = server
                 .steep_impl(SteepParams {
@@ -10010,6 +10233,253 @@ mod tests {
             assert_eq!(result.is_error, Some(true));
             assert!(text_of(&result).contains("not available over remote connections"));
         }
+    }
+
+    #[tokio::test]
+    async fn steep_organize_posts_the_answers_and_reads_the_receipt() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/organize"))
+            .and(body_json(serde_json::json!({
+                "token": "tok_1",
+                "answers": [{"n": 1, "answer": "{\"memory_type\": \"fact\"}"}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "classified": 1, "detected": 0, "linked": 0, "remaining": 1,
+                "link_targets": ["Kiln care"]
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |answers: Option<Vec<SteepAnswer>>| SteepParams {
+            action: SteepAction::Organize,
+            page_id: None,
+            item_ids: None,
+            token: Some("tok_1".into()),
+            title: None,
+            content: None,
+            answers,
+            limit: None,
+            cursor: None,
+            space: None,
+            session: None,
+        };
+
+        let missing = server.steep_impl(params(None)).await.unwrap();
+        assert_eq!(missing.is_error, Some(true));
+        assert!(
+            text_of(&missing).contains("pass answers"),
+            "{}",
+            text_of(&missing)
+        );
+
+        let done = server
+            .steep_impl(params(Some(vec![SteepAnswer {
+                n: 1,
+                answer: "{\"memory_type\": \"fact\"}".into(),
+            }])))
+            .await
+            .unwrap();
+        assert_ne!(done.is_error, Some(true));
+        let body = done.structured_content.expect("a structured receipt");
+        assert_eq!(body["classified"], 1);
+        assert_eq!(body["remaining"], 1);
+        assert_eq!(body["link_targets"][0], "Kiln care");
+    }
+
+    #[test]
+    fn a_full_new_page_stays_inside_a_tool_result() {
+        // Long vault ids, titles and full snippets: the worst ordinary case.
+        let items: Vec<wenlan_types::SteepNewItem> = (0..STEEP_NEW_DEFAULT_LIMIT)
+            .map(|i| wenlan_types::SteepNewItem {
+                item_id: format!(
+                    "{:0>36}::Projects/Home/Kitchen renovation notes {i:03}.md",
+                    i
+                ),
+                kind: "note".into(),
+                title: format!("Kitchen renovation notes, part {i:03} of the year and the next"),
+                snippet: format!("{}…", "x".repeat(120)),
+                space: Some("home".into()),
+                chars: 12_345,
+                last_modified: 1_700_000_000,
+                held: i == 0,
+            })
+            .collect();
+        let list = wenlan_types::SteepNewListResponse {
+            items,
+            total: 9_850,
+            next_cursor: Some("110".into()),
+            kinds: Default::default(),
+            held: 1,
+            page_titles: (0..50)
+                .map(|i| format!("An existing page title {i:02}"))
+                .collect(),
+            next_step: "Claim one coherent group.".into(),
+        };
+        let out = steep_new_compact(&list);
+        let text = out.to_string();
+        assert!(
+            text.chars().count() < 25_000,
+            "{} characters",
+            text.chars().count()
+        );
+        let items = out["items"].as_array().unwrap();
+        assert_eq!(
+            items.len(),
+            STEEP_NEW_DEFAULT_LIMIT as usize - 1,
+            "the held item is left out"
+        );
+        assert!(items[0].get("id").is_some() && items[0].get("s").is_some());
+        assert_eq!(
+            items[0]["id"],
+            wenlan_types::steep_short_id(&list.items[1].item_id),
+            "a short id stands for the long one"
+        );
+        assert_eq!(
+            items[0]["t"].as_str().unwrap().chars().count(),
+            STEEP_NEW_TITLE_CHARS
+        );
+        assert!(items[0].get("space").is_none() && items[0].get("last_modified").is_none());
+        assert_eq!(out["total"], 9_850);
+        assert_eq!(out["page_titles"].as_array().unwrap().len(), 50);
+    }
+
+    #[tokio::test]
+    async fn steep_claim_new_hands_the_main_model_no_tasks_and_the_helper_fetches_them() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let work = serde_json::json!({
+            "stages": [{"stage": "classify", "instructions": "Classify."}],
+            "tasks": [{"n": 1, "stage": "classify", "memory_id": "m1", "prompt": "SOURCE TEXT"}],
+            "note": "Answer each task."
+        });
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/claim"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "token": "tok_1", "held_until": 1, "note": "Write.",
+                "sources": [{"n": 1, "memory_id": "m1", "text": "SOURCE TEXT"}],
+                "organize": work.clone()
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/tasks"))
+            .and(body_json(serde_json::json!({"token": "tok_1"})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"organize": work})),
+            )
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |action: SteepAction| SteepParams {
+            action,
+            page_id: None,
+            item_ids: Some(vec!["m1".into()]),
+            token: Some("tok_1".into()),
+            title: Some("Kilns".into()),
+            content: None,
+            answers: None,
+            limit: None,
+            cursor: None,
+            space: None,
+            session: None,
+        };
+        let claim = server
+            .steep_impl(params(SteepAction::ClaimNew))
+            .await
+            .unwrap();
+        let body = claim.structured_content.expect("a claim");
+        assert_eq!(body["organize"]["waiting"], 1);
+        assert!(body["organize"].get("tasks").is_none(), "{body}");
+        assert!(
+            body["organize"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("organize_tasks"),
+            "{body}"
+        );
+        let tasks = server
+            .steep_impl(params(SteepAction::OrganizeTasks))
+            .await
+            .unwrap();
+        let body = tasks.structured_content.expect("the tasks");
+        assert_eq!(body["organize"]["tasks"][0]["prompt"], "SOURCE TEXT");
+    }
+
+    #[tokio::test]
+    async fn steep_links_and_attach_post_the_token() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/links"))
+            .and(body_json(serde_json::json!({"token": "tok_1"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "link_targets": ["Kiln care"],
+                "existing_page": {"page_id": "page_k", "title": "Kiln days"}
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/steep/new/commit"))
+            .and(body_json(
+                serde_json::json!({"token": "tok_1", "action": "attach"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "outcome": "attached", "page_id": "page_k", "title": "Kiln days"
+            })))
+            .expect(1)
+            .mount(&mock)
+            .await;
+        let server = WenlanMcpServer::new(
+            WenlanClient::new(mock.uri()),
+            TransportMode::Stdio,
+            "claude".into(),
+            None,
+        );
+        let params = |action: SteepAction| SteepParams {
+            action,
+            page_id: None,
+            item_ids: None,
+            token: Some("tok_1".into()),
+            title: None,
+            content: None,
+            answers: None,
+            limit: None,
+            cursor: None,
+            space: None,
+            session: None,
+        };
+        let links = server.steep_impl(params(SteepAction::Links)).await.unwrap();
+        let body = links.structured_content.expect("links");
+        assert_eq!(body["link_targets"][0], "Kiln care");
+        assert_eq!(body["existing_page"]["title"], "Kiln days");
+        let attached = server
+            .steep_impl(params(SteepAction::Attach))
+            .await
+            .unwrap();
+        let body = attached.structured_content.expect("a receipt");
+        assert_eq!(body["outcome"], "attached");
     }
 
     // ===== Remember request construction =====
@@ -10055,7 +10525,7 @@ mod tests {
         assert_eq!(json["space"], "work");
         assert_eq!(json["entity"], "Alice");
         assert!(json["confidence"].as_f64().unwrap() > 0.89);
-        // stdio mode: no param, no client_name → falls back to agent_name "claude"
+        // stdio mode: no replacement → keeps the configured identity "claude"
         assert_eq!(json["source_agent"], "claude");
     }
 

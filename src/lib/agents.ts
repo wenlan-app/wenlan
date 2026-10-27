@@ -7,38 +7,54 @@
 //
 // Resolution order:
 //   1. User registration (`agent_connections.display_name` via listAgents).
-//   2. Built-in `KNOWN_CLIENT_DISPLAY_NAMES` registry (mirrors origin-core's `KNOWN_CLIENTS`).
-//   3. The raw canonical ID, prettified into a readable title (word-split on
+//   2. Built-in `KNOWN_CLIENT_NAMES` registry (mirrors origin-core's `KNOWN_CLIENTS`).
+//   3. The canonical ID prettified into a readable title (word-split on
 //      `-`/`_`, title-case each word, acronym map for mcp/cli/api/ai/vscode).
-//      Every row still shows the raw ID as a mono subtitle underneath, so
-//      this never hides the real value — it's the same string, reformatted.
 //
 // **Keep in sync with `crates/origin-core/src/db.rs::KNOWN_CLIENTS`.**
 
 import type { AgentConnection } from "./tauri";
 
-export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = {
-  "antigravity": "Antigravity",
-  "chatgpt": "ChatGPT",
-  "claude-code": "Claude Code",
-  "claude-desktop": "Claude Desktop",
-  "codex": "Codex",
-  "continue": "Continue",
-  "copilot-cli": "GitHub Copilot",
-  "cursor": "Cursor",
-  "gemini-cli": "Gemini CLI",
-  "kimi-code": "Kimi Code",
-  "kiro": "Kiro",
-  "logseq": "Logseq",
-  "muse-code": "Muse Code",
-  "obsidian": "Obsidian",
-  "openai-mcp": "ChatGPT",
-  "opencode": "OpenCode",
-  "raycast": "Raycast",
-  "vscode": "VS Code",
-  "windsurf": "Windsurf",
-  "zed": "Zed",
+interface ClientNames {
+  /** Broad product label used for provenance and connection surfaces. */
+  display: string;
+  /** Narrow label used when an action targets one specific executable. */
+  action?: string;
+}
+
+export const KNOWN_CLIENT_NAMES: Record<string, ClientNames> = {
+  "antigravity": { display: "Antigravity" },
+  "chatgpt": { display: "ChatGPT" },
+  "chatgpt-mcp": { display: "ChatGPT" },
+  "claude": { display: "Claude" },
+  "claude-ai": { display: "Claude" },
+  "claude-code": { display: "Claude Code" },
+  "claude-desktop": { display: "Claude Desktop" },
+  "codex": { display: "ChatGPT / Codex", action: "Codex" },
+  "continue": { display: "Continue" },
+  "copilot-cli": { display: "GitHub Copilot CLI" },
+  "cursor": { display: "Cursor" },
+  "gemini-cli": { display: "Gemini CLI" },
+  "kimi-code": { display: "Kimi Code" },
+  "kimi-desktop": { display: "Kimi" },
+  "kiro": { display: "Kiro" },
+  "logseq": { display: "Logseq" },
+  "muse-code": { display: "Muse Code" },
+  "obsidian": { display: "Obsidian" },
+  "openai-mcp": { display: "ChatGPT" },
+  "opencode": { display: "OpenCode" },
+  "raycast": { display: "Raycast" },
+  "vscode": { display: "VS Code" },
+  "windsurf": { display: "Windsurf" },
+  "wenlan": { display: "Wenlan" },
+  "wenlan-app": { display: "Wenlan" },
+  "zed": { display: "Zed" },
 };
+
+/** Compatibility view for callers that need the canonical display map. */
+export const KNOWN_CLIENT_DISPLAY_NAMES: Record<string, string> = Object.fromEntries(
+  Object.entries(KNOWN_CLIENT_NAMES).map(([id, names]) => [id, names.display]),
+);
 
 /** Word-level overrides applied after title-casing an unknown slug's parts. */
 const SLUG_WORD_OVERRIDES: Record<string, string> = {
@@ -81,23 +97,43 @@ export function resolveAgentDisplayName(
   canonicalId: string,
   connections?: AgentConnection[],
 ): string {
-  if (!canonicalId) return canonicalId;
+  const trimmed = canonicalId.trim();
+  const normalized = trimmed.toLowerCase();
+  if (!normalized) return "";
 
   // 1. User override via registration.
   if (connections) {
-    const match = connections.find((c) => c.name === canonicalId);
+    const match = connections.find((c) => c.name.trim().toLowerCase() === normalized);
     if (match?.display_name) {
       return match.display_name;
     }
   }
 
   // 2. Built-in registry.
-  const known = KNOWN_CLIENT_DISPLAY_NAMES[canonicalId];
-  if (known) return known;
+  const known = KNOWN_CLIENT_NAMES[normalized];
+  if (known) return known.display;
 
-  // 3. Prettify the raw slug. The raw ID stays visible via the row's mono
-  //    subtitle, so this fabricates nothing — same string, reformatted.
-  return prettifySlug(canonicalId);
+  // Some older call sites can already hold a human-readable display value.
+  // Preserve that explicit casing; only canonical slug IDs need prettifying.
+  if (/\s/.test(trimmed)) return trimmed;
+
+  // 3. Prettify the slug so an unknown integration never leaks a raw ID into
+  //    visible copy.
+  return prettifySlug(normalized);
+}
+
+/**
+ * Resolve the shorter product name used when an action targets one concrete
+ * tool rather than attributing work to the broader product family.
+ */
+export function resolveAgentActionName(
+  canonicalId: string,
+  connections?: AgentConnection[],
+): string {
+  const normalized = canonicalId.trim().toLowerCase();
+  if (!normalized) return "";
+  return KNOWN_CLIENT_NAMES[normalized]?.action
+    ?? resolveAgentDisplayName(canonicalId, connections);
 }
 
 // ── Tool families ──────────────────────────────────────────────────────
@@ -139,6 +175,8 @@ export function clientTypeFamily(clientType: string): string {
       return "opencode";
     case "kimi_code":
       return "kimi-code";
+    case "kimi_desktop":
+      return "kimi-desktop";
     default:
       return "";
   }
@@ -169,6 +207,10 @@ export function toolFamilyOf(agent: { name: string; agent_type: string }): strin
 
   const name = agent.name;
 
+  // The setup probe deliberately stays outside Wenlan's own family even
+  // though `wenlan` is a known display-name key.
+  if (name === "wenlan-setup") return "wenlan-setup";
+
   // (b) exact canonical ID in the registry.
   if (name in KNOWN_CLIENT_DISPLAY_NAMES) return aliasFamily(name);
 
@@ -180,8 +222,7 @@ export function toolFamilyOf(agent: { name: string; agent_type: string }): strin
   }
   if (best) return aliasFamily(best);
 
-  // (d) the wizard's own probe identity, then a bare passthrough.
-  if (name === "wenlan-setup") return "wenlan-setup";
+  // (d) bare passthrough.
   return name;
 }
 

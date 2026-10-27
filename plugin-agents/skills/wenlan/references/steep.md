@@ -26,38 +26,94 @@ New pages come first (section 2), then the pages waiting (section 3).
 
 Skip this section when `new_total` is 0.
 
-1. Call `steep` with `action: "new"` (and `space`). Each item is one imported
-   note, chat, file or saved memory, with `item_id`, `kind`, `title` and
-   `snippet`. Leave out items whose `held` is true: another run has them.
-2. Group the items by topic. This is a small judgment, so give it to a helper
-   on a small model when you can start one (a subagent on a smaller model):
-   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it
-   to reply with only JSON: `[{"topic": "...", "item_ids": ["..."]}]`. Each
-   group is one subject a person would look up as one page; an item belongs
-   to at most one group; items that fit no group are left out. A group may be
-   a single item only when that item is long on its own (a whole note, a long
-   chat). Never group with your main model: when you cannot start a helper on
-   a small model, write no new pages this run and say that Automatic mode
-   will do it.
-3. Biggest groups first, at most 8 pages this run. For each group:
-   1. Call `steep` with `action: "claim_new"` and its `item_ids`. The answer
-      has the items' text numbered `[1]` to `[n]`, a `token` and a `note`. A
-      refusal (too little text, already taken) means skip the group.
-   2. Write the page yourself, with your main model. Never let the small
-      model write it. Title: short, names the topic, in the sources'
-      language. Open with one plain sentence that says what the page is
-      about, then short paragraphs or lists. Use only what the sources say
-      and cite every claim with its number, like `[2]`.
-   3. Call `steep` with `action: "write"`, the token, `title` and the body as
-      `content`. A citation refusal: fix the sentences it points at and write
-      again with the same token, once; still refused, `release` the token. If
+Grouping and organizing below are small work for a helper on a cheaper
+model, so they do not spend your main model. Start a subagent or helper on
+your tool's smallest or cheapest model, for example Gemini Flash in
+Antigravity, Composer in Cursor, or Haiku or Luna in GitHub Copilot. In
+Antigravity and Cursor, use the `wenlan-helper` agent when Wenlan installed
+it. Kimi Code has no cheaper helper, so the next rule applies there.
+Only when no helper on a cheaper model can start at all, do the grouping and
+organizing yourself, for this run only and at most 8 pages, and say in the
+report that no cheaper helper was available. You always write the pages
+yourself.
+
+Helpers fetch their own work from Wenlan with the `steep` tool: hand a
+helper only its instructions below and, for organizing, a token. Never copy
+items, sources or tasks to a helper.
+
+1. Group with the helper. Ask it to call `steep` with `action: "new"`,
+   `limit: 110` (and `space`), once. The answer is the newest material,
+   newest first, each item with its `id`, title `t`, snippet `s` and length
+   in characters `n`; `total` counts all of it. Do not fetch more with
+   `next_cursor`: a run writes at most 8 pages, and the rest waits for the
+   next run. The helper groups the items by topic from their titles and
+   snippets and the answer's `page_titles` (the pages that already exist),
+   and replies with only JSON:
+   `{"total": 0, "groups": [{"topic": "...", "item_ids": ["..."]}]}`, each
+   item by its `id`.
+   Each group is one subject a person would look up as one page. Material
+   on one subject from different years or versions is one group. If the
+   material belongs under an existing page, even one whose title words
+   differ (a trip to Porto under "Lisbon and Porto"), the topic is that
+   page's title, exactly as given. Prefer groups of 4 or more items: a few
+   short items on a nearby subject join that group rather than stand
+   alone. An item belongs to at most one group; items that fit no group
+   are left out. A group may be a single item only when that item is long
+   on its own (`n` over 1500: a whole note, a long chat).
+2. Claim the groups, the biggest 8 at most this run, all at once: send
+   every `claim_new` call in one message, each with one group's `item_ids`
+   and its topic as `title`. Never claim one group after another. Each
+   answer has the items' text numbered `[1]` to `[n]`, a `token` and a
+   `note`; a claim holds its items for 45 minutes. A refusal (too little
+   text, already taken) means skip the group.
+3. Start a helper for every claim whose answer has `organize`, all at once.
+   It organizes the sources the way Wenlan's own model would: their type
+   and tags, and the people, projects and tools they mention. Hand it only
+   the claim's `token`, and ask it to call `steep` with
+   `action: "organize_tasks"` and the token; to answer every task with its
+   stage's `instructions` as the system prompt and the task's `prompt` as
+   the message, each answer exactly what the instructions ask for; then to
+   call `steep` itself with `action: "organize"`, the token and `answers` as
+   `[{"n": 1, "answer": "..."}]`; and to reply with only one line: the
+   counts that call returned. Never pass the answers on yourself.
+   The helpers run at the same time when your tool runs helpers in the
+   background: start them all in one step, each in the background.
+   Otherwise start them one after another. Only when no helper could start
+   do you call `organize_tasks` and `organize` yourself.
+4. Write each page as soon as its helper reports, in the order they finish,
+   without waiting for the other helpers; a claim without `organize` is
+   ready at once. For each:
+   1. Right before you write, call `steep` with `action: "links"` and the
+      token (for helpers that finished together, all their `links` calls in
+      one message). It returns `link_targets` and `existing_page` as they
+      are now, counting the pages this run wrote since the claim.
+   2. When it has `existing_page`, a page on this subject already exists: do
+      not write a second one. Call `steep` with `action: "attach"` and the
+      token. The sources go into that page, which then waits to be rewritten
+      with all of them (section 3). Go on to the next page.
+   3. Otherwise write the page yourself, with your main model. Never let the
+      small model write it. Title: a short heading that names the topic, in
+      the sources' language; in English, in title case, every main word
+      capitalized ("Household Finances", not "Household finances"), with
+      proper names kept as written. Open with one plain sentence that says
+      what the page is about, then short paragraphs or lists. Use only what
+      the sources say and cite every claim with its number, like `[2]`. Link
+      every page in `link_targets` that the text talks about, each as
+      `[[Title]]` at its first mention, with the title exactly as given.
+      Link no other titles.
+   4. Call `steep` with `action: "write"`, the token, `title` (English in
+      title case: "Kitchen Renovation") and the body as `content`. A
+      citation refusal: fix the sentences it points at and write again with
+      the same token, once; still refused, `release` the token. If
       the sources turn out not to belong together, `release` the token.
-   4. `created`: a new page. `merged`: a page on that topic already existed
-      and took the sources.
+   5. `created`: a new page. `merged`: a page on that topic already existed
+      and took the sources. `attached`: the existing page took them.
 
 ## 3. Pages that went out of date
 
-Skip this section when `total` is 0.
+Skip this section when `total` is 0 and nothing was attached in section 2.
+When something was attached, call `list` again first: the pages that took
+sources now wait here.
 
 Work through at most 10 pages this run, newest first. Skip a page whose
 `leased_by` is set: another run has it. Page the ones with `needs_you`; they
@@ -88,7 +144,8 @@ For each page:
    sources, yes or no. When it says yes, call `steep` with
    `action: "still_accurate"` and the token. When it says no, or you cannot
    start a helper on a small model, rewrite. A page whose `stale_reason` is
-   `source_removed` is always rewritten.
+   `source_removed` is always rewritten, and so is a page you attached
+   sources to in section 2, with no check.
    When `stale_reason` is `code_changed`, the claim's `code` shows the lines
    as they read now and `what_changed` says what the page should now say.
    An entry with `deleted: true` is a file that was deleted from the
@@ -120,13 +177,19 @@ For each page:
      Otherwise move on.
 
 Never call `write_page` on a claimed page or for a claim_new's items; the
-commit and the write are the only writes. Never release a token you did not
+commit, the write and the attach are the only writes. Never release a token you did not
 get from your own claim.
 
 ## 4. Report
 
-A few short lines, no ids: the titles of the new pages written, how many pages were updated, how many wait for the
+A few short lines, no ids: the titles of the new pages written, for each
+attach "added N sources to <title>", how many of
+their sources were organized and how many of the people, projects and tools
+found there earned a Wiki page (`confirmed`), whether you grouped and organized
+them yourself because no cheaper helper could start, how many pages were updated, how many wait for the
 user as revision cards, how many still hold, how many code changes were
 checked and found harmless, and for each `needs_you` page its
-title and the reason from its `note`. If more new material or more than 10
-pages were left, say so and that `/wenlan steep` again continues.
+title and the reason from its `note`. If new material is left, say how many
+items still wait (the grouping helper's `total` less the items this run used,
+like "9,850 more waiting"); if it or more than 10 pages were left, say that
+`/wenlan steep` again continues.

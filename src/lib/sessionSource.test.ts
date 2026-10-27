@@ -7,6 +7,7 @@ import {
   sessionPlaceName,
   sessionRepoName,
   sessionResumeCommand,
+  sessionToolActionLabel,
   sessionToolLabel,
   shortCommit,
 } from "./sessionSource";
@@ -23,14 +24,21 @@ const session = (over: Partial<AgentSession> = {}): AgentSession => ({
 describe("sessionToolLabel", () => {
   it.each([
     ["claude-code", "Claude Code"],
-    ["codex", "Codex"],
+    ["codex", "ChatGPT / Codex"],
     ["opencode", "OpenCode"],
     ["gemini-cli", "Gemini CLI"],
     ["chatgpt", "ChatGPT"],
     ["claude-ai", "Claude"],
-    ["some-new-tool", "some-new-tool"],
+    ["some-new-tool", "Some New Tool"],
   ])("%s shows as %s", (tool, label) => {
     expect(sessionToolLabel(tool)).toBe(label);
+  });
+});
+
+describe("sessionToolActionLabel", () => {
+  it("names the executable an action targets", () => {
+    expect(sessionToolActionLabel("codex")).toBe("Codex");
+    expect(sessionToolActionLabel("claude-code")).toBe("Claude Code");
   });
 });
 

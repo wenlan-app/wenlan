@@ -934,10 +934,14 @@ async fn distill_one_cluster_with_tuning(
                     citations_json: Some(citations_json),
                     basis_marks: Vec::new(),
                     basis_space_guard: None,
+                    skip_protected_title_match: true,
                 },
             )
             .await?;
             let page_id = write_result.id;
+            if !write_result.wrote && write_result.attached_to.is_none() {
+                return Ok(None);
+            }
             // #708: a distilled page written about an entity cites it, and a
             // cited entity has earned its place in the Wiki whatever its memory
             // count -- the page is the evidence the count was standing in for.
@@ -2408,7 +2412,7 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     }
 
     use super::*;
-    use crate::llm_provider::{LlmBackend, LlmError, MockProvider};
+    use crate::llm_provider::{LlmBackend, LlmError, MockProvider, SequencedMockProvider};
     use crate::sources::RawDocument;
     use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
@@ -4725,6 +4729,73 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             r.is_some(),
             "threshold above cosine max should prevent attach and allow synthesis"
         );
+    }
+
+    #[tokio::test]
+    async fn distill_cluster_attaches_to_same_title_even_without_vector_match() {
+        let (db, _dir) = crate::db::tests::test_db().await;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.insert_page_with_kind(
+            "seed_tokio_title",
+            "Tokio Runtime Notes",
+            None,
+            "Tokio runtime notes already exist.",
+            None,
+            Some("work"),
+            &[],
+            &now,
+            "distilled",
+            "confirmed",
+            Some("work"),
+            None,
+        )
+        .await
+        .unwrap();
+        let source = "Tokio is an asynchronous runtime for Rust programs with a scheduler, reactor, and async network APIs. It coordinates tasks across worker threads, exposes timers and channels, and lets services process many connections without assigning one operating-system thread to every request.";
+        upsert_test_sources(&db, &[("mem_title_guard", source)], Some("work")).await;
+        let cluster = crate::db::DistillationCluster {
+            source_ids: vec!["mem_title_guard".into()],
+            contents: vec![source.into()],
+            entity_id: None,
+            entity_name: Some("Tokio".into()),
+            space: Some("work".into()),
+            estimated_tokens: 40,
+            centroid_embedding: None,
+        };
+        let tuning = crate::tuning::DistillationConfig {
+            page_match_threshold: 1.1,
+            page_min_cluster_size: 1,
+            ..Default::default()
+        };
+        let llm: Arc<dyn LlmProvider> = Arc::new(SequencedMockProvider::new(vec![
+            "Tokio is an asynchronous runtime for Rust programs with a scheduler, reactor, and async network APIs. It coordinates tasks across worker threads, exposes timers and channels, and lets services process many connections without assigning one operating-system thread to every request [1].",
+            "tokio runtime notes",
+        ]));
+
+        let result = distill_one_cluster_with_tuning(
+            &db,
+            &llm,
+            &PromptRegistry::default(),
+            &cluster,
+            &tuning,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            result.is_none(),
+            "same-title cluster must attach, not create"
+        );
+        assert_eq!(db.list_pages("active", 10, 0).await.unwrap().len(), 1);
+        let evidence: Vec<String> = db
+            .get_page_evidence("seed_tokio_title")
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| row.locator)
+            .collect();
+        assert!(evidence.contains(&"mem_title_guard".to_string()));
     }
 
     const FORCED_SOURCE_TEXT: &str = "Tokio is an async runtime for Rust programs";

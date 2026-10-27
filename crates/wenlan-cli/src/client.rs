@@ -506,6 +506,14 @@ impl WenlanClient {
         self.post_json(path, req).await
     }
 
+    /// GET /api/steep/new — how many items of material in the caller's scope
+    /// no page uses yet.
+    pub async fn new_material_total(&self) -> Result<u32> {
+        let list: wenlan_types::SteepNewListResponse =
+            self.get_json("/api/steep/new?limit=1", false).await?;
+        Ok(list.total)
+    }
+
     /// POST /api/sources/{id}/sync — sync a registered source, returning stats.
     pub async fn sync_source(&self, id: &str) -> Result<SyncStats> {
         self.post_empty_json(&format!("/api/sources/{}/sync", id))

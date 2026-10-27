@@ -80,7 +80,7 @@ async function assertRedesignedSurface(page: Page, name: string): Promise<boolea
     const metadata = context.locator(".memory-detail-metadata-list");
     await expect(metadata.getByRole("combobox", { name: "Type", exact: true })).toHaveValue("person");
     await expect(metadata.getByText("Wenlan", { exact: true })).toBeVisible();
-    await expect(metadata).toContainText("research-agent");
+    await expect(metadata.getByText("Research Agent", { exact: true })).toBeVisible();
     await expect(detail.locator(".entity-obs-content")).toHaveText("Wrote the first published algorithm");
     await expect(context.locator(".entity-relation-row")).toHaveCount(2);
     await expect(detail.getByRole("button", { name: "Add information", exact: true })).toBeVisible();

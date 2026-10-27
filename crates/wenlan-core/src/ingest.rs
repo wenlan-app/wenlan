@@ -256,6 +256,10 @@ pub struct ClassificationSliceReport {
 
 /// Advance one durable memory classification stage with at most one provider
 /// call. Field/tag writes and the versioned receipt share one guarded commit.
+///
+/// Select, request and apply are separate so an on-demand organize run
+/// ([`crate::steep_organize`]) hands the same request to the user's AI tool
+/// and lands its answer through the same [`apply_classification_output`].
 pub async fn run_classification_enrichment_slice(
     db: &MemoryDB,
     llm: &Arc<dyn LlmProvider>,
@@ -268,53 +272,63 @@ pub async fn run_classification_enrichment_slice(
         return Ok(ClassificationSliceReport::default());
     };
 
-    let request = crate::llm_provider::LlmRequest {
+    let request = classification_request(&input, prompts);
+    let generated =
+        tokio::time::timeout(std::time::Duration::from_secs(30), llm.generate(request)).await;
+    let output = match generated {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("classification timed out after 30s".to_string()),
+    };
+    let committed = apply_classification_output(db, &input, output).await?;
+    Ok(ClassificationSliceReport {
+        selected: true,
+        committed,
+        llm_calls: 1,
+    })
+}
+
+/// The one model request the classification stage spends on `input`.
+pub fn classification_request(
+    input: &crate::db::MemoryEnrichmentInput,
+    prompts: &PromptRegistry,
+) -> crate::llm_provider::LlmRequest {
+    crate::llm_provider::LlmRequest {
         system_prompt: Some(prompts.classify_memory_quality.clone()),
         user_prompt: input.content.chars().take(1000).collect(),
         max_tokens: 128,
         temperature: 0.1,
         label: Some("classify".into()),
         timeout_secs: None,
-    };
-    let generated =
-        tokio::time::timeout(std::time::Duration::from_secs(30), llm.generate(request)).await;
-    let classification = match generated {
-        Ok(Ok(output)) => crate::llm_provider::parse_classify_response(&output),
-        Ok(Err(error)) => {
-            let committed = crate::post_ingest::record_stage_failure(
+    }
+}
+
+/// Land one classification answer for `input`: parse it, derive the fields
+/// the memory's origin allows, and commit them with the tags and receipt
+/// against the input's version. `Err` is a failed model call (its message
+/// becomes the retry receipt). Returns whether anything was committed; a
+/// memory that changed since `input` was read commits nothing.
+pub async fn apply_classification_output(
+    db: &MemoryDB,
+    input: &crate::db::MemoryEnrichmentInput,
+    output: Result<String, String>,
+) -> Result<bool, WenlanError> {
+    let classification = match output {
+        Ok(output) => crate::llm_provider::parse_classify_response(&output),
+        Err(error) => {
+            return crate::post_ingest::record_stage_failure(
                 db,
                 &input.source_id,
                 "classify",
                 input.prior_attempts,
                 input.version,
-                &error.to_string(),
+                &error,
             )
-            .await?;
-            return Ok(ClassificationSliceReport {
-                selected: true,
-                committed,
-                llm_calls: 1,
-            });
-        }
-        Err(_) => {
-            let committed = crate::post_ingest::record_stage_failure(
-                db,
-                &input.source_id,
-                "classify",
-                input.prior_attempts,
-                input.version,
-                "classification timed out after 30s",
-            )
-            .await?;
-            return Ok(ClassificationSliceReport {
-                selected: true,
-                committed,
-                llm_calls: 1,
-            });
+            .await;
         }
     };
     let Some(classification) = classification else {
-        let committed = crate::post_ingest::record_stage_failure(
+        return crate::post_ingest::record_stage_failure(
             db,
             &input.source_id,
             "classify",
@@ -322,12 +336,7 @@ pub async fn run_classification_enrichment_slice(
             input.version,
             "classification response was invalid",
         )
-        .await?;
-        return Ok(ClassificationSliceReport {
-            selected: true,
-            committed,
-            llm_calls: 1,
-        });
+        .await;
     };
 
     let derived_memory_type =
@@ -345,23 +354,17 @@ pub async fn run_classification_enrichment_slice(
     } else {
         None
     };
-    let committed = db
-        .commit_classification_at_version(
-            &input.source_id,
-            input.version,
-            derived_memory_type,
-            derived_space.as_deref(),
-            classification.quality.as_deref(),
-            derived_supersede_mode,
-            classification.importance,
-            &classification.tags,
-        )
-        .await?;
-    Ok(ClassificationSliceReport {
-        selected: true,
-        committed,
-        llm_calls: 1,
-    })
+    db.commit_classification_at_version(
+        &input.source_id,
+        input.version,
+        derived_memory_type,
+        derived_space.as_deref(),
+        classification.quality.as_deref(),
+        derived_supersede_mode,
+        classification.importance,
+        &classification.tags,
+    )
+    .await
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

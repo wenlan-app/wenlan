@@ -303,7 +303,7 @@
         {
           "from": [
             "```bash",
-            "npx -y wenlan@0.20.1 setup",
+            "npx -y wenlan@0.20.2 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -335,7 +335,7 @@
             "prints the status:",
             "",
             "```bash",
-            "npx -y wenlan@0.20.1 setup",
+            "npx -y wenlan@0.20.2 setup",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "```",
             "",
@@ -349,7 +349,7 @@
             "If absent, install and configure local memory:",
             "",
             "```bash",
-            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.20.1/install.sh | bash",
+            "curl -fsSL https://raw.githubusercontent.com/wenlan-app/wenlan/v0.20.2/install.sh | bash",
             "export PATH=\"$HOME/.wenlan/bin:$PATH\"",
             "wenlan setup --basic",
             "wenlan background on",
@@ -408,12 +408,24 @@
         },
         {
           "from": [
-            "   on a small model: in Claude Code, start an `Agent` with `model: \"haiku\"`,",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+            "model, so they do not spend your main model. In Claude Code, start an",
+            "`Agent` with `model: \"haiku\"`."
           ],
           "to": [
-            "   on a small model when you can start one (a subagent on a smaller model):",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+            "model, so they do not spend your main model. Spawn a subagent on",
+            "`gpt-6-luna`; when subagents are off, run",
+            "`codex exec -m gpt-6-luna \"<the task>\"` and use what it prints."
+          ]
+        },
+        {
+          "from": [
+            "   The helpers run at the same time when your tool runs helpers in the",
+            "   background. In Claude Code, send one message with one `Agent` call per",
+            "   claim, each with `model: \"haiku\"` and `run_in_background: true`."
+          ],
+          "to": [
+            "   The helpers run at the same time: spawn one subagent per claim, all in",
+            "   parallel."
           ]
         }
       ]

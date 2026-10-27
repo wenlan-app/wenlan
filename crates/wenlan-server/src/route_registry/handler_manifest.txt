@@ -141,6 +141,9 @@ main|post|/api/pages/{id}/code-basis/cited|wenlan_server::code_basis_routes::han
 main|post|/api/steep/claim|wenlan_server::steep_routes::handle_steep_claim
 main|post|/api/steep/commit|wenlan_server::steep_routes::handle_steep_commit
 main|post|/api/steep/new/claim|wenlan_server::steep_new_routes::handle_steep_new_claim
+main|post|/api/steep/new/organize|wenlan_server::steep_new_routes::handle_steep_new_organize
+main|post|/api/steep/new/links|wenlan_server::steep_new_routes::handle_steep_new_links
+main|post|/api/steep/new/tasks|wenlan_server::steep_new_routes::handle_steep_new_tasks
 main|post|/api/steep/new/commit|wenlan_server::steep_new_routes::handle_steep_new_commit
 main|post|/api/pages/{id}/code-basis/confirm|wenlan_server::code_basis_routes::handle_confirm_code_basis
 main|post|/api/pages/{id}/export|wenlan_server::page_routes::handle_export_page

@@ -86,6 +86,7 @@ async fn verify_http(origin_url: String) {
         origin_url,
         token: Some(TOKEN.into()),
         agent_name: AGENT.into(),
+        agent_name_explicit: true,
         user_id: None,
         allowed_origins: vec![],
         whole_library: false,

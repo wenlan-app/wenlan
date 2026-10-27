@@ -290,6 +290,7 @@ pub(super) struct CreatePageInput<'a> {
     pub(super) citations_json: Option<&'a str>,
     pub(super) basis_marks: &'a [(String, i64)],
     pub(super) basis_space_guard: Option<&'a crate::read_scope::ReadScope>,
+    pub(super) skip_protected_title_match: bool,
 }
 
 pub(super) async fn create_page_impl(
@@ -298,7 +299,7 @@ pub(super) async fn create_page_impl(
 ) -> Result<WriteResult, WenlanError> {
     let CreatePageInput {
         page_id,
-        req,
+        mut req,
         agent,
         knowledge_path,
         page_min_cluster_size,
@@ -306,6 +307,7 @@ pub(super) async fn create_page_impl(
         citations_json,
         basis_marks,
         basis_space_guard,
+        skip_protected_title_match,
     } = input;
 
     // Pre-write validation
@@ -324,13 +326,14 @@ pub(super) async fn create_page_impl(
         req.creation_kind.as_deref(),
         &req.source_memory_ids,
         page_min_cluster_size,
-    );
+    )
+    .to_string();
     if creation_kind == "distilled" && req.source_memory_ids.is_empty() {
         return Err(WenlanError::Validation(
             "distilled page must cite at least one source memory".into(),
         ));
     }
-    if !VALID_PAGE_CREATION_KINDS.contains(&creation_kind) {
+    if !VALID_PAGE_CREATION_KINDS.contains(&creation_kind.as_str()) {
         return Err(WenlanError::Validation(format!(
             "invalid creation_kind '{creation_kind}' (expected one of: distilled, authored, research, imported, source)"
         )));
@@ -359,10 +362,67 @@ pub(super) async fn create_page_impl(
     let review_status = PAGE_BIRTH_REVIEW_STATUS;
     // Resolution check: every source id must exist
     for sid in &req.source_memory_ids {
-        if !page_source_reference_exists(db, creation_kind, sid).await? {
+        if !page_source_reference_exists(db, &creation_kind, sid).await? {
             return Err(WenlanError::Validation(format!(
                 "source memory '{sid}' does not exist"
             )));
+        }
+    }
+    if page_id.is_none() && creation_kind != "source" {
+        req.title = crate::page_titles::title_case_if_lowercase_ascii(req.title.trim());
+        let scope = basis_space_guard
+            .cloned()
+            .unwrap_or(crate::read_scope::ReadScope::Global);
+        let space = req.workspace.as_deref().or(req.space.named());
+        if let Some(existing) = crate::page_titles::strict_same_title_note(
+            db,
+            &scope,
+            space,
+            &req.title,
+            skip_protected_title_match,
+        )
+        .await?
+        {
+            if skip_protected_title_match && existing.protected {
+                return Ok(WriteResult {
+                    basis_confirm: None,
+                    id: existing.page_id,
+                    attached_to: None,
+                    warnings: vec![format!(
+                        "Page '{}' already exists and is hand-edited or locked; nothing was changed",
+                        existing.title
+                    )],
+                    wrote: false,
+                    revision_card_id: None,
+                    gated: false,
+                    outcome: WriteOutcome::Unchanged,
+                    acknowledged: false,
+                });
+            }
+            if !req.source_memory_ids.is_empty() {
+                return attach_page_sources_impl(
+                    db,
+                    &existing.page_id,
+                    &req.source_memory_ids,
+                    "same_title",
+                    agent,
+                )
+                .await;
+            }
+            return Ok(WriteResult {
+                basis_confirm: None,
+                id: existing.page_id,
+                attached_to: None,
+                warnings: vec![format!(
+                    "Page '{}' already exists; no duplicate was created",
+                    existing.title
+                )],
+                wrote: false,
+                revision_card_id: None,
+                gated: false,
+                outcome: WriteOutcome::Unchanged,
+                acknowledged: false,
+            });
         }
     }
     // Hallucination guard (only when sources are present)
@@ -448,7 +508,7 @@ pub(super) async fn create_page_impl(
         last_edited_at: None,
         last_delta_summary: None,
         changelog: None,
-        creation_kind: creation_kind.to_string(),
+        creation_kind: creation_kind.clone(),
         review_status: review_status.to_string(),
         workspace: req.workspace.clone(),
         citations: citations_json
@@ -486,7 +546,7 @@ pub(super) async fn create_page_impl(
             req.space.as_deref(),
             &source_refs,
             &now,
-            creation_kind,
+            &creation_kind,
             review_status,
             req.workspace.as_deref(),
             citations_json,

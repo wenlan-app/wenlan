@@ -43,6 +43,7 @@ import {
   familyOfAnyId,
   familyOfClient,
   heardSince,
+  restartNameForClient,
   seenFamiliesOf,
   useLiveAgents,
 } from "./connect/connectionState";
@@ -53,6 +54,7 @@ import { Button, Tag, SectionHeader } from "./memory/settings/primitives";
 import { OWN_IDENTITY, resolveAgentDisplayName } from "../lib/agents";
 import { PlugsConnected } from "@phosphor-icons/react";
 import { ConnectedHint } from "./memory/askAi/ConnectedHint";
+import { rememberAddedFolder } from "./memory/sources/FolderImportOrganize";
 
 // Module-level so each is a stable reference across renders — AnyProviderCard
 // memoizes its preset list on these, and a fresh array literal per render
@@ -829,6 +831,7 @@ function ConnectStep({
                         })
                       : null
                   }
+                  technicalDetails={[duplicateRiskError]}
                   leading={
                     <input
                       type="checkbox"
@@ -1365,7 +1368,12 @@ function SettingUpStep({
       if (row.kind === "import") {
         if (!pendingImportPick) return;
         addSource(pendingImportPick.sourceType, pendingImportPick.path)
-          .then((source) => syncRegisteredSource(source.id))
+          .then((source) => {
+            // The home's checklist shows the import finish once this read
+            // has stored something.
+            rememberAddedFolder(source);
+            return syncRegisteredSource(source.id);
+          })
           .then((stats) => {
             setImportStats(stats);
             setStatuses((prev) => ({ ...prev, [row.id]: "done" }));
@@ -2217,25 +2225,33 @@ export function DoneStep({
   // own setup probe arrives on it too; it is not the user's tool.
   const tools = useMemo(() => {
     const seenFamilies = seenFamiliesOf(agentConnections, seenSince);
-    const byName = new Map<string, boolean>();
+    const byName = new Map<string, { connected: boolean; restartName: string }>();
     for (const rawId of connectedAgents) {
       const family = familyOfAnyId(rawId);
       if (OWN_IDENTITY.test(family) || OWN_IDENTITY.test(rawId)) continue;
       const displayName = resolveAgentDisplayName(rawId, agentConnections);
       const isConnected = seenFamilies.has(family);
-      byName.set(displayName, (byName.get(displayName) ?? false) || isConnected);
+      const current = byName.get(displayName);
+      byName.set(displayName, {
+        connected: (current?.connected ?? false) || isConnected,
+        restartName: current?.restartName ?? restartNameForClient(rawId, displayName, t),
+      });
     }
-    return Array.from(byName, ([name, isConnected]) => ({
+    return Array.from(byName, ([name, state]) => ({
       name,
-      status: isConnected ? ("connected" as const) : ("added" as const),
+      restartName: state.restartName,
+      status: state.connected ? ("connected" as const) : ("added" as const),
     }));
-  }, [connectedAgents, agentConnections, seenSince]);
+  }, [connectedAgents, agentConnections, seenSince, t]);
   const hasTools = tools.length > 0;
   const anyToolConnected = tools.some((tool) => tool.status === "connected");
   // Tools that are all merely Added claim nothing yet: no success mark, and
   // the title says what is true. With no tools (an import-only finish) the
   // import is the news and the original all-set title stands.
   const toolsPending = hasTools && !anyToolConnected;
+  const restartHint = toolsPending && tools.length === 1
+    ? t("connectMatrix.restartToFinish", { name: tools[0].restartName })
+    : t("setup.done.restartHint");
   const isSkipPath = !hasImportData && !hasTools;
 
   // Onboarding completion wires explicit per-job pins from what the user
@@ -2462,7 +2478,7 @@ export function DoneStep({
             margin: 0,
           }}
         >
-          {toolsPending ? t("setup.done.restartHint") : t("setup.done.allSetBody1")}
+          {toolsPending ? restartHint : t("setup.done.allSetBody1")}
         </p>
         {routingSummary && <p style={routingSummaryStyle}>{routingSummary}</p>}
         {assurance && <p style={routingSummaryStyle}>{assurance}</p>}

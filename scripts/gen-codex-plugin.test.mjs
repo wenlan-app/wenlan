@@ -366,3 +366,49 @@ test("real tree: generated skills carry the pins the validators and Rust tests r
   assert.match(codex("setup"), new RegExp(`/v${pin.replaceAll(".", "\\.")}/install\\.sh`));
   assert.match(JSON.stringify(overlay), new RegExp(`npx -y wenlan@${pin.replaceAll(".", "\\.")} setup`));
 });
+
+test("real tree: Codex steep sends grouping and organizing to a gpt-6-luna helper first", () => {
+  const steep = readFileSync(join(repo, "plugin-codex/skills/wenlan/references/steep.md"), "utf8");
+  const newPages = steep.slice(steep.indexOf("## 2. New pages"), steep.indexOf("## 3."));
+  for (const needle of [
+    "Spawn a subagent on\n`gpt-6-luna`",
+    "`codex exec -m gpt-6-luna \"<the task>\"`",
+    "Only when no helper on a cheaper model can start at all, do the grouping and\norganizing yourself, for this run only and at most 8 pages",
+    "Never copy\nitems, sources or tasks to a helper",
+    "`action: \"organize_tasks\"` and the token",
+    "then to\n   call `steep` itself with",
+    "Never pass the answers on yourself",
+    "`page_titles` (the pages that already exist)",
+    "Material\n   on one subject from different years or versions is one group",
+    "If the\n   material belongs under an existing page",
+    "page's title, exactly as given",
+    "its topic as `title`",
+    "send\n   every `claim_new` call in one message",
+    "Never claim one group after another",
+    "without waiting for the other helpers",
+    "all their `links` calls in\n      one message",
+    "a claim holds its items for 45 minutes",
+    "Write each page as soon as its helper reports, in the order they finish",
+    "Right before you write, call `steep` with `action: \"links\"`",
+    "Call `steep` with `action: \"attach\"` and the\n      token",
+    "`action: \"new\"`,\n   `limit: 110`",
+    "Prefer groups of 4 or more items",
+    "in English, in title case, every main word\n      capitalized (\"Household Finances\", not \"Household finances\"), with\n      proper names kept as written",
+    "`title` (English in\n      title case: \"Kitchen Renovation\")",
+    "on its own (`n` over 1500",
+    "Do not fetch more with\n   `next_cursor`",
+    "title `t`, snippet `s`",
+    "Link\n      every page in `link_targets` that the text talks about, each as\n      `[[Title]]` at its first mention",
+    "spawn one subagent per claim, all in\n   parallel",
+  ]) {
+    assert.ok(newPages.includes(needle), needle);
+  }
+  assert.ok(steep.includes('attach "added N sources to <title>"'), "the report names attaches");
+  assert.ok(steep.includes('"9,850 more waiting"'), "the report says how much new material waits");
+  assert.ok(!/haiku|Agent`/.test(newPages), "no Claude Code helper wording in Codex");
+  assert.ok(claudeSkill("steep").includes("`Agent` with `model: \"haiku\"`"), "Claude keeps Haiku");
+  assert.ok(
+    claudeSkill("steep").includes("one `Agent` call per\n   claim, each with `model: \"haiku\"` and `run_in_background: true`"),
+    "Claude starts every organize helper at once in the background",
+  );
+});

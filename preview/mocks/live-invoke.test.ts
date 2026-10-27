@@ -1054,6 +1054,89 @@ describe("liveInvoke authored Page preview", () => {
 // because consumers dereference the result unguarded. These pin the shapes that
 // actually get dereferenced.
 describe("liveInvoke app-local defaults match the real command contracts", () => {
+  it("keeps the Connections preview fixture populated with realistic detected clients", async () => {
+    const clients = (await liveInvoke("detect_mcp_clients_cmd")) as {
+      name: string;
+      client_type: string;
+      config_path: string;
+      detected: { kind?: string } | string;
+      already_configured: { kind?: string } | string;
+      has_raw_entry: { kind?: string } | string;
+      has_plugin: { kind?: string } | string;
+      entry_health?: { kind: string; reason?: string };
+    }[];
+    const yes = { kind: "yes" };
+    const no = { kind: "no" };
+
+    expect(clients.map((client) => [client.name, client.client_type])).toEqual([
+      ["Claude Code", "claude_code"],
+      ["ChatGPT / Codex", "codex_cli"],
+      ["Kimi", "kimi_desktop"],
+      ["Cursor", "cursor"],
+      ["Claude Desktop", "claude_desktop"],
+      ["OpenCode", "opencode"],
+      ["Gemini CLI", "gemini_cli"],
+      ["Kimi Code", "kimi_code"],
+      ["GitHub Copilot CLI", "copilot_cli"],
+      ["VS Code", "vscode"],
+      ["Antigravity", "antigravity"],
+      ["Muse Code", "muse_code"],
+      ["Kiro", "kiro"],
+      ["Windsurf", "windsurf"],
+    ]);
+    expect(clients.slice(0, 2).map((client) => ({
+      detected: client.detected,
+      already_configured: client.already_configured,
+      has_plugin: client.has_plugin,
+      has_raw_entry: client.has_raw_entry,
+    }))).toEqual([
+      { detected: yes, already_configured: yes, has_plugin: yes, has_raw_entry: no },
+      { detected: yes, already_configured: yes, has_plugin: yes, has_raw_entry: no },
+    ]);
+    expect(clients.slice(2, 7).map((client) => ({
+      detected: client.detected,
+      already_configured: client.already_configured,
+      has_raw_entry: client.has_raw_entry,
+      has_plugin: client.has_plugin,
+    }))).toEqual(Array.from({ length: 5 }, () => ({
+      detected: yes,
+      already_configured: yes,
+      has_raw_entry: yes,
+      has_plugin: no,
+    })));
+    expect(clients[2]).toMatchObject({
+      client_type: "kimi_desktop",
+      config_path: "~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/mcp.json",
+      entry_health: { kind: "needs_repair", reason: "command_not_preferred" },
+    });
+    expect(Object.fromEntries(clients.slice(7, 13).map((client) => [client.client_type, client.config_path]))).toEqual({
+      kimi_code: "~/.kimi-code/mcp.json",
+      copilot_cli: "~/.copilot/mcp-config.json",
+      vscode: "~/Library/Application Support/Code/User/mcp.json",
+      antigravity: "~/.gemini/config/mcp_config.json",
+      muse_code: "~/.config/muse/settings.json",
+      kiro: "~/.kiro/settings/mcp.json",
+    });
+    expect(clients.slice(7, 13).map((client) => ({
+      detected: client.detected,
+      already_configured: client.already_configured,
+      has_raw_entry: client.has_raw_entry,
+      has_plugin: client.has_plugin,
+    }))).toEqual(Array.from({ length: 6 }, () => ({
+      detected: yes,
+      already_configured: no,
+      has_raw_entry: no,
+      has_plugin: no,
+    })));
+    expect(clients[13]).toMatchObject({
+      name: "Windsurf",
+      detected: no,
+      already_configured: no,
+      has_raw_entry: no,
+      has_plugin: no,
+    });
+  });
+
   it("get_remote_access_status is a struct with a status kind, never null", async () => {
     // RemoteAccessPanel reads status.status unguarded; its `= { status: "off" }`
     // useQuery default only covers undefined, so null crashes the connect step.
@@ -1097,7 +1180,7 @@ describe("liveInvoke wire_state (setup wizard daemon row)", () => {
     // double-register the server since their plugins declare their own.
     expect(codex?.route).toBe("plugin");
     expect(claudeCode?.route).toBe("plugin");
-    // Matches detect_mcp_clients_cmd's fixture: Codex CLI is the one already
+    // Matches detect_mcp_clients_cmd's fixture: ChatGPT / Codex is already
     // configured client.
     expect(codex?.has_plugin).toEqual({ kind: "yes" });
   });

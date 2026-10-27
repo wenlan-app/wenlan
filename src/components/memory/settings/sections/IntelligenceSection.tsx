@@ -8,7 +8,6 @@ import {
   getLockMyPages,
   getOnDeviceModel,
   getResolvedRouting,
-  setBackgroundAiEnabled,
   setLockMyPages,
   setSourcePin,
 } from "../../../../lib/tauri";
@@ -20,7 +19,7 @@ import {
   useApiKeyStatus,
 } from "../../../intelligence/IntelligenceSetup";
 import { presetForEndpoint, type PresetGroup } from "../../../intelligence/providerPresets";
-import { fillUnsetPinsWithRetry } from "../../../../lib/routingPins";
+import { chooseSteepMode } from "../../../../lib/steepMode";
 import { Button, Card, Select, SectionHeader, SegmentedControl, SettingRow } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import { SettingsHelp } from "../SettingsHelp";
@@ -393,13 +392,7 @@ export default function IntelligenceSection({ delay }: { delay: number }) {
               setSavingBackgroundAi(true);
               setBackgroundAiError(false);
               try {
-                await setBackgroundAiEnabled(enabled);
-                if (enabled) await fillUnsetPinsWithRetry();
-                await Promise.all([
-                  queryClient.invalidateQueries({ queryKey: ["backgroundAiEnabled"] }),
-                  queryClient.invalidateQueries({ queryKey: ["resolvedRouting"] }),
-                  queryClient.invalidateQueries({ queryKey: ["activity"] }),
-                ]);
+                await chooseSteepMode(queryClient, enabled);
               } catch {
                 setBackgroundAiError(true);
               } finally {

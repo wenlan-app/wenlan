@@ -1,0 +1,201 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The import finish's "Turn them into pages" card. One flat card in the
+   getting-started look (no stripe, no rule lines, nothing nested); inside a
+   dialog it drops its own box. Color and type come from --mem-* tokens. */
+
+.turn-pages-finish {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.turn-pages-lead {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.turn-pages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 16px 20px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-lg);
+  background-color: var(--mem-surface);
+}
+
+.turn-pages--bare {
+  padding: 4px 0 0;
+  border: none;
+  background: none;
+}
+
+.turn-pages-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--mem-text);
+  font: 600 15px/1.35 var(--mem-font-body);
+}
+
+.turn-pages-icon {
+  flex-shrink: 0;
+  color: var(--mem-accent-indigo);
+  font-size: 16px;
+}
+
+.turn-pages-icon--done {
+  color: var(--mem-status-success-text);
+}
+
+.turn-pages-body {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--mem-text-secondary);
+  font: 13.5px/1.55 var(--mem-font-body);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.turn-pages-hint {
+  margin: 0;
+  color: var(--mem-text-tertiary);
+  font: 12.5px/1.5 var(--mem-font-body);
+}
+
+.turn-pages-error {
+  margin: 0;
+  color: var(--mem-status-danger-text);
+  font: 12.5px/1.5 var(--mem-font-body);
+}
+
+.turn-pages-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  margin-top: 4px;
+}
+
+.turn-pages-primary {
+  padding: 7px 14px;
+  border: none;
+  border-radius: var(--mem-radius-md);
+  background-color: var(--mem-accent-indigo);
+  color: #fff;
+  cursor: pointer;
+  font: 500 13px/1.3 var(--mem-font-body);
+  white-space: nowrap;
+}
+
+.turn-pages-primary:hover {
+  filter: brightness(1.08);
+}
+
+.turn-pages-link {
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  font: 13px/1.3 var(--mem-font-body);
+  text-decoration: underline;
+  text-decoration-color: var(--mem-border);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.turn-pages-link:hover {
+  color: var(--mem-text);
+}
+
+.turn-pages-primary:disabled,
+.turn-pages-link:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.turn-pages-primary:focus-visible,
+.turn-pages-link:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-pages .write-pages-list {
+  margin: 2px 0 0;
+}
+
+.turn-pages-auto {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.turn-pages-auto .turn-pages-link {
+  white-space: normal;
+}
+
+.turn-pages-picker {
+  position: relative;
+  display: flex;
+}
+
+.turn-pages-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-md);
+  background-color: var(--mem-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
+}
+
+.turn-pages-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px 6px 6px;
+  border: none;
+  border-radius: var(--mem-radius-sm);
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: 13px/1.3 var(--mem-font-body);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.turn-pages-picker-item:hover,
+.turn-pages-picker-item:focus-visible {
+  background-color: var(--mem-hover);
+  outline: none;
+}
+
+.turn-pages-picker-check {
+  display: inline-flex;
+  width: 14px;
+  color: var(--mem-accent-indigo);
+  font-size: 13px;
+}
+
+/* Hosts that restyle every button inside them (the Sources library sets
+   `font: inherit`) must not resize the card's buttons. */
+.turn-pages-finish .turn-pages-primary {
+  font: 500 13px/1.3 var(--mem-font-body);
+}
+
+.turn-pages-finish .turn-pages-link,
+.turn-pages-finish .turn-pages-picker-item {
+  font: 13px/1.3 var(--mem-font-body);
+}

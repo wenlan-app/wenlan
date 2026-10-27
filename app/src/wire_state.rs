@@ -363,6 +363,7 @@ mod tests {
             "kiro",
             "opencode",
             "kimi_code",
+            "kimi_desktop",
         ] {
             assert_eq!(
                 route_for(client_type, &Reading::Yes, &Reading::No),

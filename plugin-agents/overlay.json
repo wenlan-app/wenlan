@@ -122,12 +122,26 @@
         },
         {
           "from": [
-            "   on a small model: in Claude Code, start an `Agent` with `model: \"haiku\"`,",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+            "model, so they do not spend your main model. In Claude Code, start an",
+            "`Agent` with `model: \"haiku\"`."
           ],
           "to": [
-            "   on a small model when you can start one (a subagent on a smaller model):",
-            "   hand it every item's `item_id`, `kind`, `title` and `snippet`, and ask it"
+            "model, so they do not spend your main model. Start a subagent or helper on",
+            "your tool's smallest or cheapest model, for example Gemini Flash in",
+            "Antigravity, Composer in Cursor, or Haiku or Luna in GitHub Copilot. In",
+            "Antigravity and Cursor, use the `wenlan-helper` agent when Wenlan installed",
+            "it. Kimi Code has no cheaper helper, so the next rule applies there."
+          ]
+        },
+        {
+          "from": [
+            "   The helpers run at the same time when your tool runs helpers in the",
+            "   background. In Claude Code, send one message with one `Agent` call per",
+            "   claim, each with `model: \"haiku\"` and `run_in_background: true`."
+          ],
+          "to": [
+            "   The helpers run at the same time when your tool runs helpers in the",
+            "   background: start them all in one step, each in the background."
           ]
         }
       ]

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use reqwest::Client;
@@ -14,6 +14,58 @@ const MAX_ERROR_RESPONSE_BYTES: usize = 64 * 1024;
 /// Mirrors the daemon's `X-Wenlan-Space` constant (daemon dual-reads the legacy x-origin-space).
 /// HTTP normalises to lowercase.
 const SPACE_HEADER: &str = "x-wenlan-space";
+
+/// The MCP connection's resolved caller identity, shared by provenance and
+/// every daemon request header. An explicitly configured name is immutable;
+/// an implicit fallback may be replaced by the MCP initialize handshake.
+#[derive(Clone, Debug)]
+pub struct AgentIdentity {
+    name: Arc<Mutex<String>>,
+    explicit: bool,
+}
+
+impl AgentIdentity {
+    pub fn new(name: String, explicit: bool) -> Self {
+        Self {
+            name: Arc::new(Mutex::new(name)),
+            explicit,
+        }
+    }
+
+    pub fn current(&self) -> String {
+        self.name
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Apply a name learned from MCP initialize only when configuration did
+    /// not explicitly choose the connection identity.
+    pub fn observe_mcp_client(&self, name: &str) -> bool {
+        if self.explicit || name.is_empty() {
+            return false;
+        }
+        let mut current = self
+            .name
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if *current == name {
+            return false;
+        }
+        *current = name.to_string();
+        true
+    }
+
+    pub fn is_explicit(&self) -> bool {
+        self.explicit
+    }
+}
+
+impl From<String> for AgentIdentity {
+    fn from(name: String) -> Self {
+        Self::new(name, true)
+    }
+}
 
 /// Discover the Wenlan server URL.
 /// Priority: CLI flag > HTTP default.
@@ -32,7 +84,7 @@ pub fn discover_origin_url(cli_url: Option<String>) -> String {
 pub struct WenlanClient {
     client: Client,
     base_url: String,
-    agent_name: Option<String>,
+    agent_identity: Option<AgentIdentity>,
     /// The AI session this clone writes for, sent as `x-wenlan-session`.
     session: Option<SessionRef>,
     /// Sessions the daemon has been told about, shared by every clone.
@@ -50,7 +102,7 @@ impl WenlanClient {
         Self {
             client: Client::new(),
             base_url,
-            agent_name: None,
+            agent_identity: None,
             session: None,
             announced: Arc::default(),
         }
@@ -123,7 +175,14 @@ impl WenlanClient {
 
     /// Set the agent name to be sent as `x-agent-name` header on every request.
     pub fn with_agent_name(mut self, name: String) -> Self {
-        self.agent_name = Some(name);
+        self.agent_identity = Some(AgentIdentity::from(name));
+        self
+    }
+
+    /// Use the same resolved identity as the MCP tool server, so initialize
+    /// fallback cannot make the request header and stored provenance diverge.
+    pub fn with_agent_identity(mut self, identity: AgentIdentity) -> Self {
+        self.agent_identity = Some(identity);
         self
     }
 
@@ -194,8 +253,8 @@ impl WenlanClient {
     /// `x-agent-name` (when set), `x-wenlan-session` (when the caller has a
     /// session) and `x-wenlan-space` (when space is locked).
     fn attach_common_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        if let Some(a) = self.agent_name.as_deref() {
-            req = req.header("x-agent-name", a);
+        if let Some(identity) = &self.agent_identity {
+            req = req.header("x-agent-name", identity.current());
         }
         if let Some(session) = &self.session {
             req = req.header(SESSION_HEADER, session.to_string());

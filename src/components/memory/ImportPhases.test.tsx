@@ -8,6 +8,8 @@ import {
   useImportBatchStatus,
 } from "./ImportPhases";
 import type { ImportBatchStatus, ImportPhase } from "../../lib/tauri";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { OrganizeActionsContext } from "./askAi/TurnIntoPages";
 
 vi.mock("../../lib/tauri", () => ({
   getImportBatchStatus: vi.fn(),
@@ -310,4 +312,22 @@ it("finishes the import without pretending that a thin batch produced a page", (
     "2 memories stored and searchable now",
   );
   expect(screen.queryByTestId("import-phase-distill")).not.toBeInTheDocument();
+});
+
+describe("ImportPhaseList inside the main window", () => {
+  it("leads with what was imported and hands it on, in place of the old handoff", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OrganizeActionsContext.Provider
+          value={{ onConnectTool: vi.fn(), onOpenIntelligence: vi.fn(), onOpenActivity: vi.fn(), onSelectPage: vi.fn() }}
+        >
+          <ImportPhaseList phases={makeBatch().phases} onDemand />
+        </OrganizeActionsContext.Provider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("import-lead")).toHaveTextContent("10 notes imported. You can search them now.");
+    expect(screen.queryByTestId("import-handoff")).not.toBeInTheDocument();
+    expect(screen.getByTestId("import-organize").textContent).not.toMatch(/steep/i);
+  });
 });

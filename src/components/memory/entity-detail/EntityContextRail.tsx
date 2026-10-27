@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { search, type Entity } from "../../../lib/tauri";
+import { resolveAgentDisplayName } from "../../../lib/agents";
 import { MetadataRow, RailPanelTitle } from "../MemoryDetailPrimitives";
 import { EntityTypeControl } from "./EntityTypeControl";
 import {
@@ -70,7 +71,7 @@ export function EntityContextRail({ entity, locale, onMemoryClick, archived, typ
           ) : null}
           {entity.source_agent ? (
             <MetadataRow label={t("entityDetail.sourceLabel")}>
-              <span>{entity.source_agent}</span>
+              <span>{resolveAgentDisplayName(entity.source_agent)}</span>
             </MetadataRow>
           ) : null}
           {createdRelative ? (

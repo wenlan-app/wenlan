@@ -935,7 +935,7 @@ mod tests {
         let (db, _dir) = crate::db::tests::test_db().await;
         let mut cache = HashMap::new();
         let entity = crate::extract::ExtractedEntity {
-            name: "user".to_string(),
+            name: "Alice".to_string(),
             entity_type: "person".to_string(),
         };
         let (id, created) = resolve_entity_bulk(&db, &mut cache, &entity, "chatgpt")
@@ -943,16 +943,16 @@ mod tests {
             .unwrap();
         assert!(!id.is_empty());
         assert!(created);
-        assert_eq!(cache.get("user"), Some(&id));
+        assert_eq!(cache.get("alice"), Some(&id));
     }
 
     #[tokio::test]
     async fn test_resolve_or_create_entity_cached() {
         let (db, _dir) = crate::db::tests::test_db().await;
         let mut cache = HashMap::new();
-        cache.insert("user".to_string(), "existing_id".to_string());
+        cache.insert("alice".to_string(), "existing_id".to_string());
         let entity = crate::extract::ExtractedEntity {
-            name: "user".to_string(),
+            name: "Alice".to_string(),
             entity_type: "person".to_string(),
         };
         let (id, created) = resolve_entity_bulk(&db, &mut cache, &entity, "chatgpt")

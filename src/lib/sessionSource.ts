@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { AgentSession } from "./tauri";
+import { resolveAgentActionName, resolveAgentDisplayName } from "./agents";
 
-const TOOL_LABELS: Readonly<Record<string, string>> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  opencode: "OpenCode",
-  "gemini-cli": "Gemini CLI",
-  "kimi-code": "Kimi Code",
-  chatgpt: "ChatGPT",
-  "claude-ai": "Claude",
-};
-
-/** Product name for a session tool; a tool Wenlan does not know shows as sent. */
+/** Product name for a session tool; unknown IDs are still made readable. */
 export function sessionToolLabel(tool: string): string {
-  return TOOL_LABELS[tool] ?? tool;
+  return resolveAgentDisplayName(tool);
+}
+
+/** Executable name for actions that resume a session in its source tool. */
+export function sessionToolActionLabel(tool: string): string {
+  return resolveAgentActionName(tool);
 }
 
 function lastSegment(path: string): string {

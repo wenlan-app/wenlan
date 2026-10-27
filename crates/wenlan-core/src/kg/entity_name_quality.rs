@@ -257,6 +257,14 @@ const PLACEHOLDERS: &[&str] = &[
     "bar",
     "baz",
     "example",
+    // The conversation's roles, not someone in it: an extraction from a chat
+    // or a memory written about "the user" names them as if they were.
+    "user",
+    "users",
+    "the user",
+    "assistant",
+    "me",
+    "you",
 ];
 
 static REJECTED_TOTAL: AtomicU64 = AtomicU64::new(0);
@@ -653,6 +661,10 @@ mod tests {
             ("test", Reason::TestFixture),
             ("tests", Reason::TestFixture),
             ("Placeholder", Reason::TestFixture),
+            ("User", Reason::TestFixture),
+            ("the user", Reason::TestFixture),
+            ("Assistant", Reason::TestFixture),
+            ("me", Reason::TestFixture),
         ];
         for (name, expected) in cases {
             assert_eq!(

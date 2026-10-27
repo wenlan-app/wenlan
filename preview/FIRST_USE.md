@@ -13,6 +13,11 @@ URL parameters:
 - `locale=en`, `locale=zh-Hans`, or `locale=zh-Hant` (default).
 - `theme=light` (default) or `theme=dark`.
 - `state=empty` (default), `ready`, `processing`, `failed`, or `error`.
+- `organize=deeplink|kimi|multi|writing|done|none|automatic|chats|folder` sets
+  the import finish's "Turn them into pages" states (see
+  `mocks/first-use-organize.ts`); `view=import` opens on the Import page and
+  `view=sources` on the Sources library, `view=settings-sources` on Settings →
+  Sources (`organize=folder`: a vault just added).
 
 Use Home's quick tour entry, then choose the example or your knowledge. The
 knowledge screen uses the actual app queries against the selected test state;

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// One definition of "added" and "connected" for every surface that lists the
-// user's AI tools (Settings > Connections and the setup wizard).
+// Shared definitions for the setup wizard and Settings > Connections.
 //
 //   added      Wenlan wrote the plugin or MCP entry. The tool may not even be
 //              running with it yet, so this claims nothing about a link.
@@ -15,11 +14,15 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { listAgents, type AgentConnection } from "../../lib/tauri";
 import { clientTypeFamily, toolFamilyOf } from "../../lib/agents";
 import { StatusChip } from "../memory/settings/primitives";
 
 export type ConnectionStatus = "added" | "connected";
+
+/** Both Connections sections use the same quiet disclosure threshold. */
+export const CONNECTION_ROW_LIMIT = 5;
 
 /** The tool family an MCP client belongs to: the same key `toolFamilyOf` gives
  *  its agent identities, so the two sides of the comparison always agree. A
@@ -32,6 +35,20 @@ export function familyOfClient(clientType: string): string {
  *  agent name (`codex-mcp-client`). The wizard's connected list mixes both. */
 export function familyOfAnyId(id: string): string {
   return clientTypeFamily(id) || toolFamilyOf({ name: id, agent_type: "" });
+}
+
+/** The label that belongs inside a restart instruction. Most tools restart as
+ *  the same product name the row displays. The shared ChatGPT / Codex config
+ *  is the exception: either client can load it, so the action copy names both
+ *  choices instead of reading the display-name slash aloud. */
+export function restartNameForClient(
+  clientTypeOrFamily: string,
+  displayName: string,
+  t: TFunction,
+): string {
+  return familyOfAnyId(clientTypeOrFamily) === "codex"
+    ? t("connectMatrix.restartNameCodex")
+    : displayName;
 }
 
 /** Whether an agent identity called Wenlan at or after `since` (epoch seconds).
@@ -66,8 +83,7 @@ export function seenFamiliesOf(
   return seen;
 }
 
-/** Added reads as an open dot, because it asserts nothing about a link;
- *  Connected is the filled success dot, because a call was observed. */
+/** The wizard keeps its compact chips; Settings uses sentence statuses. */
 export function ConnectionChip({ status }: { status: ConnectionStatus }) {
   const { t } = useTranslation();
   return status === "connected" ? (

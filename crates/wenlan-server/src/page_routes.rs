@@ -599,7 +599,7 @@ pub async fn handle_create_page(
     .await;
     if is_distilled {
         match &result {
-            Ok(Json(response)) if response.attached_to.is_none() => {
+            Ok(Json(response)) if response.write_outcome == Some(WriteOutcome::Created) => {
                 telemetry.record(TelemetryEvent::WikiGenerated)
             }
             Ok(_) => {}
@@ -693,15 +693,16 @@ async fn handle_create_page_inner(
             basis_marks: marks.clone(),
             basis_space_guard: (scope != wenlan_core::read_scope::ReadScope::Global)
                 .then(|| scope.clone()),
+            skip_protected_title_match: false,
         },
     )
     .await?;
     let persisted_page_id = result.attached_to.as_deref().unwrap_or(&result.id);
-    let persisted_space = db
+    let persisted_page = db
         .get_page(persisted_page_id)
         .await?
-        .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?
-        .space;
+        .ok_or_else(|| ServerError::Internal("Page disappeared after create".into()))?;
+    let persisted_space = persisted_page.space.clone();
     // Attribution is best effort: the page is already written, so a failure
     // here is logged and never fails the write.
     if let Some(session) = crate::session_routes::extract_session_ref(&headers) {
@@ -720,13 +721,18 @@ async fn handle_create_page_inner(
         }
     }
     let attached_existing = result.attached_to.is_some();
+    let resolved_existing = matches!(
+        result.outcome,
+        wenlan_core::post_write::WriteOutcome::Unchanged
+    );
+    let reused_existing = attached_existing || resolved_existing;
     // Marks went on the note this call created, inside its create
     // transaction. A create that attached to an existing note wrote nothing of
     // its own, so it marked nothing.
     let mut written_basis = Vec::new();
     let mut written_code_basis = Vec::new();
     let mut warnings = result.warnings;
-    if !attached_existing {
+    if !reused_existing {
         warnings.extend(wenlan_core::diagrams::diagram_warnings(&diagram_content));
         written_basis = crate::page_basis_routes::written_basis(&db, &scope, &result.id).await?;
         if !prepared_code_basis.is_empty() {
@@ -744,21 +750,47 @@ async fn handle_create_page_inner(
         written_code_basis = db.list_page_code_basis(&result.id).await?;
     } else if !prepared_code_basis.is_empty() {
         warnings.push(
-            "code_basis was not recorded: this call attached to an existing note and wrote \
+            "code_basis was not recorded: this call resolved to an existing note and wrote \
              nothing of its own"
                 .to_string(),
         );
     }
+    let link_sources = db
+        .get_memory_contents_by_ids(&persisted_page.source_memory_ids)
+        .await?;
+    let link_targets = wenlan_core::steep_new::unused_link_targets(
+        &db,
+        &scope,
+        persisted_page
+            .workspace
+            .as_deref()
+            .or(persisted_page.space.as_deref()),
+        &link_sources,
+        &persisted_page.id,
+        &persisted_page.content,
+    )
+    .await;
+    let next_step = if reused_existing {
+        format!(
+            "Read page {} before deciding whether its prose needs an update.",
+            persisted_page.id
+        )
+    } else if link_targets.is_empty() {
+        "Review the saved page.".to_string()
+    } else {
+        "If any link_targets fit, add them as [[links]] with write_page and this page's id."
+            .to_string()
+    };
     Ok(Json(CreatePageResponse {
         // A create that attached to an existing note wrote no prose of its own.
-        citations: citations_summary.filter(|_| !attached_existing),
+        citations: citations_summary.filter(|_| !reused_existing),
         code_basis: written_code_basis,
         basis: written_basis,
         id: result.id,
         attached_to: result.attached_to,
         warnings,
         space: persisted_space.clone(),
-        space_source: Some(if attached_existing {
+        space_source: Some(if reused_existing {
             WriteSpaceSource::Existing
         } else if persisted_space.is_some() {
             resolved.source
@@ -767,9 +799,13 @@ async fn handle_create_page_inner(
         }),
         write_outcome: Some(if attached_existing {
             WriteOutcome::AttachedExisting
+        } else if resolved_existing {
+            WriteOutcome::ResolvedExisting
         } else {
             WriteOutcome::Created
         }),
+        link_targets,
+        next_step,
     }))
 }
 
@@ -1967,6 +2003,10 @@ async fn handle_refresh_page_inner(
                 gated: true,
                 warnings: gated_code_basis_warning(&prepared_code_basis),
                 citations: citations_summary.clone(),
+                link_targets: Vec::new(),
+                next_step:
+                    "Wait for the revision card to be reviewed before writing this page again."
+                        .to_string(),
             },
         ));
     }
@@ -2058,6 +2098,33 @@ async fn handle_refresh_page_inner(
         }
     }
 
+    let saved = db
+        .get_page(&id)
+        .await?
+        .ok_or_else(|| ServerError::Internal(format!("page {id} disappeared after refresh")))?;
+    let link_sources = db
+        .get_memory_contents_by_ids(&saved.source_memory_ids)
+        .await?;
+    let link_targets = if result.gated {
+        Vec::new()
+    } else {
+        wenlan_core::steep_new::unused_link_targets(
+            &db,
+            &scope,
+            saved.workspace.as_deref().or(saved.space.as_deref()),
+            &link_sources,
+            &saved.id,
+            &saved.content,
+        )
+        .await
+    };
+    let next_step = if result.gated {
+        "Wait for the revision card to be reviewed before writing this page again."
+    } else if link_targets.is_empty() {
+        "Nothing else is needed for this page."
+    } else {
+        "If any link_targets fit, add them as [[links]] in this page's next write."
+    };
     Ok((
         result.outcome,
         wenlan_types::responses::PageWriteResponse {
@@ -2075,6 +2142,8 @@ async fn handle_refresh_page_inner(
             .chain(wenlan_core::diagrams::diagram_warnings(&diagram_content))
             .collect(),
             citations: citations_summary,
+            link_targets,
+            next_step: next_step.to_string(),
         },
     ))
 }
@@ -2702,7 +2771,7 @@ mod create_page_endpoint_tests {
         .await;
         let app = crate::router::build_router(state);
         let body = json!({
-            "title": "Rust Workspace Operations",
+            "title": "rust workspace operations",
             "content": "Rust workspaces share Cargo lockfiles, inherited metadata, and all-crate checks",
             "summary": "Rust workspace operations",
             "space": "work",
@@ -2765,7 +2834,7 @@ mod create_page_endpoint_tests {
         .await;
         let app = crate::router::build_router(state);
         let body = json!({
-            "title": "Rust Workspace Operations",
+            "title": "Rust Workspace Field Guide",
             "content": "Rust workspaces share Cargo lockfiles, inherited metadata, and all-crate checks",
             "summary": "Rust workspace operations",
             "space": "work",

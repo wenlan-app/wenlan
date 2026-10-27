@@ -10,6 +10,7 @@ import {
   type PendingImport,
 } from "../../lib/tauri";
 import { formatImportErrorDetail } from "../memory/importCopy";
+import { ImportOrganize, useOrganizeActions } from "../memory/askAi/TurnIntoPages";
 
 /** What the user just triggered in this session. */
 type LocalAction =
@@ -23,6 +24,9 @@ export interface ImportFlowProps {
   onBusyChange?: (busy: boolean) => void;
   /** Reports the daemon-accepted result without navigating the containing flow. */
   onImportAccepted?: (result: ImportChatExportResponse) => void;
+  /** Called when the finish's "turn them into pages" sends the user to
+   *  another screen, so a dialog holding this flow can close. */
+  onLeave?: () => void;
 }
 
 const POLL_INTERVAL_MS = 5_000;
@@ -56,9 +60,16 @@ async function maybeNotify(title: string, body: string) {
   }
 }
 
-export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps = {}) {
+export function ImportFlow({ onBusyChange, onImportAccepted, onLeave }: ImportFlowProps = {}) {
   const { t } = useTranslation();
+  const organize = useOrganizeActions() !== null;
   const [localAction, setLocalAction] = useState<LocalAction>(null);
+  // The daemon has answered at least once since this import was accepted
+  // with nothing still pending: the chats are in, and searchable.
+  const [settledAfterDone, setSettledAfterDone] = useState(false);
+  const localActionRef = useRef<LocalAction>(null);
+  localActionRef.current = localAction;
+  const doneAtRef = useRef(0);
   const [pending, setPending] = useState<PendingImport | null>(null);
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -82,6 +93,7 @@ export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps =
   useEffect(() => {
     let alive = true;
     const poll = () => {
+      const askedAt = Date.now();
       // Resolve first so a synchronous mock/runtime failure follows the same
       // visible failure-safe path as an IPC rejection.
       Promise.resolve()
@@ -97,6 +109,8 @@ export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps =
             // Both done and failed imports leave this list. Only the explicit
             // import response can establish success; enrichment runs separately.
             setPending(null);
+            // Only an answer asked for after the import was accepted counts.
+            if (localActionRef.current?.kind === "done" && askedAt >= doneAtRef.current) setSettledAfterDone(true);
           }
           prevPendingRef.current = imports[0] ?? null;
           pollFailuresRef.current = 0;
@@ -121,6 +135,8 @@ export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps =
 
   const acceptImport = useCallback(async (path: string) => {
     const result = await importChatExport(path);
+    setSettledAfterDone(false);
+    doneAtRef.current = Date.now();
     setLocalAction({ kind: "done", result });
     onImportAccepted?.(result);
     const msg = result.conversations_new > 0
@@ -145,6 +161,7 @@ export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps =
     pollFailuresRef.current = 0;
     setPollLost(false);
     setBusy(true);
+    setSettledAfterDone(false);
     setLocalAction({ kind: "reading" });
     setDismissed(false);
     try {
@@ -197,7 +214,13 @@ export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps =
   const showLocal = localAction !== null && !dismissed;
   const showRefining = isRefining && !dismissed;
   const showPollLost = pollLost && !dismissed;
-  const showStrip = showLocal || showRefining || showPollLost;
+  // New chats are in and nothing is pending: the finish turns them into
+  // pages (or says who does), in place of the "imported" strip.
+  const handOnChats = organize && !dismissed && !errored && !isRefining && settledAfterDone
+    && localAction?.kind === "done" && localAction.result.conversations_new > 0
+    ? localAction.result.conversations_new
+    : null;
+  const showStrip = (showLocal || showRefining || showPollLost) && handOnChats === null;
   const canRetry =
     (localAction?.kind === "error" && lastOperationRef.current !== null) || pollLost;
 
@@ -308,6 +331,11 @@ export function ImportFlow({ onBusyChange, onImportAccepted }: ImportFlowProps =
         </div>
       )}
 
+      {handOnChats !== null ? (
+        <div style={{ marginTop: 12 }}>
+          <ImportOrganize count={handOnChats} kind="chat" bare onLeave={onLeave} />
+        </div>
+      ) : null}
     </div>
   );
 }

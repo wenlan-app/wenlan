@@ -14,10 +14,14 @@ function state(view: WritePagesView, overrides: Partial<WritePagesState> = {}): 
   return {
     view,
     stepView: view,
+    cardView: view,
+    waitingTotal: 16,
     onDemand: true,
     loaded: true,
     run: null,
     tool: { family: "claude-code", name: "Claude Code" },
+    tools: [{ family: "claude-code", name: "Claude Code" }],
+    chooseTool: vi.fn(),
     toolName: "Claude Code",
     opensTool: true,
     command: "/wenlan steep",
@@ -100,6 +104,52 @@ describe("WritePagesStep", () => {
     expect(screen.getByTestId("row")).toHaveTextContent("12 notes and 4 files aren't in any page yet.");
     fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
     expect(ready.start).toHaveBeenCalled();
+  });
+
+  it("after a run, offers the next batch while material still waits", () => {
+    const written = Array.from({ length: 8 }, (_, i) => page(`w${i}`));
+    const done = state(
+      { kind: "done", written, updated: [], minutes: 4, left: 9943 },
+      { waitingTotal: 9943, waiting: "9,943 notes", run: { startedAt: Date.parse("2026-10-22T10:00:00Z"), tool: "Claude Code" } },
+    );
+    renderStep({ state: done, pages: written, done: true, onSelectPage: vi.fn() });
+    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("9,943 notes aren't in any page yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(done.start).toHaveBeenCalled();
+  });
+
+  it("after a run, still offers the next batch with no tool known, by copying the command", () => {
+    const written = [page("a")];
+    const done = state({ kind: "done", written, updated: [], minutes: 2, left: 40 }, { tool: null, waiting: "40 notes" });
+    renderStep({ state: done, pages: written, done: true });
+    fireEvent.click(screen.getByRole("button", { name: "Copy command" }));
+    expect(done.start).toHaveBeenCalled();
+  });
+
+  it("after a run with nothing left, offers nothing more", () => {
+    const written = [page("a")];
+    renderStep({ state: state({ kind: "done", written, updated: [], minutes: 2, left: 0 }, { waitingTotal: 0 }), pages: written, done: true });
+    expect(screen.queryByTestId("getting-started-pages-more")).toBeNull();
+  });
+
+  it("once done, offers even a little material still waiting", () => {
+    const ready = state({ kind: "hidden" }, { waitingTotal: 2, waiting: "2 notes" });
+    renderStep({ state: ready, pages: [page("a")], done: true });
+    expect(screen.getByTestId("getting-started-pages-more")).toHaveTextContent("2 notes aren't in any page yet.");
+  });
+
+  it("says the last run stopped before writing pages, over the same button", () => {
+    const ready = state({ kind: "ready", list: { items: [], total: 16 } }, { stopped: true });
+    renderStep({ state: ready });
+    expect(screen.getByTestId("getting-started-pages-stopped")).toHaveTextContent("The last run stopped before writing pages.");
+    fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
+    expect(ready.start).toHaveBeenCalled();
+  });
+
+  it("says the tool may be waiting while it holds material and nothing lands", () => {
+    renderStep({ state: state({ kind: "working", written: [], writing: true, stuck: true }, { run: { startedAt: Date.now(), tool: "Claude Code", handedOver: "opened" } }) });
+    expect(screen.getByTestId("row")).toHaveTextContent("Claude Code is writing pages");
+    expect(screen.getByTestId("row")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
   });
 
   it("says Wenlan does it in Automatic mode", () => {

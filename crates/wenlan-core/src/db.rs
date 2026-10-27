@@ -92,7 +92,7 @@ mod source_sync;
 mod space_context;
 mod space_rename;
 mod steep;
-mod steep_new;
+pub(crate) mod steep_new;
 mod truth_exposure;
 
 pub use agent_presence::{presence_agent_id, AgentPresence};
@@ -766,11 +766,27 @@ pub(crate) fn page_entity_id_column(page_alias: &str) -> String {
 ///
 /// The fenced (non-browse) twin uses the stricter `kind != 'entity'` instead;
 /// this is only for the surfaces that were showing shadow rows.
+///
+/// An established entity whose subject a note of the same title is about
+/// (the note was written as that entity's page, as steep does) is left out
+/// too: the note stands for it, so a list never shows the title twice.
 pub(crate) fn entity_row_browse_predicate(page_alias: &str) -> String {
+    // Inside the subquery an empty alias would bind to the inner `pages`.
+    let outer = if page_alias.is_empty() {
+        "pages."
+    } else {
+        page_alias
+    };
     format!(
         "(COALESCE({page_alias}kind, 'concept') != 'entity' \
           OR (COALESCE({page_alias}entity_confirmed, 0) = 1 \
-              AND {page_alias}status = 'active'))"
+              AND {page_alias}status = 'active' \
+              AND NOT EXISTS (SELECT 1 FROM entity_page_map browse_epm \
+                  JOIN pages browse_note ON browse_note.entity_id = browse_epm.entity_id \
+                  WHERE browse_epm.page_id = {outer}id \
+                    AND browse_note.status = 'active' \
+                    AND COALESCE(browse_note.kind, 'concept') != 'entity' \
+                    AND LOWER(TRIM(browse_note.title)) = LOWER(TRIM({outer}title)))))"
     )
 }
 
@@ -2068,8 +2084,9 @@ pub(crate) fn embedder_init_error(
 /// clients display nicely out of the box — users don't have to manually
 /// register `openai-mcp` to see it labeled `ChatGPT`.
 ///
-/// User-set overrides (via `agent_connections.display_name`) always win over
-/// entries here — see `row_to_agent`.
+/// User-set overrides (via `agent_connections.display_name`) win over entries
+/// here. Exact former stock defaults are recognized and follow the current
+/// registry without rewriting the stored row — see `row_to_agent`.
 ///
 /// Keep this sorted by canonical ID.
 pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
@@ -2077,12 +2094,13 @@ pub const KNOWN_CLIENTS: &[(&str, &str)] = &[
     ("chatgpt", "ChatGPT"),
     ("claude-code", "Claude Code"),
     ("claude-desktop", "Claude Desktop"),
-    ("codex", "Codex"),
+    ("codex", "ChatGPT / Codex"),
     ("continue", "Continue"),
-    ("copilot-cli", "GitHub Copilot"),
+    ("copilot-cli", "GitHub Copilot CLI"),
     ("cursor", "Cursor"),
     ("gemini-cli", "Gemini CLI"),
     ("kimi-code", "Kimi Code"),
+    ("kimi-desktop", "Kimi"),
     ("kiro", "Kiro"),
     ("logseq", "Logseq"),
     ("muse-code", "Muse Code"),
@@ -2115,6 +2133,20 @@ fn new_agent_display_name(raw_label: &str, canonical: &str) -> Option<String> {
     } else {
         known_client_display_name(canonical).map(|s| s.to_string())
     }
+}
+
+/// Resolve a persisted display name without rewriting the database. Exact
+/// former stock defaults follow the current registry, while every other
+/// stored value remains a user override.
+fn resolved_agent_display_name(canonical: &str, stored: Option<String>) -> Option<String> {
+    let is_old_stock = matches!(
+        (canonical, stored.as_deref()),
+        ("codex", Some("Codex")) | ("copilot-cli", Some("GitHub Copilot"))
+    );
+    if is_old_stock {
+        return known_client_display_name(canonical).map(str::to_string);
+    }
+    stored.or_else(|| known_client_display_name(canonical).map(str::to_string))
 }
 
 /// Normalize an agent name into its canonical technical form.
@@ -2186,6 +2218,7 @@ mod agent_id_tests {
     #[test]
     fn known_clients_lookup() {
         assert_eq!(known_client_display_name("openai-mcp"), Some("ChatGPT"));
+        assert_eq!(known_client_display_name("codex"), Some("ChatGPT / Codex"));
         assert_eq!(
             known_client_display_name("claude-code"),
             Some("Claude Code")
@@ -2197,14 +2230,31 @@ mod agent_id_tests {
         );
         assert_eq!(
             known_client_display_name("copilot-cli"),
-            Some("GitHub Copilot")
+            Some("GitHub Copilot CLI")
         );
         assert_eq!(known_client_display_name("kiro"), Some("Kiro"));
         assert_eq!(known_client_display_name("opencode"), Some("OpenCode"));
         assert_eq!(known_client_display_name("kimi-code"), Some("Kimi Code"));
+        assert_eq!(known_client_display_name("kimi-desktop"), Some("Kimi"));
         assert_eq!(known_client_display_name("vscode"), Some("VS Code"));
         assert_eq!(known_client_display_name("windsurf"), Some("Windsurf"));
         assert_eq!(known_client_display_name("unknown-tool"), None);
+    }
+
+    #[test]
+    fn former_stock_names_follow_new_defaults_but_custom_names_survive() {
+        assert_eq!(
+            resolved_agent_display_name("codex", Some("Codex".into())),
+            Some("ChatGPT / Codex".into())
+        );
+        assert_eq!(
+            resolved_agent_display_name("copilot-cli", Some("GitHub Copilot".into())),
+            Some("GitHub Copilot CLI".into())
+        );
+        assert_eq!(
+            resolved_agent_display_name("codex", Some("My Coding Agent".into())),
+            Some("My Coding Agent".into())
+        );
     }
 }
 
@@ -4270,6 +4320,38 @@ pub struct MemoryEnrichmentInput {
     pub space: Option<String>,
     pub origin: EnrichmentOrigin,
     pub prior_attempts: u32,
+}
+
+/// One memory the entity stage selected, before its model-free steps.
+#[derive(Debug, Clone)]
+struct EntityEnrichmentCandidate {
+    source_id: String,
+    prior_attempts: u32,
+    expected_version: i64,
+    existing_entity_id: Option<String>,
+}
+
+/// What is left of the entity stage once its model-free steps ran.
+#[derive(Debug, Clone)]
+pub enum EntityEnrichmentPrep {
+    /// A link repair or the vector auto-link finished it (or found it stale).
+    Settled,
+    /// Only an extraction can finish it.
+    NeedsExtraction(EntityExtractionPending),
+}
+
+/// A memory waiting for an entity extraction, as of `expected_version`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityExtractionPending {
+    pub source_id: String,
+    pub expected_version: i64,
+    pub prior_attempts: u32,
+    /// Claim planning skipped or could not finish the vector-link step. A
+    /// successful extraction settles that step in the same transaction.
+    pub complete_entity_link: bool,
+    /// The exact text the extraction reads; the commit locates relation
+    /// spans against it.
+    pub content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25951,6 +26033,52 @@ impl MemoryDB {
         Ok(embedding)
     }
 
+    /// Get a cached embedding or compute it only when the shared embedder is
+    /// immediately available. Claim planning uses this so it cannot queue
+    /// behind the import/background embedding worker.
+    fn get_or_compute_embedding_if_ready(
+        &self,
+        text: &str,
+    ) -> Result<Option<Vec<f32>>, WenlanError> {
+        {
+            let mut cache = self.embedding_cache.lock().unwrap();
+            if let Some(cached) = cache.get(text) {
+                return Ok(Some(cached));
+            }
+        }
+        let Some(embedder) = self.embedder.as_ref() else {
+            return Ok(None);
+        };
+        let mut embedder = match embedder.try_lock() {
+            Ok(embedder) => embedder,
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Ok(None),
+        };
+        let embeddings = embedder
+            .embed(vec![text], None)
+            .map_err(|e| WenlanError::Embedding(e.to_string()))?;
+        let embedding = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| WenlanError::Embedding("No embedding generated".into()))?;
+        drop(embedder);
+        self.embedding_cache
+            .lock()
+            .unwrap()
+            .put(text, embedding.clone());
+        Ok(Some(embedding))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shared_embedder_for_test(&self) -> Option<Arc<std::sync::Mutex<TextEmbedding>>> {
+        self.embedder.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_embedding_cache_for_test(&self) {
+        *self.embedding_cache.lock().unwrap() = EmbeddingCache::new(200);
+    }
+
     /// Generate embeddings for a batch of texts.
     pub fn generate_embeddings(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, WenlanError> {
         if texts.is_empty() {
@@ -31609,7 +31737,15 @@ impl MemoryDB {
         limit: usize,
     ) -> Result<Vec<EntitySearchResult>, WenlanError> {
         let embedding = self.get_or_compute_embedding(query)?;
-        let vec_str = Self::vec_to_sql(&embedding);
+        self.search_entities_by_embedding(&embedding, limit).await
+    }
+
+    async fn search_entities_by_embedding(
+        &self,
+        embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<EntitySearchResult>, WenlanError> {
+        let vec_str = Self::vec_to_sql(embedding);
 
         let conn = self.conn.lock().await;
 
@@ -40419,12 +40555,31 @@ impl MemoryDB {
     /// threaded through (never re-fetched) so each relation's `span` quote is
     /// located against the string the model actually saw, matching
     /// `create_relation_with_span`'s contract.
+    #[cfg(test)]
     async fn commit_entity_enrichment_at_version(
         &self,
         source_id: &str,
         expected_version: i64,
         kg_results: &[crate::extract::KgExtractionResult],
         content: &str,
+    ) -> Result<bool, WenlanError> {
+        self.commit_entity_enrichment_at_version_with_link_receipt(
+            source_id,
+            expected_version,
+            kg_results,
+            content,
+            false,
+        )
+        .await
+    }
+
+    async fn commit_entity_enrichment_at_version_with_link_receipt(
+        &self,
+        source_id: &str,
+        expected_version: i64,
+        kg_results: &[crate::extract::KgExtractionResult],
+        content: &str,
+        complete_entity_link: bool,
     ) -> Result<bool, WenlanError> {
         // Avoid CPU-heavy embedding/minhash preparation when inference already
         // returned after the source became stale. The transaction below still
@@ -41280,25 +41435,32 @@ impl MemoryDB {
                 })?;
             }
 
-            conn.execute(
-                "INSERT INTO enrichment_steps
-                     (source_id, step_name, status, error, attempts, updated_at, input_version)
-                 VALUES (?1, 'entity_extract', 'ok', NULL, 1, ?2, ?3)
-                 ON CONFLICT(source_id, step_name) DO UPDATE SET
-                     status = 'ok', error = NULL,
-                     attempts = CASE
-                         WHEN enrichment_steps.input_version = excluded.input_version
-                              AND enrichment_steps.status <> 'skipped'
-                         THEN enrichment_steps.attempts + 1
-                         ELSE 1
-                     END,
-                     updated_at = ?2, input_version = ?3",
-                libsql::params![source_id, now, expected_version],
-            )
-            .await
-            .map_err(|e| {
-                WenlanError::VectorDb(format!("entity enrichment receipt: {e}"))
-            })?;
+            let steps: &[&str] = if complete_entity_link {
+                &["entity_link", "entity_extract"]
+            } else {
+                &["entity_extract"]
+            };
+            for step in steps {
+                conn.execute(
+                    "INSERT INTO enrichment_steps
+                         (source_id, step_name, status, error, attempts, updated_at, input_version)
+                     VALUES (?1, ?2, 'ok', NULL, 1, ?3, ?4)
+                     ON CONFLICT(source_id, step_name) DO UPDATE SET
+                         status = 'ok', error = NULL,
+                         attempts = CASE
+                             WHEN enrichment_steps.input_version = excluded.input_version
+                                  AND enrichment_steps.status <> 'skipped'
+                             THEN enrichment_steps.attempts + 1
+                             ELSE 1
+                         END,
+                         updated_at = ?3, input_version = ?4",
+                    libsql::params![source_id, *step, now, expected_version],
+                )
+                .await
+                .map_err(|e| {
+                    WenlanError::VectorDb(format!("entity enrichment receipt: {e}"))
+                })?;
+            }
 
             Ok(true)
         }
@@ -41528,15 +41690,8 @@ impl MemoryDB {
             .await
     }
 
-    /// G6 Stage 2 PR 2c sub-step 3 item 1 (entity-sweep selector): the
-    /// `existing_entity_id` existence checks now require a live
-    /// `kind='entity'` shadow page via `entity_page_map`/`pages`, not just an
-    /// `entities` row. This is a discovery/visibility change -- a linked
-    /// entity that somehow lacks a shadow page becomes invisible to this
-    /// selector's linkage detection (same class as
-    /// `community_discovery_surfaces_shadow_only_entity`'s shadow-page
-    /// dependency), so it carries the RED-control test
-    /// `entity_enrichment_selector_requires_shadow_page_for_linkage`.
+    /// One entity-stage slice: select, the model-free steps, then at most
+    /// one extraction through `extract_fn`.
     async fn run_entity_enrichment_slice_inner<F, Fut>(
         &self,
         entity_link_distance: Option<f32>,
@@ -41548,21 +41703,103 @@ impl MemoryDB {
             Output = Result<Vec<crate::extract::KgExtractionResult>, WenlanError>,
         >,
     {
-        struct EntityEnrichmentCandidate {
-            source_id: String,
-            prior_attempts: u32,
-            prior_status: Option<String>,
-            expected_version: i64,
-            existing_entity_id: Option<String>,
+        let Some(candidate) = self.select_entity_enrichment_candidate(None).await? else {
+            return Ok(0);
+        };
+        if candidate.source_id.is_empty() {
+            return Ok(0);
         }
+        match self
+            .prepare_entity_enrichment(candidate, entity_link_distance, false)
+            .await?
+        {
+            EntityEnrichmentPrep::Settled => {}
+            EntityEnrichmentPrep::NeedsExtraction(pending) => {
+                let result = extract_fn(pending.content.clone())
+                    .await
+                    .map_err(|error| error.to_string());
+                self.apply_entity_extraction(&pending, result).await?;
+            }
+        }
+        Ok(1)
+    }
 
-        // The authoritative linkage is the junction table; `entity_id` is a
-        // legacy one-to-one mirror. Terminal step outcomes exclude valid
-        // no-entity memories and poison rows even though they remain unlinked.
-        let candidate: Option<EntityEnrichmentCandidate> = {
-            let conn = self.conn.lock().await;
-            let mut rows = conn
-                .query(
+    /// The entity stage for one named memory, with the ambient lane's own
+    /// eligibility and model-free steps (a link repair, the vector auto-link).
+    /// `None` when that memory is not waiting for the entity stage;
+    /// `NeedsExtraction` when only a model can finish it. An on-demand
+    /// organize run hands that extraction to the user's AI tool and lands the
+    /// answer through [`Self::apply_entity_extraction`].
+    pub async fn entity_enrichment_for(
+        &self,
+        source_id: &str,
+        entity_link_distance: f32,
+    ) -> Result<Option<EntityEnrichmentPrep>, WenlanError> {
+        let Some(candidate) = self
+            .select_entity_enrichment_candidate(Some(source_id))
+            .await?
+        else {
+            return Ok(None);
+        };
+        if candidate.source_id.is_empty() {
+            return Ok(None);
+        }
+        self.prepare_entity_enrichment(candidate, Some(entity_link_distance), false)
+            .await
+            .map(Some)
+    }
+
+    /// Claim planning runs alongside import embedding and must never wait for
+    /// the shared embedder. If it is busy, leave the entity step pending for
+    /// the caller's extraction task; do not write an `entity_link=ok` receipt.
+    pub async fn entity_enrichment_for_claim(
+        &self,
+        source_id: &str,
+        entity_link_distance: f32,
+    ) -> Result<Option<EntityEnrichmentPrep>, WenlanError> {
+        let Some(candidate) = self
+            .select_entity_enrichment_candidate(Some(source_id))
+            .await?
+        else {
+            return Ok(None);
+        };
+        if candidate.source_id.is_empty() {
+            return Ok(None);
+        }
+        self.prepare_entity_enrichment(candidate, Some(entity_link_distance), true)
+            .await
+            .map(Some)
+    }
+
+    /// G6 Stage 2 PR 2c sub-step 3 item 1 (entity-sweep selector): the
+    /// `existing_entity_id` existence checks now require a live
+    /// `kind='entity'` shadow page via `entity_page_map`/`pages`, not just an
+    /// `entities` row. This is a discovery/visibility change -- a linked
+    /// entity that somehow lacks a shadow page becomes invisible to this
+    /// selector's linkage detection (same class as
+    /// `community_discovery_surfaces_shadow_only_entity`'s shadow-page
+    /// dependency), so it carries the RED-control test
+    /// `entity_enrichment_selector_requires_shadow_page_for_linkage`.
+    ///
+    /// The authoritative linkage is the junction table; `entity_id` is a
+    /// legacy one-to-one mirror. Terminal step outcomes exclude valid
+    /// no-entity memories and poison rows even though they remain unlinked.
+    /// `only_source_id` narrows the same selection to one memory.
+    async fn select_entity_enrichment_candidate(
+        &self,
+        only_source_id: Option<&str>,
+    ) -> Result<Option<EntityEnrichmentCandidate>, WenlanError> {
+        // One named memory is found by its source id, through the index:
+        // `?2 IS NULL OR m.source_id = ?2` would read every memory row.
+        let only = if only_source_id.is_some() {
+            "m.source_id = ?2"
+        } else {
+            "?2 IS NULL"
+        };
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &format!(
                     "SELECT m.source_id, \
                             CASE WHEN es.status = 'skipped' \
                                       OR es.input_version IS NULL \
@@ -41589,6 +41826,7 @@ impl MemoryDB {
                        ON es.source_id = m.source_id \
                       AND es.step_name = 'entity_extract' \
                      WHERE m.source = 'memory' AND m.chunk_index = 0 \
+                       AND {only} \
                        AND COALESCE(m.pending_revision, 0) = 0 \
                        AND NOT EXISTS ( \
                            SELECT 1 FROM memories superseder \
@@ -41611,44 +41849,42 @@ impl MemoryDB {
                      ORDER BY CASE WHEN m.supersedes IS NOT NULL THEN 0 ELSE 1 END, \
                               COALESCE(eo.service_class, 2) ASC, \
                               COALESCE(es.updated_at, m.last_modified) ASC, m.source_id ASC \
-                     LIMIT 1",
-                    libsql::params![Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS as i64],
-                )
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("run_entity_enrichment_slice query: {e}"))
-                })?;
-            rows.next()
-                .await
-                .map_err(|e| {
-                    WenlanError::VectorDb(format!("run_entity_enrichment_slice row: {e}"))
-                })?
-                .map(|row| EntityEnrichmentCandidate {
-                    source_id: row.get::<String>(0).unwrap_or_default(),
-                    prior_attempts: row.get::<u32>(1).unwrap_or(0),
-                    prior_status: row.get::<Option<String>>(2).unwrap_or(None),
-                    expected_version: row.get::<i64>(3).unwrap_or(1),
-                    existing_entity_id: row.get::<Option<String>>(4).unwrap_or(None),
-                })
-        };
+                     LIMIT 1"
+                ),
+                libsql::params![Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS as i64, only_source_id],
+            )
+            .await
+            .map_err(|e| {
+                WenlanError::VectorDb(format!("run_entity_enrichment_slice query: {e}"))
+            })?;
+        Ok(rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("run_entity_enrichment_slice row: {e}")))?
+            .map(|row| EntityEnrichmentCandidate {
+                source_id: row.get::<String>(0).unwrap_or_default(),
+                prior_attempts: row.get::<u32>(1).unwrap_or(0),
+                expected_version: row.get::<i64>(3).unwrap_or(1),
+                existing_entity_id: row.get::<Option<String>>(4).unwrap_or(None),
+            }))
+    }
 
-        let Some(candidate) = candidate else {
-            return Ok(0);
-        };
+    /// The model-free part of the entity stage. A historical `skipped`
+    /// receipt and a receipt from an older source generation both start a
+    /// fresh retry budget; the guarded upserts reset their attempt count
+    /// without an eager delete race.
+    async fn prepare_entity_enrichment(
+        &self,
+        candidate: EntityEnrichmentCandidate,
+        entity_link_distance: Option<f32>,
+        nonblocking_embedder: bool,
+    ) -> Result<EntityEnrichmentPrep, WenlanError> {
         let EntityEnrichmentCandidate {
             source_id,
             prior_attempts,
-            prior_status,
             expected_version,
             existing_entity_id,
         } = candidate;
-        if source_id.is_empty() {
-            return Ok(0);
-        }
-        // A historical `skipped` receipt and a receipt from an older source
-        // generation both start a fresh retry budget. The guarded upsert below
-        // resets their attempt count without an eager delete race.
-        let _ = prior_status;
 
         if let Some(entity_id) = existing_entity_id {
             if !self
@@ -41659,7 +41895,7 @@ impl MemoryDB {
                     "[entity_enrichment_slice] dropped stale linked-receipt repair for {source_id}"
                 );
             }
-            return Ok(1);
+            return Ok(EntityEnrichmentPrep::Settled);
         }
 
         let content = {
@@ -41667,8 +41903,37 @@ impl MemoryDB {
             Self::load_memory_enrichment_content(&conn, &source_id, expected_version).await?
         };
 
+        let mut complete_entity_link = false;
         if let Some(distance) = entity_link_distance {
-            match self.search_entities_by_vector(&content, 3).await {
+            let search = if nonblocking_embedder {
+                let embedding = match self.get_or_compute_embedding_if_ready(&content) {
+                    Ok(embedding) => embedding,
+                    Err(error) => {
+                        log::warn!(
+                            "[entity_enrichment_claim] vector auto-link unavailable for {source_id}: {error}; leaving extraction pending"
+                        );
+                        None
+                    }
+                };
+                match embedding {
+                    Some(embedding) => Some(self.search_entities_by_embedding(&embedding, 3).await),
+                    None => None,
+                }
+            } else {
+                Some(self.search_entities_by_vector(&content, 3).await)
+            };
+            let Some(search) = search else {
+                return Ok(EntityEnrichmentPrep::NeedsExtraction(
+                    EntityExtractionPending {
+                        source_id,
+                        expected_version,
+                        prior_attempts,
+                        complete_entity_link: true,
+                        content,
+                    },
+                ));
+            };
+            match search {
                 Ok(entities) => {
                     if let Some(entity) = entities.iter().find(|entity| entity.distance < distance)
                     {
@@ -41684,7 +41949,7 @@ impl MemoryDB {
                                 "[entity_enrichment_slice] dropped stale auto-link for {source_id}"
                             );
                         }
-                        return Ok(1);
+                        return Ok(EntityEnrichmentPrep::Settled);
                     }
                     if !self
                         .record_enrichment_step_at_version(
@@ -41696,57 +41961,81 @@ impl MemoryDB {
                         )
                         .await?
                     {
-                        return Ok(1);
+                        return Ok(EntityEnrichmentPrep::Settled);
                     }
                 }
                 Err(error) => {
                     log::warn!(
                         "[entity_enrichment_slice] vector auto-link failed for {source_id}: {error}; falling back to extraction"
                     );
+                    complete_entity_link = true;
                 }
             }
         }
 
-        match extract_fn(content.clone()).await {
+        Ok(EntityEnrichmentPrep::NeedsExtraction(
+            EntityExtractionPending {
+                source_id,
+                expected_version,
+                prior_attempts,
+                complete_entity_link,
+                content,
+            },
+        ))
+    }
+
+    /// Land one entity extraction for `pending`: the parsed result commits
+    /// as one source-guarded transaction, a failed model call (`Err`, its
+    /// message) records a retry or abandon receipt. A memory that changed
+    /// since `pending` was read commits nothing. Returns whether anything
+    /// was committed.
+    pub async fn apply_entity_extraction(
+        &self,
+        pending: &EntityExtractionPending,
+        result: Result<Vec<crate::extract::KgExtractionResult>, String>,
+    ) -> Result<bool, WenlanError> {
+        let source_id = pending.source_id.as_str();
+        match result {
             Ok(kg_results) => {
-                if !self
-                    .commit_entity_enrichment_at_version(
-                        &source_id,
-                        expected_version,
+                let committed = self
+                    .commit_entity_enrichment_at_version_with_link_receipt(
+                        source_id,
+                        pending.expected_version,
                         &kg_results,
-                        &content,
+                        &pending.content,
+                        pending.complete_entity_link,
                     )
-                    .await?
-                {
+                    .await?;
+                if !committed {
                     log::info!("[entity_enrichment_slice] dropped stale result for {source_id}");
                 }
+                Ok(committed)
             }
             Err(error) => {
-                let next_attempt = prior_attempts.saturating_add(1);
+                let next_attempt = pending.prior_attempts.saturating_add(1);
                 let status = if next_attempt >= Self::ENTITY_ENRICHMENT_MAX_ATTEMPTS {
                     "abandoned"
                 } else {
                     "needs_retry"
                 };
-                if self
+                let committed = self
                     .record_entity_enrichment_failure_at_version(
-                        &source_id,
-                        expected_version,
+                        source_id,
+                        pending.expected_version,
                         status,
-                        &error.to_string(),
+                        &error,
                     )
-                    .await?
-                {
+                    .await?;
+                if committed {
                     log::warn!(
                         "[entity_enrichment_slice] extraction failed for {source_id}: {error}"
                     );
                 } else {
                     log::info!("[entity_enrichment_slice] dropped stale failure for {source_id}");
                 }
+                Ok(committed)
             }
         }
-
-        Ok(1)
     }
 
     /// Get the entity_id for a memory (by source_id, chunk_index=0).
@@ -44388,10 +44677,11 @@ impl MemoryDB {
         .await
         .map_err(|e| WenlanError::VectorDb(format!("register_agent insert: {}", e)))?;
 
+        let display_name = resolved_agent_display_name(&canonical, display_name_to_store);
         Ok(AgentConnection {
             id,
             name: canonical,
-            display_name: display_name_to_store,
+            display_name,
             agent_type: "api".to_string(),
             description: None,
             enabled: true,
@@ -44563,14 +44853,11 @@ impl MemoryDB {
 
     fn row_to_agent(row: &libsql::Row) -> AgentConnection {
         let raw_name = row.get::<String>(1).unwrap_or_default();
-        // Column 2 is display_name (nullable). If the DB doesn't set one,
-        // fall back to the KNOWN_CLIENTS registry so well-known technical IDs
-        // (e.g. `openai-mcp`) surface with their friendly name (`ChatGPT`)
-        // without requiring the user to explicitly register them.
-        let display_name = row
-            .get::<Option<String>>(2)
-            .unwrap_or(None)
-            .or_else(|| known_client_display_name(&raw_name).map(|s| s.to_string()));
+        // Column 2 is display_name (nullable). Missing names and exact former
+        // stock defaults follow KNOWN_CLIENTS; every other stored value is a
+        // user override and remains untouched.
+        let display_name =
+            resolved_agent_display_name(&raw_name, row.get::<Option<String>>(2).unwrap_or(None));
         AgentConnection {
             id: row.get::<String>(0).unwrap_or_default(),
             name: raw_name,
@@ -49206,10 +49493,40 @@ impl MemoryDB {
         &self,
         max_attempts: u32,
     ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
+        self.get_classification_candidate_filtered(max_attempts, None)
+            .await
+    }
+
+    /// [`Self::get_classification_candidate`] for one named memory: the same
+    /// eligibility, so an on-demand organize run hands out exactly the work
+    /// the ambient lane would select for it. `None` when that memory is not
+    /// waiting for classification.
+    pub async fn get_classification_candidate_for(
+        &self,
+        source_id: &str,
+        max_attempts: u32,
+    ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
+        self.get_classification_candidate_filtered(max_attempts, Some(source_id))
+            .await
+    }
+
+    async fn get_classification_candidate_filtered(
+        &self,
+        max_attempts: u32,
+        only_source_id: Option<&str>,
+    ) -> Result<Option<MemoryEnrichmentInput>, WenlanError> {
+        // One named memory is found by its source id, through the index:
+        // `?2 IS NULL OR m.source_id = ?2` would read every memory row.
+        let only = if only_source_id.is_some() {
+            "m.source_id = ?2"
+        } else {
+            "?2 IS NULL"
+        };
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT m.source_id, m.content, m.version, m.memory_type, m.space,
+                &format!(
+                    "SELECT m.source_id, m.content, m.version, m.memory_type, m.space,
                         COALESCE(eo.memory_type_explicit, 1),
                         COALESCE(eo.structured_fields_explicit, 1),
                         COALESCE(eo.space_rejected, 1),
@@ -49224,6 +49541,7 @@ impl MemoryDB {
                  LEFT JOIN enrichment_steps es
                    ON es.source_id=m.source_id AND es.step_name='classify'
                  WHERE m.source='memory' AND m.chunk_index=0
+                   AND {only}
                    AND COALESCE(m.pending_revision, 0)=0
                    AND NOT EXISTS (
                        SELECT 1 FROM memories superseder
@@ -49246,8 +49564,9 @@ impl MemoryDB {
                           COALESCE(eo.service_class, 2) ASC,
                           COALESCE(es.updated_at, m.last_modified) ASC,
                           m.source_id ASC
-                 LIMIT 1",
-                [i64::from(max_attempts)],
+                 LIMIT 1"
+                ),
+                libsql::params![i64::from(max_attempts), only_source_id],
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("classification candidate: {e}")))?;
@@ -55769,42 +56088,34 @@ impl MemoryDB {
         title.trim().to_lowercase()
     }
 
-    /// One scope scan folding every active non-entity page title. Value is
-    /// the unique owning page id, or `None` when two pages fold to the same
-    /// key — the resolver's ambiguity contract. Callers resolving many labels
-    /// (a page's wikilinks, the orphan sweep) build this once per scope
-    /// instead of scanning per label.
-    pub(crate) async fn folded_title_owners_scoped(
+    /// One scan folding every active non-entity page title, grouped by Space
+    /// (`None` is the no-Space scope). Used when wikilinks need to prove a
+    /// title has exactly one owner outside the linking page's own scope.
+    pub(crate) async fn folded_title_owners_by_scope(
         &self,
-        scope: Option<&str>,
-    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+    ) -> Result<crate::synthesis::wikilinks::OwnersBySpace, WenlanError> {
         let conn = self.conn.lock().await;
-        Self::folded_title_owners_scoped_on_conn(&conn, scope).await
+        Self::folded_title_owners_by_scope_on_conn(&conn).await
     }
 
-    /// [`Self::folded_title_owners_scoped`] on an already-held connection
-    /// guard, for callers whose resolution decisions must share one
-    /// snapshot/transaction with the writes they gate (the orphan sweep).
-    async fn folded_title_owners_scoped_on_conn(
+    /// [`Self::folded_title_owners_by_scope`] on an already-held connection.
+    async fn folded_title_owners_by_scope_on_conn(
         conn: &libsql::Connection,
-        scope: Option<&str>,
-    ) -> Result<std::collections::HashMap<String, Option<String>>, WenlanError> {
+    ) -> Result<crate::synthesis::wikilinks::OwnersBySpace, WenlanError> {
         let mut rows = conn
             .query(
-                "SELECT id, title FROM pages
+                "SELECT id, title, space FROM pages
                  WHERE status = 'active'
-                   AND COALESCE(kind, 'concept') != 'entity'
-                   AND space = COALESCE(?1, '00000000-0000-4000-8000-000000000001')",
-                libsql::params![scope],
+                   AND COALESCE(kind, 'concept') != 'entity'",
+                (),
             )
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_scoped: {e}")))?;
-        let mut owners: std::collections::HashMap<String, Option<String>> =
-            std::collections::HashMap::new();
+            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_by_scope: {e}")))?;
+        let mut owners = crate::synthesis::wikilinks::OwnersBySpace::new();
         while let Some(row) = rows
             .next()
             .await
-            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_scoped row: {e}")))?
+            .map_err(|e| WenlanError::VectorDb(format!("folded_title_owners_by_scope row: {e}")))?
         {
             let id: String = row
                 .get::<String>(0)
@@ -55812,7 +56123,13 @@ impl MemoryDB {
             let title: String = row
                 .get::<String>(1)
                 .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let scope = row
+                .get::<Option<String>>(2)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+                .filter(|space| space != UNFILED_SPACE_ID);
             owners
+                .entry(scope)
+                .or_default()
                 .entry(Self::page_title_key(&title))
                 .and_modify(|slot| *slot = None)
                 .or_insert(Some(id));
@@ -55860,6 +56177,9 @@ impl MemoryDB {
         Ok(names)
     }
 
+    /// Resolve one bare title with `scope` as its priority scope. One owner in
+    /// that scope wins; two make it ambiguous and block fallback. With no
+    /// owner there, exactly one owner across all other scopes wins.
     pub async fn find_unique_active_page_id_by_title_scoped(
         &self,
         label: &str,
@@ -55869,23 +56189,25 @@ impl MemoryDB {
         if wanted.is_empty() {
             return Ok(None);
         }
-        // Single-label shape: scan the scope like the map builder above, but
-        // keep nothing — fold each title, compare, and stop at the second
-        // match (ambiguous). Same identity fold, none of the map's retained
-        // allocations; the second match ends the row walk early exactly like
-        // the old `LIMIT 2` SQL did.
+        // Single-label shape: scan every eligible title once without retaining
+        // the all-scope maps. Same identity fold and ambiguity contract as
+        // `resolve_label`; a later own-scope match still outranks any earlier
+        // elsewhere match, so the full row walk is intentional.
         let conn = self.conn.lock().await;
         let mut rows = conn
             .query(
-                "SELECT id, title FROM pages
+                "SELECT id, title, space FROM pages
                  WHERE status = 'active'
-                   AND COALESCE(kind, 'concept') != 'entity'
-                   AND space = COALESCE(?1, '00000000-0000-4000-8000-000000000001')",
-                libsql::params![scope],
+                   AND COALESCE(kind, 'concept') != 'entity'",
+                (),
             )
             .await
             .map_err(|e| WenlanError::VectorDb(format!("find_unique_page_by_title: {e}")))?;
-        let mut owner: Option<String> = None;
+        let own_scope = scope.unwrap_or(UNFILED_SPACE_ID);
+        let mut own_owner: Option<String> = None;
+        let mut own_ambiguous = false;
+        let mut elsewhere_owner: Option<String> = None;
+        let mut elsewhere_ambiguous = false;
         while let Some(row) = rows
             .next()
             .await
@@ -55897,15 +56219,29 @@ impl MemoryDB {
             if Self::page_title_key(&title) != wanted {
                 continue;
             }
-            if owner.is_some() {
-                return Ok(None);
+            let owner = row
+                .get::<String>(0)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?;
+            let page_scope = row
+                .get::<Option<String>>(2)
+                .map_err(|e| WenlanError::VectorDb(e.to_string()))?
+                .unwrap_or_else(|| UNFILED_SPACE_ID.to_string());
+            if page_scope == own_scope {
+                if own_owner.is_some() {
+                    own_ambiguous = true;
+                } else {
+                    own_owner = Some(owner);
+                }
+            } else if elsewhere_owner.is_some() {
+                elsewhere_ambiguous = true;
+            } else {
+                elsewhere_owner = Some(owner);
             }
-            owner = Some(
-                row.get::<String>(0)
-                    .map_err(|e| WenlanError::VectorDb(e.to_string()))?,
-            );
         }
-        Ok(owner)
+        if own_owner.is_some() {
+            return Ok((!own_ambiguous).then_some(own_owner).flatten());
+        }
+        Ok((!elsewhere_ambiguous).then_some(elsewhere_owner).flatten())
     }
 
     /// Replace the entire outbound-link set for a page in one BEGIN/COMMIT.
@@ -56269,10 +56605,13 @@ impl MemoryDB {
 
             let mut resolved_labels = std::collections::BTreeSet::new();
             let mut failed_rows: Vec<(String, String, String)> = Vec::new();
-            // One folded-title scan per distinct source scope, built inside
-            // this same transaction — the maps read the exact snapshot the
-            // deletes and edge mints below write into.
-            let mut owner_maps = crate::synthesis::wikilinks::OwnersBySpace::new();
+            // One all-scope folded-title scan inside this transaction: the
+            // maps read the exact snapshot the deletes and edge mints write.
+            let owner_maps = if orphan_rows.is_empty() {
+                crate::synthesis::wikilinks::OwnersBySpace::new()
+            } else {
+                Self::folded_title_owners_by_scope_on_conn(&conn).await?
+            };
             // Read once, and only when some orphan could name another Space.
             let mut space_names: Option<crate::synthesis::wikilinks::TitleOwners> = None;
             let no_space_names = crate::synthesis::wikilinks::TitleOwners::new();
@@ -56281,26 +56620,10 @@ impl MemoryDB {
                 if trimmed.is_empty() {
                     continue;
                 }
-                if !owner_maps.contains_key(&scope) {
-                    let owners =
-                        Self::folded_title_owners_scoped_on_conn(&conn, scope.as_deref()).await?;
-                    owner_maps.insert(scope.clone(), owners);
-                }
                 if trimmed.contains('/') && space_names.is_none() {
                     space_names = Some(Self::folded_space_names_on_conn(&conn).await?);
                 }
                 let space_names_ref = space_names.as_ref().unwrap_or(&no_space_names);
-                for (space, _) in
-                    crate::synthesis::wikilinks::space_qualified_readings(trimmed, space_names_ref)
-                {
-                    if let std::collections::hash_map::Entry::Vacant(slot) =
-                        owner_maps.entry(Some(space.clone()))
-                    {
-                        slot.insert(
-                            Self::folded_title_owners_scoped_on_conn(&conn, Some(&space)).await?,
-                        );
-                    }
-                }
                 let Some(target) = crate::synthesis::wikilinks::resolve_label(
                     trimmed,
                     scope.as_deref(),

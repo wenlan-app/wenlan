@@ -1,349 +1,150 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "../../../../i18n";
-import type { AgentConnection } from "../../../../lib/tauri";
+import type { AgentConnection, McpClient } from "../../../../lib/tauri";
+import { NO, YES } from "../../../../test/readings";
 
 const mocks = vi.hoisted(() => ({
   listAgents: vi.fn(),
   updateAgent: vi.fn(),
   deleteAgent: vi.fn(),
   detectMcpClients: vi.fn(),
+  removeRawMcpEntry: vi.fn(),
+  writeMcpConfig: vi.fn(),
+  installClientPlugin: vi.fn(),
+  installClientSkills: vi.fn(),
+  clipboardWrite: vi.fn(),
 }));
 vi.mock("../../../../lib/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../../lib/tauri")>();
   return { ...actual, ...mocks };
 });
-
-// The web/remote surfaces are proven in their own files; here we isolate the
-// roster (grouping, disclosure, aggregate controls).
 vi.mock("../../RemoteAccessPanel", () => ({ RemoteAccessPanel: () => <div /> }));
-vi.mock("../../../connect/ClientSetupList", () => ({ default: () => <div /> }));
+vi.mock("../../../connect/ClientSetupList", () => ({ default: () => <div data-connection-section="available" /> }));
 
 import AgentsSection from "./AgentsSection";
-import { NO, YES } from "../../../../test/readings";
 
-function agent(name: string, agent_type: string, overrides: Partial<AgentConnection> = {}): AgentConnection {
+function agent(name: string, overrides: Partial<AgentConnection> = {}): AgentConnection {
   return {
     id: name,
     name,
     display_name: null,
-    agent_type,
+    agent_type: "mcp",
     description: null,
     enabled: true,
     trust_level: "full",
-    last_seen_at: null,
-    memory_count: 0,
+    last_seen_at: 1_700_000_000,
+    memory_count: 1,
     created_at: 0,
-    updated_at: 0,
+    updated_at: 1_700_000_000,
     ...overrides,
   };
 }
 
-function renderAgentsSection() {
+function client(client_type: string, name: string): McpClient {
+  return {
+    name,
+    client_type,
+    config_path: `/config/${client_type}.json`,
+    detected: YES,
+    already_configured: YES,
+    has_raw_entry: YES,
+    has_raw_duplicate: NO,
+    has_plugin: NO,
+    entry_health: { kind: "healthy" },
+  };
+}
+
+function renderSection() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <AgentsSection />
     </QueryClientProvider>,
   );
 }
 
-describe("AgentsSection", () => {
-  afterEach(() => Object.values(mocks).forEach((m) => m.mockReset()));
+describe("AgentsSection connected details", () => {
   beforeEach(() => {
-    mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 3 })]);
+    mocks.listAgents.mockResolvedValue([agent("codex")]);
+    mocks.detectMcpClients.mockResolvedValue([client("codex_cli", "ChatGPT / Codex")]);
     mocks.updateAgent.mockResolvedValue(null);
     mocks.deleteAgent.mockResolvedValue(null);
-    mocks.detectMcpClients.mockResolvedValue([]);
+    mocks.removeRawMcpEntry.mockResolvedValue(undefined);
+    mocks.writeMcpConfig.mockResolvedValue([]);
+    mocks.installClientPlugin.mockResolvedValue(undefined);
+    mocks.installClientSkills.mockResolvedValue("/skills");
+    mocks.clipboardWrite.mockResolvedValue(undefined);
   });
+  afterEach(() => Object.values(mocks).forEach((mock) => mock.mockReset()));
 
-  // Every registered identity of one physical tool folds into a single row;
-  // the identities live behind the disclosure. Codex ships three canonical
-  // IDs that must coalesce into one "Codex" row.
-  it("coalesces a tool's identities into one row, revealing them on disclosure", async () => {
+  it("coalesces identities and reveals trust, memory count, path, and friendly identity names", async () => {
     mocks.listAgents.mockResolvedValue([
-      agent("codex", "mcp", { memory_count: 3, last_seen_at: 100 }),
-      agent("codex-mcp-client", "", { memory_count: 2, last_seen_at: 300 }),
-      agent("codex-ulw-loop", "", { memory_count: 1, last_seen_at: 200 }),
+      agent("codex", { memory_count: 3 }),
+      agent("codex-mcp-client", { memory_count: 2 }),
     ]);
-    renderAgentsSection();
+    renderSection();
 
-    // Exactly one family row — the display name renders once, with a
-    // "3 identities" chip and the aggregate memory count (3 + 2 + 1).
-    expect(await screen.findByText("Codex")).toBeInTheDocument();
-    expect(screen.getAllByText("Codex")).toHaveLength(1);
-    expect(screen.getByText("3 identities")).toBeInTheDocument();
-    expect(screen.getByText("6 memories")).toBeInTheDocument();
+    expect(await screen.findAllByText("ChatGPT / Codex")).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT / Codex details" }));
 
-    // Collapsed: the per-identity controls are not mounted.
-    expect(screen.queryByRole("button", { name: "codex-ulw-loop" })).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Show identities" }));
-
-    // Expanded: one identity subrow per canonical ID (found by its own
-    // enable Toggle's aria-label).
-    for (const id of ["codex", "codex-mcp-client", "codex-ulw-loop"]) {
-      expect(screen.getByRole("button", { name: id })).toBeInTheDocument();
-    }
-    expect(screen.getAllByRole("combobox")).toHaveLength(4);
-    expect(screen.getAllByRole("combobox", { name: /^Trust levels: / })).toHaveLength(4);
+    expect(screen.getByRole("combobox", { name: "Trust levels: ChatGPT / Codex" })).toBeInTheDocument();
+    expect(screen.getByText("5 memories")).toBeInTheDocument();
+    expect(screen.getByText("/config/codex_cli.json")).toBeInTheDocument();
+    expect(screen.getByText("Codex MCP Client")).toBeInTheDocument();
+    expect(screen.queryByText("codex-mcp-client")).not.toBeInTheDocument();
   });
 
-  it("keeps a single identity disclosure focused on its technical ID and delete action", async () => {
-    mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 3, last_seen_at: 100 })]);
-    renderAgentsSection();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Show identities" }));
-
-    expect(screen.getByText("codex · mcp")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete Codex" })).toBeInTheDocument();
-    expect(screen.getAllByRole("combobox")).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Codex" })).toHaveLength(1);
-    expect(screen.getAllByText("3 memories")).toHaveLength(1);
-    expect(screen.getAllByText(/Last seen/)).toHaveLength(1);
-  });
-
-  // The aggregate trust Select shows "Mixed" when identities disagree, and
-  // picking a real value writes it to every identity.
-  it("renders Mixed for divergent trust and applies a pick to every identity", async () => {
+  it("applies an aggregate trust choice to every identity", async () => {
     mocks.listAgents.mockResolvedValue([
-      agent("codex", "mcp", { trust_level: "full" }),
-      agent("codex-ulw-loop", "", { trust_level: "review" }),
+      agent("codex", { trust_level: "full" }),
+      agent("codex-mcp-client", { trust_level: "review" }),
     ]);
-    renderAgentsSection();
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "ChatGPT / Codex details" }));
+    await userEvent.selectOptions(screen.getByRole("combobox"), "unknown");
 
-    await screen.findByText("Codex");
-    // The disabled "Mixed" option is the selected placeholder.
-    expect(screen.getByText("Mixed")).toBeInTheDocument();
-
-    // Only the aggregate Select is mounted (disclosure collapsed).
-    await userEvent.selectOptions(screen.getByRole("combobox"), "full");
-
-    expect(mocks.updateAgent).toHaveBeenCalledTimes(2);
-    expect(mocks.updateAgent).toHaveBeenCalledWith("codex", { trustLevel: "full" });
-    expect(mocks.updateAgent).toHaveBeenCalledWith("codex-ulw-loop", { trustLevel: "full" });
+    expect(mocks.updateAgent).toHaveBeenCalledWith("codex", { trustLevel: "unknown" });
+    expect(mocks.updateAgent).toHaveBeenCalledWith("codex-mcp-client", { trustLevel: "unknown" });
   });
 
-  // Primitives migration: the delete flow is a two-step ConfirmActionButton,
-  // now living inside each identity's disclosure subrow.
-  it("requires a second click before deleteAgent fires", async () => {
-    const user = userEvent.setup();
-    renderAgentsSection();
-
-    await user.click(await screen.findByRole("button", { name: "Show identities" }));
-    await user.click(screen.getByRole("button", { name: "Delete Codex" }));
+  it("requires confirmation before deleting an identity", async () => {
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "ChatGPT / Codex details" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete ChatGPT / Codex" }));
     expect(mocks.deleteAgent).not.toHaveBeenCalled();
-
-    await user.click(await screen.findByText("Confirm"));
-    expect(mocks.deleteAgent).toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(mocks.deleteAgent.mock.calls[0][0]).toBe("codex");
   });
 
-  it("shows trust level summaries in the SettingsHelp popover", async () => {
-    renderAgentsSection();
+  it("uses the existing removal path when a connected switch is turned off", async () => {
+    mocks.listAgents.mockResolvedValue([agent("cursor")]);
+    mocks.detectMcpClients.mockResolvedValue([client("cursor", "Cursor")]);
+    renderSection();
 
-    await screen.findByText("Codex");
-    await userEvent.click(screen.getByRole("button", { name: "Details: Trust levels" }));
-    expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "Full: Sees everything: identity, preferences, lessons, gotchas, decisions, pages, and search results.",
-    );
-    expect(screen.getByRole("tooltip").textContent).toContain("\n");
+    await userEvent.click(await screen.findByRole("button", { name: "Disconnect Cursor" }));
+    expect(mocks.removeRawMcpEntry).toHaveBeenCalledWith("cursor");
+    await waitFor(() => expect(screen.queryByText("Cursor")).not.toBeInTheDocument());
   });
 
-  const CODEX_CLI = {
-    name: "Codex CLI",
-    client_type: "codex_cli",
-    config_path: "~/.codex/config.toml",
-    detected: YES,
-    already_configured: YES,
-    has_raw_entry: YES,
-    has_raw_duplicate: NO,
-    has_plugin: NO,
-  };
+  it("hides Wenlan's setup probe and never exposes its internal ID", async () => {
+    mocks.listAgents.mockResolvedValue([agent("wenlan-setup")]);
+    mocks.detectMcpClients.mockResolvedValue([]);
+    renderSection();
 
-  // A configured client whose family has a registered identity that has not
-  // called Wenlan yet folds in as an Added chip and a restart note on that
-  // family's row, not a separate pending row. A registered identity is not a
-  // sighting: only a call is.
-  it("shows Added and a restart page on the family row while no identity has called yet", async () => {
-    mocks.listAgents.mockResolvedValue([agent("codex", "mcp")]);
-    mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-    renderAgentsSection();
-
-    const codexRow = (await screen.findByText("Codex")).closest("div.px-5") as HTMLElement;
-    expect(within(codexRow).getByText("Restart Codex to finish.")).toBeInTheDocument();
-    expect(within(codexRow).getByText("Added")).toBeInTheDocument();
-    expect(within(codexRow).queryByText("Connected")).not.toBeInTheDocument();
+    expect(await screen.findByText("No connections yet.")).toBeInTheDocument();
+    expect(screen.queryByText(/wenlan-setup/)).not.toBeInTheDocument();
   });
 
-  // The old note was shown for a family with stored memories. A tool that
-  // already wrote memories is talking to Wenlan: "restart to finish" would be
-  // false of it.
-  it("shows no restart page for a family that has already called Wenlan", async () => {
-    mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 3 })]);
-    mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-    renderAgentsSection();
-
-    const codexRow = (await screen.findByText("Codex")).closest("div.px-5") as HTMLElement;
-    expect(within(codexRow).queryByText(/Restart Codex/)).not.toBeInTheDocument();
-    expect(within(codexRow).queryByText("Added")).not.toBeInTheDocument();
-  });
-
-  it("a search alone counts as a call: a last_seen_at with no memories is a seen family", async () => {
-    mocks.listAgents.mockResolvedValue([
-      agent("codex", "mcp", { memory_count: 0, last_seen_at: 1_700_000_000, trust_level: "unknown" }),
-    ]);
-    mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-    renderAgentsSection();
-
-    const codexRow = (await screen.findByText("Codex")).closest("div.px-5") as HTMLElement;
-    expect(within(codexRow).queryByText(/Restart Codex/)).not.toBeInTheDocument();
-  });
-
-  it("a configured tool with no identity yet gets its own Added row with the restart line", async () => {
-    mocks.listAgents.mockResolvedValue([]);
-    mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-    renderAgentsSection();
-
-    expect(await screen.findByText("Restart Codex CLI to finish.")).toBeInTheDocument();
-    expect(screen.getByText("Added")).toBeInTheDocument();
-  });
-
-  // Added and live activity share this section without claiming the tool is
-  // already connected.
-  it("labels the activity section without implying an Added tool is connected", async () => {
-    mocks.listAgents.mockResolvedValue([]);
-    mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-    renderAgentsSection();
-
-    expect(await screen.findByText("Restart Codex CLI to finish.")).toBeInTheDocument();
-    expect(screen.getByText("Added")).toBeInTheDocument();
-    expect(screen.getByText("Tool activity")).toBeInTheDocument();
-    expect(screen.queryByText("Connected")).not.toBeInTheDocument();
-  });
-
-  it("makes no restart claim for an entry that would not start: that needs a repair, not a restart", async () => {
-    mocks.listAgents.mockResolvedValue([]);
-    // The healthy second client is the anchor: its restart line proves the
-    // clients query has been applied before the broken one's absence is
-    // asserted (a negative checked against the first, empty render proves
-    // nothing).
-    mocks.detectMcpClients.mockResolvedValue([
-      { ...CODEX_CLI, entry_health: { kind: "needs_repair", reason: "command_not_found", detail: "x" } },
-      { ...CODEX_CLI, name: "Cursor", client_type: "cursor", config_path: "~/.cursor/mcp.json" },
-    ]);
-    renderAgentsSection();
-
-    expect(await screen.findByText("Restart Cursor to finish.")).toBeInTheDocument();
-    expect(screen.queryByText(/Restart Codex CLI/)).not.toBeInTheDocument();
-  });
-
-  // Live state: the section must notice a tool that has just been restarted
-  // without the user reopening Settings.
-  describe("live roster", () => {
-    afterEach(() => {
-      focusManager.setFocused(undefined);
-      vi.useRealTimers();
-    });
-
-    it("flips Added to connected when the window regains focus", async () => {
-      mocks.listAgents.mockResolvedValue([agent("codex", "mcp")]);
-      mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-      renderAgentsSection();
-      const codexRow = (await screen.findByText("Codex")).closest("div.px-5") as HTMLElement;
-      expect(within(codexRow).getByText("Restart Codex to finish.")).toBeInTheDocument();
-      const callsBefore = mocks.listAgents.mock.calls.length;
-
-      mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 0, last_seen_at: 1_700_000_000 })]);
-      act(() => {
-        focusManager.setFocused(false);
-        focusManager.setFocused(true);
-      });
-
-      await waitFor(() => expect(mocks.listAgents.mock.calls.length).toBeGreaterThan(callsBefore));
-      await waitFor(() => expect(screen.queryByText("Restart Codex to finish.")).not.toBeInTheDocument());
-      expect(screen.queryByText("Added")).not.toBeInTheDocument();
-    });
-
-    it("polls every 30 seconds while the window is visible", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      mocks.listAgents.mockResolvedValue([agent("codex", "mcp")]);
-      mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-      renderAgentsSection();
-      await screen.findByText("Restart Codex to finish.");
-      const callsBefore = mocks.listAgents.mock.calls.length;
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(29_000);
-      });
-      expect(mocks.listAgents.mock.calls.length).toBe(callsBefore);
-
-      mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 0, last_seen_at: 1_700_000_000 })]);
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2_000);
-      });
-
-      await waitFor(() => expect(mocks.listAgents.mock.calls.length).toBeGreaterThan(callsBefore));
-      await waitFor(() => expect(screen.queryByText("Restart Codex to finish.")).not.toBeInTheDocument());
-    });
-
-    it("does not poll while the window is hidden", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      mocks.listAgents.mockResolvedValue([agent("codex", "mcp")]);
-      mocks.detectMcpClients.mockResolvedValue([CODEX_CLI]);
-      renderAgentsSection();
-      await screen.findByText("Restart Codex to finish.");
-      const callsBefore = mocks.listAgents.mock.calls.length;
-
-      act(() => focusManager.setFocused(false));
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(95_000);
-      });
-
-      expect(mocks.listAgents.mock.calls.length).toBe(callsBefore);
-    });
-  });
-
-  // Round 5, defect 4. The gate was `if (!client.already_configured) continue;`
-  // — and `!` on a read that FAILED is `true`, so an unreadable config was
-  // treated exactly like a config measured to have no Wenlan entry. Skipping
-  // is the right call for an unread client (a "restart to activate" note is a
-  // claim, and nothing was measured that supports it); this pins that it is
-  // reached by asking, not by a boolean falling the convenient way.
-  it("makes no restart claim about a client whose config could not be read", async () => {
-    mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 3 })]);
-    mocks.detectMcpClients.mockResolvedValue([
-      {
-        name: "Codex CLI",
-        client_type: "codex_cli",
-        config_path: "~/.codex/config.toml",
-        detected: YES,
-        already_configured: { kind: "unreadable", error: "Access is denied. (os error 5)" },
-        has_raw_entry: NO,
-        has_raw_duplicate: NO,
-        has_plugin: NO,
-      },
-    ]);
-    renderAgentsSection();
-
-    const codexRow = (await screen.findByText("Codex")).closest("div.px-5") as HTMLElement;
-    expect(within(codexRow).queryByText(/Restart Codex/)).not.toBeInTheDocument();
-  });
-
-  // The measured negative, for contrast: same shape, `no` instead of
-  // `unreadable`, same outcome — which is exactly why the two must be
-  // distinguishable somewhere other than here.
-  it("makes no restart claim about a client measured to have no entry", async () => {
-    mocks.listAgents.mockResolvedValue([agent("codex", "mcp", { memory_count: 3 })]);
-    mocks.detectMcpClients.mockResolvedValue([
-      { name: "Codex CLI", client_type: "codex_cli", config_path: "~/.codex/config.toml", detected: YES, already_configured: NO, has_raw_entry: NO, has_raw_duplicate: NO, has_plugin: NO },
-    ]);
-    renderAgentsSection();
-
-    const codexRow = (await screen.findByText("Codex")).closest("div.px-5") as HTMLElement;
-    expect(within(codexRow).queryByText(/Restart Codex/)).not.toBeInTheDocument();
+  it("uses spacing rather than horizontal dividers", async () => {
+    renderSection();
+    await screen.findByText("ChatGPT / Codex");
+    const connected = document.querySelector('[data-connection-section="connected"]') as HTMLElement;
+    expect(connected.querySelector(".divide-y")).not.toBeInTheDocument();
+    expect(connected.querySelector(".border-t")).not.toBeInTheDocument();
+    expect(within(connected).getByRole("heading", { name: "Connected" })).toBeInTheDocument();
   });
 });

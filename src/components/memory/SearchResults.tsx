@@ -5,6 +5,7 @@ import { highlightTerms } from "../../lib/highlight";
 import type { EntitySearchResult, Page, SearchResult } from "../../lib/tauri";
 import { passagesBeingPrepared } from "../../lib/activitySentence";
 import { useActivity } from "../../lib/useActivity";
+import { resolveAgentDisplayName } from "../../lib/agents";
 
 interface SearchResultsProps {
   query: string;
@@ -71,7 +72,7 @@ export function SearchResults({
             <span className="search-result-snippet">{highlightTerms(result.content.length > 280 ? `${result.content.slice(0, 280)}…` : result.content, query, "search-result-match")}</span>
             <span className="search-result-meta">
               {result.memory_type && <span className="search-result-kind">{result.memory_type}</span>}
-              {result.source_agent && <span>{result.source_agent}</span>}
+              {result.source_agent && <span>{resolveAgentDisplayName(result.source_agent)}</span>}
               {result.domain && <span>{result.domain}</span>}
             </span>
           </button>
@@ -85,7 +86,7 @@ export function SearchResults({
           <button className="search-result-button" key={result.id} onClick={() => onOpenResult(result)} type="button">
             <span className="search-result-snippet">{highlightTerms(result.content.length > 280 ? `${result.content.slice(0, 280)}…` : result.content, query, "search-result-match")}</span>
             <span className="search-result-meta">
-              {result.source_agent && <span>{result.source_agent}</span>}
+              {result.source_agent && <span>{resolveAgentDisplayName(result.source_agent)}</span>}
               {result.domain && <span>{result.domain}</span>}
             </span>
           </button>

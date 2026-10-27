@@ -48,6 +48,11 @@
   overflow-wrap: anywhere;
 }
 
+/* "The last run stopped before writing pages." over the offer. */
+.write-pages-stopped {
+  display: block;
+}
+
 .write-pages-hint {
   display: block;
   color: var(--mem-text-tertiary);

@@ -1189,8 +1189,10 @@ crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::set_page_space|Te
 crates/wenlan-core/src/steep_test.rs|crate::steep::steep_test::set_page_space|test_primary_session|1
 crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::a_source_edited_after_the_claim_refuses_the_commit|TestDbSession::execute|1
 crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::a_source_edited_after_the_claim_refuses_the_commit|test_primary_session|1
-crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::row|TestDbSession::execute|1
-crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::row|test_primary_session|1
+crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::row_at|TestDbSession::execute|1
+crates/wenlan-core/src/steep_new_test.rs|crate::steep_new::steep_new_test::row_at|test_primary_session|1
+crates/wenlan-core/src/steep_organize_test.rs|crate::steep_organize::steep_organize_test::snapshot|TestDbSession::query|1
+crates/wenlan-core/src/steep_organize_test.rs|crate::steep_organize::steep_organize_test::snapshot|test_primary_session|1
 crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::successful_basis_preview_clears_old_block_on_fresh_page|TestDbSession::execute|1
 crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::successful_basis_preview_clears_old_block_on_fresh_page|test_primary_session|1
 crates/wenlan-core/src/synthesis/distill.rs|crate::synthesis::distill::tests::successful_gated_refresh_clears_old_block_on_fresh_page|TestDbSession::execute|1

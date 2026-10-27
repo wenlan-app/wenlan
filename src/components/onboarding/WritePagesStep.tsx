@@ -6,6 +6,7 @@ import type { Page } from "../../lib/tauri";
 import {
   copyAgainLabel,
   pagesWrittenSince,
+  doneLine,
   waitingLine,
   workingHeadline,
   WrittenPages,
@@ -75,6 +76,27 @@ export function WritePagesStep({
       ? t("askAi.writePages.askIn", { tool: state.tool.name })
       : t("askAi.writePages.copyCommand")
     : null;
+  // Material still waiting under pages already written: one line saying so,
+  // with the one button that writes the next batch.
+  const moreLabel = startLabel ?? (state?.command ? t("askAi.writePages.copyCommand") : null);
+  const more = (show: boolean) => state && show && moreLabel ? (
+    <div className="getting-started-pages-more" data-testid="getting-started-pages-more">
+      <span>{waitingLine(state, pages, t)}</span>
+      <button
+        type="button"
+        className="getting-started-link"
+        disabled={state.command === null}
+        onClick={() => void state.start()}
+      >
+        {moreLabel}
+      </button>
+    </div>
+  ) : null;
+  // A run that let its material go without a page says so over the offer,
+  // rather than the step quietly going back to it.
+  const stopped = state?.stopped
+    ? <p className="getting-started-step-body" data-testid="getting-started-pages-stopped">{t("askAi.writePages.stopped")}</p>
+    : null;
   // A tool the app cannot open gets the command to paste, and says so.
   const pasteHint = state?.tool && !state.opensTool
     ? <p className="getting-started-step-hint">{t("askAi.writePages.copiesCommand", { tool: state.tool.name })}</p>
@@ -111,34 +133,26 @@ export function WritePagesStep({
       <div className="getting-started-copy">
         {title}
         <p className="getting-started-step-body">
-          {t("askAi.writePages.done", { count: view.written.length, minutes: view.minutes })}
+          {doneLine(view, t)}
         </p>
         {list(false)}
+        {/* The run is over but most material may still wait: offer the next
+            batch, whichever way the run was started. */}
+        {more(view.left > 0)}
       </div>
     );
   }
 
   if (done && !comeBack) {
-    // Material that came in after the pages were written: say so under them,
-    // with the same one button.
-    const more = state && view.kind === "ready" && startLabel ? (
-      <div className="getting-started-pages-more">
-        <span>{waitingLine(state, pages, t)}</span>
-        <button
-          type="button"
-          className="getting-started-link"
-          disabled={state.command === null}
-          onClick={() => void state.start()}
-        >
-          {startLabel}
-        </button>
-      </div>
-    ) : null;
+    // Material that came in after the pages were written (or that a run
+    // started outside this screen left): say so under them, with the same
+    // one button.
     return (
       <div className="getting-started-copy">
         {title}
         {list(false)}
-        {more}
+        {stopped}
+        {more(view.kind === "ready" || (view.kind === "hidden" && state?.onDemand === true && state.waitingTotal > 0))}
       </div>
     );
   }
@@ -149,6 +163,7 @@ export function WritePagesStep({
       <>
         <div className="getting-started-copy">
           {title}
+          {stopped}
           <p className="getting-started-step-body">
             {state.tool ? waitingLine(state, pages, t) : t("askAi.writePages.noTool")}
           </p>

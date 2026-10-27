@@ -2,9 +2,12 @@
 // No network fallback: every value belongs to the browser-only verification library.
 import { createSpacesNavigationFixture } from "../../e2e/fixtures/spacesNavigation";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
-import type { ImportBatchStatus, ImportPhase } from "../../src/lib/tauri";
+import type { ImportBatchStatus, ImportPhase, Page } from "../../src/lib/tauri";
+import { organizeInvoke, seedOrganizeRun } from "./first-use-organize";
 const scenario = new URLSearchParams(location.search).get("state") ?? "empty";
 const fixture = createSpacesNavigationFixture();
+const organizeBasePage = fixture.pages[0] as unknown as Page | undefined;
+seedOrganizeRun();
 const runtime = new TauriMockRuntime(scenario === "ready" ? fixture : {
   ...fixture, pages: [], memories: [], entities: [], entityDetails: [], refinements: [],
   distillReview: { ...fixture.distillReview, pending: [], stale_pages: [], orphan_topics: [] },
@@ -19,6 +22,8 @@ const batch: ImportBatchStatus = {
 let submittedBatch: ImportBatchStatus | null = null;
 export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (scenario === "error" && (command === "list_pages" || command === "active_import_batches_cmd")) throw new Error("Verification: daemon unavailable");
+  const organized = organizeInvoke(command, args, organizeBasePage);
+  if (organized) return organized.value as T;
   let value: unknown;
   switch (command) {
     case "active_import_batches_cmd": {
