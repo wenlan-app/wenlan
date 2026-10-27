@@ -134,7 +134,7 @@ Saving material is only the start. **Steep prepares it for reuse and keeps suppo
 
 Choose one of two modes in Settings:
 
-- **On demand** (new installs start here): when your AI tool saves or writes into Wenlan, it steeps as it goes, with no command needed. To finish the rest at once, run `/wenlan steep`: it writes new pages from imported material and brings out-of-date pages up to date.
+- **On demand** (new installs start here): when your AI tool saves or writes into Wenlan, it steeps as it goes, and while it works it hears which pages are out of date and which material is in no page yet. No command needed; `/wenlan steep` is there if you want to catch up on everything at once.
 - **Automatic:** Wenlan steeps in the background with the model you assign.
 
 What steep does:
@@ -154,7 +154,7 @@ In both modes, without a model, Wenlan:
 - **Suggests merging near-duplicate pages** as a card for you or your AI to accept or dismiss.
 - **Tidies links:** lists `[[links]]` that point to no page yet, and drops citations to memories you deleted.
 
-Rewriting a flagged page takes a model. In Automatic, Wenlan does it in the background. In On demand, flagged pages wait until you run `/wenlan steep` in your AI tool.
+Rewriting a flagged page takes a model. In Automatic, Wenlan does it in the background. In On demand, your AI tool is told which pages are waiting and can bring them up to date while it works.
 
 [Steep guide: triggers, review rules, and model setup](docs/steep.md). Choose an on-device model, a local server, or a cloud provider; model-backed background work is optional.
 
@@ -164,7 +164,7 @@ Rewriting a flagged page takes a model. In Automatic, Wenlan does it in the back
 
 ## A wiki for your code repository
 
-Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing. `/wenlan wiki` replaces `/wenlan map`, with no alias for the old name.
+Run `/wenlan wiki` (`$wenlan wiki` in Codex) in a repository. Your AI tool plans the wiki from the repository itself: an overview that lists every page, then one page for each part or flow a newcomer needs. A small tool gets a few pages, a large monorepo many more. A rerun writes only the pages that are missing.
 
 - **Tied to the code:** Each page records the code lines it was read from. When that code changes, the page shows what changed with one Review button, and steep brings the page up to date.
 - **In the repository as a pull request:** The GitHub button on a Space connects it to its repository and puts the pages that rely on that code in the repository's `wiki/` folder as a pull request. Run it from the button, or turn on the daily update: it runs your own AI tool on your computer, or runs on GitHub Actions with your AI tool's key saved as a repository secret, so your computer can stay off. The same pull request fixes sentences in the repository's own docs that the code no longer agrees with, for you to review.
