@@ -7,9 +7,9 @@
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-en-desktop-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-en-desktop-orb)"/>
   </g>
-  <text x="300" y="154" fill="#93E3F2" font-size="44" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
-  <text x="300" y="194" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="26" font-weight="500" text-anchor="start">Your living wiki</text>
-  <text x="300" y="224" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="17" font-weight="400" text-anchor="start">Free · Open source · Local-first</text></g>
+  <text x="300" y="140" fill="#93E3F2" font-size="43.2" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
+  <text x="300" y="197" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="40" font-weight="500" text-anchor="start">Your living wiki</text>
+  <text x="300" y="235" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="20" font-weight="400" text-anchor="start">Free · Open source · Local-first</text></g>
   <defs>
     <linearGradient id="banner-en-desktop-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>
