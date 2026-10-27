@@ -2,14 +2,14 @@
   <title id="title">Wenlan README banner</title>
   <desc id="desc">Wenlan: Your living wiki</desc>
   <rect width="720" height="256" fill="#151D2B"/>
-  <g transform="translate(320 30) scale(0.15625)">
+  <g transform="translate(320 42) scale(0.15625)">
     <rect width="512" height="512" rx="112" fill="#1A1A2E"/>
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-en-mobile-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-en-mobile-orb)"/>
   </g>
-  <text x="360" y="146" fill="#93E3F2" font-size="30.24" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
-  <text x="360" y="182" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="26" font-weight="500" text-anchor="middle">Your living wiki</text>
-  <text x="360" y="214" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="18" font-weight="400" text-anchor="middle">Free · Open source · Local-first</text>
+  <text x="360" y="152" fill="#93E3F2" font-size="26" font-weight="500" text-anchor="middle"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan></text>
+  <text x="360" y="182" fill="#F7F8FF" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="22" font-weight="500" text-anchor="middle">Your living wiki</text>
+  <text x="360" y="209" fill="#BAC4D2" font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif" font-size="16" font-weight="400" text-anchor="middle">Free · Open source · Local-first</text>
   <defs>
     <linearGradient id="banner-en-mobile-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>

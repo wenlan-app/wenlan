@@ -101,18 +101,18 @@ function makeSimpleBanner(viewport, locale) {
   // The title stays a step below the Wenlan name.
   const content = mobile
     ? tagline
-      ? `${logoMarkup({ x: 320, y: 30, size: 80, prefix })}
-  ${brand(360, 146, chineseName ? 29.12 : 30.24, "middle")}
-  ${text(360, 182, copy.title[0], 26, BANNER.white, 500, "middle")}
-  ${text(360, 214, tagline, 18, BANNER.secondary, 400, "middle")}`
+      ? `${logoMarkup({ x: 320, y: 42, size: 80, prefix })}
+  ${brand(360, 152, chineseName ? 25 : 26, "middle")}
+  ${text(360, 182, copy.title[0], 22, BANNER.white, 500, "middle")}
+  ${text(360, 209, tagline, 16, BANNER.secondary, 400, "middle")}`
       : `${logoMarkup({ x: 320, y: 32, size: 80, prefix })}
   ${brand(360, 150, chineseName ? 29.12 : 30.24, "middle")}
   ${text(360, 195, copy.title[0], 32, BANNER.white, 500, "middle")}`
     : tagline
       ? `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
-  ${brand(300, 144.5, chineseName ? 41.6 : 43.2, "start")}
-  ${text(300, 194.5, copy.title[0], 32, BANNER.white, 500, "start", chineseName ? 0.65 : null)}
-  ${text(300, 236.5, tagline, 20, BANNER.secondary, 400, "start", chineseName ? 0.65 : null)}`
+  ${brand(300, 148, chineseName ? 36 : 37, "start")}
+  ${text(300, 190, copy.title[0], 30, BANNER.white, 500, "start", chineseName ? 0.65 : null)}
+  ${text(300, 224, tagline, 19, BANNER.secondary, 400, "start", chineseName ? 0.65 : null)}`
       : `${logoMarkup({ x: 81.28, y: 84.28, size: 181.44, prefix })}
   ${brand(300, 153, chineseName ? 41.6 : 43.2, "start")}
   ${text(300, 219, copy.title[0], 40, BANNER.white, 500, "start", chineseName ? 0.65 : null)}`;
