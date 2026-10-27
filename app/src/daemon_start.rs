@@ -20,7 +20,7 @@
 //! [`last_sidecar_stop`]. Nothing may assume either guarantee held without
 //! asking.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri_plugin_shell::process::CommandChild;
@@ -31,18 +31,48 @@ use crate::state::AppState;
 mod repair_runtime;
 pub use repair_runtime::resume_repair_runtime;
 
-/// Whether `setup()`'s server-plist preflight repair succeeded. Set once at
-/// startup and read by the on-demand command, which must not re-run the
-/// *mutating* preflight (that would be plist management from a user click).
-static STARTUP_PREFLIGHT_OK: AtomicBool = AtomicBool::new(false);
+/// Whether the server-plist preflight has settled. The frontend reads this
+/// before the daemon-backed first-run gate so a known terminal failure can be
+/// shown immediately without shortening the ordinary cold-start wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupPreflightStatus {
+    Pending = 0,
+    Ready = 1,
+    Failed = 2,
+}
+
+static STARTUP_PREFLIGHT_STATUS: AtomicU8 = AtomicU8::new(StartupPreflightStatus::Pending as u8);
+
+fn startup_preflight_status_for(ok: bool) -> StartupPreflightStatus {
+    if ok {
+        StartupPreflightStatus::Ready
+    } else {
+        StartupPreflightStatus::Failed
+    }
+}
 
 /// Record the startup preflight outcome for the on-demand command to consult.
 pub fn set_startup_preflight_ok(ok: bool) {
-    STARTUP_PREFLIGHT_OK.store(ok, Ordering::Relaxed);
+    let status = startup_preflight_status_for(ok);
+    STARTUP_PREFLIGHT_STATUS.store(status as u8, Ordering::Release);
 }
 
 fn startup_preflight_ok() -> bool {
-    STARTUP_PREFLIGHT_OK.load(Ordering::Relaxed)
+    startup_preflight_status() == StartupPreflightStatus::Ready
+}
+
+fn startup_preflight_status() -> StartupPreflightStatus {
+    match STARTUP_PREFLIGHT_STATUS.load(Ordering::Acquire) {
+        1 => StartupPreflightStatus::Ready,
+        2 => StartupPreflightStatus::Failed,
+        _ => StartupPreflightStatus::Pending,
+    }
+}
+
+#[tauri::command]
+pub fn get_startup_preflight_status() -> StartupPreflightStatus {
+    startup_preflight_status()
 }
 
 /// Whether this app has ever spawned a sidecar without being able to measure
@@ -1747,6 +1777,34 @@ mod version_heal_tests {
 mod tests {
     use super::*;
     use crate::lifecycle::LaunchdOwnership;
+
+    #[test]
+    fn startup_preflight_status_has_stable_wire_values() {
+        assert_eq!(
+            serde_json::to_string(&StartupPreflightStatus::Pending).unwrap(),
+            "\"pending\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StartupPreflightStatus::Ready).unwrap(),
+            "\"ready\""
+        );
+        assert_eq!(
+            serde_json::to_string(&StartupPreflightStatus::Failed).unwrap(),
+            "\"failed\""
+        );
+    }
+
+    #[test]
+    fn startup_preflight_result_maps_only_success_to_ready() {
+        assert_eq!(
+            startup_preflight_status_for(true),
+            StartupPreflightStatus::Ready
+        );
+        assert_eq!(
+            startup_preflight_status_for(false),
+            StartupPreflightStatus::Failed
+        );
+    }
 
     // Port-health wins over everything: a daemon that came back on its own must
     // never be double-spawned, even if launchd or preflight would say otherwise.

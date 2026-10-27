@@ -1760,6 +1760,7 @@ pub fn run() {
             search::set_lock_my_pages,
             search::should_show_wizard,
             search::local_setup_completed,
+            daemon_start::get_startup_preflight_status,
             search::detect_mcp_clients_cmd,
             search::write_mcp_config,
             search::remove_raw_mcp_entry,

@@ -29,6 +29,7 @@ const startDaemonSidecarMock = vi.hoisted(
 const getWireStateMock = vi.hoisted(
   () => vi.fn<() => Promise<{ daemon: { reachable: boolean; error: string | null } }>>(),
 );
+const getStartupPreflightStatusMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/event", () => ({
   emit: emitMock,
@@ -44,6 +45,7 @@ vi.mock("./lib/tauri", () => ({
   quitWenlanFull: quitWenlanFullMock,
   shouldShowWizard: vi.fn(),
   localSetupCompleted: vi.fn(),
+  getStartupPreflightStatus: getStartupPreflightStatusMock,
   setSetupCompleted: vi.fn().mockResolvedValue(undefined),
   setTrafficLightsVisible: vi.fn().mockResolvedValue(undefined),
   startDaemonSidecar: startDaemonSidecarMock,
@@ -106,8 +108,15 @@ vi.mock("./components/SetupWizard", () => ({
   default: (props: {
     onComplete: () => void | Promise<void>;
     daemonGateErrored?: boolean;
+    startupPreflightFailed?: boolean;
+    initialStep?: string;
   }) => (
-    <div data-testid="setup-wizard" data-gate-errored={String(!!props.daemonGateErrored)}>
+    <div
+      data-testid="setup-wizard"
+      data-gate-errored={String(!!props.daemonGateErrored)}
+      data-preflight-failed={String(!!props.startupPreflightFailed)}
+      data-initial-step={props.initialStep}
+    >
       wizard
       <button
         type="button"
@@ -144,7 +153,7 @@ vi.mock("./components/UpdateWatcher", () => ({
   default: () => null,
 }));
 
-import { localSetupCompleted, setSetupCompleted, shouldShowWizard } from "./lib/tauri";
+import { getStartupPreflightStatus, localSetupCompleted, setSetupCompleted, shouldShowWizard } from "./lib/tauri";
 import { getDaemonStartupPhase, setDaemonStartupPhase } from "./lib/daemonStartup";
 import { bootQueryBudgetMs } from "./lib/bootRetryPolicy";
 import { resources } from "./i18n/resources";
@@ -152,6 +161,10 @@ import { getServiceNotices, setServiceFallback } from "./lib/serviceNotices";
 
 const STARTING_RUNTIME = resources.en.translation.common.startingRuntime;
 const BOOT = resources.en.translation.boot;
+
+beforeEach(() => {
+  getStartupPreflightStatusMock.mockReset().mockResolvedValue("ready");
+});
 
 function renderApp() {
   const queryClient = new QueryClient({
@@ -195,6 +208,7 @@ describe("App - first-run wizard gate", () => {
     showWindowMock.mockReset().mockResolvedValue(undefined);
     vi.mocked(shouldShowWizard).mockReset();
     vi.mocked(localSetupCompleted).mockReset().mockResolvedValue(false);
+    vi.mocked(getStartupPreflightStatus).mockReset().mockResolvedValue("ready");
     setDaemonStartupPhase("ready");
     startDaemonSidecarMock.mockReset().mockResolvedValue({ status: "started" });
   });
@@ -276,6 +290,44 @@ describe("App - first-run wizard gate", () => {
     });
     expect(await screen.findByTestId("home-main")).toBeInTheDocument();
     expect(screen.queryByText(STARTING_RUNTIME)).not.toBeInTheDocument();
+  });
+
+  it("shows the preflight repair screen immediately without waiting for the wizard gate", async () => {
+    vi.mocked(localSetupCompleted).mockResolvedValue(false);
+    vi.mocked(getStartupPreflightStatus).mockResolvedValue("failed");
+    vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
+
+    renderApp();
+
+    const wizard = await screen.findByTestId("setup-wizard");
+    expect(wizard).toHaveAttribute("data-preflight-failed", "true");
+    expect(wizard).toHaveAttribute("data-initial-step", "setting-up");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("home-main")).not.toBeInTheDocument();
+  });
+
+  it("keeps the ordinary cold-start screen while preflight is pending", async () => {
+    vi.mocked(localSetupCompleted).mockResolvedValue(false);
+    vi.mocked(getStartupPreflightStatus).mockResolvedValue("pending");
+    vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
+
+    renderApp();
+
+    expect(await screen.findByRole("status")).toHaveTextContent(STARTING_RUNTIME);
+    expect(screen.queryByTestId("setup-wizard")).not.toBeInTheDocument();
+  });
+
+  it("shows the app-restart repair screen for a configured user with a preflight failure", async () => {
+    vi.mocked(localSetupCompleted).mockResolvedValue(true);
+    vi.mocked(getStartupPreflightStatus).mockResolvedValue("failed");
+    vi.mocked(shouldShowWizard).mockReturnValue(new Promise<boolean>(() => {}));
+
+    renderApp();
+
+    const wizard = await screen.findByTestId("setup-wizard");
+    expect(wizard).toHaveAttribute("data-preflight-failed", "true");
+    expect(wizard).toHaveAttribute("data-initial-step", "setting-up");
+    expect(screen.queryByTestId("home-main")).not.toBeInTheDocument();
   });
 
   // The daemon's first-run install is async (app/src/lib.rs) and can race this

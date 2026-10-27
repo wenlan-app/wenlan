@@ -174,6 +174,7 @@ function renderWizard(
     initialPendingModelId?: string | null;
     initialPendingImportPick?: { sourceType: "obsidian" | "directory"; path: string; label: string } | null;
     daemonGateErrored?: boolean;
+    startupPreflightFailed?: boolean;
     embedded?: boolean;
   } = {},
 ) {
@@ -193,6 +194,7 @@ function renderWizard(
           initialPendingModelId={props.initialPendingModelId}
           initialPendingImportPick={props.initialPendingImportPick}
           daemonGateErrored={props.daemonGateErrored}
+          startupPreflightFailed={props.startupPreflightFailed}
           embedded={props.embedded}
         />
       </QueryClientProvider>,
@@ -2637,6 +2639,22 @@ describe("SetupWizard", () => {
       expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Running");
     });
     expect(screen.queryByTestId("daemon-gate-problem")).not.toBeInTheDocument();
+  });
+
+  it("shows the app-restart instruction for a terminal startup preflight failure without retry controls", () => {
+    renderWizard({ initialStep: "setting-up", daemonGateErrored: true, startupPreflightFailed: true });
+
+    expect(screen.getByTestId("startup-preflight-failure")).toHaveTextContent(
+      "Wenlan couldn't repair its startup configuration",
+    );
+    expect(screen.getByTestId("startup-preflight-failure")).toHaveTextContent(
+      "Quit Wenlan, then reopen it to try the repair again.",
+    );
+    expect(screen.queryByRole("button", { name: "Start the service" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    expect(startDaemonSidecar).not.toHaveBeenCalled();
+    expect(getWireState).not.toHaveBeenCalled();
   });
 
   // Item 4. The download row only ever failed on a rejected promise, and the

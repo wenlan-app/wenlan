@@ -11,6 +11,7 @@ import {
   setTrafficLightsVisible,
   shouldShowWizard,
   localSetupCompleted,
+  getStartupPreflightStatus,
   setSetupCompleted,
 } from "./lib/tauri";
 import {
@@ -75,7 +76,22 @@ export default function App() {
     retry: false,
     networkMode: "always",
   });
+  // This status is native startup state, not daemon state. It lets startup
+  // escape the generic boot wait only when the plist preflight has definitively
+  // failed. Pending/ready leaves the existing cold-start gate in
+  // charge. The short background poll handles the unlikely case that the
+  // webview asks before native setup records its result.
+  const { data: startupPreflightStatus = "pending" } = useQuery({
+    queryKey: ["startupPreflightStatus"],
+    queryFn: getStartupPreflightStatus,
+    staleTime: Infinity,
+    retry: false,
+    networkMode: "always",
+    refetchInterval: (query) => query.state.data === "pending" ? 100 : false,
+    refetchIntervalInBackground: true,
+  });
   const openedEarly = localSetupDone === true;
+  const startupPreflightFailed = localSetupDone !== undefined && startupPreflightStatus === "failed";
   const daemonStartupPhase: DaemonStartupPhase = !openedEarly
     ? "ready"
     : wizardPending
@@ -347,6 +363,19 @@ export default function App() {
     // One local file read, well under a frame or two. The background is what
     // index.html already paints, so this is the same empty window, not a flash.
     body = <div className="w-screen h-screen bg-[var(--bg-primary)]" />;
+  } else if (startupPreflightFailed) {
+    // A failed server-plist preflight is terminal for this app launch: the
+    // service start command intentionally refuses to mutate the plist from a
+    // click. Show the explicit quit/reopen instruction now, without waiting
+    // for the ordinary gate budget or offering a misleading start button.
+    body = (
+      <SetupWizard
+        onComplete={handleWizardComplete}
+        initialStep="setting-up"
+        daemonGateErrored
+        startupPreflightFailed
+      />
+    );
   } else if (wizardPending && !openedEarly) {
     // The daemon can take seconds to answer on a cold start. Say so, instead
     // of holding an empty window. --bg-primary is what index.html paints

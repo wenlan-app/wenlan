@@ -89,6 +89,9 @@ interface SetupWizardProps {
   // fail-closed scaffolding around a connection problem, not a first run, and
   // it says so instead of greeting a configured user as brand new.
   daemonGateErrored?: boolean;
+  /** Startup's server-plist preflight failed before the daemon could start.
+   *  This is not repaired by retrying a health probe or spawning a sidecar. */
+  startupPreflightFailed?: boolean;
   /** The wizard occupies an existing app surface rather than its own window. */
   embedded?: boolean;
 }
@@ -2624,6 +2627,7 @@ function SetupWizardFlow({
   initialPendingModelId = null,
   initialPendingImportPick = null,
   daemonGateErrored = false,
+  startupPreflightFailed = false,
 }: SetupWizardProps) {
   const startStep = initialStep ?? "welcome";
   const [step, setStep] = useState<WizardStep>(startStep);
@@ -2648,6 +2652,10 @@ function SetupWizardFlow({
       return merged.size === prev.length ? prev : Array.from(merged);
     });
   }, []);
+
+  if (startupPreflightFailed) {
+    return <StartupPreflightFailure />;
+  }
 
   if (step === "welcome" && !daemonGateErrored) {
     return <NotesWelcome onComplete={onComplete} />;
@@ -2730,6 +2738,41 @@ function SetupWizardFlow({
       seenSince={wizardEnteredAtRef.current}
       onComplete={onComplete}
     />
+  );
+}
+
+function StartupPreflightFailure() {
+  const { t } = useTranslation();
+  return (
+    <StepShell hideDots activeStep="setting-up">
+      <div
+        role="alert"
+        data-testid="startup-preflight-failure"
+        className="flex flex-col"
+        style={{ gap: "12px", paddingTop: "80px" }}
+      >
+        <h1
+          style={{
+            fontFamily: "var(--mem-font-heading)",
+            fontSize: "var(--mem-text-2xl)",
+            fontWeight: 500,
+            color: "var(--mem-text)",
+          }}
+        >
+          {t("boot.preflightRepairTitle")}
+        </h1>
+        <p
+          style={{
+            fontFamily: "var(--mem-font-body)",
+            fontSize: "var(--mem-text-lg)",
+            color: "var(--mem-text-secondary)",
+            lineHeight: 1.5,
+          }}
+        >
+          {t("boot.preflightRepairBody")}
+        </p>
+      </div>
+    </StepShell>
   );
 }
 

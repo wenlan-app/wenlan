@@ -8,6 +8,7 @@ test("keeps the compact service row quiet during automatic recovery and explains
   const errors = collectBrowserErrors(page);
   await installTauriMock(page, {
     locale: "en",
+    rawActions: [],
     localStorage: {
       "wenlan-navigation-v1": JSON.stringify({
         version: 1,
@@ -17,20 +18,24 @@ test("keeps the compact service row quiet during automatic recovery and explains
     },
   });
   await page.addInitScript(() => {
+    const browserWindow = window as typeof window & {
+      __daemonRecoveryCalls: { statusReads: number; restarts: number };
+      __finishDaemonRecovery?: () => void;
+    };
     const internals = window.__TAURI_INTERNALS__;
     if (!internals) throw new Error("Tauri mock was not installed before bootstrap");
     const originalInvoke = internals.invoke.bind(internals);
     let failedRestarts = 1;
-    window.__daemonRecoveryCalls = { statusReads: 0, restarts: 0 };
+    browserWindow.__daemonRecoveryCalls = { statusReads: 0, restarts: 0 };
     internals.invoke = async (command: string, args?: unknown) => {
       if (command === "daemon_version_status") {
-        window.__daemonRecoveryCalls.statusReads += 1;
+        browserWindow.__daemonRecoveryCalls.statusReads += 1;
         return { daemon: "0.19.3", app: "0.20.0", matched: false, owner: "launchd", program: null };
       }
       if (command === "restart_daemon") {
-        window.__daemonRecoveryCalls.restarts += 1;
+        browserWindow.__daemonRecoveryCalls.restarts += 1;
         if (failedRestarts > 0) {
-          await new Promise<void>((resolve) => { window.__finishDaemonRecovery = resolve; });
+          await new Promise<void>((resolve) => { browserWindow.__finishDaemonRecovery = resolve; });
           failedRestarts -= 1;
           throw "daemon-restart:still-mismatched";
         }
@@ -45,13 +50,29 @@ test("keeps the compact service row quiet during automatic recovery and explains
   // Wait until the watcher has started its safe retry. The compact rail has no
   // warning while recovery is in progress; only the service icon becomes amber
   // after the mocked restart reports the mismatch again.
-  await expect.poll(() => page.evaluate(() => (window as typeof window & { __daemonRecoveryCalls: { statusReads: number } }).__daemonRecoveryCalls.statusReads))
+  await expect.poll(() => page.evaluate(() => {
+    const browserWindow = window as typeof window & {
+      __daemonRecoveryCalls: { statusReads: number };
+    };
+    return browserWindow.__daemonRecoveryCalls.statusReads;
+  }))
     .toBeGreaterThan(0);
-  await expect.poll(() => page.evaluate(() => (window as typeof window & { __daemonRecoveryCalls: { restarts: number } }).__daemonRecoveryCalls.restarts))
+  await expect.poll(() => page.evaluate(() => {
+    const browserWindow = window as typeof window & {
+      __daemonRecoveryCalls: { restarts: number };
+    };
+    return browserWindow.__daemonRecoveryCalls.restarts;
+  }))
     .toBeGreaterThan(0);
   await expect(page.getByTestId("service-status")).toHaveCount(0);
 
-  await page.evaluate(() => window.__finishDaemonRecovery());
+  await page.evaluate(() => {
+    const browserWindow = window as typeof window & {
+      __finishDaemonRecovery?: () => void;
+    };
+    if (!browserWindow.__finishDaemonRecovery) throw new Error("automatic recovery is not pending");
+    browserWindow.__finishDaemonRecovery();
+  });
   await openPrimaryDestination(page, "Wiki");
   const status = page.getByTestId("service-status");
   await expect(status).toHaveAttribute("data-kind", "outOfDate");
@@ -63,7 +84,12 @@ test("keeps the compact service row quiet during automatic recovery and explains
 
   await page.getByTestId("service-status-action").click();
   await expect(page.getByTestId("service-status")).toHaveCount(0);
-  expect(await page.evaluate(() => (window as typeof window & { __daemonRecoveryCalls: { restarts: number } }).__daemonRecoveryCalls.restarts)).toBe(2);
+  expect(await page.evaluate(() => {
+    const browserWindow = window as typeof window & {
+      __daemonRecoveryCalls: { restarts: number };
+    };
+    return browserWindow.__daemonRecoveryCalls.restarts;
+  })).toBe(2);
   expect(errors.pageErrors).toEqual([]);
   expect(errors.consoleErrors).toEqual([]);
 });

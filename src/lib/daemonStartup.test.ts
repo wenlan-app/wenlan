@@ -6,6 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriInvokeMock }));
 
 import { daemonStartupWait, getDaemonStartupPhase, setDaemonStartupPhase } from "./daemonStartup";
 import {
+  getStartupPreflightStatus,
   getDaemonVersionStatus,
   listRecentPages,
   restartDaemon,
@@ -53,6 +54,15 @@ describe("daemon startup hold", () => {
       "should_show_wizard",
       "start_daemon_sidecar",
     ]);
+  });
+
+  it("lets the startup preflight status through while starting", () => {
+    tauriInvokeMock.mockResolvedValue("failed");
+    setDaemonStartupPhase("starting");
+
+    void getStartupPreflightStatus();
+
+    expect(tauriInvokeMock).toHaveBeenCalledWith("get_startup_preflight_status");
   });
 
   it("lets version diagnosis and manual recovery through while starting", () => {

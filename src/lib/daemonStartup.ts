@@ -27,6 +27,7 @@ const ANSWERS_WITHOUT_DAEMON = new Set<string>([
   "should_show_wizard",
   "local_setup_completed",
   "wire_state",
+  "get_startup_preflight_status",
   "start_daemon_sidecar",
   "daemon_version_status",
   "restart_daemon",

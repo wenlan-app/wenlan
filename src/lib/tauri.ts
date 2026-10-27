@@ -3920,6 +3920,15 @@ export async function startDaemonSidecar(): Promise<DaemonStartResult> {
   return invoke("start_daemon_sidecar");
 }
 
+/** Startup's LaunchAgent preflight state, read without waiting for the daemon.
+ *  A terminal failure lets first-run UI explain the required app restart while
+ *  ordinary cold starts continue through the daemon-backed boot gate. */
+export type StartupPreflightStatus = "pending" | "ready" | "failed";
+
+export async function getStartupPreflightStatus(): Promise<StartupPreflightStatus> {
+  return invoke("get_startup_preflight_status");
+}
+
 // ===== Onboarding Journey Milestones =====
 
 export type MilestoneId =

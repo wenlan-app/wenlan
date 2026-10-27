@@ -27,6 +27,19 @@ describe("translation resources", () => {
     expect(resources.en.translation.settings.language.label).toBe("Language");
   });
 
+  it("explains a terminal startup preflight failure in every locale", () => {
+    expect(supportedAppLocales.map((locale) => resources[locale].translation.boot.preflightRepairTitle)).toEqual([
+      "Wenlan couldn't repair its startup configuration",
+      "文澜无法修复启动配置",
+      "文瀾無法修復啟動設定",
+    ]);
+    expect(supportedAppLocales.map((locale) => resources[locale].translation.boot.preflightRepairBody)).toEqual([
+      "Quit Wenlan, then reopen it to try the repair again.",
+      "请退出文澜后重新打开，再试一次修复。",
+      "請退出文瀾後重新開啟，再試一次修復。",
+    ]);
+  });
+
   it("keeps the Connections subtitles and concise status copy exact in every locale", () => {
     const copy = supportedAppLocales.map((locale) => resources[locale].translation.connectMatrix);
     expect(copy.map((locale) => locale.subtitleCodex)).toEqual([
