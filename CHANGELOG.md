@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.20.2](https://github.com/wenlan-app/wenlan/compare/v0.20.1...v0.20.2) (2026-10-27)
+
+
+### Features
+
+* **connect:** connect the Kimi desktop app and clean up the Connections page ([#1017](https://github.com/wenlan-app/wenlan/issues/1017)) ([cfc370f](https://github.com/wenlan-app/wenlan/commit/cfc370f870c74dd0b221152c33fb480c9ebb5cc0))
+* **steep:** organize new pages' sources on demand and offer pages after import ([#1016](https://github.com/wenlan-app/wenlan/issues/1016)) ([85f72fd](https://github.com/wenlan-app/wenlan/commit/85f72fdc6a19c684a1779600ebb9371493c8b7d6))
+
+
+### Bug Fixes
+
+* **app:** tidy citation and link preview cards ([#1014](https://github.com/wenlan-app/wenlan/issues/1014)) ([11a6898](https://github.com/wenlan-app/wenlan/commit/11a689854d0affae877f305c69135267ecc0696b))
+
 ## [0.20.1](https://github.com/wenlan-app/wenlan/compare/v0.20.0...v0.20.1) (2026-10-25)
 
 
