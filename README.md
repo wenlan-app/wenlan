@@ -29,10 +29,8 @@
   <a href="#license"><img alt="License: Apache-2.0 and AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
 </p>
 
-<!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
-
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Watch the Wenlan walkthrough" width="100%"></a>
+  <a href="https://youtu.be/vM2GXS6UjyA"><img src="./docs/assets/readme-video-cover-en.png" alt="Watch the Wenlan launch film (1:44)" width="100%"></a>
 </p>
 
 <a id="why-wenlan"></a>

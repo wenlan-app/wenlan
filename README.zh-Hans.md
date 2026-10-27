@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=51a95b2103002be792aa2bb8b7946373a7bcd5bf31489bacca847da7bf0115f1 -->
+<!-- README_SYNC: source=README.md sha256=67cdf91d8405178c43a6a0837eeed71f1284a8b6ad041569773b85f31c61abfb -->
 
 <p align="center">
   <picture>
@@ -31,10 +31,8 @@
   <a href="#license"><img alt="许可证：Apache-2.0 与 AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
 </p>
 
-<!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
-
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/60b791b0-9726-4fbc-8f08-7e1ab0f5d89d"><img src="./docs/assets/readme-video-cover-zh-Hans.png" alt="观看 Wenlan 操作导览" width="100%"></a>
+  <a href="https://youtu.be/vM2GXS6UjyA"><img src="./docs/assets/readme-video-cover-zh-Hans.png" alt="观看 Wenlan 介绍视频（1:44，英文）" width="100%"></a>
 </p>
 
 <a id="why-wenlan"></a>

@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=51a95b2103002be792aa2bb8b7946373a7bcd5bf31489bacca847da7bf0115f1 -->
+<!-- README_SYNC: source=README.md sha256=67cdf91d8405178c43a6a0837eeed71f1284a8b6ad041569773b85f31c61abfb -->
 
 <p align="center">
   <picture>
@@ -31,10 +31,8 @@
   <a href="#license"><img alt="Licencia: Apache-2.0 y AGPL-3.0" src="https://img.shields.io/badge/license-Apache--2.0%20%2B%20AGPL--3.0-blue.svg"></a>
 </p>
 
-<!-- R113 walkthrough: approved 0.5-second cover; 1080p; original video/audio and masters retained. -->
-
 <p align="center">
-  <a href="https://github.com/user-attachments/assets/5e661389-d7ea-4a36-a645-2b1ec2a92d32"><img src="./docs/assets/readme-video-cover-en.png" alt="Ver el recorrido por Wenlan" width="100%"></a>
+  <a href="https://youtu.be/vM2GXS6UjyA"><img src="./docs/assets/readme-video-cover-en.png" alt="Ver el vídeo de presentación de Wenlan (1:44, en inglés)" width="100%"></a>
 </p>
 
 <a id="why-wenlan"></a>
