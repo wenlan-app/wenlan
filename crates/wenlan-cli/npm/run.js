@@ -7,6 +7,7 @@ const fs = require("fs");
 const https = require("https");
 const os = require("os");
 const path = require("path");
+const { pipeline } = require("stream/promises");
 
 const REPO = "wenlan-app/wenlan";
 const ASSET = "wenlan-darwin-arm64.tar.gz";
@@ -53,62 +54,106 @@ function binDir() {
   return path.join(os.homedir(), ".wenlan", "bin");
 }
 
-// The public releases page redirects to the latest tag. Unlike the GitHub API
-// it has no limit of 60 anonymous calls per hour per IP address, which a
-// shared network can exhaust before a first install.
-function latestTag() {
-  const url = `https://github.com/${REPO}/releases/latest`;
-  const tagPage = `https://github.com/${REPO}/releases/tag/`;
+// Bound DNS/connect/headers, inactive sockets, and the full redirect/download
+// chain separately: slow but progressing downloads can take up to five minutes.
+const REQUEST_IDLE_MS = 30_000;
+const REQUEST_TOTAL_MS = 5 * 60_000;
+const MAX_REDIRECTS = 10;
+
+function getResponse(url, headers, options) {
+  const { get = https.get, idleMs = REQUEST_IDLE_MS, deadline } = options;
   return new Promise((resolve, reject) => {
-    https
-      .get(url, { headers: { "User-Agent": "wenlan" } }, (res) => {
-        res.resume();
-        try {
-          const redirected = res.statusCode >= 300 && res.statusCode < 400;
-          const location = (res.headers.location || "").split(/[?#]/)[0];
-          if (!redirected || !location.startsWith(tagPage)) {
-            throw new Error(
-              `Could not find the latest Wenlan release at ${url} (HTTP ${res.statusCode}). ` +
-                "Check the network, or pin one with WENLAN_RELEASE_TAG=vX.Y.Z."
-            );
-          }
-          resolve(checkTag(decodeURIComponent(location.slice(tagPage.length))));
-        } catch (err) {
-          reject(err);
-        }
-      })
-      .on("error", reject);
+    let req;
+    let response;
+    let headersTimer;
+    let totalTimer;
+    const clearTimers = () => {
+      clearTimeout(headersTimer);
+      clearTimeout(totalTimer);
+    };
+    const fail = (error) => {
+      clearTimers();
+      reject(error);
+      response?.destroy(error);
+      req?.destroy(error);
+    };
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      reject(new Error("Wenlan download timed out. Check your connection and retry."));
+      return;
+    }
+    const timeout = () => fail(new Error("Wenlan download timed out. Check your connection and retry."));
+    headersTimer = setTimeout(timeout, Math.min(idleMs, remaining));
+    totalTimer = setTimeout(timeout, remaining);
+    try {
+      req = get(url, { headers: { "User-Agent": "wenlan", ...headers } }, (res) => {
+        response = res;
+        clearTimeout(headersTimer);
+        res.once("end", clearTimers);
+        res.once("close", clearTimers);
+        // Keep an error listener even when a redirect body is being discarded.
+        // pipeline also observes this error for the actual archive response.
+        res.once("error", clearTimers);
+        resolve(res);
+      });
+      req.once("error", (error) => {
+        clearTimers();
+        reject(error);
+        response?.destroy(error);
+      });
+      req.setTimeout(idleMs, timeout);
+    } catch (error) {
+      fail(error);
+    }
   });
 }
 
-function request(url, headers = {}) {
-  return new Promise((resolve, reject) => {
-    https
-      .get(url, { headers: { "User-Agent": "wenlan", ...headers } }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume();
-          resolve(request(res.headers.location, headers));
-          return;
-        }
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          res.resume();
-          reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-          return;
-        }
-        resolve(res);
-      })
-      .on("error", reject);
+// The public page avoids the low anonymous GitHub API rate limit.
+async function latestTag(options = {}) {
+  const url = `https://github.com/${REPO}/releases/latest`;
+  const tagPage = `https://github.com/${REPO}/releases/tag/`;
+  const res = await getResponse(url, {}, {
+    ...options,
+    deadline: Date.now() + (options.totalMs ?? REQUEST_TOTAL_MS),
   });
+  res.destroy();
+  const redirected = res.statusCode >= 300 && res.statusCode < 400;
+  const location = (res.headers.location || "").split(/[?#]/)[0];
+  if (!redirected || !location.startsWith(tagPage)) {
+    throw new Error(
+      `Could not find the latest Wenlan release at ${url} (HTTP ${res.statusCode}). ` +
+        "Check the network, or pin one with WENLAN_RELEASE_TAG=vX.Y.Z."
+    );
+  }
+  return checkTag(decodeURIComponent(location.slice(tagPage.length)));
+}
+
+async function request(url, headers = {}, options = {}) {
+  const deadline = Date.now() + (options.totalMs ?? REQUEST_TOTAL_MS);
+  const maxRedirects = options.maxRedirects ?? MAX_REDIRECTS;
+  let current = new URL(url);
+  for (let redirects = 0; ; redirects += 1) {
+    if (current.protocol !== "https:") {
+      throw new Error("Wenlan downloads require HTTPS.");
+    }
+    const res = await getResponse(current.href, headers, { ...options, deadline });
+    if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      res.destroy();
+      if (redirects >= maxRedirects) throw new Error("Too many Wenlan download redirects.");
+      current = new URL(res.headers.location, current);
+      continue;
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      res.destroy();
+      throw new Error(`HTTP ${res.statusCode} for ${current.href}`);
+    }
+    return res;
+  }
 }
 
 async function download(url, dest) {
   const res = await request(url);
-  await new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    res.pipe(file);
-    file.on("finish", () => file.close(resolve));
-    file.on("error", reject);
-  });
+  await pipeline(res, fs.createWriteStream(dest));
 }
 
 function extractBinaries(archivePath, dir) {
@@ -375,6 +420,8 @@ module.exports = {
   checkTag,
   extractBinaries,
   installBinaries,
+  latestTag,
+  request,
   readStamp,
   safeTag,
 };

@@ -421,3 +421,76 @@ describe("extractBinaries", () => {
     }
   );
 });
+
+// Real loopback sockets exercise timeout and stream-error propagation without
+// reaching GitHub or touching installed binaries. HTTPS policy remains in the
+// production request helper; only its transport is injected for this fixture.
+const http = require('node:http');
+const { Writable } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
+const { request, latestTag } = require('./run.js');
+async function withDownloadServer(handler, verify) {
+  const server = http.createServer(handler);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const get = (url, options, callback) => http.get(
+    `http://127.0.0.1:${address.port}${new URL(url).pathname}`,
+    options, callback,
+  );
+  try {
+    await verify({ get, idleMs: 75, totalMs: 1000 });
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+}
+
+test('latest lookup and archive request reject a server that never sends headers', async () => {
+  await withDownloadServer(() => {}, async options => {
+    await assert.rejects(latestTag(options), /timed out/);
+    await assert.rejects(request('https://fixture/archive', {}, options), /timed out/);
+  });
+});
+
+test('stalled archive body rejects the download pipeline', async () => {
+  await withDownloadServer((_req, res) => {
+    res.writeHead(200);
+    res.write('partial archive');
+  }, async options => {
+    const response = await request('https://fixture/archive', {}, options);
+    await assert.rejects(pipeline(response, new Writable({
+      write(_chunk, _encoding, done) { done(); },
+    })), /timed out/);
+  });
+});
+
+test('total deadline also bounds a continuously progressing response', async () => {
+  await withDownloadServer((_req, res) => {
+    res.writeHead(200);
+    const timer = setInterval(() => res.write('x'), 10);
+    res.once('close', () => clearInterval(timer));
+  }, async options => {
+    const response = await request('https://fixture/archive', {}, { ...options, idleMs: 200, totalMs: 80 });
+    await assert.rejects(pipeline(response, new Writable({
+      write(_chunk, _encoding, done) { done(); },
+    })), /timed out/);
+  });
+});
+
+test('relative redirects succeed, loops and insecure redirects fail', async () => {
+  await withDownloadServer((req, res) => {
+    if (req.url === '/ok') { res.end('archive'); return; }
+    res.writeHead(302, { location: req.url === '/start' ? '/ok' : req.url === '/insecure' ? 'http://fixture/ok' : '/loop' });
+    res.end();
+  }, async options => {
+    const response = await request('https://fixture/start', {}, options);
+    let body = '';
+    for await (const chunk of response) body += chunk;
+    assert.equal(body, 'archive');
+    await assert.rejects(request('https://fixture/loop', {}, { ...options, maxRedirects: 2 }), /Too many/);
+    await assert.rejects(request('https://fixture/insecure', {}, options), /HTTPS/);
+  });
+});
