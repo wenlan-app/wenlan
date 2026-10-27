@@ -1274,6 +1274,8 @@ const en = {
         "This run uses a separate data directory, so the service is left alone. Restart it yourself.",
       stillMismatched:
         "The service restarted but still reports an older version. Check how the service is installed, then try again.",
+      sidecarStopUnconfirmed:
+        "Wenlan couldn't confirm the background service stopped. Try again to finish restarting it.",
     },
   },
   settings: {
@@ -4245,6 +4247,8 @@ const zhHans = {
         "本次运行使用了单独的数据目录，因此不会改动该服务。请自行重启它。",
       stillMismatched:
         "服务已重启，但仍报告较旧的版本。请检查服务的安装方式，然后再试一次。",
+      sidecarStopUnconfirmed:
+        "文澜无法确认后台服务已经停止。请再试一次，完成服务重启。",
     },
   },
   settings: {
@@ -7183,6 +7187,8 @@ const zhHant = {
         "本次執行使用了獨立的資料目錄，因此不會更動該服務。請自行重新啟動它。",
       stillMismatched:
         "服務已重新啟動，但仍回報較舊的版本。請檢查服務的安裝方式，然後再試一次。",
+      sidecarStopUnconfirmed:
+        "無法確認文瀾的背景服務已停止。請再試一次，以完成服務重新啟動。",
     },
   },
   settings: {

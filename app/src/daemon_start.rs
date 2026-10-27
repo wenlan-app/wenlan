@@ -1222,6 +1222,24 @@ const VERSION_HEAL_REPOLL_LIMIT: Duration = Duration::from_secs(10);
 pub const RESTART_ERROR_NOT_OWNED: &str = "daemon-restart:not-owned";
 pub const RESTART_ERROR_ISOLATED: &str = "daemon-restart:isolated";
 pub const RESTART_ERROR_STILL_MISMATCHED: &str = "daemon-restart:still-mismatched";
+const RESTART_ERROR_SIDECAR_STILL_RUNNING: &str = "daemon-restart:sidecar-still-running";
+const RESTART_ERROR_SIDECAR_STOP_UNVERIFIED: &str = "daemon-restart:sidecar-stop-unverified";
+
+/// Only a measured exit is enough to put a replacement on the sidecar's port.
+/// A failed measurement leaves the recorded process owned by this app and
+/// available for another stop attempt.
+fn sidecar_respawn_error(outcome: &SidecarStopOutcome) -> Option<String> {
+    match outcome {
+        SidecarStopOutcome::Ended => None,
+        SidecarStopOutcome::NoSidecar => Some(RESTART_ERROR_NOT_OWNED.to_string()),
+        SidecarStopOutcome::StillRunning { reason } => {
+            Some(format!("{RESTART_ERROR_SIDECAR_STILL_RUNNING}: {reason}"))
+        }
+        SidecarStopOutcome::CouldNotMeasure { reason } => {
+            Some(format!("{RESTART_ERROR_SIDECAR_STOP_UNVERIFIED}: {reason}"))
+        }
+    }
+}
 
 /// One self-heal at a time. The startup health poll and the banner's
 /// "Restart service" button both run [`heal_version_mismatch`]; a click while
@@ -1473,9 +1491,10 @@ pub async fn heal_version_mismatch(
             // no sidecar to stop belongs to another process (an older app
             // still running, or a separate install): a respawn would meet
             // the held port and exit, so report without an attempt.
-            if matches!(stop_sidecar().await, SidecarStopOutcome::NoSidecar) {
+            let stop_outcome = stop_sidecar().await;
+            if let Some(error) = sidecar_respawn_error(&stop_outcome) {
                 log::warn!(
-                    "[daemon-version] no app-owned sidecar to restart; the mismatched daemon belongs to another process"
+                    "[daemon-version] refusing sidecar respawn because stop was not confirmed: {stop_outcome:?}"
                 );
                 return DaemonVersionReport {
                     daemon: daemon_version.to_string(),
@@ -1483,7 +1502,7 @@ pub async fn heal_version_mismatch(
                     matched: false,
                     restarted: false,
                     owner: owner_label(owner),
-                    error: Some(RESTART_ERROR_NOT_OWNED.to_string()),
+                    error: Some(error),
                     program,
                 };
             }
@@ -1629,8 +1648,12 @@ pub async fn restart_daemon_to_move_pages(
         }
         crate::lifecycle::VersionMismatchAction::RespawnSidecar => {
             log::info!("[pages-folder] respawning the app-owned sidecar to move pages");
-            if matches!(stop_sidecar().await, SidecarStopOutcome::NoSidecar) {
-                return Err(RESTART_ERROR_NOT_OWNED.to_string());
+            let stop_outcome = stop_sidecar().await;
+            if let Some(error) = sidecar_respawn_error(&stop_outcome) {
+                log::warn!(
+                    "[pages-folder] refusing sidecar respawn because stop was not confirmed: {stop_outcome:?}"
+                );
+                return Err(error);
             }
             respawn_sidecar_for_version_heal(
                 &app,
@@ -1671,6 +1694,27 @@ mod version_heal_tests {
             error: error.map(str::to_string),
             program: None,
         }
+    }
+
+    #[test]
+    fn sidecar_respawn_requires_a_confirmed_end() {
+        assert_eq!(sidecar_respawn_error(&SidecarStopOutcome::Ended), None);
+        assert_eq!(
+            sidecar_respawn_error(&SidecarStopOutcome::NoSidecar),
+            Some(RESTART_ERROR_NOT_OWNED.to_string())
+        );
+        assert_eq!(
+            sidecar_respawn_error(&SidecarStopOutcome::StillRunning {
+                reason: "pid still alive".to_string(),
+            }),
+            Some("daemon-restart:sidecar-still-running: pid still alive".to_string())
+        );
+        assert_eq!(
+            sidecar_respawn_error(&SidecarStopOutcome::CouldNotMeasure {
+                reason: "permission denied".to_string(),
+            }),
+            Some("daemon-restart:sidecar-stop-unverified: permission denied".to_string())
+        );
     }
 
     fn live_status(daemon: &str) -> DaemonVersionStatus {
@@ -2185,7 +2229,8 @@ mod tests {
         let binding = JobBinding::Unbound {
             reason: "restricted token".to_string(),
         };
-        install_sidecar_for_test(identity_of(&helper), binding.clone());
+        let identity = identity_of(&helper);
+        install_sidecar_for_test(identity, binding.clone());
 
         let first = stop_sidecar().await;
 
@@ -2195,8 +2240,14 @@ mod tests {
         );
         assert_eq!(
             sidecar_job_binding(),
-            Some(binding),
+            Some(binding.clone()),
             "the wire must keep reporting the real binding while the daemon is up"
+        );
+        assert!(sidecar_respawn_error(&first).is_some());
+        assert_eq!(
+            identity.presence(),
+            ProcessPresence::Running,
+            "the real original process must still be tracked after a failed stop"
         );
 
         let second = stop_sidecar().await;
@@ -2212,10 +2263,25 @@ mod tests {
             "the recorded failure was replaced: {:?}",
             last_sidecar_stop()
         );
+        assert!(sidecar_respawn_error(&second).is_some());
+
+        let _ = helper.kill();
+        helper.wait().expect("reap the original helper");
+
+        // The same tracked identity now measures as ended. Only this result
+        // may release the sidecar slot and let a replacement be installed.
+        let confirmed_end = stop_sidecar().await;
+        assert_eq!(confirmed_end, SidecarStopOutcome::Ended);
+        assert_eq!(sidecar_respawn_error(&confirmed_end), None);
+        assert_eq!(sidecar_job_binding(), None);
+
+        let mut replacement = spawn_a_live_process();
+        install_sidecar_for_test(identity_of(&replacement), binding.clone());
+        assert_eq!(sidecar_job_binding(), Some(binding));
 
         clear_sidecar_for_test();
-        let _ = helper.kill();
-        let _ = helper.wait();
+        let _ = replacement.kill();
+        let _ = replacement.wait();
     }
 
     /// Defect 2, end to end. The port-release path reported one immediate

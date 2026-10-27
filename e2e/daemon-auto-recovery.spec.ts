@@ -37,7 +37,7 @@ test("keeps the compact service row quiet during automatic recovery and explains
         if (failedRestarts > 0) {
           await new Promise<void>((resolve) => { browserWindow.__finishDaemonRecovery = resolve; });
           failedRestarts -= 1;
-          throw "daemon-restart:still-mismatched";
+          throw "daemon-restart:sidecar-still-running: pid 12345 is still alive";
         }
         return "0.20.0";
       }
@@ -78,7 +78,10 @@ test("keeps the compact service row quiet during automatic recovery and explains
   await expect(status).toHaveAttribute("data-kind", "outOfDate");
   if (await status.getAttribute("aria-expanded") === "false") await status.click();
   await expect(page.getByTestId("service-status-popover")).toContainText("0.19.3");
-  await expect(page.getByRole("alert")).toContainText("The service restarted but still reports an older version");
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("Wenlan couldn't confirm the background service stopped");
+  await expect(alert).not.toContainText("12345");
+  await expect(alert).not.toContainText("still alive");
   await expect(page.getByTestId("service-status-action")).toBeEnabled();
   await page.screenshot({ path: info.outputPath("compact-service-recovery-failed.png"), fullPage: false });
 

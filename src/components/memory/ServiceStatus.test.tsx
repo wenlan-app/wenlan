@@ -121,6 +121,20 @@ describe("ServiceStatus", () => {
     expect(row()).toHaveAttribute("data-kind", "outOfDate");
   });
 
+  it.each([
+    "daemon-restart:sidecar-still-running: pid still alive",
+    "daemon-restart:sidecar-stop-unverified: permission denied",
+  ])("explains how to recover when the app cannot confirm its sidecar stopped (%s)", (error) => {
+    setVersionReport({ ...OUT_OF_DATE, restarted: false, error });
+    renderStatus(<ServiceStatus compact />);
+
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent(SERVICE.errors.sidecarStopUnconfirmed);
+    expect(alert).not.toHaveTextContent("pid still alive");
+    expect(alert).not.toHaveTextContent("permission denied");
+    expect(action()).toBeEnabled();
+  });
+
   it("keeps raw service-manager diagnostics out of the notice", () => {
     const rawError = `launchctl print gui/501/com.wenlan.server\n${"diagnostic line\n".repeat(80)}`;
     setVersionReport({ ...OUT_OF_DATE, restarted: true, error: rawError });

@@ -9,12 +9,13 @@ const RESTART_ERROR_KEYS = {
   "daemon-restart:not-owned": "daemonService.errors.notOwned",
   "daemon-restart:isolated": "daemonService.errors.isolated",
   "daemon-restart:still-mismatched": "daemonService.errors.stillMismatched",
+  "daemon-restart:sidecar-still-running": "daemonService.errors.sidecarStopUnconfirmed",
+  "daemon-restart:sidecar-stop-unverified": "daemonService.errors.sidecarStopUnconfirmed",
 } as const;
 
 export type RestartErrorKey = (typeof RESTART_ERROR_KEYS)[keyof typeof RESTART_ERROR_KEYS];
 
 export function restartErrorKey(raw: string): RestartErrorKey | null {
-  return Object.prototype.hasOwnProperty.call(RESTART_ERROR_KEYS, raw)
-    ? RESTART_ERROR_KEYS[raw as keyof typeof RESTART_ERROR_KEYS]
-    : null;
+  const key = Object.keys(RESTART_ERROR_KEYS).find((prefix) => raw === prefix || raw.startsWith(`${prefix}:`));
+  return key ? RESTART_ERROR_KEYS[key as keyof typeof RESTART_ERROR_KEYS] : null;
 }
