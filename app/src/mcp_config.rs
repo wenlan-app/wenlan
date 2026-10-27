@@ -298,7 +298,13 @@ pub enum ClientConfigPath {
 /// The expected config file path for each MCP client.
 pub fn client_config_path(client_type: &str) -> ClientConfigPath {
     let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
-    client_config_path_for(client_type, home.as_deref(), config_dir.as_deref())
+    let codex_home = crate::identity_paths::codex_home_dir();
+    client_config_path_for_with_codex_home(
+        client_type,
+        home.as_deref(),
+        config_dir.as_deref(),
+        codex_home.as_deref(),
+    )
 }
 
 /// Path construction, split from the directory lookups so the "the platform
@@ -306,10 +312,21 @@ pub fn client_config_path(client_type: &str) -> ClientConfigPath {
 /// not reachable through the environment on Windows — `dirs::home_dir()`
 /// resolves the known folder and IGNORES `$HOME` — so without this seam the
 /// branch could only be reasoned about, never measured.
+#[cfg(test)]
 pub(crate) fn client_config_path_for(
     client_type: &str,
     home: Option<&Path>,
     config_dir: Option<&Path>,
+) -> ClientConfigPath {
+    let codex_home = home.map(|home| home.join(".codex"));
+    client_config_path_for_with_codex_home(client_type, home, config_dir, codex_home.as_deref())
+}
+
+fn client_config_path_for_with_codex_home(
+    client_type: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+    codex_home: Option<&Path>,
 ) -> ClientConfigPath {
     // Each arm asks only for the directory it actually needs — `claude_desktop`
     // does not use `home` at all — and a directory that could not be determined
@@ -332,7 +349,7 @@ pub(crate) fn client_config_path_for(
         "cursor" => under(home, HOME, &[".cursor", "mcp.json"]),
         "claude_code" => under(home, HOME, &[".claude.json"]),
         "gemini_cli" => under(home, HOME, &[".gemini", "settings.json"]),
-        "codex_cli" => under(home, HOME, &[".codex", "config.toml"]),
+        "codex_cli" => under(codex_home, "the Codex state directory", &["config.toml"]),
         // Muse Code documents one user settings file, `~/.config/muse/settings.json`,
         // on every platform. It is NOT resolved through `config_dir`: on macOS
         // and Windows that is `Library/Application Support` / `AppData`, which
@@ -362,8 +379,8 @@ pub(crate) fn client_config_path_for(
         // `~/.kimi-code/mcp.json`, `mcpServers` with `{command, args}`. The
         // legacy Python `kimi-cli` used `~/.kimi/mcp.json`; `kimi migrate`
         // moves it, and it is being retired, so only the current file is
-        // written. `KIMI_CODE_HOME` relocates the folder; like `CODEX_HOME`,
-        // it is not followed here.
+        // written. `KIMI_CODE_HOME` relocates the folder. Unlike Codex, this
+        // lookup does not follow that client-specific override.
         "kimi_code" => under(home, HOME, &[".kimi-code", "mcp.json"]),
         // Kimi, Moonshot AI's general desktop app (not Kimi Code), embeds its
         // own Kimi Code whose `KIMI_CODE_HOME` is under the app's data folder,
@@ -639,16 +656,16 @@ fn codex_cli_plugin_enabled(toml_str: &str) -> Result<bool, String> {
         }))
 }
 
-/// Reads the real `~/.codex/config.toml` and checks it via
+/// Reads the selected Codex `config.toml` and checks it via
 /// `codex_cli_plugin_enabled`. Split out so the matching logic stays a pure,
 /// directly testable function.
-fn codex_cli_plugin_enabled_on_disk(home: Option<&Path>) -> Reading {
-    match home {
-        Some(home) => {
-            read_config(&home.join(".codex").join("config.toml")).asks(codex_cli_plugin_enabled)
+fn codex_cli_plugin_enabled_on_disk(codex_home: Option<&Path>) -> Reading {
+    match codex_home {
+        Some(codex_home) => {
+            read_config(&codex_home.join("config.toml")).asks(codex_cli_plugin_enabled)
         }
         None => Reading::Unreadable {
-            error: "the platform would not report a home directory".to_string(),
+            error: "the platform would not report a Codex state directory".to_string(),
         },
     }
 }
@@ -804,8 +821,9 @@ fn home_lookup_reading(home: Option<&Path>) -> Reading {
 }
 
 /// Where ChatGPT desktop can be installed. Its Codex pane reads the same
-/// `~/.codex/config.toml` as Codex CLI (OpenAI merged Codex into the ChatGPT
-/// app), so finding the bundle means the `codex_cli` row applies.
+/// The Codex pane reads the same effective config root as Codex CLI (OpenAI
+/// merged Codex into the ChatGPT app), so finding the bundle means the
+/// `codex_cli` row applies.
 fn chatgpt_app_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     let mut out = vec![PathBuf::from("/Applications/ChatGPT.app")];
     if let Some(home) = home {
@@ -814,8 +832,8 @@ fn chatgpt_app_candidates(home: Option<&Path>) -> Vec<PathBuf> {
     out
 }
 
-/// Whether the Codex CLI row should be detected: either its shared
-/// `~/.codex/config.toml` exists, or ChatGPT desktop is installed. Feeds the
+/// Whether the Codex CLI row should be detected: either its shared config
+/// exists, or ChatGPT desktop is installed. Feeds the
 /// single `codex_cli` row — never a second row for ChatGPT.
 ///
 /// `exists` is injected so the bundle paths themselves are under test: a typo
@@ -859,6 +877,8 @@ impl HostKind {
 /// is [`detect_mcp_clients`]; a hermetic one is [`detect_mcp_clients_from`].
 pub(crate) struct DetectProbes<'a> {
     pub host: HostKind,
+    /// Effective Codex home selected by `identity_paths`.
+    pub codex_home: Option<&'a Path>,
     /// The per-user program folder the platform reports (`%LOCALAPPDATA%` on
     /// Windows). Only consulted on Windows.
     pub local_data_dir: Option<&'a Path>,
@@ -1204,10 +1224,10 @@ fn program_reading(client_type: &str, home: Option<&Path>, probes: &DetectProbes
 
 /// What a client leaves behind in its own home folder, beyond the one config
 /// file `detect_mcp_clients_from` already reads: Cursor's `~/.cursor`, Codex's
-/// `~/.codex` and Muse Code's `~/.config/muse` exist once the client has run,
-/// with or without a `mcp.json` / `config.toml` / `settings.json`. Only the
-/// folder's existence is asked — never its contents (`config.toml` is the
-/// user's, and read only where it already was).
+/// effective state directory, and Muse Code's `~/.config/muse` exist once the
+/// client has run, with or without a `mcp.json` / `config.toml` /
+/// `settings.json`. Only the folder's existence is asked — never its contents
+/// (`config.toml` is the user's, and read only where it already was).
 ///
 /// Kimi (the desktop app) keeps its files under the application-configuration
 /// folder rather than the home, so that one client is looked for there.
@@ -1215,6 +1235,7 @@ fn client_home_dir_reading(
     client_type: &str,
     home: Option<&Path>,
     config_dir: Option<&Path>,
+    codex_home: Option<&Path>,
     exists: &dyn Fn(&Path) -> Reading,
 ) -> Reading {
     if client_type == "kimi_desktop" {
@@ -1234,11 +1255,18 @@ fn client_home_dir_reading(
             exists,
         );
     }
+    if client_type == "codex_cli" {
+        return match codex_home {
+            Some(path) => exists(path),
+            None => Reading::Unreadable {
+                error: "the platform would not report a Codex state directory".to_string(),
+            },
+        };
+    }
     // Path components rather than one string, so `.config/muse` is joined with
     // the platform's own separator. Several places are an OR.
     let dirs: &[&[&str]] = match client_type {
         "cursor" => &[&[".cursor"]],
-        "codex_cli" => &[&[".codex"]],
         "muse_code" => &[&[".config", "muse"]],
         // Antigravity's own folder under `~/.gemini`, current and older. NOT
         // `~/.gemini` itself, which Gemini CLI owns, and not `~/.gemini/skills`,
@@ -1363,10 +1391,11 @@ fn client_plugin_enabled_for(
     client_type: &str,
     home: Option<&Path>,
     config_dir: Option<&Path>,
+    codex_home: Option<&Path>,
 ) -> Reading {
     match client_type {
         "claude_code" => claude_code_plugin_enabled_on_disk(home),
-        "codex_cli" => codex_cli_plugin_enabled_on_disk(home),
+        "codex_cli" => codex_cli_plugin_enabled_on_disk(codex_home),
         "claude_desktop" => claude_desktop_plugin_enabled_on_disk(config_dir),
         _ => Reading::No,
     }
@@ -1705,6 +1734,7 @@ pub fn detect_mcp_clients() -> Vec<McpClient> {
     let local_data_dir = dirs::data_local_dir();
     let program_files = program_files_dirs();
     let (home, config_dir) = crate::identity_paths::ai_tool_dirs();
+    let codex_home = crate::identity_paths::codex_home_dir();
     let preferred_mcp_command = match find_wenlan_mcp_binary_with_trail().resolution {
         McpBinaryResolution::Found { path, .. } => Some(path),
         McpBinaryResolution::NoneInstalled | McpBinaryResolution::Unresolved(_) => None,
@@ -1714,6 +1744,7 @@ pub fn detect_mcp_clients() -> Vec<McpClient> {
         config_dir.as_deref(),
         &DetectProbes {
             host: HostKind::current(),
+            codex_home: codex_home.as_deref(),
             local_data_dir: local_data_dir.as_deref(),
             program_files: &program_files,
             exists: &path_exists_reading,
@@ -1740,11 +1771,13 @@ pub(crate) fn detect_mcp_clients_from(
     config_dir: Option<&Path>,
     exists: impl Fn(&Path) -> Reading,
 ) -> Vec<McpClient> {
+    let codex_home = home.map(|home| home.join(".codex"));
     detect_mcp_clients_with(
         home,
         config_dir,
         &DetectProbes {
             host: HostKind::MacOs,
+            codex_home: codex_home.as_deref(),
             local_data_dir: None,
             program_files: &[],
             exists: &exists,
@@ -1786,7 +1819,12 @@ pub(crate) fn detect_mcp_clients_with(
         // honest output for a client whose config path could not be built, and
         // it can only exist if the row exists.
         .map(|(name, client_type)| {
-            let path = client_config_path_for(client_type, home, config_dir);
+            let path = client_config_path_for_with_codex_home(
+                client_type,
+                home,
+                config_dir,
+                probes.codex_home,
+            );
             let (config_path, config) = match &path {
                 ClientConfigPath::Known(path) => {
                     // ONE read answers both "is the file there" and "what does
@@ -1807,7 +1845,8 @@ pub(crate) fn detect_mcp_clients_with(
 
             let has_raw_entry = raw_entry_reading(client_type, &config);
             let has_raw_duplicate = raw_duplicate_reading(client_type, &config);
-            let has_plugin = client_plugin_enabled_for(client_type, home, config_dir);
+            let has_plugin =
+                client_plugin_enabled_for(client_type, home, config_dir, probes.codex_home);
             let entry_health = entry_health_reading(client_type, &config, probes);
 
             // Two kinds of evidence that the client is here. The program (an app
@@ -1821,6 +1860,7 @@ pub(crate) fn detect_mcp_clients_with(
                 client_type,
                 home,
                 config_dir,
+                probes.codex_home,
                 probes.exists,
             ));
             let detected = program.clone().or(leftovers.clone());
@@ -4768,6 +4808,25 @@ mod tests {
     }
 
     #[test]
+    fn codex_config_path_uses_the_effective_codex_home() {
+        let home = PathBuf::from("/Users/someone");
+        let custom_codex_home = PathBuf::from("/Volumes/codex-profile");
+        assert_eq!(
+            client_config_path_for_with_codex_home(
+                "codex_cli",
+                Some(&home),
+                None,
+                Some(&custom_codex_home),
+            ),
+            ClientConfigPath::Known(custom_codex_home.join("config.toml"))
+        );
+        assert!(matches!(
+            client_config_path_for_with_codex_home("codex_cli", Some(&home), None, None),
+            ClientConfigPath::Undetermined(_)
+        ));
+    }
+
+    #[test]
     fn test_detect_mcp_clients_has_exactly_one_codex_cli_row() {
         // ChatGPT desktop shares ~/.codex/config.toml with Codex CLI — it
         // must fold into the existing codex_cli row, never add a second row.
@@ -4808,7 +4867,11 @@ mod tests {
         ] {
             match client_config_path_for(client_type, None, Some(&config_dir)) {
                 ClientConfigPath::Undetermined(why) => assert!(
-                    why.contains("home directory"),
+                    why.contains(if client_type == "codex_cli" {
+                        "Codex state directory"
+                    } else {
+                        "home directory"
+                    }),
                     "the reason must name what could not be determined: {why}"
                 ),
                 other => panic!("{client_type} reported {other:?} for an unreadable home"),
@@ -5851,6 +5914,7 @@ args = ["-y", "wenlan-mcp"]
     /// passes, so nothing here ever looks at the developer's own machine.
     struct Machine {
         host: HostKind,
+        codex_home: Option<PathBuf>,
         local: Option<PathBuf>,
         program_files: Vec<PathBuf>,
         existing: Vec<PathBuf>,
@@ -5864,6 +5928,7 @@ args = ["-y", "wenlan-mcp"]
         fn new(host: HostKind) -> Self {
             Machine {
                 host,
+                codex_home: None,
                 local: None,
                 program_files: Vec::new(),
                 existing: Vec::new(),
@@ -5895,11 +5960,16 @@ args = ["-y", "wenlan-mcp"]
                     .contains(&name)
                     .then(|| PathBuf::from("/fake/bin").join(name))
             };
+            let codex_home = self
+                .codex_home
+                .clone()
+                .unwrap_or_else(|| home.join(".codex"));
             detect_mcp_clients_with(
                 Some(home),
                 Some(home),
                 &DetectProbes {
                     host: self.host,
+                    codex_home: Some(&codex_home),
                     local_data_dir: self.local.as_deref(),
                     program_files: &self.program_files,
                     exists: &exists,
@@ -6111,10 +6181,21 @@ args = ["-y", "wenlan-mcp"]
 
         let mut machine = Machine::new(HostKind::Linux);
         machine.on_path = vec!["codex"];
+        assert!(
+            !home.join(".codex").exists(),
+            "fresh Codex has no state dir"
+        );
+        let clients = machine.detect(home);
+        let codex = row(&clients, "codex_cli");
         assert_eq!(
-            machine.install_state(home, "codex_cli"),
+            codex.install_state,
             InstallState::Installed,
             "codex on PATH, no ChatGPT, no ~/.codex"
+        );
+        assert_eq!(codex.detected, Reading::Yes);
+        assert_eq!(
+            codex.config_path.as_deref(),
+            Some(home.join(".codex/config.toml").to_string_lossy().as_ref())
         );
 
         let mut machine = Machine::new(HostKind::MacOs);
@@ -6125,11 +6206,52 @@ args = ["-y", "wenlan-mcp"]
             "the ChatGPT desktop bundle still counts"
         );
 
+        let machine = Machine::new(HostKind::MacOs);
+        assert_eq!(
+            machine.install_state(home, "codex_cli"),
+            InstallState::NotFound,
+            "no executable, ChatGPT.app, Codex state, or config"
+        );
+
         let machine = Machine::new(HostKind::Windows);
         assert_eq!(
             machine.install_state(home, "codex_cli"),
             InstallState::NotFound
         );
+    }
+
+    #[test]
+    fn codex_detection_and_plugin_state_share_custom_codex_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let codex_home = tmp.path().join("separate-codex-profile");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::write(
+            codex_home.join("config.toml"),
+            "[plugins.\"wenlan@test\"]\nenabled = true\n",
+        )
+        .unwrap();
+
+        let mut machine = Machine::new(HostKind::Linux);
+        machine.codex_home = Some(codex_home.clone());
+        machine.on_path = vec!["codex"];
+        machine.existing = vec![codex_home.clone()];
+        let clients = machine.detect(home);
+        let codex = row(&clients, "codex_cli");
+        assert_eq!(
+            codex.config_path.as_deref(),
+            Some(codex_home.join("config.toml").to_string_lossy().as_ref())
+        );
+        assert_eq!(codex.install_state, InstallState::Installed);
+        assert_eq!(codex.has_plugin, Reading::Yes);
+
+        let mut machine = Machine::new(HostKind::Linux);
+        machine.codex_home = Some(codex_home.clone());
+        machine.existing = vec![codex_home];
+        let clients = machine.detect(home);
+        let codex = row(&clients, "codex_cli");
+        assert_eq!(codex.install_state, InstallState::ConfigOnly);
+        assert_eq!(codex.has_plugin, Reading::Yes);
     }
 
     #[test]
@@ -6284,6 +6406,7 @@ args = ["-y", "wenlan-mcp"]
     ) -> DetectProbes<'a> {
         DetectProbes {
             host,
+            codex_home: None,
             local_data_dir: None,
             program_files: &[],
             exists: &nothing_exists,

@@ -444,6 +444,22 @@ fn client_command(bin: &Path) -> Command {
     client_command_with_path(bin, std::env::var_os("PATH"))
 }
 
+fn codex_command(bin: &Path, codex_home: &Path) -> Command {
+    codex_command_with_path(bin, std::env::var_os("PATH"), codex_home)
+}
+
+fn codex_command_with_path(
+    bin: &Path,
+    inherited_path: Option<OsString>,
+    codex_home: &Path,
+) -> Command {
+    let mut command = client_command_with_path(bin, inherited_path);
+    // Always override an inherited empty or stale CODEX_HOME so the CLI uses
+    // the same effective root Wenlan selected and prepared for this install.
+    command.env("CODEX_HOME", codex_home);
+    command
+}
+
 /// Builds a client command with the selected executable's directory at the
 /// front of its PATH. Some CLI shims use `#!/usr/bin/env node`, so they need
 /// sibling runtimes even when Wenlan itself was launched with a minimal GUI
@@ -463,21 +479,23 @@ fn client_command_with_path(bin: &Path, inherited_path: Option<OsString>) -> Com
     }
     if crate::identity_paths::isolated_dev_state_dir().is_some() {
         if let (Some(home), _) = crate::identity_paths::ai_tool_dirs() {
-            // Codex refuses a CODEX_HOME that does not exist, and in a fresh
-            // isolated state dir nothing has created it yet.
-            let codex_home = home.join(".codex");
-            let _ = std::fs::create_dir_all(&codex_home);
-            command
-                .env("HOME", &home)
-                .env("USERPROFILE", &home)
-                .env("CODEX_HOME", codex_home);
+            command.env("HOME", &home).env("USERPROFILE", &home);
         }
     }
     command
 }
 
-fn resolve_selector(bin: &Path, parse: impl Fn(&str) -> Option<String>, fallback: &str) -> String {
-    match client_command(bin)
+fn resolve_selector(
+    bin: &Path,
+    codex_home: Option<&Path>,
+    parse: impl Fn(&str) -> Option<String>,
+    fallback: &str,
+) -> String {
+    let mut command = match codex_home {
+        Some(codex_home) => codex_command(bin, codex_home),
+        None => client_command(bin),
+    };
+    match command
         .args(["plugin", "marketplace", "list", "--json"])
         .output()
     {
@@ -557,8 +575,17 @@ fn classify_step(
     )))
 }
 
-fn run_step(bin: &Path, step: &'static str, args: &[&str]) -> Result<(), PluginInstallError> {
-    let output = client_command(bin)
+fn run_step(
+    bin: &Path,
+    codex_home: Option<&Path>,
+    step: &'static str,
+    args: &[&str],
+) -> Result<(), PluginInstallError> {
+    let mut command = match codex_home {
+        Some(codex_home) => codex_command(bin, codex_home),
+        None => client_command(bin),
+    };
+    let output = command
         .args(args)
         .output()
         .map_err(|e| PluginInstallError::StepFailed(format!("{step}: {e}")))?;
@@ -570,6 +597,21 @@ fn run_step(bin: &Path, step: &'static str, args: &[&str]) -> Result<(), PluginI
     )
 }
 
+fn prepare_codex_home(codex_home: Option<PathBuf>) -> Result<PathBuf, PluginInstallError> {
+    let codex_home = codex_home.ok_or_else(|| {
+        PluginInstallError::StepFailed(
+            "Codex state directory could not be determined (CODEX_HOME)".to_string(),
+        )
+    })?;
+    std::fs::create_dir_all(&codex_home).map_err(|error| {
+        PluginInstallError::StepFailed(format!(
+            "Could not create Codex state directory {}: {error}",
+            codex_home.display()
+        ))
+    })?;
+    Ok(codex_home)
+}
+
 // ── Public install entry points ─────────────────────────────────────────
 
 /// Installs the Wenlan Claude Code plugin: `claude plugin marketplace add
@@ -579,15 +621,22 @@ pub fn install_claude_code_plugin() -> Result<(), PluginInstallError> {
     let bin = resolve_binary("claude").ok_or(PluginInstallError::CliNotFound("Claude Code"))?;
     run_step(
         &bin,
+        None,
         "marketplace add",
         &["plugin", "marketplace", "add", WENLAN_REPO],
     )?;
     let selector = resolve_selector(
         &bin,
+        None,
         find_marketplace_name_claude,
         FALLBACK_MARKETPLACE_CLAUDE,
     );
-    run_step(&bin, "plugin install", &["plugin", "install", &selector])?;
+    run_step(
+        &bin,
+        None,
+        "plugin install",
+        &["plugin", "install", &selector],
+    )?;
     Ok(())
 }
 
@@ -597,17 +646,25 @@ pub fn install_claude_code_plugin() -> Result<(), PluginInstallError> {
 /// Idempotent — succeeds if the marketplace or plugin is already present.
 pub fn install_codex_plugin() -> Result<(), PluginInstallError> {
     let bin = resolve_binary("codex").ok_or(PluginInstallError::CliNotFound("Codex"))?;
+    let codex_home = prepare_codex_home(crate::identity_paths::codex_home_dir())?;
     run_step(
         &bin,
+        Some(&codex_home),
         "marketplace add",
         &["plugin", "marketplace", "add", WENLAN_REPO],
     )?;
     let selector = resolve_selector(
         &bin,
+        Some(&codex_home),
         find_marketplace_name_codex,
         FALLBACK_MARKETPLACE_CODEX,
     );
-    run_step(&bin, "plugin add", &["plugin", "add", &selector])?;
+    run_step(
+        &bin,
+        Some(&codex_home),
+        "plugin add",
+        &["plugin", "add", &selector],
+    )?;
     Ok(())
 }
 
@@ -716,6 +773,50 @@ mod tests {
         assert!(command
             .get_envs()
             .all(|(name, _)| name != std::ffi::OsStr::new("PATH")));
+    }
+
+    #[test]
+    fn codex_command_sets_the_selected_home_over_inherited_environment() {
+        let temp = tempfile::tempdir().unwrap();
+        let codex_home = temp.path().join("chosen-codex-home");
+        let inherited = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let command =
+            codex_command_with_path(Path::new("/tools/bin/codex"), Some(inherited), &codex_home);
+
+        let selected = command
+            .get_envs()
+            .find(|(name, _)| *name == std::ffi::OsStr::new("CODEX_HOME"))
+            .and_then(|(_, value)| value)
+            .expect("Codex command should explicitly set CODEX_HOME");
+        assert_eq!(PathBuf::from(selected), codex_home);
+    }
+
+    #[test]
+    fn prepare_codex_home_creates_the_selected_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("not-created-yet").join(".codex");
+
+        assert!(!root.exists());
+        let selected = prepare_codex_home(Some(root.clone())).unwrap();
+
+        assert_eq!(selected, root);
+        assert!(selected.is_dir());
+    }
+
+    #[test]
+    fn prepare_codex_home_reports_creation_and_resolution_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let blocker = temp.path().join("file-not-directory");
+        std::fs::write(&blocker, "block").unwrap();
+        let impossible_child = blocker.join(".codex");
+
+        let error = prepare_codex_home(Some(impossible_child.clone())).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("Could not create Codex state directory"));
+        assert!(message.contains(&impossible_child.display().to_string()));
+
+        let error = prepare_codex_home(None).unwrap_err();
+        assert!(error.to_string().contains("CODEX_HOME"));
     }
 
     // ── PATH search ─────────────────────────────────────────────────────

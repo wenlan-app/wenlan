@@ -268,6 +268,39 @@ fn ai_tool_dirs_for(state_dir: Option<PathBuf>) -> (Option<PathBuf>, Option<Path
     }
 }
 
+/// The root Codex uses for its config and plugin state. An isolated dev
+/// checkout always takes precedence so test/dev commands cannot see or write
+/// the user's Codex profile. Otherwise honor a non-empty CODEX_HOME, then use
+/// the OS-reported home directory.
+pub(crate) fn codex_home_dir() -> Option<PathBuf> {
+    let isolated_state = isolated_dev_state_dir();
+    if isolated_state.is_some() {
+        return codex_home_dir_for(isolated_state, None, None);
+    }
+    let configured = std::env::var_os("CODEX_HOME").filter(|value| !value.is_empty());
+    if configured.is_some() {
+        return codex_home_dir_for(None, configured, None);
+    }
+    codex_home_dir_for(None, None, dirs::home_dir())
+}
+
+/// Pure precedence rule for Codex's state root. Kept separate so tests can
+/// prove the selected location without reading process environment or a real
+/// user's profile.
+fn codex_home_dir_for(
+    isolated_state_dir: Option<PathBuf>,
+    configured_codex_home: Option<std::ffi::OsString>,
+    default_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(state) = isolated_state_dir {
+        return Some(state.join("ai-tools").join("home").join(".codex"));
+    }
+    if let Some(configured) = configured_codex_home.filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(configured));
+    }
+    default_home.map(|home| home.join(".codex"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,5 +567,41 @@ mod mcp_tests {
                 Some(state.join("ai-tools").join("config"))
             )
         );
+    }
+
+    #[test]
+    fn codex_home_prefers_isolated_state_then_configured_then_default() {
+        let state = PathBuf::from("/scratch/wenlan-dev");
+        let configured = std::ffi::OsString::from("/custom/codex-home");
+        let default_home = PathBuf::from("/Users/u");
+        assert_eq!(
+            codex_home_dir_for(
+                Some(state.clone()),
+                Some(configured.clone()),
+                Some(default_home.clone())
+            ),
+            Some(state.join("ai-tools/home/.codex"))
+        );
+        assert_eq!(
+            codex_home_dir_for(None, Some(configured.clone()), Some(default_home.clone())),
+            Some(PathBuf::from(configured))
+        );
+        assert_eq!(
+            codex_home_dir_for(None, None, Some(default_home)),
+            Some(PathBuf::from("/Users/u/.codex"))
+        );
+    }
+
+    #[test]
+    fn empty_codex_home_falls_back_and_missing_home_stays_undetermined() {
+        assert_eq!(
+            codex_home_dir_for(
+                None,
+                Some(std::ffi::OsString::new()),
+                Some(PathBuf::from("/Users/u"))
+            ),
+            Some(PathBuf::from("/Users/u/.codex"))
+        );
+        assert_eq!(codex_home_dir_for(None, None, None), None);
     }
 }
