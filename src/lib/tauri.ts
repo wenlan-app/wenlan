@@ -301,6 +301,9 @@ export interface DaemonVersionStatus {
   matched: boolean;
   owner: "launchd" | "sidecar" | "unknown";
   program?: string | null;
+  /** Retained recovery outcome, including an event emitted before UI startup. */
+  restarted?: boolean;
+  error?: string | null;
 }
 
 /** Outcome of one self-heal attempt, emitted as `daemon://version`. */

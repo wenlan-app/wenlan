@@ -28,6 +28,8 @@ const ANSWERS_WITHOUT_DAEMON = new Set<string>([
   "local_setup_completed",
   "wire_state",
   "start_daemon_sidecar",
+  "daemon_version_status",
+  "restart_daemon",
   "set_traffic_lights_visible",
   "acknowledge_guarded_quit_request",
   "cancel_guarded_quit_request",

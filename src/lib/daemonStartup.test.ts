@@ -5,7 +5,13 @@ const { tauriInvokeMock } = vi.hoisted(() => ({ tauriInvokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: tauriInvokeMock }));
 
 import { daemonStartupWait, getDaemonStartupPhase, setDaemonStartupPhase } from "./daemonStartup";
-import { listRecentPages, shouldShowWizard, startDaemonSidecar } from "./tauri";
+import {
+  getDaemonVersionStatus,
+  listRecentPages,
+  restartDaemon,
+  shouldShowWizard,
+  startDaemonSidecar,
+} from "./tauri";
 
 async function flush() {
   for (let i = 0; i < 5; i += 1) await Promise.resolve();
@@ -46,6 +52,19 @@ describe("daemon startup hold", () => {
     expect(tauriInvokeMock.mock.calls.map((call) => call[0])).toEqual([
       "should_show_wizard",
       "start_daemon_sidecar",
+    ]);
+  });
+
+  it("lets version diagnosis and manual recovery through while starting", () => {
+    tauriInvokeMock.mockResolvedValue({});
+    setDaemonStartupPhase("starting");
+
+    void getDaemonVersionStatus();
+    void restartDaemon();
+
+    expect(tauriInvokeMock.mock.calls.map((call) => call[0])).toEqual([
+      "daemon_version_status",
+      "restart_daemon",
     ]);
   });
 

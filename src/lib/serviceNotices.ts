@@ -49,7 +49,26 @@ function publish(next: Partial<ServiceNotices>): void {
  *  nothing answered (a restart pressed with the daemon down) has no daemon
  *  version and says nothing about which version will answer. */
 export function setVersionReport(report: VersionReport | null): void {
+  // A failed restart can leave the daemon offline, so Rust may report no
+  // version at all. Keep the actionable failure that led to this retry rather
+  // than clearing the row on an empty follow-up report.
+  if (
+    report &&
+    !report.matched &&
+    !report.daemon &&
+    isTerminalRestartFailure(notices.version)
+  ) {
+    return;
+  }
   publish({ version: report && !report.matched && report.daemon ? report : null });
+}
+
+function isTerminalRestartFailure(report: VersionReport | null): boolean {
+  return Boolean(
+    report &&
+    !report.matched &&
+    (("restarted" in report && report.restarted === true) || ("error" in report && report.error)),
+  );
 }
 
 export function setServiceFallback(fallback: boolean): void {
@@ -85,6 +104,10 @@ export function serviceStatusKind(
   phase: DaemonStartupPhase,
   { version, fallback }: ServiceNotices,
 ): ServiceStatusKind | null {
+  // A completed restart failure is known even if the separate boot gate is
+  // still waiting for its own health query. Bare version mismatches remain
+  // quiet until startup settles.
+  if (isTerminalRestartFailure(version)) return "outOfDate";
   if (phase === "failed") return "notAnswering";
   // While the workspace waits, nothing else is known yet: an old report or a
   // fallback said before the daemon answered may be about to change.

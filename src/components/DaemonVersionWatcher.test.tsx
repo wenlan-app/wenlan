@@ -44,6 +44,20 @@ describe("DaemonVersionWatcher", () => {
     expect(getServiceNotices().version).toBeNull();
   });
 
+  it("shows a cached terminal failure on the first ready read without restarting again", async () => {
+    const cachedFailure = {
+      ...mismatchedStatus,
+      restarted: true,
+      error: "daemon-restart:still-mismatched",
+    };
+    getStatusMock.mockResolvedValue(cachedFailure);
+
+    render(<DaemonVersionWatcher />);
+
+    await waitFor(() => expect(getServiceNotices().version).toMatchObject(cachedFailure));
+    expect(restartMock).not.toHaveBeenCalled();
+  });
+
   it("automatically recovers an initial mismatch without publishing a warning", async () => {
     getStatusMock.mockResolvedValue(mismatchedStatus);
     let finishRestart!: (version: string) => void;
@@ -70,6 +84,60 @@ describe("DaemonVersionWatcher", () => {
 
     finishRestart("0.18.2");
     await waitFor(() => expect(getServiceNotices().version).toBeNull());
+  });
+
+  it("does not show a cached terminal read while a newer automatic retry is pending", async () => {
+    const cachedFailure = {
+      ...mismatchedStatus,
+      restarted: true,
+      error: "daemon-restart:still-mismatched",
+    };
+    getStatusMock
+      .mockResolvedValueOnce(mismatchedStatus)
+      .mockResolvedValueOnce(cachedFailure);
+    let failRestart!: (error: string) => void;
+    restartMock.mockImplementation(() => new Promise<string>((_resolve, reject) => { failRestart = reject; }));
+    render(<DaemonVersionWatcher />);
+    await waitFor(() => expect(restartMock).toHaveBeenCalledTimes(1));
+
+    act(() => setDaemonStartupPhase("starting"));
+    act(() => setDaemonStartupPhase("ready"));
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(2));
+    expect(getServiceNotices().version).toBeNull();
+
+    act(() => failRestart("newer retry failed"));
+    await waitFor(() => expect(getServiceNotices().version).toMatchObject({
+      restarted: true,
+      error: "newer retry failed",
+    }));
+  });
+
+  it("ignores a delayed starting probe after the ready-phase recovery begins", async () => {
+    act(() => setDaemonStartupPhase("starting"));
+    const cachedFailure = {
+      ...mismatchedStatus,
+      restarted: true,
+      error: "daemon-restart:still-mismatched",
+    };
+    let finishStartingProbe!: (status: typeof cachedFailure) => void;
+    getStatusMock
+      .mockImplementationOnce(() => new Promise((resolve) => { finishStartingProbe = resolve; }))
+      .mockResolvedValueOnce(mismatchedStatus);
+    let failRestart!: (error: string) => void;
+    restartMock.mockImplementation(() => new Promise<string>((_resolve, reject) => { failRestart = reject; }));
+    render(<DaemonVersionWatcher />);
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(1));
+
+    act(() => setDaemonStartupPhase("ready"));
+    await waitFor(() => expect(restartMock).toHaveBeenCalledTimes(1));
+    act(() => finishStartingProbe(cachedFailure));
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(2));
+    expect(getServiceNotices().version).toBeNull();
+
+    act(() => failRestart("ready recovery failed"));
+    await waitFor(() => expect(getServiceNotices().version).toMatchObject({
+      error: "ready recovery failed",
+    }));
   });
 
   it("defers a failed startup event until the frontend retry returns its error", async () => {
@@ -128,6 +196,84 @@ describe("DaemonVersionWatcher", () => {
       restarted: true,
       error: "daemon-restart:still-mismatched",
     }));
+  });
+
+  it("publishes a terminal startup recovery failure while the startup gate is still waiting", async () => {
+    act(() => setDaemonStartupPhase("starting"));
+    getStatusMock.mockRejectedValue(new Error("connection refused after service restart"));
+    render(<DaemonVersionWatcher />);
+    await waitFor(() => expect(listenMock).toHaveBeenCalledTimes(1));
+
+    fireVersionEvent({
+      ...mismatchedStatus,
+      restarted: true,
+      owner: "launchd",
+      error: "wenlan restart failed: daemon did not become healthy",
+    });
+
+    await waitFor(() => expect(getServiceNotices().version).toMatchObject({
+      daemon: mismatchedStatus.daemon,
+      restarted: true,
+      error: "wenlan restart failed: daemon did not become healthy",
+    }));
+  });
+
+  it("recovers a missed terminal startup event from the cached status without retrying", async () => {
+    act(() => setDaemonStartupPhase("starting"));
+    const cachedFailure = {
+      ...mismatchedStatus,
+      restarted: true,
+      error: "daemon-restart:still-mismatched",
+    };
+    getStatusMock
+      .mockResolvedValueOnce(cachedFailure)
+      .mockResolvedValueOnce(mismatchedStatus);
+    render(<DaemonVersionWatcher />);
+    await waitFor(() => expect(getServiceNotices().version).toMatchObject(cachedFailure));
+
+    act(() => setDaemonStartupPhase("ready"));
+
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(2));
+    expect(restartMock).not.toHaveBeenCalled();
+    expect(getServiceNotices().version).toMatchObject(cachedFailure);
+  });
+
+  it("clears the terminal failure when the startup status probe confirms a match", async () => {
+    act(() => setDaemonStartupPhase("starting"));
+    setVersionReport({
+      ...mismatchedStatus,
+      restarted: true,
+      error: "daemon-restart:still-mismatched",
+    });
+    getStatusMock.mockResolvedValue(matchedStatus);
+    render(<DaemonVersionWatcher />);
+
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getServiceNotices().version).toBeNull());
+    expect(restartMock).not.toHaveBeenCalled();
+  });
+
+  it("preserves the previous terminal failure when a retry event has no daemon version", async () => {
+    const previousFailure = {
+      ...mismatchedStatus,
+      restarted: true,
+      error: "daemon-restart:still-mismatched",
+    };
+    setVersionReport(previousFailure);
+    getStatusMock.mockRejectedValueOnce(new Error("daemon unavailable"));
+    render(<DaemonVersionWatcher />);
+    await waitFor(() => expect(getStatusMock).toHaveBeenCalledTimes(1));
+
+    fireVersionEvent({
+      daemon: "",
+      app: mismatchedStatus.app,
+      matched: false,
+      restarted: true,
+      owner: "launchd",
+      error: "daemon-restart:no-answer",
+    });
+
+    expect(getServiceNotices().version).toMatchObject(previousFailure);
   });
 
   it("does not overwrite a newer successful event with a stale mismatch read", async () => {
