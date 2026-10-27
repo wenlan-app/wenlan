@@ -9,8 +9,8 @@
 
 <p align="center">
   <strong>Notas, código y chats de IA en una wiki, contrastada con sus fuentes.</strong><br>
-  Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.<br>
-  App de escritorio para Mac (Apple silicon) y Windows. CLI y servicio local en Linux.
+  Una sola fuente de verdad para ti y tus herramientas de IA, al día cuando cambian tus fuentes.<br>
+  Tus notas se quedan en tu equipo y solo van a las herramientas de IA que elijas.
 </p>
 
 <p align="center">
@@ -63,21 +63,17 @@
 
 ## Primeros pasos
 
-Guarda tu material en Wenlan para que tus herramientas de IA habituales lo usen para responder preguntas y ayudarte a completar tareas.
-
 ### 1. Descarga y abre Wenlan
 
-[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) (macOS 11 o posterior en Apple Silicon, o Windows x64), instálala y ábrela.
+[Descarga la aplicación de escritorio](https://github.com/wenlan-app/wenlan/releases/latest) para macOS 11 o posterior en Apple Silicon, o Windows x64. La app está en inglés, chino simplificado y chino tradicional.
 
-La app está en inglés, chino simplificado y chino tradicional.
+¿Prefieres el terminal? En un Mac, ejecuta `npx -y wenlan setup`, o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. Linux y Windows: [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation).
 
-¿Prefieres el terminal? En un Mac, ejecuta `npx -y wenlan setup`, o `brew install 7xuanlu/tap/wenlan` y después `wenlan setup`. Para Linux y Windows, consulta la [guía de instalación de la CLI](docs/setup-and-data.es-ES.md#installation).
+### 2. Trae tu material
 
-### 2. Crea una página o importa material existente
+Crea una página o trae una bóveda de Obsidian, un grafo de Logseq, una carpeta o chats de IA anteriores. [Guía de importación](docs/import-guide.md).
 
-Crea una página en Wenlan, conecta una bóveda de Obsidian o un grafo de Logseq, añade una carpeta o importa conversaciones y recuerdos de IA anteriores. [Guía de importación](docs/import-guide.md).
-
-### 3. Conecta una herramienta de IA cuando quieras
+### 3. Conecta tu herramienta de IA
 
 | Herramienta de IA | Conexión | Configuración |
 |---|---|---|
@@ -86,17 +82,13 @@ Crea una página en Wenlan, conecta una bóveda de Obsidian o un grafo de Logseq
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP y skills | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code y otros clientes MCP | MCP | [Guía de MCP](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-En los ajustes de la aplicación, **Add a tool** muestra las herramientas de IA instaladas en tu ordenador y **Connect all** las configura con un solo clic. Las herramientas que leen skills también reciben las skills de Wenlan para configurar, recuperar, guardar, el brief y el traspaso.
+En los ajustes de la aplicación, **Add a tool** encuentra las herramientas de IA de tu ordenador y **Connect all** las configura con un solo clic. Después, inicia una nueva sesión de IA y pide:
 
-Tras instalar un plugin, inicia una nueva sesión de IA y ejecuta `/wenlan` (`$wenlan` en Codex). Comprueba que Wenlan funciona y lo configura si hace falta. Para todo lo demás, escribe lo que quieres a continuación, por ejemplo `/wenlan abre mi página sobre el plan de lanzamiento`.
+> /recall mis páginas y decisiones anteriores sobre esto y luego ayúdame con: …
 
-El material importado ya está listo para usar; no hace falta crear una página primero. Pregunta a tu IA:
+En Codex, usa `$recall`; con una herramienta solo MCP, pídele que consulte Wenlan primero.
 
-> Usa lo que he guardado en Wenlan para ayudarme con esta tarea: …
-
-Para convertir el material importado en páginas con citas, ejecuta `/wenlan steep` (`$wenlan steep` en Codex). Las instalaciones nuevas hacen Steep en modo **On demand**, con tu herramienta de IA; cambia a **Automatic** con un [modelo](docs/steep.md#enable-steep) para organizar memorias y actualizar páginas en segundo plano.
-
-¿No sabes qué pedir? Abre **What your AI can do** en la aplicación para ver el texto exacto que debes escribir en tu herramienta de IA.
+Cuando termina una importación, la aplicación ofrece **Write pages with** tu herramienta de IA para convertirla en tus primeras páginas con citas. No hace falta ningún comando.
 
 <a id="what-can-i-bring-in"></a>
 
@@ -143,7 +135,7 @@ Guardar material es solo el comienzo. **Steep lo prepara para reutilizarlo y man
 
 Elige uno de dos modos en Settings:
 
-- **On demand** (las instalaciones nuevas empiezan aquí): cuando tu herramienta de IA guarda o escribe en Wenlan, hace Steep sobre la marcha, sin ningún comando. Para terminar el resto de una vez, ejecuta `/wenlan steep`: escribe páginas nuevas a partir del material importado y pone al día las páginas desactualizadas.
+- **On demand** (las instalaciones nuevas empiezan aquí): cuando tu herramienta de IA guarda o escribe en Wenlan, hace Steep sobre la marcha y, mientras trabaja, sabe qué páginas están desactualizadas y qué material aún no está en ninguna página. No hace falta ningún comando; `/wenlan steep` está ahí si quieres ponerlo todo al día de una vez.
 - **Automatic:** Wenlan hace Steep en segundo plano con el modelo que asignes.
 
 Qué hace Steep:
@@ -163,7 +155,7 @@ En ambos modos, sin modelo, Wenlan:
 - **Sugiere fusionar páginas casi duplicadas** con una tarjeta que tú o tu IA aceptan o descartan.
 - **Ordena los enlaces:** lista los `[[enlaces]]` que aún no llevan a ninguna página y quita las citas a memorias que borraste.
 
-Reescribir una página marcada requiere un modelo. En **Automatic**, Wenlan lo hace en segundo plano. En **On demand**, las páginas marcadas esperan hasta que ejecutes `/wenlan steep` en tu herramienta de IA.
+Reescribir una página marcada requiere un modelo. En **Automatic**, Wenlan lo hace en segundo plano. En **On demand**, tu herramienta de IA sabe qué páginas esperan y puede ponerlas al día mientras trabaja.
 
 [Guía de Steep: activadores, reglas de revisión y modelos (en inglés)](docs/steep.md). Elige un modelo en el dispositivo, un servidor local o un proveedor en la nube; el trabajo en segundo plano con modelos es opcional.
 
@@ -173,7 +165,7 @@ Reescribir una página marcada requiere un modelo. En **Automatic**, Wenlan lo h
 
 ## Una wiki para tu repositorio de código
 
-Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA planifica la wiki a partir del propio repositorio: una página de resumen que enumera todas las páginas y, después, una página para cada parte o flujo que necesita conocer alguien nuevo. Una herramienta pequeña tiene pocas páginas; un monorepo grande, muchas más. Al volver a ejecutarlo solo escribe las páginas que faltan. `/wenlan wiki` sustituye a `/wenlan map`, sin alias para el nombre anterior.
+Ejecuta `/wenlan wiki` (`$wenlan wiki` en Codex) en un repositorio. Tu herramienta de IA planifica la wiki a partir del propio repositorio: una página de resumen que enumera todas las páginas y, después, una página para cada parte o flujo que necesita conocer alguien nuevo. Una herramienta pequeña tiene pocas páginas; un monorepo grande, muchas más. Al volver a ejecutarlo solo escribe las páginas que faltan.
 
 - **Ligada al código:** Cada página registra las líneas de código de las que se extrajo. Cuando ese código cambia, la página muestra qué cambió con un solo botón Review, y Steep pone la página al día.
 - **En el repositorio como pull request:** El botón de GitHub de un Espacio lo conecta con su repositorio y coloca las páginas que dependen de ese código en la carpeta `wiki/` del repositorio como pull request. Ejecútalo desde el botón o activa la actualización diaria: usa tu propia herramienta de IA en tu ordenador, o se ejecuta en GitHub Actions con la clave de tu herramienta de IA guardada como secret del repositorio, así tu ordenador puede estar apagado. La misma pull request corrige las frases de la documentación del propio repositorio con las que el código ya no coincide, para que las revises.
@@ -309,6 +301,8 @@ Estas mediciones de LongMemEval (LME) evalúan la recuperación de conocimiento 
 <!-- EVAL_SNAPSHOT_END -->
 
 En una prueba con 10.000 páginas (páginas generadas, M2 Pro con 16 GB, v0.20.0), la búsqueda en la App respondió en 11 a 50 ms, el reinicio tardó menos de 0,3 s y la memoria llegó a un máximo de unos 1,2 GB. Con la corrección de búsqueda de 0.20.1, la búsqueda de las herramientas de IA encontró las 30 palabras raras de prueba en esa biblioteca.
+
+Al importar una bóveda de Obsidian de 10.000 notas en 0.20.2 (notas inventadas, Mac M2 Pro con 16 GB, compilación de depuración, Claude Code escribiendo las páginas): se puede buscar a los 15 s, la primera página llega en unos 2 minutos y 8 páginas con citas en unos 4 minutos.
 
 [Método de evaluación y detalles del benchmark](docs/eval/README.md).
 

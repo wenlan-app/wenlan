@@ -9,8 +9,8 @@
 
 <p align="center">
   <strong>笔记、代码、AI 对话整理成知识库，对照过来源。</strong><br>
-  你的笔记留在你的电脑上，只会发给你选的 AI 工具。<br>
-  桌面版支持 Mac（Apple 芯片）和 Windows；Linux 可用 CLI 和本机服务。
+  你和 AI 工具共用同一份资料，来源变了会跟着更新。<br>
+  你的笔记留在你的电脑上，只会发给你选的 AI 工具。
 </p>
 
 <p align="center">
@@ -65,21 +65,17 @@
 
 ## 开始使用
 
-把资料保存在 Wenlan，让你常用的 AI 工具用这些知识回答问题、完成工作。
-
 ### 1. 下载并打开 Wenlan
 
-[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS 11 以上的 Apple Silicon，或 Windows x64），安装并打开。
+[下载桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支持 macOS 11 以上的 Apple Silicon 和 Windows x64。App 界面有英文、简体中文和繁體中文。
 
-App 界面有英文、简体中文和繁體中文。
+更喜欢终端？在 Mac 上运行 `npx -y wenlan setup`，或运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。
 
-更喜欢终端？在 Mac 上运行 `npx -y wenlan setup`，或用 Homebrew 运行 `brew install 7xuanlu/tap/wenlan` 再运行 `wenlan setup`。Linux 和 Windows 请看 [CLI 安装说明](docs/setup-and-data.zh-Hans.md#installation)。
+### 2. 带入你的资料
 
-### 2. 新建笔记或导入现有资料
+新建一篇笔记，或带入 Obsidian 仓库、Logseq 图谱、文件夹或之前的 AI 对话。[导入指南](docs/import-guide.md)。
 
-在 Wenlan 中新建笔记、连接 Obsidian 仓库或 Logseq 图谱、添加文件夹，或导入过去的 AI 对话与记忆。[导入指南](docs/import-guide.md)。
-
-### 3. 需要时再连接 AI 工具
+### 3. 连接你的 AI 工具
 
 | AI 工具 | 连接方式 | 设置入口 |
 |---|---|---|
@@ -88,19 +84,13 @@ App 界面有英文、简体中文和繁體中文。
 | Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-在 App 的设置里，“添加工具”会列出你电脑上装好的 AI 工具，点“全部连接”一次设好。能读技能的工具，也会拿到文澜的技能，例如找回和记下。
-
-安装插件后，开启新的 AI 会话并运行 `/wenlan`（Codex 中为 `$wenlan`）。它会确认 Wenlan 是否正常，需要时自动完成设置。
-
-导入的资料可以直接使用，想整理成笔记也随时可以。连接后，就可以问 AI：
+在 App 的设置里，“添加工具”会找出你电脑上的 AI 工具，点“全部连接”一次设好。接着开一个新的 AI 会话，问它：
 
 > /recall 我之前对这件事的笔记和决定，再帮我：……
 
-Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我之前对这件事的笔记和决定，再帮我：……”。
+Codex 中用 `$recall`；只用 MCP 的工具，直接请它先查文澜。
 
-想把导入的资料整理成带引用的笔记，运行 `/wenlan steep`（Codex 中为 `$wenlan steep`）。新安装默认以“随叫”方式[沉淀](#steep沉淀让知识跟上新发现)，由你的 AI 工具完成；也可以改成“自动”，用[模型](docs/steep.md#enable-steep)在后台整理记忆、更新笔记。
-
-不知道该问什么？在 App 中打开“AI 能做什么”，查看要在 AI 工具里输入的确切文字。
+导入完成后，App 会提供“用（你的 AI 工具）写页面”，把资料写成第一批带引用的笔记，不用输入指令。
 
 <a id="what-can-i-bring-in"></a>
 
@@ -147,7 +137,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 在“设置”中选择两种方式之一：
 
-- **随叫**（新安装默认）：AI 工具在文澜里保存或写入时，会顺手沉淀，不用另外下指令。想把剩下的一次做完，运行 `/wenlan steep`：它会用导入的资料写出新笔记，并把过期的笔记更新到最新。
+- **随叫**（新安装默认）：AI 工具在文澜里保存或写入时，会顺手沉淀，并在工作时得知哪些笔记过期、哪些资料还没写进笔记。不用下指令；想一次全部整理，也可以运行 `/wenlan steep`。
 - **自动：** 文澜用你指定的模型在后台沉淀。
 
 沉淀会做这些事：
@@ -167,7 +157,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 - **建议合并近似重复的笔记：** 生成一张合并卡，由你或你的 AI 决定接受或忽略。
 - **整理链接：** 列出还没有对应笔记的 `[[链接]]`，并移除指向你已删除记忆的引用。
 
-重写被标记的笔记需要模型。“自动”模式下，文澜在后台完成；“随叫”模式下，被标记的笔记会等你在 AI 工具里运行 `/wenlan steep`。
+重写被标记的笔记需要模型。“自动”模式下，文澜在后台完成；“随叫”模式下，AI 工具会得知哪些笔记在等待更新，并能在工作时顺手更新。
 
 [Steep 指南：触发条件、审核规则与模型设置（英文）](docs/steep.md)。可选择设备端模型、本地服务器或云端提供商；由模型驱动的后台工作为选配。
 
@@ -177,7 +167,7 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 
 ## 为代码仓库建 wiki
 
-在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。AI 工具会依据仓库本身规划 wiki：先写一篇列出所有笔记的总览，再为新人需要了解的每个部分或流程各写一篇。小工具只需几篇，大型 monorepo 会多得多。再次运行时只补写缺少的笔记。`/wenlan wiki` 取代了 `/wenlan map`，旧名称没有保留别名。
+在代码仓库中运行 `/wenlan wiki`（Codex 中为 `$wenlan wiki`）。AI 工具会依据仓库本身规划 wiki：先写一篇列出所有笔记的总览，再为新人需要了解的每个部分或流程各写一篇。小工具只需几篇，大型 monorepo 会多得多。再次运行时只补写缺少的笔记。
 
 - **与代码绑定：** 每篇笔记都会记录它所依据的代码行。代码改动时，笔记会显示改了什么，并提供一个审核按钮；沉淀会把笔记更新到最新。
 - **以 pull request 放进仓库：** Space 上的 GitHub 按钮会把 Space 连接到对应的仓库，并把依据这些代码的笔记以 pull request 放进仓库的 `wiki/` 文件夹。可以从按钮运行，也可以开启每日更新：在你的电脑上用你自己的 AI 工具运行，或在 GitHub Actions 上运行（AI 工具的密钥存为仓库 secret），电脑关着也可以。同一个 pull request 还会修正仓库自身文档中与代码不再相符的句子，供你审核。
@@ -315,6 +305,8 @@ Codex 中用 `$recall`。只用 MCP 的工具，直接说“先查文澜里我�
 <!-- EVAL_SNAPSHOT_END -->
 
 一万篇笔记的测试（生成的测试笔记，M2 Pro 16 GB，v0.20.0）：App 搜索 11 到 50 毫秒，重启不到 0.3 秒，内存峰值约 1.2 GB。0.20.1 修好搜索后，AI 工具在同一个资料库里找到了全部 30 个罕见测试字词。
+
+在 0.20.2 导入一万篇笔记的 Obsidian 仓库（虚构的笔记，M2 Pro Mac 16 GB，debug build，由 Claude Code 写笔记）：15 秒后可以搜索，约 2 分钟写出第一篇笔记，约 4 分钟写出 8 篇带引用的笔记。
 
 [评估方法与基准详情](docs/eval/README.md)。
 
