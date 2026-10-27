@@ -1247,6 +1247,9 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
 export const DEFAULTS: Record<string, unknown> = {
   should_show_wizard: false,
   local_setup_completed: false,
+  // Preview has no native LaunchAgent preflight. Its local app startup is
+  // ready, so keep the dedicated native repair state out of this surface.
+  get_startup_preflight_status: "ready",
   get_setup_completed: true,
   // Telemetry is not exercised by the fixture harness. Keep its response
   // shaped like the daemon contract while remaining unavailable rather than

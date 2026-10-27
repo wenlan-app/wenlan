@@ -94,6 +94,8 @@ const OUTSIDE_THE_REVIEW_SURFACE: readonly string[] = [
   "get_remote_access_status",
   "get_session_snapshots",
   "get_setup_completed",
+  // The Review surface has no native LaunchAgent preflight to report.
+  "get_startup_preflight_status",
   "get_telemetry_status",
   "get_snapshot_captures",
   "get_snapshot_captures_with_content",

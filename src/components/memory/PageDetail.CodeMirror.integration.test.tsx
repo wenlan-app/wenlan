@@ -401,7 +401,7 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText(PAGE.title)).toHaveClass("page-detail-title");
+    expect(await screen.findByRole("heading", { name: PAGE.title })).toHaveClass("page-detail-title");
     expect(screen.queryByRole("button", { name: "Copy as context" })).toBeNull();
     expect(
       screen.getByRole("button", { name: "Page actions" }),
@@ -445,7 +445,9 @@ describe("PageDetail with the real MarkdownEditor and CodeMirror", () => {
     ).toHaveClass("sr-only");
 
     act(() => pressKey(textbox, "Escape"));
-    expect(await screen.findByText(PAGE.title)).toHaveClass("page-detail-title");
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: PAGE.title })).toHaveClass("page-detail-title");
+    });
     expect(screen.queryByRole("button", { name: "Copy as context" })).toBeNull();
   });
 
