@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=b062d35c55e4130cae234f193102c84ad152286deb9977980d74730f0bc45cec -->
+<!-- README_SYNC: source=README.md sha256=13bfabfe192a6be43f5b97bc58eb6fff208f1b05957f353892760eef26c2898f -->
 
 <p align="center">
   <picture>
@@ -88,7 +88,9 @@
 
 > /recall 我之前對這件事的筆記和決定，再幫我：……
 
-Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。想把匯入的資料整理成帶引用的筆記，執行 `/wenlan steep`（Codex 中為 `$wenlan steep`）。
+Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。
+
+匯入完成後，App 會提供「用（你的 AI 工具）寫頁面」，把資料寫成第一批帶引用的筆記，不用輸入指令。
 
 <a id="what-can-i-bring-in"></a>
 

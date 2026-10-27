@@ -86,7 +86,9 @@ In the App's Settings, **Add a tool** finds the AI tools on your computer and **
 
 > /recall my earlier pages and decisions on this, then help me: …
 
-Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. To turn imported material into cited pages, run `/wenlan steep` (`$wenlan steep` in Codex).
+Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first.
+
+When an import finishes, the app offers **Write pages with** your AI tool to turn it into your first cited pages. No command needed.
 
 <a id="what-can-i-bring-in"></a>
 
