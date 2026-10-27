@@ -13,6 +13,7 @@ import {
   updatePageDraft,
   type Page,
 } from "../../../lib/tauri";
+import { WorkspaceDocumentToolsHostContext } from "../navigation/WorkspacePaneHost";
 import {
   PageDraftEditor,
   type PageDraftEditorHandle,
@@ -47,7 +48,10 @@ function page(overrides: Partial<Page> = {}): Page {
   };
 }
 
-function renderEditor(props: Partial<React.ComponentProps<typeof PageDraftEditor>> = {}) {
+function renderEditor(
+  props: Partial<React.ComponentProps<typeof PageDraftEditor>> = {},
+  documentToolsHost: HTMLElement | null = null,
+) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -56,13 +60,15 @@ function renderEditor(props: Partial<React.ComponentProps<typeof PageDraftEditor
   const onOpenExisting = vi.fn();
   const result = render(
     <QueryClientProvider client={queryClient}>
-      <PageDraftEditor
-        onBack={onBack}
-        onOpenExisting={onOpenExisting}
-        onPublished={onPublished}
-        space={null}
-        {...props}
-      />
+      <WorkspaceDocumentToolsHostContext.Provider value={documentToolsHost}>
+        <PageDraftEditor
+          onBack={onBack}
+          onOpenExisting={onOpenExisting}
+          onPublished={onPublished}
+          space={null}
+          {...props}
+        />
+      </WorkspaceDocumentToolsHostContext.Provider>
     </QueryClientProvider>,
   );
   return { ...result, onBack, onOpenExisting, onPublished, queryClient };
@@ -104,6 +110,37 @@ describe("PageDraftEditor", () => {
     expect(screen.getByRole("textbox", { name: "Content" })).toBe(content);
     expect(handle.getIdentity().publishedPage).toMatchObject({ id: "draft-1", status: "active" });
     expect(onPublished).not.toHaveBeenCalled();
+  });
+
+  it("opens draft info from the document tools host and Escape closes without publishing", async () => {
+    vi.mocked(createPageDraft).mockResolvedValue(page({ version: 1, title: "Saved draft", content: "Draft body" }));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const { onBack, unmount } = renderEditor({}, host);
+
+    try {
+      const title = await screen.findByRole("textbox", { name: "Title" });
+      await userEvent.clear(title);
+      await userEvent.type(title, "Local title");
+      await userEvent.type(screen.getByRole("textbox", { name: "Content" }), " body");
+      await waitFor(() => expect(createPageDraft).toHaveBeenCalled());
+      const toggle = screen.getByRole("button", { name: "Open page sidebar" });
+      expect(toggle.parentElement).toBe(host);
+      await userEvent.click(toggle);
+
+      expect(await screen.findByText("Local title")).toBeInTheDocument();
+      expect(screen.getByText("State")).toBeInTheDocument();
+      await userEvent.keyboard("{Escape}");
+
+      await waitFor(() => expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument());
+      expect(title).toHaveValue("Local title");
+      expect(onBack).not.toHaveBeenCalled();
+      expect(publishPageDraft).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Open page sidebar" })).toHaveFocus();
+    } finally {
+      unmount();
+      host.remove();
+    }
   });
 
   it.each(["loading", "error", "missing"] as const)(

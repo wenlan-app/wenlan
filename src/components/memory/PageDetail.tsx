@@ -8,7 +8,7 @@ import type { TFunction } from "i18next";
 import { createPortal } from "react-dom";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "./navigation/WorkspacePaneHost";
 import { NoteInspectorTabs, type NoteInspectorTab } from "./page/NoteInspectorTabs";
-import { ArrowLeft, SidebarSimple } from "@phosphor-icons/react";
+import { ArrowLeft, PencilSimple, SidebarSimple } from "@phosphor-icons/react";
 import {
   getPage,
   getPageLinks,
@@ -286,6 +286,7 @@ export default function PageDetail({
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [titleRenamePending, setTitleRenamePending] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const [renameExpectedVersion, setRenameExpectedVersion] = useState<number | null>(null);
   const [renameError, setRenameError] = useState(false);
@@ -425,6 +426,7 @@ export default function PageDetail({
   const editPageTitleRef = useRef("");
   const beginEditAttemptRef = useRef(0);
   const renameAttemptRef = useRef(0);
+  const titleRenamePendingRef = useRef(false);
   const autoEditIntentRef = useRef<{ pageId: string; mode: "read" | "edit" } | null>(null);
   const editorSessionEpochRef = useRef(0);
   const activeEditorSessionRef = useRef<{
@@ -720,6 +722,8 @@ export default function PageDetail({
 
   useEffect(() => {
     renameAttemptRef.current += 1;
+    titleRenamePendingRef.current = false;
+    setTitleRenamePending(false);
     setRenaming(false);
     setRenameExpectedVersion(null);
     setRenameError(false);
@@ -1218,7 +1222,7 @@ export default function PageDetail({
   };
 
   const beginEditing = async (automatic = false) => {
-    if (!page || renaming || renameMutation.isPending) return;
+    if (!page || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
     setCanvasOpen(false);
     canvasReturnToEditorRef.current = false;
     const originPageId = page.id;
@@ -1363,7 +1367,7 @@ export default function PageDetail({
   };
 
   const requestToggleCanvas = async () => {
-    if (canvasSwitchPendingRef.current) return;
+    if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
     if (showCanvas) {
       const returnToEditor = canvasReturnToEditorRef.current;
       canvasReturnToEditorRef.current = false;
@@ -1404,7 +1408,7 @@ export default function PageDetail({
   };
 
   const requestPageInfo = async () => {
-    if (canvasSwitchPendingRef.current) return;
+    if (canvasSwitchPendingRef.current || titleRenamePendingRef.current) return;
     // Keep the same pane mounted while the map yields back to document editing.
     setInfoOpen(true);
     if (showCanvas) {
@@ -1596,7 +1600,7 @@ export default function PageDetail({
   };
 
   const requestStoredPageAction = async (kind: "redistill" | "review" | "delete") => {
-    if (storedActionRef.current || renaming || renameMutation.isPending || canvasSwitchPendingRef.current || showCanvas ||
+    if (storedActionRef.current || titleRenamePendingRef.current || renaming || renameMutation.isPending || canvasSwitchPendingRef.current || showCanvas ||
         (editing && (editGate.kind !== "editor" || !editorStatus?.ready || editorStatus.compositionActive)) ||
         (kind === "review" && !reviewSupported)) return;
     const originPageId = pageId;
@@ -2044,6 +2048,10 @@ export default function PageDetail({
     page.creation_kind !== "imported";
   const renameDisabled = storedActionPending || canvasSwitchPending || editing || editDirty || saveState.phase !== "idle" ||
     !!editorStatus?.compositionActive || renameMutation.isPending;
+  const titleRenameDisabled = storedActionPending || canvasSwitchPending ||
+    titleRenamePending || saveState.phase === "conflict" || editorStatus.compositionActive || renameMutation.isPending ||
+    (editing && (editGate.kind !== "editor" || !editorStatus.ready)) ||
+    (!editing && (editDirty || saveState.phase !== "idle"));
 
   const startRename = () => {
     if (!canRenamePage || renaming || renameDisabled) return;
@@ -2053,6 +2061,63 @@ export default function PageDetail({
     setRenameError(false);
     setRenameNeedsReview(false);
     setRenaming(true);
+  };
+
+  const renameFromTitle = async () => {
+    if (!canRenamePage || titleRenameDisabled || renaming || titleRenamePendingRef.current) return;
+    if (!editing) {
+      startRename();
+      return;
+    }
+
+    // The page opens directly into its editor. Flush its current buffer before
+    // switching modes, then use a fresh server version for the rename CAS.
+    const originPageId = page.id;
+    const originSession = activeEditorSessionRef.current;
+    const originBeginAttempt = beginEditAttemptRef.current;
+    const attempt = ++renameAttemptRef.current;
+    titleRenamePendingRef.current = true;
+    setTitleRenamePending(true);
+    const ownsEditorAttempt = () => mountedRef.current &&
+      activePageIdRef.current === originPageId &&
+      activeEditorSessionRef.current === originSession &&
+      beginEditAttemptRef.current === originBeginAttempt &&
+      renameAttemptRef.current === attempt &&
+      storedActionRef.current === null;
+    const ownsPageAttempt = (closedBeginAttempt: number) => mountedRef.current &&
+      activePageIdRef.current === originPageId &&
+      renameAttemptRef.current === attempt &&
+      beginEditAttemptRef.current === closedBeginAttempt &&
+      storedActionRef.current === null &&
+      !canvasSwitchPendingRef.current;
+
+    try {
+      if (!originSession || !await flushEditor() || !ownsEditorAttempt()) return;
+      closeEditor();
+      const closedBeginAttempt = beginEditAttemptRef.current;
+      const latest = await refetchPage();
+      if (!ownsPageAttempt(closedBeginAttempt)) return;
+      if (latest.isError || !latest.data || latest.data.id !== originPageId || latest.data.status !== "active" ||
+        latest.data.creation_kind === "entity" || latest.data.creation_kind === "source" ||
+        latest.data.creation_kind === "imported") {
+        setActionErrorMessage(t("pageDetail.renameError"));
+        return;
+      }
+      setRenameTitle(latest.data.title);
+      setRenameExpectedVersion(latest.data.version);
+      setRenameError(false);
+      setRenameNeedsReview(false);
+      setRenaming(true);
+    } catch {
+      if (activePageIdRef.current === originPageId && renameAttemptRef.current === attempt) {
+        setActionErrorMessage(t("pageDetail.renameError"));
+      }
+    } finally {
+      if (renameAttemptRef.current === attempt) {
+        titleRenamePendingRef.current = false;
+        setTitleRenamePending(false);
+      }
+    }
   };
 
   const cancelRename = () => {
@@ -2108,6 +2173,18 @@ export default function PageDetail({
   const documentTools = (
     <div className="page-document-tools">
       {!documentToolsHost && inspectorToggle}
+      {hideOuterTitleWhileEditing && canRenamePage && (
+        <button
+          aria-label={t("pageDetail.renamePage")}
+          className="mem-icon-action page-detail-title-action"
+          disabled={titleRenameDisabled || renaming}
+          onClick={() => void renameFromTitle()}
+          title={t("pageDetail.renamePage")}
+          type="button"
+        >
+          <PencilSimple aria-hidden="true" size={16} />
+        </button>
+      )}
       <WorkspaceBackButton
           aria-label={t("main.back")}
           className="mem-icon-action"
@@ -2298,7 +2375,19 @@ export default function PageDetail({
                 ) : null}
               </form>
             ) : (
-              <h1 className="page-detail-title">{page.title}</h1>
+              <h1 aria-label={page.title} className="page-detail-title">
+                {canRenamePage ? (
+                  <button
+                    aria-label={t("pageDetail.renamePage")}
+                    className="page-detail-title-edit"
+                    disabled={titleRenameDisabled || renaming}
+                    onClick={() => void renameFromTitle()}
+                    type="button"
+                  >
+                    {page.title}
+                  </button>
+                ) : page.title}
+              </h1>
             )}
             {documentTools}
           </div>

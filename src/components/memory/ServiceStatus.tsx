@@ -157,6 +157,15 @@ function ServiceWarning({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverId = useId();
   const copy = warningCopy(kind, notices, t);
+  const reportError = kind === "outOfDate" && notices.version && "error" in notices.version
+    ? notices.version.error
+    : null;
+  const visibleFailure = failure ?? (reportError
+    ? (() => {
+        const key = restartErrorKey(reportError);
+        return key ? t(key) : reportError;
+      })()
+    : null);
 
   useEffect(() => {
     if (!expanded) return;
@@ -234,7 +243,7 @@ function ServiceWarning({
           {copy.body.map((line) => (
             <p key={line} className="mem-daemon-startup-body">{line}</p>
           ))}
-          {failure && <p role="alert" className="mem-daemon-startup-failure">{failure}</p>}
+          {visibleFailure && <p role="alert" className="mem-daemon-startup-failure">{visibleFailure}</p>}
           <div>
             <button
               type="button"

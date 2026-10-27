@@ -11,9 +11,10 @@
 //! searches the process `PATH` (with `.exe`/`.cmd`/`.bat` suffixes on
 //! Windows), then the conventional install dirs a GUI-launched app's minimal
 //! PATH misses (`~/.local/bin`, Homebrew, npm/volta/bun/pnpm globals, every
-//! `~/.nvm/versions/node/*/bin`, `%APPDATA%\npm` on Windows), and only then
-//! asks the user's own login shell (`$SHELL -l -i -c 'command -v <bin>'`,
-//! Unix only) under a hard 3 s bound. Both CLIs are commonly installed via
+//! `~/.nvm/versions/node/*/bin`, `%APPDATA%\npm` on Windows), then the Codex
+//! CLI bundled with ChatGPT Desktop on macOS, and only then asks the user's
+//! own login shell (`$SHELL -l -i -c 'command -v <bin>'`, Unix only) under a
+//! hard 3 s bound. Both CLIs are commonly installed via
 //! `npm i -g` under a version manager whose bin dir only the user's rc
 //! files know; an interactive login shell can hang on a slow rc file, so it
 //! is the last resort rather than the first.
@@ -73,6 +74,7 @@ struct LookupEnv {
     home: Option<PathBuf>,
     path_var: Option<OsString>,
     windows: bool,
+    macos: bool,
     appdata: Option<PathBuf>,
     local_appdata: Option<PathBuf>,
 }
@@ -88,6 +90,7 @@ impl LookupEnv {
             home: dirs::home_dir(),
             path_var: std::env::var_os("PATH"),
             windows: std::env::consts::OS == "windows",
+            macos: std::env::consts::OS == "macos",
             appdata: nonempty("APPDATA"),
             local_appdata: nonempty("LOCALAPPDATA"),
         }
@@ -195,13 +198,31 @@ fn known_candidates(
         .collect()
 }
 
+/// Codex is bundled inside ChatGPT Desktop on macOS. Desktop-only users have
+/// no standalone `codex` on PATH, so plugin setup must be able to invoke the
+/// copy shipped with the detected app. Keep this lookup macOS-only and scoped
+/// to Codex; the app's bundled CLI is an implementation detail of that bundle.
+fn bundled_codex_candidates(env: &LookupEnv, binary_name: &str) -> Vec<PathBuf> {
+    if !env.macos || binary_name != "codex" {
+        return Vec::new();
+    }
+    let mut apps = vec![PathBuf::from("/Applications/ChatGPT.app")];
+    if let Some(home) = &env.home {
+        apps.push(home.join("Applications/ChatGPT.app"));
+    }
+    apps.into_iter()
+        .map(|app| app.join("Contents/Resources/codex-cli/bin/codex"))
+        .collect()
+}
+
 fn first_existing(candidates: &[PathBuf], exists: &impl Fn(&Path) -> bool) -> Option<PathBuf> {
     candidates.iter().find(|p| exists(p)).cloned()
 }
 
 /// Full resolution with every filesystem/process dependency injected, so the
-/// probe order (PATH, then known install dirs, then the bounded login shell)
-/// is unit-testable without spawning a shell or touching the real filesystem.
+/// probe order (PATH, known install dirs, ChatGPT's bundled Codex, then the
+/// bounded login shell) is unit-testable without spawning a shell or touching
+/// the real filesystem.
 fn resolve_binary_with(
     binary_name: &str,
     env: &LookupEnv,
@@ -211,6 +232,7 @@ fn resolve_binary_with(
 ) -> Option<PathBuf> {
     first_existing(&path_candidates(env, binary_name), &exists)
         .or_else(|| first_existing(&known_candidates(env, binary_name, &list_dir), &exists))
+        .or_else(|| first_existing(&bundled_codex_candidates(env, binary_name), &exists))
         .or_else(|| login_shell(binary_name))
 }
 
@@ -349,7 +371,8 @@ pub fn resolve_binary_no_shell(binary_name: &str) -> Option<PathBuf> {
 }
 
 /// Resolve a CLI binary by name ("claude" / "codex"): PATH, known install
-/// dirs, then the user's login shell under a 3 s bound as the last resort.
+/// dirs, ChatGPT Desktop's bundled Codex CLI, then the user's login shell
+/// under a 3 s bound as the last resort.
 pub fn resolve_binary(binary_name: &str) -> Option<PathBuf> {
     resolve_binary_with(
         binary_name,
@@ -592,6 +615,7 @@ mod tests {
             home: Some(PathBuf::from(home)),
             path_var: Some(std::env::join_paths(path).expect("join PATH")),
             windows: false,
+            macos: false,
             appdata: None,
             local_appdata: None,
         }
@@ -602,8 +626,20 @@ mod tests {
             home: Some(PathBuf::from("/users/u")),
             path_var: Some(std::env::join_paths(["/tools/bin", "/more/bin"]).expect("join PATH")),
             windows: true,
+            macos: false,
             appdata: Some(PathBuf::from("/users/u/AppData/Roaming")),
             local_appdata: Some(PathBuf::from("/users/u/AppData/Local")),
+        }
+    }
+
+    fn macos_env(home: &str, path: &[&str]) -> LookupEnv {
+        LookupEnv {
+            home: Some(PathBuf::from(home)),
+            path_var: Some(std::env::join_paths(path).expect("join PATH")),
+            windows: false,
+            macos: true,
+            appdata: None,
+            local_appdata: None,
         }
     }
 
@@ -730,6 +766,87 @@ mod tests {
         assert_eq!(
             resolve_binary_with("codex", &env, exists, no_dirs, |_| None),
             Some(PathBuf::from("/users/u/AppData/Roaming/npm/codex.cmd"))
+        );
+    }
+
+    #[test]
+    fn desktop_only_codex_install_resolves_the_chatgpt_bundle_cli() {
+        let env = macos_env("/Users/u", &[]);
+        let bundled = Path::new("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
+        let shell_calls = std::cell::Cell::new(0);
+        let resolved = resolve_binary_with(
+            "codex",
+            &env,
+            |path| path == bundled,
+            no_dirs,
+            |_| {
+                shell_calls.set(shell_calls.get() + 1);
+                None
+            },
+        );
+        assert_eq!(resolved, Some(bundled.to_path_buf()));
+        assert_eq!(shell_calls.get(), 0, "bundle hit should avoid shell lookup");
+    }
+
+    #[test]
+    fn codex_bundle_search_includes_user_applications() {
+        let env = macos_env("/Users/u", &[]);
+        let system =
+            PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
+        let user = PathBuf::from(
+            "/Users/u/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+        );
+        assert_eq!(
+            bundled_codex_candidates(&env, "codex"),
+            vec![system, user.clone()]
+        );
+        assert_eq!(
+            resolve_binary_with(
+                "codex",
+                &env,
+                |candidate| candidate == user,
+                no_dirs,
+                |_| None
+            ),
+            Some(user)
+        );
+    }
+
+    #[test]
+    fn bundled_codex_is_excluded_for_other_platforms_and_binaries() {
+        assert!(bundled_codex_candidates(&unix_env("/Users/u", &[]), "codex").is_empty());
+        assert!(bundled_codex_candidates(&windows_env(), "codex").is_empty());
+        assert!(bundled_codex_candidates(&macos_env("/Users/u", &[]), "claude").is_empty());
+    }
+
+    #[test]
+    fn codex_bundle_does_not_override_path_or_standard_install_dirs() {
+        let env = macos_env("/Users/u", &["/on/path"]);
+        let path_cli = Path::new("/on/path/codex");
+        let standard_cli = Path::new("/Users/u/.local/bin/codex");
+        let bundled_cli =
+            Path::new("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex");
+        let exists = |candidate: &Path| {
+            candidate == path_cli || candidate == standard_cli || candidate == bundled_cli
+        };
+        assert_eq!(
+            resolve_binary_with("codex", &env, exists, no_dirs, |_| None),
+            Some(path_cli.to_path_buf())
+        );
+
+        let exists = |candidate: &Path| candidate == standard_cli || candidate == bundled_cli;
+        assert_eq!(
+            resolve_binary_with("codex", &env, exists, no_dirs, |_| None),
+            Some(standard_cli.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn missing_bundle_and_cli_still_returns_none() {
+        let env = macos_env("/Users/u", &[]);
+        assert_eq!(
+            resolve_binary_with("codex", &env, |_| false, no_dirs, |_| None),
+            None
         );
     }
 

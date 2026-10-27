@@ -14,6 +14,41 @@
   width: 100%;
 }
 
+.page-draft-tools {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 36px;
+  margin: 0 0 6px;
+}
+
+.page-draft-inspector-info {
+  padding: 16px 20px 24px;
+}
+
+.page-draft-inspector-details {
+  display: grid;
+  gap: 18px;
+  margin: 0;
+}
+
+.page-draft-inspector-details > div {
+  display: grid;
+  gap: 5px;
+}
+
+.page-draft-inspector-details dt {
+  color: var(--mem-text-tertiary);
+  font: 11px/1.4 var(--mem-font-mono);
+  text-transform: uppercase;
+}
+
+.page-draft-inspector-details dd {
+  color: var(--mem-text);
+  font: 14px/1.5 var(--mem-font-body);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .page-draft-notice button,
 .page-draft-load-state button {
   border-radius: var(--mem-control-radius);

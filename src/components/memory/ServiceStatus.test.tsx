@@ -113,6 +113,14 @@ describe("ServiceStatus", () => {
     expect(popover).toHaveTextContent("/opt/homebrew/bin/wenlan-server");
   });
 
+  it("shows an automatic recovery failure and leaves the retry action available", () => {
+    setVersionReport({ ...OUT_OF_DATE, restarted: true, error: "daemon-restart:still-mismatched" });
+    renderStatus(<ServiceStatus compact />);
+    expect(screen.getByRole("alert")).toHaveTextContent(SERVICE.errors.stillMismatched);
+    expect(action()).toHaveTextContent(SERVICE.restart);
+    expect(row()).toHaveAttribute("data-kind", "outOfDate");
+  });
+
   it("goes quiet by itself when the problem goes away", () => {
     setVersionReport(OUT_OF_DATE);
     renderStatus(<ServiceStatus />);

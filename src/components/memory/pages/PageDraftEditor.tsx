@@ -1,5 +1,5 @@
-import { WorkspaceNoteGroupContext } from "../navigation/WorkspacePaneHost";
-import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
+import { createPortal } from "react-dom";
+import { SidebarSimple } from "@phosphor-icons/react";
 import {
   forwardRef,
   useCallback,
@@ -14,6 +14,9 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
+import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "../navigation/WorkspacePaneHost";
+import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
+import PageInfoDrawer from "../page/PageInfoDrawer";
 import { getPage, publishPageDraft, type Page } from "../../../lib/tauri";
 import {
   usePageDraftAutosave,
@@ -76,9 +79,12 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
   }, ref) {
     const { t } = useTranslation();
     const noteGroup = useContext(WorkspaceNoteGroupContext);
+    const documentToolsHost = useContext(WorkspaceDocumentToolsHostContext);
     const headingId = useId();
     const queryClient = useQueryClient();
     const titleRef = useRef<HTMLInputElement>(null);
+    const inspectorToggleRef = useRef<HTMLButtonElement>(null);
+    const [inspectorOpen, setInspectorOpen] = useState(false);
     const [title, setTitle] = useState(initialPage?.title ?? "");
     useEffect(() => { onTitleChange?.(title); }, [title, onTitleChange]);
     const [content, setContent] = useState(initialPage?.content ?? "");
@@ -279,12 +285,17 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
         if (event.target instanceof Element && event.target.closest("[data-sidebar-escape-scope]")) return;
         event.preventDefault();
         event.stopPropagation();
+        if (inspectorOpen) {
+          setInspectorOpen(false);
+          inspectorToggleRef.current?.focus({ preventScroll: true });
+          return;
+        }
         if (onEscapeBeforeLeave?.()) return;
         void requestBack();
       };
       window.addEventListener("keydown", handleEscape, true);
       return () => window.removeEventListener("keydown", handleEscape, true);
-    }, [onEscapeBeforeLeave, requestBack, noteGroup]);
+    }, [inspectorOpen, onEscapeBeforeLeave, requestBack, noteGroup]);
 
     const reloadLatest = async () => {
       const identity = autosave.getIdentity();
@@ -327,10 +338,40 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     };
 
     const locked = operationKind !== "idle";
+    const autosaveLabel = autosave.status === "saving"
+      ? t("pages.editor.saving")
+      : autosave.status === "saved"
+        ? t("pages.editor.saved")
+        : autosave.status === "error"
+          ? t("pages.editor.saveError")
+          : autosave.status === "conflict"
+            ? t("pages.editor.versionConflict")
+            : title.trim() || content.trim()
+              ? t("pageDetail.editor.unsaved")
+              : t("pages.overview.draft");
+    const inspectorToggle = (
+      <button
+        aria-expanded={inspectorOpen}
+        aria-label={t(inspectorOpen ? "pageInspector.close" : "pageInspector.open")}
+        className="mem-icon-action workspace-panel-toggle note-inspector-toggle"
+        onClick={(event) => {
+          event.currentTarget.focus({ preventScroll: true });
+          setInspectorOpen((open) => !open);
+        }}
+        ref={inspectorToggleRef}
+        title={t(inspectorOpen ? "pageInspector.close" : "pageInspector.open")}
+        type="button"
+      >
+        <SidebarSimple aria-hidden="true" size={18} style={{ transform: "scaleX(-1)" }} />
+      </button>
+    );
 
     return (
+      <>
+      {documentToolsHost ? createPortal(inspectorToggle, documentToolsHost) : null}
       <section className="page-draft-editor" aria-labelledby={headingId}>
         <div className="page-draft-editor-axis">
+          {!documentToolsHost && <div className="page-draft-tools">{inspectorToggle}</div>}
           <h1 className="sr-only" id={headingId}>
             {t("pages.editor.heading")}
           </h1>
@@ -410,6 +451,26 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
           />
         </div>
       </section>
+      <PageInfoDrawer
+        docked
+        inspector
+        open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        returnFocusRef={inspectorToggleRef}
+        title={t("pageInspector.info")}
+        closeLabel={t("common.close")}
+      >
+        <div
+          className="page-draft-inspector-info"
+        >
+          <dl className="page-draft-inspector-details">
+            <div><dt>{t("pages.editor.titleLabel")}</dt><dd>{title.trim() || t("pages.editor.titlePlaceholder")}</dd></div>
+            <div><dt>{t("pages.overview.reviewStatusLabel")}</dt><dd aria-live="polite" role="status">{autosaveLabel}</dd></div>
+            <div><dt>{t("pages.editor.spaceLabel")}</dt><dd>{space || t("pages.editor.noSpace")}</dd></div>
+          </dl>
+        </div>
+      </PageInfoDrawer>
+      </>
     );
   },
 );

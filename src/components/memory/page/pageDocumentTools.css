@@ -8,6 +8,24 @@
   min-width: 0;
 }
 .page-document-title-row .page-detail-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.page-detail-title-edit {
+  appearance: none;
+  border: 0;
+  border-radius: var(--mem-control-radius);
+  background: transparent;
+  color: inherit;
+  cursor: text;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  padding: 0 2px;
+  margin-left: -2px;
+  text-align: left;
+  text-wrap: inherit;
+}
+.page-detail-title-edit:disabled { cursor: default; }
+.page-detail-title-edit:not(:disabled):hover { background: var(--mem-hover); }
+.page-detail-title-edit:focus-visible { outline: 2px solid var(--mem-accent-page); outline-offset: 3px; }
 .page-document-tools { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
 .page-document-tools .page-detail-actions-menu { z-index: 40; }
 .page-document-editor { position: relative; min-width: 0; }

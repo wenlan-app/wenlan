@@ -186,7 +186,37 @@ describe("PageDetail", () => {
   it("renders page title", async () => {
     renderWithQuery(<PageDetail {...defaultProps} />);
     expect(await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename page" })).toHaveTextContent("libSQL Architecture");
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+  });
+
+  it("opens rename from the page title and cancels without changing it", async () => {
+    const { getPage, renamePage, updatePage } = await import("../../lib/tauri");
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} initialMode="edit" />);
+
+    const editor = await screen.findByRole("textbox", { name: "Page editor" });
+    const currentPage = await getPage("concept_abc");
+    if (!currentPage) throw new Error("Missing page fixture");
+    const savedPage = {
+      ...currentPage,
+      content: "Body saved before renaming",
+      version: 4,
+    };
+    await vi.mocked(getPage).withImplementation(async () => savedPage, async () => {
+      act(() => replaceDocument(editorViewFromTextbox(editor), "Body saved before renaming"));
+      await user.click(screen.getByRole("button", { name: "Rename page" }));
+      expect(await screen.findByRole("textbox", { name: "Page title" })).toHaveValue("libSQL Architecture");
+      expect(updatePage).toHaveBeenCalledWith(expect.objectContaining({
+        id: "concept_abc",
+        content: "Body saved before renaming",
+        expectedVersion: 3,
+      }));
+
+      expect(renamePage).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Cancel rename" }));
+      expect(await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeInTheDocument();
+      expect(screen.getByText("Body saved before renaming")).toBeInTheDocument();
+    });
   });
 
   it("renames a page with its current version and keeps its content", async () => {
