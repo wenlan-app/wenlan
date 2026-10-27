@@ -1,4 +1,4 @@
-<!-- README_SYNC: source=README.md sha256=53a9f8bbdc76d0aa5f8cb64ebb238af69be837c9ee77966ad86aeb8d554122f7 -->
+<!-- README_SYNC: source=README.md sha256=b062d35c55e4130cae234f193102c84ad152286deb9977980d74730f0bc45cec -->
 
 <p align="center">
   <picture>
@@ -9,8 +9,8 @@
 
 <p align="center">
   <strong>筆記、程式碼、AI 對話整理成知識庫，對照過來源。</strong><br>
-  你的筆記留在你的電腦上，只會送到你選的 AI 工具。<br>
-  桌面版支援 Mac（Apple 晶片）和 Windows；Linux 可用 CLI 和本機服務。
+  你和 AI 工具共用同一份資料，來源變了會跟著更新。<br>
+  你的筆記留在你的電腦上，只會送到你選的 AI 工具。
 </p>
 
 <p align="center">
@@ -65,21 +65,17 @@
 
 ## 開始使用
 
-把資料保存在 Wenlan，讓你常用的 AI 用上這些知識，回答問題、完成工作。
-
 ### 1. 下載並開啟 Wenlan
 
-[下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)（macOS 11 以上的 Apple Silicon、Windows x64），安裝後開啟。
+[下載桌面版](https://github.com/wenlan-app/wenlan/releases/latest)，支援 macOS 11 以上的 Apple Silicon 和 Windows x64。App 介面有英文、简体中文和繁體中文。
 
-App 介面有英文、简体中文和繁體中文。
+偏好終端機？在 Mac 上執行 `npx -y wenlan setup`，或執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。
 
-偏好終端機？在 Mac 上執行 `npx -y wenlan setup`，或用 Homebrew 執行 `brew install 7xuanlu/tap/wenlan` 再執行 `wenlan setup`。Linux 和 Windows 請看 [CLI 安裝說明](docs/setup-and-data.zh-Hant.md#installation)。
+### 2. 帶進你的資料
 
-### 2. 建立筆記或匯入既有資料
+建立一篇筆記，或帶進 Obsidian vault、Logseq 圖譜、資料夾或之前的 AI 對話。[匯入教學](docs/import-guide.zh-Hant.md)。
 
-在 Wenlan 建立一篇筆記、連接 Obsidian vault 或 Logseq 圖譜、加入資料夾，或匯入之前的 AI 對話與記憶。[匯入教學](docs/import-guide.zh-Hant.md)。
-
-### 3. 想使用時再連接 AI 工具
+### 3. 連接你的 AI 工具
 
 | AI 工具 | 連接方式 | 設定入口 |
 |---|---|---|
@@ -88,19 +84,11 @@ App 介面有英文、简体中文和繁體中文。
 | Cursor、GitHub Copilot、VS Code、Gemini CLI、Antigravity、Windsurf、Kiro、OpenCode、Kimi Code | MCP 和技能 | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code 和其他 MCP 工具 | MCP | [MCP 指南](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-在 App 的設定裡，「新增工具」會列出你電腦上裝好的 AI 工具，按「全部連接」一次設好。能讀技能的工具，也會拿到文瀾的技能，例如找回和記下。
-
-安裝插件後，開啟新的 AI 對話並執行 `/wenlan`（Codex 中為 `$wenlan`）。它會確認 Wenlan 是否正常，需要時自動完成設定。
-
-匯入的資料可以直接使用，想整理成筆記也隨時可以。連接後，就可以問 AI：
+在 App 的設定裡，「新增工具」會找出你電腦上的 AI 工具，按「全部連接」一次設好。接著開一個新的 AI 對話，問它：
 
 > /recall 我之前對這件事的筆記和決定，再幫我：……
 
-Codex 中用 `$recall`。只用 MCP 的工具，直接說「先查文瀾裡我之前對這件事的筆記和決定，再幫我：……」。
-
-想把匯入的資料整理成帶引用的筆記，執行 `/wenlan steep`（Codex 中為 `$wenlan steep`）。新安裝預設以「隨叫」方式[沉澱](#steep沉澱讓知識持續更新)，由你的 AI 工具完成；也可以改成「自動」，用[模型](docs/steep.zh-Hant.md#enable-steep)在背景整理記憶、更新筆記。
-
-不知道該問什麼？在 App 中打開「AI 能做什麼」，查看要在 AI 工具裡輸入的確切文字。
+Codex 中用 `$recall`；只用 MCP 的工具，直接請它先查文瀾。想把匯入的資料整理成帶引用的筆記，執行 `/wenlan steep`（Codex 中為 `$wenlan steep`）。
 
 <a id="what-can-i-bring-in"></a>
 

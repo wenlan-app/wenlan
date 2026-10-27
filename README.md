@@ -7,8 +7,8 @@
 
 <p align="center">
   <strong>Notes, code, AI chats into a wiki, checked against sources.</strong><br>
-  Your notes stay on your machine and go only to the AI tools you pick.<br>
-  Desktop app for Mac (Apple silicon) and Windows. CLI and local service on Linux.
+  One source of truth for you and your AI tools, kept up to date as your sources change.<br>
+  Your notes stay on your machine and go only to the AI tools you pick.
 </p>
 
 <p align="center">
@@ -63,21 +63,17 @@ I started Wenlan because my notes, documents, and AI chats were scattered and al
 
 ## Get started
 
-Save your material in Wenlan so your everyday AI tools can use it to answer questions and get work done.
-
 ### 1. Download and open Wenlan
 
-[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) (macOS 11 or later on Apple Silicon, or Windows x64), install it, and open it.
+[Download the desktop app](https://github.com/wenlan-app/wenlan/releases/latest) for macOS 11 or later on Apple Silicon, or Windows x64. The app is in English, 简体中文, and 繁體中文.
 
-The app is in English, 简体中文, and 繁體中文.
+Prefer the terminal? On a Mac, run `npx -y wenlan setup`, or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. Linux and Windows: [CLI install guide](docs/setup-and-data.md#installation).
 
-Prefer the terminal? On a Mac, run `npx -y wenlan setup`, or `brew install 7xuanlu/tap/wenlan` and then `wenlan setup`. For Linux and Windows, see the [CLI install guide](docs/setup-and-data.md#installation).
+### 2. Bring in your material
 
-### 2. Create a page or import existing material
+Create a page, or bring in an Obsidian vault, a Logseq graph, a folder, or earlier AI chats. [Import guide](docs/import-guide.md).
 
-Create a page in Wenlan, connect an Obsidian vault or a Logseq graph, add a folder, or import earlier AI conversations and memories. [Import guide](docs/import-guide.md).
-
-### 3. Connect an AI tool when you want
+### 3. Connect your AI tool
 
 | AI tool | Connection | Setup |
 |---|---|---|
@@ -86,19 +82,11 @@ Create a page in Wenlan, connect an Obsidian vault or a Logseq graph, add a fold
 | Cursor, GitHub Copilot, VS Code, Gemini CLI, Antigravity, Windsurf, Kiro, OpenCode, Kimi Code | MCP and skills | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 | Muse Code and other MCP clients | MCP | [MCP guide](docs/setup-with-ai.md#mcp-only-setup-and-other-clients) |
 
-In the App's Settings, **Add a tool** lists the AI tools installed on your computer, and **Connect all** sets them up in one press. Tools that read skills also get Wenlan's skills for setup, recall, capture, brief, and handoff.
-
-After installing a plugin, start a new AI session and run `/wenlan` (`$wenlan` in Codex). It checks that Wenlan works and sets it up when needed.
-
-Imported material is ready to use right away, and you can turn it into pages whenever you want. Ask your AI:
+In the App's Settings, **Add a tool** finds the AI tools on your computer and **Connect all** sets them up in one press. Then start a new AI session and ask:
 
 > /recall my earlier pages and decisions on this, then help me: …
 
-In Codex, use `$recall`. With an MCP-only tool, just ask: “Check Wenlan for my earlier pages and decisions on this, then help me: …”
-
-To turn imported material into cited pages, run `/wenlan steep` (`$wenlan steep` in Codex). New installs [steep](#steep-keep-knowledge-useful-as-it-changes) On demand, with your AI tool; switch to Automatic with a [model](docs/steep.md#enable-steep) to organize memories and update pages in the background.
-
-Not sure what to ask? Open **What your AI can do** in the App for the exact text to type in your AI tool.
+Use `$recall` in Codex; with an MCP-only tool, just ask it to check Wenlan first. To turn imported material into cited pages, run `/wenlan steep` (`$wenlan steep` in Codex).
 
 <a id="what-can-i-bring-in"></a>
 
