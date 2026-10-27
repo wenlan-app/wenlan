@@ -7,9 +7,9 @@
     <circle cx="256" cy="256" r="160" fill="none" stroke="url(#banner-zh-Hant-desktop-ring)" stroke-width="76"/>
     <circle cx="322" cy="160" r="42" fill="url(#banner-zh-Hant-desktop-orb)"/>
   </g>
-  <text x="300" y="140" fill="#93E3F2" font-size="41.6" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="12" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文瀾</tspan></text>
-  <text x="300" y="203" fill="#F7F8FF" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="40" font-weight="500" text-anchor="start" letter-spacing="0.65">持續更新的知識庫</text>
-  <text x="300" y="255" fill="#BAC4D2" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="24" font-weight="400" text-anchor="start" letter-spacing="0.65">免費 · 開源 · 本地優先</text></g>
+  <text x="300" y="144.5" fill="#93E3F2" font-size="41.6" font-weight="500" text-anchor="start"><tspan font-family="-apple-system, BlinkMacSystemFont, &quot;SF Pro Display&quot;, &quot;Helvetica Neue&quot;, Arial, sans-serif">Wenlan</tspan><tspan dx="12" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif">文瀾</tspan></text>
+  <text x="300" y="194.5" fill="#F7F8FF" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="32" font-weight="500" text-anchor="start" letter-spacing="0.65">持續更新的知識庫</text>
+  <text x="300" y="236.5" fill="#BAC4D2" font-family="&quot;PingFang TC&quot;, &quot;Noto Sans TC&quot;, -apple-system, BlinkMacSystemFont, sans-serif" font-size="20" font-weight="400" text-anchor="start" letter-spacing="0.65">免費 · 開源 · 本地優先</text></g>
   <defs>
     <linearGradient id="banner-zh-Hant-desktop-ring" x1="96" y1="256" x2="416" y2="256" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6C63FF"/>
