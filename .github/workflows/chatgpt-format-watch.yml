@@ -1,0 +1,74 @@
+name: ChatGPT export format signals
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+      timezone: America/Los_Angeles
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create or update the shared checkpoint and post new candidate signals"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: chatgpt-format-watch
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.event_name == 'workflow_dispatch' && !inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Scan public signals (read-only)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/chatgpt-format-watch.py \
+            --output "$RUNNER_TEMP/chatgpt-format-watch.json" \
+            --markdown-output "$RUNNER_TEMP/chatgpt-format-watch-report.md"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: chatgpt-format-watch-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/chatgpt-format-watch.json
+            ${{ runner.temp }}/chatgpt-format-watch-report.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  shared-scan:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Scan and publish only new candidate signals
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/chatgpt-format-watch.py --publish \
+            --output "$RUNNER_TEMP/chatgpt-format-watch.json" \
+            --markdown-output "$RUNNER_TEMP/chatgpt-format-watch-report.md"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: chatgpt-format-watch-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/chatgpt-format-watch.json
+            ${{ runner.temp }}/chatgpt-format-watch-report.md
+          retention-days: 14
+          if-no-files-found: warn

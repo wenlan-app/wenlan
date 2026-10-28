@@ -223,7 +223,7 @@ export const hansFirstUse = {
       },
       tool: {
         title: "连接一个 AI 工具",
-        body: "让 Claude Code、Codex 或 ChatGPT 读写你的笔记库。",
+        body: "让 Claude Code、Codex 或 ChatGPT 使用你的笔记。",
         action: "连接工具",
       },
       sources: {
@@ -364,7 +364,7 @@ export const hantFirstUse = {
       },
       tool: {
         title: "連接一個 AI 工具",
-        body: "讓 Claude Code、Codex 或 ChatGPT 讀寫你的筆記庫。",
+        body: "讓 Claude Code、Codex 或 ChatGPT 使用你的筆記。",
         action: "連接工具",
       },
       sources: {

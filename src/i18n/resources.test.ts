@@ -459,7 +459,6 @@ function flattenStringEntries(
 }
 
 const PLUGIN_WORD_ALLOWLIST = new Set([
-  "intelligence.synthesisBetaHelp", // Wenlan's actual plugin/MCP integration, not the app's identity
   "connectMatrix.claudeCodeCommand1",
   "connectMatrix.claudeCodeCommand2",
   "connectMatrix.claudeCodeReload",

@@ -448,12 +448,11 @@ describe("IntelligenceSection", () => {
     expect(within(select).getByRole("option", { name: "On-device (set up in AI services)" })).toBeDisabled();
   });
 
-  it("Synthesis Beta help explains plugin/MCP even without a model", async () => {
+  it("explains background synthesis Beta even without a model", async () => {
     renderSection();
     await userEvent.click(await screen.findByRole("button", { name: "Details: Beta" }));
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Background synthesis is in Beta");
-    expect(tooltip).toHaveTextContent("Wenlan's plugin or MCP with Claude or Codex");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Details: Beta" })).toHaveFocus();

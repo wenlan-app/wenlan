@@ -82,7 +82,7 @@ describe("VaultConnectCard", () => {
     const onPick = vi.fn();
     renderCard({ onPick });
     await userEvent.click(screen.getByText("Browse…"));
-    await waitFor(() => expect(screen.getByText(/No files found/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/No Markdown, text or PDF files here yet/)).toBeInTheDocument());
     await waitFor(() =>
       expect(onPick).toHaveBeenCalledWith({ sourceType: "directory", path: "/v", label: "v" }),
     );

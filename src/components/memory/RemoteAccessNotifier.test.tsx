@@ -16,8 +16,8 @@ vi.mock("../../lib/tauri", () => ({ takeRemoteAccessNotice }));
 
 const WORDS: Record<string, Record<string, string>> = {
   en: { stopped: "Wenlan Web access stopped. Open Wenlan to reconnect.", expired: "Wenlan Web access ended. Open Wenlan to turn it on again." },
-  "zh-Hans": { stopped: "Wenlan 网页访问已停止。打开 Wenlan 以重新连接。", expired: "Wenlan 网页访问已结束。打开 Wenlan 重新开启。" },
-  "zh-Hant": { stopped: "Wenlan 網頁存取已停止。開啟 Wenlan 以重新連接。", expired: "Wenlan 網頁存取已結束。開啟 Wenlan 重新開啟。" },
+  "zh-Hans": { stopped: "文澜网页访问已停止。打开文澜以重新连接。", expired: "文澜网页访问已结束。打开文澜重新开启。" },
+  "zh-Hant": { stopped: "文瀾網頁存取已停止。開啟文瀾以重新連接。", expired: "文瀾網頁存取已結束。開啟文瀾重新開啟。" },
 };
 function wakeUp() {
   return (listen.mock.calls[0][1] as () => void);

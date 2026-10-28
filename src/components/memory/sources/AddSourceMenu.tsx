@@ -53,7 +53,7 @@ export default function AddSourceMenu({ onClose, start = "menu" }: {
     mutationFn: async () => {
       const picked = await openDialog({
         title: t("sourceAccess.files"), directory: false, multiple: false,
-        filters: [{ name: "Documents", extensions: ["pdf", "md", "txt"] }],
+        filters: [{ name: t("sourceAccess.pickerFilter"), extensions: ["pdf", "md", "txt"] }],
       });
       if (!picked || typeof picked !== "string") return null;
       await uploadSourceFile(picked);
