@@ -499,9 +499,36 @@ async fn restore_stopped_daemon(
     Err(details.join("; "))
 }
 
-async fn resume_saved_remote_access(app: &AppHandle) -> Option<String> {
+async fn recover_after_original_exit(
+    wait_for_exit: impl std::future::Future<Output = Result<(), String>>,
+    restore: impl std::future::Future<Output = Result<(), String>>,
+) -> Result<(), String> {
+    wait_for_exit.await?;
+    restore.await
+}
+
+async fn resume_saved_remote_access(
+    app: &AppHandle,
+    state: &SharedLifecycleState,
+) -> Option<String> {
     let ticket = crate::remote_access::prepare_startup(app.clone()).await;
     if let Some(ticket) = ticket {
+        // A later update may already have stopped remote access. Obtain the
+        // generation ticket first, then check the updater phase: a subsequent
+        // stop invalidates the ticket before it can start a new process.
+        loop {
+            let installing = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .phase
+                == LifecyclePhase::Installing;
+            if !installing {
+                break;
+            }
+            // A successful install ends this process. If it fails, let this
+            // recovery continue; the ticket still rejects any later stop.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
         crate::remote_access::resume_startup(app.clone(), ticket).await;
     }
     let app_state = app.state::<Arc<tokio::sync::RwLock<crate::state::AppState>>>();
@@ -531,15 +558,31 @@ async fn report_failure_after_cleanup(
             recovery_errors.push(format!("daemon recovery failed: {error}"));
         }
     }
-    if let Some(error) = resume_saved_remote_access(app).await {
-        recovery_errors.push(format!("remote access recovery failed: {error}"));
-    }
     let message = if recovery_errors.is_empty() {
         message
     } else {
         format!("{message} ({})", recovery_errors.join("; "))
     };
-    report_install_failure(app, state, version, message);
+    // Report the installer failure before reconnecting: relay backoff may take
+    // minutes, and a timed-out cleanup may still own the controller lock.
+    let recovery_app = app.clone();
+    let recovery_state = state.clone();
+    report_then_recover(
+        || report_install_failure(app, state, version, message),
+        async move {
+            if let Some(error) = resume_saved_remote_access(&recovery_app, &recovery_state).await {
+                log::error!("[updater] remote access recovery failed: {error}");
+            }
+        },
+    );
+}
+
+fn report_then_recover(
+    report: impl FnOnce(),
+    recovery: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    report();
+    tauri::async_runtime::spawn(recovery);
 }
 
 async fn check_once_after_begin(
@@ -668,8 +711,19 @@ async fn check_once_after_begin(
         return;
     }
 
-    let outcome = crate::daemon_start::stop_sidecar().await;
-    if let Some(message) = update_restart_block_reason(&outcome) {
+    let (outcome, stop_ticket) = crate::daemon_start::stop_sidecar_with_ticket().await;
+    if let Some(mut message) = update_restart_block_reason(&outcome) {
+        if let Some(ticket) = stop_ticket {
+            let client = crate::api::WenlanClient::new();
+            if let Err(error) = recover_after_original_exit(
+                crate::daemon_start::wait_for_stopped_sidecar(ticket, DAEMON_RECOVERY_TIMEOUT),
+                restore_stopped_daemon(app, &client),
+            )
+            .await
+            {
+                message = format!("{message} (daemon recovery failed: {error})");
+            }
+        }
         report_failure_after_cleanup(app, state, &version, message, false).await;
         return;
     }
@@ -819,6 +873,61 @@ pub async fn check_and_prompt(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn recovery_cannot_accept_health_until_the_original_stop_finishes() {
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let restored = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mark = restored.clone();
+        let recovery = tokio::spawn(async move {
+            recover_after_original_exit(
+                async { release_rx.await.map_err(|e| e.to_string()) },
+                async {
+                    mark.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!restored.load(std::sync::atomic::Ordering::SeqCst));
+        release_tx.send(()).unwrap();
+        recovery.await.unwrap().unwrap();
+        assert!(restored.load(std::sync::atomic::Ordering::SeqCst));
+        let called = std::sync::atomic::AtomicBool::new(false);
+        assert!(
+            recover_after_original_exit(async { Err("unknown original".into()) }, async {
+                called.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },)
+            .await
+            .is_err()
+        );
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn installer_failure_is_reported_before_slow_remote_recovery() {
+        let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = reported.clone();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        report_then_recover(
+            || flag.store(true, std::sync::atomic::Ordering::SeqCst),
+            async move {
+                let _ = release_rx.await;
+                let _ = done_tx.send(());
+            },
+        );
+        assert!(reported.load(std::sync::atomic::Ordering::SeqCst));
+        let mut done_rx = done_rx;
+        assert!(matches!(
+            done_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+        release_tx.send(()).unwrap();
+        done_rx.await.unwrap();
+    }
     use crate::test_env::EnvGuard;
 
     #[test]

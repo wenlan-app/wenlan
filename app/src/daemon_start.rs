@@ -573,13 +573,24 @@ fn forget_sidecar(generation: u64) {
 /// errored — and a `()` makes them indistinguishable. Callers branch on it,
 /// and the last one is readable on the diagnostics wire.
 pub async fn stop_sidecar() -> SidecarStopOutcome {
-    let outcome = stop_sidecar_inner().await;
+    stop_sidecar_with_ticket().await.0
+}
+
+// Carries the exact generation for a caller that survives a failed stop.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SidecarStopTicket {
+    generation: u64,
+    identity: SidecarIdentity,
+}
+
+pub(crate) async fn stop_sidecar_with_ticket() -> (SidecarStopOutcome, Option<SidecarStopTicket>) {
+    let (outcome, ticket) = stop_sidecar_inner().await;
     let mut last = LAST_SIDECAR_STOP
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *last = next_recorded_stop(last.as_ref(), outcome.clone());
     drop(last);
-    outcome
+    (outcome, ticket)
 }
 
 /// What [`LAST_SIDECAR_STOP`] should hold after a stop reported `next`. Pure so
@@ -613,7 +624,7 @@ fn next_recorded_stop(
     }
 }
 
-async fn stop_sidecar_inner() -> SidecarStopOutcome {
+async fn stop_sidecar_inner() -> (SidecarStopOutcome, Option<SidecarStopTicket>) {
     // Read the slot, do not empty it. A `take()` before anything is known
     // drops the identity a retry needs, makes `sidecar_job_binding()` answer
     // `None` while a daemon still holds the port, and turns the next
@@ -636,7 +647,11 @@ async fn stop_sidecar_inner() -> SidecarStopOutcome {
             )
         })
     }) else {
-        return SidecarStopOutcome::NoSidecar;
+        return (SidecarStopOutcome::NoSidecar, None);
+    };
+    let ticket = SidecarStopTicket {
+        generation,
+        identity,
     };
     let pid = identity.pid;
     let client = crate::api::WenlanClient::new();
@@ -682,7 +697,38 @@ async fn stop_sidecar_inner() -> SidecarStopOutcome {
              the real binding"
         );
     }
-    outcome
+    (outcome, Some(ticket))
+}
+
+// The failed stop may have sent an asynchronous shutdown. Do not accept its
+// still-healthy response as recovery; establish that this exact generation is
+// gone before starting or accepting any replacement.
+pub(crate) async fn wait_for_stopped_sidecar(
+    ticket: SidecarStopTicket,
+    limit: Duration,
+) -> Result<(), String> {
+    wait_for_original_stop(|| ticket.identity.presence(), limit).await?;
+    forget_sidecar(ticket.generation);
+    Ok(())
+}
+
+async fn wait_for_original_stop(
+    mut presence: impl FnMut() -> ProcessPresence,
+    limit: Duration,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        if presence() == ProcessPresence::Gone {
+            return Ok(());
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Err(format!(
+                "the original daemon did not have a confirmed exit within {limit:?}"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(100).min(deadline - now)).await;
+    }
 }
 
 /// Spend the child handle on `generation`'s sidecar and, when nothing outside
@@ -1819,6 +1865,31 @@ mod version_heal_tests {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn delayed_original_stop_must_finish_before_recovery() {
+        use super::{wait_for_original_stop, ProcessPresence};
+        use std::time::Duration;
+        let mut observations = 0;
+        let result = wait_for_original_stop(
+            || {
+                observations += 1;
+                if observations < 3 {
+                    ProcessPresence::Running
+                } else {
+                    ProcessPresence::Gone
+                }
+            },
+            Duration::from_secs(2),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(observations, 3);
+        assert!(
+            wait_for_original_stop(|| ProcessPresence::Unknown, Duration::from_millis(20))
+                .await
+                .is_err()
+        );
+    }
     use super::*;
     use crate::lifecycle::LaunchdOwnership;
 
