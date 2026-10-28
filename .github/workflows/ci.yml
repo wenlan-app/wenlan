@@ -504,6 +504,7 @@ jobs:
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
               - 'scripts/install-macos-app.sh'
               - 'scripts/test-install-macos-app.sh'
+              - 'scripts/test-install-macos-app-stub.test.ts'
               - 'scripts/release_targets.py'
               - 'scripts/release_targets.test.py'
               - 'scripts/build-release-binaries.sh'
