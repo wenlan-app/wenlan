@@ -12,7 +12,7 @@ import { createSpacesNavigationFixture } from "../../../e2e/fixtures/spacesNavig
 vi.mock("../../lib/tauri", async (original) => ({
   ...(await original<typeof import("../../lib/tauri")>()),
   getPage: vi.fn(), getPageSources: vi.fn(), getMemoryDetail: vi.fn(), getEntityDetail: vi.fn(),
-  getPageRevisions: vi.fn(), search: vi.fn(),
+  getPageRevisions: vi.fn(), search: vi.fn(), getActivity: vi.fn(),
   clipboardWrite: vi.fn(),
   repairRecovery: vi.fn(),
 }));
@@ -46,11 +46,23 @@ beforeEach(async () => {
   vi.mocked(api.getEntityDetail).mockImplementation(async (id) => fixture.entityDetails.find((detail) => detail.entity.id === id)!);
   vi.mocked(api.getPageRevisions).mockResolvedValue({ page_id: fixture.pages[0].id, current_version: 1, user_edited: false, entries: [] });
   vi.mocked(api.search).mockResolvedValue([]);
+  vi.mocked(api.getActivity).mockRejectedValue(new Error("unavailable"));
   vi.mocked(api.clipboardWrite).mockResolvedValue(undefined);
   vi.mocked(api.repairRecovery).mockResolvedValue(null);
 });
 
 describe("Review decision contracts", () => {
+  it("copies the command for the chosen AI tool when a stale page needs help", async () => {
+    vi.mocked(api.getActivity).mockResolvedValue({ assets: [], everyday: { available: false }, synthesis: { available: false } } as never);
+    const item: ReviewItem = { kind: "stale_page", id: fixture.pages[0].id, title: "Page", summary: null, sourcesUpdated: 1, timestampMs: null };
+    const { user, resolve } = mount(item);
+    await user.click(await screen.findByRole("button", { name: "Copy for Codex" }));
+    expect(api.clipboardWrite).toHaveBeenLastCalledWith("$wenlan steep");
+    await user.click(screen.getByRole("button", { name: "Copy for Claude Code" }));
+    expect(api.clipboardWrite).toHaveBeenLastCalledWith("/wenlan steep");
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it("labels declining a source repair as keeping the source and never approves it", async () => {
     const item: ReviewItem = {
       ...archive, id: "repair-keep", action: "lint_repair_review",

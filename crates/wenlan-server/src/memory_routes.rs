@@ -1135,7 +1135,7 @@ async fn handle_store_memory_inner(
     let (enrichment, hint) = if !runtime_config.background_ai_enabled() {
         (
             "off".to_string(),
-            "Stored. Recall is available now; steeping is On demand, so run /wenlan steep to write pages from it.".to_string(),
+            "Stored. Recall is available now; steeping is On demand. To write pages, run /wenlan steep in Claude Code or $wenlan steep in Codex.".to_string(),
         )
     } else {
         let everyday_pin =
@@ -2585,6 +2585,8 @@ mod store_scheduler_handoff_tests {
         .unwrap();
         assert_eq!(off.0.enrichment, "off");
         assert!(off.0.hint.contains("steeping is On demand"));
+        assert!(off.0.hint.contains("/wenlan steep in Claude Code"));
+        assert!(off.0.hint.contains("$wenlan steep in Codex"));
         assert!(!off.0.hint.contains("choose a model"));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
     }
@@ -2810,6 +2812,8 @@ mod store_scheduler_handoff_tests {
         .unwrap();
         assert_eq!(off.0.enrichment, "off");
         assert!(off.0.hint.contains("steeping is On demand"));
+        assert!(off.0.hint.contains("/wenlan steep in Claude Code"));
+        assert!(off.0.hint.contains("$wenlan steep in Codex"));
         assert!(!off.0.hint.contains("quietly enrich"));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
         assert_eq!(

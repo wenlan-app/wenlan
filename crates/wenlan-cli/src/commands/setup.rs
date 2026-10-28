@@ -711,7 +711,7 @@ pub async fn print_enrichment_status() {
         Ok(cfg) if cfg["background_ai_enabled"].as_bool() == Some(false) => {
             println!("Steep: On demand");
             println!(
-                "  Nothing steeps in the background; run /wenlan steep in your AI tool. Saved model choices are kept."
+                "  Nothing steeps in the background. To write pages, run /wenlan steep in Claude Code or $wenlan steep in Codex. Saved model choices are kept."
             );
         }
         Ok(cfg) if supports_background_consent(&cfg) => {

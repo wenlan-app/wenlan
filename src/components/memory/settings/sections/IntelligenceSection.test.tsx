@@ -106,7 +106,7 @@ describe("IntelligenceSection", () => {
     await waitFor(() => expect(onDemand).toBeChecked());
     expect(within(group).getByRole("radio", { name: "Automatic" })).not.toBeChecked();
     expect(screen.queryByRole("button", { name: "Steeping" })).not.toBeInTheDocument();
-    expect(screen.getByText(/run \/wenlan steep/)).toBeInTheDocument();
+    expect(screen.getByText(/\/wenlan steep in Claude Code or \$wenlan steep in Codex/)).toBeInTheDocument();
     // On demand needs no model, so the task rows stay out of the way.
     expect(screen.queryByText("Everyday work")).not.toBeInTheDocument();
   });

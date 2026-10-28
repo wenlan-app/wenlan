@@ -24,7 +24,7 @@ import { MemoryRevisionChain, PageRevisionChain } from "./ReviewHistory";
 import SourceRepairReview from "./SourceRepairReview";
 import MarkdownDiff from "./MarkdownDiff";
 import { useActivity } from "../../lib/useActivity";
-import { STEEP_COMMAND, SteepNeedsAiToolError } from "../../lib/steepMode";
+import { STEEP_COMMANDS, SteepNeedsAiToolError } from "../../lib/steepMode";
 
 // The writer id the desktop app sends on its own saves and rebuilds.
 const APP_AGENT_ID = "wenlan-app";
@@ -686,9 +686,9 @@ export default function ReviewDialog({
   const [staleNeedsAiToolIds, setStaleNeedsAiToolIds] = useState<ReadonlySet<string>>(() => new Set());
   const noDaemonModel = activity !== undefined && !activity.everyday.available && !activity.synthesis.available;
   const staleNeedsAiTool = item?.kind === "stale_page" && (noDaemonModel || staleNeedsAiToolIds.has(item.id));
-  const copySteepCommand = async () => {
+  const copySteepCommand = async (tool: keyof typeof STEEP_COMMANDS) => {
     try {
-      await clipboardWrite(STEEP_COMMAND);
+      await clipboardWrite(STEEP_COMMANDS[tool]);
       setFlash(t("review.commandCopied"));
       window.setTimeout(() => setFlash(null), 1200);
     } catch {
@@ -1896,9 +1896,14 @@ export default function ReviewDialog({
               )}
               {item.kind === "refinement" && item.action === "lint_repair_review" && <div className="source-repair-actions" ref={setRepairActionHost} />}
               {staleNeedsAiTool && (
-                <button type="button" data-testid="review-copy-steep-command" onClick={() => void copySteepCommand()} style={actionButtonStyle}>
-                  {t("review.copyCommand")}
-                </button>
+                <>
+                  <button type="button" onClick={() => void copySteepCommand("claude")} style={actionButtonStyle}>
+                    {t("review.copyClaudeCommand")}
+                  </button>
+                  <button type="button" onClick={() => void copySteepCommand("codex")} style={actionButtonStyle}>
+                    {t("review.copyCodexCommand")}
+                  </button>
+                </>
               )}
               {!reviewApproveBlocked(item) && !staleNeedsAiTool && (
                 <button

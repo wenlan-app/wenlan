@@ -308,12 +308,14 @@ describe("DistillReviewPanel", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Refresh page" }));
 
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Copy command" })).toBeInTheDocument());
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Copy for Claude Code" })).toBeInTheDocument());
     expect(within(dialog).queryByRole("button", { name: "Refresh page" })).toBeNull();
     expect(within(dialog).getByText("Page refresh")).toBeInTheDocument();
-    expect(within(dialog).getByText(/run \/wenlan steep/)).toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "Copy command" }));
-    expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep");
+    expect(within(dialog).getByText(/\/wenlan steep in Claude Code or \$wenlan steep in Codex/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Copy for Claude Code" }));
+    expect(clipboardWrite).toHaveBeenLastCalledWith("/wenlan steep");
+    await user.click(within(dialog).getByRole("button", { name: "Copy for Codex" }));
+    expect(clipboardWrite).toHaveBeenLastCalledWith("$wenlan steep");
   });
 
   it("keeps the last successful result visible after refresh failure", async () => {
