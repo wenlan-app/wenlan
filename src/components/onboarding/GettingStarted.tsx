@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Check,
   CheckCircle,
   MagicWand,
   PlugsConnected,
@@ -75,7 +76,6 @@ export function GettingStarted({
   const {
     visible,
     progress: savedProgress,
-    doneCount: savedDoneCount,
     dismissed,
     setDismissed,
     pages,
@@ -99,7 +99,6 @@ export function GettingStarted({
   // its first page is in, and asking about that page would interrupt the run.
   const writing = writePages?.loaded === true && writePages.stepView.kind === "working";
   const progress = writing && savedProgress.pages ? { ...savedProgress, pages: false } : savedProgress;
-  const doneCount = progress === savedProgress ? savedDoneCount : savedDoneCount - 1;
 
   const stepsById: Record<GettingStartedStepId, { icon: React.ReactNode; onAction: () => void }> = {
     tool: { icon: <PlugsConnected weight="regular" />, onAction: onConnectTool },
@@ -147,14 +146,30 @@ export function GettingStarted({
   // cannot see it yet, so the pages step says how to finish it.
   const draftPending = !progress.pages && pages.some((page) => page.status === "draft");
 
+  // One step at a time: only the first step not yet done shows, with a line
+  // saying what the step before it achieved.
+  const current = order.find((id) => !progress[id]) ?? order[order.length - 1]!;
+  const stepNumber = order.indexOf(current) + 1;
+  const toolName = promptFamily != null ? resolveAgentActionName(promptFamily, agents) : null;
+  const doneLine = current === "tool"
+    ? writePages && writePages.waitingTotal > 0 && writePages.waiting
+      ? t("firstUse.checklist.doneLine.material", { what: writePages.waiting })
+      : null
+    : current === "pages"
+      ? toolName ? t("firstUse.checklist.doneLine.tool", { tool: toolName }) : null
+      : t("firstUse.checklist.doneLine.pages", { count: askablePages(pages).length });
+
   return (
     <section
-      className="getting-started"
+      className="getting-started getting-started-one"
       data-testid="getting-started"
-      aria-labelledby="getting-started-title"
+      data-step={current}
+      aria-label={t("firstUse.checklist.title")}
     >
       <header className="getting-started-header">
-        <h2 id="getting-started-title">{t("firstUse.checklist.title")}</h2>
+        <p className="getting-started-step-of" data-testid="getting-started-step-of">
+          {t("firstUse.checklist.stepOf", { n: stepNumber, total: order.length })}
+        </p>
         <button
           type="button"
           className="getting-started-hide"
@@ -165,20 +180,14 @@ export function GettingStarted({
           <X aria-hidden="true" weight="regular" />
         </button>
       </header>
-      <p className="getting-started-progress">
-        {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
-        {/* Once the ask row offers its own button, the sample moves up here. */}
-        {progress.recall || promptText ? (
-          <>
-            {" · "}
-            <button type="button" className="getting-started-link" onClick={onSeeExample}>
-              {t("firstUse.checklist.steps.recall.action")}
-            </button>
-          </>
-        ) : null}
-      </p>
+      {doneLine ? (
+        <p className="getting-started-done-line" data-testid="getting-started-done-line">
+          <Check aria-hidden="true" weight="bold" />
+          {doneLine}
+        </p>
+      ) : null}
       <ol className="getting-started-steps">
-        {order.map((id) => {
+        {[current].map((id) => {
           const step = stepsById[id];
           const done = progress[id];
           const icon = (

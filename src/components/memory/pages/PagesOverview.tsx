@@ -133,7 +133,7 @@ export function PagesOverview({
       {newPages}
       {gettingStarted}
       {everyday}
-      {adding ? <AddSourceMenu title={t("firstUse.checklist.steps.pages.material.title")} onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
+      {adding ? <AddSourceMenu onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
     </section>
   );
 }

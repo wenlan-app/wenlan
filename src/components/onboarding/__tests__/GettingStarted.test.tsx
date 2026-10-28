@@ -192,14 +192,26 @@ describe("GettingStarted", () => {
     vi.mocked(listOnboardingMilestones).mockResolvedValue([]);
   });
 
-  it("offers each unfinished step with an action that leads to it", async () => {
+  it("starts with connecting a tool, the one step there is to do", async () => {
+    const props = renderCard();
+    expect(await screen.findByRole("region", { name: title() })).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 1, total: 3 }));
+    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
+    expect(screen.queryByTestId("getting-started-recall")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.tool.action") }));
+    expect(props.onConnectTool).toHaveBeenCalledOnce();
+  });
+
+  it("shows only the next step, numbered, with what the one before it achieved", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     const props = renderCard();
 
-    expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
-    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 3 }))).toBeInTheDocument();
-    expect(screen.getByTestId("getting-started-tool")).toHaveAttribute("data-done", "true");
-    expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.tool.action") })).toBeNull();
+    expect(await screen.findByRole("region", { name: title() })).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 2, total: 3 }));
+    expect(screen.getByTestId("getting-started-done-line")).toHaveTextContent(i18n.t("firstUse.checklist.doneLine.tool", { tool: "Claude Code" }));
+    // Done steps are not listed again, and the next one waits its turn.
+    expect(screen.queryByTestId("getting-started-tool")).toBeNull();
+    expect(screen.queryByTestId("getting-started-recall")).toBeNull();
 
     fireEvent.click(screen.getByTestId("getting-started-pages-write"));
     expect(screen.getByTestId("getting-started-pages-write")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.writeOwn"));
@@ -210,16 +222,12 @@ describe("GettingStarted", () => {
     expect(props.onWriteNote).toHaveBeenCalledOnce();
     expect(props.onAddSources).toHaveBeenCalledOnce();
     expect(props.onSeeExample).toHaveBeenCalledOnce();
-    // The example is offered once, in the pages step; asking waits for a page.
-    expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.later"));
-    expect(screen.getByTestId("getting-started-recall")).toHaveAttribute("data-later", "true");
-    expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") })).toBeNull();
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
 
   it("keeps to its steps, with nothing extra underneath", async () => {
     renderCard();
-    expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: title() })).toBeInTheDocument();
     // What to ask the AI tool comes once the steps are done, as its own overlay.
     expect(screen.queryByTestId("getting-started-extra")).toBeNull();
   });
@@ -261,15 +269,17 @@ describe("GettingStarted", () => {
   it("asks about a page the user wrote once a tool is connected", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     renderCard([page({ title: "Garden plan" })]);
-    await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started")).toHaveTextContent(i18n.t("firstUse.checklist.progress", { done: 2, total: 3 }));
-    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
+    await screen.findByRole("region", { name: title() });
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 3, total: 3 }));
+    expect(screen.getByTestId("getting-started-done-line")).toHaveTextContent(i18n.t("firstUse.checklist.doneLine.pages", { count: 1 }));
+    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
     expect(screen.getByTestId("getting-started-recall")).not.toHaveAttribute("data-later");
   });
 
   it("tells a user whose only note is a draft to leave the editor so AI can find it", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ status: "draft" })]);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
     expect(screen.getByText(i18n.t("firstUse.checklist.steps.pages.draftBody"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.copy") })).toBeNull();
@@ -278,7 +288,7 @@ describe("GettingStarted", () => {
   it("does not mistake copies of brought-in files for a draft or a page to ask about", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" })]);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
     expect(screen.queryByText(i18n.t("firstUse.checklist.steps.pages.draftBody"))).toBeNull();
     expect(screen.queryByText(/ISP Outage Runbook/)).toBeNull();
@@ -287,8 +297,8 @@ describe("GettingStarted", () => {
   it("asks about a page written from material before anything else", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" }), written]);
-    await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
+    await screen.findByRole("region", { name: title() });
+    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
     expect(screen.getByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeInTheDocument();
   });
 
@@ -315,9 +325,9 @@ describe("GettingStarted", () => {
       close: vi.fn(),
     } as unknown as WritePagesState;
     renderCard([written], {}, working);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
-    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 3 }))).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 2, total: 3 }));
     expect(screen.queryByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeNull();
   });
 
@@ -358,7 +368,7 @@ describe("GettingStarted", () => {
           </OrganizeActionsContext.Provider>
         </QueryClientProvider>,
       );
-      await screen.findByRole("heading", { name: title() });
+      await screen.findByRole("region", { name: title() });
       await waitFor(() => expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-finish", "folder"));
       const step = screen.getByTestId("getting-started-pages");
       expect(step).toHaveTextContent("12 files imported.");
@@ -375,15 +385,17 @@ describe("GettingStarted", () => {
   });
 
   it("keeps the pages step to two choices and writing one yourself, with no skip link", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages").querySelectorAll(".getting-started-choice")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   });
 
   it("says what the pages step will do before there is anything to hand over", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.body"));
   });
 
@@ -403,7 +415,7 @@ describe("GettingStarted", () => {
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);
     vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
     renderAskStep();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
 
     // Claude Code takes it through the plugin's front door.
     const prompt = `/wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`;
@@ -412,8 +424,6 @@ describe("GettingStarted", () => {
     await vi.waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", prompt));
     expect(clipboardWrite).toHaveBeenCalledWith(prompt);
     expect(await screen.findByText(ask("waiting", { tool: "Claude Code" }))).toBeInTheDocument();
-    // The example stays one click away in the header for whoever wants to see it first.
-    expect(screen.getAllByRole("button", { name: ask("action") })).toHaveLength(1);
   });
 
   it.each(["en", "zh-Hans", "zh-Hant"] as const)(
@@ -424,7 +434,7 @@ describe("GettingStarted", () => {
       vi.mocked(clipboardWrite).mockResolvedValue(undefined);
       vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
       renderAskStep();
-      await screen.findByRole("heading", { name: title() });
+      await screen.findByRole("region", { name: title() });
 
       fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
       expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
@@ -446,7 +456,7 @@ describe("GettingStarted", () => {
       copied: false, waiting: null, start: vi.fn(), copyCommand: vi.fn(), close: vi.fn(),
     } as unknown as WritePagesState;
     renderCard([page({ id: "newest", title: "Kyoto itinerary", last_modified: "2026-10-02T00:00:00Z" })], {}, state);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
 
     fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
     await vi.waitFor(() =>
@@ -460,7 +470,7 @@ describe("GettingStarted", () => {
   it("offers no other tool when only one is connected", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderAskStep();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.queryByRole("button", { name: i18n.t("askAi.writePages.importCard.useAnother") })).toBeNull();
   });
 
@@ -468,7 +478,7 @@ describe("GettingStarted", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);
     renderAskStep();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
 
     fireEvent.click(screen.getByRole("button", { name: ask("copy") }));
     expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
@@ -480,13 +490,13 @@ describe("GettingStarted", () => {
   it("keeps the local model out from under the steps", async () => {
     vi.mocked(getBackgroundAiEnabled).mockResolvedValue(false);
     renderCard([], { onTurnOnSteeping: vi.fn() });
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.queryByTestId("getting-started-steep")).toBeNull();
   });
 
   it("keeps the prompt away until a tool has actually connected", async () => {
     renderCard([page()]);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.copy") })).toBeNull();
   });
 
@@ -497,7 +507,7 @@ describe("GettingStarted", () => {
     expect(localStorage.getItem("onboarding:gettingStartedDismissed")).toBe("1");
 
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.reopen") }));
-    expect(screen.getByRole("heading", { name: title() })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: title() })).toBeInTheDocument();
     expect(localStorage.getItem("onboarding:gettingStartedDismissed")).toBeNull();
   });
 });

@@ -64,6 +64,13 @@ export const enFirstUse = {
     useWithAi: "What else your AI can do",
   },
   checklist: {
+    stepOf: "Step {{n}} of {{total}}",
+    doneLine: {
+      material: "{{what}} are in",
+      tool: "{{tool}} is connected",
+      pages_one: "{{count}} page written",
+      pages_other: "{{count}} pages written",
+    },
     title: "Build your wiki in three steps",
     progress: "{{done}} of {{total}} done",
     done: "Done",
@@ -194,6 +201,13 @@ export const hansFirstUse = {
     useWithAi: "AI 还能做什么",
   },
   checklist: {
+    stepOf: "第 {{n}} 步，共 {{total}} 步",
+    doneLine: {
+      material: "{{what}}已经加入",
+      tool: "{{tool}} 已接上",
+      pages_one: "已写好 {{count}} 篇笔记",
+      pages_other: "已写好 {{count}} 篇笔记",
+    },
     title: "三步建好你的 wiki",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
@@ -321,6 +335,13 @@ export const hantFirstUse = {
     useWithAi: "AI 還能做什麼",
   },
   checklist: {
+    stepOf: "第 {{n}} 步，共 {{total}} 步",
+    doneLine: {
+      material: "{{what}}已經加入",
+      tool: "{{tool}} 已接上",
+      pages_one: "已寫好 {{count}} 篇筆記",
+      pages_other: "已寫好 {{count}} 篇筆記",
+    },
     title: "三步建好你的 wiki",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",

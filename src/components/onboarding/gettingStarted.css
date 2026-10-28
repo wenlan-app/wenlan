@@ -381,3 +381,55 @@
   margin: 8px 0 0;
   font-size: 12.5px;
 }
+
+/* One step at a time: the step's own title leads, a quiet "Step n of 3"
+   above it, and one line on what the step before it achieved. */
+.getting-started-one .getting-started-header {
+  align-items: center;
+}
+
+.getting-started-step-of {
+  margin: 0;
+  color: var(--mem-text-tertiary);
+  font: 12.5px/1.5 var(--mem-font-body);
+}
+
+.getting-started-done-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  color: var(--mem-accent-sage-text);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.getting-started-one .getting-started-icon {
+  display: none;
+}
+
+.getting-started-one .getting-started-steps > li {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 10px 0 16px;
+}
+
+.getting-started-one .getting-started-step-title,
+.wiki-reading-start[data-onboarding="true"] .getting-started-one .getting-started-step-title {
+  margin: 0;
+  font: 600 19px/1.35 var(--mem-font-body);
+}
+
+.getting-started-one .getting-started-step-body {
+  margin-top: 6px;
+}
+
+.getting-started-one .getting-started-action,
+.getting-started-one .getting-started-actions {
+  align-self: flex-start;
+  margin-left: 0;
+}
+
+.getting-started-one .getting-started-actions {
+  align-items: flex-start;
+}

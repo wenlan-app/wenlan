@@ -7,6 +7,14 @@ vi.mock("../../memory/askAi/askInTool", async (importOriginal) => {
   return { ...actual, handToTool: vi.fn(async () => "opened") };
 });
 
+vi.mock("../../memory/askAi/AskAiDialog", () => ({
+  AskAiDialog: ({ onClose }: { onClose: () => void }) => (
+    <div role="dialog" aria-label="What your AI can do">
+      <button type="button" onClick={onClose}>Close all commands</button>
+    </div>
+  ),
+}));
+
 import { EverydayUse } from "../EverydayUse";
 
 describe("EverydayUse", () => {
@@ -36,5 +44,19 @@ describe("EverydayUse", () => {
     unmount();
     render(<EverydayUse tool={{ family: "claude-code", name: "Claude Code" }} />);
     expect(screen.queryByTestId("everyday-use")).toBeNull();
+  });
+
+  it("says these are enough, and opens every command for the curious", async () => {
+    // A fresh module: the test before closed the overlay for this session.
+    vi.resetModules();
+    const { EverydayUse: Fresh } = await import("../EverydayUse");
+    render(<Fresh tool={{ family: "claude-code", name: "Claude Code" }} />);
+    expect(screen.getByTestId("everyday-use")).toHaveTextContent("These are all you need. Wenlan does the rest.");
+    fireEvent.click(screen.getByRole("button", { name: "See all commands" }));
+    // The full list takes its place; closing it closes both.
+    expect(screen.queryByTestId("everyday-use")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close all commands" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(localStorage.getItem("onboarding:everydayUse")).toBe("closed");
   });
 });

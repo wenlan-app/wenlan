@@ -138,7 +138,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
   // The two ways are offered side by side: one is done in a minute and
   // brings what the AI remembers; the other brings every chat but waits for
   // an email.
-  if (showChats && !fullChats && onQuickChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
+  if (showChats && !fullChats && onQuickChats) return <SourceDialog title={t("sourceAccess.chatHistory")} lead={t("sourceAccess.chatHistoryLead")} onClose={onClose}>
     <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
       <ClipboardText aria-hidden="true" size={20} weight="regular" data-resource-icon="quick" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatQuick")}</strong><span>{t("sourceAccess.chatQuickHint")}</span></span>
     </button>
@@ -177,7 +177,7 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     </ol>
     <ImportFlow onLeave={onClose} />
   </SourceDialog>;
-  return <SourceDialog title={title ?? t("sourceAccess.addTitle")} onClose={onClose}>
+  return <SourceDialog title={title ?? t("sourceAccess.addTitle")} lead={t("sourceAccess.addLead")} onClose={onClose}>
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}
     {/* Past AI chats first: everyone who uses an AI tool has them. Then an
         Obsidian vault, a folder, files; a link with its text, Logseq last. */}

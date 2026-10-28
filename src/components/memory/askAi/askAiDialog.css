@@ -199,10 +199,9 @@
   outline-offset: 1px;
 }
 
+/* Spacing, not a rule line, sets the closing tip apart. */
 .ask-ai-tip {
-  margin: 10px 0 0;
-  padding-top: 10px;
-  border-top: 1px solid var(--mem-border);
+  margin: 16px 0 0;
   color: var(--mem-text-tertiary);
   font: 12px/1.5 var(--mem-font-body);
 }

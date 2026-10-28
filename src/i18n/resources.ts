@@ -746,13 +746,14 @@ const en = {
   },
   everydayUse: {
     title: "Day to day",
-    lead: "Three things to say to {{tool}} on a normal day.",
+    lead: "These are all you need. Wenlan does the rest.",
+    more: "See all commands",
     orSkill: "or",
     close: "Close",
     moments: {
-      start: { when: "Starting work", words: "where did I leave off?", sentence: "Ask Wenlan where I left off" },
-      remember: { when: "Something worth keeping", words: "remember we switched to SQLite", sentence: "Wenlan, remember: we switched to SQLite" },
-      wrapUp: { when: "Wrapping up", words: "wrap up", sentence: "Ask Wenlan to save where I stopped" },
+      start: { when: "Starting work", does: "brings back what you saved last time", words: "where did I leave off?", sentence: "Ask Wenlan where I left off" },
+      remember: { when: "Something worth keeping", does: "saves just this one thing", words: "remember we switched to SQLite", sentence: "Wenlan, remember: we switched to SQLite" },
+      wrapUp: { when: "Wrapping up", does: "saves what this chat did, for next time", words: "wrap up", sentence: "Ask Wenlan to save where I stopped" },
     },
   },
   tabIntro: {
@@ -3780,13 +3781,14 @@ const zhHans = {
   },
   everydayUse: {
     title: "平常这样用",
-    lead: "平常在 {{tool}} 里这样说就好。",
+    lead: "记得这三句就够了，其他交给文澜。",
+    more: "看全部指令",
     orSkill: "或",
     close: "关闭",
     moments: {
-      start: { when: "开工时", words: "上次做到哪", sentence: "问文澜我上次做到哪" },
-      remember: { when: "想记一件事", words: "记住我们改用 SQLite", sentence: "用文澜记住：我们改用 SQLite" },
-      wrapUp: { when: "收工时", words: "收工", sentence: "用文澜记下我做到哪，下次接着做" },
+      start: { when: "开工时", does: "接回上次存下的进度", words: "上次做到哪", sentence: "问文澜我上次做到哪" },
+      remember: { when: "想记一件事", does: "只记这一句", words: "记住我们改用 SQLite", sentence: "用文澜记住：我们改用 SQLite" },
+      wrapUp: { when: "收工时", does: "记下这次对话做了什么、做到哪", words: "收工", sentence: "用文澜记下我做到哪，下次接着做" },
     },
   },
   tabIntro: {
@@ -6770,13 +6772,14 @@ const zhHant = {
   },
   everydayUse: {
     title: "平常這樣用",
-    lead: "平常在 {{tool}} 裡這樣說就好。",
+    lead: "記得這三句就夠了，其他交給文瀾。",
+    more: "看全部指令",
     orSkill: "或",
     close: "關閉",
     moments: {
-      start: { when: "開工時", words: "上次做到哪", sentence: "問文瀾我上次做到哪" },
-      remember: { when: "想記一件事", words: "記住我們改用 SQLite", sentence: "用文瀾記住：我們改用 SQLite" },
-      wrapUp: { when: "收工時", words: "收工", sentence: "用文瀾記下我做到哪，下次接著做" },
+      start: { when: "開工時", does: "接回上次存下的進度", words: "上次做到哪", sentence: "問文瀾我上次做到哪" },
+      remember: { when: "想記一件事", does: "只記這一句", words: "記住我們改用 SQLite", sentence: "用文瀾記住：我們改用 SQLite" },
+      wrapUp: { when: "收工時", does: "記下這次對話做了什麼、做到哪", words: "收工", sentence: "用文瀾記下我做到哪，下次接著做" },
     },
   },
   tabIntro: {

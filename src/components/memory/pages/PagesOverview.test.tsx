@@ -218,6 +218,8 @@ describe("PagesOverview reading workspace", () => {
     });
 
     it("opens the add-source dialog in place instead of leaving the Wiki", async () => {
+      // With a tool connected, the card's one step is writing pages.
+      vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
       renderOverview({ checklist: true });
       fireEvent.click(await screen.findByRole("button", { name: /Add your material/ }));
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -225,6 +227,8 @@ describe("PagesOverview reading workspace", () => {
     });
 
     it("keeps past AI chats inside the one material choice", async () => {
+      // With a tool connected, the card's one step is writing pages.
+      vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
       renderOverview({ checklist: true });
       expect(screen.queryByTestId("getting-started-pages-chats")).toBeNull();
       fireEvent.click(await screen.findByRole("button", { name: /Add your material/ }));

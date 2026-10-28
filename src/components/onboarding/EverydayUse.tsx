@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useId, useRef, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X } from "@phosphor-icons/react";
 import { AskInToolButton, frontDoorFor } from "../memory/askAi/askInTool";
+import { AskAiDialog } from "../memory/askAi/AskAiDialog";
 import { useHoldOnboardingStage } from "./onboardingStage";
 
 import "./everydayUse.css";
@@ -59,11 +60,14 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
   const titleId = useId();
   const panel = useRef<HTMLElement | null>(null);
   const closed = useSyncExternalStore(subscribe, () => closedThisSession || readClosed(), () => false);
+  // "See all commands" swaps this for the full list; closing that closes both.
+  const [more, setMore] = useState(false);
   useHoldOnboardingStage(!closed);
   useEffect(() => {
-    if (!closed) panel.current?.focus();
-  }, [closed]);
+    if (!closed && !more) panel.current?.focus();
+  }, [closed, more]);
   if (closed) return null;
+  if (more) return <AskAiDialog onClose={close} />;
   const frontDoor = frontDoorFor(tool.family);
   return createPortal(
     <div
@@ -99,7 +103,12 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
           <X aria-hidden="true" weight="regular" />
         </button>
       </header>
-      <p className="getting-started-lead">{t("everydayUse.lead", { tool: tool.name })}</p>
+      <p className="getting-started-lead">
+        {t("everydayUse.lead", { tool: tool.name })}{" "}
+        <button type="button" className="getting-started-link" data-testid="everyday-use-more" onClick={() => setMore(true)}>
+          {t("everydayUse.more")}
+        </button>
+      </p>
       <ul className="everyday-use-rows">
         {MOMENTS.map(({ id: moment, skill }) => {
           // A tool with the plugin takes the front door and a few words, and
@@ -113,7 +122,12 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
           return (
             <li key={moment} data-testid={`everyday-use-${moment}`}>
               <div className="everyday-use-copy">
-                <p>{t(`everydayUse.moments.${moment}.when`)}</p>
+                {/* When, then what it keeps: "remember" keeps one thing, "wrap up"
+                    the whole chat, so the two read as different. */}
+                <p>
+                  <strong>{t(`everydayUse.moments.${moment}.when`)}</strong>{" "}
+                  {t(`everydayUse.moments.${moment}.does`)}
+                </p>
                 <code className={frontDoor ? undefined : "everyday-use-plain"}>{text}</code>
                 {skillText ? (
                   <span className="everyday-use-skill">
