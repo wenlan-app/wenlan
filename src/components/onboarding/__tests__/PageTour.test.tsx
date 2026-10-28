@@ -40,7 +40,7 @@ describe("PageTour", () => {
     expect(screen.getByTestId("page-tour")).toHaveAttribute("data-tip", "unverified");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByTestId("page-tour")).toHaveAttribute("data-tip", "edit");
-    expect(screen.getByText(/asks you first/)).toBeInTheDocument();
+    expect(screen.getByText(/Once you edit it, Wenlan asks before updating/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Got it" }));
     expect(screen.queryByTestId("page-tour")).toBeNull();
     expect(localStorage.getItem(TOUR_KEY)).toBe("seen");

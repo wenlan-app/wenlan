@@ -1,0 +1,108 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
+import { X } from "@phosphor-icons/react";
+import { AskInToolButton, frontDoorFor } from "../memory/askAi/askInTool";
+
+import "./everydayUse.css";
+
+const CLOSED_KEY = "onboarding:everydayUse";
+const listeners = new Set<() => void>();
+
+function readClosed(): boolean {
+  try {
+    return localStorage.getItem(CLOSED_KEY) === "closed";
+  } catch {
+    return false;
+  }
+}
+
+function close() {
+  try {
+    localStorage.setItem(CLOSED_KEY, "closed");
+  } catch {
+    // Storage refused: the card closes for this session only.
+  }
+  closedThisSession = true;
+  listeners.forEach((listener) => listener());
+}
+
+let closedThisSession = false;
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** The day's rhythm, in the order it happens: start, while working, wrap up,
+ *  each with the plugin skill that does the same thing. */
+const MOMENTS = [
+  { id: "start", skill: "brief" },
+  { id: "remember", skill: "capture" },
+  { id: "wrapUp", skill: "handoff" },
+] as const;
+
+/**
+ * Takes the checklist's place once its three steps are done, while the
+ * library is still new: the three things a person says to their AI tool on an
+ * ordinary day (where did I leave off, remember this, wrap up), each one
+ * click away from that tool. Closed for good with its ×.
+ */
+export function EverydayUse({ tool }: { readonly tool: { readonly family: string; readonly name: string } }) {
+  const { t } = useTranslation();
+  const closed = useSyncExternalStore(subscribe, () => closedThisSession || readClosed(), () => false);
+  if (closed) return null;
+  const frontDoor = frontDoorFor(tool.family);
+  return (
+    <section className="getting-started everyday-use" data-testid="everyday-use" aria-labelledby="everyday-use-title">
+      <header className="getting-started-header">
+        <h2 id="everyday-use-title">{t("everydayUse.title")}</h2>
+        <button
+          type="button"
+          className="getting-started-hide"
+          aria-label={t("everydayUse.close")}
+          title={t("everydayUse.close")}
+          onClick={close}
+        >
+          <X aria-hidden="true" weight="regular" />
+        </button>
+      </header>
+      <p className="getting-started-lead">{t("everydayUse.lead", { tool: tool.name })}</p>
+      <ul className="everyday-use-rows">
+        {MOMENTS.map(({ id: moment, skill }) => {
+          // A tool with the plugin takes the front door and a few words, and
+          // names the skill that does the same; any other tool is asked in a
+          // plain sentence.
+          const text = frontDoor
+            ? `${frontDoor} ${t(`everydayUse.moments.${moment}.words`)}`
+            : t(`everydayUse.moments.${moment}.sentence`);
+          // Codex calls plugin skills with `$`, Claude Code with `/`.
+          const skillText = frontDoor ? `${frontDoor.charAt(0)}${skill}` : null;
+          return (
+            <li key={moment} data-testid={`everyday-use-${moment}`}>
+              <div className="everyday-use-copy">
+                <p>{t(`everydayUse.moments.${moment}.when`)}</p>
+                <code className={frontDoor ? undefined : "everyday-use-plain"}>{text}</code>
+                {skillText ? (
+                  <span className="everyday-use-skill">
+                    {t("everydayUse.orSkill")} <code>{skillText}</code>
+                  </span>
+                ) : null}
+              </div>
+              <AskInToolButton
+                family={tool.family}
+                tool={tool.name}
+                text={text}
+                label={t("askAi.tryIn", { tool: tool.name })}
+                className="ask-in-tool everyday-use-action"
+                testId={`everyday-use-try-${moment}`}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}

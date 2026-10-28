@@ -48,9 +48,6 @@ export interface GettingStartedProps {
   readonly onWriteNote: () => void;
   readonly onConnectTool: () => void;
   readonly onAddSources: () => void;
-  /** Opens the add-source dialog straight at importing past AI chats. Falls
-   *  back to the full dialog. */
-  readonly onImportChats?: () => void;
   readonly onSeeExample: () => void;
   /** Opens the setting that turns background steeping on. Without it the
    *  optional steeping line is not offered. */
@@ -66,7 +63,6 @@ export function GettingStarted({
   onWriteNote,
   onConnectTool,
   onAddSources,
-  onImportChats,
   onSeeExample,
   onTurnOnSteeping,
   writePages = null,
@@ -231,7 +227,6 @@ export function GettingStarted({
                   draftPending={draftPending}
                   onWriteNote={onWriteNote}
                   onAddSources={onAddSources}
-                  onImportChats={onImportChats ?? onAddSources}
                   onSeeExample={onSeeExample}
                   onSelectPage={onSelectPage}
                   onUseLocalModel={onTurnOnSteeping}

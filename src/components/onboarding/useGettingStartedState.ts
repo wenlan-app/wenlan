@@ -159,6 +159,10 @@ export interface GettingStartedState {
   /** Whether `visible` is an answer yet: false until the library, agents and
    *  milestones have all loaded (an established library needs only pages). */
   readonly loaded: boolean;
+  /** A library still being built (fewer pages than an established one),
+   *  whether or not the checklist is done: first-visit explanations and the
+   *  everyday-use card are for this person. False until pages have loaded. */
+  readonly newLibrary: boolean;
 }
 
 export function useGettingStartedState(): GettingStartedState {
@@ -188,6 +192,7 @@ export function useGettingStartedState(): GettingStartedState {
       pages,
       agents: [],
       loaded: loaded || (ready && established),
+      newLibrary: ready && !established,
     };
   }
   const progress = gettingStartedProgress({
@@ -206,5 +211,6 @@ export function useGettingStartedState(): GettingStartedState {
     pages,
     agents: agentsQuery.data,
     loaded: true,
+    newLibrary: true,
   };
 }

@@ -219,13 +219,15 @@ describe("PagesOverview reading workspace", () => {
 
     it("opens the add-source dialog in place instead of leaving the Wiki", async () => {
       renderOverview({ checklist: true });
-      fireEvent.click(await screen.findByRole("button", { name: /Folder or files/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /Add your material/ }));
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
       expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
     });
 
-    it("opens straight at importing AI chats", async () => {
+    it("keeps past AI chats inside the one material choice", async () => {
       renderOverview({ checklist: true });
+      expect(screen.queryByTestId("getting-started-pages-chats")).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: /Add your material/ }));
       fireEvent.click(await screen.findByRole("button", { name: /Past AI chats/ }));
       expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });

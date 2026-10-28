@@ -54,6 +54,28 @@ describe("AddSourceMenu", () => {
     expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
   });
 
+  it("offers the quick and the full way for past AI chats side by side where both exist", async () => {
+    const onClose = vi.fn();
+    const onQuickChats = vi.fn();
+    render(wrap(<AddSourceMenu start="chats" onQuickChats={onQuickChats} onClose={onClose} />));
+    expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
+    expect(screen.getByTestId("source-chats-quick")).toHaveTextContent("Quick, about a minute");
+    expect(screen.getByTestId("source-chats-full")).toHaveTextContent("Full chat history");
+    expect(screen.queryByTestId("chat-import-drop-zone")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("source-chats-full"));
+    expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
+  });
+
+  it("hands the quick way to the paste-back import and closes", async () => {
+    const onClose = vi.fn();
+    const onQuickChats = vi.fn();
+    render(wrap(<AddSourceMenu start="chats" onQuickChats={onQuickChats} onClose={onClose} />));
+    fireEvent.click(await screen.findByTestId("source-chats-quick"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onQuickChats).toHaveBeenCalledTimes(1);
+  });
+
   it("shows the update-daemon notice on an old daemon", async () => {
     mocks.getDaemonVersion.mockResolvedValue("0.9.5");
     render(wrap(<AddSourceMenu onClose={() => {}} />));

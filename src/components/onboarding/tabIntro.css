@@ -1,0 +1,49 @@
+/* Floats at the foot of the content area, centred on it (the left edge is
+   set from the area's box), so nothing in the view moves. */
+.tab-intro-anchor {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 40;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.tab-intro {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 6px 8px 6px 14px;
+  border-radius: 999px;
+  background: var(--mem-surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  color: var(--mem-text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.tab-intro span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-intro-close {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mem-text-tertiary);
+  cursor: pointer;
+}
+
+.tab-intro-close:hover {
+  background: var(--mem-hover);
+  color: var(--mem-text);
+}

@@ -36,6 +36,7 @@ import {
 import { SettingsGroup } from "../SettingsView";
 import ProfileAvatar from "../../ProfileAvatar";
 import { replayPageTour, usePageTourState } from "../../../onboarding/PageTour";
+import { resetTabIntros } from "../../../onboarding/TabIntro";
 
 type ThemeLabelKey =
   | "settings.theme.auto"
@@ -439,7 +440,10 @@ function PageTipsRow() {
           variant="secondary"
           size="sm"
           disabled={tour === "replay"}
-          onClick={replayPageTour}
+          onClick={() => {
+            replayPageTour();
+            resetTabIntros();
+          }}
           data-testid="settings-page-tips-replay"
         >
           {t("settings.general.pageTipsGo")}

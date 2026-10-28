@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { ArrowsClockwise, ChatsCircle, DownloadSimple } from "@phosphor-icons/react";
+import { ArrowsClockwise, ChatsCircle, ClipboardText, DownloadSimple, FileZip } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
@@ -24,19 +24,20 @@ import { useTranslation } from "react-i18next";
 type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
 
-export default function AddSourceMenu({ onClose, start = "menu", withChats = true }: {
+export default function AddSourceMenu({ onClose, start = "menu", onQuickChats }: {
   onClose: () => void;
   /** "chats" opens straight at importing past AI chats. */
   start?: "menu" | "chats";
-  /** False where past AI chats already have their own button next to the one
-   *  that opened this menu (the getting-started step), so they are not
-   *  offered twice. */
-  withChats?: boolean;
+  /** Where past AI chats can also come in the quick way (copy a prompt into
+   *  the AI, paste its answer back), the chats panel offers both ways. */
+  onQuickChats?: () => void;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const [showWeb, setShowWeb] = useState(false);
   const [showChats, setShowChats] = useState(start === "chats");
+  // Quick or full: asked first wherever the quick way exists.
+  const [fullChats, setFullChats] = useState(onQuickChats === undefined);
   // A picked folder waits here while the user chooses sync or import-once.
   const [picked, setPicked] = useState<PickedFolder | null>(null);
   // A failure to add a source is shown here in the dialog, next to the choice
@@ -132,6 +133,17 @@ export default function AddSourceMenu({ onClose, start = "menu", withChats = tru
   if (showWeb) return <AddWebSourceDialog onClose={onClose} />;
   // Past AI chats use the same import as Settings, so a new user can bring
   // earlier decisions in from the home without hunting for it.
+  // The two ways are offered side by side: one is done in a minute and
+  // brings what the AI remembers; the other brings every chat but waits for
+  // an email.
+  if (showChats && !fullChats && onQuickChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
+    <button type="button" className="source-add-option" data-testid="source-chats-quick" onClick={() => { onClose(); onQuickChats(); }}>
+      <ClipboardText aria-hidden="true" size={20} weight="regular" data-resource-icon="quick" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatQuick")}</strong><span>{t("sourceAccess.chatQuickHint")}</span></span>
+    </button>
+    <button type="button" className="source-add-option" data-testid="source-chats-full" onClick={() => setFullChats(true)}>
+      <FileZip aria-hidden="true" size={20} weight="regular" data-resource-icon="zip" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatFull")}</strong><span>{t("sourceAccess.chatFullHint")}</span></span>
+    </button>
+  </SourceDialog>;
   if (showChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
     {/* The export arrives by email, sometimes much later, so the dialog says
         so up front instead of leaving the user waiting at the drop zone. */}
@@ -178,9 +190,9 @@ export default function AddSourceMenu({ onClose, start = "menu", withChats = tru
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowWeb(true)}>
       <SourceTypeIcon kind="webpage" /><span className="source-add-option-copy"><strong>{t("sourceAccess.web")}</strong><span>{t("sourceAccess.webHint")}</span></span>
     </button>
-    {withChats && <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
       <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
-    </button>}
+    </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
       <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
     </button>

@@ -92,14 +92,13 @@ function mockLibrary(pages: Page[]) {
 
 function renderCard(
   pages: Page[] = [],
-  handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onImportChats" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {},
+  handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {},
   writePages: WritePagesState | null = null,
 ) {
   const props = {
     onWriteNote: vi.fn(),
     onConnectTool: vi.fn(),
     onAddSources: vi.fn(),
-    onImportChats: vi.fn(),
     onSeeExample: vi.fn(),
     ...handlers,
     writePages,
@@ -204,12 +203,12 @@ describe("GettingStarted", () => {
 
     fireEvent.click(screen.getByTestId("getting-started-pages-write"));
     expect(screen.getByTestId("getting-started-pages-write")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.writeOwn"));
-    fireEvent.click(screen.getByTestId("getting-started-pages-folder"));
-    fireEvent.click(screen.getByTestId("getting-started-pages-chats"));
+    // Material of any kind behind one choice, the sample beside it.
+    expect(screen.queryByTestId("getting-started-pages-chats")).toBeNull();
+    fireEvent.click(screen.getByTestId("getting-started-pages-material"));
     fireEvent.click(screen.getByTestId("getting-started-pages-sample"));
     expect(props.onWriteNote).toHaveBeenCalledOnce();
     expect(props.onAddSources).toHaveBeenCalledOnce();
-    expect(props.onImportChats).toHaveBeenCalledOnce();
     expect(props.onSeeExample).toHaveBeenCalledOnce();
     // The example is offered once, in the pages step; asking waits for a page.
     expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.later"));
@@ -377,10 +376,10 @@ describe("GettingStarted", () => {
     }
   });
 
-  it("keeps the pages step to its three choices and writing one yourself, with no skip link", async () => {
+  it("keeps the pages step to two choices and writing one yourself, with no skip link", async () => {
     renderCard();
     await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-pages").querySelectorAll(".getting-started-choice")).toHaveLength(3);
+    expect(screen.getByTestId("getting-started-pages").querySelectorAll(".getting-started-choice")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   });
 

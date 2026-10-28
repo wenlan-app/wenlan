@@ -16,6 +16,9 @@
 //   folder     An Obsidian vault was just added and its first read stored
 //              12 notes: the folder import's finish, On demand, Codex
 //              connected. `view=sources` opens the Sources library.
+//
+// `&asked=1` adds the first-recall milestone, so with `done` all three
+// checklist steps are done and the everyday-use card shows instead.
 import type { Page, RegisteredSource } from "../../src/lib/tauri";
 import { rememberAddedFolder } from "../../src/components/memory/sources/FolderImportOrganize";
 
@@ -112,6 +115,10 @@ export function organizeInvoke(command: string, args: Record<string, unknown> | 
   if (!scenario) return undefined;
   switch (command) {
     case "get_background_ai_enabled": return { value: scenario === "automatic" };
+    case "list_onboarding_milestones":
+      return params.get("asked")
+        ? { value: [{ id: "first-recall", first_triggered_at: Math.floor(now / 1000) - 60, acknowledged_at: null, payload: null }] }
+        : undefined;
     case "list_agents": {
       if (scenario === "none") return { value: [] };
       if (scenario === "kimi") return { value: [agent("kimi-code", "Kimi Code")] };

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useTranslation } from "react-i18next";
-import { ChatsCircle, Eye, FolderSimplePlus } from "@phosphor-icons/react";
+import { Eye, FolderSimplePlus } from "@phosphor-icons/react";
 import type { Page } from "../../lib/tauri";
 import {
   copyAgainLabel,
@@ -24,7 +24,6 @@ interface WritePagesStepProps {
   /** Opens the editor, for someone who would rather write a page themselves. */
   readonly onWriteNote?: () => void;
   readonly onAddSources?: () => void;
-  readonly onImportChats?: () => void;
   readonly onSeeExample?: () => void;
   readonly onSelectPage?: (pageId: string) => void;
   /** Opens the steep settings, where the local model is chosen. */
@@ -33,9 +32,9 @@ interface WritePagesStepProps {
 
 /**
  * The checklist's "turn your material into pages" row, laid out by the
- * checklist like its other rows. With nothing in yet it asks where the
- * user's material is (a folder of any kind, past AI chats, or the sample for
- * someone with none); once material is in, from an import or from what AI
+ * checklist like its other rows. With nothing in yet it offers two equal
+ * choices: add your material (folders, files, past AI chats and the rest, in
+ * one dialog) or see the sample, for someone with none yet; once material is in, from an import or from what AI
  * tools saved, it hands it to the AI tool; then the same run the home line
  * follows shows here, so the pages appear in this row as they land. Once
  * done, the row keeps the newest pages, so the open checklist is the home's
@@ -48,7 +47,6 @@ export function WritePagesStep({
   draftPending = false,
   onWriteNote,
   onAddSources,
-  onImportChats,
   onSeeExample,
   onSelectPage,
   onUseLocalModel,
@@ -186,11 +184,10 @@ export function WritePagesStep({
     );
   }
 
-  // Nothing to hand over yet (or Wenlan writes the pages itself): where is
-  // the user's material?
+  // Nothing to hand over yet (or Wenlan writes the pages itself): bring
+  // material in, or look at the sample first.
   const choices = [
-    { key: "folder", icon: <FolderSimplePlus weight="regular" />, onClick: onAddSources },
-    { key: "chats", icon: <ChatsCircle weight="regular" />, onClick: onImportChats },
+    { key: "material", icon: <FolderSimplePlus weight="regular" />, onClick: onAddSources },
     { key: "sample", icon: <Eye weight="regular" />, onClick: onSeeExample },
   ] as const;
   return (

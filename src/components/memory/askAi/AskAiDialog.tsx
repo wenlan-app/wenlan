@@ -7,6 +7,7 @@ import {
   Check,
   Code,
   Copy,
+  FlagCheckered,
   MagnifyingGlass,
   Play,
   PushPin,
@@ -33,6 +34,7 @@ const ICONS: Record<AskAiTaskId, React.ReactNode> = {
   capture: <PushPin weight="regular" />,
   recall: <MagnifyingGlass weight="regular" />,
   brief: <Play weight="regular" />,
+  handoff: <FlagCheckered weight="regular" />,
   steep: <ArrowsClockwise weight="regular" />,
   wiki: <Code weight="regular" />,
 };

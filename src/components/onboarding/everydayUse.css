@@ -1,0 +1,52 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The everyday-use card reuses the checklist card; its rows are flat, spaced
+   apart rather than divided. */
+
+.everyday-use-rows {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.everyday-use-rows li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.everyday-use-copy {
+  min-width: 0;
+}
+
+.everyday-use-copy p {
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 12.5px/1.4 var(--mem-font-body);
+}
+
+.everyday-use-copy code {
+  color: var(--mem-text);
+  font: 13px/1.5 var(--mem-font-mono);
+}
+
+.everyday-use-copy code.everyday-use-plain {
+  font-family: var(--mem-font-body);
+}
+
+.everyday-use-action {
+  flex-shrink: 0;
+}
+
+.everyday-use-skill {
+  margin-left: 8px;
+  color: var(--mem-text-tertiary);
+  font: 12.5px/1.5 var(--mem-font-body);
+}
+
+.everyday-use-copy .everyday-use-skill code {
+  color: var(--mem-text-secondary);
+  font-size: 12.5px;
+}

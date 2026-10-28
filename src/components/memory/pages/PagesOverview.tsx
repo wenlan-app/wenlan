@@ -6,6 +6,7 @@ import { useLibraryInventory } from "./useLibraryInventory";
 import "./wikiInventoryOverview.css";
 import { FirstPageMilestone } from "../../onboarding/FirstPageMilestone";
 import { GettingStarted } from "../../onboarding/GettingStarted";
+import { EverydayUse } from "../../onboarding/EverydayUse";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
@@ -28,6 +29,8 @@ interface PagesOverviewProps {
    *  source opens its dialog in place and needs no destination. */
   readonly onConnectTool?: () => void;
   readonly onSeeExample?: () => void;
+  /** Opens the paste-back import, the quick way to bring past AI chats in. */
+  readonly onImportChatsQuick?: () => void;
   readonly onOpenIntelligence?: () => void;
   /** Open the review group for notes whose source note changed. */
   readonly onOpenBasisUpdates?: () => void;
@@ -41,6 +44,7 @@ export function PagesOverview({
   onSelectPage,
   onConnectTool,
   onSeeExample,
+  onImportChatsQuick,
   onOpenIntelligence,
   onOpenBasisUpdates,
   onOpenNoteSuggestion,
@@ -48,7 +52,7 @@ export function PagesOverview({
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   const checklist = useGettingStartedState();
-  const [adding, setAdding] = useState<"menu" | "chats" | null>(null);
+  const [adding, setAdding] = useState(false);
   const writePages = useWritePages(pages);
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
@@ -61,8 +65,7 @@ export function PagesOverview({
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
       onConnectTool={onConnectTool}
-      onAddSources={() => setAdding("menu")}
-      onImportChats={() => setAdding("chats")}
+      onAddSources={() => setAdding(true)}
       onSeeExample={onSeeExample}
       onTurnOnSteeping={onOpenIntelligence}
       writePages={writePages}
@@ -70,6 +73,11 @@ export function PagesOverview({
     />
   ) : null;
   const open = gettingStarted !== null && checklist.visible && !checklist.dismissed;
+  // Once the three steps are done, a still-new library gets the everyday
+  // sentences in the checklist's place.
+  const everyday = gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
+    ? <EverydayUse tool={writePages.tool} />
+    : null;
   // While the open checklist is the screen's content the panel above it shrinks
   // to its title, and the new pages sit inside its "write pages" step, so the
   // home is one card that fits the default window.
@@ -123,7 +131,8 @@ export function PagesOverview({
       {/* The pages come first and the card (or its "show" line) follows. */}
       {newPages}
       {gettingStarted}
-      {adding ? <AddSourceMenu start={adding} withChats={false} onClose={() => setAdding(null)} /> : null}
+      {everyday}
+      {adding ? <AddSourceMenu onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
     </section>
   );
 }

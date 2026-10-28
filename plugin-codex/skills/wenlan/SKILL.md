@@ -98,8 +98,8 @@ Match the request to one row. Old command words count as their row.
 | Delete one memory by id | forget | `$wenlan forget mem_123` |
 | Save one memory, or save this conversation as one note | capture | `$wenlan 記住我們改用 SQLite` |
 | Look something up | recall | `$wenlan 我們上次怎麼決定資料庫` |
-| Catch up on the project | brief | `$wenlan 上次做到哪` |
-| End the session | handoff | `$wenlan 收工`, `$wenlan handoff` |
+| Catch up on the project | brief | `$wenlan 上次做到哪`, `$wenlan where did I leave off?` |
+| End the session | handoff | `$wenlan 收工`, `$wenlan wrap up`, `$wenlan handoff` |
 | What Wenlan can do, where data lives, how to read notes without the app | answer from "Reference" below | `$wenlan help`, `$wenlan 資料存在哪` |
 
 Rules:

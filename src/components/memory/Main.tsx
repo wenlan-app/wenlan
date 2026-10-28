@@ -31,6 +31,7 @@ import MemoryStream from "./MemoryStream";
 import type { SortMode } from "./MemoryStream";
 import { FirstUseGuide } from "../onboarding/FirstUseGuide";
 import { useGettingStartedState } from "../onboarding/useGettingStartedState";
+import { TabIntro, type IntroTab } from "../onboarding/TabIntro";
 import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
 import { SearchResults } from "./SearchResults";
@@ -145,7 +146,7 @@ function sameDestination(current: View, next: View): boolean {
     case "space": return next.kind === "space" && (current.spaceId && next.spaceId
       ? current.spaceId === next.spaceId : current.spaceName === next.spaceName);
     case "spaces": return next.kind === "spaces" && !!current.create === !!next.create;
-    case "import": return next.kind === "import" && !!current.fromFirstUse === !!next.fromFirstUse;
+    case "import": return next.kind === "import" && !!current.fromFirstUse === !!next.fromFirstUse && !!current.fromHome === !!next.fromHome;
     case "first-use": return next.kind === "first-use"
       && !!current.showKnowledge === !!next.showKnowledge && current.batchId === next.batchId;
     case "page-draft": return next.kind === "page-draft" && current.space === next.space
@@ -170,6 +171,17 @@ function navigationSettlement(callback?: () => void) {
     },
   };
 }
+
+
+/** The tabs that get a one-line explanation the first time a new user opens them. */
+const INTRO_TABS: Partial<Record<View["kind"], IntroTab>> = {
+  stream: "memories",
+  sources: "sources",
+  entities: "topics",
+  graph: "graph",
+  spaces: "spaces",
+  activity: "activity",
+};
 
 export default function Main({
   initialView,
@@ -1390,12 +1402,17 @@ export default function Main({
 
         {/* Main content */}
         <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" ? " memory-main-content--page" : ["spaces", "entities", "stream"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
+          <TabIntro tab={INTRO_TABS[view.kind] ?? null} newUser={gettingStarted.newLibrary} areaRef={mainContentRef} />
           {view.kind === "import" ? (
             <ImportView
               onBack={navigateBack}
-              completeLabel={view.fromFirstUse ? t("firstUse.guide.seeKnowledge") : undefined}
+              completeLabel={view.fromFirstUse ? t("firstUse.guide.seeKnowledge") : view.fromHome ? t("setup.done.backToWiki") : undefined}
               onComplete={(_source, result) => {
-                if (view.fromFirstUse) {
+                if (view.fromHome) {
+                  // From the getting-started checklist: back to it, where the
+                  // next step hands the imported chats to the AI tool.
+                  navigateBack();
+                } else if (view.fromFirstUse) {
                   showView({
                     kind: "first-use",
                     showKnowledge: true,
@@ -1453,6 +1470,7 @@ export default function Main({
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
                 onSeeExample={() => navigateTo({ kind: "first-use" })}
+                onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
                 onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
                 onOpenNoteSuggestion={(container) => {
