@@ -427,6 +427,7 @@ jobs:
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
               - 'crates/wenlan-cli/src/commands/service.rs'
+              - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
               - 'crates/wenlan-cli/tests/cli_integration.rs'
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
@@ -541,7 +542,10 @@ jobs:
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/mod.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              - 'crates/wenlan-cli/src/commands/windows_task.rs'
+              - 'scripts/resolve-backend-dir.test.ps1'
               - 'crates/wenlan-cli/src/commands/service.rs'
+              - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/tests/cli_integration.rs'
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'

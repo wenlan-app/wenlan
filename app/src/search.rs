@@ -1783,7 +1783,7 @@ pub async fn add_watch_path(
     }
     // The daemon owns the canonical registration and rejects ID collisions.
     // Keep its stored spelling for the matching watcher removal operation.
-    let source = register_directory_source_with_daemon(&state, &path).await?;
+    let source = register_directory_source_with_daemon(&state, &path, Some(true)).await?;
     let path = source.path;
 
     {
