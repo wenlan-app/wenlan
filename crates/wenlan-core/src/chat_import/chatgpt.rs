@@ -55,55 +55,200 @@ impl ChatExportParser for ChatGptParser {
         let names: Vec<String> = (0..archive.len())
             .filter_map(|i| archive.by_index(i).ok().map(|f| f.name().to_string()))
             .collect();
-        names.iter().any(|n| n == "conversations.json")
-            && names.iter().any(|n| n == "message_feedback.json")
+        names.iter().any(|n| n == "message_feedback.json")
+            && (names.iter().any(|n| n == "conversations.json")
+                || names.iter().any(|n| n == "export_manifest.json"))
     }
 
     fn parse(
         &self,
         archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
     ) -> Result<Vec<ParsedConversation>, ImportError> {
+        let files = conversation_files(archive)?;
+        let mut out = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+        for path in files {
+            let mut entry = archive
+                .by_name(&path)
+                .map_err(|e| ImportError::InvalidFormat {
+                    reason: format!("manifest conversation file '{path}' not found: {e}"),
+                })?;
+            let mut buf = String::new();
+            entry
+                .read_to_string(&mut buf)
+                .map_err(|source| ImportError::ZipEntryRead {
+                    path: path.clone(),
+                    source,
+                })?;
+            drop(entry);
+
+            let raw: Vec<RawChatGptConversation> =
+                serde_json::from_str(&buf).map_err(|source| ImportError::Json {
+                    path: path.clone(),
+                    source,
+                })?;
+            for raw_conv in raw {
+                if !seen_ids.insert(raw_conv.id.clone()) {
+                    return Err(ImportError::InvalidFormat {
+                        reason: format!(
+                            "duplicate conversation id '{}' across export files",
+                            raw_conv.id
+                        ),
+                    });
+                }
+                if raw_conv.is_do_not_remember {
+                    continue;
+                }
+                let messages = walk_current_branch(&raw_conv);
+                if messages.is_empty() {
+                    continue;
+                }
+                out.push(ParsedConversation {
+                    external_id: raw_conv.id,
+                    vendor: Vendor::ChatGpt,
+                    title: raw_conv.title.filter(|t| !t.is_empty()),
+                    created_at: float_to_utc(raw_conv.create_time),
+                    summary: None,
+                    messages,
+                });
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Resolve the logical conversations file, using the export manifest as the
+/// authority when present so a missing shard cannot silently drop history.
+fn conversation_files(
+    archive: &mut zip::ZipArchive<Cursor<&[u8]>>,
+) -> Result<Vec<String>, ImportError> {
+    if archive
+        .file_names()
+        .any(|name| name == "export_manifest.json")
+    {
         let mut entry =
             archive
-                .by_name("conversations.json")
+                .by_name("export_manifest.json")
                 .map_err(|e| ImportError::InvalidFormat {
-                    reason: format!("conversations.json not found: {e}"),
+                    reason: format!("export_manifest.json not found: {e}"),
                 })?;
         let mut buf = String::new();
         entry
             .read_to_string(&mut buf)
             .map_err(|source| ImportError::ZipEntryRead {
-                path: "conversations.json".into(),
+                path: "export_manifest.json".into(),
                 source,
             })?;
         drop(entry);
-
-        let raw: Vec<RawChatGptConversation> =
+        let manifest: RawExportManifest =
             serde_json::from_str(&buf).map_err(|source| ImportError::Json {
-                path: "conversations.json".into(),
+                path: "export_manifest.json".into(),
                 source,
             })?;
-
-        let mut out = Vec::with_capacity(raw.len());
-        for raw_conv in raw {
-            if raw_conv.is_do_not_remember {
-                continue;
-            }
-            let messages = walk_current_branch(&raw_conv);
-            if messages.is_empty() {
-                continue;
-            }
-            out.push(ParsedConversation {
-                external_id: raw_conv.id,
-                vendor: Vendor::ChatGpt,
-                title: raw_conv.title.filter(|t| !t.is_empty()),
-                created_at: float_to_utc(raw_conv.create_time),
-                summary: None,
-                messages,
+        let logical_value = manifest
+            .logical_files
+            .get("conversations.json")
+            .ok_or_else(|| ImportError::InvalidFormat {
+                reason: "export manifest has no conversations.json logical file".into(),
+            })?;
+        let logical: RawLogicalFile =
+            serde_json::from_value(logical_value.clone()).map_err(|source| ImportError::Json {
+                path: "export_manifest.json logical_files.conversations.json".into(),
+                source,
+            })?;
+        if logical.files.is_empty() {
+            return Err(ImportError::InvalidFormat {
+                reason: "manifest conversations.json file list is empty".into(),
             });
         }
-        Ok(out)
+        if logical
+            .files
+            .iter()
+            .any(|path| !is_conversation_export_path(path))
+        {
+            return Err(ImportError::InvalidFormat {
+                reason: "manifest contains an invalid conversations file path".into(),
+            });
+        }
+        let mut unique = std::collections::HashSet::new();
+        if logical
+            .files
+            .iter()
+            .any(|path| !unique.insert(path.as_str()))
+        {
+            return Err(ImportError::InvalidFormat {
+                reason: "manifest contains duplicate conversations file paths".into(),
+            });
+        }
+        if logical.sharded {
+            if logical.shard_count != Some(logical.files.len()) {
+                return Err(ImportError::InvalidFormat {
+                    reason: format!(
+                        "manifest shard_count does not match {} conversation files",
+                        logical.files.len()
+                    ),
+                });
+            }
+        } else if logical.files.len() != 1 || logical.shard_count.is_some() {
+            return Err(ImportError::InvalidFormat {
+                reason: "unsharded manifest must name exactly one conversation file".into(),
+            });
+        }
+        for path in &logical.files {
+            if !archive.file_names().any(|name| name == path) {
+                return Err(ImportError::InvalidFormat {
+                    reason: format!("manifest conversation file '{path}' is missing from archive"),
+                });
+            }
+        }
+        if archive
+            .file_names()
+            .filter(|name| is_conversation_export_path(name))
+            .any(|name| !unique.contains(name))
+        {
+            return Err(ImportError::InvalidFormat {
+                reason: "archive contains a conversation file omitted from the export manifest"
+                    .into(),
+            });
+        }
+        Ok(logical.files)
+    } else if archive
+        .file_names()
+        .any(|name| name == "conversations.json")
+    {
+        Ok(vec!["conversations.json".into()])
+    } else {
+        Err(ImportError::InvalidFormat {
+            reason: "conversations.json or export manifest not found".into(),
+        })
     }
+}
+
+fn is_conversation_export_path(path: &str) -> bool {
+    if path == "conversations.json" {
+        return true;
+    }
+    let Some(shard) = path
+        .strip_prefix("conversations-")
+        .and_then(|p| p.strip_suffix(".json"))
+    else {
+        return false;
+    };
+    !shard.is_empty() && shard.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+#[derive(Deserialize)]
+struct RawExportManifest {
+    logical_files: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct RawLogicalFile {
+    files: Vec<String>,
+    #[serde(default)]
+    shard_count: Option<usize>,
+    #[serde(default)]
+    sharded: bool,
 }
 
 /// Convert an optional Unix timestamp (as f64) to a UTC DateTime.
@@ -452,6 +597,212 @@ mod tests {
     }
 
     // ---- parse tests ----
+
+    fn manifest(files: &[&str], shard_count: usize) -> String {
+        serde_json::json!({
+            "version": 1,
+            "logical_files": {"conversations.json": {
+                "files": files,
+                "shard_count": shard_count,
+                "sharded": true
+            }}
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn parse_manifest_shards_in_list_order() {
+        let first = build_conversations_json(
+            "shard-one",
+            Some("First"),
+            None,
+            false,
+            Some("node-asst"),
+            &[
+                ("node-user", None, "user", "text", "first user", None),
+                (
+                    "node-asst",
+                    Some("node-user"),
+                    "assistant",
+                    "text",
+                    "first reply",
+                    None,
+                ),
+            ],
+        );
+        let second = build_conversations_json(
+            "shard-two",
+            Some("Second"),
+            None,
+            false,
+            Some("node-asst"),
+            &[
+                ("node-user", None, "user", "text", "second user", None),
+                (
+                    "node-asst",
+                    Some("node-user"),
+                    "assistant",
+                    "text",
+                    "second reply",
+                    None,
+                ),
+            ],
+        );
+        let zip = make_zip(&[
+            ("message_feedback.json", b"[]"),
+            (
+                "export_manifest.json",
+                manifest(&["conversations-000.json", "conversations-001.json"], 2).as_bytes(),
+            ),
+            ("conversations-000.json", first.as_bytes()),
+            ("conversations-001.json", second.as_bytes()),
+        ]);
+        let batch = crate::chat_import::dispatch_parse(&zip).expect("sharded export parses");
+        assert_eq!(batch.vendor, Vendor::ChatGpt);
+        assert_eq!(
+            batch
+                .conversations
+                .iter()
+                .map(|c| c.external_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["shard-one", "shard-two"]
+        );
+        assert!(batch.conversations[0].messages[0]
+            .content
+            .contains("first user"));
+        assert!(batch.conversations[1].messages[0]
+            .content
+            .contains("second user"));
+    }
+
+    #[test]
+    fn legacy_conversations_file_still_parses() {
+        let zip = make_zip(&[
+            (
+                "conversations.json",
+                min_chatgpt_conversations_json().as_bytes(),
+            ),
+            ("message_feedback.json", b"[]"),
+        ]);
+        assert_eq!(parse_zip(&zip).expect("legacy export parses").len(), 1);
+    }
+
+    #[test]
+    fn can_parse_accepts_manifest_export_with_message_feedback() {
+        let zip = make_zip(&[
+            ("export_manifest.json", b"{}"),
+            ("message_feedback.json", b"[]"),
+        ]);
+        assert!(can_parse_zip(&zip));
+    }
+
+    #[test]
+    fn manifest_missing_shard_fails_closed() {
+        let zip = make_zip(&[
+            ("message_feedback.json", b"[]"),
+            (
+                "export_manifest.json",
+                manifest(&["conversations-000.json", "conversations-001.json"], 2).as_bytes(),
+            ),
+            ("conversations-000.json", b"[]"),
+        ]);
+        assert!(matches!(
+            parse_zip(&zip),
+            Err(ImportError::InvalidFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_later_shard_fails_the_entire_parse() {
+        let zip = make_zip(&[
+            ("message_feedback.json", b"[]"),
+            (
+                "export_manifest.json",
+                manifest(&["conversations-000.json", "conversations-001.json"], 2).as_bytes(),
+            ),
+            (
+                "conversations-000.json",
+                min_chatgpt_conversations_json().as_bytes(),
+            ),
+            ("conversations-001.json", b"{"),
+        ]);
+        assert!(matches!(parse_zip(&zip), Err(ImportError::Json { .. })));
+    }
+
+    #[test]
+    fn invalid_manifest_file_names_fail_closed() {
+        for files in [
+            vec!["../conversations.json"],
+            vec!["conversations-000.json", "conversations-000.json"],
+        ] {
+            let zip = make_zip(&[
+                ("message_feedback.json", b"[]"),
+                (
+                    "export_manifest.json",
+                    manifest(&files, files.len()).as_bytes(),
+                ),
+            ]);
+            assert!(matches!(
+                parse_zip(&zip),
+                Err(ImportError::InvalidFormat { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn manifest_shard_count_must_match() {
+        let zip = make_zip(&[
+            ("message_feedback.json", b"[]"),
+            (
+                "export_manifest.json",
+                manifest(&["conversations-000.json", "conversations-001.json"], 3).as_bytes(),
+            ),
+            ("conversations-000.json", b"[]"),
+            ("conversations-001.json", b"[]"),
+        ]);
+        assert!(matches!(
+            parse_zip(&zip),
+            Err(ImportError::InvalidFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn manifest_cannot_silently_omit_an_archive_shard() {
+        let zip = make_zip(&[
+            ("message_feedback.json", b"[]"),
+            (
+                "export_manifest.json",
+                manifest(&["conversations-000.json"], 1).as_bytes(),
+            ),
+            ("conversations-000.json", b"[]"),
+            (
+                "conversations-001.json",
+                min_chatgpt_conversations_json().as_bytes(),
+            ),
+        ]);
+        assert!(matches!(
+            parse_zip(&zip),
+            Err(ImportError::InvalidFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_conversation_ids_across_shards_fail_closed() {
+        let duplicate = min_chatgpt_conversations_json();
+        let zip = make_zip(&[
+            ("message_feedback.json", b"[]"),
+            (
+                "export_manifest.json",
+                manifest(&["conversations-000.json", "conversations-001.json"], 2).as_bytes(),
+            ),
+            ("conversations-000.json", duplicate.as_bytes()),
+            ("conversations-001.json", duplicate.as_bytes()),
+        ]);
+        assert!(matches!(
+            parse_zip(&zip),
+            Err(ImportError::InvalidFormat { .. })
+        ));
+    }
 
     #[test]
     fn parse_simple_linear_conversation() {

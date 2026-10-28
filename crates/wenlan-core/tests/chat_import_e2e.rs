@@ -242,12 +242,42 @@ fn chatgpt_conversations_json() -> String {
 
 #[tokio::test]
 async fn chatgpt_end_to_end_imports_and_dedupes() {
+    assert_chatgpt_import_and_dedupe(false).await;
+}
+
+#[tokio::test]
+async fn chatgpt_sharded_export_imports_and_dedupes() {
+    assert_chatgpt_import_and_dedupe(true).await;
+}
+
+async fn assert_chatgpt_import_and_dedupe(sharded: bool) {
     // ---- Step 1: Build a synthetic ChatGPT export ZIP ----
     let chatgpt_json = chatgpt_conversations_json();
-    let zip_bytes = make_zip(&[
-        ("conversations.json", chatgpt_json.as_bytes()),
-        ("message_feedback.json", b"[]"),
-    ]);
+    let zip_bytes = if sharded {
+        let conversations: Vec<serde_json::Value> = serde_json::from_str(&chatgpt_json).unwrap();
+        let first = serde_json::to_vec(&conversations[..1]).unwrap();
+        let second = serde_json::to_vec(&conversations[1..]).unwrap();
+        let manifest = serde_json::to_vec(&json!({
+            "version": 1,
+            "logical_files": {"conversations.json": {
+                "files": ["conversations-000.json", "conversations-001.json"],
+                "shard_count": 2,
+                "sharded": true
+            }}
+        }))
+        .unwrap();
+        make_zip(&[
+            ("export_manifest.json", &manifest),
+            ("conversations-000.json", &first),
+            ("conversations-001.json", &second),
+            ("message_feedback.json", b"[]"),
+        ])
+    } else {
+        make_zip(&[
+            ("conversations.json", chatgpt_json.as_bytes()),
+            ("message_feedback.json", b"[]"),
+        ])
+    };
 
     // ---- Step 2: Parse via dispatch_parse ----
     let batch = dispatch_parse(&zip_bytes).expect("dispatch_parse should succeed for ChatGPT zip");
@@ -381,25 +411,20 @@ async fn chatgpt_end_to_end_imports_and_dedupes() {
     );
 }
 
-/// Smoke test against the user's real ChatGPT export zip (~155 MB).
+/// Parser smoke against an explicitly supplied real ChatGPT export ZIP.
 ///
 /// Ignored by default — run with:
-///   cargo test -p origin-core --test chat_import_e2e --release \
+///   WENLAN_CHATGPT_ZIP=/path/to/export.zip cargo test -p wenlan-core --test chat_import_e2e \
 ///       -- --ignored chatgpt_real_zip_smoke --nocapture
 ///
-/// Set `WENLAN_CHATGPT_ZIP=/path/to/export.zip` to override the path.
 /// Verifies: (a) dispatch picks the ChatGPT parser, (b) parsing completes
-/// without panic, (c) conversation count is non-zero and in a sane range.
+/// without panic, (c) conversations contain importable text. Storage and
+/// deduplication are covered separately; this smoke alone is not an import proof.
 #[test]
 #[ignore]
 fn chatgpt_real_zip_smoke() {
-    let default_path = "/Users/lucian/Downloads/b50fdbe7b5a67df02e91af8f5d75a53ea4796a12b5c7b726b8b2562a233c2905-2026-04-11-20-28-58-326de17fc3cb48bb91504f88fe0ded37.zip";
-    let path = std::env::var("WENLAN_CHATGPT_ZIP").unwrap_or_else(|_| default_path.to_string());
-
-    if !std::path::Path::new(&path).exists() {
-        eprintln!("zip not found at {path}; skipping");
-        return;
-    }
+    let path = std::env::var("WENLAN_CHATGPT_ZIP")
+        .expect("set WENLAN_CHATGPT_ZIP to the real export to test; missing input is not a pass");
 
     let bytes = std::fs::read(&path).expect("reading zip should succeed");
     eprintln!("read {} bytes from {}", bytes.len(), path);
@@ -411,12 +436,6 @@ fn chatgpt_real_zip_smoke() {
     assert!(
         !batch.conversations.is_empty(),
         "real export should contain at least one conversation"
-    );
-    // Per profile of this zip: expected ~77 conversations. Give a wide range.
-    assert!(
-        batch.conversations.len() >= 10,
-        "expected at least 10 conversations in real export, got {}",
-        batch.conversations.len()
     );
 
     let total_messages: usize = batch.conversations.iter().map(|c| c.messages.len()).sum();
