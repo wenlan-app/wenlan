@@ -990,12 +990,11 @@ export default function Main({
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   // The directory has nothing to say to a brand-new library, and it reads as a
   // second sidebar next to the open getting-started checklist, so both give the
-  // Wiki a single column; see WikiWorkspace `directoryHidden`. Once the card is
-  // down to its one-line form the pages are the home again, directory included.
+  // Wiki a single column; see WikiWorkspace `directoryHidden`.
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
   const liveDirectoryHidden = libraryEmpty
-    || (gettingStarted.visible && !gettingStarted.dismissed && !gettingStarted.compact);
+    || (gettingStarted.visible && !gettingStarted.dismissed);
   // Until both reads answer (they wait on the daemon at launch), keep the
   // layout of last time so the Wiki does not collapse under the user.
   const layoutKnown = gettingStarted.loaded || libraryEmpty;

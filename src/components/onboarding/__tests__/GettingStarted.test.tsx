@@ -119,13 +119,13 @@ const title = () => i18n.t("firstUse.checklist.title");
 describe("gettingStartedProgress", () => {
   it("reads every step from the library as it stands", () => {
     expect(gettingStartedProgress({ pages: [], agents: [], milestones: [] }))
-      .toEqual({ note: false, tool: false, pages: false, recall: false });
+      .toEqual({ tool: false, pages: false, recall: false });
     expect(gettingStartedProgress({
       pages: [page(), written],
       agents: [agent("claude-code")],
      
       milestones: [recall],
-    })).toEqual({ note: true, tool: true, pages: true, recall: true });
+    })).toEqual({ tool: true, pages: true, recall: true });
   });
 
   it("does not count Wenlan's own identities", () => {
@@ -158,7 +158,13 @@ describe("gettingStartedProgress", () => {
   it("does not count a draft as a saved note, because recall cannot see it yet", () => {
     expect(gettingStartedProgress({
       pages: [page({ status: "draft" })], agents: [], milestones: [],
-    }).note).toBe(false);
+    }).pages).toBe(false);
+  });
+
+  it("counts a page the user wrote as the pages step", () => {
+    expect(gettingStartedProgress({
+      pages: [page()], agents: [], milestones: [],
+    })).toMatchObject({ pages: true, recall: false });
   });
 
   it("does not count copies of brought-in files as a page the user wrote or one written from material", () => {
@@ -166,14 +172,14 @@ describe("gettingStartedProgress", () => {
       const progress = gettingStartedProgress({
         pages: [page({ creation_kind: kind })], agents: [], milestones: [],
       });
-      expect(progress).toMatchObject({ note: false, pages: false });
+      expect(progress).toMatchObject({ pages: false });
     }
   });
 
-  it("counts a page written from material as that step, not as writing or asking", () => {
+  it("counts a page written from material as that step, not as asking", () => {
     expect(gettingStartedProgress({
       pages: [written], agents: [], milestones: [],
-    })).toMatchObject({ pages: true, note: false, recall: false });
+    })).toMatchObject({ pages: true, recall: false });
   });
 });
 
@@ -192,11 +198,12 @@ describe("GettingStarted", () => {
     const props = renderCard();
 
     expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
-    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 3 }))).toBeInTheDocument();
     expect(screen.getByTestId("getting-started-tool")).toHaveAttribute("data-done", "true");
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.tool.action") })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.note.action") }));
+    fireEvent.click(screen.getByTestId("getting-started-pages-write"));
+    expect(screen.getByTestId("getting-started-pages-write")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.writeOwn"));
     fireEvent.click(screen.getByTestId("getting-started-pages-folder"));
     fireEvent.click(screen.getByTestId("getting-started-pages-chats"));
     fireEvent.click(screen.getByTestId("getting-started-pages-sample"));
@@ -254,26 +261,20 @@ describe("GettingStarted", () => {
     expect(screen.queryByTestId("getting-started")).toBeNull();
   });
 
-  it("steps back to one line when writing a page by hand is all that is left", async () => {
+  it("asks about a page the user wrote once a tool is connected", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
-    vi.mocked(listOnboardingMilestones).mockResolvedValue([recall]);
-    const props = renderCard([written]);
-    const card = await screen.findByTestId("getting-started");
-    expect(card).toHaveTextContent(i18n.t("firstUse.checklist.progress", { done: 3, total: 4 }));
-    expect(card).toHaveTextContent(i18n.t("firstUse.checklist.steps.note.title"));
-    expect(screen.queryByRole("heading", { name: title() })).toBeNull();
-    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.note.action") }));
-    expect(props.onWriteNote).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.hide") }));
-    expect(screen.getByRole("button", { name: i18n.t("firstUse.checklist.reopen") })).toBeInTheDocument();
+    renderCard([page({ title: "Garden plan" })]);
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.getByTestId("getting-started")).toHaveTextContent(i18n.t("firstUse.checklist.progress", { done: 2, total: 3 }));
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
+    expect(screen.getByTestId("getting-started-recall")).not.toHaveAttribute("data-later");
   });
 
   it("tells a user whose only note is a draft to leave the editor so AI can find it", async () => {
     renderCard([page({ status: "draft" })]);
     await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-note")).toHaveAttribute("data-done", "false");
-    expect(screen.getByText(i18n.t("firstUse.checklist.steps.note.draftBody"))).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
+    expect(screen.getByText(i18n.t("firstUse.checklist.steps.pages.draftBody"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.copy") })).toBeNull();
   });
 
@@ -281,8 +282,8 @@ describe("GettingStarted", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" })]);
     await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-note")).toHaveAttribute("data-done", "false");
-    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.note.draftBody"))).toBeNull();
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
+    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.pages.draftBody"))).toBeNull();
     expect(screen.queryByText(/ISP Outage Runbook/)).toBeNull();
   });
 
@@ -319,7 +320,7 @@ describe("GettingStarted", () => {
     renderCard([written], {}, working);
     await screen.findByRole("heading", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
-    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 3 }))).toBeInTheDocument();
     expect(screen.queryByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeNull();
   });
 
@@ -376,10 +377,10 @@ describe("GettingStarted", () => {
     }
   });
 
-  it("keeps the pages step to its three choices, with no skip link", async () => {
+  it("keeps the pages step to its three choices and writing one yourself, with no skip link", async () => {
     renderCard();
     await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-pages").querySelectorAll("button")).toHaveLength(3);
+    expect(screen.getByTestId("getting-started-pages").querySelectorAll(".getting-started-choice")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   });
 
@@ -514,7 +515,7 @@ describe("useGettingStartedState", () => {
     const { result } = renderState();
     await waitFor(() => expect(result.current.visible).toBe(true));
     expect(result.current.doneCount).toBe(2);
-    expect(result.current.progress).toMatchObject({ note: true, tool: true, pages: false, recall: false });
+    expect(result.current.progress).toMatchObject({ tool: true, pages: true, recall: false });
 
     act(() => result.current.setDismissed(true));
     expect(result.current.visible).toBe(true);

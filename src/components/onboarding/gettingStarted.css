@@ -377,3 +377,8 @@
   align-items: center;
   gap: 8px;
 }
+
+.getting-started-pages-own {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}

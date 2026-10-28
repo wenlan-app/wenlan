@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { ChatsCircle, Eye, FolderSimplePlus } from "@phosphor-icons/react";
 import type { Page } from "../../lib/tauri";
@@ -19,9 +18,10 @@ interface WritePagesStepProps {
   readonly state: WritePagesState | null;
   readonly pages: readonly Page[];
   readonly done: boolean;
-  /** Done only because the user skipped it, with nothing to bring in. */
-  readonly skipped?: boolean;
-  readonly onSkip?: (value: boolean) => void;
+  /** A page started by hand is still a draft: say how to finish it. */
+  readonly draftPending?: boolean;
+  /** Opens the editor, for someone who would rather write a page themselves. */
+  readonly onWriteNote?: () => void;
   readonly onAddSources?: () => void;
   readonly onImportChats?: () => void;
   readonly onSeeExample?: () => void;
@@ -44,8 +44,8 @@ export function WritePagesStep({
   state,
   pages,
   done,
-  skipped = false,
-  onSkip,
+  draftPending = false,
+  onWriteNote,
   onAddSources,
   onImportChats,
   onSeeExample,
@@ -54,13 +54,6 @@ export function WritePagesStep({
 }: WritePagesStepProps) {
   const { t } = useTranslation();
   const view = state?.loaded ? state.stepView : { kind: "hidden" as const };
-  const hasPages = pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft");
-  // Skipping was for having nothing to bring in. Once there is, the step
-  // comes back with its button.
-  const comeBack = skipped && !hasPages && view.kind === "ready";
-  useEffect(() => {
-    if (comeBack) onSkip?.(false);
-  }, [comeBack, onSkip]);
   const title = (
     <p className="getting-started-step-title">
       {t("firstUse.checklist.steps.pages.title")}
@@ -143,7 +136,7 @@ export function WritePagesStep({
     );
   }
 
-  if (done && !comeBack) {
+  if (done) {
     // Material that came in after the pages were written (or that a run
     // started outside this screen left): say so under them, with the same
     // one button.
@@ -156,7 +149,7 @@ export function WritePagesStep({
       </div>
     );
   }
-  if (done && !comeBack) return <div className="getting-started-copy">{title}</div>;
+  if (done) return <div className="getting-started-copy">{title}</div>;
 
   if (state && view.kind === "ready") {
     return (
@@ -198,9 +191,11 @@ export function WritePagesStep({
     <div className="getting-started-copy">
       {title}
       <p className="getting-started-step-body">
-        {state?.onDemand === false
-          ? t("firstUse.checklist.steps.pages.automatic")
-          : t("firstUse.checklist.steps.pages.body")}
+        {draftPending
+          ? t("firstUse.checklist.steps.pages.draftBody")
+          : state?.onDemand === false
+            ? t("firstUse.checklist.steps.pages.automatic")
+            : t("firstUse.checklist.steps.pages.body")}
       </p>
       <div className="getting-started-choices">
         {choices.map((choice) => choice.onClick ? (
@@ -219,6 +214,18 @@ export function WritePagesStep({
           </button>
         ) : null)}
       </div>
+      {onWriteNote ? (
+        <p className="getting-started-pages-own">
+          <button
+            type="button"
+            className="getting-started-link"
+            data-testid="getting-started-pages-write"
+            onClick={onWriteNote}
+          >
+            {t("firstUse.checklist.steps.pages.writeOwn")}
+          </button>
+        </p>
+      ) : null}
     </div>
   );
 }

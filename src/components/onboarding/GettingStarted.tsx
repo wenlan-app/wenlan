@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import {
   CheckCircle,
   MagicWand,
-  NotePencil,
   PlugsConnected,
   Sparkle,
   X,
@@ -83,11 +82,8 @@ export function GettingStarted({
     doneCount: savedDoneCount,
     dismissed,
     setDismissed,
-    pagesSkipped,
-    setPagesSkipped,
     pages,
     agents,
-    compact,
   } = useGettingStartedState();
   // A folder, vault or graph added from here (or anywhere this session) whose
   // first read has stored something: its import finish takes the pages step.
@@ -115,7 +111,6 @@ export function GettingStarted({
   const doneCount = progress === savedProgress ? savedDoneCount : savedDoneCount - 1;
 
   const stepsById: Record<GettingStartedStepId, { icon: React.ReactNode; onAction: () => void }> = {
-    note: { icon: <NotePencil weight="regular" />, onAction: onWriteNote },
     tool: { icon: <PlugsConnected weight="regular" />, onAction: onConnectTool },
     // Its row draws its own copy and action.
     pages: { icon: <MagicWand weight="regular" />, onAction: () => undefined },
@@ -135,38 +130,6 @@ export function GettingStarted({
     );
   }
 
-  // Only writing a page by hand is left: the card steps back to one line and
-  // the pages are the home.
-  if (compact && !writing) {
-    return (
-      <section
-        className="getting-started getting-started--compact"
-        data-testid="getting-started"
-        aria-label={t("firstUse.checklist.title")}
-      >
-        <p className="getting-started-compact-text">
-          {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
-          {" · "}
-          {t("firstUse.checklist.steps.note.title")}
-        </p>
-        <div className="getting-started-compact-actions">
-          <button type="button" className="getting-started-action" onClick={onWriteNote}>
-            {t("firstUse.checklist.steps.note.action")}
-          </button>
-          <button
-            type="button"
-            className="getting-started-hide"
-            aria-label={t("firstUse.checklist.hide")}
-            title={t("firstUse.checklist.hide")}
-            onClick={() => setDismissed(true)}
-          >
-            <X aria-hidden="true" weight="regular" />
-          </button>
-        </div>
-      </section>
-    );
-  }
-
   // The moment the whole thing is for happens outside Wenlan, in the AI tool.
   // Once there is a page to ask about and a tool is connected, open that tool
   // with the question about it already typed in (a tool that cannot be opened
@@ -182,7 +145,9 @@ export function GettingStarted({
   const promptText = promptTool && askable
     ? t("firstUse.checklist.steps.recall.prompt", { title: askable.title })
     : null;
-  const onlyDrafts = !progress.note && pages.some((page) => page.status === "draft");
+  // A page started by hand stays a draft until the editor is left; recall
+  // cannot see it yet, so the pages step says how to finish it.
+  const draftPending = !progress.pages && pages.some((page) => page.status === "draft");
 
   return (
     <section
@@ -254,8 +219,8 @@ export function GettingStarted({
                   state={writePages}
                   pages={pages}
                   done={done}
-                  skipped={pagesSkipped}
-                  onSkip={setPagesSkipped}
+                  draftPending={draftPending}
+                  onWriteNote={onWriteNote}
                   onAddSources={onAddSources}
                   onImportChats={onImportChats ?? onAddSources}
                   onSeeExample={onSeeExample}
@@ -269,20 +234,18 @@ export function GettingStarted({
           // others: the question as its one line, and one button that opens the
           // tool with it typed in (or copies it where that is not possible).
           const asking = !done && id === "recall" && promptTool != null && promptText != null;
-          const body = id === "note" && onlyDrafts
-            ? t("firstUse.checklist.steps.note.draftBody")
-            : asking && handedOver === "opened"
-              ? t("firstUse.checklist.steps.recall.waiting", { tool: promptTool })
-              : asking && opensTool && handedOver !== "copied"
-                // The button already names the tool, so the line is just the question.
-                ? t("firstUse.checklist.steps.recall.question", { title: askable?.title })
-                : asking
-                  ? t("firstUse.checklist.steps.recall.askLine", { tool: promptTool, title: askable?.title })
-                  : id === "recall"
-                    // Nothing to ask about yet: the step waits for the pages
-                    // step, and says only that.
-                    ? t("firstUse.checklist.steps.recall.later")
-                    : t(`firstUse.checklist.steps.${id}.body`);
+          const body = asking && handedOver === "opened"
+            ? t("firstUse.checklist.steps.recall.waiting", { tool: promptTool })
+            : asking && opensTool && handedOver !== "copied"
+              // The button already names the tool, so the line is just the question.
+              ? t("firstUse.checklist.steps.recall.question", { title: askable?.title })
+              : asking
+                ? t("firstUse.checklist.steps.recall.askLine", { tool: promptTool, title: askable?.title })
+                : id === "recall"
+                  // Nothing to ask about yet: the step waits for the pages
+                  // step, and says only that.
+                  ? t("firstUse.checklist.steps.recall.later")
+                  : t(`firstUse.checklist.steps.${id}.body`);
           // Asking needs a page first, so until then the row reads as the
           // step that comes next rather than one to do now.
           const later = !done && id === "recall" && !asking;

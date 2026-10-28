@@ -64,19 +64,13 @@ export const enFirstUse = {
     useWithAi: "What else your AI can do",
   },
   checklist: {
-    title: "Get started with Wenlan",
-    lead: "Your AI turns your material into cited pages. New chats read them first.",
+    title: "Build your wiki in three steps",
+    lead: "Connect your AI and add your notes. It writes pages that cite them.",
     progress: "{{done}} of {{total}} done",
     done: "Done",
     hide: "Hide getting started",
     reopen: "Show getting started",
     steps: {
-      note: {
-        title: "Write a page yourself",
-        body: "In your own words. A few lines is enough.",
-        draftBody: "Your page is still a draft. Leave the editor and it is saved as a page your AI tools can find.",
-        action: "Write a page",
-      },
       tool: {
         title: "Connect an AI tool",
         body: "Let Claude Code, Codex, Cursor and more use your pages.",
@@ -94,6 +88,8 @@ export const enFirstUse = {
         folder: { title: "Folder or files", hint: "Notes, docs, code" },
         chats: { title: "Past AI chats", hint: "ChatGPT, Claude" },
         sample: { title: "See an example", hint: "No material needed" },
+        writeOwn: "Or write a page yourself",
+        draftBody: "Your page is still a draft. Leave the editor and it is saved as a page your AI tools can find.",
       },
       recall: {
         title: "Ask your AI about your pages",
@@ -206,19 +202,13 @@ export const hansFirstUse = {
     useWithAi: "AI 还能做什么",
   },
   checklist: {
-    title: "开始使用文澜",
-    lead: "AI 把你的资料写成附出处的笔记。下次开新对话，它先读笔记，不用你再讲一遍。",
+    title: "三步建好你的 wiki",
+    lead: "连上 AI、加入资料，它会写成附出处的笔记。",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
     hide: "隐藏开始使用清单",
     reopen: "显示开始使用清单",
     steps: {
-      note: {
-        title: "自己写一篇笔记",
-        body: "用你自己的话写一篇，几行就好。",
-        draftBody: "你的笔记还是草稿。离开编辑器后才会保存，AI 工具才能找到。",
-        action: "写笔记",
-      },
       tool: {
         title: "连接一个 AI 工具",
         body: "让 Claude Code、Codex、Cursor 等工具读写你的笔记库。",
@@ -236,6 +226,8 @@ export const hansFirstUse = {
         folder: { title: "加文件夹或文件", hint: "笔记、文档、代码" },
         chats: { title: "以前的 AI 聊天", hint: "ChatGPT、Claude" },
         sample: { title: "先看示例", hint: "不用带任何资料" },
+        writeOwn: "或自己写一篇",
+        draftBody: "你的笔记还是草稿。离开编辑器后才会保存，AI 工具才能找到。",
       },
       recall: {
         title: "在 AI 里问问你的笔记",
@@ -345,19 +337,13 @@ export const hantFirstUse = {
     useWithAi: "AI 還能做什麼",
   },
   checklist: {
-    title: "開始使用文瀾",
-    lead: "AI 把你的資料寫成附出處的筆記。下次開新對話，它先讀筆記，不用你再講一遍。",
+    title: "三步建好你的 wiki",
+    lead: "連上 AI、加入資料，它會寫成附出處的筆記。",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
     hide: "隱藏開始使用清單",
     reopen: "顯示開始使用清單",
     steps: {
-      note: {
-        title: "自己寫一篇筆記",
-        body: "用你自己的話寫一篇，幾行就好。",
-        draftBody: "你的筆記還是草稿。離開編輯器後才會儲存，AI 工具才能找到。",
-        action: "寫筆記",
-      },
       tool: {
         title: "連接一個 AI 工具",
         body: "讓 Claude Code、Codex、Cursor 等工具讀寫你的筆記庫。",
@@ -375,6 +361,8 @@ export const hantFirstUse = {
         folder: { title: "加資料夾或檔案", hint: "筆記、文件、程式碼" },
         chats: { title: "以前的 AI 聊天", hint: "ChatGPT、Claude" },
         sample: { title: "先看範例", hint: "不用帶任何資料" },
+        writeOwn: "或自己寫一篇",
+        draftBody: "你的筆記還是草稿。離開編輯器後才會儲存，AI 工具才能找到。",
       },
       recall: {
         title: "在 AI 裡問問你的筆記",

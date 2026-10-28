@@ -70,14 +70,10 @@ export function PagesOverview({
     />
   ) : null;
   const open = gettingStarted !== null && checklist.visible && !checklist.dismissed;
-  // While the AI tool is writing, the pages step is the place to follow it,
-  // so the card stays whole even if writing a page by hand is all that's left.
-  const writing = writePages.loaded && writePages.stepView.kind === "working";
-  const compact = open && checklist.compact && !writing;
   // While the open checklist is the screen's content the panel above it shrinks
   // to its title, and the new pages sit inside its "write pages" step, so the
   // home is one card that fits the default window.
-  const onboarding = open && !compact;
+  const onboarding = open;
   const newPages = onboarding
     ? null
     : (
@@ -124,11 +120,9 @@ export function PagesOverview({
           <p>{t("pages.overview.unavailableDescription")}</p>
         </div>
       )}
-      {/* The one-line card says what is left above the pages; otherwise the
-          pages come first and the card (or its "show" line) follows. */}
-      {compact ? gettingStarted : null}
+      {/* The pages come first and the card (or its "show" line) follows. */}
       {newPages}
-      {compact ? null : gettingStarted}
+      {gettingStarted}
       {adding ? <AddSourceMenu start={adding} withChats={false} onClose={() => setAdding(null)} /> : null}
     </section>
   );
