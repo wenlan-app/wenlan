@@ -375,6 +375,94 @@ async fn refresh_update(
     updater.check().await.map_err(|error| error.to_string())
 }
 
+fn update_restart_block_reason(
+    outcome: &crate::daemon_start::SidecarStopOutcome,
+) -> Option<String> {
+    use crate::daemon_start::SidecarStopOutcome;
+
+    match outcome {
+        SidecarStopOutcome::NoSidecar | SidecarStopOutcome::Ended => None,
+        SidecarStopOutcome::StillRunning { reason } => Some(format!(
+            "update is ready, but the app sidecar is still running: {reason}"
+        )),
+        SidecarStopOutcome::CouldNotMeasure { reason } => Some(format!(
+            "update is ready, but the app could not verify that its sidecar stopped: {reason}"
+        )),
+    }
+}
+
+fn report_install_failure(
+    app: &AppHandle,
+    state: &SharedLifecycleState,
+    version: &str,
+    message: String,
+) {
+    log::error!("update failed: {message}");
+    let _ = app.emit(
+        "updater://progress",
+        serde_json::json!({ "error": message }),
+    );
+    set_status(
+        app,
+        state,
+        KnownStatus {
+            state: StatusState::Error,
+            version: Some(version.to_string()),
+            error: Some(message),
+        },
+    );
+    set_phase(state, LifecyclePhase::Idle);
+}
+
+async fn resume_saved_remote_access(app: &AppHandle) -> Option<String> {
+    let ticket = crate::remote_access::prepare_startup(app.clone()).await;
+    if let Some(ticket) = ticket {
+        crate::remote_access::resume_startup(app.clone(), ticket).await;
+    }
+    let app_state = app.state::<Arc<tokio::sync::RwLock<crate::state::AppState>>>();
+    let remote = { app_state.read().await.remote_access.clone() };
+    let status = remote.lock().await.status.clone();
+    match status {
+        crate::remote_access::RemoteAccessStatus::Error { error } => {
+            Some(format!("saved remote access could not resume: {error}"))
+        }
+        crate::remote_access::RemoteAccessStatus::Off
+        | crate::remote_access::RemoteAccessStatus::Starting
+        | crate::remote_access::RemoteAccessStatus::Connected { .. } => None,
+    }
+}
+
+async fn report_failure_after_cleanup(
+    app: &AppHandle,
+    state: &SharedLifecycleState,
+    version: &str,
+    message: String,
+    restart_stopped_sidecar: bool,
+) {
+    let mut recovery_errors = Vec::new();
+    if restart_stopped_sidecar {
+        match crate::daemon_start::start_daemon_if_unowned(app, &crate::api::WenlanClient::new())
+            .await
+        {
+            crate::daemon_start::DaemonStartResult::Failed { message } => {
+                recovery_errors.push(format!("daemon recovery failed: {message}"));
+            }
+            crate::daemon_start::DaemonStartResult::Started
+            | crate::daemon_start::DaemonStartResult::AlreadyRunning
+            | crate::daemon_start::DaemonStartResult::LaunchdManaged => {}
+        }
+    }
+    if let Some(error) = resume_saved_remote_access(app).await {
+        recovery_errors.push(format!("remote access recovery failed: {error}"));
+    }
+    let message = if recovery_errors.is_empty() {
+        message
+    } else {
+        format!("{message} ({})", recovery_errors.join("; "))
+    };
+    report_install_failure(app, state, version, message);
+}
+
 async fn check_once_after_begin(
     app: &AppHandle,
     state: &SharedLifecycleState,
@@ -488,23 +576,29 @@ async fn check_once_after_begin(
     // Update starts with timeout None even when the builder timeout is set, so
     // bind the package budget here; configure_client carries over for body reads.
     configure_download(&mut update);
-    if let Err(error) = update.download_and_install(on_chunk, on_done).await {
-        let message = error.to_string();
-        log::error!("update install failed: {message}");
-        let _ = app.emit(
-            "updater://progress",
-            serde_json::json!({ "error": message }),
-        );
-        set_status(
-            app,
-            state,
-            KnownStatus {
-                state: StatusState::Error,
-                version: Some(version),
-                error: Some(message),
-            },
-        );
-        set_phase(state, LifecyclePhase::Idle);
+    let bytes = match update.download(on_chunk, on_done).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            report_install_failure(app, state, &version, error.to_string());
+            return;
+        }
+    };
+
+    if let Err(error) = crate::remote_access::shutdown_for_exit(app).await {
+        report_failure_after_cleanup(app, state, &version, error, false).await;
+        return;
+    }
+
+    let outcome = crate::daemon_start::stop_sidecar().await;
+    if let Some(message) = update_restart_block_reason(&outcome) {
+        report_failure_after_cleanup(app, state, &version, message, false).await;
+        return;
+    }
+
+    if let Err(error) = update.install(bytes) {
+        let sidecar_was_stopped = matches!(outcome, crate::daemon_start::SidecarStopOutcome::Ended);
+        report_failure_after_cleanup(app, state, &version, error.to_string(), sidecar_was_stopped)
+            .await;
         return;
     }
 
@@ -655,6 +749,38 @@ mod tests {
         assert!(!LifecyclePhase::Checking.accepts_manual_check());
         assert!(!LifecyclePhase::Prompting.accepts_manual_check());
         assert!(!LifecyclePhase::Installing.accepts_manual_check());
+    }
+
+    #[test]
+    fn update_restart_requires_the_sidecar_to_be_gone_or_unowned() {
+        use crate::daemon_start::SidecarStopOutcome;
+
+        assert_eq!(
+            update_restart_block_reason(&SidecarStopOutcome::NoSidecar),
+            None
+        );
+        assert_eq!(
+            update_restart_block_reason(&SidecarStopOutcome::Ended),
+            None
+        );
+        assert!(
+            update_restart_block_reason(&SidecarStopOutcome::StillRunning {
+                reason: "still listening".to_string(),
+            })
+            .unwrap()
+            .contains("still listening")
+        );
+        assert!(
+            update_restart_block_reason(&SidecarStopOutcome::CouldNotMeasure {
+                reason: "process table unavailable".to_string(),
+            })
+            .unwrap()
+            .contains("process table unavailable")
+        );
+
+        // The caller returns through report_install_failure, which restores
+        // Idle so an explicit retry can be accepted after a blocked restart.
+        assert!(LifecyclePhase::Idle.accepts_manual_check());
     }
 
     #[test]
