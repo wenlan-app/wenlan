@@ -816,9 +816,135 @@ def contract_violations(
                 f"Node 24 action {action} uses mutable or unexpected reference {reference}"
             )
     violations.extend(release_cache_retry_contract_violations(ci))
+    violations.extend(fastembed_artifact_demand_violations(ci))
     violations.extend(signpath_signing_contract_violations(ci, release))
     violations.extend(authenticode_lane_violations(ci))
     return violations
+
+
+def fastembed_artifact_demand_violations(ci: str) -> list[str]:
+    """Keep the shared model artifact available to every selected consumer."""
+
+    violations: list[str] = []
+    job = job_body(ci, "detect-changes")
+    demand = named_step_body(job, "Mark FastEmbed model demand")
+    consumer_condition = re.search(r"^    if: (.+)$", job_body(ci, "release-preflight"), re.MULTILINE)
+    branch_prefix = (
+        re.search(r"startsWith\(github\.head_ref, '([^']+)'\)", consumer_condition.group(1)).group(1)
+        if consumer_condition
+        and re.search(r"startsWith\(github\.head_ref, '([^']+)'\)", consumer_condition.group(1))
+        else None
+    )
+    if branch_prefix is None:
+        violations.append("release-preflight consumer branch predicate is missing")
+        branch_prefix = "invalid-prefix"
+    required = (
+        "steps.release-proof.outputs.verified-release-merge != 'true' && "
+        "(steps.test-plan.outputs.rust-ci-required == 'true' || "
+        "((github.event_name == 'workflow_dispatch' || "
+        f"startsWith(github.head_ref, '{branch_prefix}') || "
+        "steps.filter.outputs.release-preflight == 'true') && "
+        "contains(steps.release-preflight-targets.outputs.release-preflight-targets, "
+        "'x86_64-pc-windows-msvc')))"
+    )
+    if_match = re.search(r'^\s*if: "(?P<expression>.*)"$', demand, re.MULTILINE)
+    if (
+        "id: fastembed-demand" not in demand
+        or if_match is None
+        or if_match.group("expression") != required
+    ):
+        violations.append(
+            "FastEmbed artifact demand must include Rust tests or selected Windows release preflight, excluding promoted merges"
+        )
+    else:
+        cases = [
+            # label, promoted, Rust, filter, event, head, Windows matrix, expected
+            ("app-only main push", False, False, True, "push", "", True, True),
+            ("ordinary app PR", False, False, True, "pull_request", "codex/app", False, False),
+            ("docs-only main (job disabled)", False, False, False, "push", "", True, False),
+            ("Rust test partitions", False, True, False, "pull_request", "codex/core", False, True),
+            ("manual Windows preflight", False, False, False, "workflow_dispatch", "", True, True),
+            ("release-please non-main branch", False, False, False, "pull_request", "release-please--branches--test", True, True),
+            ("promoted merge even with Rust tests", True, True, True, "push", "", True, False),
+        ]
+        for label, promoted, rust, selected, event, head, windows, expected in cases:
+            result = evaluate_fastembed_demand_expression(
+                if_match.group("expression"), promoted, rust, selected, event, head, windows
+            )
+            if result is not expected:
+                violations.append(f"FastEmbed demand for {label}: got {result}, expected {expected}")
+        # Confirm the former --main-only guard would reject the real release-please branch prefix.
+        if branch_prefix.endswith("--") and evaluate_fastembed_demand_expression(
+            if_match.group("expression").replace(
+                f"startsWith(github.head_ref, '{branch_prefix}')",
+                f"startsWith(github.head_ref, '{branch_prefix}main')",
+            ),
+            False,
+            False,
+            False,
+            "pull_request",
+            "release-please--branches--test",
+            True,
+        ):
+            violations.append("release-please prefix negative control did not reject --main-only producer gating")
+
+    producer = [
+        "Restore portable FastEmbed model",
+        "Restore legacy Linux FastEmbed model",
+        "Prepare portable FastEmbed model",
+        "Publish portable FastEmbed model for this run",
+        "Save portable FastEmbed model",
+    ]
+    for name in producer:
+        body = named_step_body(job, name)
+        if "steps.fastembed-demand.outputs.required == 'true'" not in body:
+            violations.append(f"FastEmbed producer step {name!r} does not share the demand gate")
+    positions = [job.find(f"- name: {name}") for name in ["Mark FastEmbed model demand", *producer]]
+    if any(position < 0 for position in positions) or positions != sorted(positions):
+        violations.append("FastEmbed demand must precede every gated producer step")
+    if 'run: echo "required=true" >> "$GITHUB_OUTPUT"' not in demand:
+        violations.append("FastEmbed demand gate does not set required=true for its consumers")
+    return violations
+
+
+def evaluate_fastembed_demand_expression(
+    expression: str,
+    promoted: bool,
+    rust: bool,
+    release_preflight: bool,
+    event: str,
+    head: str,
+    windows: bool,
+) -> bool:
+    """Evaluate the closed GitHub-expression subset used by the demand gate."""
+
+    replacements = {
+        "steps.release-proof.outputs.verified-release-merge": repr(str(promoted).lower()),
+        "steps.test-plan.outputs.rust-ci-required": repr(str(rust).lower()),
+        "steps.filter.outputs.release-preflight": repr(str(release_preflight).lower()),
+        "github.event_name": repr(event),
+        "github.head_ref": repr(head),
+        "steps.release-preflight-targets.outputs.release-preflight-targets": repr(
+            '[{"target":"x86_64-pc-windows-msvc"}]'
+            if windows
+            else '[{"target":"aarch64-apple-darwin"}]'
+        ),
+    }
+    result = expression
+    for key, value in replacements.items():
+        result = result.replace(key, value)
+    result = re.sub(
+        r"startsWith\(([^,]+),\s*('[^']*')\)",
+        r"\1.startswith(\2)",
+        result,
+    )
+    result = re.sub(
+        r"contains\(([^,]+),\s*('[^']*')\)",
+        r"(\2 in \1)",
+        result,
+    )
+    result = result.replace("&&", "and").replace("||", "or")
+    return bool(eval(result, {"__builtins__": {}}, {}))
 
 
 #: The job that runs THIS suite on a host that can answer the Authenticode
