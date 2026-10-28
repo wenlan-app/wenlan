@@ -24,10 +24,14 @@ import { useTranslation } from "react-i18next";
 type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
 
-export default function AddSourceMenu({ onClose, start = "menu" }: {
+export default function AddSourceMenu({ onClose, start = "menu", withChats = true }: {
   onClose: () => void;
   /** "chats" opens straight at importing past AI chats. */
   start?: "menu" | "chats";
+  /** False where past AI chats already have their own button next to the one
+   *  that opened this menu (the getting-started step), so they are not
+   *  offered twice. */
+  withChats?: boolean;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -129,23 +133,44 @@ export default function AddSourceMenu({ onClose, start = "menu" }: {
   // Past AI chats use the same import as Settings, so a new user can bring
   // earlier decisions in from the home without hunting for it.
   if (showChats) return <SourceDialog title={t("sourceAccess.chatHistory")} onClose={onClose}>
-    <p>{t("sourceAccess.chatHistoryBody")}</p>
-    <ul className="source-chat-export-steps">
-      <li><strong>{t("settings.sources.chatgptName")}</strong> {t("settings.sources.chatgptExportSteps")}</li>
-      <li><strong>{t("settings.sources.claudeName")}</strong> {t("settings.sources.claudeExportSteps")}</li>
-    </ul>
+    {/* The export arrives by email, sometimes much later, so the dialog says
+        so up front instead of leaving the user waiting at the drop zone. */}
+    <ol className="source-chat-steps">
+      <li>
+        <span className="source-chat-step-number" aria-hidden="true">1</span>
+        <div className="source-chat-step-copy">
+          <strong>{t("sourceAccess.chatStepExport")}</strong>
+          <dl className="source-chat-export-steps">
+            <div><dt>{t("settings.sources.chatgptName")}</dt><dd>{t("settings.sources.chatgptExportSteps")}</dd></div>
+            <div><dt>{t("settings.sources.claudeName")}</dt><dd>{t("settings.sources.claudeExportSteps")}</dd></div>
+          </dl>
+        </div>
+      </li>
+      <li>
+        <span className="source-chat-step-number" aria-hidden="true">2</span>
+        <div className="source-chat-step-copy">
+          <strong>{t("sourceAccess.chatStepWait")}</strong>
+          <span>{t("sourceAccess.chatStepWaitBody")}</span>
+        </div>
+      </li>
+      <li>
+        <span className="source-chat-step-number" aria-hidden="true">3</span>
+        <div className="source-chat-step-copy">
+          <strong>{t("sourceAccess.chatStepDrop")}</strong>
+          <span>{t("sourceAccess.chatStepDropBody")}</span>
+        </div>
+      </li>
+    </ol>
     <ImportFlow onLeave={onClose} />
   </SourceDialog>;
   return <SourceDialog title={t("sourceAccess.addTitle")} onClose={onClose}>
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}
+    {/* An Obsidian vault or a plain folder is where most people start; Logseq last. */}
     <button type="button" className="source-add-option source-add-option--vault" disabled={busy} onClick={() => connect.mutate("obsidian")}>
       <SourceTypeIcon kind="obsidian" /><span className="source-add-option-copy"><strong>{t("sourceAccess.obsidian")}</strong><span>{t("sourceAccess.obsidianHint")}</span></span>
     </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
-      <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
-    </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
-      <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("folder")}>
+      <SourceTypeIcon kind="folder" /><span className="source-add-option-copy"><strong>{t("sourceAccess.folder")}</strong><span>{t("sourceAccess.folderHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => upload.mutate()}>
       <SourceTypeIcon kind="file" /><span className="source-add-option-copy"><strong>{t(upload.isPending ? "sourceAccess.adding" : "sourceAccess.files")}</strong><span>{t("sourceAccess.filesHint")}</span></span>
@@ -153,8 +178,11 @@ export default function AddSourceMenu({ onClose, start = "menu" }: {
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowWeb(true)}>
       <SourceTypeIcon kind="webpage" /><span className="source-add-option-copy"><strong>{t("sourceAccess.web")}</strong><span>{t("sourceAccess.webHint")}</span></span>
     </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("folder")}>
-      <SourceTypeIcon kind="folder" /><span className="source-add-option-copy"><strong>{t("sourceAccess.folder")}</strong><span>{t("sourceAccess.folderHint")}</span></span>
+    {withChats && <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
+      <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
+    </button>}
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
+      <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>
     </button>
     {connect.isPending && <p role="status">{t("sourceAccess.connecting")}</p>}
     {failure && <div role="alert" className="source-dialog-error">{t("sourceAccess.addFailed")}<p>{failure}</p></div>}

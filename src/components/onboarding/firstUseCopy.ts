@@ -40,7 +40,7 @@ export const enFirstUse = {
     memoryOrigin: "Captured from conversation",
     close: "Close",
     backToPage: "Back to the page",
-    useTitle: "Commands for later",
+    useTitle: "What else your AI can do",
     useBody:
       "Connect a tool, then type one of these in a new chat. The answer comes with its source.",
     finish: "Back to home",
@@ -61,7 +61,7 @@ export const enFirstUse = {
     copyFailed: "Copy failed. Select the text and copy it manually.",
     notInLibrary:
       "Sample only. It is not in your library and your AI cannot find it.",
-    useWithAi: "Commands for later",
+    useWithAi: "What else your AI can do",
   },
   checklist: {
     title: "Get started with Wenlan",
@@ -79,7 +79,7 @@ export const enFirstUse = {
       },
       tool: {
         title: "Connect an AI tool",
-        body: "Let Claude Code, Codex or ChatGPT use your pages.",
+        body: "Let Claude Code, Codex, Cursor and more use your pages.",
         action: "Connect a tool",
       },
       sources: {
@@ -94,12 +94,12 @@ export const enFirstUse = {
         folder: { title: "Folder or files", hint: "Notes, docs, code" },
         chats: { title: "Past AI chats", hint: "ChatGPT, Claude" },
         sample: { title: "See an example", hint: "No material needed" },
-        skip: "Skip for now",
       },
       recall: {
         title: "Ask your AI about your pages",
         body: "Connect a tool, then ask it. It answers from your pages, with sources.",
         bodyConnected: "Once pages are written, ask your AI. It answers with sources.",
+        later: "Once your first pages are written.",
         action: "See an example",
         askLine: "Ask {{tool}}: “What do my pages say on {{title}}?”",
         prompt: "What do my pages say on “{{title}}”? Tell me where each part came from.",
@@ -111,12 +111,10 @@ export const enFirstUse = {
       },
     },
     askAi: {
-      line: "Your AI can also organize and update pages.",
-      action: "See what it can do",
+      action: "What your AI can do",
     },
     steep: {
-      line: "Optional: write pages with a local model instead of your AI tool.",
-      action: "Set up",
+      action: "Use a local model instead",
     },
   },
   live: {
@@ -185,7 +183,7 @@ export const hansFirstUse = {
     memoryOrigin: "来自对话记录",
     close: "关闭",
     backToPage: "回到这篇笔记",
-    useTitle: "之后会用到的指令",
+    useTitle: "AI 还能做什么",
     useBody:
       "连好工具后，在新对话里输入下面任一句，回答会带出处。",
     finish: "回到首页",
@@ -205,7 +203,7 @@ export const hansFirstUse = {
     copied: "已复制",
     copyFailed: "复制失败，请手动选择文本复制。",
     notInLibrary: "只是示例，不在你的库里，AI 也搜不到。",
-    useWithAi: "之后会用到的指令",
+    useWithAi: "AI 还能做什么",
   },
   checklist: {
     title: "开始使用文澜",
@@ -223,7 +221,7 @@ export const hansFirstUse = {
       },
       tool: {
         title: "连接一个 AI 工具",
-        body: "让 Claude Code、Codex 或 ChatGPT 使用你的笔记。",
+        body: "让 Claude Code、Codex、Cursor 等工具读写你的笔记库。",
         action: "连接工具",
       },
       sources: {
@@ -238,12 +236,12 @@ export const hansFirstUse = {
         folder: { title: "加文件夹或文件", hint: "笔记、文档、代码" },
         chats: { title: "以前的 AI 聊天", hint: "ChatGPT、Claude" },
         sample: { title: "先看示例", hint: "不用带任何资料" },
-        skip: "先跳过",
       },
       recall: {
         title: "在 AI 里问问你的笔记",
         body: "连上 AI 工具后，在里面问一句，它会从你的笔记回答，并告诉你出处。",
         bodyConnected: "笔记整理好后，在 AI 里问一句，它会从你的笔记回答，并告诉你出处。",
+        later: "第一批笔记写好后再来。",
         action: "看示例",
         askLine: "在 {{tool}} 里问：我的笔记里关于「{{title}}」怎么说？",
         prompt: "我的笔记里关于「{{title}}」怎么说？每一点都说明出处。",
@@ -255,12 +253,10 @@ export const hansFirstUse = {
       },
     },
     askAi: {
-      line: "除了问答，AI 还能帮你整理和更新笔记。",
-      action: "看看 AI 能做什么",
+      action: "AI 能做什么",
     },
     steep: {
-      line: "可选：让文澜用本机模型在后台整理，不占用你的 AI 工具。",
-      action: "设置",
+      action: "改用本机模型",
     },
   },
   live: {
@@ -326,7 +322,7 @@ export const hantFirstUse = {
     memoryOrigin: "來自對話記錄",
     close: "關閉",
     backToPage: "回到這篇筆記",
-    useTitle: "之後會用到的指令",
+    useTitle: "AI 還能做什麼",
     useBody:
       "連好工具後，在新對話裡輸入下面任一句，回答會附出處。",
     finish: "回到首頁",
@@ -346,7 +342,7 @@ export const hantFirstUse = {
     copied: "已複製",
     copyFailed: "複製失敗，請手動選取文字複製。",
     notInLibrary: "只是範例，不在你的庫裡，AI 也搜不到。",
-    useWithAi: "之後會用到的指令",
+    useWithAi: "AI 還能做什麼",
   },
   checklist: {
     title: "開始使用文瀾",
@@ -364,7 +360,7 @@ export const hantFirstUse = {
       },
       tool: {
         title: "連接一個 AI 工具",
-        body: "讓 Claude Code、Codex 或 ChatGPT 使用你的筆記。",
+        body: "讓 Claude Code、Codex、Cursor 等工具讀寫你的筆記庫。",
         action: "連接工具",
       },
       sources: {
@@ -379,12 +375,12 @@ export const hantFirstUse = {
         folder: { title: "加資料夾或檔案", hint: "筆記、文件、程式碼" },
         chats: { title: "以前的 AI 聊天", hint: "ChatGPT、Claude" },
         sample: { title: "先看範例", hint: "不用帶任何資料" },
-        skip: "先跳過",
       },
       recall: {
         title: "在 AI 裡問問你的筆記",
         body: "連上 AI 工具後，在裡面問一句，它會從你的筆記回答，並告訴你出處。",
         bodyConnected: "筆記整理好後，在 AI 裡問一句，它會從你的筆記回答，並告訴你出處。",
+        later: "第一批筆記寫好後再來。",
         action: "看範例",
         askLine: "在 {{tool}} 裡問：我的筆記裡關於「{{title}}」怎麼說？",
         prompt: "我的筆記裡關於「{{title}}」怎麼說？每一點都說明出處。",
@@ -396,12 +392,10 @@ export const hantFirstUse = {
       },
     },
     askAi: {
-      line: "除了問答，AI 還能幫你整理和更新筆記。",
-      action: "看看 AI 能做什麼",
+      action: "AI 能做什麼",
     },
     steep: {
-      line: "可選：讓文瀾用本機模型在背景整理，不佔用你的 AI 工具。",
-      action: "設定",
+      action: "改用本機模型",
     },
   },
   live: {

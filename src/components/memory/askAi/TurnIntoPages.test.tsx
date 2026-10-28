@@ -100,7 +100,7 @@ describe("TurnIntoPagesView", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Write pages with Codex" }));
     expect(s.start).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Switch to Automatic" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Or let Wenlan write them in the background" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Later" })).toBeInTheDocument();
     expect(card.textContent).not.toMatch(/Claude|steep/i);
   });
@@ -162,7 +162,7 @@ describe("TurnIntoPagesView", () => {
     const value = actions();
     render(wrap(<TurnIntoPagesView state={state(ready, { tool: null, toolName: "Your AI tool" })} hasPages={false} />, value));
     expect(screen.getByTestId("turn-into-pages")).toHaveAttribute("data-state", "no-tool");
-    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Connect your AI tool to write pages, or switch to Automatic.");
+    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Connect your AI tool and it writes the pages for you.");
     fireEvent.click(screen.getByRole("button", { name: "Connect an AI tool" }));
     expect(value.onConnectTool).toHaveBeenCalled();
   });
@@ -229,19 +229,19 @@ describe("TurnIntoPagesView", () => {
   it("explains Automatic before changing anything, then switches and opens the model picker", async () => {
     const value = actions();
     render(wrap(<TurnIntoPagesView state={state(ready)} hasPages={false} />, value));
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Automatic" }));
+    fireEvent.click(screen.getByRole("button", { name: "Or let Wenlan write them in the background" }));
     const card = screen.getByTestId("turn-into-pages");
     expect(card).toHaveAttribute("data-state", "explain");
     expect(card).toHaveTextContent(
-      "Automatic: Wenlan keeps organizing in the background with a model you pick. A local model is free and runs on this computer, but it is slower and writes less well than Codex.",
+      "Wenlan can write pages in the background with a model you choose. A local model is free and runs on this computer, but it is slower and writes less well than Codex.",
     );
     expect(setBackgroundAiEnabled).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Keep On demand" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByTestId("turn-into-pages")).toHaveAttribute("data-state", "ready");
 
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Automatic" }));
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Automatic" }));
+    fireEvent.click(screen.getByRole("button", { name: "Or let Wenlan write them in the background" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
     await waitFor(() => expect(value.onOpenIntelligence).toHaveBeenCalled());
     expect(setBackgroundAiEnabled).toHaveBeenCalledWith(true);
     expect(fillUnsetPinsWithRetry).toHaveBeenCalled();

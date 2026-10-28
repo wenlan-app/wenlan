@@ -137,7 +137,7 @@ describe("FirstUseGuide navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
     expect(onBack).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Skip to result" }));
-    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
+    fireEvent.click(screen.getByRole("button", { name: "What else your AI can do" }));
     expect(screen.queryByRole("button", { name: "Connect my AI" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Bring my data" })).not.toBeInTheDocument();
     const [, finish] = screen.getAllByRole("button", { name: "Back to home" });

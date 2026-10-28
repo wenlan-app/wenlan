@@ -417,9 +417,9 @@
   margin: 0 0 12px;
 }
 
+/* Space alone separates the title from the plan; no rule line. */
 .fus-result-rule {
-  border-top: 1px solid var(--mem-border);
-  margin: 0 0 12px;
+  margin: 0 0 8px;
 }
 
 .fus-result-heading {

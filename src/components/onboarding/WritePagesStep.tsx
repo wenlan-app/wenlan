@@ -219,13 +219,6 @@ export function WritePagesStep({
           </button>
         ) : null)}
       </div>
-      {onSkip ? (
-        <p className="getting-started-step-body">
-          <button type="button" className="getting-started-link" onClick={() => onSkip(true)}>
-            {t("firstUse.checklist.steps.pages.skip")}
-          </button>
-        </p>
-      ) : null}
     </div>
   );
 }

@@ -129,7 +129,7 @@ export function PagesOverview({
       {compact ? gettingStarted : null}
       {newPages}
       {compact ? null : gettingStarted}
-      {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
+      {adding ? <AddSourceMenu start={adding} withChats={false} onClose={() => setAdding(null)} /> : null}
     </section>
   );
 }

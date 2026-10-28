@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Check, CheckCircle, CircleNotch, Sparkle } from "@phosphor-icons/react";
+import { Check, CheckCircle, CircleNotch, Sparkle, X } from "@phosphor-icons/react";
 import { getOnDeviceModel, getResolvedRouting } from "../../../lib/tauri";
 import { chooseSteepMode, useSteepOnDemand } from "../../../lib/steepMode";
 import { ANTHROPIC_MODELS } from "../../intelligence/IntelligenceSetup";
@@ -256,7 +256,13 @@ export function TurnIntoPagesView({
   const toolName = state.tool?.name ?? state.run?.tool ?? null;
   const inlineTool = toolName ?? t("askAi.writePages.importCard.yourTool");
 
-  const shell = (body: ReactNode, cardState: string) => (
+  const putOff = () => {
+    setLater(true);
+    onLater?.();
+  };
+  // An offer the user can put off closes from its corner, so the card's own
+  // row holds only the one thing to do.
+  const shell = (body: ReactNode, cardState: string, closable = false) => (
     <section
       className={`turn-pages${bare ? " turn-pages--bare" : ""}`}
       data-testid="turn-into-pages"
@@ -264,6 +270,7 @@ export function TurnIntoPagesView({
       aria-labelledby={titleId}
       aria-live="polite"
     >
+      <div className="turn-pages-head">
       <h3 id={titleId} className="turn-pages-title">
         {cardState === "done" ? (
           <CheckCircle aria-hidden="true" weight="fill" className="turn-pages-icon turn-pages-icon--done" />
@@ -274,6 +281,19 @@ export function TurnIntoPagesView({
         )}
         {t("askAi.writePages.importCard.title")}
       </h3>
+      {closable ? (
+        <button
+          type="button"
+          className="turn-pages-close"
+          data-testid="turn-into-pages-later"
+          aria-label={t("askAi.writePages.importCard.later")}
+          title={t("askAi.writePages.importCard.later")}
+          onClick={putOff}
+        >
+          <X aria-hidden="true" weight="regular" />
+        </button>
+      ) : null}
+      </div>
       {body}
     </section>
   );
@@ -311,22 +331,13 @@ export function TurnIntoPagesView({
     );
   }
 
+  // The other way to get pages, as one quiet line under the actions.
   const secondary = (
-    <>
+    <p className="turn-pages-alt">
       <button type="button" className="turn-pages-link" onClick={() => setExplaining(true)}>
         {t("askAi.writePages.importCard.switchToAutomatic")}
       </button>
-      <button
-        type="button"
-        className="turn-pages-link"
-        onClick={() => {
-          setLater(true);
-          onLater?.();
-        }}
-      >
-        {t("askAi.writePages.importCard.later")}
-      </button>
-    </>
+    </p>
   );
 
   if (kind === "noTool") {
@@ -339,10 +350,11 @@ export function TurnIntoPagesView({
               {t("askAi.writePages.connect")}
             </button>
           ) : null}
-          {secondary}
         </div>
+        {secondary}
       </>,
       "no-tool",
+      true,
     );
   }
 
@@ -380,10 +392,11 @@ export function TurnIntoPagesView({
           {state.tools.length > 1 && state.tool ? (
             <ToolPicker tools={state.tools} current={state.tool.family} onChoose={state.chooseTool} />
           ) : null}
-          {secondary}
         </div>
+        {secondary}
       </>,
       "ready",
+      true,
     );
   }
 

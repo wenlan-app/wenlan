@@ -197,11 +197,19 @@
   font: 12px/1.5 var(--mem-font-body);
 }
 
-/* Extra lines in a row share the one rule above them. */
-.getting-started-extra + .getting-started-extra {
-  margin-top: -6px;
-  padding-top: 0;
-  border-top: none;
+.getting-started-extra-dot {
+  margin: 0 8px;
+}
+
+/* The step that waits on the one before it: present, but quieter, so the
+   eye goes to what can be done now. */
+.getting-started-steps > li[data-later="true"] .getting-started-icon {
+  opacity: 0.55;
+}
+
+.getting-started-steps > li[data-later="true"] .getting-started-step-title,
+.getting-started-steps > li[data-later="true"] .getting-started-step-body {
+  color: var(--mem-text-tertiary);
 }
 
 .getting-started-link:focus-visible {

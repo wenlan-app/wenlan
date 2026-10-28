@@ -30,7 +30,7 @@ function skipToResult() {
 
 function openAiPanel() {
   skipToResult();
-  fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
+  fireEvent.click(screen.getByRole("button", { name: "What else your AI can do" }));
 }
 
 function stubMatchMedia(initial: boolean) {
@@ -83,8 +83,8 @@ describe("FirstUseSample demo isolation", () => {
     fireEvent.click(screen.getByTestId("sample-citation-sample-cite-2"));
     expect(screen.getByTestId("sample-citation-dialog")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
-    expect(screen.getByRole("heading", { name: "Commands for later" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "What else your AI can do" }));
+    expect(screen.getByRole("heading", { name: "What else your AI can do" })).toBeInTheDocument();
     // The only daemon-adjacent call allowed on the sample path is clipboard.
     expect(mockedInvoke).not.toHaveBeenCalled();
   });
@@ -189,19 +189,19 @@ describe("FirstUseSample source rack and page flow", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("reveals the AI step only through Commands for later, with a way back", () => {
+  it("reveals the AI step only through What else your AI can do, with a way back", () => {
     renderSample();
     skipToResult();
     expect(
-      screen.queryByRole("heading", { name: "Commands for later" }),
+      screen.queryByRole("heading", { name: "What else your AI can do" }),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Commands for later" }));
+    fireEvent.click(screen.getByRole("button", { name: "What else your AI can do" }));
     expect(
-      screen.getByRole("heading", { name: "Commands for later" }),
+      screen.getByRole("heading", { name: "What else your AI can do" }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to the page" }));
     expect(
-      screen.queryByRole("heading", { name: "Commands for later" }),
+      screen.queryByRole("heading", { name: "What else your AI can do" }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByText("v2 launch plan"),

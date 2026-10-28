@@ -278,15 +278,20 @@ export function GettingStarted({
                 ? t("firstUse.checklist.steps.recall.question", { title: askable?.title })
                 : asking
                   ? t("firstUse.checklist.steps.recall.askLine", { tool: promptTool, title: askable?.title })
-                  : id === "recall" && progress.tool
-                    // Connected, with no page to ask about yet.
-                    ? t("firstUse.checklist.steps.recall.bodyConnected")
+                  : id === "recall"
+                    // Nothing to ask about yet: the step waits for the pages
+                    // step, and says only that.
+                    ? t("firstUse.checklist.steps.recall.later")
                     : t(`firstUse.checklist.steps.${id}.body`);
+          // Asking needs a page first, so until then the row reads as the
+          // step that comes next rather than one to do now.
+          const later = !done && id === "recall" && !asking;
           return (
             <li
               key={id}
               data-testid={`getting-started-${id}`}
               data-done={done ? "true" : "false"}
+              data-later={later ? "true" : undefined}
             >
               {icon}
               <div className="getting-started-copy">
@@ -341,13 +346,31 @@ export function GettingStarted({
           );
         })}
       </ol>
-      {/* The full list of what to ask the AI tool. After the checklist is
-          gone it stays in the account menu. */}
-      <p className="getting-started-extra" data-testid="getting-started-ask-ai">
-        {t("firstUse.checklist.askAi.line")}{" "}
-        <button type="button" className="getting-started-link" onClick={() => setAskAiOpen(true)}>
+      {/* One quiet line under the steps: the full list of what to ask the
+          AI tool (it stays in the account menu after the checklist is gone)
+          and, while it is off, writing pages with a local model instead. */}
+      <p className="getting-started-extra" data-testid="getting-started-extra">
+        <button
+          type="button"
+          className="getting-started-link"
+          data-testid="getting-started-ask-ai"
+          onClick={() => setAskAiOpen(true)}
+        >
           {t("firstUse.checklist.askAi.action")}
         </button>
+        {onTurnOnSteeping && backgroundAi.data === false ? (
+          <>
+            <span className="getting-started-extra-dot" aria-hidden="true">·</span>
+            <button
+              type="button"
+              className="getting-started-link"
+              data-testid="getting-started-steep"
+              onClick={onTurnOnSteeping}
+            >
+              {t("firstUse.checklist.steep.action")}
+            </button>
+          </>
+        ) : null}
       </p>
       {askAiOpen ? (
         <AskAiDialog
@@ -357,16 +380,6 @@ export function GettingStarted({
             onConnectTool();
           }}
         />
-      ) : null}
-      {/* Optional, so it sits under the steps instead of being one of them.
-          Shown only when the setting is known to be off. */}
-      {onTurnOnSteeping && backgroundAi.data === false ? (
-        <p className="getting-started-extra" data-testid="getting-started-steep">
-          {t("firstUse.checklist.steep.line")}{" "}
-          <button type="button" className="getting-started-link" onClick={onTurnOnSteeping}>
-            {t("firstUse.checklist.steep.action")}
-          </button>
-        </p>
       ) : null}
     </section>
   );

@@ -2703,6 +2703,13 @@ function SetupWizardFlow({
       <ConnectStep
         hideDots={hideDots}
         onNext={(selected) => {
+          // Opened from inside the app with nothing picked: there is nothing
+          // to set up, so go straight back instead of through the setup and
+          // "ready" screens of a first launch.
+          if (startStep === "connect" && selected.length === 0) {
+            void onComplete();
+            return;
+          }
           setSelectedClients(selected);
           setStep("setting-up");
         }}

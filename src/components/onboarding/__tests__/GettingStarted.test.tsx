@@ -205,7 +205,8 @@ describe("GettingStarted", () => {
     expect(props.onImportChats).toHaveBeenCalledOnce();
     expect(props.onSeeExample).toHaveBeenCalledOnce();
     // The example is offered once, in the pages step; asking waits for a page.
-    expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.bodyConnected"));
+    expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.later"));
+    expect(screen.getByTestId("getting-started-recall")).toHaveAttribute("data-later", "true");
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") })).toBeNull();
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
@@ -213,7 +214,7 @@ describe("GettingStarted", () => {
   it("opens what your AI can do from under the steps", async () => {
     renderCard();
     expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
-    expect(screen.getByTestId("getting-started-ask-ai")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.line"));
+    expect(screen.getByTestId("getting-started-ask-ai")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.action"));
 
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.askAi.action") }));
     expect(screen.getByRole("dialog", { name: i18n.t("askAi.title") })).toBeInTheDocument();
@@ -375,12 +376,11 @@ describe("GettingStarted", () => {
     }
   });
 
-  it("can skip the pages step when there is nothing to bring in", async () => {
+  it("keeps the pages step to its three choices, with no skip link", async () => {
     renderCard();
     await screen.findByRole("heading", { name: title() });
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.pages.skip") }));
-    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
-    expect(localStorage.getItem("onboarding:pagesStepSkipped")).toBe("1");
+    expect(screen.getByTestId("getting-started-pages").querySelectorAll("button")).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   });
 
   it("says what the pages step will do before there is anything to hand over", async () => {
@@ -450,7 +450,8 @@ describe("GettingStarted", () => {
     const onTurnOnSteeping = vi.fn();
     renderCard([], { onTurnOnSteeping });
     const line = await screen.findByTestId("getting-started-steep");
-    expect(line).toHaveTextContent(i18n.t("firstUse.checklist.steep.line"));
+    expect(line).toHaveTextContent(i18n.t("firstUse.checklist.steep.action"));
+    expect(screen.getByTestId("getting-started-extra")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.action"));
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steep.action") }));
     expect(onTurnOnSteeping).toHaveBeenCalledTimes(1);
   });

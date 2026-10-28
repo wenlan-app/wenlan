@@ -663,7 +663,7 @@ export function FirstUseSample({
                 <div className="fus-own">
                   <p>{t("firstUse.sample.ownBody")}</p>
                   <button type="button" className="fug-button-primary" onClick={onFinish}>
-                    {finishLabel ?? t("firstUse.sample.startOwn")}
+                    {t("firstUse.sample.startOwn")}
                   </button>
                 </div>
               </section>
