@@ -18,6 +18,8 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const DAEMON_RECOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+const DAEMON_RECOVERY_POLL: Duration = Duration::from_millis(250);
 
 static UPDATER_STARTED: AtomicBool = AtomicBool::new(false);
 
@@ -414,6 +416,89 @@ fn report_install_failure(
     set_phase(state, LifecyclePhase::Idle);
 }
 
+fn check_recovered_daemon_version(actual: &str) -> Result<(), String> {
+    let expected = env!("CARGO_PKG_VERSION");
+    if crate::release_part(actual) == crate::release_part(expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "daemon reports version {actual}; expected {expected}"
+        ))
+    }
+}
+
+fn validate_recovered_daemon_health(
+    health: &wenlan_types::responses::HealthResponse,
+) -> Result<(), String> {
+    if health.status != "ok" {
+        return Err(format!(
+            "daemon health status is {}; expected ok",
+            health.status
+        ));
+    }
+    if !health.db_initialized {
+        return Err("daemon health reports that its database is not initialized".to_string());
+    }
+    check_recovered_daemon_version(&health.version)
+}
+
+async fn restore_stopped_daemon(
+    app: &AppHandle,
+    client: &crate::api::WenlanClient,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + DAEMON_RECOVERY_TIMEOUT;
+    let mut last_start_error = None;
+    let mut last_health_error = None;
+    let mut last_version_error = None;
+
+    loop {
+        match tokio::time::timeout_at(
+            deadline,
+            crate::daemon_start::start_daemon_if_unowned(app, client),
+        )
+        .await
+        {
+            Ok(crate::daemon_start::DaemonStartResult::Failed { message }) => {
+                last_start_error = Some(message);
+            }
+            Ok(crate::daemon_start::DaemonStartResult::Started)
+            | Ok(crate::daemon_start::DaemonStartResult::AlreadyRunning)
+            | Ok(crate::daemon_start::DaemonStartResult::LaunchdManaged) => {}
+            Err(_) => break,
+        }
+
+        match tokio::time::timeout_at(deadline, client.health()).await {
+            Ok(Ok(health)) => match validate_recovered_daemon_health(&health) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_version_error = Some(error),
+            },
+            Ok(Err(error)) => last_health_error = Some(error),
+            Err(_) => break,
+        }
+
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        tokio::time::sleep(DAEMON_RECOVERY_POLL.min(deadline - now)).await;
+    }
+
+    let mut details = vec![format!(
+        "daemon recovery did not confirm version {} within {DAEMON_RECOVERY_TIMEOUT:?}",
+        env!("CARGO_PKG_VERSION")
+    )];
+    if let Some(error) = last_start_error {
+        details.push(format!("last start attempt: {error}"));
+    }
+    if let Some(error) = last_health_error {
+        details.push(format!("last health check: {error}"));
+    }
+    if let Some(error) = last_version_error {
+        details.push(error);
+    }
+    Err(details.join("; "))
+}
+
 async fn resume_saved_remote_access(app: &AppHandle) -> Option<String> {
     let ticket = crate::remote_access::prepare_startup(app.clone()).await;
     if let Some(ticket) = ticket {
@@ -441,15 +526,9 @@ async fn report_failure_after_cleanup(
 ) {
     let mut recovery_errors = Vec::new();
     if restart_stopped_sidecar {
-        match crate::daemon_start::start_daemon_if_unowned(app, &crate::api::WenlanClient::new())
-            .await
-        {
-            crate::daemon_start::DaemonStartResult::Failed { message } => {
-                recovery_errors.push(format!("daemon recovery failed: {message}"));
-            }
-            crate::daemon_start::DaemonStartResult::Started
-            | crate::daemon_start::DaemonStartResult::AlreadyRunning
-            | crate::daemon_start::DaemonStartResult::LaunchdManaged => {}
+        let client = crate::api::WenlanClient::new();
+        if let Err(error) = restore_stopped_daemon(app, &client).await {
+            recovery_errors.push(format!("daemon recovery failed: {error}"));
         }
     }
     if let Some(error) = resume_saved_remote_access(app).await {
@@ -781,6 +860,47 @@ mod tests {
         // The caller returns through report_install_failure, which restores
         // Idle so an explicit retry can be accepted after a blocked restart.
         assert!(LifecyclePhase::Idle.accepts_manual_check());
+    }
+
+    #[test]
+    fn daemon_recovery_requires_the_running_release_version() {
+        assert!(check_recovered_daemon_version(env!("CARGO_PKG_VERSION")).is_ok());
+        assert!(
+            check_recovered_daemon_version(&format!("{}+fixture", env!("CARGO_PKG_VERSION")))
+                .is_ok()
+        );
+        let error = check_recovered_daemon_version("0.0.0").unwrap_err();
+        assert!(error.contains("daemon reports version 0.0.0"));
+        assert!(error.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn daemon_recovery_requires_a_ready_health_response() {
+        let version = env!("CARGO_PKG_VERSION").to_string();
+        let ready = wenlan_types::responses::HealthResponse {
+            status: "ok".into(),
+            db_initialized: true,
+            version: version.clone(),
+        };
+        assert!(validate_recovered_daemon_health(&ready).is_ok());
+
+        let uninitialized = wenlan_types::responses::HealthResponse {
+            status: "ok".into(),
+            db_initialized: false,
+            version: version.clone(),
+        };
+        assert!(validate_recovered_daemon_health(&uninitialized)
+            .unwrap_err()
+            .contains("database is not initialized"));
+
+        let unhealthy = wenlan_types::responses::HealthResponse {
+            status: "starting".into(),
+            db_initialized: true,
+            version,
+        };
+        assert!(validate_recovered_daemon_health(&unhealthy)
+            .unwrap_err()
+            .contains("expected ok"));
     }
 
     #[test]
