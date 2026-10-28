@@ -8,6 +8,9 @@ use wenlan_core::{config, on_device_models};
 
 use crate::client::origin_host_from_env;
 
+#[path = "secret_input.rs"]
+mod secret_input;
+
 #[derive(Clone, Debug)]
 pub struct SetupArgs {
     pub basic: bool,
@@ -1096,13 +1099,7 @@ fn prompt_line(prompt: &str) -> anyhow::Result<String> {
 fn prompt_secret(prompt: &str) -> anyhow::Result<String> {
     print!("{}", prompt);
     io::stdout().flush()?;
-    let _ = std::process::Command::new("stty").arg("-echo").status();
-    let mut value = String::new();
-    let read = io::stdin().read_line(&mut value);
-    let _ = std::process::Command::new("stty").arg("echo").status();
-    println!();
-    read?;
-    Ok(value)
+    Ok(secret_input::read_secret()?)
 }
 
 #[cfg(test)]

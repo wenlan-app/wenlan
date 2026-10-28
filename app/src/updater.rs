@@ -1014,6 +1014,8 @@ mod tests {
     fn daemon_recovery_requires_a_ready_health_response() {
         let version = env!("CARGO_PKG_VERSION").to_string();
         let ready = wenlan_types::responses::HealthResponse {
+            data_root: None,
+            data_root_identity: None,
             status: "ok".into(),
             db_initialized: true,
             version: version.clone(),
@@ -1021,6 +1023,8 @@ mod tests {
         assert!(validate_recovered_daemon_health(&ready).is_ok());
 
         let uninitialized = wenlan_types::responses::HealthResponse {
+            data_root: None,
+            data_root_identity: None,
             status: "ok".into(),
             db_initialized: false,
             version: version.clone(),
@@ -1030,6 +1034,8 @@ mod tests {
             .contains("database is not initialized"));
 
         let unhealthy = wenlan_types::responses::HealthResponse {
+            data_root: None,
+            data_root_identity: None,
             status: "starting".into(),
             db_initialized: true,
             version,

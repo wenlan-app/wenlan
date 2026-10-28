@@ -29,6 +29,7 @@ mod page_attachments;
 mod page_review;
 mod pairing_link;
 pub mod plugin_install;
+mod source_paths;
 // M5 presence-capability minting (D7). The page-review half is live through
 // `page_review::review_page`; the claim-attest half has no daemon route yet,
 // so its action variant and the test-only verifier are still unconstructed

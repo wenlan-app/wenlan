@@ -28,6 +28,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  WENLAN_NO_AUTOSTART: '1'
 
 jobs:
   detect-changes:
@@ -50,6 +51,7 @@ jobs:
       app:     ${{ steps.filter.outputs.app }}
       macos:   ${{ steps.filter.outputs.macos }}
       windows: ${{ steps.filter.outputs.windows }}
+      native-contracts: ${{ steps.filter.outputs.native-contracts }}
       windows-lint: ${{ steps.filter.outputs.windows-lint }}
       macos-m4: ${{ steps.filter.outputs.macos-m4 }}
       m5-platform: ${{ steps.filter.outputs.m5-platform }}
@@ -178,6 +180,41 @@ jobs:
             # (src/, e2e/, vite/tsconfig/package.json), not under app/. Without
             # this filter an app-only PR matches no filter and every job skips,
             # so `conclusion` reports green with zero jobs run (silent-green).
+            native-contracts:
+              - 'scripts/platform-contracts/**'
+              - 'app/src/process_identity.rs'
+              - 'app/src/remote_access_platform*.rs'
+              - 'app/src/source_paths.rs'
+              - 'app/src/search.rs'
+              - 'app/src/remote_access.rs'
+              - 'app/src/plugin_install.rs'
+              - 'app/src/sources/obsidian.rs'
+              - 'app/src/config.rs'
+              - 'app/src/error.rs'
+              - 'app/src/identity_paths.rs'
+              - 'app/src/test_env.rs'
+              - 'crates/wenlan-cli/src/commands/windows_task.rs'
+              - 'crates/wenlan-cli/src/commands/service.rs'
+              - 'crates/wenlan-cli/src/commands/service_binding.rs'
+              - 'crates/wenlan-core/src/config.rs'
+              - 'crates/wenlan-cli/src/commands/pages.rs'
+              - 'crates/wenlan-cli/src/commands/setup.rs'
+              - 'crates/wenlan-cli/src/commands/secret_input.rs'
+              - 'crates/wenlan-cli/src/commands/open_document.rs'
+              - 'crates/wenlan-core/src/export/**'
+              - 'crates/wenlan-server/src/source_routes.rs'
+              - 'crates/wenlan-server/src/main/**'
+              - 'crates/wenlan-server/src/main.rs'
+              - 'crates/wenlan-server/src/routes.rs'
+              - 'crates/wenlan-types/**'
+              - 'scripts/resolve-backend-dir*'
+              - 'scripts/setup-vulkan-sdk-windows*'
+              - 'scripts/smoke-windows.ps1'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'app/Cargo.toml'
+              - 'crates/wenlan-cli/Cargo.toml'
+              - '.github/workflows/ci.yml'
             app:
               - 'app/**'
               - 'vendor/tauri-plugin-updater/**'
@@ -390,6 +427,7 @@ jobs:
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
               - 'crates/wenlan-cli/src/commands/service.rs'
+              - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/src/commands/setup.rs'
               - 'crates/wenlan-cli/tests/cli_integration.rs'
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
@@ -504,7 +542,10 @@ jobs:
               - 'crates/wenlan-cli/src/commands/mcp.rs'
               - 'crates/wenlan-cli/src/commands/mod.rs'
               - 'crates/wenlan-cli/src/commands/pages.rs'
+              - 'crates/wenlan-cli/src/commands/windows_task.rs'
+              - 'scripts/resolve-backend-dir.test.ps1'
               - 'crates/wenlan-cli/src/commands/service.rs'
+              - 'crates/wenlan-cli/src/commands/service_binding.rs'
               - 'crates/wenlan-cli/tests/cli_integration.rs'
               # The refresh test drives a shell-script stand-in AI tool, so it is `cfg(unix)`.
               - 'crates/wenlan-cli/tests/wiki_refresh_cli.rs'
@@ -2545,9 +2586,34 @@ jobs:
   # fails, downstream jobs would be skipped silently. Every filtered job also
   # has an expected-vs-actual assertion: expected jobs must succeed and jobs
   # with no matching diff must be skipped.
+  native-platform-contracts:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.native-contracts == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: 1.95.0
+      - name: Test production platform modules
+        run: cargo test --manifest-path scripts/platform-contracts/Cargo.toml --locked
+      - name: Windows SDK path regression cases
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& scripts/setup-vulkan-sdk-windows.test.ps1'
+      - name: Windows backend path regression cases
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& scripts/resolve-backend-dir.test.ps1'
+
   conclusion:
     name: conclusion
-    needs: [detect-changes, release-base-proof, fmt, lint, linux-nextest-build, linux-nextest, macos-nextest-build, macos-nextest, test, mcp-platform, canonical-acceptance, contract-integration, release-preflight, docs, windows-release-contract, plugin, plugin-rust-contract, npm, relay-check, runtime-image, app-check, app-e2e]
+    needs: [detect-changes, release-base-proof, fmt, lint, linux-nextest-build, linux-nextest, macos-nextest-build, macos-nextest, test, mcp-platform, canonical-acceptance, contract-integration, release-preflight, docs, windows-release-contract, plugin, plugin-rust-contract, npm, relay-check, runtime-image, app-check, app-e2e, native-platform-contracts]
     # merge_group: still run after fail-fast cancels the run so the queue gets the failure; a PR run superseded by a newer push stays cancelled.
     if: always() && (github.event_name == 'merge_group' || !cancelled())
     runs-on: ubuntu-24.04
@@ -2606,6 +2672,7 @@ jobs:
           expect_job runtime-image '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.runtime-image == 'true' }}' '${{ needs.runtime-image.result }}'
           expect_job app-check '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-check.result }}'
           expect_job app-e2e '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-e2e.result }}'
+          expect_job native-platform-contracts '${{ needs.detect-changes.outputs.native-contracts == 'true' || github.event_name == 'workflow_dispatch' }}' '${{ needs.native-platform-contracts.result }}'
 
           if [ "$failed" -ne 0 ]; then
             exit 1

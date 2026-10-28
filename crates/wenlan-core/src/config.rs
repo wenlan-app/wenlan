@@ -146,16 +146,27 @@ impl Config {
         if self.watch_paths.is_empty() {
             return;
         }
-        let existing_paths: std::collections::HashSet<PathBuf> =
-            self.sources.iter().map(|s| s.path.clone()).collect();
+        let mut existing_paths: std::collections::HashSet<PathBuf> = self
+            .sources
+            .iter()
+            .map(|s| std::fs::canonicalize(&s.path).unwrap_or_else(|_| s.path.clone()))
+            .collect();
 
         for path in &self.watch_paths {
-            if existing_paths.contains(path) {
+            if !existing_paths.insert(std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+            {
                 continue;
             }
             let slug = slug_from_path(path);
             self.sources.push(Source {
-                id: format!("dir-{}", slug),
+                id: {
+                    use sha2::{Digest, Sha256};
+                    format!(
+                        "dir-{}-{:x}",
+                        slug,
+                        Sha256::digest(path.as_os_str().as_encoded_bytes())
+                    )
+                },
                 source_type: SourceType::Directory,
                 path: path.clone(),
                 status: SyncStatus::Active,
@@ -264,6 +275,16 @@ pub fn data_root() -> PathBuf {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("wenlan")
         })
+}
+
+/// Stable instance identity for lifecycle requests, including symlink aliases.
+pub fn data_root_identity(root: &std::path::Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let root = std::fs::canonicalize(root)?;
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(root.as_os_str().as_encoded_bytes())
+    ))
 }
 
 /// Where pages go when the config names no folder: `~/.wenlan/pages`, or
@@ -919,6 +940,41 @@ mod tests {
     }
 
     // --- New sources/knowledge_path tests ---
+
+    #[test]
+    fn same_named_legacy_roots_have_stable_unique_ids() {
+        let paths = vec![
+            PathBuf::from("a/Notes"),
+            PathBuf::from("b/Notes"),
+            PathBuf::from("a/Notes"),
+        ];
+        let mut first = Config {
+            watch_paths: paths.clone(),
+            ..Config::default()
+        };
+        let mut second = Config {
+            watch_paths: paths,
+            ..Config::default()
+        };
+        first.migrate();
+        second.migrate();
+        assert_eq!(first.sources.len(), 2);
+        assert_ne!(first.sources[0].id, first.sources[1].id);
+        assert_eq!(
+            first
+                .sources
+                .iter()
+                .map(|source| &source.id)
+                .collect::<Vec<_>>(),
+            second
+                .sources
+                .iter()
+                .map(|source| &source.id)
+                .collect::<Vec<_>>()
+        );
+        first.migrate();
+        assert_eq!(first.sources.len(), 2);
+    }
 
     #[test]
     fn test_config_defaults_empty_sources() {

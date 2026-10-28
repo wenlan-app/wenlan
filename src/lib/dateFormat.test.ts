@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { formatLocaleDate, formatTimeAgo } from "./dateFormat";
+import { folderName, formatLocaleDate, formatTimeAgo } from "./dateFormat";
+
+describe("folderName", () => {
+  it.each([
+    ["C:\\中文 Notes\\report.md", "report.md"],
+    ["\\\\server\\share\\Notes\\", "Notes"],
+    ["/home/notes/report.md", "report.md"],
+    ["C:/Notes/report.md", "report.md"],
+    ["", ""],
+  ])("extracts the display name of %s", (path, name) => {
+    expect(folderName(path)).toBe(name);
+  });
+});
 
 describe("formatLocaleDate", () => {
   it("returns one unambiguous locale-aware calendar style and an ISO machine value", () => {

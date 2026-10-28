@@ -98,11 +98,11 @@ struct ObsidianRegistryEntry {
     ts: i64,
 }
 
-/// Path to Obsidian's vault registry on macOS.
+/// Obsidian stores its vault registry under the platform configuration root.
 pub fn obsidian_registry_path() -> PathBuf {
-    dirs::home_dir()
+    dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Library/Application Support/obsidian/obsidian.json")
+        .join("obsidian/obsidian.json")
 }
 
 /// Read and parse the Obsidian vault registry at `registry_path`, sorted by
@@ -145,6 +145,15 @@ pub fn discover_vaults(registry_path: &Path) -> Vec<ObsidianVault> {
 #[cfg(test)]
 mod discover_vaults_tests {
     use super::*;
+    #[test]
+    #[cfg(windows)]
+    fn registry_uses_the_native_roaming_profile() {
+        let appdata = std::env::var_os("APPDATA").expect("Windows test profile");
+        assert_eq!(
+            obsidian_registry_path(),
+            PathBuf::from(appdata).join("obsidian/obsidian.json")
+        );
+    }
     use std::fs;
 
     fn write_registry(dir: &Path, json: &str) -> PathBuf {

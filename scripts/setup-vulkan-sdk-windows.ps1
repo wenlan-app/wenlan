@@ -53,26 +53,26 @@ function Assert-VulkanSdk {
         (Join-Path $Root "Lib\vulkan-1.lib"),
         (Join-Path $Root "Include\vulkan\vulkan.h")
     )
-    $missing = @($required | Where-Object { -not (Test-Path $_ -PathType Leaf) })
+    $missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
     if ($missing.Count -gt 0) {
         throw "Vulkan SDK at '$Root' is incomplete; missing: $($missing -join ', ')"
     }
 }
 
-if (-not $ValidateOnly -and -not (Test-Path (Join-Path $InstallRoot "Bin\glslc.exe"))) {
+if (-not $ValidateOnly -and -not (Test-Path -LiteralPath (Join-Path $InstallRoot "Bin\glslc.exe"))) {
     if (-not $InstallerPath) {
         $downloadRoot = Join-Path ([System.IO.Path]::GetTempPath()) "wenlan-vulkan-sdk-$Version"
         New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
         $InstallerPath = Join-Path $downloadRoot "vulkansdk-windows-X64-$Version.exe"
-        if (-not (Test-Path $InstallerPath -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
             $uri = "https://sdk.lunarg.com/sdk/download/$Version/windows/vulkansdk-windows-X64-$Version.exe"
             Write-Host "Downloading Vulkan SDK $Version from LunarG..."
-            Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $InstallerPath
+            Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $InstallerPath -TimeoutSec 120
         }
     }
 
-    $InstallerPath = (Resolve-Path $InstallerPath).Path
-    $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $InstallerPath).Hash.ToLowerInvariant()
+    $InstallerPath = (Resolve-Path -LiteralPath $InstallerPath).Path
+    $actualSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $InstallerPath).Hash.ToLowerInvariant()
     if ($actualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
         throw "Vulkan SDK checksum mismatch: expected $ExpectedSha256, got $actualSha256"
     }
@@ -98,10 +98,10 @@ $sdkBin = Join-Path $InstallRoot "Bin"
 $env:PATH = "$sdkBin;$env:PATH"
 
 if ($env:GITHUB_ENV) {
-    Add-Content -Path $env:GITHUB_ENV -Value "VULKAN_SDK=$InstallRoot"
+    Add-Content -LiteralPath $env:GITHUB_ENV -Value "VULKAN_SDK=$InstallRoot"
 }
 if ($env:GITHUB_PATH) {
-    Add-Content -Path $env:GITHUB_PATH -Value $sdkBin
+    Add-Content -LiteralPath $env:GITHUB_PATH -Value $sdkBin
 }
 
 Write-Host "VULKAN_SDK=$InstallRoot"

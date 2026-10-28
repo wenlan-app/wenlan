@@ -63,27 +63,23 @@ owns that suite` and stops at Clippy. Narrow plans still run their own lib and
 integration tests locally, which is where the fast local signal is worth paying
 for.
 
-**What CI does not own: Windows-gated unit tests.** `workspace-lib-required`
-runs on Linux and macOS. The Windows job deliberately skips the workspace lib
-suite — see the "Workspace lib tests skipped on Windows" step comment in
-`ci.yml` — because Linux and macOS catch the same cross-platform unit logic in
-a third of the wall-clock. A `#[cfg(windows)]` unit test therefore has no
-required-CI execution on any platform; `projection_state_mode_tracks_windows_readonly_attribute`
-is one such test.
+**Focused Windows unit coverage.** `workspace-lib-required` runs on Linux and
+macOS; the full Windows workspace lib suite remains skipped. The required
+`native-platform-contracts` matrix now executes selected platform behavior on
+Windows, macOS, and Linux without compiling Tauri or the ML runtime. Its standalone
+manifest imports the actual production modules for process ownership, service XML,
+root/path identity, source migration, secret input, document opening, and export
+filenames. Its Windows leg also exercises SDK LiteralPath handling and native
+backend paths through Git Bash. Ownership filters and `conclusion` require this
+job when those sources change.
 
-Trimming the widened pre-push plan removed the one lane that did run them.
-Before that change a widened plan scheduled `cargo test --workspace --exclude
-wenlan-app --lib` and the `wenlan-server` binary tests, so a Windows developer
-pushing a broad change executed every `#[cfg(windows)]` unit test on the only
-platform that compiles them. Nothing runs them now — not a required check, not
-a local hook, on any platform.
-
-That is the cost of the trade the section above describes, taken knowingly: the
-same run took over an hour on Windows and blocked every broad change on a
-failure unrelated to it. Windows behaviour is still covered at a coarser grain
-by the Windows CLI/server integration step and the schtasks install round-trip
-in the same job. Closing the unit-level gap means paying the ~25 minute Windows
-lib run on every PR, which is a separate decision from this one.
+Run the focused lane locally with `cargo test --manifest-path
+scripts/platform-contracts/Cargo.toml --locked`. This does not replace the
+CLI/server integration and actual schtasks round-trip, nor does it cover every
+Windows-only workspace test. For example,
+`projection_state_mode_tracks_windows_readonly_attribute` is outside this focused
+lane; expanding coverage still requires selecting more production modules or
+paying for the full Windows lib suite.
 
 ### Why pre-push no longer compiles
 

@@ -1781,6 +1781,10 @@ pub async fn add_watch_path(
     if !path.is_dir() {
         return Err(format!("Path is not a directory: {}", path.display()));
     }
+    // The daemon owns the canonical registration and rejects ID collisions.
+    // Keep its stored spelling for the matching watcher removal operation.
+    let source = register_directory_source_with_daemon(&state, &path, Some(true)).await?;
+    let path = source.path;
 
     {
         let mut app_state = state.write().await;
@@ -1792,7 +1796,11 @@ pub async fn add_watch_path(
                 local.add_watch_path(path.clone());
             }
         }
-        if !app_state.watch_paths.contains(&path) {
+        if !app_state
+            .watch_paths
+            .iter()
+            .any(|existing| crate::source_paths::same_path(existing, &path))
+        {
             app_state.watch_paths.push(path.clone());
         }
     }
@@ -1805,34 +1813,6 @@ pub async fn add_watch_path(
     }
     if let Some(w) = watcher_guard.as_mut() {
         crate::indexer::watch_path(w, &path).map_err(|e| e.to_string())?;
-    }
-
-    // Persist as a Source entry in config
-    {
-        let mut cfg = config::load_config();
-        if !cfg.sources.iter().any(|s| s.path == path) {
-            let dirname = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "dir".to_string());
-            let slug = crate::sources::obsidian::slugify(&dirname);
-            let id = format!("directory-{}", slug);
-            cfg.sources.push(crate::sources::Source {
-                id,
-                source_type: crate::sources::SourceType::Directory,
-                path: path.clone(),
-                status: crate::sources::SyncStatus::Active,
-                last_sync: None,
-                file_count: 0,
-                memory_count: 0,
-                last_sync_errors: 0,
-                last_sync_error_detail: None,
-                space: None,
-                queued_files: 0,
-                waiting_files: 0,
-            });
-            config::save_config(&cfg).map_err(|e| e.to_string())?;
-        }
     }
 
     // Trigger initial index
@@ -1853,36 +1833,53 @@ pub async fn remove_watch_path(
     path: String,
 ) -> Result<(), String> {
     let path = PathBuf::from(&path);
+    let client = daemon_client(&state).await;
+    let sources = client.list_sources().await?;
+    if let Some(source) = crate::source_paths::source_for_path(&sources, &path)? {
+        client.remove_source(&source.id).await?;
+        detach_watch_path(&state, &watcher, &source.path).await;
+    } else {
+        detach_watch_path(&state, &watcher, &path).await;
+    }
+    Ok(())
+}
 
+async fn detach_watch_path(
+    state: &tauri::State<'_, State>,
+    watcher: &tauri::State<'_, WatcherState>,
+    path: &Path,
+) {
+    let mut registered_paths = vec![path.to_path_buf()];
     {
         let mut app_state = state.write().await;
+        registered_paths.extend(
+            app_state
+                .watch_paths
+                .iter()
+                .filter(|existing| crate::source_paths::same_path(existing, path))
+                .cloned(),
+        );
         if let Some(source) = app_state.sources.get_mut("local_files") {
             if let Some(local) = source
                 .as_any_mut()
                 .downcast_mut::<crate::sources::local_files::LocalFilesSource>()
             {
-                local.remove_watch_path(&path);
+                for registered in &registered_paths {
+                    local.remove_watch_path(registered);
+                }
             }
         }
-        app_state.watch_paths.retain(|p| p != &path);
+        app_state
+            .watch_paths
+            .retain(|p| !crate::source_paths::same_path(p, path));
     }
 
     let mut watcher_guard = watcher.lock().await;
     if let Some(w) = watcher_guard.as_mut() {
-        crate::indexer::unwatch_path(w, &path);
-    }
-
-    // Remove from config.sources
-    {
-        let mut cfg = config::load_config();
-        let before = cfg.sources.len();
-        cfg.sources.retain(|s| s.path != path);
-        if cfg.sources.len() != before {
-            config::save_config(&cfg).map_err(|e| e.to_string())?;
+        for registered in registered_paths {
+            crate::indexer::unwatch_path(w, &registered);
         }
     }
-
-    Ok(())
 }
 
 #[tauri::command]
@@ -5816,7 +5813,7 @@ async fn register_directory_source_with_daemon(
             .list_sources()
             .await?
             .into_iter()
-            .find(|s| s.path == path)
+            .find(|s| crate::source_paths::same_path(&s.path, path))
             .ok_or_else(|| "source registered but not returned by daemon".to_string()),
         Err(e) => Err(e),
     }
@@ -5983,38 +5980,19 @@ async fn remove_directory_source(
     id: &str,
     source: crate::sources::Source,
 ) -> Result<(), String> {
-    let mut cfg = config::load_config();
-    if !cfg.sources.iter().any(|s| s.id == id) {
-        return Err(format!("Source not found: {}", id));
-    }
-    cfg.sources.retain(|s| s.id != id);
-    config::save_config(&cfg).map_err(|e| e.to_string())?;
+    // Complete the daemon's ambiguity check and canonical config mutation
+    // before touching local state, watchers, or managed files.
+    daemon_client(state).await.remove_source(id).await?;
 
     let sources_dir = crate::sources::uploads::sources_dir();
     for blob in managed_blob_paths(&sources_dir, &source) {
         let _ = std::fs::remove_dir_all(&blob); // best-effort; missing dir is fine
     }
 
-    {
-        let mut app_state = state.write().await;
-        if let Some(local) = app_state.sources.get_mut("local_files") {
-            if let Some(local) = local
-                .as_any_mut()
-                .downcast_mut::<crate::sources::local_files::LocalFilesSource>()
-            {
-                local.remove_watch_path(&source.path);
-            }
-        }
-        app_state.watch_paths.retain(|p| p != &source.path);
-    }
-
     // Pruning `watch_paths` does not stop ingestion — the debouncer callback
     // never consults it. The live watcher must be told, or files under a
     // disconnected folder keep flowing into the daemon until the app restarts.
-    let mut watcher_guard = watcher.lock().await;
-    if let Some(w) = watcher_guard.as_mut() {
-        crate::indexer::unwatch_path(w, &source.path);
-    }
+    detach_watch_path(state, watcher, &source.path).await;
     Ok(())
 }
 

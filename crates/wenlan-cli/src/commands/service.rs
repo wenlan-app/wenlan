@@ -9,10 +9,18 @@
 //!   Control Protocol (`sc start` would time out at 30s with error 1053).
 
 use anyhow::{Context, Result};
-use service_manager::{
-    ServiceInstallCtx, ServiceLabel, ServiceLevel, ServiceManager, ServiceStartCtx, ServiceStopCtx,
-};
+use service_manager::ServiceLabel;
+#[cfg(not(target_os = "macos"))]
+use service_manager::{ServiceInstallCtx, ServiceLevel, ServiceManager, ServiceStartCtx};
 use std::path::{Path, PathBuf};
+
+#[cfg(windows)]
+#[path = "windows_task.rs"]
+mod windows_task;
+
+#[path = "service_binding.rs"]
+mod service_binding;
+use service_binding::OwnershipRefusal;
 
 use crate::client::origin_host_from_env;
 use crate::client::recovery::poll_health;
@@ -25,6 +33,9 @@ const SHUTDOWN_STABILITY_WINDOW: std::time::Duration = std::time::Duration::from
 const SHUTDOWN_VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 const DAEMON_PROCESS_ID_HEADER: &str = "x-wenlan-process-id";
 const AUTOSTART_OFF_MARKER: &str = "autostart.off";
+// Windows loopback refusal can take over two seconds to reach WSAECONNREFUSED.
+// A shorter deadline hides measured absence behind an inconclusive timeout.
+const OWNERSHIP_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long `background on` waits for `/api/health` before reporting.
 const FIRST_HEALTH_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -66,6 +77,18 @@ enum DaemonShutdownRequest {
 /// and systemd-user paths still use the canonical reverse-DNS `SERVICE_LABEL`.
 #[cfg(target_os = "windows")]
 pub const WINDOWS_TASK_NAME: &str = "WenlanServer";
+
+#[cfg(windows)]
+fn windows_task_name() -> String {
+    let root = explicit_data_root();
+    if root.as_deref().is_some_and(|root| {
+        dirs::data_local_dir()
+            .is_some_and(|base| windows_task::same_root(root, &base.join("wenlan")))
+    }) {
+        return WINDOWS_TASK_NAME.into();
+    }
+    windows_task::task_name(root.as_deref())
+}
 
 #[derive(clap::Subcommand)]
 pub enum BackgroundCommand {
@@ -110,12 +133,207 @@ fn run_schtasks(args: &[&str], action: &str) -> Result<std::process::Output> {
     Ok(output)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn manager() -> Result<Box<dyn ServiceManager>> {
     // macOS + Linux only. Windows install/stop short-circuit before
     // calling this and drive schtasks.exe directly (see install/stop).
     let mut m = <dyn ServiceManager>::native().context("detect native service manager")?;
     let _ = m.set_level(ServiceLevel::User);
     Ok(m)
+}
+
+/// Configuration is not runtime evidence. No supervisor mutation is allowed
+/// while its instance is active, queued, or unmeasurable.
+fn verify_registered_stopped() -> Result<()> {
+    verify_registered_root()?;
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; $service=New-Object -ComObject Schedule.Service; $service.Connect(); $task=$service.GetFolder('\\').GetTask($env:WENLAN_TASK_OWNERSHIP_NAME); @{state=[uint32]$task.State; instances=[uint32]$task.GetInstances(0).Count} | ConvertTo-Json -Compress"])
+            .env("WENLAN_TASK_OWNERSHIP_NAME", windows_task_name())
+            .output().context("read scheduled task runtime state")?;
+        if !output.status.success() {
+            return Err(
+                OwnershipRefusal("scheduled task runtime could not be measured".into()).into(),
+            );
+        }
+        #[derive(serde::Deserialize)]
+        struct Runtime {
+            state: u32,
+            instances: u32,
+        }
+        let runtime: Runtime = serde_json::from_slice(&output.stdout)?;
+        service_binding::verify_windows_stopped(runtime.state, runtime.instances)?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let unit = format!("{}.service", label()?.to_script_name());
+        let output = std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                &unit,
+                "--property=ActiveState",
+                "--property=MainPID",
+            ])
+            .output()
+            .context("read systemd runtime state")?;
+        if !output.status.success() {
+            return Err(OwnershipRefusal("systemd runtime could not be measured".into()).into());
+        }
+        service_binding::verify_systemd_stopped(&String::from_utf8(output.stdout)?)?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(output) = loaded_launchd_job()? {
+            service_binding::verify_launchd_stopped(&output, &wenlan_core::config::data_root())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn loaded_launchd_job() -> Result<Option<String>> {
+    let target = format!("gui/{}/{}", current_user_id()?, SERVICE_LABEL);
+    let output = std::process::Command::new("launchctl")
+        .args(["print", &target])
+        .output()?;
+    if output.status.success() {
+        return Ok(Some(String::from_utf8(output.stdout)?));
+    }
+    if output.status.code() == Some(113) {
+        return Ok(None);
+    }
+    Err(OwnershipRefusal("loaded launchd job could not be measured".into()).into())
+}
+
+#[cfg(target_os = "macos")]
+fn require_unloaded_launchd_job() -> Result<()> {
+    if loaded_launchd_job()?.is_some() {
+        return Err(OwnershipRefusal("launchd job is still loaded; unload the verified old registration manually before replacing it".into()).into());
+    }
+    Ok(())
+}
+
+/// A reachable daemon and a globally named service can belong to different
+/// stores. Prove the registration independently before any supervisor action.
+fn verify_registered_root() -> Result<()> {
+    #[cfg(windows)]
+    {
+        // A task name alone is not proof: an old or manually edited task may
+        // point at another store. Inspect its actual action without changing it.
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $service=New-Object -ComObject Schedule.Service; $service.Connect(); $task=$service.GetFolder('\\').GetTask($env:WENLAN_TASK_OWNERSHIP_NAME); $actions=$task.Definition.Actions; if($actions.Count -ne 1 -or $actions.Item(1).Type -ne 0){throw 'unverified task actions'}; @{arguments=$actions.Item(1).Arguments} | ConvertTo-Json -Compress"])
+            .env("WENLAN_TASK_OWNERSHIP_NAME", windows_task_name())
+            .output().context("read scheduled task ownership")?;
+        if !output.status.success() {
+            return Err(
+                OwnershipRefusal("scheduled task action could not be verified".into()).into(),
+            );
+        }
+        #[derive(serde::Deserialize)]
+        struct TaskAction {
+            arguments: String,
+        }
+        let action: TaskAction = serde_json::from_slice(&output.stdout)
+            .map_err(|_| OwnershipRefusal("scheduled task action is unreadable".into()))?;
+        let arguments = windows_task::parse_arguments(&action.arguments)?;
+        service_binding::verify_launch_root(&wenlan_core::config::data_root(), &arguments, &[])?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let value = plist::Value::from_file(service_unit_path()?)
+            .context("read registered LaunchAgent ownership")?;
+        let dict = value
+            .as_dictionary()
+            .context("LaunchAgent is not a dictionary")?;
+        let args: Vec<String> = dict
+            .get("ProgramArguments")
+            .and_then(plist::Value::as_array)
+            .context("LaunchAgent has no ProgramArguments")?
+            .iter()
+            .map(|value| {
+                value
+                    .as_string()
+                    .map(str::to_owned)
+                    .context("LaunchAgent argument is not a string")
+            })
+            .collect::<Result<_>>()?;
+        let environment = dict
+            .get("EnvironmentVariables")
+            .and_then(plist::Value::as_dictionary)
+            .map(|env| {
+                env.iter()
+                    .filter_map(|(key, value)| {
+                        value
+                            .as_string()
+                            .map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        service_binding::verify_launch_root(
+            &wenlan_core::config::data_root(),
+            &args,
+            &environment,
+        )?;
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let unit = format!("{}.service", label()?.to_script_name());
+        let output = std::process::Command::new("systemctl")
+            .args([
+                "--user",
+                "show",
+                &unit,
+                "--property=Environment",
+                "--property=ExecStart",
+                "--property=EnvironmentFiles",
+            ])
+            .output()
+            .context("read effective systemd service ownership")?;
+        if !output.status.success() {
+            return Err(OwnershipRefusal(
+                "systemd could not prove the registered data root".into(),
+            )
+            .into());
+        }
+        verify_systemd_root(
+            &String::from_utf8(output.stdout)?,
+            &wenlan_core::config::data_root(),
+        )
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn verify_systemd_root(properties: &str, selected: &Path) -> Result<()> {
+    // EnvironmentFiles and command-line overrides need full systemd parsing;
+    // refuse unknown registrations rather than guessing their effective root.
+    let mut environment = Vec::new();
+    for line in properties.lines() {
+        if let Some(value) = line.strip_prefix("Environment=") {
+            let tokens = shlex::split(value)
+                .ok_or_else(|| OwnershipRefusal("systemd environment is ambiguous".into()))?;
+            environment.extend(tokens.into_iter().filter_map(|token| {
+                token
+                    .split_once('=')
+                    .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            }));
+        } else if line
+            .strip_prefix("EnvironmentFiles=")
+            .is_some_and(|value| !value.trim().is_empty())
+            || (line.starts_with("ExecStart=") && line.contains("--data-dir"))
+        {
+            return Err(OwnershipRefusal(
+                "systemd registration has unverified root overrides".into(),
+            )
+            .into());
+        }
+    }
+    service_binding::verify_launch_root(selected, &[], &environment)?;
+    Ok(())
 }
 
 /// Resolves the platform-specific path to the Wenlan service unit file.
@@ -278,7 +496,7 @@ fn build_launchd_plist(
 /// The data root this CLI run was told to use, if any: `WENLAN_DATA_DIR` (or
 /// its legacy `ORIGIN_DATA_DIR` spelling) in the CLI's own environment, which
 /// is also how the desktop app hands over its selected store.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn explicit_data_root() -> Option<PathBuf> {
     wenlan_core::env_compat::var_compat("WENLAN_DATA_DIR").map(PathBuf::from)
 }
@@ -386,6 +604,9 @@ fn merge_launchd_plist(
 }
 
 pub async fn install() -> Result<()> {
+    if is_installed() {
+        verify_registered_root()?;
+    }
     #[cfg(target_os = "windows")]
     {
         // wenlan-server is a plain console app and does not speak the Windows
@@ -396,28 +617,51 @@ pub async fn install() -> Result<()> {
         // systemd --user (Linux), without needing a service dispatcher in
         // wenlan-server.
         let program = current_server_path()?;
-        let program_str = program.to_string_lossy();
-        let _ = std::process::Command::new("schtasks.exe")
-            .args(["/end", "/tn", WINDOWS_TASK_NAME])
-            .output();
+        let program_str = program.to_str().context("server path is not Unicode")?;
+        let bind = configured_bind_addr()?;
+        match request_daemon_shutdown().await? {
+            DaemonShutdownRequest::Requested(process) => {
+                verify_local_daemon_shutdown(process).await?;
+            }
+            DaemonShutdownRequest::NotRunning => {}
+        }
+        let data_root = Some(std::path::absolute(wenlan_core::config::data_root())?);
+        if let Some(root) = data_root.as_deref() {
+            std::fs::create_dir_all(root).context(
+                "create selected background data root before computing its task identity",
+            )?;
+        }
+        let data_root = data_root
+            .as_ref()
+            .map(|path| path.to_str().context("data path is not Unicode"))
+            .transpose()?;
+        let xml = windows_task::task_xml(program_str, data_root, bind);
+        let definition = windows_task::write_task_definition(&xml)?;
+        let definition_path = definition
+            .to_str()
+            .context("task definition path is not Unicode")?;
+        if is_installed() {
+            verify_registered_stopped()?;
+        }
         run_schtasks(
             &[
                 "/create",
                 "/tn",
-                WINDOWS_TASK_NAME,
-                "/sc",
-                "ONLOGON",
-                "/tr",
-                &program_str,
+                &windows_task_name(),
+                "/xml",
+                definition_path,
                 "/f",
             ],
             "create scheduled task",
         )?;
         let log_marks = DaemonLogMarks::capture();
-        run_schtasks(&["/run", "/tn", WINDOWS_TASK_NAME], "run scheduled task")?;
+        run_schtasks(&["/run", "/tn", &windows_task_name()], "run scheduled task")?;
         remove_autostart_off_marker()?;
         return wait_for_first_health(
-            &format!("Windows scheduled task '{WINDOWS_TASK_NAME}' (wenlan-server)"),
+            &format!(
+                "Windows scheduled task '{}' (wenlan-server)",
+                windows_task_name()
+            ),
             &log_marks,
         )
         .await;
@@ -426,6 +670,7 @@ pub async fn install() -> Result<()> {
     #[cfg_attr(target_os = "windows", allow(unreachable_code))]
     let label_value = label()?;
     let program = current_server_path()?;
+    #[cfg(not(target_os = "macos"))]
     let m = manager()?;
 
     // Gracefully stop any daemon that is currently answering, and wait for it
@@ -444,20 +689,29 @@ pub async fn install() -> Result<()> {
         }
     }
 
-    // Stop any daemon still running under this label so the reinstall swaps
-    // the binary. Without this, the freshly-installed binary detects the
-    // healthy incumbent on port 7878 and exits, leaving the OLD daemon running
-    // (wenlan-server/src/main.rs:582-615). Best-effort: errors if not running
-    // (e.g. the graceful shutdown above already stopped it).
-    let _ = m.stop(ServiceStopCtx {
-        label: label_value.clone(),
-    });
+    if is_installed() {
+        verify_registered_stopped()?;
+    }
+    #[cfg(target_os = "macos")]
+    require_unloaded_launchd_job()?;
 
     // Apply RUST_LOG=info to every platform. launchd consumes
     // `EnvironmentVariables`, systemd-user consumes `Environment=`. winsw +
     // sc.exe ignore the field (Windows daemons still rely on `RUST_LOG`
     // exported in the user environment).
-    let environment = Some(vec![("RUST_LOG".to_string(), "info".to_string())]);
+    let environment = Some(vec![
+        ("RUST_LOG".to_string(), "info".to_string()),
+        (
+            "WENLAN_DATA_DIR".to_string(),
+            std::path::absolute(wenlan_core::config::data_root())?
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
+            "WENLAN_BIND_ADDR".to_string(),
+            configured_bind_addr()?.to_string(),
+        ),
+    ]);
 
     // macOS: hand-roll the plist so launchd does not append an unbounded
     // duplicate of the daemon-owned rotating log. service-manager 0.11 has no
@@ -496,25 +750,46 @@ pub async fn install() -> Result<()> {
     };
 
     let log_marks = DaemonLogMarks::capture();
-    m.install(ServiceInstallCtx {
-        label: label_value.clone(),
-        program,
-        args: vec![],
-        contents,
-        username: None,
-        working_directory: None,
-        environment,
-        autostart: true,
-        restart_policy: service_manager::RestartPolicy::OnFailure {
-            delay_secs: None,
-            max_retries: None,
-            reset_after_secs: None,
-        },
-    })
-    .context("install service")?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        m.install(ServiceInstallCtx {
+            label: label_value.clone(),
+            program,
+            args: vec![],
+            contents,
+            username: None,
+            working_directory: None,
+            environment,
+            autostart: true,
+            restart_policy: service_manager::RestartPolicy::OnFailure {
+                delay_secs: None,
+                max_retries: None,
+                reset_after_secs: None,
+            },
+        })
+        .context("install service")?;
 
-    m.start(ServiceStartCtx { label: label_value })
-        .context("start service")?;
+        m.start(ServiceStartCtx { label: label_value })
+            .context("start service")?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (label_value, environment);
+        let mut value = plist::Value::from_reader_xml(
+            contents
+                .as_deref()
+                .context("missing LaunchAgent contents")?
+                .as_bytes(),
+        )?;
+        value
+            .as_dictionary_mut()
+            .context("invalid LaunchAgent")?
+            .remove("Disabled");
+        let path = service_unit_path()?;
+        std::fs::create_dir_all(path.parent().context("missing LaunchAgent parent")?)?;
+        value.to_file_xml(&path)?;
+        bootstrap_launchd_job()?;
+    }
     remove_autostart_off_marker()?;
     wait_for_first_health(SERVICE_LABEL, &log_marks).await
 }
@@ -602,6 +877,12 @@ async fn wait_for_first_health(installed: &str, marks: &DaemonLogMarks) -> Resul
     };
     let health_url = format!("{base_url}/api/health");
     if poll_health(&health_url, FIRST_HEALTH_WAIT).await.is_ok() {
+        verify_daemon_data_root(
+            &reqwest::Client::new(),
+            &base_url,
+            &wenlan_core::config::data_root(),
+        )
+        .await?;
         println!("Installed and started {installed}; daemon healthy at {base_url}.");
         return Ok(());
     }
@@ -657,11 +938,29 @@ fn current_user_id() -> Result<String> {
 }
 
 #[cfg(target_os = "macos")]
+fn bootstrap_launchd_job() -> Result<()> {
+    require_unloaded_launchd_job()?;
+    let domain = format!("gui/{}", current_user_id()?);
+    let output = std::process::Command::new("launchctl")
+        .arg("bootstrap")
+        .arg(domain)
+        .arg(service_unit_path()?)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "launchctl bootstrap failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn kickstart_registered_service() -> Result<()> {
     let uid = current_user_id()?;
     let target = format!("gui/{uid}/{SERVICE_LABEL}");
     let output = std::process::Command::new("launchctl")
-        .args(["kickstart", "-k", &target])
+        .args(["kickstart", &target])
         .output()
         .context("spawn launchctl kickstart")?;
     if !output.status.success() {
@@ -701,128 +1000,49 @@ fn print_service_diagnostics() {
     }
 }
 
-fn stop_registered_service() -> Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        // /end returns nonzero when the registered task is not currently
-        // running. Preserve idempotence and, critically, never /delete it.
-        let _ = std::process::Command::new("schtasks.exe")
-            .args(["/end", "/tn", WINDOWS_TASK_NAME])
-            .output()
-            .context("spawn schtasks.exe (end scheduled task)")?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let uid = current_user_id()?;
-        let domain = format!("gui/{uid}");
-        let plist = service_unit_path()?;
-        let bootout = std::process::Command::new("launchctl")
-            .arg("bootout")
-            .arg(&domain)
-            .arg(&plist)
-            .output()
-            .context("spawn launchctl bootout")?;
-
-        if !bootout.status.success() {
-            let target = format!("{domain}/{SERVICE_LABEL}");
-            let status = std::process::Command::new("launchctl")
-                .args(["print", &target])
-                .output()
-                .context("spawn launchctl print after failed bootout")?;
-            if status.status.code() != Some(113) {
-                let stderr = String::from_utf8_lossy(&bootout.stderr);
-                let stdout = String::from_utf8_lossy(&bootout.stdout);
-                let details = if stderr.trim().is_empty() {
-                    stdout.trim()
-                } else {
-                    stderr.trim()
-                };
-                anyhow::bail!(
-                    "launchctl bootout failed (exit {}): {}",
-                    bootout.status.code().unwrap_or(-1),
-                    details
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let label_value = label()?;
-        let m = manager()?;
-        m.stop(ServiceStopCtx { label: label_value })
-            .context("stop service")?;
-        Ok(())
-    }
-}
-
-// restart() starts the daemon back up after its graceful stop using whatever
-// fallback each platform's service manager needs, so each platform gets its
-// own definition rather than one function with unused parameters in the
-// branches that do not need them (macOS's `kickstart -k` folds its fallback
-// into the start itself and ignores both arguments).
-#[cfg(target_os = "macos")]
-async fn start_after_graceful_stop(
-    _graceful_failed: bool,
-    _expected_process: Option<DaemonProcessIdentity>,
-) -> Result<()> {
-    kickstart_registered_service()
-        .context("if you ran `wenlan background off`, run `wenlan background on`")
-}
-
-#[cfg(target_os = "linux")]
-async fn start_after_graceful_stop(
-    graceful_failed: bool,
-    expected_process: Option<DaemonProcessIdentity>,
-) -> Result<()> {
-    if graceful_failed {
-        stop_registered_service()
-            .context("graceful daemon shutdown failed; service fallback failed")?;
-        verify_local_daemon_shutdown(expected_process)
-            .await
-            .context("service fallback did not stop the daemon before restart")?;
-    }
-    let label_value = label()?;
-    let m = manager()?;
-    m.start(ServiceStartCtx { label: label_value })
-        .context("start service; if you ran `wenlan background off`, run `wenlan background on`")
-}
-
-#[cfg(target_os = "windows")]
-async fn start_after_graceful_stop(
-    graceful_failed: bool,
-    expected_process: Option<DaemonProcessIdentity>,
-) -> Result<()> {
-    if graceful_failed {
-        let _ = std::process::Command::new("schtasks.exe")
-            .args(["/end", "/tn", WINDOWS_TASK_NAME])
-            .output();
-        verify_local_daemon_shutdown(expected_process)
-            .await
-            .context("service fallback did not stop the daemon before restart")?;
-    }
-    run_schtasks(&["/run", "/tn", WINDOWS_TASK_NAME], "run scheduled task")
-        .context("if you ran `wenlan background off`, run `wenlan background on`")?;
-    Ok(())
+// Supervisors start proven inactive registrations; they never force-stop.
+async fn start_after_graceful_stop() -> Result<()> {
+    start_registered(false)
 }
 
 async fn request_daemon_shutdown() -> Result<DaemonShutdownRequest> {
     let base_url = local_daemon_base_url()?;
+    let root = wenlan_core::config::data_root();
+    request_daemon_shutdown_at(&base_url, Some(&root)).await
+}
+
+async fn request_daemon_shutdown_at(
+    base_url: &str,
+    selected_root: Option<&Path>,
+) -> Result<DaemonShutdownRequest> {
     let shutdown_url = format!("{base_url}/api/shutdown");
     let shutdown_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(OWNERSHIP_PROBE_TIMEOUT)
         .pool_max_idle_per_host(0)
         .build()
         .context("build daemon shutdown client")?;
 
-    let response = match build_shutdown_request(&shutdown_client, &shutdown_url)
-        .send()
-        .await
-    {
+    let expected_root = if let Some(root) = selected_root {
+        match verify_daemon_data_root(&shutdown_client, base_url, root).await {
+            Ok(identity) => Some(identity),
+            Err(error)
+                if error
+                    .downcast_ref::<reqwest::Error>()
+                    .is_some_and(|error| error.is_connect()) =>
+            {
+                return Ok(DaemonShutdownRequest::NotRunning)
+            }
+            Err(error) => return Err(error),
+        }
+    } else {
+        None
+    };
+    let mut request = build_shutdown_request(&shutdown_client, &shutdown_url);
+    if let Some(identity) = expected_root {
+        request = request.header("x-wenlan-expected-root", identity);
+    }
+
+    let response = match request.send().await {
         Ok(response) => response,
         Err(error) if error.is_connect() => return Ok(DaemonShutdownRequest::NotRunning),
         Err(error) => {
@@ -852,6 +1072,28 @@ async fn request_daemon_shutdown() -> Result<DaemonShutdownRequest> {
     Ok(DaemonShutdownRequest::Requested(process))
 }
 
+async fn verify_daemon_data_root(
+    client: &reqwest::Client,
+    base_url: &str,
+    root: &Path,
+) -> Result<String> {
+    let health: wenlan_types::responses::HealthResponse = client
+        .get(format!("{base_url}/api/health"))
+        .timeout(OWNERSHIP_PROBE_TIMEOUT)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let expected = wenlan_core::config::data_root_identity(root)?;
+    match health.data_root_identity.as_deref() {
+        Some(identity) if identity == expected => {}
+        Some(_) => return Err(OwnershipRefusal(format!("daemon at {base_url} does not prove the selected data root; check WENLAN_DATA_DIR and WENLAN_BIND_ADDR")).into()),
+        None => return Err(OwnershipRefusal(format!("legacy daemon at {base_url} does not report its data root; stop the verified old instance manually before upgrading")).into()),
+    }
+    Ok(expected)
+}
+
 fn build_shutdown_request(client: &reqwest::Client, shutdown_url: &str) -> reqwest::RequestBuilder {
     // This is a server-visible shutdown contract, not merely a client pool
     // preference. Hyper graceful shutdown waits for accepted HTTP/1.1
@@ -863,23 +1105,32 @@ fn build_shutdown_request(client: &reqwest::Client, shutdown_url: &str) -> reqwe
 }
 
 fn local_daemon_base_url() -> Result<String> {
-    let raw =
-        std::env::var("WENLAN_BIND_ADDR").unwrap_or_else(|_| DEFAULT_LOCAL_BIND_ADDR.to_string());
-    let mut address: std::net::SocketAddr = raw
-        .parse()
-        .with_context(|| format!("invalid local WENLAN_BIND_ADDR {raw:?}"))?;
+    let mut address = configured_bind_addr()?;
     if address.ip().is_unspecified() {
         address.set_ip(if address.is_ipv4() {
             std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         } else {
             std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
         });
-    } else if !address.ip().is_loopback() {
+    }
+    Ok(format!("http://{address}"))
+}
+
+fn configured_bind_addr() -> Result<std::net::SocketAddr> {
+    let raw = std::env::var("WENLAN_BIND_ADDR").unwrap_or_else(|_| {
+        std::env::var("WENLAN_PORT")
+            .map(|port| format!("127.0.0.1:{port}"))
+            .unwrap_or_else(|_| DEFAULT_LOCAL_BIND_ADDR.to_string())
+    });
+    let address: std::net::SocketAddr = raw
+        .parse()
+        .with_context(|| format!("invalid local WENLAN_BIND_ADDR {raw:?}"))?;
+    if !address.ip().is_unspecified() && !address.ip().is_loopback() {
         anyhow::bail!(
             "refusing background lifecycle control through non-loopback WENLAN_BIND_ADDR {raw:?}"
         );
     }
-    Ok(format!("http://{address}"))
+    Ok(address)
 }
 
 async fn verify_daemon_unreachable(
@@ -988,42 +1239,19 @@ async fn verify_local_daemon_shutdown(
 
 async fn stop() -> Result<()> {
     let registration_present = is_installed();
-    let mut expected_process = None;
-    let graceful_result = match request_daemon_shutdown().await {
-        Ok(DaemonShutdownRequest::Requested(process)) => {
-            expected_process = process;
-            verify_local_daemon_shutdown(process).await.map(|()| true)
-        }
-        Ok(DaemonShutdownRequest::NotRunning) => Ok(false),
-        Err(error) => Err(error),
-    };
-    let shutdown_requested = match graceful_result {
-        Ok(true) => true,
-        Ok(false) if registration_present => {
-            // Connection refusal is ambiguous while a registered manager job
-            // may still be starting or respawning. Stop the supervisor too;
-            // otherwise `background off` can report success before the hot
-            // daemon appears on its port.
-            stop_registered_service().context("daemon was unreachable; service fallback failed")?;
-            verify_local_daemon_shutdown(None)
-                .await
-                .context("service fallback did not keep the daemon stopped")?;
+    if registration_present {
+        verify_registered_root()?;
+    }
+    let shutdown_requested = match request_daemon_shutdown().await? {
+        DaemonShutdownRequest::Requested(process) => {
+            verify_local_daemon_shutdown(process).await?;
             true
         }
-        Ok(false) => false,
-        Err(graceful_error) if registration_present => {
-            stop_registered_service().with_context(|| {
-                format!(
-                    "graceful daemon shutdown failed ({graceful_error:#}); service fallback failed"
-                )
-            })?;
-            verify_local_daemon_shutdown(expected_process)
-                .await
-                .with_context(|| format!("graceful daemon shutdown failed: {graceful_error:#}"))?;
-            true
-        }
-        Err(error) => return Err(error),
+        DaemonShutdownRequest::NotRunning => false,
     };
+    if registration_present {
+        verify_registered_stopped()?;
+    }
     let marker = write_autostart_off_marker()?;
     if registration_present {
         println!(
@@ -1059,22 +1287,13 @@ pub async fn restart() -> Result<()> {
     if !is_installed() {
         anyhow::bail!("Wenlan background process is not set up. Run `wenlan background on` first.");
     }
+    verify_registered_root()?;
 
-    // Ask the daemon to shut down cooperatively and wait for it to actually
-    // exit — the same graceful path stop() uses. A failure here does not
-    // abort restart(); the OS-specific start step below force-stops as a
-    // fallback where one is needed.
-    let mut expected_process = None;
-    let graceful_failed = match request_daemon_shutdown().await {
-        Ok(DaemonShutdownRequest::Requested(process)) => {
-            expected_process = process;
-            verify_local_daemon_shutdown(process).await.is_err()
-        }
-        Ok(DaemonShutdownRequest::NotRunning) => false,
-        Err(_) => true,
-    };
-
-    start_after_graceful_stop(graceful_failed, expected_process).await?;
+    match request_daemon_shutdown().await? {
+        DaemonShutdownRequest::Requested(process) => verify_local_daemon_shutdown(process).await?,
+        DaemonShutdownRequest::NotRunning => {}
+    }
+    start_after_graceful_stop().await?;
 
     let base_url = local_daemon_base_url()?;
     let health_url = format!("{base_url}/api/health");
@@ -1086,6 +1305,12 @@ pub async fn restart() -> Result<()> {
         );
     }
 
+    verify_daemon_data_root(
+        &reqwest::Client::new(),
+        &base_url,
+        &wenlan_core::config::data_root(),
+    )
+    .await?;
     remove_autostart_off_marker()?;
     println!(
         "Restarted {}; daemon healthy at {}.",
@@ -1099,21 +1324,20 @@ pub fn start_registered(explicit_user_command: bool) -> Result<()> {
     if !is_installed() {
         anyhow::bail!("Wenlan background process is not set up. Run `wenlan background on` first.");
     }
-
-    #[cfg(target_os = "windows")]
+    verify_registered_stopped()?;
+    #[cfg(windows)]
+    run_schtasks(&["/run", "/tn", &windows_task_name()], "run scheduled task")?;
+    #[cfg(target_os = "macos")]
     {
-        run_schtasks(&["/run", "/tn", WINDOWS_TASK_NAME], "run scheduled task")?;
-        if explicit_user_command {
-            remove_autostart_off_marker()?;
+        if loaded_launchd_job()?.is_some() {
+            kickstart_registered_service()?;
+        } else {
+            bootstrap_launchd_job()?;
         }
-        return Ok(());
     }
-
-    #[cfg_attr(target_os = "windows", allow(unreachable_code))]
-    let label_value = label()?;
-    let m = manager()?;
-    // The service manager may unload/load when the plist carries Disabled: true.
-    m.start(ServiceStartCtx { label: label_value })
+    #[cfg(target_os = "linux")]
+    manager()?
+        .start(ServiceStartCtx { label: label()? })
         .context("start service")?;
     if explicit_user_command {
         remove_autostart_off_marker()?;
@@ -1127,7 +1351,7 @@ pub fn is_installed() -> bool {
         // `schtasks /query /tn <name>` exits 0 when the task exists, 1 when
         // it does not. No admin rights needed for the read-only query.
         std::process::Command::new("schtasks.exe")
-            .args(["/query", "/tn", WINDOWS_TASK_NAME])
+            .args(["/query", "/tn", &windows_task_name()])
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
@@ -1144,12 +1368,12 @@ pub async fn print_status() -> Result<()> {
         if is_installed() {
             println!(
                 "Service: scheduled task '{}' (registered)",
-                WINDOWS_TASK_NAME
+                windows_task_name()
             );
         } else {
             println!(
                 "Service: scheduled task '{}' (not installed)",
-                WINDOWS_TASK_NAME
+                windows_task_name()
             );
         }
     }
@@ -1179,6 +1403,112 @@ pub async fn print_status() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effective_systemd_registration_requires_an_explicit_matching_root() {
+        let root = tempfile::tempdir().unwrap();
+        let escaped = root.path().to_string_lossy().replace('\\', "\\\\");
+        let properties = format!("Environment=\"WENLAN_DATA_DIR={escaped}\" RUST_LOG=info\nExecStart={{ path=/usr/bin/wenlan-server ; argv[]=/usr/bin/wenlan-server ; }}\nEnvironmentFiles=\n");
+        assert!(verify_systemd_root(&properties, root.path()).is_ok());
+        let other = tempfile::tempdir().unwrap();
+        assert!(verify_systemd_root(&properties, other.path()).is_err());
+        assert!(verify_systemd_root("Environment=RUST_LOG=info\n", root.path()).is_err());
+        assert!(verify_systemd_root(
+            &(properties.clone() + "EnvironmentFiles=/tmp/overrides\n"),
+            root.path()
+        )
+        .is_err());
+        assert!(verify_systemd_root(
+            &(properties + "ExecStart=server --data-dir /other\n"),
+            root.path()
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn absent_daemon_is_measured_before_the_ownership_probe_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let root = tempfile::tempdir().unwrap();
+        let result = request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()))
+            .await
+            .unwrap();
+        assert!(matches!(result, DaemonShutdownRequest::NotRunning));
+    }
+
+    #[tokio::test]
+    async fn legacy_health_refusal_gives_migration_guidance_without_posting() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            {
+                let mut reader = tokio::io::BufReader::new(&mut stream);
+                let mut request = String::new();
+                assert!(reader.read_line(&mut request).await.unwrap() > 0);
+                assert!(request.starts_with("GET /api/health "));
+                loop {
+                    let mut header = String::new();
+                    assert!(reader.read_line(&mut header).await.unwrap() > 0);
+                    if header == "\r\n" {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"status":"ok","db_initialized":true,"version":"legacy"}"#;
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        let root = tempfile::tempdir().unwrap();
+        let error = request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()))
+            .await
+            .err()
+            .unwrap();
+        assert!(error.downcast_ref::<OwnershipRefusal>().is_some());
+        assert!(error.to_string().contains("Legacy service upgrade"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wrong_root_is_rejected_before_any_shutdown_request() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 4096];
+            let size = stream.read(&mut request).await.unwrap();
+            assert!(String::from_utf8_lossy(&request[..size]).starts_with("GET /api/health "));
+            let body = r#"{"status":"ok","db_initialized":true,"version":"test","data_root_identity":"another-instance"}"#;
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept())
+                    .await
+                    .is_err(),
+                "wrong instance must never receive POST /api/shutdown"
+            );
+        });
+        let root = tempfile::tempdir().unwrap();
+        let result =
+            request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path())).await;
+        assert!(result.is_err());
+        server.await.unwrap();
+    }
 
     #[test]
     fn daemon_process_identity_observes_child_exit() {

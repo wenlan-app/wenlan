@@ -8,9 +8,12 @@
 use crate::error::WenlanError;
 use crate::repo_wiki::{self, git, github_slug, origin_url, run};
 use crate::repo_wiki_ci::{self, WORKFLOW_PATH};
-use std::io::{Read as _, Write as _};
+#[cfg(unix)]
+use std::io::Read as _;
+use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 use wenlan_types::repo_wiki::{
     RepoWikiAgent, RepoWikiBinding, RepoWikiDaily, RepoWikiGithubRun, RepoWikiGithubStatus,
@@ -36,6 +39,7 @@ pub fn key_secret(agent: RepoWikiAgent) -> Option<&'static str> {
     }
 }
 /// Longest wait for the user to confirm the Claude sign-in in the browser.
+#[cfg(unix)]
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 /// This computer's offset from UTC now, in seconds.

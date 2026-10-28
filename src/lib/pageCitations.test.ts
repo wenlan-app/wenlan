@@ -168,6 +168,12 @@ describe("stripCitationLinks", () => {
 });
 
 describe("citationDisplayLabel", () => {
+  it.each(["C:\\中文 Notes\\design.md", "\\\\server\\share\\design.md"])(
+    "shortens native Windows file locator %s",
+    (locator) => {
+      expect(citationDisplayLabel(cite(1, 1, { source_kind: "external_file", locator }), kindLabels)).toBe("File · design.md");
+    },
+  );
   it("uses a localized source kind for imported memory locators", () => {
     expect(
       citationDisplayLabel(
