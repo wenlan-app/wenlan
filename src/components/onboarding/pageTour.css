@@ -1,0 +1,87 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The first-page tips: one small card next to what it is about, and a quiet
+   ring around that thing. Neither blocks the page. */
+
+.page-tour {
+  position: fixed;
+  z-index: 60;
+  width: min(300px, calc(100vw - 32px));
+  padding: 12px 14px 10px;
+  color: var(--mem-text);
+  font: 13.5px/1.5 var(--mem-font-body);
+}
+
+.page-tour-text {
+  margin: 0;
+}
+
+.page-tour-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.page-tour-count {
+  color: var(--mem-text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-tour-close,
+.page-tour-next {
+  border-radius: var(--mem-radius-md);
+  cursor: pointer;
+  font: 500 13px/1.3 var(--mem-font-body);
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.page-tour-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--mem-text-secondary);
+}
+
+.page-tour-close:hover {
+  background-color: var(--mem-hover);
+  color: var(--mem-text);
+}
+
+.page-tour-next {
+  border: 1px solid var(--mem-border);
+  background: var(--mem-surface);
+  color: var(--mem-text);
+}
+
+.page-tour-next:hover {
+  background-color: var(--mem-hover);
+}
+
+.page-tour-close:focus-visible,
+.page-tour-next:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}
+
+.page-tour-ring {
+  position: fixed;
+  z-index: 59;
+  border-radius: var(--mem-radius-sm);
+  box-shadow: 0 0 0 2px var(--mem-accent-amber);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .page-tour {
+    animation: page-tour-in 160ms ease-out;
+  }
+}
+
+@keyframes page-tour-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}

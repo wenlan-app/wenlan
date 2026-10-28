@@ -67,6 +67,7 @@ import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
+import { PageTour } from "../onboarding/PageTour";
 import { ReferencePreview } from "./links/ReferencePreview";
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import type { ReferencePreviewRequest, ReferenceTarget } from "./links/referenceTypes";
@@ -127,6 +128,8 @@ interface PageDetailProps {
   onEditDirtyChange?: (dirty: boolean) => void;
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   showAttachedPageNotice?: boolean;
+  /** Someone still getting started: the first page Wenlan writes shows its tips. */
+  pageTour?: boolean;
 }
 
 /** How often an open page checks for edits made outside Wenlan. */
@@ -273,6 +276,7 @@ export default function PageDetail({
   onEditDirtyChange,
   onRegisterFlush,
   showAttachedPageNotice = false,
+  pageTour = false,
 }: PageDetailProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -3016,6 +3020,12 @@ export default function PageDetail({
         space={page.space ?? undefined}
         onClose={() => setSourcePreview(null)}
       />}
+      <PageTour
+        rootRef={pageDetailRootRef}
+        eligible={page.creation_kind === "distilled" && page.status === "active" && !showCanvas}
+        newUser={pageTour}
+        pageKey={page.id}
+      />
     </div>
   );
 }

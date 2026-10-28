@@ -745,6 +745,18 @@ const en = {
     suggestedLabel: "Auto-created by an agent",
     viewAllEntities: "View all {{count}}",
   },
+  pageTour: {
+    label: "Page tips",
+    tips: {
+      sources: "Each sentence ends with its source. Click one to read the original.",
+      unverified: "Wenlan couldn't find this in the source. Check it before you rely on it.",
+      edit: "This page is yours to change. When Wenlan updates it later, it asks you first and keeps your edits.",
+    },
+    count: "{{n}} of {{total}}",
+    next: "Next",
+    done: "Got it",
+    close: "Close tips",
+  },
   citation: {
     authoredDescription: "Written by you in this page. It is kept unchanged when the page is rebuilt from its sources.",
     missingTitle: "Source removed",
@@ -1346,6 +1358,11 @@ const en = {
       rerunSetupGo: "Open",
       rerunSetupConfirm:
         "Reopen the welcome screen. Your pages and settings stay as they are.",
+      pageTips: "Page tips",
+      pageTipsGo: "Show again",
+      pageTipsDetails:
+        "Show the three tips again on the next page Wenlan writes with sources.",
+      pageTipsQueued: "They'll show on the next page with sources you open.",
       localData: "Local data",
       pageStorageTitle: "Page storage location",
       pageStorageDescription: "Wenlan pages are stored here as Markdown files.",
@@ -3740,6 +3757,18 @@ const zhHans = {
     suggestedLabel: "由代理自动创建",
     viewAllEntities: "查看全部 {{count}} 个",
   },
+  pageTour: {
+    label: "笔记小提示",
+    tips: {
+      sources: "每句后面是它的出处，点开看原文。",
+      unverified: "这句文澜在来源里找不到根据，用之前可以核对一下。",
+      edit: "这篇是你的，可以直接改。文澜之后更新会先问你，不会盖掉你改的。",
+    },
+    count: "{{n}} / {{total}}",
+    next: "下一个",
+    done: "知道了",
+    close: "关闭提示",
+  },
   citation: {
     authoredDescription: "你在本页撰写的内容。文澜重新整理来源时，会保留原文。",
     missingTitle: "来源已删除",
@@ -4329,6 +4358,11 @@ const zhHans = {
       rerunSetupGo: "打开",
       rerunSetupConfirm:
         "重新打开欢迎画面。你的笔记和设置保持不变。",
+      pageTips: "笔记小提示",
+      pageTipsGo: "再看一次",
+      pageTipsDetails:
+        "下次打开文澜写的、有出处的笔记时，再显示这三个小提示。",
+      pageTipsQueued: "下次打开有出处的笔记就会出现。",
       localData: "本地数据",
       pageStorageTitle: "笔记存储位置",
       pageStorageDescription: "文澜笔记以 Markdown 文件存储于此。",
@@ -6691,6 +6725,18 @@ const zhHant = {
     suggestedLabel: "由代理自動建立",
     viewAllEntities: "檢視全部 {{count}} 個",
   },
+  pageTour: {
+    label: "筆記小提示",
+    tips: {
+      sources: "每句後面是它的出處，點開看原文。",
+      unverified: "這句文瀾在來源裡找不到根據，用之前可以核對一下。",
+      edit: "這篇是你的，可以直接改。文瀾之後更新會先問你，不會蓋掉你改的。",
+    },
+    count: "{{n}} / {{total}}",
+    next: "下一個",
+    done: "知道了",
+    close: "關閉提示",
+  },
   citation: {
     authoredDescription: "你在這篇筆記撰寫的內容。文瀾重新整理來源時，會保留原文。",
     missingTitle: "來源已刪除",
@@ -7280,6 +7326,11 @@ const zhHant = {
       rerunSetupGo: "開啟",
       rerunSetupConfirm:
         "重新開啟歡迎畫面。你的筆記和設定保持不變。",
+      pageTips: "筆記小提示",
+      pageTipsGo: "再看一次",
+      pageTipsDetails:
+        "下次打開文瀾寫的、有出處的筆記時，再顯示這三個小提示。",
+      pageTipsQueued: "下次打開有出處的筆記就會出現。",
       localData: "本機資料",
       pageStorageTitle: "筆記儲存位置",
       pageStorageDescription: "文瀾筆記以 Markdown 檔案儲存在此。",

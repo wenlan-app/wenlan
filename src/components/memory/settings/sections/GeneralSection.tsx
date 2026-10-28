@@ -35,6 +35,7 @@ import {
 } from "../primitives";
 import { SettingsGroup } from "../SettingsView";
 import ProfileAvatar from "../../ProfileAvatar";
+import { replayPageTour, usePageTourState } from "../../../onboarding/PageTour";
 
 type ThemeLabelKey =
   | "settings.theme.auto"
@@ -415,10 +416,36 @@ export default function GeneralSection() {
               </ConfirmActionButton>
             }
           />
+          <PageTipsRow />
       </SettingsGroup>
       <LocalDataSettingsBlock />
       <ExportSettingsBlock />
     </>
+  );
+}
+
+/** Brings the first-page tips back for the next page Wenlan writes. */
+function PageTipsRow() {
+  const { t } = useTranslation();
+  const tour = usePageTourState();
+  return (
+    <SettingRow
+      title={t("settings.general.pageTips")}
+      description=""
+      details={t("settings.general.pageTipsDetails")}
+      statusLine={tour === "replay" ? t("settings.general.pageTipsQueued") : undefined}
+      control={
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={tour === "replay"}
+          onClick={replayPageTour}
+          data-testid="settings-page-tips-replay"
+        >
+          {t("settings.general.pageTipsGo")}
+        </Button>
+      }
+    />
   );
 }
 

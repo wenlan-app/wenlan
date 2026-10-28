@@ -1608,6 +1608,7 @@ export default function Main({
               onPageClick={(id) => navigateTo({ kind: "page", pageId: id })}
               onEntityClick={handleEntityClick}
               onSavePendingChange={reportPageSaving}
+              pageTour={gettingStarted.visible}
             />
             </WikiWorkspace>
           ) : view.kind === "distill-review" ? (
