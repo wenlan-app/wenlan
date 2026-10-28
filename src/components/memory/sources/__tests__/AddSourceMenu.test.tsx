@@ -90,6 +90,21 @@ describe("AddSourceMenu", () => {
     fireEvent.click(await screen.findByText("Files"));
     await waitFor(() => expect(mocks.uploadSourceFile).toHaveBeenCalledWith("/Users/me/paper.pdf"));
   });
+  it("opened from the welcome's folder row, goes straight to the folder picker once", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/vault");
+    render(wrap(<AddSourceMenu start="folder" onClose={() => {}} />));
+    expect(await screen.findByRole("dialog", { name: "Sync or import once?" })).toBeInTheDocument();
+    expect(mocks.openDialog).toHaveBeenCalledOnce();
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Folder", directory: true, multiple: false });
+  });
+
+  it("a cancelled picker from the welcome leaves the menu with every other way in", async () => {
+    mocks.openDialog.mockResolvedValue(null);
+    render(wrap(<AddSourceMenu start="folder" onClose={() => {}} />));
+    await waitFor(() => expect(mocks.openDialog).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Past AI chats")).toBeInTheDocument();
+  });
+
   it("opens the system folder picker directly and connects the selected folder", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     const close = vi.fn();

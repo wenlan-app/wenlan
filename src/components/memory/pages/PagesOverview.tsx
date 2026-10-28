@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import type { WikiInventoryScope } from "./pageInventory";
@@ -9,6 +9,7 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { EverydayUse } from "../../onboarding/EverydayUse";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
+import { takeStartIntent } from "../../onboarding/startIntent";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
 import { NoteSuggestionsSummary } from "../sources/VaultNotes";
@@ -52,7 +53,15 @@ export function PagesOverview({
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   const checklist = useGettingStartedState();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
+  // What the user picked on the welcome screen happens here, once: the
+  // folder picker, the past-chats choice, or a new page.
+  useEffect(() => {
+    const intent = takeStartIntent();
+    if (intent === "empty") onCreatePage(null);
+    else if (intent) setAdding(intent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
+  }, []);
   const writePages = useWritePages(pages);
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
@@ -65,7 +74,7 @@ export function PagesOverview({
     <GettingStarted
       onWriteNote={() => onCreatePage(null)}
       onConnectTool={onConnectTool}
-      onAddSources={() => setAdding(true)}
+      onAddSources={() => setAdding("menu")}
       onSeeExample={onSeeExample}
       onTurnOnSteeping={onOpenIntelligence}
       writePages={writePages}
@@ -133,7 +142,7 @@ export function PagesOverview({
       {newPages}
       {gettingStarted}
       {everyday}
-      {adding ? <AddSourceMenu onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
+      {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
     </section>
   );
 }

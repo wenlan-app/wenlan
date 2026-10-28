@@ -34,7 +34,7 @@ for (const [locale, copy] of cases) for (const width of [1440, 375]) {
     });
     await page.goto('/');
     await expect(page.getByTestId('notes-welcome')).toBeVisible();
-    await page.getByRole('button', { name: copy.guide.tryExample, exact: true }).click();
+    await page.getByTestId('notes-welcome-example').click();
     await expect(page.getByTestId('first-use-sample')).toBeVisible();
     expect(completed).toBe(false);
     await page.getByRole('button', { name: copy.sample.skipToResult, exact: true }).click();

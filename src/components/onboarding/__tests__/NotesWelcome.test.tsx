@@ -22,12 +22,14 @@ function backButton() {
   return screen.getByRole("button", { name: i18n.t("setup.back") });
 }
 
+/** "Start empty" on the welcome screen; at the end of the sample, its start button. */
 function startButton() {
-  return screen.getByRole("button", { name: i18n.t("setup.notesFirst.start") });
+  return screen.queryByTestId("notes-welcome-empty")
+    ?? screen.getByRole("button", { name: i18n.t("setup.notesFirst.start") });
 }
 
 function sampleButton() {
-  return screen.getByRole("button", { name: i18n.t("firstUse.guide.tryExample") });
+  return screen.getByTestId("notes-welcome-example");
 }
 
 function enterSampleAi() {
@@ -42,12 +44,14 @@ describe("NotesWelcome", () => {
     localStorage.clear();
   });
 
-  it("is a short brand moment: a start button and an example, with no choice to make", () => {
+  it("offers four ways in as rows, and nothing else to fill in", () => {
     render(<NotesWelcome onComplete={vi.fn()} />);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(i18n.t("setup.welcomeTitle"));
-    expect(screen.getByText(i18n.t("setup.notesFirst.intro"))).toBeInTheDocument();
-    expect(screen.getAllByRole("button")).toEqual([startButton(), sampleButton()]);
+    expect(screen.getByText(i18n.t("setup.notesFirst.welcome.lead"))).toBeInTheDocument();
+    expect(screen.getAllByRole("button").map((button) => button.dataset.testid)).toEqual([
+      "notes-welcome-folder", "notes-welcome-chats", "notes-welcome-empty", "notes-welcome-example",
+    ]);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
@@ -244,5 +248,29 @@ describe("NotesWelcome", () => {
     await act(async () => completion.resolve());
     expect(screen.getByTestId("first-use-sample").parentElement).not.toHaveAttribute("inert");
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("NotesWelcome ways in", () => {
+  it.each([
+    ["folder", "folder"],
+    ["chats", "chats"],
+    ["empty", "empty"],
+  ] as const)("the %s row opens the app and leaves what to do there", async (row, intent) => {
+    const { takeStartIntent } = await import("../startIntent");
+    const onComplete = vi.fn();
+    render(<NotesWelcome onComplete={onComplete} />);
+    fireEvent.click(screen.getByTestId(`notes-welcome-${row}`));
+    await waitFor(() => expect(onComplete).toHaveBeenCalledOnce());
+    expect(takeStartIntent()).toBe(intent);
+    // Taken once: a later visit to the Wiki opens nothing on its own.
+    expect(takeStartIntent()).toBeNull();
+  });
+
+  it("the example row opens the example without leaving the welcome", () => {
+    const onComplete = vi.fn();
+    render(<NotesWelcome onComplete={onComplete} />);
+    fireEvent.click(screen.getByTestId("notes-welcome-example"));
+    expect(onComplete).not.toHaveBeenCalled();
   });
 });

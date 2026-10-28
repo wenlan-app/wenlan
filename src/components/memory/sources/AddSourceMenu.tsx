@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ArrowsClockwise, ChatsCircle, ClipboardText, DownloadSimple, FileZip } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,8 +26,9 @@ type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string
 
 export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, title }: {
   onClose: () => void;
-  /** "chats" opens straight at importing past AI chats. */
-  start?: "menu" | "chats";
+  /** "chats" opens straight at importing past AI chats; "folder" opens the
+   *  folder picker at once (an Obsidian vault is recognised from the folder). */
+  start?: "menu" | "chats" | "folder";
   /** Where past AI chats can also come in the quick way (copy a prompt into
    *  the AI, paste its answer back), the chats panel offers both ways. */
   onQuickChats?: () => void;
@@ -119,6 +120,15 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, t
     },
     onError: fail,
   });
+
+  // Opened from the welcome screen's folder row: go straight to the picker.
+  // Cancelling it leaves the menu, so the other ways in are still there.
+  const pickedOnOpen = useRef(false);
+  useEffect(() => {
+    if (start !== "folder" || pickedOnOpen.current) return;
+    pickedOnOpen.current = true;
+    connect.mutate("folder");
+  }, [start, connect]);
 
   const busy = upload.isPending || connect.isPending || register.isPending;
   if (picked) return <SourceDialog key="follow" title={t("sourceAccess.followTitle")} onClose={onClose}>

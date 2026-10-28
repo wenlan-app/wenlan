@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useId, useRef, useState } from "react";
-import { BookOpenText } from "@phosphor-icons/react";
+import { ChatsCircle, Eye, PencilSimpleLine } from "@phosphor-icons/react";
 import { useTranslation } from "react-i18next";
 import { dragStripHeight } from "../../lib/windowChrome";
-import { Button } from "../memory/settings/primitives";
+import { SourceTypeIcon } from "../memory/sources/SourceTypeIcon";
 import { FirstUseSample } from "./FirstUseSample";
+import { setStartIntent, type StartIntent } from "./startIntent";
+import "../memory/sources/source-access.css";
 import "./notesWelcome.css";
+
+/** The four ways in, as option rows: each row does its thing directly. */
+const STARTS = [
+  { id: "folder", icon: <SourceTypeIcon kind="folder" /> },
+  { id: "chats", icon: <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /> },
+  { id: "empty", icon: <PencilSimpleLine aria-hidden="true" size={20} weight="regular" data-resource-icon="empty" /> },
+  { id: "example", icon: <Eye aria-hidden="true" size={20} weight="regular" data-resource-icon="example" /> },
+] as const;
 
 interface NotesWelcomeProps {
   onComplete: () => void | Promise<void>;
@@ -31,9 +41,10 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
     }
   }, [sampleOpen]);
 
-  async function openNotes() {
+  async function openNotes(intent?: StartIntent) {
     // State updates may be batched, so guard before invoking the callback.
     if (inFlight.current) return;
+    if (intent) setStartIntent(intent);
     inFlight.current = true;
     setPending(true);
     setFailed(false);
@@ -96,45 +107,41 @@ export function NotesWelcome({ onComplete }: NotesWelcomeProps) {
           </div>
         ) : (
           <div className="notes-welcome__content">
-            <BookOpenText
-              className="notes-welcome__icon"
-              size={32}
-              weight="regular"
-              aria-hidden="true"
-            />
             <h1 id={titleId} className="notes-welcome__title">
               {t("setup.welcomeTitle")}
             </h1>
-            <p className="notes-welcome__body">{t("setup.notesFirst.intro")}</p>
+            <p className="notes-welcome__body">{t("setup.notesFirst.welcome.lead")}</p>
             {failed && (
               <p className="notes-welcome__error" role="alert">
                 {t("setup.notesFirst.openFailed")}
               </p>
             )}
-            <Button
-              type="button"
-              variant="primary"
-              className="notes-welcome__open"
-              loading={pending}
-              disabled={pending}
-              aria-busy={pending}
-              onClick={() => void openNotes()}
-            >
-              {t("setup.notesFirst.start")}
-            </Button>
-            <button
-              ref={sampleTrigger}
-              type="button"
-              className="notes-welcome__try"
-              disabled={pending}
-              onClick={() => {
-                if (inFlight.current) return;
-                setFailed(false);
-                setSampleOpen(true);
-              }}
-            >
-              {t("firstUse.guide.tryExample")}
-            </button>
+            <div className="notes-welcome__starts">
+              {STARTS.map(({ id, icon }) => (
+                <button
+                  key={id}
+                  ref={id === "example" ? sampleTrigger : undefined}
+                  type="button"
+                  className="source-add-option"
+                  data-testid={`notes-welcome-${id}`}
+                  disabled={pending}
+                  aria-busy={pending}
+                  onClick={() => {
+                    if (inFlight.current) return;
+                    setFailed(false);
+                    if (id === "example") setSampleOpen(true);
+                    else void openNotes(id);
+                  }}
+                >
+                  {icon}
+                  <span className="source-add-option-copy">
+                    <strong>{t(`setup.notesFirst.welcome.${id}.title`)}</strong>
+                    <span>{t(`setup.notesFirst.welcome.${id}.hint`)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="notes-welcome__foot">{t("setup.notesFirst.welcome.foot")}</p>
           </div>
         )}
       </main>

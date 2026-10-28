@@ -11,6 +11,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { PagesOverview } from "./PagesOverview";
+import { setStartIntent } from "../../onboarding/startIntent";
 import { setDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { DISTILL_REVIEW_SESSION_QUERY_KEY } from "./pageReviewSignals";
 import type { WikiInventoryScope } from "./pageInventory";
@@ -235,5 +236,23 @@ describe("PagesOverview reading workspace", () => {
       fireEvent.click(await screen.findByRole("button", { name: /Past AI chats/ }));
       expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });
+  });
+});
+
+describe("PagesOverview arriving from the welcome", () => {
+  it("opens a new page for someone who chose to start empty, once", async () => {
+    setStartIntent("empty");
+    const { onCreatePage, unmount } = renderOverview();
+    await waitFor(() => expect(onCreatePage).toHaveBeenCalledExactlyOnceWith(null));
+    unmount();
+    const again = renderOverview();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(again.onCreatePage).not.toHaveBeenCalled();
+  });
+
+  it("opens past AI chats for someone who chose to bring them in", async () => {
+    setStartIntent("chats");
+    renderOverview();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
   });
 });

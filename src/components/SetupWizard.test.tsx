@@ -272,9 +272,9 @@ describe("SetupWizard", () => {
   it("starts with pages and an optional example, without setup questions", () => {
     renderWizard();
     expect(screen.getByText("Welcome to Wenlan")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Get started" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try an example" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /Start empty/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Look around an example wiki/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(4);
     expect(screen.queryByTestId("wizard-action-bar")).not.toBeInTheDocument();
     expect(detectMcpClients).not.toHaveBeenCalled();
     expect(getWireState).not.toHaveBeenCalled();
@@ -339,13 +339,13 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(screen.getByText("欢迎使用文澜")).toBeInTheDocument();
-    expect(screen.getByText(/你和 AI 工具一起搭建的个人 Wiki/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "开始使用" })).toBeInTheDocument();
+    expect(screen.getByText(/你的 wiki 存在你自己的电脑上/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /从空白开始/ })).toBeInTheDocument();
   });
 
   it("opens pages directly without entering intelligence setup", async () => {
     const { onComplete } = renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(screen.getByRole("button", { name: /Start empty/ }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Choose how Wenlan thinks")).not.toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
@@ -1577,7 +1577,7 @@ describe("SetupWizard", () => {
       },
     });
     const { onComplete } = renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(screen.getByRole("button", { name: /Start empty/ }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(getBackgroundAiEnabled).not.toHaveBeenCalled();
     expect(getResolvedRouting).not.toHaveBeenCalled();
@@ -2594,7 +2594,7 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(
-      await screen.findByText(/A personal Wiki you and your AI tools build together/),
+      await screen.findByText(/Your wiki lives on your computer/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Welcome to Wenlan" }),

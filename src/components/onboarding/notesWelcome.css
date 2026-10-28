@@ -14,76 +14,46 @@
   padding: 32px 24px;
 }
 
+/* Quiet and left-aligned, like a notes app's first screen: a title, one
+   line, and the four ways in as the same option rows the dialogs use. */
 .notes-welcome__content {
   width: 100%;
-  max-width: 460px;
+  max-width: 520px;
   margin: auto;
-  text-align: center;
   font-family: var(--mem-font-body);
-}
-
-.notes-welcome__icon {
-  margin: 0 auto 24px;
-  color: var(--mem-text-tertiary);
 }
 
 .notes-welcome__title {
   margin: 0;
-  font-family: var(--mem-font-heading);
-  font-size: var(--mem-text-2xl);
-  font-weight: 500;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
+  font: 600 26px/1.3 var(--mem-font-body);
+  letter-spacing: -0.01em;
 }
 
 .notes-welcome__body {
-  margin: 16px 0 0;
+  margin: 8px 0 0;
   color: var(--mem-text-secondary);
-  font-size: var(--mem-text-lg);
+  font-size: 15px;
   line-height: 1.6;
-  text-wrap: balance;
 }
 
 .notes-welcome__error {
-  margin: 20px 0 0;
+  margin: 16px 0 0;
   color: var(--mem-status-danger-text);
   font-size: var(--mem-text-sm);
   line-height: 1.5;
 }
 
-.notes-welcome__open {
-  margin-top: 28px;
-  max-width: 100%;
-  white-space: normal;
+.notes-welcome__starts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 24px -12px 0;
 }
 
-.notes-welcome__try {
-  display: block;
-  margin: 12px auto 0;
-  padding: 10px 12px;
-  border: 0;
-  border-radius: var(--mem-radius-md);
-  background: transparent;
-  color: var(--mem-text-secondary);
-  font-family: var(--mem-font-body);
-  font-size: var(--mem-text-sm);
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.notes-welcome__try:hover {
-  background: var(--mem-hover);
-  color: var(--mem-text);
-}
-
-.notes-welcome__try:focus-visible {
-  outline: 2px solid var(--mem-focus-ring);
-  outline-offset: 2px;
-}
-
-.notes-welcome__try:disabled {
-  opacity: 0.45;
-  cursor: default;
+.notes-welcome__foot {
+  margin: 16px 0 0;
+  color: var(--mem-text-tertiary);
+  font-size: 13px;
 }
 
 .notes-welcome__main--sample {
