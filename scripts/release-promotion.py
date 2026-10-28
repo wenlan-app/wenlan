@@ -650,6 +650,96 @@ def verify_main(
         )
 
 
+def verify_queue(
+    api: PromotionApi,
+    repository: str,
+    event: object,
+    temp_root: Path,
+) -> GateResult:
+    """Reuse a closed candidate proof only for its exact current-base queue tree.
+
+    This function runs from the immutable queue base, with read-only credentials.
+    Ordinary PRs keep the complete differential matrix. A release-like entry with
+    missing, stale or conflicting evidence fails instead of granting any skip.
+    Queue verification never writes a main promotion plan or creates a tag.
+    """
+    try:
+        if re.fullmatch(r"[^/\s]+/[^/\s]+", repository) is None:
+            raise PromotionError("repository must be OWNER/REPO")
+        payload = _mapping(event, "merge group event")
+        group = _mapping(payload.get("merge_group"), "merge group")
+        queue_sha = _sha(group.get("head_sha"), "queue head SHA")
+        base_sha = _sha(group.get("base_sha"), "queue base SHA")
+        if group.get("base_ref") != "refs/heads/main":
+            raise PromotionError("queue base ref is not main")
+        match = re.fullmatch(
+            r"(?:refs/heads/)?gh-readonly-queue/main/pr-([1-9][0-9]*)-[0-9a-f]{40}",
+            str(group.get("head_ref", "")),
+        )
+        if match is None:
+            raise PromotionError("queue ref does not identify exactly one PR")
+        number = int(match.group(1))
+        pr = _mapping(
+            api.get_json(f"/repos/{repository}/pulls/{number}"), "queued pull request"
+        )
+        head = _mapping(pr.get("head"), "queued pull request head")
+        if head.get("ref") != RELEASE_BRANCH:
+            return GateResult("ordinary", "queue entry is not the release PR")
+        if pr.get("number") != number:
+            raise PromotionError("queue PR number differs from its ref")
+        version, head_sha = VALIDATOR.validate_trusted_release_candidate(
+            {"pull_request": pr}, api, repository
+        )
+        if _mapping(pr.get("base"), "queued PR base").get("sha") != base_sha:
+            raise PromotionError("queue base differs from candidate base")
+        tree_sha = _tree_sha(api, repository, queue_sha)
+        if _tree_sha(api, repository, head_sha) != tree_sha:
+            raise PromotionError("queue tree differs from the proven candidate tree")
+        repository_info = _mapping(
+            api.get_json(f"/repos/{repository}"), "queue repository"
+        )
+        repository_id = _positive_int(repository_info.get("id"), "repository id")
+        check_suite_id = _conclusion_check_suite(api, repository, head_sha)
+        source_run = _source_run(
+            api, repository, repository_id, head_sha, check_suite_id
+        )
+        # Revalidate the base too: a prior successful candidate alone is not a
+        # substitute for the independent successful main backstop it relied on.
+        verify_main_ci(api, repository, base_sha)
+        receipt, artifact = _find_receipt(
+            api, repository, repository_id, source_run, number,
+            head_sha, tree_sha, temp_root,
+        )
+        if receipt.get("version") != version:
+            raise PromotionError("queue candidate version differs from its receipt")
+        # Detect a release-branch update or main advance during artifact reads.
+        latest = _mapping(
+            api.get_json(f"/repos/{repository}/pulls/{number}"), "latest queued PR"
+        )
+        latest_main = _mapping(
+            api.get_json(f"/repos/{repository}/git/ref/heads/main"), "latest main ref"
+        )
+        main_object = _mapping(latest_main.get("object"), "latest main object")
+        if (
+            latest.get("number") != number
+            or latest.get("state") != "open"
+            or latest.get("draft") is not False
+            or latest.get("merged_at") is not None
+            or _mapping(latest.get("head"), "latest PR head").get("sha") != head_sha
+            or _mapping(latest.get("base"), "latest PR base").get("sha") != base_sha
+            or main_object.get("type") != "commit"
+            or main_object.get("sha") != base_sha
+        ):
+            raise PromotionError("release candidate or main moved during queue verification")
+        return GateResult(
+            "validated", "queue tree, current base CI and closed candidate receipt verified",
+            receipt=receipt, receipt_artifact=artifact,
+            main_sha=queue_sha, main_tree_sha=tree_sha,
+        )
+    except Exception as error:
+        return GateResult("blocked", f"queue proof {type(error).__name__}: {error}")
+
+
 def write_plan(path: Path, result: GateResult) -> None:
     if result.state != "validated" or result.receipt is None or result.receipt_artifact is None:
         raise PromotionError("only a validated release can write a promotion plan")
@@ -1250,6 +1340,12 @@ def _main(argv: list[str]) -> int:
     gate.add_argument("--main-run-id", type=int)
     gate.add_argument("--main-run-attempt", type=int)
 
+    queue = subparsers.add_parser("gate-queue")
+    queue.add_argument("--repository", required=True)
+    queue.add_argument("--event", required=True, type=Path)
+    queue.add_argument("--temp-root", required=True, type=Path)
+    queue.add_argument("--github-output", required=True, type=Path)
+
     verify_ci = subparsers.add_parser("verify-main-ci")
     verify_ci.add_argument("--repository", required=True)
     verify_ci.add_argument("--sha", required=True)
@@ -1312,6 +1408,16 @@ def _main(argv: list[str]) -> int:
             )
         )
         return 0
+
+    if args.command == "gate-queue":
+        try:
+            event = json.loads(args.event.read_text(encoding="utf-8"))
+            result = verify_queue(api, args.repository, event, args.temp_root)
+        except Exception as error:
+            result = GateResult("blocked", f"queue event {type(error).__name__}: {error}")
+        _write_outputs(args.github_output, result)
+        print(f"release-gate-state={result.state} reason={_single_line(result.reason)}")
+        return 0 if result.state != "blocked" else 2
 
     if args.command == "gate-main":
         pr_api = compatibility_pr_api()

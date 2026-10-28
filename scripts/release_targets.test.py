@@ -19,7 +19,7 @@ from release_targets import (
 EXPECTED = [
     {
         "target": "aarch64-apple-darwin",
-        "os": "macos-14",
+        "os": "macos-15",
         "archive": "tar.gz",
         "artifact_name": "wenlan-darwin-arm64",
     },

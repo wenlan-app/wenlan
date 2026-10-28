@@ -34,6 +34,7 @@ jobs:
   detect-changes:
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       checks: read
       pull-requests: read
@@ -63,7 +64,9 @@ jobs:
       macos-archive-contract: ${{ steps.filter.outputs.macos-archive-contract }}
       runtime-image: ${{ steps.filter.outputs.runtime-image }}
       trusted-release-candidate: ${{ steps.release-candidate-trust.outputs.trusted-release-candidate }}
-      verified-release-merge: ${{ steps.release-proof.outputs.verified-release-merge }}
+      # Compatibility routing output: both proofs bind the immutable release
+      # tree. Only release-proof may produce a main promotion receipt below.
+      verified-release-merge: ${{ steps.release-proof.outputs.verified-release-merge == 'true' || steps.queue-proof.outputs.verified-release-merge == 'true' }}
       release-gate-state: ${{ steps.release-proof.outputs.release-gate-state }}
       test-plan: ${{ steps.test-plan.outputs.test-plan }}
       workspace-lib-required: ${{ steps.test-plan.outputs.workspace-lib-required }}
@@ -148,6 +151,24 @@ jobs:
             exit 1
           fi
           echo "release PR #$number queue entry matches its proven head tree $pr_tree"
+      - name: Verify reusable release queue
+        id: queue-proof
+        if: github.event_name == 'merge_group'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          verifier=trusted-release-gate/scripts/release-promotion.py
+          if [ -f "$verifier" ] && grep -q '^def verify_queue(' "$verifier"; then
+            python3 "$verifier" gate-queue \
+              --repository "$GITHUB_REPOSITORY" \
+              --event "$GITHUB_EVENT_PATH" \
+              --temp-root "$RUNNER_TEMP" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            # The introducing PR's immutable base predates this verifier.
+            # Keep the full matrix until the trusted base supports the proof.
+            echo "verified-release-merge=false" >> "$GITHUB_OUTPUT"
+          fi
       # dorny/paths-filter reads pull-request files through the REST API, whose
       # response is capped at 3,000 files. Reject a larger PR before routing a
       # silently truncated inventory.
@@ -521,6 +542,7 @@ jobs:
               - 'crates/wenlan-server/tests/graceful_shutdown.rs'
               - 'scripts/install-macos-app.sh'
               - 'scripts/test-install-macos-app.sh'
+              - 'scripts/test-install-macos-app-stub.test.ts'
               - 'scripts/release_targets.py'
               - 'scripts/release_targets.test.py'
               - 'scripts/build-release-binaries.sh'
@@ -844,7 +866,7 @@ jobs:
           overwrite: false
       - id: matrix
         run: |
-          macos='{"os":"macos-14","label":"macos-14"}'
+          macos='{"os":"macos-15","label":"macos-15"}'
           windows='{"os":"windows-2022","label":"windows-2022"}'
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             include="${macos},${windows}"
@@ -886,18 +908,19 @@ jobs:
       - name: Verify local hook routing contracts
         run: bash scripts/git-hooks.test.sh
       - name: Set up Rust for affected-test planning
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
         with:
           toolchain: 1.95.0
       - name: Test CI impact planner
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         run: |
           python3 scripts/ci_test_plan.test.py
           python3 scripts/ci_measure_plan.test.py
+          python3 scripts/ci-release-throughput.test.py
       - name: Plan affected Rust tests
         id: test-plan
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         env:
           CHANGED_FILES_JSON: ${{ steps.filter.outputs.impact_files }}
           CI_EVENT_NAME: ${{ github.event_name }}
@@ -910,7 +933,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
       - name: Plan affected platform behavior tests
         id: platform-test-plan
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         env:
           MACOS_FILES_JSON: ${{ steps.filter.outputs.macos_files }}
           MACOS_M4_FILES_JSON: ${{ steps.filter.outputs['macos-m4_files'] }}
@@ -968,7 +991,7 @@ jobs:
       # latter while rust-ci-required is false; do not leave its artifact out.
       - name: Mark FastEmbed model demand
         id: fastembed-demand
-        if: "steps.release-proof.outputs.verified-release-merge != 'true' && (steps.test-plan.outputs.rust-ci-required == 'true' || ((github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || steps.filter.outputs.release-preflight == 'true') && contains(steps.release-preflight-targets.outputs.release-preflight-targets, 'x86_64-pc-windows-msvc')))"
+        if: "steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true' && (steps.test-plan.outputs.rust-ci-required == 'true' || ((github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || steps.filter.outputs.release-preflight == 'true') && contains(steps.release-preflight-targets.outputs.release-preflight-targets, 'x86_64-pc-windows-msvc')))"
         run: echo "required=true" >> "$GITHUB_OUTPUT"
       - name: Restore portable FastEmbed model
         id: fastembed-portable-restore
@@ -1019,10 +1042,11 @@ jobs:
     if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate == 'true'
     runs-on: ubuntu-24.04
     # The release branch is pushed seconds after the main merge, so this proof
-    # starts while the base's own push CI is still running. Recent main push CI
-    # runs take 18-27 minutes, so the wait window must outlast a slow main run;
-    # a shorter one fails the release PR on a pure start-order race.
-    timeout-minutes: 45
+    # starts while the base's own push CI is still running. Include concurrency
+    # waiting as well as execution: Oct 26-28 main p90 was 51 minutes, and the
+    # old 40-minute budget failed a healthy main. Keep a finite 90-minute wait
+    # plus teardown margin; pending is never accepted as successful evidence.
+    timeout-minutes: 95
     permissions:
       actions: read
       contents: read
@@ -1041,7 +1065,7 @@ jobs:
           python3 trusted-main-ci-proof/scripts/release-promotion.py verify-main-ci
           --repository "$GITHUB_REPOSITORY"
           --sha "${{ github.event.pull_request.base.sha }}"
-          --wait-seconds 2400
+          --wait-seconds 5400
 
   # On PRs and main pushes, Rust fmt + lint run only when their exact source
   # classes changed. Non-Rust changes still get the required aggregate
@@ -1210,7 +1234,7 @@ jobs:
     name: macos-nextest archive
     needs: [detect-changes]
     if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: ${{ github.event_name == 'pull_request' && 25 || 60 }}
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -1255,7 +1279,7 @@ jobs:
     name: macos-nextest (${{ matrix.partition }})
     needs: [detect-changes, macos-nextest-build]
     if: "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && (needs.detect-changes.outputs.workspace-platform == 'true' || needs.detect-changes.outputs.macos-archive-contract == 'true' || (needs.detect-changes.outputs.macos == 'true' && (needs.detect-changes.outputs.platform-workspace-lib-required == 'true' || needs.detect-changes.outputs.platform-cli-server-integration-required == 'true' || needs.detect-changes.outputs.macos-m4 == 'true')) || github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--'))"
-    runs-on: macos-14
+    runs-on: macos-15
     # A slice that draws the slow server and legacy-copy tests runs about 21
     # minutes of tests after a download that can take 4; 25 cut it off with
     # every test passed.
@@ -1436,7 +1460,7 @@ jobs:
       # by the Windows CLI/server integration step + the schtasks install
       # round-trip E2E further down.
       - name: M5 bench platform controls
-        if: "(matrix.os == 'macos-14' || matrix.os == 'windows-2022') && (github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.m5-platform == 'true')"
+        if: "(matrix.os == 'macos-15' || matrix.os == 'windows-2022') && (github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.m5-platform == 'true')"
         # The cfg(unix) retarget control executes on macOS and compiles out on
         # Windows; eval-harness is required for the target's exporter tests.
         run: cargo nextest run -p wenlan-core --features eval-harness --test m5_bench
@@ -1650,11 +1674,11 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
       # Exact mirror of whether this OS appears in the behavioral test matrix.
       # When true, that job owns the Cargo proof and reuses its target directory.
-      TEST_OWNS_PLATFORM: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || (matrix.os == 'macos-14' && (needs.detect-changes.outputs.macos == 'true' || needs.detect-changes.outputs.workspace-platform == 'true')) || (matrix.os == 'windows-2022' && needs.detect-changes.outputs.windows == 'true') }}
+      TEST_OWNS_PLATFORM: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || (matrix.os == 'macos-15' && (needs.detect-changes.outputs.macos == 'true' || needs.detect-changes.outputs.workspace-platform == 'true')) || (matrix.os == 'windows-2022' && needs.detect-changes.outputs.windows == 'true') }}
     strategy:
       fail-fast: true
       matrix:
-        os: [macos-14, windows-2022]
+        os: [macos-15, windows-2022]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
@@ -2773,7 +2797,7 @@ jobs:
         run: npm test --prefix relay
 
   # Desktop app (Tauri + React). Ported from the app's pre-merge ci.yml `check`
-  # job. Runs only when app/frontend paths change (detect-changes.app). macos-14
+  # job. Runs only when app/frontend paths change (detect-changes.app). macos-15
   # because Tauri needs the macOS toolchain and the app targets darwin-arm64.
   # Release PRs are skipped via the trusted-release-candidate classifier, the
   # same guard the other path-owned jobs use.
@@ -2781,7 +2805,7 @@ jobs:
     name: app-check
     needs: detect-changes
     if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
@@ -2899,6 +2923,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     timeout-minutes: 120
+    env:
+      # Match the explicit sidecar build and tauri --target below.
+      TARGET_TRIPLE: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13

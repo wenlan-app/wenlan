@@ -8,6 +8,7 @@ STUB_SERVER=
 cleanup() {
   if [[ -n $STUB_SERVER ]]; then
     kill "$STUB_SERVER" 2>/dev/null || true
+    wait "$STUB_SERVER" 2>/dev/null || true
   fi
   rm -rf "$TMP_DIR"
 }
@@ -213,6 +214,7 @@ test_names_rate_limiting_without_sending_the_token_elsewhere() {
   cat > "$fixture_dir/server.py" <<'PY'
 import http.server
 import pathlib
+import socketserver
 import sys
 
 auth_log = pathlib.Path(sys.argv[1])
@@ -233,21 +235,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+class LoopbackHTTPServer(http.server.HTTPServer):
+    def server_bind(self):
+        # HTTPServer otherwise resolves a hostname synchronously before the
+        # constructor returns. This numeric loopback fixture needs no DNS.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
+
+
+server = LoopbackHTTPServer(("127.0.0.1", 0), Handler)
 port_file.write_text(str(server.server_address[1]))
 server.serve_forever()
 PY
-  python3 "$fixture_dir/server.py" "$fixture_dir/auth.log" "$fixture_dir/port" &
+  python3 "$fixture_dir/server.py" "$fixture_dir/auth.log" "$fixture_dir/port" \
+    > "$fixture_dir/server.log" 2>&1 &
   STUB_SERVER=$!
-  disown "$STUB_SERVER"
-  for _ in $(seq 1 50); do
-    [[ -s "$fixture_dir/port" ]] && break
+  local stub_deadline=$((SECONDS + 30))
+  while [[ ! -s "$fixture_dir/port" ]]; do
+    if ! kill -0 "$STUB_SERVER" 2>/dev/null; then
+      local server_status=0
+      wait "$STUB_SERVER" || server_status=$?
+      STUB_SERVER=
+      echo "rate-limit stub exited before publishing its port (status $server_status)" >&2
+      cat "$fixture_dir/server.log" >&2
+      return 1
+    fi
+    if (( SECONDS >= stub_deadline )); then
+      echo "timed out waiting for rate-limit stub to publish its port" >&2
+      cat "$fixture_dir/server.log" >&2
+      return 1
+    fi
     sleep 0.1
   done
-  if [[ ! -s "$fixture_dir/port" ]]; then
-    echo "rate-limit stub server did not start" >&2
-    return 1
-  fi
 
   local status=0
   GITHUB_TOKEN=test-token \
@@ -257,6 +277,7 @@ PY
     WENLAN_APP_SKIP_PLATFORM_CHECK=1 \
     bash "$INSTALLER" > "$fixture_dir/installer.log" 2>&1 || status=$?
   kill "$STUB_SERVER" 2>/dev/null || true
+  wait "$STUB_SERVER" 2>/dev/null || true
   STUB_SERVER=
 
   if [[ $status -eq 0 ]]; then

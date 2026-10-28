@@ -840,6 +840,7 @@ def fastembed_artifact_demand_violations(ci: str) -> list[str]:
         branch_prefix = "invalid-prefix"
     required = (
         "steps.release-proof.outputs.verified-release-merge != 'true' && "
+        "steps.queue-proof.outputs.verified-release-merge != 'true' && "
         "(steps.test-plan.outputs.rust-ci-required == 'true' || "
         "((github.event_name == 'workflow_dispatch' || "
         f"startsWith(github.head_ref, '{branch_prefix}') || "
@@ -873,6 +874,11 @@ def fastembed_artifact_demand_violations(ci: str) -> list[str]:
             )
             if result is not expected:
                 violations.append(f"FastEmbed demand for {label}: got {result}, expected {expected}")
+        if evaluate_fastembed_demand_expression(
+            if_match.group("expression"), False, True, True, "merge_group", "", True,
+            queue_validated=True,
+        ):
+            violations.append("validated release queue needlessly produces the FastEmbed model")
         # Confirm the former --main-only guard would reject the real release-please branch prefix.
         if branch_prefix.endswith("--") and evaluate_fastembed_demand_expression(
             if_match.group("expression").replace(
@@ -915,11 +921,13 @@ def evaluate_fastembed_demand_expression(
     event: str,
     head: str,
     windows: bool,
+    queue_validated: bool = False,
 ) -> bool:
     """Evaluate the closed GitHub-expression subset used by the demand gate."""
 
     replacements = {
         "steps.release-proof.outputs.verified-release-merge": repr(str(promoted).lower()),
+        "steps.queue-proof.outputs.verified-release-merge": repr(str(queue_validated).lower()),
         "steps.test-plan.outputs.rust-ci-required": repr(str(rust).lower()),
         "steps.filter.outputs.release-preflight": repr(str(release_preflight).lower()),
         "github.event_name": repr(event),
@@ -1877,7 +1885,7 @@ def trusted_candidate_gate_violations(
     for marker in [
         "needs: [detect-changes]",
         "trusted-release-candidate == 'true'",
-        "timeout-minutes: 45",
+        "timeout-minutes: 95",
         "actions: read",
         "contents: read",
     ]:
@@ -1897,7 +1905,7 @@ def trusted_candidate_gate_violations(
         "trusted-main-ci-proof/scripts/release-promotion.py verify-main-ci",
         '--repository "$GITHUB_REPOSITORY"',
         '--sha "${{ github.event.pull_request.base.sha }}"',
-        "--wait-seconds 2400",
+        "--wait-seconds 5400",
     ]:
         if marker not in proof_run:
             violations.append(f"trusted candidate base CI proof omits {marker!r}")
@@ -2619,6 +2627,9 @@ def desktop_link_behaviour_violations(release: str) -> list[str]:
                     "PATH": os.environ.get("PATH", ""),
                     "WORK": work.replace("\\", "/"),
                     "RUNNER_TEMP": runner_temp.replace("\\", "/"),
+                    # Clean child envs otherwise send Git Bash heredocs to its
+                    # installation's unwritable /tmp on Windows.
+                    "TMPDIR": runner_temp.replace("\\", "/"),
                     "RELEASE_TAG": DESKTOP_LINK_TAG,
                     "GITHUB_REPOSITORY": DESKTOP_LINK_REPO,
                     "SIGNPATH_CONFIGURED": case.signpath,

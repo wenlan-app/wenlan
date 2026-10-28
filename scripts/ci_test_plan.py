@@ -158,7 +158,7 @@ def _bin_test_args(names) -> list[str]:
 
 # The Tauri desktop app crate plus the root-level frontend dirs it shares a
 # release pipeline with. All of it runs under the separate app-check job
-# (macos-14), never the Rust workspace plan.
+# (macos-15), never the Rust workspace plan.
 APP_JOB_PREFIXES = ("app", "src", "e2e", "preview", "review", "public")
 APP_JOB_FILES = {
     "package.json",
@@ -294,7 +294,7 @@ def _workspace(metadata: object) -> tuple[dict[str, dict], dict[str, str]]:
             ) from error
         if name == "wenlan-app":
             # wenlan-app is a workspace member but ships its own CI lane
-            # (app-check, macos-14). Ubuntu runners lack GTK, so the planner
+            # (app-check, macos-15). Ubuntu runners lack GTK, so the planner
             # must never select it, and app/ must never be treated as
             # rust-plan-owned territory.
             continue

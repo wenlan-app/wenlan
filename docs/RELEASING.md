@@ -12,13 +12,17 @@ Merge conventional commits to `main` through the merge queue (for example, `feat
 
 The `.release-please-manifest.json` is the canonical version source; check the pending version with `cat .release-please-manifest.json`. The release-please workflow syncs Cargo manifests, npm package manifests, plugin metadata, and pinned install URLs from `version.txt`. It also syncs the workspace `Cargo.toml` version on the release branch because release-please cannot reliably handle Cargo workspaces with the `simple` release type.
 
+Standalone runtime archives are promoted without recompilation. Desktop bundles still build their native app and sidecars before packaging/signing. Their build steps set `TARGET_TRIPLE` to the same explicit `tauri build --target` value, so the sidecar hook and app share Cargo's target directory. Without that explicit value, a native hook uses `target/release` while Tauri uses `target/<triple>/release`, compiling shared dependencies twice. The offline Cargo regression in `scripts/ci-release-throughput.test.py` checks actual dependency freshness; production bundle time still requires a real release measurement.
+
+macOS CI/preflight matrices, desktop publication, and Homebrew validation use the pinned ARM64 `macos-15` host. This replaces the retiring `macos-14` pool without changing the shipped architecture or asset inventory; see [cross-platform support](cross-platform.md) for the runner retirement source and runtime compatibility scope.
+
 Config files:
 
 - `release-please-config.json` — release type and version-bump behavior
 - `.release-please-manifest.json` — current version
 - `.github/workflows/release-pr-maintenance.yml` — immediately maintains the Release PR on `main` pushes; it has no tag, release, or lifecycle-label API path
 - `.github/workflows/release-please.yml` — revalidates successful main CI, provides the delayed ordinary-maintenance fallback, and creates a tag only for a receipt-validated Release PR merge
-- `.github/workflows/release.yml` — consumes exact validated archives and publishes them on the receipt-derived `v*` tag; it does not recompile Rust
+- `.github/workflows/release.yml` — publishes the exact validated standalone archives on the receipt-derived `v*` tag; desktop app bundles still compile before signing and packaging
 
 ## Merging the Release PR
 
@@ -29,6 +33,8 @@ Config files:
 3. With nothing else queued, add it with `gh pr merge <number> --match-head-commit <head-sha>` or **Merge when ready**.
 
 The Release PR's receipt binds its exact head tree. If another PR lands first or is queued ahead of it, its queue entry has a different tree, and `detect-changes` drops it from the queue before anything reaches `main`. Wait for the next sync and repeat step 2.
+
+For a release queued alone on its proven base, the read-only queue gate runs from the immutable base checkout. It revalidates the canonical release-only diff, exact queue/candidate tree, current base's successful main CI, exact successful candidate CI/check suite, and newest closed observer receipt and asset metadata. Only this complete proof permits reusing the candidate checks instead of running the ordinary matrix again. Missing, stale, expired or conflicting evidence fails the queue; ordinary PRs retain their normal matrix. A base predating the queue verifier uses the full matrix for bootstrap. The queue gate cannot create a main promotion receipt or a tag; main freshly revalidates the release after merging.
 
 After it lands, main CI picks up the receipt, **Release Please** creates the `v*` tag, and the tag starts `release.yml`. Merging the Release PR publishes to GitHub Releases, crates.io, npm, the Homebrew tap, and GHCR, so check [Required secrets](#required-secrets) and the npm trusted publisher before queueing it.
 
@@ -61,6 +67,8 @@ The read-only resolver freshly proves the release merge, tree, version, closed-r
 Release PR CI validates that the proposed version is synchronized across `version.txt`, workspace Cargo, npm package manifests, and plugin metadata before producing archives. The observer independently verifies the strict release-managed diff and version policy. The tag workflow rechecks the receipt-derived tag, version, commit, and asset inventory before publishing; it never repairs drift or rebuilds different bytes.
 
 ## Validated release-candidate promotion
+
+The independent base-main CI proof waits at most 90 minutes, with a 95-minute job limit. This includes the main workflow's concurrency wait as well as execution: the former 40-minute window could expire while a healthy main run was still queued or running. A pending, failed or ambiguous main run never counts as a pass. This budget prevents the measured timeout race; it does not shorten the underlying main checks or guarantee against all future scheduling delays.
 
 The exact same-repository `release-please--branches--main` PR builds and smoke-tests the six canonical final archives once during `release-preflight`. Before CI omits duplicate base-tree Rust tests, Clippy, canonical acceptance, contract integration, or platform compiles, it requires two independent proofs: the release validator's exact owner/repository/branch identity, current-`main` base, closed release-managed path set, unchanged Git modes, and canonical version-only transforms; and a read-only control-plane check that the exact base SHA's unique active `ci.yml` push run on `main` completed successfully. These proofs run from immutable base code. Any API, parse, identity, path, content, run, or workflow uncertainty fails closed; a lookalike branch never grants a skip. Release-managed plugin/npm/docs/version checks and all four shipped-target preflights remain required. The base-CI proof and preflights run in parallel, so safety does not serialize the release critical path. Those hostile-PR outputs are named by source run, producing attempt, and target. A separate default-branch `workflow_run` observer checks out trusted default-branch code, has read-only permissions, treats every downloaded byte as untrusted data, and verifies the upstream CI identity through the Actions API. GitHub can rerun only failed or selected jobs, so a successful terminal run may legitimately contain target artifacts from different attempts; the attempt jobs API also re-emits inherited jobs with the new attempt number. The observer therefore indexes the attempt-scoped artifacts first, selects each target's newest available artifact, then requires the exact matrix job on that artifact's attempt to have completed successfully and requires its embedded manifest attempt to agree. The terminal source run must itself be successful, so a genuinely failed rerun cannot fall back to an older artifact. It then reconciles the Release PR and strict version-only diff, checks the exact four-wrapper/six-asset inventory, hashes every layer, and safely inspects each archive without executing it. To tolerate the merge/observer scheduling race, it accepts either the still-open Release PR or a merged Release PR whose merge tree is byte-for-byte the candidate head tree; a closed-unmerged PR or different tree fails.
 

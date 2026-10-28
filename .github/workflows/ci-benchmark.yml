@@ -34,7 +34,6 @@ jobs:
         os:
           - ubuntu-24.04
           - ubuntu-latest
-          - macos-14
           - macos-15
           - macos-26
           - macos-latest
@@ -345,8 +344,8 @@ jobs:
         include:
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, profile: current, cache_mode: cold, cgu: "16", lto: "off" }
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, profile: current, cache_mode: production-restore, cgu: "16", lto: "off" }
-          - { os: macos-14, target: aarch64-apple-darwin, profile: current, cache_mode: cold, cgu: "16", lto: "off" }
-          - { os: macos-14, target: aarch64-apple-darwin, profile: current, cache_mode: production-restore, cgu: "16", lto: "off" }
+          - { os: macos-15, target: aarch64-apple-darwin, profile: current, cache_mode: cold, cgu: "16", lto: "off" }
+          - { os: macos-15, target: aarch64-apple-darwin, profile: current, cache_mode: production-restore, cgu: "16", lto: "off" }
           - { os: windows-2022, target: x86_64-pc-windows-msvc, profile: current, cache_mode: cold, cgu: "16", lto: "off" }
           - { os: windows-2022, target: x86_64-pc-windows-msvc, profile: current, cache_mode: production-restore, cgu: "16", lto: "off" }
           - { os: windows-2022, target: x86_64-pc-windows-msvc, profile: cgu-256, cache_mode: cold, cgu: "256", lto: "off" }

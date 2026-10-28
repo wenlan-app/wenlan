@@ -439,7 +439,7 @@ jobs:
   app-bundle:
     name: Build macOS desktop app bundle
     needs: [resolve-promotion, bind-release-tag]
-    runs-on: macos-14
+    runs-on: macos-15
     # The notary wait is the long pole and it is not the only one: this job
     # compiles the whole workspace from scratch first (no Cargo cache here,
     # only pnpm's), then waits up to 90 minutes on Apple's queue, then staples,
@@ -586,6 +586,9 @@ jobs:
       - name: Build macOS desktop app bundle
         shell: bash
         env:
+          # Match Tauri's explicit --target so the hook and app share Cargo
+          # dependencies instead of compiling host and explicit-target copies.
+          TARGET_TRIPLE: aarch64-apple-darwin
           CXXFLAGS: "-std=c++17"
           # Ad-hoc sign ("-") when no Apple Developer cert is configured.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
@@ -1114,13 +1117,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # No explicit daemon build step: tauri.conf.json's beforeBuildCommand runs
-      # prepare-sidecars.sh, which compiles the daemon, CLI, and MCP for
-      # TAURI_ENV_TARGET_TRIPLE itself. Adding one here would also trip the
-      # contract test's rule that a tag release never recompiles on its own.
+      # The hook builds sidecars in the same explicit target directory as the
+      # app. TAURI_ENV_TARGET_TRIPLE alone selects the host directory for a
+      # native build, which otherwise compiles shared dependencies twice.
       - name: Build Windows desktop app bundle
         shell: bash
         env:
+          TARGET_TRIPLE: x86_64-pc-windows-msvc
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target x86_64-pc-windows-msvc
@@ -2092,7 +2095,7 @@ jobs:
     needs: [promote-assets, bind-release-tag]
     # The tap ships macOS arm64 archives. Validate the formulas with the real
     # Homebrew client on the same architecture instead of stopping at `ruby -c`.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - name: Download artifacts
