@@ -1025,7 +1025,7 @@ INVENTORY: dict[str, tuple[str, str, str]] = {
     ),
     'release_promotion_contract_violations': (
         TOOTH,
-        '8cbb6c54f31a4a90',
+        '27d85947b55771ac',
         'THE TEETH for promotion, seven arguments wide; release.yml is the '
         'fifth. The other function round 13b named: it carries the assertions '
         'and no path literal, so the mention-based inventory could not see it '
@@ -1033,16 +1033,18 @@ INVENTORY: dict[str, tuple[str, str, str]] = {
     ),
     'release_promotion_contract_rejects_rebuild_and_unbounded_receipts': (
         CONTROL,
-        '5f4cbc5951a81095',
+        '4828e941ed2cff54',
         'mutates release.yml (download-assets -> cargo build --release) and '
         'asserts the tooth fires.',
     ),
     'ci_routing_contract_violations': (
         OUT_OF_SCOPE,
-        '44f14044d890217a',
+        '90ee012e35f8e2d6',
         "release.yml appears only as a STRING in ci.yml's required path-filter "
         'lists; the tooth never reads release.yml\'s content. Track A adds '
-        'signpath-status.yml, which no list here names.',
+        'signpath-status.yml, which no list here names. Re-reviewed with the '
+        'trusted queue proof, bounded 90-minute base CI wait and throughput '
+        'regression scheduler; these assertions still consume ci.yml only.',
     ),
     'ci_manifest_and_lockfile_changes_get_focused_platform_compile_proof': (
         OUT_OF_SCOPE,

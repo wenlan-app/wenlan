@@ -347,6 +347,7 @@ fn fastembed_ci_cache_violations(workflow: &str) -> Vec<String> {
     let demand_condition = branch_prefix.map(|branch_prefix| {
         format!(
             "steps.release-proof.outputs.verified-release-merge != 'true' && \
+             steps.queue-proof.outputs.verified-release-merge != 'true' && \
              (steps.test-plan.outputs.rust-ci-required == 'true' || \
              ((github.event_name == 'workflow_dispatch' || \
              startsWith(github.head_ref, '{branch_prefix}') || \
@@ -414,8 +415,7 @@ fn fastembed_ci_cache_violations(workflow: &str) -> Vec<String> {
             ));
         }
     }
-    let cache_miss_condition =
-        "steps.fastembed-demand.outputs.required == 'true' && steps.fastembed-portable-restore.outputs.cache-hit != 'true'";
+    let cache_miss_condition = "steps.fastembed-demand.outputs.required == 'true' && steps.fastembed-portable-restore.outputs.cache-hit != 'true'";
     for name in [
         "Restore legacy Linux FastEmbed model",
         "Save portable FastEmbed model",
@@ -797,6 +797,10 @@ fn fastembed_ci_demand_gate_rejects_missing_promotion_or_windows_guards() {
         (
             condition.replace("steps.release-proof.outputs.verified-release-merge != 'true' && ", ""),
             "promoted-merge exclusion",
+        ),
+        (
+            condition.replace("steps.queue-proof.outputs.verified-release-merge != 'true' && ", ""),
+            "proven-queue exclusion",
         ),
         (
             condition.replace(
@@ -2284,8 +2288,7 @@ fn ci_routing_contract_violations(
     if !impact_paths.contains("**") {
         violations.push("impact routing is not a fail-closed repository catch-all".into());
     }
-    let universal_planner_condition =
-        "steps.release-proof.outputs.verified-release-merge != 'true'";
+    let universal_planner_condition = "steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'";
     let trusted_checkout = job_step(
         &ci,
         "detect-changes",
@@ -2326,6 +2329,41 @@ fn ci_routing_contract_violations(
                 .into(),
         );
     }
+    let queue_proof = job_step(&ci, "detect-changes", "Verify reusable release queue");
+    let queue_command = queue_proof
+        .and_then(|step| step["run"].as_str())
+        .unwrap_or_default();
+    let main_receipt_upload = job_step(
+        &ci,
+        "detect-changes",
+        "Upload main release promotion receipt",
+    );
+    if ci["jobs"]["detect-changes"]["outputs"]["verified-release-merge"].as_str()
+        != Some(
+            "${{ steps.release-proof.outputs.verified-release-merge == 'true' || steps.queue-proof.outputs.verified-release-merge == 'true' }}",
+        )
+        || ci["jobs"]["detect-changes"]["permissions"]["actions"].as_str() != Some("read")
+        || queue_proof.and_then(|step| step["id"].as_str()) != Some("queue-proof")
+        || queue_proof.and_then(|step| step["if"].as_str())
+            != Some("github.event_name == 'merge_group'")
+        || queue_proof.and_then(|step| step["env"]["GITHUB_TOKEN"].as_str())
+            != Some("${{ github.token }}")
+        || queue_proof.is_some_and(|step| step.get("continue-on-error").is_some())
+        || !queue_command.contains("verifier=trusted-release-gate/scripts/release-promotion.py")
+        || !queue_command.contains("python3 \"$verifier\" gate-queue")
+        || !queue_command.contains("--repository \"$GITHUB_REPOSITORY\"")
+        || !queue_command.contains("--event \"$GITHUB_EVENT_PATH\"")
+        || !queue_command.contains("--github-output \"$GITHUB_OUTPUT\"")
+        || !queue_command.contains("echo \"verified-release-merge=false\"")
+        || queue_command.contains("--plan-output")
+        || main_receipt_upload.and_then(|step| step["if"].as_str())
+            != Some("steps.release-proof.outputs.release-gate-state == 'validated'")
+    {
+        violations.push(
+            "release queue reuse is not bound to a read-only trusted proof without main receipt authority"
+                .into(),
+        );
+    }
     let base_proof = &ci["jobs"]["release-base-proof"];
     let base_proof_checkout = job_step(
         &ci,
@@ -2345,7 +2383,7 @@ fn ci_routing_contract_violations(
             != Some(
                 "needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate == 'true'",
             )
-        || base_proof["timeout-minutes"].as_u64() != Some(45)
+        || base_proof["timeout-minutes"].as_u64() != Some(95)
         || base_proof["permissions"]["actions"].as_str() != Some("read")
         || base_proof["permissions"]["contents"].as_str() != Some("read")
         || base_proof_checkout.and_then(|step| step["uses"].as_str())
@@ -2354,8 +2392,7 @@ fn ci_routing_contract_violations(
             != Some("${{ github.event.pull_request.base.sha }}")
         || base_proof_checkout.and_then(|step| step["with"]["path"].as_str())
             != Some("trusted-main-ci-proof")
-        || base_proof_checkout.and_then(|step| step["with"]["fetch-depth"].as_u64())
-            != Some(1)
+        || base_proof_checkout.and_then(|step| step["with"]["fetch-depth"].as_u64()) != Some(1)
         || base_proof_checkout.and_then(|step| step["with"]["persist-credentials"].as_bool())
             != Some(false)
         || base_proof_run.and_then(|step| step["env"]["GITHUB_TOKEN"].as_str())
@@ -2364,11 +2401,10 @@ fn ci_routing_contract_violations(
             .contains("trusted-main-ci-proof/scripts/release-promotion.py verify-main-ci")
         || !base_proof_command.contains("--repository \"$GITHUB_REPOSITORY\"")
         || !base_proof_command.contains("--sha \"${{ github.event.pull_request.base.sha }}\"")
-        || !base_proof_command.contains("--wait-seconds 2400")
+        || !base_proof_command.contains("--wait-seconds 5400")
     {
         violations.push(
-            "trusted release candidate skip is not backed by exact successful base main CI"
-                .into(),
+            "trusted release candidate skip is not backed by exact successful base main CI".into(),
         );
     }
     for job in [
@@ -2400,7 +2436,7 @@ fn ci_routing_contract_violations(
         .and_then(|step| step["run"].as_str())
         .unwrap_or_default();
     if planner_test
-        != "python3 scripts/ci_test_plan.test.py\npython3 scripts/ci_measure_plan.test.py\n"
+        != "python3 scripts/ci_test_plan.test.py\npython3 scripts/ci_measure_plan.test.py\npython3 scripts/ci-release-throughput.test.py\n"
     {
         violations.push("detect-changes does not test both impact planners before use".into());
     }
@@ -2529,10 +2565,8 @@ fn ci_routing_contract_violations(
         || !platform_planner_run
             .contains("(($macos - $macos_m4 - $m5_platform) + ($windows - $m5_platform)) | unique")
         || platform_macos_files != "${{ steps.filter.outputs.macos_files }}"
-        || platform_macos_m4_files
-            != "${{ steps.filter.outputs['macos-m4_files'] }}"
-        || platform_m5_files
-            != "${{ steps.filter.outputs['m5-platform_files'] }}"
+        || platform_macos_m4_files != "${{ steps.filter.outputs['macos-m4_files'] }}"
+        || platform_m5_files != "${{ steps.filter.outputs['m5-platform_files'] }}"
         || platform_windows_files != "${{ steps.filter.outputs.windows_files }}"
         || platform_planner_run.contains("impact_files")
         || platform_event
@@ -3345,17 +3379,19 @@ fn ci_routing_contract_violations(
 
     let debug_build = job_step(&ci, "test", "Build Windows contract binaries");
     if debug_build.and_then(|step| step["if"].as_str())
-        != Some("matrix.os == 'windows-2022' && needs.detect-changes.outputs.platform-cli-server-integration-required == 'true'")
+        != Some(
+            "matrix.os == 'windows-2022' && needs.detect-changes.outputs.platform-cli-server-integration-required == 'true'",
+        )
         || debug_build
-        .and_then(|step| step["run"].as_str())
-        .is_none_or(|run| {
-            !run.contains("cargo build -p wenlan -p wenlan-server")
-                || !run.contains("needs.detect-changes.outputs.workspace-platform")
-                || !run.contains("scripts/stage-onnxruntime-windows.ps1")
-                || !run.contains("scripts/stage-vulkan-loader-windows.ps1")
-                || !run.contains("target\\debug")
-                || run.contains("--release")
-        })
+            .and_then(|step| step["run"].as_str())
+            .is_none_or(|run| {
+                !run.contains("cargo build -p wenlan -p wenlan-server")
+                    || !run.contains("needs.detect-changes.outputs.workspace-platform")
+                    || !run.contains("scripts/stage-onnxruntime-windows.ps1")
+                    || !run.contains("scripts/stage-vulkan-loader-windows.ps1")
+                    || !run.contains("target\\debug")
+                    || run.contains("--release")
+            })
     {
         violations.push(
             "ordinary Windows contract does not build and stage adjacent ONNX/Vulkan debug runtime artifacts".into(),
@@ -3370,7 +3406,9 @@ fn ci_routing_contract_violations(
         .and_then(|step| step["run"].as_str())
         .unwrap_or_default();
     if schtasks_step.and_then(|step| step["if"].as_str())
-        != Some("matrix.os == 'windows-2022' && needs.detect-changes.outputs.platform-cli-server-integration-required == 'true'")
+        != Some(
+            "matrix.os == 'windows-2022' && needs.detect-changes.outputs.platform-cli-server-integration-required == 'true'",
+        )
         || !schtasks.contains(r"target\debug\wenlan.exe")
     {
         violations.push("ordinary Windows schtasks contract does not use debug binaries".into());
@@ -3406,7 +3444,9 @@ fn ci_routing_contract_violations(
         || !mcp_run.contains("cargo check -p wenlan-mcp --lib --bins")
         || mcp_run.contains("--all-targets")
         || mcp_compile.and_then(|step| step["if"].as_str())
-            != Some("env.TEST_OWNS_PLATFORM == 'true' || needs.detect-changes.outputs.workspace-platform != 'true'")
+            != Some(
+                "env.TEST_OWNS_PLATFORM == 'true' || needs.detect-changes.outputs.workspace-platform != 'true'",
+            )
         || ci["jobs"]["mcp-platform"]["env"]["CARGO_PROFILE_DEV_DEBUG"].as_str() != Some("0")
         || ci["jobs"]["mcp-platform"]["env"]["CARGO_PROFILE_TEST_DEBUG"].as_str() != Some("0")
         || ci["jobs"]["mcp-platform"]["env"]["TEST_OWNS_PLATFORM"].as_str()
@@ -3441,7 +3481,9 @@ fn ci_routing_contract_violations(
     )
     .is_some()
         || transferred_workspace.and_then(|step| step["if"].as_str())
-            != Some("matrix.os == 'windows-2022' && needs.detect-changes.outputs.workspace-platform == 'true'")
+            != Some(
+                "matrix.os == 'windows-2022' && needs.detect-changes.outputs.workspace-platform == 'true'",
+            )
         || transferred_workspace
             .and_then(|step| step["run"].as_str())
             .is_none_or(|run| {
@@ -3516,7 +3558,9 @@ fn ci_routing_contract_violations(
     }
     let windows_integration = "Integration tests wenlan-cli + wenlan-server (Windows)";
     if job_step(&ci, "test", windows_integration).and_then(|step| step["if"].as_str())
-        != Some("matrix.os == 'windows-2022' && needs.detect-changes.outputs.platform-cli-server-integration-required == 'true'")
+        != Some(
+            "matrix.os == 'windows-2022' && needs.detect-changes.outputs.platform-cli-server-integration-required == 'true'",
+        )
     {
         violations.push(format!(
             "platform step {windows_integration} is not gated by its focused platform plan"
@@ -3586,6 +3630,64 @@ fn ci_routing_is_fail_closed_and_differential() {
          change also updates ci_routing_contract_violations() and its positive control:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn ci_release_queue_reuse_rejects_unproven_or_privileged_shortcuts() {
+    let root = repo_root();
+    let workflow =
+        std::fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("read ci.yml");
+    let planner = std::fs::read_to_string(root.join("scripts/ci_test_plan.py"))
+        .expect("read CI test planner");
+    let platform_paths = platform_sensitive_paths(&root);
+    let release_paths = release_profile_sensitive_paths(&root);
+    for mutation in [
+        "mutable-code",
+        "ignored-failure",
+        "wrong-event",
+        "receipt-authority",
+    ] {
+        let mut ci: serde_yaml::Value = serde_yaml::from_str(&workflow).expect("parse ci.yml");
+        let steps = ci["jobs"]["detect-changes"]["steps"]
+            .as_sequence_mut()
+            .expect("detect-changes steps");
+        if mutation == "receipt-authority" {
+            let upload = steps
+                .iter_mut()
+                .find(|step| step["name"].as_str() == Some("Upload main release promotion receipt"))
+                .expect("main receipt upload");
+            upload["if"] = serde_yaml::Value::String(
+                "steps.queue-proof.outputs.release-gate-state == 'validated'".into(),
+            );
+        } else {
+            let queue = steps
+                .iter_mut()
+                .find(|step| step["id"].as_str() == Some("queue-proof"))
+                .expect("queue proof");
+            match mutation {
+                "mutable-code" => {
+                    queue["run"] = serde_yaml::Value::String(
+                        queue["run"].as_str().expect("queue command").replace(
+                            "verifier=trusted-release-gate/scripts/",
+                            "verifier=scripts/",
+                        ),
+                    );
+                }
+                "ignored-failure" => queue["continue-on-error"] = serde_yaml::Value::Bool(true),
+                "wrong-event" => queue["if"] = serde_yaml::Value::String("always()".into()),
+                _ => unreachable!(),
+            }
+        }
+        let mutated = serde_yaml::to_string(&ci).expect("serialize mutated workflow");
+        let violations =
+            ci_routing_contract_violations(&mutated, &planner, &platform_paths, &release_paths);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("release queue reuse")),
+            "{mutation} must not grant queue reuse or publication authority: {violations:?}"
+        );
+    }
 }
 
 #[test]
@@ -4391,11 +4493,18 @@ fn macos_archive_contract_violations(ci_workflow: &str, planner: &str) -> Vec<St
             violations.push(format!("direct test job still duplicates {removed}"));
         }
     }
-    if job_step(&ci, "test", "Build CLI/server contract binaries (test owner)")
-        .and_then(|step| step["if"].as_str())
-        != Some("matrix.os == 'windows-2022' && needs.detect-changes.outputs.workspace-platform == 'true'")
+    if job_step(
+        &ci,
+        "test",
+        "Build CLI/server contract binaries (test owner)",
+    )
+    .and_then(|step| step["if"].as_str())
+        != Some(
+            "matrix.os == 'windows-2022' && needs.detect-changes.outputs.workspace-platform == 'true'",
+        )
     {
-        violations.push("direct macOS test owner still duplicates the archive compile graph".into());
+        violations
+            .push("direct macOS test owner still duplicates the archive compile graph".into());
     }
     if job_step(&ci, "test", "M5 bench platform controls").and_then(|step| step["run"].as_str())
         != Some("cargo nextest run -p wenlan-core --features eval-harness --test m5_bench")
@@ -4664,7 +4773,9 @@ fn ci_manifest_and_lockfile_changes_get_focused_platform_compile_proof() {
         .expect("workspace platform build step");
     assert_eq!(
         workspace["if"].as_str(),
-        Some("needs.detect-changes.outputs.workspace-platform == 'true' && env.TEST_OWNS_PLATFORM != 'true'"),
+        Some(
+            "needs.detect-changes.outputs.workspace-platform == 'true' && env.TEST_OWNS_PLATFORM != 'true'"
+        ),
         "workspace build must be limited to dependency-sensitive changes without a test owner"
     );
     let run = workspace["run"].as_str().unwrap_or_default();
@@ -5481,14 +5592,11 @@ fn release_candidate_observer_contract_violations(
             )
         || validated_upload.and_then(|step| step["with"]["path"].as_str())
             != Some("${{ runner.temp }}/validated-release-assets/*")
-        || validated_upload.and_then(|step| step["with"]["compression-level"].as_u64())
-            != Some(0)
-        || validated_upload.and_then(|step| step["with"]["retention-days"].as_u64())
-            != Some(30)
+        || validated_upload.and_then(|step| step["with"]["compression-level"].as_u64()) != Some(0)
+        || validated_upload.and_then(|step| step["with"]["retention-days"].as_u64()) != Some(30)
         || validated_upload.and_then(|step| step["with"]["if-no-files-found"].as_str())
             != Some("error")
-        || validated_upload.and_then(|step| step["with"]["overwrite"].as_bool())
-            != Some(false)
+        || validated_upload.and_then(|step| step["with"]["overwrite"].as_bool()) != Some(false)
     {
         violations.push("validated assets upload is not immutable and source-run scoped".into());
     }
@@ -5521,14 +5629,11 @@ fn release_candidate_observer_contract_violations(
             )
         || closed_upload.and_then(|step| step["with"]["path"].as_str())
             != Some("${{ runner.temp }}/validated-release-receipt.json")
-        || closed_upload.and_then(|step| step["with"]["compression-level"].as_u64())
-            != Some(0)
-        || closed_upload.and_then(|step| step["with"]["retention-days"].as_u64())
-            != Some(30)
+        || closed_upload.and_then(|step| step["with"]["compression-level"].as_u64()) != Some(0)
+        || closed_upload.and_then(|step| step["with"]["retention-days"].as_u64()) != Some(30)
         || closed_upload.and_then(|step| step["with"]["if-no-files-found"].as_str())
             != Some("error")
-        || closed_upload.and_then(|step| step["with"]["overwrite"].as_bool())
-            != Some(true)
+        || closed_upload.and_then(|step| step["with"]["overwrite"].as_bool()) != Some(true)
     {
         violations.push("closed receipt upload is not a retry-safe source-run locator".into());
     }
@@ -5585,8 +5690,9 @@ fn release_candidate_observer_contract_violations(
         || upload.and_then(|step| step["with"]["if-no-files-found"].as_str()) != Some("error")
         || upload.and_then(|step| step["with"]["overwrite"].as_bool()) != Some(false)
     {
-        violations
-            .push("release candidate producer artifact is not immutable and run-attempt scoped".into());
+        violations.push(
+            "release candidate producer artifact is not immutable and run-attempt scoped".into(),
+        );
     }
     let producer_names = ci["jobs"]["release-preflight"]["steps"]
         .as_sequence()
