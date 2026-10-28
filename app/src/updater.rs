@@ -706,13 +706,39 @@ async fn check_once_after_begin(
         }
     };
 
+    // Once acquired, actual remote and daemon spawn decisions are inhibited
+    // through installer handoff, including commands already in flight.
+    let install_lease = match tokio::time::timeout(
+        Duration::from_secs(8),
+        crate::remote_access::acquire_update_install_lease(app),
+    )
+    .await
+    {
+        Ok(Ok(lease)) => lease,
+        Ok(Err(error)) => {
+            report_install_failure(app, state, &version, error);
+            return;
+        }
+        Err(_) => {
+            report_install_failure(
+                app,
+                state,
+                &version,
+                "Remote access is still busy; try updating again.".into(),
+            );
+            return;
+        }
+    };
+
     if let Err(error) = crate::remote_access::shutdown_for_exit(app).await {
+        drop(install_lease);
         report_failure_after_cleanup(app, state, &version, error, false).await;
         return;
     }
 
     let (outcome, stop_ticket) = crate::daemon_start::stop_sidecar_with_ticket().await;
     if let Some(mut message) = update_restart_block_reason(&outcome) {
+        drop(install_lease);
         if let Some(ticket) = stop_ticket {
             let client = crate::api::WenlanClient::new();
             if let Err(error) = recover_after_original_exit(
@@ -729,6 +755,7 @@ async fn check_once_after_begin(
     }
 
     if let Err(error) = update.install(bytes) {
+        drop(install_lease);
         let sidecar_was_stopped = matches!(outcome, crate::daemon_start::SidecarStopOutcome::Ended);
         report_failure_after_cleanup(app, state, &version, error.to_string(), sidecar_was_stopped)
             .await;

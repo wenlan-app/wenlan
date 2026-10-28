@@ -608,6 +608,7 @@ pub async fn toggle_remote_access(
     expected_revision: Option<String>,
 ) -> Result<crate::remote_access::RemoteAccessStatus, String> {
     if enabled {
+        crate::daemon_start::ensure_update_spawn_allowed()?;
         crate::remote_access::ensure_shutdown_confirmed(&app_handle).await?;
         let revision = expected_revision.ok_or_else(|| {
             "Choose and confirm the remote data scope before enabling access".to_string()

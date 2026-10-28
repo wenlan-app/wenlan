@@ -164,6 +164,36 @@ fn launchd_install_pending() -> bool {
 /// second child that had already seen the first one healthy exits 75, which
 /// leaves zero owners.
 static OWNER_DECISION: Mutex<()> = Mutex::new(());
+static UPDATE_INSTALL_LEASE: AtomicBool = AtomicBool::new(false);
+const UPDATE_INSTALL_BUSY: &str = "Wenlan is installing an update; try again after it finishes.";
+
+/// Inhibits app-owned process starts while an installer takes over. Acquisition
+/// is serialized with daemon spawns; the caller also holds the remote controller
+/// mutex so a remote spawn cannot pass its check while the lease is acquired.
+pub(crate) struct UpdateInstallLease;
+
+pub(crate) fn acquire_update_install_lease() -> Result<UpdateInstallLease, String> {
+    with_owner_decision(|| {
+        if UPDATE_INSTALL_LEASE.swap(true, Ordering::SeqCst) {
+            return Err(UPDATE_INSTALL_BUSY.into());
+        }
+        Ok(UpdateInstallLease)
+    })
+}
+
+pub(crate) fn ensure_update_spawn_allowed() -> Result<(), String> {
+    if UPDATE_INSTALL_LEASE.load(Ordering::SeqCst) {
+        Err(UPDATE_INSTALL_BUSY.into())
+    } else {
+        Ok(())
+    }
+}
+
+impl Drop for UpdateInstallLease {
+    fn drop(&mut self) {
+        with_owner_decision(|| UPDATE_INSTALL_LEASE.store(false, Ordering::SeqCst));
+    }
+}
 
 pub(crate) fn with_owner_decision<T>(operation: impl FnOnce() -> T) -> T {
     let _decision = OWNER_DECISION
@@ -1038,6 +1068,8 @@ pub fn spawn_daemon_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 fn spawn_daemon_sidecar_unlocked(app: &tauri::AppHandle) -> Result<(), String> {
+    // Every caller holds OWNER_DECISION, the same lock as lease acquisition.
+    ensure_update_spawn_allowed()?;
     use tauri_plugin_shell::ShellExt;
     let (data_dir_env, data_dir) = crate::identity_paths::sidecar_data_dir_env();
     let command = app

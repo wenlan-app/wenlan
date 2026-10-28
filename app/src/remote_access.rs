@@ -269,6 +269,7 @@ fn spawn_and_store_child<T, P>(
 }
 
 fn validate_mcp_spawn(ra: &RemoteAccessState, generation: u64) -> Result<(), String> {
+    crate::daemon_start::ensure_update_spawn_allowed()?;
     if !generation_is_current(ra.generation, generation) {
         return Err("Remote access start cancelled.".into());
     }
@@ -288,6 +289,7 @@ fn validate_mcp_spawn(ra: &RemoteAccessState, generation: u64) -> Result<(), Str
 }
 
 fn validate_write_spawn(ra: &RemoteAccessState, generation: u64) -> Result<(), String> {
+    crate::daemon_start::ensure_update_spawn_allowed()?;
     if !generation_is_current(ra.generation, generation) {
         return Err("Remote access start cancelled.".into());
     }
@@ -358,7 +360,11 @@ pub(crate) async fn prepare_reconnect(
     client: crate::api::WenlanClient,
 ) -> Result<StartupResume, String> {
     let remote = remote_access_mutex(app_handle).await;
-    let generation = remote.lock().await.generation;
+    let generation = {
+        let ra = remote.lock().await;
+        crate::daemon_start::ensure_update_spawn_allowed()?;
+        ra.generation
+    };
     let profile = validate_reconnect_profile(
         relay_runtime::storage(|store| store.load()).await?,
         &expected_revision,
@@ -532,6 +538,17 @@ async fn publish_disconnect_result(
 
 const SHUTDOWN_UNCONFIRMED: &str = "Local remote-access processes have not been confirmed stopped. New connections are blocked; retry Stop access.";
 const EXIT_CLEANUP_LIMIT: Duration = Duration::from_secs(8);
+
+/// Atomically close both spawn gates with respect to the remote controller and
+/// daemon owner locks. Existing starts finish before the lease is acquired;
+/// subsequent starts observe the lease before their synchronous spawn.
+pub(crate) async fn acquire_update_install_lease<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+) -> Result<crate::daemon_start::UpdateInstallLease, String> {
+    let remote = remote_access_mutex(app_handle).await;
+    let _ra = remote.lock().await;
+    crate::daemon_start::acquire_update_install_lease()
+}
 
 /// Stop only the transport and local processes owned by this app before it
 /// exits. Unlike [`toggle_off`], this deliberately does not change the saved
@@ -1197,6 +1214,10 @@ async fn toggle_on_inner(
         if expected_generation
             .is_some_and(|expected| !generation_is_current(ra.generation, expected))
         {
+            return;
+        }
+        if let Err(error) = crate::daemon_start::ensure_update_spawn_allowed() {
+            let _ = app_handle.emit("remote-access-status", RemoteAccessStatus::Error { error });
             return;
         }
         let shutdown_pending = !ra.pending_stops.is_empty() || ra.orphan_cleanup_failed;
@@ -1955,6 +1976,60 @@ pub async fn toggle_off(app_handle: &tauri::AppHandle) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Run the real process-wide lease in a child test process so it cannot
+    // block unrelated app tests running concurrently in the parent harness.
+    #[test]
+    #[ignore = "isolated helper for the installation lease test"]
+    fn install_lease_helper() {
+        assert_eq!(
+            std::env::var("WENLAN_INSTALL_LEASE_HELPER").as_deref(),
+            Ok("1")
+        );
+        let lease = crate::daemon_start::acquire_update_install_lease().unwrap();
+        let state = RemoteAccessState {
+            status: RemoteAccessStatus::Starting,
+            generation: 7,
+            ..Default::default()
+        };
+        let mut slot: Option<()> = None;
+        let mut port = None;
+        let blocked: Result<(), String> = spawn_and_store_child(
+            validate_mcp_spawn(&state, 7),
+            &mut slot,
+            &mut port,
+            23760,
+            || panic!("remote process must not spawn during installation"),
+            |_| Ok(()),
+        );
+        assert!(blocked.is_err());
+        assert!(validate_write_spawn(&state, 7).is_err());
+        assert!(crate::daemon_start::ensure_update_spawn_allowed().is_err());
+        assert!(crate::daemon_start::acquire_update_install_lease().is_err());
+        drop(lease);
+        assert!(crate::daemon_start::ensure_update_spawn_allowed().is_ok());
+        assert!(validate_mcp_spawn(&state, 7).is_ok());
+    }
+
+    #[test]
+    fn install_lease_blocks_remote_and_daemon_spawn_gates_until_release() {
+        let module = module_path!().split_once("::").unwrap().1;
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                &format!("{module}::install_lease_helper"),
+                "--ignored",
+            ])
+            .env("WENLAN_INSTALL_LEASE_HELPER", "1")
+            .output()
+            .expect("start isolated helper");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "installation lease helper failed or did not run: {} {stdout}",
+            output.status
+        );
+    }
 
     #[tokio::test]
     async fn exit_timeout_keeps_cleanup_owned_until_scan_finishes() {
