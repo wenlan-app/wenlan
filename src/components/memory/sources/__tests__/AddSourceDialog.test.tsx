@@ -107,7 +107,7 @@ describe("AddSourceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Choose folder…" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/No files found/)).toBeInTheDocument();
+      expect(screen.getByText(/No Markdown, text or PDF files here yet/)).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Connect folder" })).toBeEnabled();
   });

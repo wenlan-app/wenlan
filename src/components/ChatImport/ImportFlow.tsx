@@ -43,16 +43,15 @@ const POLL_INTERVAL_MS = 5_000;
  */
 const POLL_FAILURE_LIMIT = 3;
 
+// The import finish already shows in the window, so a system notification is
+// only for someone who switched away. Never ask for notification permission
+// here: a first import is too early for a macOS permission dialog.
 async function maybeNotify(title: string, body: string) {
   try {
-    const { sendNotification, isPermissionGranted, requestPermission } =
+    if (typeof document !== "undefined" && document.hasFocus()) return;
+    const { sendNotification, isPermissionGranted } =
       await import("@tauri-apps/plugin-notification");
-    let granted = await isPermissionGranted();
-    if (!granted) {
-      const result = await requestPermission();
-      granted = result === "granted";
-    }
-    if (granted) {
+    if (await isPermissionGranted()) {
       await sendNotification({ title, body });
     }
   } catch {

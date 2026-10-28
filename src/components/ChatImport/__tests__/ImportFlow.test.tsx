@@ -4,6 +4,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { i18n } from "../../../i18n";
 
 const mockSendNotification = vi.fn();
+const mockIsPermissionGranted = vi.fn(() => Promise.resolve(true));
+const mockRequestPermission = vi.fn(() => Promise.resolve("granted"));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -16,8 +18,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/plugin-notification", () => ({
   sendNotification: (...args: unknown[]) => mockSendNotification(...args),
-  isPermissionGranted: vi.fn(() => Promise.resolve(true)),
-  requestPermission: vi.fn(() => Promise.resolve("granted")),
+  isPermissionGranted: () => mockIsPermissionGranted(),
+  requestPermission: () => mockRequestPermission(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -163,6 +165,55 @@ describe("ImportFlow", () => {
     const icons = container.querySelectorAll("svg");
     expect(icons.length).toBeGreaterThan(0);
     icons.forEach((svg) => expect(svg).toHaveAttribute("aria-hidden", "true"));
+  });
+
+  it("does not notify while the window is in front", async () => {
+    const mockOpen = open as ReturnType<typeof vi.fn>;
+    mockOpen.mockResolvedValue("/tmp/export.zip");
+    mockImportChatExport.mockResolvedValue({
+      import_id: "imp_1",
+      vendor: "chatgpt",
+      conversations_total: 3,
+      conversations_new: 3,
+      conversations_skipped_existing: 0,
+      memories_stored: 5,
+    });
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    try {
+      const { getByRole, getByText } = render(<ImportFlow />);
+      await act(async () => {
+        getByRole("button", { name: /choose file/i }).click();
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      expect(getByText(/imported/i)).toBeInTheDocument();
+      expect(mockSendNotification).not.toHaveBeenCalled();
+      expect(mockRequestPermission).not.toHaveBeenCalled();
+    } finally {
+      hasFocus.mockRestore();
+    }
+  });
+
+  it("never asks for notification permission after an import", async () => {
+    const mockOpen = open as ReturnType<typeof vi.fn>;
+    mockOpen.mockResolvedValue("/tmp/export.zip");
+    mockImportChatExport.mockResolvedValue({
+      import_id: "imp_1",
+      vendor: "chatgpt",
+      conversations_total: 3,
+      conversations_new: 3,
+      conversations_skipped_existing: 0,
+      memories_stored: 5,
+    });
+    mockIsPermissionGranted.mockResolvedValueOnce(false);
+    const { getByRole, getByText } = render(<ImportFlow />);
+    await act(async () => {
+      getByRole("button", { name: /choose file/i }).click();
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(getByText(/imported/i)).toBeInTheDocument();
+    await vi.waitFor(() => expect(mockIsPermissionGranted).toHaveBeenCalled());
+    expect(mockRequestPermission).not.toHaveBeenCalled();
+    expect(mockSendNotification).not.toHaveBeenCalled();
   });
 
   it("reports busy while the daemon accepts an import and blocks duplicates", async () => {

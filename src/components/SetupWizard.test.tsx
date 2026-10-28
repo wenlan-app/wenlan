@@ -1248,7 +1248,7 @@ describe("SetupWizard", () => {
     // must not render a second one. The badge is the affordance; `disabled`
     // never is.
     expect(screen.getAllByText("Added")).toHaveLength(1);
-    expect(screen.getByText("Already set up. Uncheck to leave it as it is.")).toBeInTheDocument();
+    expect(screen.getByText("Already set up. Uncheck to skip it.")).toBeInTheDocument();
     expect(cursorCheckbox).toBeEnabled();
 
     // And unchecking actually takes: the box clears, and Setting up gives it
