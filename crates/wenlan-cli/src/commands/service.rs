@@ -33,6 +33,9 @@ const SHUTDOWN_STABILITY_WINDOW: std::time::Duration = std::time::Duration::from
 const SHUTDOWN_VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 const DAEMON_PROCESS_ID_HEADER: &str = "x-wenlan-process-id";
 const AUTOSTART_OFF_MARKER: &str = "autostart.off";
+// Windows loopback refusal can take over two seconds to reach WSAECONNREFUSED.
+// A shorter deadline hides measured absence behind an inconclusive timeout.
+const OWNERSHIP_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long `background on` waits for `/api/health` before reporting.
 const FIRST_HEALTH_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -1016,7 +1019,7 @@ async fn request_daemon_shutdown_at(
 ) -> Result<DaemonShutdownRequest> {
     let shutdown_url = format!("{base_url}/api/shutdown");
     let shutdown_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(OWNERSHIP_PROBE_TIMEOUT)
         .pool_max_idle_per_host(0)
         .build()
         .context("build daemon shutdown client")?;
@@ -1078,7 +1081,7 @@ async fn verify_daemon_data_root(
 ) -> Result<String> {
     let health: wenlan_types::responses::HealthResponse = client
         .get(format!("{base_url}/api/health"))
-        .timeout(std::time::Duration::from_secs(2))
+        .timeout(OWNERSHIP_PROBE_TIMEOUT)
         .send()
         .await?
         .error_for_status()?
@@ -1422,6 +1425,18 @@ mod tests {
             root.path()
         )
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn absent_daemon_is_measured_before_the_ownership_probe_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let root = tempfile::tempdir().unwrap();
+        let result = request_daemon_shutdown_at(&format!("http://{address}"), Some(root.path()))
+            .await
+            .unwrap();
+        assert!(matches!(result, DaemonShutdownRequest::NotRunning));
     }
 
     #[tokio::test]
