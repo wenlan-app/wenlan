@@ -503,9 +503,6 @@ export function workingHeadline(
       ? t("askAi.writePages.workingCountOf", { tool: state.toolName, count: view.written.length, total: of })
       : t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
   }
-  // Quiet for a while with nothing written: say so, rather than "writing"
-  // over a spinner that contradicts the hint below it.
-  if (view.stuck) return t("askAi.writePages.waitingFor", { tool: state.toolName });
   if (view.writing) return t("askAi.writePages.working", { tool: state.toolName });
   return state.run?.handedOver === "opened"
     ? t("askAi.writePages.pressEnter", { tool: state.toolName })
@@ -557,6 +554,40 @@ export function WrittenPages({
         </li>
       ) : null}
     </ul>
+  );
+}
+
+/** A run quiet for minutes with nothing written: one spinning line naming
+ *  the tool it waits on, and one line with the likely cause and the way to
+ *  hand the command over again, instead of three stacked hints. */
+export function HeldNotice({
+  state,
+  lineClassName,
+  linkClassName,
+}: {
+  readonly state: WritePagesState;
+  readonly lineClassName: string;
+  readonly linkClassName: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <p className={`${lineClassName} write-pages-held`} data-testid="write-pages-held">
+        <CircleNotch aria-hidden="true" weight="bold" className="write-pages-row-icon write-pages-spin" />
+        <span>{t("askAi.writePages.waitingFor", { tool: state.toolName })}</span>
+      </p>
+      <p className={lineClassName}>
+        {t("askAi.writePages.heldHint")}{" "}
+        <button
+          type="button"
+          className={linkClassName}
+          disabled={state.command === null}
+          onClick={() => void state.copyCommand()}
+        >
+          {state.copied ? t("askAi.copied") : t("askAi.writePages.copyAgain")}
+        </button>
+      </p>
+    </>
   );
 }
 
@@ -654,14 +685,17 @@ export function WritePagesLine({ state, pages, onConnectTool, onUseLocalModel }:
   }
 
   if (view.kind === "working") {
-    const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
+    const held = view.stuck && view.written.length === 0;
+    const hint = held
+      ? t("askAi.writePages.heldHint")
+      : view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
     const copyAgain = copyAgainLabel(state, view.written.length, t);
     return (
       <div className="write-pages-line" data-testid="write-pages-line" data-state="working" aria-live="polite">
         <div className="write-pages-line-row">
           <CircleNotch aria-hidden="true" weight="bold" className="write-pages-icon write-pages-spin" />
           <p className="write-pages-text">
-            {workingHeadline(state, view, t)}
+            {held ? t("askAi.writePages.waitingFor", { tool: state.toolName }) : workingHeadline(state, view, t)}
             {hint ? <span className="write-pages-hint">{hint}</span> : null}
           </p>
           <div className="write-pages-actions">

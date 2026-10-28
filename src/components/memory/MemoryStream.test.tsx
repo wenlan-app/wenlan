@@ -196,7 +196,7 @@ describe("MemoryStream", () => {
     renderWithQuery(<MemoryStream memories={[]} selectedDomain={null} presentation="parent-list" />);
 
     expect(screen.getByRole("searchbox", { name: "Filter memories" })).toBeVisible();
-    expect(screen.getByText(/^No memories yet\./)).toBeVisible();
+    expect(screen.getByText(/^Memories are small things/)).toBeVisible();
   });
 
   it("leaves embedded memory view mode behavior unchanged", () => {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { resetTabIntros, TabIntro as Intro, type IntroTab } from "../TabIntro";
+import { resetTabIntros, TabEmptyMark, TabIntro as Intro, type IntroTab } from "../TabIntro";
 
 const area = { current: null };
 function TabIntro(props: { tab: IntroTab | null; newUser: boolean }) {
@@ -33,6 +33,15 @@ describe("TabIntro", () => {
     unmount();
     render(<TabIntro tab="graph" newUser />);
     expect(screen.queryByTestId("tab-intro")).toBeNull();
+  });
+
+  it("stays away while the tab shows its own empty state, and comes once it has content", () => {
+    const { rerender } = render(<><TabIntro tab="spaces" newUser /><TabEmptyMark tab="spaces" /></>);
+    expect(screen.queryByTestId("tab-intro")).toBeNull();
+    // Unseen while empty, so leaving does not use it up.
+    rerender(<TabIntro tab={null} newUser />);
+    rerender(<TabIntro tab="spaces" newUser />);
+    expect(screen.getByTestId("tab-intro")).toHaveAttribute("data-tab", "spaces");
   });
 
   it("says nothing to someone whose library is established", () => {

@@ -172,7 +172,7 @@ test("renders the empty parent memory list", async ({ page }) => {
   await openPrimaryDestination(page, "Memories");
 
   await expect(page.getByRole("region", { name: "Memory list" })).toBeVisible();
-  await expect(page.getByText(/^No memories yet\./)).toBeVisible();
+  await expect(page.getByText(/^Memories are small things/)).toBeVisible();
   await capture(page, "memory-list-empty");
 
   expect(pageErrors).toEqual([]);

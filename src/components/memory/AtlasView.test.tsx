@@ -454,13 +454,13 @@ describe("AtlasView", () => {
     renderWithQuery(<AtlasView />);
 
     expect(await screen.findByText("Loading your knowledge graph…")).toBeInTheDocument();
-    expect(screen.queryByText("The graph appears once your pages mention a few topics.")).not.toBeInTheDocument();
+    expect(screen.queryByText("The graph shows how your pages and topics connect. It grows with your knowledge.")).not.toBeInTheDocument();
     expect(capturedSigmaInstances).toHaveLength(0);
 
     resolveEntities([]);
 
     expect(
-      await screen.findByText("The graph appears once your pages mention a few topics."),
+      await screen.findByText("The graph shows how your pages and topics connect. It grows with your knowledge."),
     ).toBeInTheDocument();
     expect(screen.queryByText("Loading your knowledge graph…")).not.toBeInTheDocument();
     expect(capturedSigmaInstances).toHaveLength(0);
@@ -472,7 +472,7 @@ describe("AtlasView", () => {
     renderWithQuery(<AtlasView />);
 
     expect(
-      await screen.findByText("The graph appears once your pages mention a few topics."),
+      await screen.findByText("The graph shows how your pages and topics connect. It grows with your knowledge."),
     ).toBeInTheDocument();
     expect(capturedSigmaInstances).toHaveLength(0);
   });
@@ -483,7 +483,7 @@ describe("AtlasView", () => {
     renderWithQuery(<AtlasView />);
 
     expect(await screen.findByText("Couldn't load your knowledge graph.")).toBeInTheDocument();
-    expect(screen.queryByText("The graph appears once your pages mention a few topics.")).not.toBeInTheDocument();
+    expect(screen.queryByText("The graph shows how your pages and topics connect. It grows with your knowledge.")).not.toBeInTheDocument();
     expect(capturedSigmaInstances).toHaveLength(0);
 
     const entities = [makeEntity({ id: "e1", name: "Alice" })];

@@ -2487,7 +2487,6 @@ export function DoneStep({
         {assurance && <p style={routingSummaryStyle}>{assurance}</p>}
       </div>
 
-      <ConnectedHint justConnected={connectedAgents} />
 
       {/* Import stats card — surfaces the essential value Wenlan extracted:
           memories in, topics (entities) pulled out, and a forward line about
@@ -2614,6 +2613,11 @@ export function DoneStep({
           ))}
         </ul>
       )}
+
+      {/* What to do next, under what was set up and as wide as it. */}
+      <div className="setup-done-next">
+        <ConnectedHint justConnected={connectedAgents} />
+      </div>
     </div>
     </StepShell>
   );

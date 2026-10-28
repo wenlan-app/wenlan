@@ -9,6 +9,7 @@ import { ANTHROPIC_MODELS } from "../../intelligence/IntelligenceSetup";
 import { useLibraryInventory } from "../pages/useLibraryInventory";
 import {
   copyAgainLabel,
+  HeldNotice,
   PAGES_PER_RUN,
   useWritePages,
   workingHeadline,
@@ -400,6 +401,13 @@ export function TurnIntoPagesView({
     );
   }
 
+  if (view.kind === "working" && view.stuck && view.written.length === 0) {
+    return shell(
+      <HeldNotice state={state} lineClassName="turn-pages-body" linkClassName="turn-pages-link" />,
+      "working",
+    );
+  }
+
   if (view.kind === "working") {
     const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
     const copyAgain = copyAgainLabel(state, view.written.length, t);
@@ -420,7 +428,7 @@ export function TurnIntoPagesView({
             </button>
           </div>
         ) : null}
-        <WrittenPages rows={view.written} writing={view.writing && !view.stuck} onSelectPage={selectPage} />
+        <WrittenPages rows={view.written} writing={view.writing || view.stuck} onSelectPage={selectPage} />
       </>,
       "working",
     );

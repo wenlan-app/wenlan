@@ -52,3 +52,9 @@
   color: var(--mem-text-secondary);
   font-size: 12.5px;
 }
+
+/* As wide as the page list below it, so the two read as one column. */
+.wiki-reading-start .getting-started.everyday-use {
+  max-width: min(100%, 640px);
+  margin-bottom: 28px;
+}

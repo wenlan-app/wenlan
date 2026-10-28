@@ -128,10 +128,12 @@ export function PagesOverview({
           <p>{t("pages.overview.unavailableDescription")}</p>
         </div>
       )}
-      {/* The pages come first and the card (or its "show" line) follows. */}
+      {/* The everyday card takes the finished checklist's place at the top;
+          otherwise the pages come first and the card (or its "show" line)
+          follows. */}
+      {everyday}
       {newPages}
       {gettingStarted}
-      {everyday}
       {adding ? <AddSourceMenu title={t("firstUse.checklist.steps.pages.material.title")} onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
     </section>
   );

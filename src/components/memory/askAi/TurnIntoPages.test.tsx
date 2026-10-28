@@ -123,7 +123,11 @@ describe("TurnIntoPagesView", () => {
         hasPages={false}
       />,
     ));
-    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Nothing happening? Check whether Codex is waiting for you.");
+    const card = screen.getByTestId("turn-into-pages");
+    expect(screen.getByTestId("write-pages-held")).toHaveTextContent("Waiting for Codex");
+    expect(card.querySelector(".write-pages-spin")).not.toBeNull();
+    expect(card).toHaveTextContent("It may be waiting for your answer.");
+    expect(screen.getByRole("button", { name: "Copy the command again" })).toBeInTheDocument();
   });
 
   it("copies the command for a tool with no prompt link, and says where to paste it", () => {

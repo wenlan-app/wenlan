@@ -6,6 +6,7 @@ import {
   copyAgainLabel,
   pagesWrittenSince,
   doneLine,
+  HeldNotice,
   waitingLine,
   workingHeadline,
   WrittenPages,
@@ -94,6 +95,15 @@ export function WritePagesStep({
     ? <p className="getting-started-step-hint">{t("askAi.writePages.copiesCommand", { tool: state.tool.name })}</p>
     : null;
 
+  if (state && view.kind === "working" && view.stuck && view.written.length === 0) {
+    return (
+      <div className="getting-started-copy">
+        {title}
+        <HeldNotice state={state} lineClassName="getting-started-step-body" linkClassName="getting-started-link" />
+      </div>
+    );
+  }
+
   if (state && view.kind === "working") {
     const headline = workingHeadline(state, view, t);
     const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
@@ -115,7 +125,7 @@ export function WritePagesStep({
             </button>
           </p>
         ) : null}
-        {list(view.writing && !view.stuck)}
+        {list(view.writing || view.stuck)}
       </div>
     );
   }

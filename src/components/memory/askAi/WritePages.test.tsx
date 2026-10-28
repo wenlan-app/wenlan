@@ -382,7 +382,7 @@ describe("WritePagesLine", () => {
     vi.mocked(listNewMaterial).mockResolvedValue(material(16, { held: 12 }));
     wrap(<Line pages={[]} />);
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Waiting for Claude Code"));
-    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("It may be waiting for your answer.");
   });
 
   it("does not call a run stopped when its material was written up", async () => {

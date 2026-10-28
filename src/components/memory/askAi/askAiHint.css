@@ -173,3 +173,26 @@
   background: none;
   color: var(--mem-text);
 }
+
+/* On the setup's finish screen the next step is a box under the tool list,
+   the same width and left edge, so it reads as the one thing to do now. */
+.setup-done-next {
+  width: 100%;
+  max-width: 420px;
+}
+
+.setup-done-next:empty {
+  display: none;
+}
+
+.setup-done-next .ask-ai-next {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-md);
+  text-align: left;
+}
+
+.setup-done-next .ask-ai-next-text {
+  color: var(--mem-text);
+}
