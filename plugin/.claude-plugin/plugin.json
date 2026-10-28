@@ -2,7 +2,7 @@
   "name": "wenlan",
   "displayName": "Wenlan",
   "description": "A living wiki your AI tools write, keep current, and cite. Pages link to their sources and update when those change.",
-  "version": "0.20.2",
+  "version": "0.20.3",
   "author": {
     "name": "Qi-Xuan Lu",
     "url": "https://github.com/7xuanlu"
