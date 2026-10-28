@@ -5,6 +5,8 @@ working on platform-conditional code, service registration, or the release matri
 
 Supported builds and prebuilt releases cover macOS arm64, Linux x86_64/aarch64 with glibc, and Windows x86_64. macOS x86_64 is not a supported stock source-build target: the pinned ONNX Runtime dependency has no prebuilt Intel macOS binary, so a custom build must compile ONNX Runtime separately and provide it through `ORT_LIB_LOCATION`.
 
+GitHub CI, release builds, and current benchmark baselines pin the standard ARM64 `macos-15` image. GitHub [retires `macos-14` on November 2, 2026](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/), with reduced capacity and scheduled brownouts beforehand. The build-host migration preserves `aarch64-apple-darwin`, release asset names, and the desktop configuration's `minimumSystemVersion: 11.0`; that configuration alone does not prove every native dependency's runtime deployment floor. Inspect actual Mach-O deployment metadata and validate older-system runtime compatibility separately when needed.
+
 | OS | Data dir | Service registration |
 |---|---|---|
 | macOS | `~/Library/Application Support/wenlan/` | launchd via `~/Library/LaunchAgents/com.wenlan.server.plist` (user-level) |

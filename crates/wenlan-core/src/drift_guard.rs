@@ -1744,7 +1744,7 @@ jobs:
       - name: Integration tests wenlan-cli + wenlan-server
         run: cargo nextest run
       - name: Stage ONNX Runtime for Windows tests
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         run: |
           scripts/stage-onnxruntime-windows.ps1
           "ORT_DYLIB_PATH=x" | Out-File $env:GITHUB_ENV
@@ -2964,7 +2964,7 @@ fn ci_routing_contract_violations(
         }
     }
     let m5_step = job_step(&ci, "test", "M5 bench platform controls");
-    let m5_condition = "(matrix.os == 'macos-14' || matrix.os == 'windows-2022') && (github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.m5-platform == 'true')";
+    let m5_condition = "(matrix.os == 'macos-15' || matrix.os == 'windows-2022') && (github.event_name != 'pull_request' || startsWith(github.head_ref, 'release-please--branches--') || needs.detect-changes.outputs.m5-platform == 'true')";
     if m5_step.and_then(|step| step["if"].as_str()) != Some(m5_condition)
         || m5_step.and_then(|step| step["run"].as_str())
             != Some("cargo nextest run -p wenlan-core --features eval-harness --test m5_bench")
@@ -3158,7 +3158,7 @@ fn ci_routing_contract_violations(
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .collect::<Vec<_>>();
     let expected_matrix_lines = [
-        r#"macos='{"os":"macos-14","label":"macos-14"}'"#,
+        r#"macos='{"os":"macos-15","label":"macos-15"}'"#,
         r#"windows='{"os":"windows-2022","label":"windows-2022"}'"#,
         r#"if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then"#,
         r#"include="${macos},${windows}""#,
@@ -3422,7 +3422,7 @@ fn ci_routing_contract_violations(
         .and_then(|step| step["run"].as_str())
         .unwrap_or_default();
     let mcp_rust_cache = job_step_using(&ci, "mcp-platform", "Swatinem/rust-cache");
-    let test_owner_formula = "${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || (matrix.os == 'macos-14' && (needs.detect-changes.outputs.macos == 'true' || needs.detect-changes.outputs.workspace-platform == 'true')) || (matrix.os == 'windows-2022' && needs.detect-changes.outputs.windows == 'true') }}";
+    let test_owner_formula = "${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || (matrix.os == 'macos-15' && (needs.detect-changes.outputs.macos == 'true' || needs.detect-changes.outputs.workspace-platform == 'true')) || (matrix.os == 'windows-2022' && needs.detect-changes.outputs.windows == 'true') }}";
     let mcp_windows_linker = job_step(
         &ci,
         "mcp-platform",
@@ -3434,7 +3434,7 @@ fn ci_routing_contract_violations(
         .flatten()
         .filter_map(serde_yaml::Value::as_str)
         .collect::<BTreeSet<_>>();
-    if mcp_oses != BTreeSet::from(["macos-14", "windows-2022"])
+    if mcp_oses != BTreeSet::from(["macos-15", "windows-2022"])
         || !mcp_condition
             .contains("needs.detect-changes.outputs.trusted-release-candidate != 'true'")
         || !mcp_condition.contains("needs.detect-changes.outputs.workspace-platform == 'true'")
@@ -4355,14 +4355,14 @@ fn macos_archive_contract_violations(ci_workflow: &str, planner: &str) -> Vec<St
 
     if job_needs(&ci, "macos-nextest-build") != ["detect-changes"]
         || ci["jobs"]["macos-nextest-build"]["if"].as_str() != Some(condition)
-        || ci["jobs"]["macos-nextest-build"]["runs-on"].as_str() != Some("macos-14")
+        || ci["jobs"]["macos-nextest-build"]["runs-on"].as_str() != Some("macos-15")
     {
         violations
             .push("macOS archive producer is not an independently routed native owner".into());
     }
     if job_needs(&ci, "macos-nextest") != ["detect-changes", "macos-nextest-build"]
         || ci["jobs"]["macos-nextest"]["if"].as_str() != Some(condition)
-        || ci["jobs"]["macos-nextest"]["runs-on"].as_str() != Some("macos-14")
+        || ci["jobs"]["macos-nextest"]["runs-on"].as_str() != Some("macos-15")
     {
         violations.push("macOS archive consumers do not wait for the exact producer".into());
     }
@@ -5045,7 +5045,7 @@ jobs:
             release-preflight:
               - 'Cargo.toml'
       - id: matrix
-        run: echo 'json=["ubuntu-24.04", "macos-14"]'
+        run: echo 'json=["ubuntu-24.04", "macos-15"]'
   lint:
     needs: [detect-changes, fmt]
   test:
@@ -5058,10 +5058,10 @@ jobs:
         if: matrix.os == 'windows-2022'
         run: smoke
       - name: Workspace lib tests (macOS, single-threaded)
-        if: matrix.os == 'macos-14'
+        if: matrix.os == 'macos-15'
         run: cargo nextest run --workspace --lib --test-threads=1
       - name: Compile platform-owned MCP runtime
-        if: matrix.os == 'macos-14' || matrix.os == 'windows-2022'
+        if: matrix.os == 'macos-15' || matrix.os == 'windows-2022'
         run: cargo check -p wenlan-mcp --all-targets
   conclusion:
     steps:
@@ -8664,7 +8664,6 @@ fn ci_benchmark_contract_violations(ci_workflow: &str, benchmark_workflow: &str)
         "p6-release",
         "ubuntu-24.04",
         "ubuntu-latest",
-        "macos-14",
         "macos-15",
         "macos-26",
         "macos-latest",

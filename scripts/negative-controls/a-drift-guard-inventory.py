@@ -1039,17 +1039,20 @@ INVENTORY: dict[str, tuple[str, str, str]] = {
     ),
     'ci_routing_contract_violations': (
         OUT_OF_SCOPE,
-        '90ee012e35f8e2d6',
+        '75a922c61f9c783c',
         "release.yml appears only as a STRING in ci.yml's required path-filter "
         'lists; the tooth never reads release.yml\'s content. Track A adds '
         'signpath-status.yml, which no list here names. Re-reviewed with the '
         'trusted queue proof, bounded 90-minute base CI wait and throughput '
-        'regression scheduler; these assertions still consume ci.yml only.',
+        'regression scheduler and macOS 15 routing; these assertions still '
+        'consume ci.yml only.',
     ),
     'ci_manifest_and_lockfile_changes_get_focused_platform_compile_proof': (
         OUT_OF_SCOPE,
-        'ff6d638b678238f5',
-        'same: a required path-filter entry in ci.yml, not a read of release.yml.',
+        '26a30b82af309b6b',
+        'same: a required path-filter entry in ci.yml, not a read of release.yml. '
+        'Re-read the unchanged body: it checks focused workspace build routing '
+        'and Windows prerequisite order entirely through ci.yml.',
     ),
     # --- helpers: no assertions of their own, but every tooth above sees the
     # --- workflow through them, so a change here changes what all of them mean.

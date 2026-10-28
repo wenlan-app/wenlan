@@ -14,6 +14,8 @@ The `.release-please-manifest.json` is the canonical version source; check the p
 
 Standalone runtime archives are promoted without recompilation. Desktop bundles still build their native app and sidecars before packaging/signing. Their build steps set `TARGET_TRIPLE` to the same explicit `tauri build --target` value, so the sidecar hook and app share Cargo's target directory. Without that explicit value, a native hook uses `target/release` while Tauri uses `target/<triple>/release`, compiling shared dependencies twice. The offline Cargo regression in `scripts/ci-release-throughput.test.py` checks actual dependency freshness; production bundle time still requires a real release measurement.
 
+macOS CI/preflight matrices, desktop publication, and Homebrew validation use the pinned ARM64 `macos-15` host. This replaces the retiring `macos-14` pool without changing the shipped architecture or asset inventory; see [cross-platform support](cross-platform.md) for the runner retirement source and runtime compatibility scope.
+
 Config files:
 
 - `release-please-config.json` — release type and version-bump behavior

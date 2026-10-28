@@ -439,7 +439,7 @@ jobs:
   app-bundle:
     name: Build macOS desktop app bundle
     needs: [resolve-promotion, bind-release-tag]
-    runs-on: macos-14
+    runs-on: macos-15
     # The notary wait is the long pole and it is not the only one: this job
     # compiles the whole workspace from scratch first (no Cargo cache here,
     # only pnpm's), then waits up to 90 minutes on Apple's queue, then staples,
@@ -2095,7 +2095,7 @@ jobs:
     needs: [promote-assets, bind-release-tag]
     # The tap ships macOS arm64 archives. Validate the formulas with the real
     # Homebrew client on the same architecture instead of stopping at `ruby -c`.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - name: Download artifacts

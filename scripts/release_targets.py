@@ -21,7 +21,7 @@ MERGE_QUEUE_REF_PREFIX = "refs/heads/gh-readonly-queue/main/"
 _TARGETS = (
     {
         "target": "aarch64-apple-darwin",
-        "os": "macos-14",
+        "os": "macos-15",
         "archive": "tar.gz",
         "artifact_name": "wenlan-darwin-arm64",
     },
