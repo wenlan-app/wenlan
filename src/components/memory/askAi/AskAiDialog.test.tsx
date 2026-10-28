@@ -66,13 +66,13 @@ describe("AskAiDialog", () => {
     renderDialog();
 
     await waitFor(() => expect(screen.getByTestId("ask-ai-tab-codex")).toHaveAttribute("aria-selected", "true"));
-    expect(command("steep")).toBe("$wenlan steep");
+    expect(command("steep")).toBe("$wenlan write my pages");
     expect(command("wiki")).toBe("$wenlan wiki");
     expect(command("brief")).toBe("$brief");
     expect(command("recall")).toBe("$recall how we chose the database");
 
     fireEvent.click(screen.getByTestId("ask-ai-tab-claude"));
-    expect(command("steep")).toBe("/wenlan steep");
+    expect(command("steep")).toBe("/wenlan write my pages");
     expect(command("capture")).toBe("/capture we switched to SQLite");
   });
 
@@ -85,7 +85,7 @@ describe("AskAiDialog", () => {
     const tryIt = await screen.findByTestId("ask-ai-try-steep");
     expect(tryIt).toHaveTextContent("Try in Codex");
     fireEvent.click(tryIt);
-    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("codex", "$wenlan steep"));
+    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("codex", "$wenlan write my pages"));
     expect(await screen.findByTestId("ask-ai-try-steep")).toHaveTextContent("Opened in Codex.");
 
     fireEvent.click(screen.getByTestId("ask-ai-tab-claude"));
@@ -110,7 +110,7 @@ describe("AskAiDialog", () => {
 
     await waitFor(() => expect(screen.getByTestId("ask-ai-connect")).toBeInTheDocument());
     fireEvent.click(within(screen.getByTestId("ask-ai-task-steep")).getByRole("button"));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep"));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("/wenlan write my pages"));
     fireEvent.click(screen.getByRole("button", { name: "Connect a tool" }));
     expect(onConnectTool).toHaveBeenCalled();
   });

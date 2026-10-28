@@ -115,7 +115,7 @@ export function WritePagesStep({
             </button>
           </p>
         ) : null}
-        {list(view.writing)}
+        {list(view.writing && !view.stuck)}
       </div>
     );
   }

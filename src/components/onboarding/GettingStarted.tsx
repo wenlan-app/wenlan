@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
   CheckCircle,
@@ -9,7 +8,7 @@ import {
   Sparkle,
   X,
 } from "@phosphor-icons/react";
-import { clipboardWrite, getBackgroundAiEnabled, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
+import { clipboardWrite, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
 import type { WritePagesState } from "../memory/askAi/WritePages";
 import { AskAiDialog } from "../memory/askAi/AskAiDialog";
 import { frontDoorFor } from "../memory/askAi/askInTool";
@@ -87,12 +86,6 @@ export function GettingStarted({
   // first read has stored something: its import finish takes the pages step.
   const folderFinish = useFolderImportFinish();
   const organize = useOrganizeActions() !== null;
-  // Same key as the Intelligence settings, so turning it on there hides the line here.
-  const backgroundAi = useQuery({
-    queryKey: ["backgroundAiEnabled"],
-    queryFn: getBackgroundAiEnabled,
-    enabled: visible && onTurnOnSteeping != null,
-  });
 
   useEffect(() => {
     if (!copied) return;
@@ -172,8 +165,6 @@ export function GettingStarted({
           <X aria-hidden="true" weight="regular" />
         </button>
       </header>
-      {/* Why any of this: the one sentence a new user needs first. */}
-      <p className="getting-started-lead">{t("firstUse.checklist.lead")}</p>
       <p className="getting-started-progress">
         {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
         {/* Once the ask row offers its own button, the sample moves up here. */}
@@ -327,8 +318,8 @@ export function GettingStarted({
         })}
       </ol>
       {/* One quiet line under the steps: the full list of what to ask the
-          AI tool (it stays in the account menu after the checklist is gone)
-          and, while it is off, writing pages with a local model instead. */}
+          AI tool (it stays in the account menu after the checklist is gone).
+          A local model is offered where pages are handed over, not here. */}
       <p className="getting-started-extra" data-testid="getting-started-extra">
         <button
           type="button"
@@ -338,19 +329,6 @@ export function GettingStarted({
         >
           {t("firstUse.checklist.askAi.action")}
         </button>
-        {onTurnOnSteeping && backgroundAi.data === false ? (
-          <>
-            <span className="getting-started-extra-dot" aria-hidden="true">·</span>
-            <button
-              type="button"
-              className="getting-started-link"
-              data-testid="getting-started-steep"
-              onClick={onTurnOnSteeping}
-            >
-              {t("firstUse.checklist.steep.action")}
-            </button>
-          </>
-        ) : null}
       </p>
       {askAiOpen ? (
         <AskAiDialog

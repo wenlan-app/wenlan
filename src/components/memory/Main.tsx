@@ -1407,6 +1407,7 @@ export default function Main({
             <ImportView
               onBack={navigateBack}
               completeLabel={view.fromFirstUse ? t("firstUse.guide.seeKnowledge") : view.fromHome ? t("setup.done.backToWiki") : undefined}
+              title={view.fromHome ? t("sourceAccess.chatQuickTitle") : undefined}
               onComplete={(_source, result) => {
                 if (view.fromHome) {
                   // From the getting-started checklist: back to it, where the

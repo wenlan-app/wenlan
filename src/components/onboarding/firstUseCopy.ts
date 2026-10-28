@@ -65,7 +65,6 @@ export const enFirstUse = {
   },
   checklist: {
     title: "Build your wiki in three steps",
-    lead: "Connect your AI and add your notes. It writes pages that cite them.",
     progress: "{{done}} of {{total}} done",
     done: "Done",
     hide: "Hide getting started",
@@ -107,9 +106,6 @@ export const enFirstUse = {
     },
     askAi: {
       action: "What your AI can do",
-    },
-    steep: {
-      action: "Use a local model instead",
     },
   },
   live: {
@@ -202,7 +198,6 @@ export const hansFirstUse = {
   },
   checklist: {
     title: "三步建好你的 wiki",
-    lead: "连上 AI、加入资料，它会写成附出处的笔记。",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
     hide: "隐藏开始使用清单",
@@ -244,9 +239,6 @@ export const hansFirstUse = {
     },
     askAi: {
       action: "AI 能做什么",
-    },
-    steep: {
-      action: "改用本机模型",
     },
   },
   live: {
@@ -336,7 +328,6 @@ export const hantFirstUse = {
   },
   checklist: {
     title: "三步建好你的 wiki",
-    lead: "連上 AI、加入資料，它會寫成附出處的筆記。",
     progress: "已完成 {{done}}/{{total}}",
     done: "已完成",
     hide: "隱藏開始使用清單",
@@ -378,9 +369,6 @@ export const hantFirstUse = {
     },
     askAi: {
       action: "AI 能做什麼",
-    },
-    steep: {
-      action: "改用本機模型",
     },
   },
   live: {

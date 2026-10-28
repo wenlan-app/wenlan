@@ -61,8 +61,8 @@ interface ImportOrganizeProps {
   readonly onLater?: () => void;
 }
 
-/** "12 notes imported. You can search them now." Under a heading that
- *  already gives the count, `short` says only the second half. */
+/** "12 notes imported." Under a heading that already gives the count,
+ *  `short` says nothing more. */
 export function ImportedLead({
   count,
   kind,
@@ -75,11 +75,10 @@ export function ImportedLead({
   readonly short?: boolean;
 }) {
   const { t } = useTranslation();
+  if (short) return null;
   return (
     <p className={className ?? "turn-pages-lead"} data-testid="import-lead">
-      {short
-        ? t("askAi.writePages.importCard.leadShort")
-        : t("askAi.writePages.importCard.lead", { items: t(`askAi.writePages.kinds.${kind}`, { count }) })}
+      {t("askAi.writePages.importCard.lead", { items: t(`askAi.writePages.kinds.${kind}`, { count }) })}
     </p>
   );
 }
@@ -421,7 +420,7 @@ export function TurnIntoPagesView({
             </button>
           </div>
         ) : null}
-        <WrittenPages rows={view.written} writing={view.writing} onSelectPage={selectPage} />
+        <WrittenPages rows={view.written} writing={view.writing && !view.stuck} onSelectPage={selectPage} />
       </>,
       "working",
     );

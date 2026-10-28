@@ -148,7 +148,8 @@ describe("WritePagesStep", () => {
 
   it("says the tool may be waiting while it holds material and nothing lands", () => {
     renderStep({ state: state({ kind: "working", written: [], writing: true, stuck: true }, { run: { startedAt: Date.now(), tool: "Claude Code", handedOver: "opened" } }) });
-    expect(screen.getByTestId("row")).toHaveTextContent("Claude Code is writing pages");
+    expect(screen.getByTestId("row")).toHaveTextContent("Waiting for Claude Code");
+    expect(screen.getByTestId("row")).not.toHaveTextContent("is writing pages");
     expect(screen.getByTestId("row")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
   });
 

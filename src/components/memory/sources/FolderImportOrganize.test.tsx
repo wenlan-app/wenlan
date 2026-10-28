@@ -85,7 +85,7 @@ describe("FolderImportOrganize", () => {
     rememberAddedFolder(source());
     render(wrap(<FolderImportOrganize />));
     await waitFor(() => {
-      expect(screen.getByTestId("import-lead")).toHaveTextContent("12 notes imported. You can search them now.");
+      expect(screen.getByTestId("import-lead")).toHaveTextContent("12 notes imported.");
     });
     await waitFor(() => expect(screen.getByTestId("turn-into-pages")).toHaveAttribute("data-state", "ready"));
     expect(screen.getByRole("button", { name: "Write pages with Codex" })).toBeInTheDocument();
@@ -108,7 +108,7 @@ describe("FolderImportOrganize", () => {
     rememberAddedFolder({ id: "docs", source_type: "directory" });
     render(wrap(<FolderImportOrganize />));
     await waitFor(() => {
-      expect(screen.getByTestId("import-lead")).toHaveTextContent("7 files imported. You can search them now.");
+      expect(screen.getByTestId("import-lead")).toHaveTextContent("7 files imported.");
     });
   });
 

@@ -24,13 +24,15 @@ import { useTranslation } from "react-i18next";
 type ConnectKind = "obsidian" | "logseq" | "folder";
 type PickedFolder = { kind: ConnectKind; sourceType: SourceTypeStr; path: string };
 
-export default function AddSourceMenu({ onClose, start = "menu", onQuickChats }: {
+export default function AddSourceMenu({ onClose, start = "menu", onQuickChats, title }: {
   onClose: () => void;
   /** "chats" opens straight at importing past AI chats. */
   start?: "menu" | "chats";
   /** Where past AI chats can also come in the quick way (copy a prompt into
    *  the AI, paste its answer back), the chats panel offers both ways. */
   onQuickChats?: () => void;
+  /** The menu's title, when the button that opened it named it otherwise. */
+  title?: string;
 }) {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -175,10 +177,14 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats }:
     </ol>
     <ImportFlow onLeave={onClose} />
   </SourceDialog>;
-  return <SourceDialog title={t("sourceAccess.addTitle")} onClose={onClose}>
+  return <SourceDialog title={title ?? t("sourceAccess.addTitle")} onClose={onClose}>
     {!ready && <div role="status"><p>{t("sourceAccess.upgrade")}</p><button className="page-editor-action" type="button" onClick={() => openFile("https://wenlan.app")}>{t("sourceAccess.update")}</button></div>}
-    {/* An Obsidian vault or a plain folder is where most people start; Logseq last. */}
-    <button type="button" className="source-add-option source-add-option--vault" disabled={busy} onClick={() => connect.mutate("obsidian")}>
+    {/* Past AI chats first: everyone who uses an AI tool has them. Then an
+        Obsidian vault, a folder, files; a link with its text, Logseq last. */}
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
+      <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
+    </button>
+    <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("obsidian")}>
       <SourceTypeIcon kind="obsidian" /><span className="source-add-option-copy"><strong>{t("sourceAccess.obsidian")}</strong><span>{t("sourceAccess.obsidianHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("folder")}>
@@ -189,9 +195,6 @@ export default function AddSourceMenu({ onClose, start = "menu", onQuickChats }:
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowWeb(true)}>
       <SourceTypeIcon kind="webpage" /><span className="source-add-option-copy"><strong>{t("sourceAccess.web")}</strong><span>{t("sourceAccess.webHint")}</span></span>
-    </button>
-    <button type="button" className="source-add-option" disabled={busy} onClick={() => setShowChats(true)}>
-      <ChatsCircle aria-hidden="true" size={20} weight="regular" data-resource-icon="chats" /><span className="source-add-option-copy"><strong>{t("sourceAccess.chatHistory")}</strong><span>{t("sourceAccess.chatHistoryHint")}</span></span>
     </button>
     <button type="button" className="source-add-option" disabled={busy} onClick={() => connect.mutate("logseq")}>
       <SourceTypeIcon kind="logseq" /><span className="source-add-option-copy"><strong>{t("sourceAccess.logseq")}</strong><span>{t("sourceAccess.logseqHint")}</span></span>

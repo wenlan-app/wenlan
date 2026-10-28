@@ -309,15 +309,15 @@ describe("ImportOrganize", () => {
     render(wrap(<><ImportedLead count={12} kind="note" /><ImportedLead count={1} kind="chat" /><ImportedLead count={3} kind="file" /></>));
     const leads = screen.getAllByTestId("import-lead").map((node) => node.textContent);
     expect(leads).toEqual([
-      "12 notes imported. You can search them now.",
-      "1 chat imported. You can search them now.",
-      "3 files imported. You can search them now.",
+      "12 notes imported.",
+      "1 chat imported.",
+      "3 files imported.",
     ]);
   });
 
   it("writes big counts with the locale's grouping", async () => {
     const { unmount } = render(wrap(<ImportedLead count={10000} kind="note" />));
-    expect(screen.getByTestId("import-lead")).toHaveTextContent("10,000 notes imported. You can search them now.");
+    expect(screen.getByTestId("import-lead")).toHaveTextContent("10,000 notes imported.");
     unmount();
     const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
     render(wrap(<TurnIntoPagesView state={state({ kind: "done", written, updated: [], minutes: 3, left: 9962 }, { waiting: i18n.t("askAi.writePages.kinds.note", { count: 9962 }) })} hasPages />));
@@ -329,9 +329,9 @@ describe("ImportOrganize", () => {
     }
   });
 
-  it("says only the second half under a heading that already gives the count", () => {
+  it("says nothing more under a heading that already gives the count", () => {
     render(wrap(<ImportedLead count={12} kind="note" short />));
-    expect(screen.getByTestId("import-lead")).toHaveTextContent(/^You can search them now\.$/);
+    expect(screen.queryByTestId("import-lead")).toBeNull();
   });
 
   it("in Automatic, names the model writing pages and links to Activity, with no button", async () => {

@@ -503,6 +503,9 @@ export function workingHeadline(
       ? t("askAi.writePages.workingCountOf", { tool: state.toolName, count: view.written.length, total: of })
       : t("askAi.writePages.workingCount", { tool: state.toolName, count: view.written.length });
   }
+  // Quiet for a while with nothing written: say so, rather than "writing"
+  // over a spinner that contradicts the hint below it.
+  if (view.stuck) return t("askAi.writePages.waitingFor", { tool: state.toolName });
   if (view.writing) return t("askAi.writePages.working", { tool: state.toolName });
   return state.run?.handedOver === "opened"
     ? t("askAi.writePages.pressEnter", { tool: state.toolName })

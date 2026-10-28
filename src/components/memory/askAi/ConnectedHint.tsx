@@ -8,6 +8,7 @@ import { useLiveAgents } from "../../connect/connectionState";
 import { AskAiDialog } from "./AskAiDialog";
 import { AskInToolButton, frontDoorFor } from "./askInTool";
 import { recentTool } from "./WritePages";
+import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import "./askAiHint.css";
 
 /** On the connect flow's last step: where to ask now that a tool is
@@ -22,8 +23,20 @@ export function ConnectedHint({ justConnected = [] }: {
   const [open, setOpen] = useState(false);
   const agents = useLiveAgents();
   const tool = pickTool(justConnected, agents.data ?? []) ?? (agents.isSuccess ? recentTool(agents.data) : null);
+  // With no pages yet there is nothing to ask about: the next step is the
+  // material the tool will write from, back on the Wiki.
+  const checklist = useGettingStartedState();
+  const beforePages = checklist.progress !== null && !checklist.progress.pages;
   if (!tool) return null;
   const command = frontDoorFor(tool.family);
+  if (beforePages) {
+    return (
+      <div className="ask-ai-next" data-testid="ask-ai-hint-connected" data-next="material">
+        <Sparkle aria-hidden="true" weight="regular" className="ask-ai-hint-icon" />
+        <p className="ask-ai-next-text">{t("askAi.hints.connectedFirstMaterial", { tool: tool.name })}</p>
+      </div>
+    );
+  }
   return (
     <>
       <div className="ask-ai-next" data-testid="ask-ai-hint-connected">

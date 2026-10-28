@@ -106,12 +106,14 @@ describe("AddSourceMenu", () => {
     expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("connected");
   });
 
-  it("gives Obsidian a distinct first entry and connects it with its own source type", async () => {
+  it("lists past AI chats first, then Obsidian, and connects a vault with its own source type", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/vault");
     mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
     const vault = await screen.findByText("Connect Obsidian vault");
-    expect(vault.closest("button")).toHaveClass("source-add-option--vault");
+    const options = screen.getAllByRole("button").filter((button) => button.classList.contains("source-add-option"));
+    expect(options[0]).toHaveTextContent("Past AI chats");
+    expect(options[1]).toBe(vault.closest("button"));
     fireEvent.click(vault);
     fireEvent.click(await screen.findByText("Keep in sync"));
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));

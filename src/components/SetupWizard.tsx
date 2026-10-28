@@ -865,7 +865,9 @@ function ConnectStep({
                     />
                   }
                 >
-                  {isConfigured ? (
+                  {/* The row's chip already says Added; only a repair needs a
+                      sentence, saying what Continue will do about it. */}
+                  {isConfigured && needsRepair ? (
                     <p
                       style={{
                         fontFamily: "var(--mem-font-body)",
@@ -874,9 +876,7 @@ function ConnectStep({
                         lineHeight: "1.5",
                       }}
                     >
-                      {needsRepair
-                        ? t("setup.connect.repairOnContinue")
-                        : t("setup.connect.alreadySetUp")}
+                      {t("setup.connect.repairOnContinue")}
                     </p>
                   ) : null}
                 </ClientRow>

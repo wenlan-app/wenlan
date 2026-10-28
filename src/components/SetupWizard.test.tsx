@@ -32,6 +32,7 @@ vi.mock("../lib/tauri", () => ({
   installClientPlugin: vi.fn().mockResolvedValue(undefined),
   registerConnectedAgent: vi.fn().mockResolvedValue(true),
   listAgents: vi.fn().mockResolvedValue([]),
+  listOnboardingMilestones: vi.fn().mockResolvedValue([]),
   getWenlanMcpEntry: vi.fn().mockResolvedValue({ command: "npx", args: ["-y", "wenlan-mcp"] }),
   getRemoteAccessStatus: vi.fn().mockResolvedValue({ status: "off" }),
   toggleRemoteAccess: vi.fn().mockResolvedValue({ status: "off" }),
@@ -1250,7 +1251,8 @@ describe("SetupWizard", () => {
     // must not render a second one. The badge is the affordance; `disabled`
     // never is.
     expect(screen.getAllByText("Added")).toHaveLength(1);
-    expect(screen.getByText("Already connected.")).toBeInTheDocument();
+    // The chip says it; no second sentence repeats it.
+    expect(screen.queryByText("Already connected.")).toBeNull();
     expect(cursorCheckbox).toBeEnabled();
 
     // And unchecking actually takes: the box clears, and Setting up gives it
@@ -3460,7 +3462,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     expect(await screen.findByText("Tools added")).toBeInTheDocument();
     expect(
-      screen.getByText("Restart these tools and they will read and write your library."),
+      screen.getByText("Restart these tools once. After that they can read and write your wiki."),
     ).toBeInTheDocument();
     expect(screen.queryByText("You're all set.")).not.toBeInTheDocument();
     expect(screen.queryByText(i18n.t("setup.done.allSetBody1"))).not.toBeInTheDocument();
@@ -3483,7 +3485,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
     expect(screen.getByText(i18n.t("setup.done.allSetBody1"))).toBeInTheDocument();
     expect(screen.queryByText("Tools added")).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Restart these tools and they will read and write your library."),
+      screen.queryByText("Restart these tools once. After that they can read and write your wiki."),
     ).not.toBeInTheDocument();
   });
 

@@ -55,7 +55,7 @@ export const enActivityStatus = {
   },
   asset: {
     memories: "Memories",
-    entities: "Entities",
+    entities: "Topics",
     pages: "Pages",
   },
   summary: {
@@ -64,14 +64,14 @@ export const enActivityStatus = {
     entitiesWaiting_one: "{{count}} memory awaiting a scan",
     entitiesWaiting_other: "{{count}} memories awaiting a scan",
   },
-  rowAsset: { memories: "Memories", entities: "Entities", pages: "Pages" },
+  rowAsset: { memories: "Memories", entities: "Topics", pages: "Pages" },
   // On demand: nothing runs in the background, so a row says what is
   // waiting for the user's AI tool instead of reading as stalled.
   assetOnDemand: {
     memories_one: "{{count}} stored, searchable now",
     memories_other: "{{count}} stored, all searchable now",
-    entities_one: "{{count}} memory not yet scanned for entities",
-    entities_other: "{{count}} memories not yet scanned for entities",
+    entities_one: "{{count}} memory not yet scanned for topics",
+    entities_other: "{{count}} memories not yet scanned for topics",
     pages_one: "{{count}} page still needs steeping",
     pages_other: "{{count}} pages still need steeping",
   },
@@ -89,12 +89,12 @@ export const enActivityStatus = {
     pages: "No pages yet",
   },
   // Every number names its unit. Entities' running and blocked counts are
-  // MEMORIES scanned for entities, not entities: one memory can name several
+  // MEMORIES scanned for topics, not entities: one memory can name several
   // entities or none, so "8" beside "Entities" would be a wrong number.
   assetRunning: {
     memories: "{{done}} of {{total}} summarized and linked",
-    entities_one: "{{done}} of {{total}} memory scanned for entities",
-    entities_other: "{{done}} of {{total}} memories scanned for entities",
+    entities_one: "{{done}} of {{total}} memory scanned for topics",
+    entities_other: "{{done}} of {{total}} memories scanned for topics",
     pages: "{{done}} of {{total}} pages current, the rest updating",
   },
   // Rows say only how many are waiting, in their own unit. The cause and the
@@ -103,8 +103,8 @@ export const enActivityStatus = {
   // sentence twice.
   assetBlockedNoModel: {
     memories: "{{count}} not yet summarized. All are searchable now.",
-    entities_one: "{{count}} memory not yet scanned for entities",
-    entities_other: "{{count}} memories not yet scanned for entities",
+    entities_one: "{{count}} memory not yet scanned for topics",
+    entities_other: "{{count}} memories not yet scanned for topics",
     pages_one: "{{count}} page waiting to be updated",
     pages_other: "{{count}} pages waiting to be updated",
   },
@@ -309,7 +309,7 @@ export const hansActivityStatus = {
   },
   asset: {
     memories: "记忆",
-    entities: "实体",
+    entities: "主题",
     pages: "笔记",
   },
   summary: {
@@ -318,12 +318,12 @@ export const hansActivityStatus = {
     entitiesWaiting_one: "{{count}} 条记忆待识别主题",
     entitiesWaiting_other: "{{count}} 条记忆待识别主题",
   },
-  rowAsset: { memories: "记忆", entities: "实体", pages: "笔记" },
+  rowAsset: { memories: "记忆", entities: "主题", pages: "笔记" },
   assetOnDemand: {
     memories_one: "已存 {{count}} 条，都可以搜索",
     memories_other: "已存 {{count}} 条，都可以搜索",
-    entities_one: "{{count}} 条记忆还没识别实体",
-    entities_other: "{{count}} 条记忆还没识别实体",
+    entities_one: "{{count}} 条记忆还没识别主题",
+    entities_other: "{{count}} 条记忆还没识别主题",
     pages_one: "{{count}} 篇笔记还没整理",
     pages_other: "{{count}} 篇笔记还没整理",
   },
@@ -337,19 +337,19 @@ export const hansActivityStatus = {
   },
   assetEmpty: {
     memories: "还没有存入内容",
-    entities: "还没有发现实体",
+    entities: "还没有发现主题",
     pages: "还没有笔记",
   },
   assetRunning: {
     memories: "{{total}} 条中已完成 {{done}} 条的摘要与关联",
-    entities_one: "{{total}} 条记忆中已有 {{done}} 条完成实体扫描",
-    entities_other: "{{total}} 条记忆中已有 {{done}} 条完成实体扫描",
+    entities_one: "{{total}} 条记忆中已有 {{done}} 条完成主题扫描",
+    entities_other: "{{total}} 条记忆中已有 {{done}} 条完成主题扫描",
     pages: "{{total}} 篇笔记中 {{done}} 篇为最新，其余正在更新",
   },
   assetBlockedNoModel: {
     memories: "{{count}} 条尚未生成摘要。全部已可搜索。",
-    entities_one: "{{count}} 条记忆尚未扫描实体",
-    entities_other: "{{count}} 条记忆尚未扫描实体",
+    entities_one: "{{count}} 条记忆尚未扫描主题",
+    entities_other: "{{count}} 条记忆尚未扫描主题",
     pages_one: "{{count}} 篇笔记等待更新",
     pages_other: "{{count}} 篇笔记等待更新",
   },
@@ -527,7 +527,7 @@ export const hantActivityStatus = {
   },
   asset: {
     memories: "記憶",
-    entities: "實體",
+    entities: "主題",
     pages: "筆記",
   },
   summary: {
@@ -536,12 +536,12 @@ export const hantActivityStatus = {
     entitiesWaiting_one: "{{count}} 筆記憶待辨識主題",
     entitiesWaiting_other: "{{count}} 筆記憶待辨識主題",
   },
-  rowAsset: { memories: "記憶", entities: "實體", pages: "筆記" },
+  rowAsset: { memories: "記憶", entities: "主題", pages: "筆記" },
   assetOnDemand: {
     memories_one: "已存 {{count}} 則，都可以搜尋",
     memories_other: "已存 {{count}} 則，都可以搜尋",
-    entities_one: "{{count}} 則記憶還沒辨識實體",
-    entities_other: "{{count}} 則記憶還沒辨識實體",
+    entities_one: "{{count}} 則記憶還沒辨識主題",
+    entities_other: "{{count}} 則記憶還沒辨識主題",
     pages_one: "{{count}} 篇筆記還沒整理",
     pages_other: "{{count}} 篇筆記還沒整理",
   },
@@ -555,19 +555,19 @@ export const hantActivityStatus = {
   },
   assetEmpty: {
     memories: "還沒有存入內容",
-    entities: "還沒有發現實體",
+    entities: "還沒有發現主題",
     pages: "還沒有筆記",
   },
   assetRunning: {
     memories: "{{total}} 則中已完成 {{done}} 則的摘要與關聯",
-    entities_one: "{{total}} 則記憶中已有 {{done}} 則完成實體掃描",
-    entities_other: "{{total}} 則記憶中已有 {{done}} 則完成實體掃描",
+    entities_one: "{{total}} 則記憶中已有 {{done}} 則完成主題掃描",
+    entities_other: "{{total}} 則記憶中已有 {{done}} 則完成主題掃描",
     pages: "{{total}} 篇筆記中 {{done}} 篇為最新，其餘正在更新",
   },
   assetBlockedNoModel: {
     memories: "{{count}} 則尚未產生摘要。全部已可搜尋。",
-    entities_one: "{{count}} 則記憶尚未掃描實體",
-    entities_other: "{{count}} 則記憶尚未掃描實體",
+    entities_one: "{{count}} 則記憶尚未掃描主題",
+    entities_other: "{{count}} 則記憶尚未掃描主題",
     pages_one: "{{count}} 篇筆記等待更新",
     pages_other: "{{count}} 篇筆記等待更新",
   },

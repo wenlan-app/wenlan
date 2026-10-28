@@ -26,7 +26,9 @@ export const ASK_AI_TASKS: readonly AskAiTask[] = [
   { id: "recall", group: "daily", command: null },
   { id: "brief", group: "daily", command: "/brief" },
   { id: "handoff", group: "daily", command: "/handoff" },
-  { id: "steep", group: "sometimes", command: "steep" },
+  // Plain words rather than the internal verb; the skill routes them to the
+  // same workflow.
+  { id: "steep", group: "sometimes", command: null },
   { id: "wiki", group: "sometimes", command: "wiki", skillOnly: true },
 ];
 

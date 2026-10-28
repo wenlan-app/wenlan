@@ -39,7 +39,6 @@
 .source-add-option > [data-resource-icon] { flex:0 0 20px; color:var(--mem-text-secondary); }
 .source-add-option-copy { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .source-add-option-copy strong { font-size:14px; font-weight:500; color:var(--mem-text); }
-.source-add-option--vault { background:var(--mem-indigo-bg); margin-bottom:8px; }
 .source-add-option:disabled { cursor:wait; opacity:.6; }
 
 .source-chat-steps { margin:4px 0 16px; padding:0; list-style:none; display:flex; flex-direction:column; gap:14px; }
