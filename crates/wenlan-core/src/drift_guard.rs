@@ -337,8 +337,39 @@ fn fastembed_ci_cache_violations(workflow: &str) -> Vec<String> {
             .iter()
             .position(|step| step["name"].as_str() == Some(name))
     };
+    let release_preflight_if = parsed["jobs"]["release-preflight"]["if"]
+        .as_str()
+        .unwrap_or_default();
+    let branch_prefix = release_preflight_if
+        .split_once("startsWith(github.head_ref, '")
+        .and_then(|(_, suffix)| suffix.split_once("')"))
+        .map(|(prefix, _)| prefix);
+    let demand_condition = branch_prefix.map(|branch_prefix| {
+        format!(
+            "steps.release-proof.outputs.verified-release-merge != 'true' && \
+             (steps.test-plan.outputs.rust-ci-required == 'true' || \
+             ((github.event_name == 'workflow_dispatch' || \
+             startsWith(github.head_ref, '{branch_prefix}') || \
+             steps.filter.outputs.release-preflight == 'true') && \
+             contains(steps.release-preflight-targets.outputs.release-preflight-targets, \
+             'x86_64-pc-windows-msvc')))"
+        )
+    });
+    let demand_index = detect_index("Mark FastEmbed model demand");
+    let demand = demand_index.and_then(|index| detect_steps.get(index).copied());
+    if demand_condition.is_none()
+        || demand.and_then(|step| step["id"].as_str()) != Some("fastembed-demand")
+        || demand.and_then(|step| step["if"].as_str()) != demand_condition.as_deref()
+        || demand.and_then(|step| step["run"].as_str())
+            != Some("echo \"required=true\" >> \"$GITHUB_OUTPUT\"")
+    {
+        violations.push(
+            "detect-changes FastEmbed demand gate must exclude promoted merges and include Rust consumers or Windows selected by the release-preflight scheduler".into(),
+        );
+    }
     let prep_order = [
         detect_index("Test FastEmbed cache preparation"),
+        demand_index,
         detect_index("Restore portable FastEmbed model"),
         detect_index("Restore legacy Linux FastEmbed model"),
         detect_index("Prepare portable FastEmbed model"),
@@ -369,7 +400,6 @@ fn fastembed_ci_cache_violations(workflow: &str) -> Vec<String> {
     {
         violations.push("detect-changes does not run the pinned FastEmbed preparer".into());
     }
-    let rust_ci_condition = "steps.release-proof.outputs.verified-release-merge != 'true' && steps.test-plan.outputs.rust-ci-required == 'true'";
     for name in [
         "Restore portable FastEmbed model",
         "Prepare portable FastEmbed model",
@@ -378,15 +408,14 @@ fn fastembed_ci_cache_violations(workflow: &str) -> Vec<String> {
         let condition = detect_index(name)
             .and_then(|index| detect_steps.get(index).copied())
             .and_then(|step| step["if"].as_str());
-        if condition != Some(rust_ci_condition) {
+        if condition != Some("steps.fastembed-demand.outputs.required == 'true'") {
             violations.push(format!(
-                "detect-changes {name:?} is not gated by the canonical rust-ci-required planner output"
+                "detect-changes {name:?} is not gated by the canonical FastEmbed demand output"
             ));
         }
     }
-    let cache_miss_condition = format!(
-        "{rust_ci_condition} && steps.fastembed-portable-restore.outputs.cache-hit != 'true'"
-    );
+    let cache_miss_condition =
+        "steps.fastembed-demand.outputs.required == 'true' && steps.fastembed-portable-restore.outputs.cache-hit != 'true'";
     for name in [
         "Restore legacy Linux FastEmbed model",
         "Save portable FastEmbed model",
@@ -394,9 +423,9 @@ fn fastembed_ci_cache_violations(workflow: &str) -> Vec<String> {
         let condition = detect_index(name)
             .and_then(|index| detect_steps.get(index).copied())
             .and_then(|step| step["if"].as_str());
-        if condition != Some(cache_miss_condition.as_str()) {
+        if condition != Some(cache_miss_condition) {
             violations.push(format!(
-                "detect-changes {name:?} is not gated by rust-ci-required plus the portable-cache miss"
+                "detect-changes {name:?} is not gated by FastEmbed demand plus the portable-cache miss"
             ));
         }
     }
@@ -749,6 +778,43 @@ fn fastembed_ci_artifact_is_prepared_once_before_model_consumers() {
          also updates fastembed_ci_cache_violations() and its positive control:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn fastembed_ci_demand_gate_rejects_missing_promotion_or_windows_guards() {
+    let workflow =
+        std::fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("read ci.yml");
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&workflow).expect("parse ci.yml");
+    let condition = parsed["jobs"]["detect-changes"]["steps"]
+        .as_sequence()
+        .into_iter()
+        .flatten()
+        .find(|step| step["id"].as_str() == Some("fastembed-demand"))
+        .and_then(|step| step["if"].as_str())
+        .expect("FastEmbed demand condition");
+
+    for (mutated, expected) in [
+        (
+            condition.replace("steps.release-proof.outputs.verified-release-merge != 'true' && ", ""),
+            "promoted-merge exclusion",
+        ),
+        (
+            condition.replace(
+                "contains(steps.release-preflight-targets.outputs.release-preflight-targets, 'x86_64-pc-windows-msvc')",
+                "true",
+            ),
+            "selected Windows consumer",
+        ),
+    ] {
+        assert_ne!(mutated, condition, "mutation must remove {expected}");
+        let workflow_mutated = workflow.replacen(condition, &mutated, 1);
+        assert_ne!(workflow_mutated, workflow, "fixture must mutate demand gate");
+        let violations = fastembed_ci_cache_violations(&workflow_mutated);
+        assert!(
+            violations.iter().any(|violation| violation.contains("FastEmbed demand gate")),
+            "mutation must detect missing {expected}: {violations:?}"
+        );
+    }
 }
 
 #[test]
@@ -3609,7 +3675,7 @@ fn ci_planner_routing_rejects_optional_and_fail_open_mutations() {
     for expected in [
         "every non-reused CI run",
         "fmt does not derive exactly",
-        "canonical rust-ci-required planner output",
+        "FastEmbed demand gate",
         "rust-ci-required output is not the union",
         "non-Rust fast-owner",
         "unknown paths",
