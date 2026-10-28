@@ -129,6 +129,10 @@ pub struct HealthResponse {
     pub status: String,
     pub db_initialized: bool,
     pub version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_root_identity: Option<String>,
 }
 
 /// Cross-encoder reranker state, surfaced on `/api/status` so operators can see

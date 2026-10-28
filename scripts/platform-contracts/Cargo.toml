@@ -1,0 +1,31 @@
+[package]
+name = "wenlan-platform-contracts"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only"
+
+# Small native behavior lane: imports the production modules without Tauri or ML.
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+sysinfo = { version = "=0.38.3", default-features = false, features = ["system"] }
+sha2 = "0.10"
+fs2 = "0.4"
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+console = "0.15"
+log = "0.4"
+open = "5.4.1"
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_System_Threading"] }
+
+[dev-dependencies]
+serial_test = "3"

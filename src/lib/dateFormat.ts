@@ -45,5 +45,5 @@ export function formatTimeAgo(ts: number, locale?: string): string {
 
 /** Last path segment, used as a display name for a folder/source path. */
 export function folderName(p: string): string {
-  return p.split("/").filter(Boolean).pop() || p;
+  return p.split(/[\\/]/).filter(Boolean).pop() || p;
 }

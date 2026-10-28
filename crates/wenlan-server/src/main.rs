@@ -601,6 +601,10 @@ struct Cli {
     #[arg(long, global = true)]
     port: Option<u16>,
 
+    /// Override the HTTP bind address, also honored via WENLAN_BIND_ADDR.
+    #[arg(long, global = true)]
+    bind_addr: Option<std::net::SocketAddr>,
+
     /// Internal repair-only startup claim. Both exact fields are required.
     #[arg(long, global = true, hide = true, requires = "repair_manifest_digest")]
     repair_manifest_id: Option<String>,
@@ -948,6 +952,14 @@ async fn ingest_batch_process(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Some(bind) = cli.bind_addr {
+        anyhow::ensure!(
+            cli.port.is_none_or(|port| port == bind.port()),
+            "--port and --bind-addr must select the same port"
+        );
+        std::env::set_var("WENLAN_PORT", bind.port().to_string());
+        std::env::set_var("WENLAN_BIND_ADDR", bind.to_string());
+    }
 
     // Propagate flags through env vars so both wenlan-server's own path logic
     // and wenlan-core's config loader (`wenlan_core::config::config_path`) see

@@ -19,7 +19,10 @@ impl ObsidianExporter {
     pub fn export(&self, page: &Page) -> Result<ExportResult, WenlanError> {
         std::fs::create_dir_all(&self.vault_path)?;
 
-        let filename = format!("{}.md", slugify(&page.title));
+        let filename = format!(
+            "{}.md",
+            super::filename::bounded_basename(&slugify(&page.title), &page.id)
+        );
         let path = self.vault_path.join(&filename);
 
         let frontmatter = build_frontmatter(page);

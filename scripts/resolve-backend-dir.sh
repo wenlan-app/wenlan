@@ -17,6 +17,15 @@ is_wenlan_backend_dir() {
 # An explicit WENLAN_BACKEND_DIR override always has the highest priority.
 if [[ -n "${WENLAN_BACKEND_DIR:-}" ]]; then
   candidate="$WENLAN_BACKEND_DIR"
+  # Environment values set in PowerShell use native drive/UNC spelling. Convert
+  # before testing absoluteness; only POSIX spelling is safe to prefix here.
+  if command -v cygpath >/dev/null 2>&1; then
+    candidate="$(cygpath -u -- "$candidate")" || {
+      echo "error: could not convert WENLAN_BACKEND_DIR" >&2
+      exit 1
+    }
+    [[ -n "$candidate" ]] || exit 1
+  fi
   if [[ "$candidate" != /* ]]; then
     candidate="$REPO_ROOT/$candidate"
   fi

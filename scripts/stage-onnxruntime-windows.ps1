@@ -25,13 +25,13 @@ try {
     # developer's machine never would.
     Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -TimeoutSec 120
 
-    $ActualZipSha256 = (Get-FileHash -Path $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $ActualZipSha256 = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($ActualZipSha256 -ne $ExpectedZipSha256) {
         throw "onnxruntime archive SHA-256 mismatch: expected $ExpectedZipSha256, got $ActualZipSha256"
     }
 
-    Expand-Archive -Path $ZipPath -DestinationPath $ExtractPath
-    $Dll = Get-ChildItem -Path $ExtractPath -Recurse -Filter onnxruntime.dll |
+    Expand-Archive -LiteralPath $ZipPath -DestinationPath $ExtractPath
+    $Dll = Get-ChildItem -LiteralPath $ExtractPath -Recurse -Filter onnxruntime.dll |
         Select-Object -First 1
     if (-not $Dll) {
         throw "onnxruntime.dll not found in verified archive"
@@ -39,9 +39,9 @@ try {
 
     New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
     $Destination = Join-Path $DestinationDirectory "onnxruntime.dll"
-    Copy-Item -Path $Dll.FullName -Destination $Destination -Force
+    Copy-Item -LiteralPath $Dll.FullName -Destination $Destination -Force
     Write-Host "Staged verified ONNX Runtime $OrtVersion at $Destination"
 }
 finally {
-    Remove-Item -Recurse -Force $TempRoot -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

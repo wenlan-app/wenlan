@@ -60,12 +60,7 @@ pub struct SearchResponse {
     pub supplemental_pages: Option<Vec<wenlan_core::db::SearchResult>>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct HealthResponse {
-    pub status: String,
-    pub db_initialized: bool,
-    pub version: String,
-}
+pub use wenlan_types::responses::HealthResponse;
 
 // ===== Route Handlers =====
 
@@ -75,11 +70,19 @@ pub async fn handle_health(
 ) -> Result<Json<HealthResponse>, ServerError> {
     let s = state.read().await;
     let db_initialized = s.db.is_some();
+    let root = s.presence_root.clone();
+    drop(s);
 
     Ok(Json(HealthResponse {
         status: "ok".to_string(),
         db_initialized,
         version: wenlan_core::version().to_string(),
+        data_root: root
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned()),
+        data_root_identity: root
+            .as_deref()
+            .and_then(|path| wenlan_core::config::data_root_identity(path).ok()),
     }))
 }
 
@@ -1280,7 +1283,20 @@ pub async fn handle_test_llm(
 /// and retains a hard deadline for tasks that cannot cooperate.
 pub async fn handle_shutdown(
     Extension(shutdown): Extension<crate::lifecycle::ShutdownHandle>,
-) -> (HeaderMap, &'static str) {
+    State(state): State<SharedState>,
+    request_headers: HeaderMap,
+) -> Result<(HeaderMap, &'static str), ServerError> {
+    if let Some(expected) = request_headers.get("x-wenlan-expected-root") {
+        let root = state.read().await.presence_root.clone();
+        let actual = root
+            .as_deref()
+            .and_then(|path| wenlan_core::config::data_root_identity(path).ok());
+        if actual.as_deref() != expected.to_str().ok() || actual.is_none() {
+            return Err(ServerError::ValidationError(
+                "Shutdown target belongs to a different data root".into(),
+            ));
+        }
+    }
     shutdown.request();
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -1288,7 +1304,7 @@ pub async fn handle_shutdown(
         HeaderValue::from_str(&std::process::id().to_string())
             .expect("process id is always a valid HTTP header value"),
     );
-    (headers, "shutting down")
+    Ok((headers, "shutting down"))
 }
 
 #[cfg(test)]
@@ -1302,6 +1318,43 @@ mod recent_endpoints_tests {
     use wenlan_core::llm_provider::{LlmBackend, LlmError, LlmProvider, LlmRequest};
 
     use crate::state::ServerState;
+
+    #[tokio::test]
+    async fn shutdown_rechecks_instance_identity_before_signalling() {
+        let root = tempfile::tempdir().unwrap();
+        let mut server = ServerState::default();
+        server.presence_root = Some(root.path().to_path_buf());
+        let state = Arc::new(RwLock::new(server));
+        let shutdown = crate::lifecycle::ShutdownHandle::default();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "x-wenlan-expected-root",
+            "another-instance".parse().unwrap(),
+        );
+        assert!(super::handle_shutdown(
+            axum::Extension(shutdown.clone()),
+            axum::extract::State(state.clone()),
+            headers.clone()
+        )
+        .await
+        .is_err());
+        assert!(!shutdown.is_requested());
+        headers.insert(
+            "x-wenlan-expected-root",
+            wenlan_core::config::data_root_identity(root.path())
+                .unwrap()
+                .parse()
+                .unwrap(),
+        );
+        super::handle_shutdown(
+            axum::Extension(shutdown.clone()),
+            axum::extract::State(state),
+            headers,
+        )
+        .await
+        .unwrap();
+        assert!(shutdown.is_requested());
+    }
 
     struct WenlanDataDirGuard {
         previous: Option<std::ffi::OsString>,

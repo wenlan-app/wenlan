@@ -349,6 +349,7 @@ pub async fn handle_update_source(
     Json(body): Json<UpdateSourceRequest>,
 ) -> Result<Json<Source>, ServerError> {
     let updated = wenlan_core::config::update_config(|config| {
+        require_unambiguous_source(config, &id)?;
         let Some(src) = config.sources.iter_mut().find(|s| s.id == id) else {
             return Ok(None);
         };
@@ -369,6 +370,7 @@ pub async fn handle_remove_source(
     Path(id): Path<String>,
 ) -> Result<StatusCode, ServerError> {
     let removed = wenlan_core::config::update_config(|config| {
+        require_unambiguous_source(config, &id)?;
         let removed = config.sources.iter().find(|s| s.id == id).cloned();
         config.sources.retain(|s| s.id != id);
         Ok(removed)
@@ -395,6 +397,27 @@ pub async fn handle_remove_source(
 }
 
 // ===== Helpers =====
+
+/// Old versions allowed distinct roots to share an ID. Never diff or remove an
+/// ambiguous source: its existing memories must survive until it is reconnected
+/// with separate IDs. Guessing which root owns the shared rows can delete data.
+fn require_unambiguous_source(
+    config: &wenlan_core::config::Config,
+    id: &str,
+) -> Result<(), wenlan_core::error::WenlanError> {
+    if config
+        .sources
+        .iter()
+        .filter(|source| source.id == id)
+        .count()
+        > 1
+    {
+        return Err(wenlan_core::error::WenlanError::Validation(format!(
+            "Source ID {id} belongs to multiple folders; reconnect them with separate IDs before syncing or removing this source"
+        )));
+    }
+    Ok(())
+}
 
 fn content_hash(content: &str) -> String {
     content_hash_bytes(content.as_bytes())
@@ -566,6 +589,7 @@ pub(crate) async fn sync_directory_source(
     source: &Source,
     config: &wenlan_core::config::Config,
 ) -> Result<DirectorySyncOutcome, ServerError> {
+    require_unambiguous_source(config, &source.id)?;
     if source.source_type == SourceType::Okf {
         return okf_sync::sync_okf_source(db, source, config).await;
     }
@@ -949,6 +973,7 @@ pub async fn handle_sync_source(
 ) -> Result<Json<SyncStatsResponse>, ServerError> {
     // Look up the source in config.
     let config = wenlan_core::config::load_config();
+    require_unambiguous_source(&config, &id)?;
     let source = config
         .sources
         .iter()
@@ -984,6 +1009,205 @@ pub async fn handle_sync_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn same_named_roots_have_distinct_ids_and_aliases_are_rejected() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let env = DataDirGuard::new();
+        let pages = env._tmp.path().join("pages");
+        wenlan_core::config::save_config(&Config {
+            knowledge_path: Some(pages.clone()),
+            ..Config::default()
+        })
+        .unwrap();
+        let (db, _db_dir) = new_test_db().await;
+        let server = ServerState {
+            db: Some(db.clone()),
+            ..ServerState::default()
+        };
+        let state = Arc::new(RwLock::new(server));
+        let mut seeded = Vec::new();
+        let mut ids = Vec::new();
+        for parent in ["a", "b"] {
+            let path = env._tmp.path().join(parent).join("Notes");
+            std::fs::create_dir_all(&path).unwrap();
+            let Json(source) = handle_add_source(
+                State(state.clone()),
+                crate::space_header::SpaceHeader(None),
+                Json(AddSourceRequest {
+                    source_type: "directory".into(),
+                    follow_changes: None,
+                    path: path.to_string_lossy().into_owned(),
+                }),
+            )
+            .await
+            .unwrap();
+            let file = path.join("note.txt");
+            std::fs::write(&file, "A stable document for a uniquely registered folder.").unwrap();
+            let document = seed_document(
+                &db,
+                &source.id,
+                &file,
+                &pages,
+                "A stable document for a uniquely registered folder.",
+            )
+            .await;
+            seeded.push((source.id.clone(), file, document));
+            ids.push(source.id);
+            let alias = path.join(".");
+            assert!(handle_add_source(
+                State(state.clone()),
+                crate::space_header::SpaceHeader(None),
+                Json(AddSourceRequest {
+                    source_type: "directory".into(),
+                    follow_changes: None,
+                    path: alias.to_string_lossy().into_owned()
+                })
+            )
+            .await
+            .is_err());
+        }
+        assert_ne!(ids[0], ids[1]);
+        let config = wenlan_core::config::load_config();
+        for source in config.sources.iter().rev() {
+            sync_directory_source(db.clone(), source, &config)
+                .await
+                .unwrap();
+        }
+        for (id, file, document) in &seeded {
+            assert!(!db
+                .get_memories_by_source_id("memory", document)
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(db
+                .get_sync_state(id, &file.to_string_lossy())
+                .await
+                .unwrap()
+                .is_some());
+        }
+        handle_remove_source(State(state), Path(ids[0].clone()))
+            .await
+            .unwrap();
+        let config = wenlan_core::config::load_config();
+        assert_eq!(config.sources.len(), 1);
+        assert_eq!(config.sources[0].id, ids[1]);
+        assert!(db
+            .get_sync_state(&seeded[1].0, &seeded[1].1.to_string_lossy())
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn legacy_colliding_source_ids_refuse_mutation() {
+        let mut config = Config::default();
+        for parent in ["a", "b"] {
+            config.sources.push(Source {
+                id: "directory-notes".into(),
+                source_type: SourceType::Directory,
+                path: PathBuf::from(parent).join("Notes"),
+                status: SyncStatus::Active,
+                last_sync: None,
+                file_count: 0,
+                memory_count: 0,
+                last_sync_errors: 0,
+                last_sync_error_detail: None,
+                space: None,
+                queued_files: 0,
+                waiting_files: 0,
+            });
+        }
+        assert!(require_unambiguous_source(&config, "directory-notes").is_err());
+        assert!(require_unambiguous_source(&config, "other").is_ok());
+    }
+
+    #[tokio::test]
+    async fn colliding_roots_cannot_delete_each_others_rows_or_registration() {
+        let _lock = crate::TEST_DATA_DIR_LOCK
+            .get_or_init(|| tokio::sync::Mutex::new(()))
+            .lock()
+            .await;
+        let env = DataDirGuard::new();
+        let (db, _db_dir) = new_test_db().await;
+        let mut config = Config {
+            knowledge_path: Some(env._tmp.path().join("pages")),
+            ..Config::default()
+        };
+        let mut documents = Vec::new();
+        for parent in ["a", "b"] {
+            let root = env._tmp.path().join(parent).join("Notes");
+            std::fs::create_dir_all(&root).unwrap();
+            let file = root.join("kept.txt");
+            std::fs::write(
+                &file,
+                "A persistent document belonging to this source root.",
+            )
+            .unwrap();
+            let source = Source {
+                id: "directory-notes".into(),
+                source_type: SourceType::Directory,
+                path: root,
+                status: SyncStatus::Active,
+                last_sync: None,
+                file_count: 0,
+                memory_count: 0,
+                last_sync_errors: 0,
+                last_sync_error_detail: None,
+                space: None,
+                queued_files: 0,
+                waiting_files: 0,
+            };
+            let document = seed_document(
+                &db,
+                &source.id,
+                &file,
+                config.knowledge_path.as_deref().unwrap(),
+                "A persistent document belonging to this source root.",
+            )
+            .await;
+            db.enqueue_document(&source.id, &file.to_string_lossy(), Some("pending"))
+                .await
+                .unwrap();
+            documents.push((file, document));
+            config.sources.push(source);
+        }
+        wenlan_core::config::save_config(&config).unwrap();
+        for source in &config.sources {
+            assert!(sync_directory_source(db.clone(), source, &config)
+                .await
+                .is_err());
+        }
+        let mut server = ServerState::default();
+        server.db = Some(db.clone());
+        assert!(handle_remove_source(
+            State(Arc::new(RwLock::new(server))),
+            Path("directory-notes".into())
+        )
+        .await
+        .is_err());
+        assert_eq!(wenlan_core::config::load_config().sources.len(), 2);
+        for (file, document) in documents {
+            assert!(!db
+                .get_memories_by_source_id("memory", &document)
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(db
+                .get_sync_state("directory-notes", &file.to_string_lossy())
+                .await
+                .unwrap()
+                .is_some());
+            assert!(db
+                .get_queue_entry("directory-notes", &file.to_string_lossy())
+                .await
+                .unwrap()
+                .is_some());
+        }
+    }
     use wenlan_core::config::Config;
     use wenlan_core::events::NoopEmitter;
     use wenlan_core::sources::SyncStatus;

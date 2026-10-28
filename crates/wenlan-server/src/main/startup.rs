@@ -6,6 +6,9 @@ use super::*;
 /// post-serve continuation to yield between slices.
 pub(super) const SUPPORT_RECONCILE_BATCH: usize = 25;
 
+#[path = "startup_paths.rs"]
+mod startup_paths;
+
 pub(super) struct PreparedStartupState {
     pub(super) server_state: ServerState,
     pub(super) db_arc: Arc<wenlan_core::db::MemoryDB>,
@@ -73,10 +76,14 @@ pub(super) async fn prepare_startup_state(
             wenlan_core::migrate_rename::migrate_and_log(&dl.join("origin"), &dl.join("wenlan"));
         }
     }
-    // An isolated daemon must not migrate the user's legacy home either.
-    // This applies again when a verified cold runtime resumes normally.
-    if !repair_recovery_pending && wenlan_core::env_compat::var_compat("WENLAN_DATA_DIR").is_none()
-    {
+    // Do not create the destination before the legacy data migration above.
+    // First-run roots need an identity too; repair mode must create nothing.
+    let default_home_writes = startup_paths::prepare_default_home(
+        repair_recovery_pending,
+        &wenlan_root,
+        dirs::data_local_dir().as_deref(),
+    )?;
+    if optional_runtime_workers_allowed(repair_recovery_pending) && default_home_writes {
         if let Some(home) = dirs::home_dir() {
             wenlan_core::migrate_rename::migrate_and_log(
                 &home.join(".origin"),
@@ -223,11 +230,7 @@ pub(super) async fn prepare_startup_state(
     // - Migrate legacy ~/Origin/knowledge/ md files into ~/.wenlan/pages/ if
     //   the new dir is empty. Never deletes the old dir; user can clean up
     //   manually after verifying.
-    // An isolated data root keeps its pages to itself (see
-    // `wenlan_core::config::default_pages_root`), so it leaves ~/.wenlan alone.
-    if optional_runtime_workers_allowed(repair_recovery_pending)
-        && wenlan_core::config::isolated_data_root().is_none()
-    {
+    if default_home_writes {
         if let Some(home) = dirs::home_dir() {
             let wenlan_dot = home.join(".wenlan");
             for sub in ["pages", "sessions", "sessions/_status"] {

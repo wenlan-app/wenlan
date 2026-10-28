@@ -16,6 +16,9 @@ use std::time::SystemTime;
 
 use anyhow::Result;
 
+#[path = "open_document.rs"]
+mod open_document;
+
 use crate::client::WenlanClient;
 use crate::output::{print_json, ResolvedFormat};
 
@@ -218,18 +221,13 @@ fn read_pages(dir: &Path) -> Vec<PageEntry> {
 /// Open a path in the OS default app for its type. Returns whether a launcher
 /// actually ran (false -> caller prints the path so the user opens it).
 fn open_in_editor(path: &Path) -> bool {
-    use std::process::Command;
-    let status = if cfg!(target_os = "windows") {
-        Command::new("cmd")
-            .args(["/C", "start", ""])
-            .arg(path)
-            .status()
-    } else if cfg!(target_os = "macos") {
-        Command::new("open").arg(path).status()
-    } else {
-        Command::new("xdg-open").arg(path).status()
-    };
-    status.map(|s| s.success()).unwrap_or(false)
+    open_document::open_document(path, |command| {
+        let mut child = command.spawn()?;
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        Ok(())
+    })
 }
 
 /// Collapse same-title pages into `(title, count)`, newest-first by first

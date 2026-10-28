@@ -64,6 +64,7 @@ import { pageReviewNotice, type PageReviewNotice } from "./page/pageReviewNotice
 import { RailPanelTitle } from "./MemoryDetailPrimitives";
 import { AiChangesOptions } from "./AiChangesOptions";
 import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
+import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
 import { ReferencePreview } from "./links/ReferencePreview";
@@ -165,10 +166,6 @@ function parseWikilink(inner: string): { targetLabel: string; displayText: strin
     displayText: alias || targetDisplay || inner.trim(),
     hasAlias: alias.length > 0,
   };
-}
-
-function folderName(path: string): string {
-  return path.split("/").filter(Boolean).pop() || path;
 }
 
 function createPageOperationId(): string {

@@ -2165,5 +2165,36 @@ class CommandGenerationTests(unittest.TestCase):
         )
 
 
+class NativePlatformContractTests(unittest.TestCase):
+    def test_lifecycle_cannot_restore_destructive_supervisor_fallback(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "crates/wenlan-cli/src/commands/service.rs").read_text(encoding="utf-8")
+        # Runtime-state tests exercise the ownership policy; this protects its
+        # caller boundary against adding a separate force-stop escape hatch.
+        self.assertNotIn("ServiceStopCtx", source)
+        self.assertNotIn('"/end"', source)
+        self.assertNotIn('"bootout"', source)
+        self.assertNotIn('"unload"', source)
+        self.assertNotIn('"kickstart", "-k"', source)
+        self.assertNotIn(".stop(", source)
+        start = source.split("pub fn start_registered(", 1)[1].split("pub fn is_installed", 1)[0]
+        self.assertLess(start.index("verify_registered_stopped()?"), start.index("run_schtasks("))
+        stop = source.split("async fn stop()", 1)[1].split("pub async fn restart()", 1)[0]
+        self.assertLess(stop.index("verify_registered_stopped()?"), stop.index("write_autostart_off_marker()?"))
+
+    def test_native_behavior_lane_is_required_on_all_supported_host_families(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        job = workflow.split("  native-platform-contracts:\n", 1)[1].split("  conclusion:\n", 1)[0]
+        for host in ("ubuntu-24.04", "macos-14", "windows-2022"):
+            self.assertIn(host, job)
+        self.assertIn("cargo test --manifest-path scripts/platform-contracts/Cargo.toml --locked", job)
+        conclusion = workflow.split("  conclusion:\n", 1)[1]
+        self.assertIn("app-e2e, native-platform-contracts]", conclusion)
+        self.assertIn("expect_job native-platform-contracts", conclusion)
+        self.assertIn("scripts/resolve-backend-dir.test.ps1", job)
+        self.assertIn("scripts/setup-vulkan-sdk-windows.test.ps1", job)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

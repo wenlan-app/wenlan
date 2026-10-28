@@ -77,6 +77,53 @@ If you see `Failed to load onnxruntime.dll` or version-mismatch errors on Window
 
 ## Manual Windows verification
 
+### Legacy service upgrade
+
+Lifecycle commands require the daemon to report the selected data-root identity.
+They also check ownership of a globally named macOS/Linux registration before
+controlling its supervisor. Process shutdown uses only the daemon's root-checked
+HTTP endpoint; a failed, unresponsive, or mismatched endpoint never authorizes a
+force-stop through the supervisor. Before starting or updating a registration,
+the CLI independently requires an inactive runtime: Windows checks task state
+and running-instance count, Linux checks ActiveState and MainPID, and macOS checks
+the loaded job's state and effective launch root. Queued or unknown states refuse
+control. A missing identity from an older daemon or an
+unmarked old service is an explicit refusal, never permission to stop an unknown
+instance. New Linux registrations persist `WENLAN_DATA_DIR` and `WENLAN_BIND_ADDR`.
+
+macOS updates require the previous job to be unloaded, even after its daemon has
+exited. The CLI writes the confirmed plist and uses `bootstrap` without implicit
+unload/remove behavior; starting a verified inactive loaded job uses `kickstart`
+without `-k`. If an update reports that the old job is still loaded, inspect and
+boot out that confirmed job using the steps below, then retry. Other root's loaded
+configuration cannot be replaced merely by editing the plist on disk.
+
+For a one-time upgrade, first inspect the existing service and confirm its
+executable, arguments, and data directory against the store you intend to upgrade:
+
+- Windows: Task Scheduler, or `schtasks /query /tn WenlanServer /xml`. Inspect
+  custom `WenlanServer-*` tasks separately. Export the confirmed task XML as a
+  backup, stop that task, then delete that stopped legacy task registration in
+  Task Scheduler before reinstalling. Keep its data directory.
+- macOS: inspect `~/Library/LaunchAgents/com.wenlan.server.plist` and
+  `launchctl print gui/$(id -u)/com.wenlan.server`. After confirming the instance,
+  boot it out with `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.wenlan.server.plist`.
+- Linux: inspect `systemctl --user cat wenlan-server.service` and
+  `systemctl --user show wenlan-server.service -p Environment -p ExecStart -p MainPID`.
+  After confirming the instance, use `systemctl --user stop wenlan-server.service`.
+
+On macOS/Linux, back up the confirmed registration. If it has no reliable root marker, move that
+registration out of its service directory (and run `systemctl --user daemon-reload`
+on Linux). Then run `wenlan background on` with the intended absolute
+`WENLAN_DATA_DIR` and loopback `WENLAN_BIND_ADDR`. Do not delete the data directory.
+A manually started legacy daemon must be stopped from its own terminal or by its
+verified PID before retrying. A root mismatch means the selected endpoint or
+registration is wrong; do not stop it merely to silence the error.
+
+The [Windows compatibility audit from 2026-10-28](windows-audit-2026-10-28.md)
+records source-confirmed defects, isolated probe results, and the focused
+regression gates needed before broader Windows runtime verification.
+
 The CI matrix includes `windows-2022` for Windows-affecting PRs, but hosted runners do not prove physical GPU inference. Follow [`windows-vulkan.md`](windows-vulkan.md) on a real Windows 11 GPU machine and run all three Qwen live-smoke legs: Vulkan/device assertion, forced CPU, and injected CPU fallback.
 
 A fourth leg is defined but **has never been run**: the same install on a clean Windows VM or Windows Sandbox with *no* vendor ICD, from the real signed installer or release ZIP, loading a real GGUF and asserting `/api/status` reports `backend=cpu` and `gpu_layers=0`. The three legs above all ran on a machine with working drivers, so none of them covers it. Until that leg runs, the driverless end-user path is unproven — do not assert either that users are unaffected or that they are affected.

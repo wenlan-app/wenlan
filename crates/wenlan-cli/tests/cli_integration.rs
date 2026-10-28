@@ -56,6 +56,44 @@ fn claude_desktop_config_in(runtime: &IsolatedRuntime) -> PathBuf {
     }
 }
 
+#[test]
+fn background_off_rejects_another_instance_without_sending_shutdown() {
+    use std::io::{Read, Write};
+    let runtime = IsolatedRuntime::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 8192];
+        let size = stream.read(&mut request).unwrap();
+        assert!(String::from_utf8_lossy(&request[..size]).starts_with("GET /api/health "));
+        let body = r#"{"status":"ok","db_initialized":true,"version":"test","data_root_identity":"different-instance"}"#;
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        drop(stream);
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok(_) => panic!("the other instance must not receive a shutdown request"),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(std::time::Duration::from_millis(10))
+                }
+                Err(error) => panic!("listener failed: {error}"),
+            }
+        }
+    });
+    cli_with_isolated_runtime(&runtime)
+        .env("WENLAN_BIND_ADDR", address.to_string())
+        .args(["background", "off"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not prove the selected data root",
+        ));
+    server.join().unwrap();
+    assert!(!runtime.data.path().join("autostart.off").exists());
+}
+
 struct IsolatedRuntime {
     root: TempDir,
     home: TempDir,
@@ -100,43 +138,161 @@ impl IsolatedRuntime {
 }
 
 #[cfg(target_os = "macos")]
-fn write_fake_launchctl(fake_bin: &Path) {
-    let path = fake_bin.join("launchctl");
-    fs::write(
-        &path,
-        "#!/bin/sh\nif [ -n \"$WENLAN_TEST_LAUNCHCTL_LOG\" ]; then echo \"$@\" >> \"$WENLAN_TEST_LAUNCHCTL_LOG\"; fi\ncase \"$1\" in\n  list) exit 0 ;;\n  load|unload) echo \"fake launchctl $1 $2\"; exit 0 ;;\n  bootout) echo \"fake launchctl $@\"; exit \"${WENLAN_TEST_LAUNCHCTL_BOOTOUT_EXIT:-0}\" ;;\n  print) echo \"fake launchctl $@\"; exit \"${WENLAN_TEST_LAUNCHCTL_PRINT_EXIT:-0}\" ;;\n  *) echo \"fake launchctl $@\"; exit 0 ;;\nesac\n",
-    )
-    .expect("write fake launchctl");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&path)
-            .expect("fake launchctl metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(path, perms).expect("chmod fake launchctl");
+fn write_owned_launch_agent(runtime: &IsolatedRuntime, root: &Path) {
+    let path = runtime.service_unit_path();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut environment = plist::Dictionary::new();
+    environment.insert(
+        "WENLAN_DATA_DIR".into(),
+        plist::Value::String(root.to_string_lossy().into_owned()),
+    );
+    let mut dict = plist::Dictionary::new();
+    dict.insert(
+        "EnvironmentVariables".into(),
+        plist::Value::Dictionary(environment),
+    );
+    dict.insert(
+        "ProgramArguments".into(),
+        plist::Value::Array(vec![plist::Value::String("/test/wenlan-server".into())]),
+    );
+    plist::Value::Dictionary(dict).to_file_xml(path).unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn ownership_refusal_never_reaches_any_supervisor_control() {
+    use std::io::{Read, Write};
+    for arguments in [
+        vec!["background", "off"],
+        vec!["restart"],
+        vec!["background", "on"],
+    ] {
+        let runtime = IsolatedRuntime::new();
+        write_owned_launch_agent(&runtime, runtime.data.path());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            stream.read(&mut request).unwrap();
+            let body = r#"{"status":"ok","db_initialized":true,"version":"test","data_root_identity":"other-root"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let log = runtime.data.path().join("supervisor.log");
+        cli_with_isolated_runtime(&runtime)
+            .env("WENLAN_BIND_ADDR", address.to_string())
+            .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
+            .args(arguments)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(
+                "does not prove the selected data root",
+            ));
+        server.join().unwrap();
+        assert!(fs::read_to_string(&log).unwrap_or_default().is_empty());
+        assert!(!runtime.data.path().join("autostart.off").exists());
     }
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_shutdown_stub() -> (String, std::sync::mpsc::Receiver<String>) {
-    spawn_shutdown_stub_response("200 OK", "shutting down")
+#[test]
+fn legacy_or_foreign_registration_refuses_control_even_without_a_listener() {
+    for legacy in [false, true] {
+        let runtime = IsolatedRuntime::new();
+        let other = tempfile::tempdir().unwrap();
+        write_owned_launch_agent(&runtime, other.path());
+        if legacy {
+            let mut value = plist::Value::from_file(runtime.service_unit_path()).unwrap();
+            value
+                .as_dictionary_mut()
+                .unwrap()
+                .remove("EnvironmentVariables");
+            value.to_file_xml(runtime.service_unit_path()).unwrap();
+        }
+        let log = runtime.data.path().join("supervisor.log");
+        cli_with_isolated_runtime(&runtime)
+            .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
+            .args(["background", "off"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Refusing lifecycle control"));
+        assert!(fs::read_to_string(&log).unwrap_or_default().is_empty());
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_shutdown_failure_stub() -> (String, std::sync::mpsc::Receiver<String>) {
-    spawn_shutdown_stub_response("500 Internal Server Error", "")
+fn write_fake_launchctl(fake_bin: &Path) {
+    let path = fake_bin.join("launchctl");
+    fs::write(&path, r#"#!/bin/sh
+if [ -n "$WENLAN_TEST_LAUNCHCTL_LOG" ]; then printf '%s\n' "$*" >> "$WENLAN_TEST_LAUNCHCTL_LOG"; fi
+case "$1" in
+  print)
+    if [ -n "$WENLAN_TEST_LAUNCHCTL_PRINT_EXIT" ]; then exit "$WENLAN_TEST_LAUNCHCTL_PRINT_EXIT"; fi
+    if [ -z "$WENLAN_TEST_LAUNCHCTL_LOADED_ROOT" ]; then exit 113; fi
+    printf '%s\n' 'service = {' "state = ${WENLAN_TEST_LAUNCHCTL_STATE:-not running}" 'arguments = {' '/test/wenlan-server' '}' 'environment = {' "WENLAN_DATA_DIR => $WENLAN_TEST_LAUNCHCTL_LOADED_ROOT" '}' '}'
+    if [ -n "$WENLAN_TEST_LAUNCHCTL_PID" ]; then printf 'pid = %s\n' "$WENLAN_TEST_LAUNCHCTL_PID"; fi
+    ;;
+  *) exit 0 ;;
+esac
+"#).expect("write fake launchctl");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+}
+
+#[cfg(unix)]
+fn lifecycle_health_body(root: &Path) -> String {
+    serde_json::json!({"status":"ok", "db_initialized":true, "version":"test", "data_root_identity":wenlan_core::config::data_root_identity(root).unwrap()}).to_string()
+}
+
+#[cfg(unix)]
+fn answer_identity_probe(listener: &std::net::TcpListener, body: &str) {
+    use std::io::{BufRead, BufReader, Write};
+    let (stream, _) = listener.accept().expect("accept instance identity probe");
+    let mut reader = BufReader::new(stream);
+    let mut request = String::new();
+    reader.read_line(&mut request).unwrap();
+    assert!(request.starts_with("GET /api/health "), "{request}");
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        if line == "\r\n" || line.is_empty() {
+            break;
+        }
+    }
+    reader.get_mut().write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).unwrap();
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_respawning_shutdown_stub() -> String {
+fn spawn_shutdown_stub(root: &Path) -> (String, std::sync::mpsc::Receiver<String>) {
+    spawn_shutdown_stub_response("200 OK", "shutting down", root)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_shutdown_failure_stub(root: &Path) -> (String, std::sync::mpsc::Receiver<String>) {
+    spawn_shutdown_stub_response("500 Internal Server Error", "", root)
+}
+
+#[cfg(target_os = "macos")]
+fn spawn_respawning_shutdown_stub(root: &Path) -> String {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::thread;
 
+    let identity_body = lifecycle_health_body(root);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind respawning shutdown stub");
     let address = listener.local_addr().expect("respawning stub address");
     thread::spawn(move || {
+        answer_identity_probe(&listener, &identity_body);
         let (stream, _) = listener.accept().expect("accept shutdown request");
         let mut reader = BufReader::new(stream);
         let mut request_line = String::new();
@@ -189,14 +345,16 @@ fn spawn_respawning_shutdown_stub() -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_hanging_health_probe_stub() -> String {
+fn spawn_hanging_health_probe_stub(root: &Path) -> String {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::thread;
 
+    let identity_body = lifecycle_health_body(root);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind slow-closing shutdown stub");
     let address = listener.local_addr().expect("slow-closing stub address");
     thread::spawn(move || {
+        answer_identity_probe(&listener, &identity_body);
         let (stream, _) = listener.accept().expect("accept shutdown request");
         let mut reader = BufReader::new(stream);
         let mut request_line = String::new();
@@ -230,16 +388,18 @@ fn spawn_hanging_health_probe_stub() -> String {
 }
 
 #[cfg(unix)]
-fn spawn_keepalive_shutdown_stub() -> (String, std::sync::mpsc::Receiver<bool>) {
+fn spawn_keepalive_shutdown_stub(root: &Path) -> (String, std::sync::mpsc::Receiver<bool>) {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
     use std::thread;
 
+    let identity_body = lifecycle_health_body(root);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind keepalive shutdown stub");
     let address = listener.local_addr().expect("keepalive stub address");
     let (close_header_tx, close_header_rx) = mpsc::channel();
     thread::spawn(move || {
+        answer_identity_probe(&listener, &identity_body);
         let (stream, _) = listener.accept().expect("accept shutdown request");
         stream
             .set_read_timeout(Some(std::time::Duration::from_secs(12)))
@@ -329,12 +489,14 @@ fn spawn_keepalive_shutdown_stub() -> (String, std::sync::mpsc::Receiver<bool>) 
 fn spawn_shutdown_stub_response(
     status: &'static str,
     body: &'static str,
+    root: &Path,
 ) -> (String, std::sync::mpsc::Receiver<String>) {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
     use std::thread;
 
+    let identity_body = lifecycle_health_body(root);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind shutdown stub");
     let base = format!(
         "http://{}",
@@ -342,6 +504,7 @@ fn spawn_shutdown_stub_response(
     );
     let (sent, received) = mpsc::channel();
     thread::spawn(move || {
+        answer_identity_probe(&listener, &identity_body);
         let (stream, _) = listener.accept().expect("accept shutdown request");
         let mut reader = BufReader::new(stream);
         let mut request_line = String::new();
@@ -373,14 +536,16 @@ fn spawn_shutdown_stub_response(
 // verb lands in the fake launchctl log after that close -- the same "does not
 // come back until told to" behavior a real KeepAlive job has.
 #[cfg(target_os = "macos")]
-fn spawn_restart_cycle_daemon(log_path: PathBuf) -> String {
+fn spawn_restart_cycle_daemon(log_path: PathBuf, root: &Path) -> String {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
     use std::thread;
 
+    let identity_body = lifecycle_health_body(root);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind restart cycle daemon");
     let address = listener.local_addr().expect("restart cycle daemon address");
     thread::spawn(move || {
+        answer_identity_probe(&listener, &identity_body);
         let (stream, _) = listener.accept().expect("accept shutdown request");
         let mut reader = BufReader::new(stream);
         let mut request_line = String::new();
@@ -416,7 +581,7 @@ fn spawn_restart_cycle_daemon(log_path: PathBuf) -> String {
             if contents.len() as u64 > offset {
                 let started = contents[offset as usize..]
                     .lines()
-                    .any(|line| line.starts_with("start ") || line.starts_with("kickstart "));
+                    .any(|line| line.starts_with("bootstrap ") || line.starts_with("kickstart "));
                 if started {
                     break;
                 }
@@ -439,7 +604,7 @@ fn spawn_restart_cycle_daemon(log_path: PathBuf) -> String {
                 }
             }
             let _ = health_reader.get_mut().write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"ok\"}",
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", identity_body.len(), identity_body).as_bytes(),
             );
         }
     });
@@ -1471,7 +1636,7 @@ fn restart_after_install_succeeds_isolated() {
         .success();
 
     let log = runtime.data.path().join("restart_launchctl.log");
-    let base_url = spawn_restart_cycle_daemon(log.clone());
+    let base_url = spawn_restart_cycle_daemon(log.clone(), runtime.data.path());
     let bind_addr = bind_addr_from_stub_host(&base_url);
 
     // Installed → restart gracefully stops the daemon, waits for it to exit,
@@ -1479,6 +1644,7 @@ fn restart_after_install_succeeds_isolated() {
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_BIND_ADDR", bind_addr)
         .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
+        .env("WENLAN_TEST_LAUNCHCTL_LOADED_ROOT", runtime.data.path())
         .arg("restart")
         .assert()
         .success()
@@ -1489,10 +1655,12 @@ fn restart_after_install_succeeds_isolated() {
         !calls.lines().any(|l| l.starts_with("stop ")),
         "restart must use the graceful HTTP shutdown, not `launchctl stop`; launchctl calls were:\n{calls}"
     );
+    assert!(calls.lines().any(|line| line.starts_with("kickstart gui/")));
+    assert!(!calls.contains("kickstart -k"));
     assert!(
         calls
             .lines()
-            .any(|l| l.starts_with("start ") || l.starts_with("kickstart ")),
+            .any(|l| l.starts_with("bootstrap ") || l.starts_with("kickstart ")),
         "restart must start the service after the graceful stop; launchctl calls were:\n{calls}"
     );
 
@@ -1530,47 +1698,34 @@ fn restart_without_a_daemon_fails_loud_after_starting_the_service() {
     assert!(
         calls
             .lines()
-            .any(|l| l.starts_with("start ") || l.starts_with("kickstart ")),
+            .any(|l| l.starts_with("bootstrap ") || l.starts_with("kickstart ")),
         "restart must still attempt to start the service even when health never answers; launchctl calls were:\n{calls}"
     );
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn background_on_over_running_daemon_stops_first_isolated() {
+fn background_on_replaces_only_an_unloaded_registration() {
     let runtime = IsolatedRuntime::new();
+    write_owned_launch_agent(&runtime, runtime.data.path());
     let log = runtime.data.path().join("launchctl.log");
-
-    // First background-on registers + starts the service.
-    cli_with_isolated_runtime(&runtime)
-        .args(["background", "on"])
-        .assert()
-        .success();
-
-    // Second background-on (the upgrade case): clear the log, re-register, and assert
-    // a stop-class launchctl call happened before the new start.
-    let _ = fs::remove_file(&log);
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
         .args(["background", "on"])
         .assert()
         .success();
-
     let calls = fs::read_to_string(&log).unwrap_or_default();
-    // We assert specifically for "stop" — our explicit m.stop() emits
-    // `launchctl stop com.wenlan.server`. service-manager's internal reinstall
-    // logic emits `launchctl remove`, which is a different verb and does NOT
-    // terminate a running process the same way. The test must discriminate
-    // between our explicit stop and the library's internal unload-before-reload.
-    assert!(
-        calls.lines().any(|l| l.starts_with("stop ")),
-        "second background-on must explicitly call `launchctl stop` before re-registering; launchctl calls were:\n{calls}"
-    );
+    assert!(calls.lines().any(|line| line.starts_with("bootstrap ")));
+    assert!(!calls
+        .lines()
+        .any(|line| ["stop ", "remove ", "unload ", "bootout "]
+            .iter()
+            .any(|verb| line.starts_with(verb))));
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn background_off_boots_out_keepalive_job_without_stop_restart_race() {
+fn background_off_keeps_inactive_job_without_force_stop() {
     let runtime = IsolatedRuntime::new();
     let log = runtime.data.path().join("launchctl.log");
 
@@ -1588,8 +1743,8 @@ fn background_off_boots_out_keepalive_job_without_stop_restart_race() {
 
     let calls = fs::read_to_string(&log).unwrap_or_default();
     assert!(
-        calls.lines().any(|line| line.starts_with("bootout ")),
-        "background off must boot out the KeepAlive job while preserving its plist; launchctl calls were:\n{calls}"
+        !calls.lines().any(|line| line.starts_with("bootout ")),
+        "background off must preserve the inactive registration without force-stop; launchctl calls were:\n{calls}"
     );
     assert!(
         !calls.lines().any(|line| line.starts_with("stop ")),
@@ -1679,7 +1834,7 @@ fn setup_background_status_roundtrip_isolated() {
         .stdout(predicate::str::contains("\"status\": \"unreachable\""));
 
     let launchctl_log = runtime.data.path().join("background-off-launchctl.log");
-    let (host, shutdown_requests) = spawn_shutdown_stub();
+    let (host, shutdown_requests) = spawn_shutdown_stub(runtime.data.path());
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_TEST_LAUNCHCTL_LOG", &launchctl_log)
         .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
@@ -1731,17 +1886,16 @@ fn background_off_without_registration_is_a_successful_noop() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn background_off_with_registration_and_unreachable_daemon_stops_manager_but_keeps_registration() {
+fn background_off_with_inactive_registration_preserves_it_without_force_stop() {
     let runtime = IsolatedRuntime::new();
     let plist = runtime.service_unit_path();
     fs::create_dir_all(plist.parent().expect("launch agent directory"))
         .expect("create fake launch agent directory");
-    fs::write(&plist, "fake registered launch agent").expect("write fake registration");
+    write_owned_launch_agent(&runtime, runtime.data.path());
 
     // Reserve an ephemeral address, then release it immediately so the shutdown
-    // request deterministically takes the connection-refused path. A registered
-    // job may be between supervisor attempts here; `background off` must still
-    // stop the manager job rather than merely report success.
+    // request deterministically takes the connection-refused path. The fake
+    // manager explicitly reports that this job is absent.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve unused port");
     let bind_addr = listener.local_addr().expect("reserved loopback address");
     drop(listener);
@@ -1758,12 +1912,12 @@ fn background_off_with_registration_and_unreachable_daemon_stops_manager_but_kee
 
     let calls = fs::read_to_string(&launchctl_log).unwrap_or_default();
     assert!(
-        calls.lines().any(|line| line.starts_with("bootout ")),
-        "an unreachable registered daemon may still be starting; background off must stop its manager job; calls were:\n{calls}"
+        !calls.lines().any(|line| line.starts_with("bootout ")),
+        "a proven inactive registration must remain untouched; calls were:\n{calls}"
     );
     assert!(
         plist.exists(),
-        "manager fallback must stop the daemon without deleting its registration"
+        "the inactive registration must remain available"
     );
 }
 
@@ -1771,7 +1925,7 @@ fn background_off_with_registration_and_unreachable_daemon_stops_manager_but_kee
 #[test]
 fn background_off_without_registration_stops_reachable_daemon() {
     let runtime = IsolatedRuntime::new();
-    let (host, requests) = spawn_shutdown_stub();
+    let (host, requests) = spawn_shutdown_stub(runtime.data.path());
 
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
@@ -1794,7 +1948,7 @@ fn background_off_without_registration_stops_reachable_daemon() {
 #[test]
 fn background_off_rejects_daemon_that_respawns_after_initial_disconnect() {
     let runtime = IsolatedRuntime::new();
-    let host = spawn_respawning_shutdown_stub();
+    let host = spawn_respawning_shutdown_stub(runtime.data.path());
 
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
@@ -1808,7 +1962,7 @@ fn background_off_rejects_daemon_that_respawns_after_initial_disconnect() {
 #[test]
 fn background_off_tolerates_transient_probe_timeout_before_socket_closes() {
     let runtime = IsolatedRuntime::new();
-    let host = spawn_hanging_health_probe_stub();
+    let host = spawn_hanging_health_probe_stub(runtime.data.path());
 
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
@@ -1824,7 +1978,7 @@ fn background_off_tolerates_transient_probe_timeout_before_socket_closes() {
 #[test]
 fn background_off_does_not_keep_graceful_shutdown_connection_alive() {
     let runtime = IsolatedRuntime::new();
-    let (host, close_header) = spawn_keepalive_shutdown_stub();
+    let (host, close_header) = spawn_keepalive_shutdown_stub(runtime.data.path());
 
     let assertion = cli_with_isolated_runtime(&runtime)
         .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
@@ -1845,8 +1999,8 @@ fn background_off_does_not_keep_graceful_shutdown_connection_alive() {
 #[test]
 fn background_off_ignores_remote_wenlan_host_for_local_lifecycle() {
     let runtime = IsolatedRuntime::new();
-    let (local_host, local_requests) = spawn_shutdown_stub();
-    let (remote_host, remote_requests) = spawn_shutdown_stub();
+    let (local_host, local_requests) = spawn_shutdown_stub(runtime.data.path());
+    let (remote_host, remote_requests) = spawn_shutdown_stub(runtime.data.path());
 
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_HOST", remote_host)
@@ -1874,48 +2028,70 @@ fn background_off_ignores_remote_wenlan_host_for_local_lifecycle() {
 #[test]
 fn background_off_succeeds_when_launchd_job_is_already_absent() {
     let runtime = IsolatedRuntime::new();
+    write_owned_launch_agent(&runtime, runtime.data.path());
     let log = runtime.data.path().join("already-absent-launchctl.log");
-    let (host, _requests) = spawn_shutdown_failure_stub();
-
-    cli_with_isolated_runtime(&runtime)
-        .args(["background", "on"])
-        .assert()
-        .success();
-
     cli_with_isolated_runtime(&runtime)
         .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
-        .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
-        .env("WENLAN_TEST_LAUNCHCTL_BOOTOUT_EXIT", "3")
-        .env("WENLAN_TEST_LAUNCHCTL_PRINT_EXIT", "113")
         .args(["background", "off"])
         .assert()
-        .success()
-        .stdout(predicate::str::contains("Stopped com.wenlan.server"));
-
-    let calls = fs::read_to_string(&log).expect("already-absent launchctl log");
+        .success();
+    let calls = fs::read_to_string(&log).unwrap();
     assert!(calls.lines().any(|line| line.starts_with("print gui/")));
+    assert!(!calls
+        .lines()
+        .any(|line| line.starts_with("bootout ") || line.starts_with("stop ")));
     assert!(runtime.service_unit_path().exists());
 }
 
 #[cfg(target_os = "macos")]
 #[test]
-fn background_off_surfaces_unconfirmed_launchd_failure() {
+fn background_off_http_failure_never_reaches_supervisor() {
     let runtime = IsolatedRuntime::new();
-    let (host, _requests) = spawn_shutdown_failure_stub();
-
+    write_owned_launch_agent(&runtime, runtime.data.path());
+    let (host, requests) = spawn_shutdown_failure_stub(runtime.data.path());
+    let log = runtime.data.path().join("http-failure-launchctl.log");
     cli_with_isolated_runtime(&runtime)
-        .args(["background", "on"])
-        .assert()
-        .success();
-
-    cli_with_isolated_runtime(&runtime)
-        .env("WENLAN_TEST_LAUNCHCTL_BOOTOUT_EXIT", "5")
-        .env("WENLAN_TEST_LAUNCHCTL_PRINT_EXIT", "0")
+        .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
         .env("WENLAN_BIND_ADDR", bind_addr_from_stub_host(&host))
         .args(["background", "off"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("launchctl bootout failed"));
+        .stderr(predicate::str::contains("daemon returned an error"));
+    assert!(requests
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .is_ok());
+    assert!(fs::read_to_string(&log).unwrap_or_default().is_empty());
+    assert!(!runtime.data.path().join("autostart.off").exists());
+}
 
-    assert!(runtime.service_unit_path().exists());
+#[cfg(target_os = "macos")]
+#[test]
+fn stale_plist_cannot_control_a_loaded_foreign_or_running_job() {
+    for running in [false, true] {
+        let runtime = IsolatedRuntime::new();
+        write_owned_launch_agent(&runtime, runtime.data.path());
+        let other = tempfile::tempdir().unwrap();
+        let log = runtime.data.path().join("runtime-ownership.log");
+        cli_with_isolated_runtime(&runtime)
+            .env("WENLAN_TEST_LAUNCHCTL_LOG", &log)
+            .env(
+                "WENLAN_TEST_LAUNCHCTL_LOADED_ROOT",
+                if running {
+                    runtime.data.path()
+                } else {
+                    other.path()
+                },
+            )
+            .env(
+                "WENLAN_TEST_LAUNCHCTL_PID",
+                if running { "123" } else { "" },
+            )
+            .args(["background", "off"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Refusing lifecycle control"));
+        let calls = fs::read_to_string(log).unwrap_or_default();
+        assert!(!calls.lines().any(|line| !line.starts_with("print ")));
+        assert!(!runtime.data.path().join("autostart.off").exists());
+    }
 }

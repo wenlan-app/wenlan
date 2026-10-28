@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $setupScript = Join-Path $PSScriptRoot "setup-vulkan-sdk-windows.ps1"
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) "wenlan-vulkan-sdk-test-$PID"
-$validSdk = Join-Path $testRoot "valid"
+$validSdk = Join-Path $testRoot "[Wenlan] 中文 SDK"
 $invalidSdk = Join-Path $testRoot "invalid"
 $githubEnv = Join-Path $testRoot "github-env.txt"
 $githubPath = Join-Path $testRoot "github-path.txt"
@@ -76,5 +76,8 @@ finally {
     } else {
         $env:VULKAN_SDK = $previousVulkanSdk
     }
-    Remove-Item -Recurse -Force $testRoot -ErrorAction SilentlyContinue
+    $safeRoot = [System.IO.Path]::GetFullPath($testRoot)
+    $tempPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    if (-not $safeRoot.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw "unsafe fixture cleanup" }
+    Remove-Item -LiteralPath $safeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
