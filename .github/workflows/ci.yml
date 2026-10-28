@@ -180,6 +180,7 @@ jobs:
             # so `conclusion` reports green with zero jobs run (silent-green).
             app:
               - 'app/**'
+              - 'vendor/tauri-plugin-updater/**'
               - 'src/**'
               - 'e2e/**'
               - 'preview/**'
@@ -727,6 +728,8 @@ jobs:
               - 'crates/wenlan-types/src/**'
               - 'crates/wenlan-types/Cargo.toml'
               - 'crates/wenlan-types/build.rs'
+              # The vendored updater's native launch tests run on Windows here.
+              - 'vendor/tauri-plugin-updater/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -1676,6 +1679,9 @@ jobs:
       # execute the seeder here.
       - name: Compile MCP examples (compile-only)
         run: cargo check -p wenlan-mcp --examples
+      - name: Test Windows updater launch recovery
+        if: matrix.os == 'windows-2022' && needs.detect-changes.outputs.app == 'true'
+        run: cargo test -p tauri-plugin-updater --lib windows_shell_launch
       # Dependency-graph changes can alter native target linkage. Link every
       # shipped binary in the dev profile here; release-profile proof remains
       # reserved for release-sensitive paths in release-preflight.
