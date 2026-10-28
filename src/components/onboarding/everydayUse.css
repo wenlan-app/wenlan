@@ -53,8 +53,22 @@
   font-size: 12.5px;
 }
 
-/* As wide as the page list below it, so the two read as one column. */
-.wiki-reading-start .getting-started.everyday-use {
-  max-width: min(100%, 640px);
-  margin-bottom: 28px;
+/* One overlay, centred over the app, shown once. */
+.everyday-use-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 40%);
+}
+
+.getting-started.everyday-use {
+  max-width: min(100%, 560px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  outline: none;
 }

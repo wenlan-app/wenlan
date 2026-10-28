@@ -74,7 +74,7 @@ export function PagesOverview({
   ) : null;
   const open = gettingStarted !== null && checklist.visible && !checklist.dismissed;
   // Once the three steps are done, a still-new library gets the everyday
-  // sentences in the checklist's place.
+  // sentences, once, as an overlay.
   const everyday = gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
     ? <EverydayUse tool={writePages.tool} />
     : null;
@@ -128,12 +128,11 @@ export function PagesOverview({
           <p>{t("pages.overview.unavailableDescription")}</p>
         </div>
       )}
-      {/* The everyday card takes the finished checklist's place at the top;
-          otherwise the pages come first and the card (or its "show" line)
-          follows. */}
-      {everyday}
+      {/* The pages come first and the card (or its "show" line) follows;
+          the everyday overlay floats over both. */}
       {newPages}
       {gettingStarted}
+      {everyday}
       {adding ? <AddSourceMenu title={t("firstUse.checklist.steps.pages.material.title")} onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
     </section>
   );

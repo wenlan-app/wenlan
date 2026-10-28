@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X } from "@phosphor-icons/react";
 import { AskInToolButton, frontDoorFor } from "../memory/askAi/askInTool";
@@ -45,20 +46,47 @@ const MOMENTS = [
 ] as const;
 
 /**
- * Takes the checklist's place once its three steps are done, while the
- * library is still new: the three things a person says to their AI tool on an
- * ordinary day (where did I leave off, remember this, wrap up), each one
- * click away from that tool. Closed for good with its ×.
+ * The moment the checklist's three steps are done, while the library is still
+ * new: one overlay, centred over the app, with the three things a person says
+ * to their AI tool on an ordinary day (where did I leave off, remember this,
+ * wrap up), each one click away from that tool. It is the one turning point
+ * worth interrupting for, so it shows once: ×, Esc or a click outside closes
+ * it for good.
  */
 export function EverydayUse({ tool }: { readonly tool: { readonly family: string; readonly name: string } }) {
   const { t } = useTranslation();
+  const titleId = useId();
+  const panel = useRef<HTMLElement | null>(null);
   const closed = useSyncExternalStore(subscribe, () => closedThisSession || readClosed(), () => false);
+  useEffect(() => {
+    if (!closed) panel.current?.focus();
+  }, [closed]);
   if (closed) return null;
   const frontDoor = frontDoorFor(tool.family);
-  return (
-    <section className="getting-started everyday-use" data-testid="everyday-use" aria-labelledby="everyday-use-title">
+  return createPortal(
+    <div
+      className="everyday-use-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
+    >
+    <section
+      ref={panel}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      className="getting-started everyday-use"
+      data-testid="everyday-use"
+      aria-labelledby={titleId}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      }}
+    >
       <header className="getting-started-header">
-        <h2 id="everyday-use-title">{t("everydayUse.title")}</h2>
+        <h2 id={titleId}>{t("everydayUse.title")}</h2>
         <button
           type="button"
           className="getting-started-hide"
@@ -104,5 +132,7 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
         })}
       </ul>
     </section>
+    </div>,
+    document.body,
   );
 }
