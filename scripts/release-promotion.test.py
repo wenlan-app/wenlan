@@ -41,6 +41,289 @@ class ReleasePromotionTests(unittest.TestCase):
     ASSET_NAME = "wenlan-test.zip"
     ASSET_BYTES = b"exact validated release asset"
 
+    def _queue_fixture(self):
+        base_sha, queue_sha, tree_sha = "2" * 40, "3" * 40, "4" * 40
+        pr = {
+            "number": 1020, "state": "open", "draft": False, "merged_at": None,
+            "head": {"ref": PROMOTION.RELEASE_BRANCH, "sha": HEAD_SHA},
+            "base": {"ref": "main", "sha": base_sha},
+        }
+        event = {"merge_group": {
+            "head_ref": f"refs/heads/gh-readonly-queue/main/pr-1020-{base_sha}",
+            "head_sha": queue_sha, "base_ref": "refs/heads/main", "base_sha": base_sha,
+        }}
+        api = FakeApi({
+            (f"/repos/{REPOSITORY}/pulls/1020", ()): pr,
+            (f"/repos/{REPOSITORY}/git/commits/{HEAD_SHA}", ()): {"tree": {"sha": tree_sha}},
+            (f"/repos/{REPOSITORY}/git/commits/{queue_sha}", ()): {"tree": {"sha": tree_sha}},
+            (f"/repos/{REPOSITORY}", ()): {"id": 2, "full_name": REPOSITORY},
+            (f"/repos/{REPOSITORY}/git/ref/heads/main", ()): {
+                "object": {"type": "commit", "sha": base_sha}},
+        })
+        return api, event, pr
+
+    def _queue_proof(self, api, event, *, candidate_error=None, main_error=None, receipt_error=None, receipt_version="0.20.3"):
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(
+            PROMOTION.VALIDATOR, "validate_trusted_release_candidate",
+            return_value=("0.20.3", HEAD_SHA), side_effect=candidate_error,
+        ) as candidate, mock.patch.object(
+            PROMOTION, "_conclusion_check_suite", return_value=11,
+        ), mock.patch.object(
+            PROMOTION, "_source_run", return_value={"id": 100, "run_attempt": 1},
+        ), mock.patch.object(
+            PROMOTION, "verify_main_ci", side_effect=main_error,
+        ) as main, mock.patch.object(
+            PROMOTION, "_find_receipt", side_effect=receipt_error,
+            return_value=({"version": receipt_version, "pr_number": 1020}, {"id": 77}),
+        ) as receipt:
+            result = PROMOTION.verify_queue(api, REPOSITORY, event, Path(raw))
+        return result, candidate, main, receipt
+
+    def test_release_queue_reuses_only_the_closed_same_tree_current_base_proof(self):
+        api, event, pr = self._queue_fixture()
+        result, candidate, main, receipt = self._queue_proof(api, event)
+        self.assertEqual(result.state, "validated", result.reason)
+        candidate.assert_called_once_with({"pull_request": pr}, api, REPOSITORY)
+        main.assert_called_once_with(api, REPOSITORY, event["merge_group"]["base_sha"])
+        self.assertEqual(receipt.call_args.args[4:7], (1020, HEAD_SHA, "4" * 40))
+        self.assertIsNone(result.main_run_id)  # A queue result is never a main promotion plan.
+
+    def test_ordinary_queue_keeps_matrix_without_reading_release_evidence(self):
+        api, event, pr = self._queue_fixture()
+        pr["head"]["ref"] = "feature/ordinary"
+        result, candidate, main, receipt = self._queue_proof(api, event)
+        self.assertEqual(result.state, "ordinary")
+        candidate.assert_not_called()
+        main.assert_not_called()
+        receipt.assert_not_called()
+
+    def test_release_queue_rejects_changed_tree_base_or_malformed_queue(self):
+        for mutation, reason in [
+            ("tree", "queue tree differs"),
+            ("base", "queue base differs"),
+            ("ref", "queue ref does not identify"),
+            ("base_ref", "queue base ref is not main"),
+        ]:
+            with self.subTest(mutation=mutation):
+                api, event, pr = self._queue_fixture()
+                if mutation == "tree":
+                    api.responses[(f"/repos/{REPOSITORY}/git/commits/{'3' * 40}", ())] = {
+                        "tree": {"sha": "5" * 40}}
+                elif mutation == "base":
+                    pr["base"]["sha"] = "5" * 40
+                elif mutation == "ref":
+                    event["merge_group"]["head_ref"] = "refs/heads/feature/release"
+                else:
+                    event["merge_group"]["base_ref"] = "refs/heads/other"
+                result, _, _, receipt = self._queue_proof(api, event)
+                self.assertEqual(result.state, "blocked")
+                self.assertIn(reason, result.reason)
+                receipt.assert_not_called()
+
+    def test_queue_cli_fails_closed_on_invalid_event_without_writing_a_plan(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            event = root / "event.json"
+            output = root / "outputs"
+            event.write_text("{invalid", encoding="utf-8")
+            with mock.patch.object(PROMOTION.VALIDATOR, "GitHubApi"), mock.patch(
+                "sys.stdout", new=io.StringIO()
+            ):
+                status = PROMOTION._main([
+                    "gate-queue", "--repository", REPOSITORY, "--event", str(event),
+                    "--temp-root", str(root), "--github-output", str(output),
+                ])
+            self.assertEqual(status, 2)
+            self.assertIn("verified-release-merge=false", output.read_text(encoding="utf-8"))
+            self.assertEqual({path.name for path in root.iterdir()}, {"event.json", "outputs"})
+
+    def test_release_queue_rejects_missing_failed_or_conflicting_evidence(self):
+        for kwargs, reason in [
+            ({"candidate_error": PROMOTION.VALIDATOR.CandidateError("noncanonical diff")}, "noncanonical diff"),
+            ({"main_error": PROMOTION.PromotionError("base CI failed")}, "base CI failed"),
+            ({"receipt_error": PROMOTION.PendingEvidence("receipt absent")}, "receipt absent"),
+            ({"receipt_error": PROMOTION.PromotionError("conflicting receipt")}, "conflicting receipt"),
+            ({"receipt_version": "0.20.2"}, "version differs"),
+        ]:
+            with self.subTest(reason=reason):
+                api, event, _ = self._queue_fixture()
+                result, _, _, _ = self._queue_proof(api, event, **kwargs)
+                self.assertEqual(result.state, "blocked")
+                self.assertIn(reason, result.reason)
+
+    def test_release_queue_with_real_semantic_validator_rejects_source_changes(self):
+        fixture_spec = importlib.util.spec_from_file_location(
+            "queue_semantic_fixtures", Path(__file__).with_name("validate-release-candidate.test.py")
+        )
+        fixtures = importlib.util.module_from_spec(fixture_spec)
+        fixture_spec.loader.exec_module(fixtures)
+        old, new = fixtures.release_contents()
+        base_api = fixtures.TrustedCandidateApi(old, new)
+        queue_sha = "f" * 40
+        event = {"merge_group": {
+            "head_ref": f"refs/heads/gh-readonly-queue/main/pr-42-{fixtures.BASE_SHA}",
+            "head_sha": queue_sha, "base_ref": "refs/heads/main", "base_sha": fixtures.BASE_SHA,
+        }}
+        class Api:
+            def get_json(self, path, *, params=None):
+                if path.endswith(f"/git/commits/{queue_sha}"):
+                    return {"tree": {"sha": fixtures.HEAD_TREE_SHA}}
+                return base_api.get_json(path, params=params)
+        with tempfile.TemporaryDirectory() as raw, mock.patch.object(
+            PROMOTION, "_conclusion_check_suite", return_value=11,
+        ), mock.patch.object(
+            PROMOTION, "_source_run", return_value={"id": 100, "run_attempt": 1},
+        ), mock.patch.object(PROMOTION, "verify_main_ci"), mock.patch.object(
+            PROMOTION, "_find_receipt", return_value=(
+                {"version": new["version.txt"].strip(), "pr_number": 42}, {"id": 77}),
+        ) as receipt:
+            result = PROMOTION.verify_queue(Api(), REPOSITORY, event, Path(raw))
+            self.assertEqual(result.state, "validated", result.reason)
+            # A same-name release with extra Cargo behaviour cannot reuse the proof.
+            new["Cargo.toml"] += '\n[profile.release]\nlto = true\n'
+            result = PROMOTION.verify_queue(Api(), REPOSITORY, event, Path(raw))
+            self.assertEqual(result.state, "blocked")
+            self.assertIn("version-only", result.reason)
+            self.assertEqual(receipt.call_count, 1)
+
+    def test_release_queue_rejects_main_or_candidate_moving_during_receipt_read(self):
+        for moved in ["main", "candidate"]:
+            with self.subTest(moved=moved):
+                api, event, pr = self._queue_fixture()
+                if moved == "main":
+                    api.responses[(f"/repos/{REPOSITORY}/git/ref/heads/main", ())]["object"]["sha"] = "5" * 40
+                else:
+                    original = api.get_json
+                    reads = 0
+                    def moving(path, *, params=None):
+                        nonlocal reads
+                        if path.endswith("/pulls/1020"):
+                            reads += 1
+                            if reads > 1:
+                                return {**pr, "head": {**pr["head"], "sha": "5" * 40}}
+                        return original(path, params=params)
+                    api.get_json = moving
+                result, _, _, _ = self._queue_proof(api, event)
+                self.assertEqual(result.state, "blocked")
+                self.assertIn("moved during queue verification", result.reason)
+
+    def test_queue_composes_real_control_plane_and_closed_receipt_validation(self):
+        spec = importlib.util.spec_from_file_location(
+            "queue_receipt_fixtures", Path(__file__).with_name("validate-release-candidate.test.py")
+        )
+        fixtures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixtures)
+        old, new = fixtures.release_contents()
+        content = fixtures.TrustedCandidateApi(old, new)
+        queue_sha = "f" * 40
+        repo = {"id": 2, "full_name": REPOSITORY, "fork": False}
+        source = {
+            "id": 100, "run_attempt": 1, "workflow_id": 9, "check_suite_id": 11,
+            "path": PROMOTION.CI_WORKFLOW_PATH, "event": "pull_request",
+            "status": "completed", "conclusion": "success",
+            "head_branch": PROMOTION.RELEASE_BRANCH, "head_sha": fixtures.HEAD_SHA,
+            "repository": repo, "head_repository": repo,
+        }
+        main = {**source, "id": 200, "event": "push", "head_branch": "main", "head_sha": fixtures.BASE_SHA}
+        observer = {
+            **source, "id": 300, "workflow_id": 10, "event": "workflow_run",
+            "path": PROMOTION.OBSERVER_WORKFLOW_PATH, "head_sha": fixtures.BASE_SHA,
+            "display_title": "release-candidate-observer source 100/1",
+        }
+        assets = {
+            "id": 500, "name": "validated-release-assets-100-1-300-1",
+            "digest": "sha256:" + "d" * 64, "size_in_bytes": 100, "expired": False,
+            "workflow_run": {"id": 300, "repository_id": 2, "head_repository_id": 2},
+        }
+        event = {"merge_group": {
+            "head_ref": f"refs/heads/gh-readonly-queue/main/pr-42-{fixtures.BASE_SHA}",
+            "head_sha": queue_sha, "base_ref": "refs/heads/main", "base_sha": fixtures.BASE_SHA,
+        }}
+        receipt = {
+            "status": "passed", "repository": REPOSITORY, "repository_id": 2,
+            "run_id": 100, "run_attempt": 1, "check_suite_id": 11, "workflow_id": 9,
+            "pr_number": 42, "pr_state": "open", "merge_commit_sha": None,
+            "head_sha": fixtures.HEAD_SHA, "tree_sha": fixtures.HEAD_TREE_SHA,
+            "version": new["version.txt"].strip(),
+            "paths": sorted(PROMOTION.VALIDATOR.REQUIRED_RELEASE_PATHS),
+            "artifacts": [
+                {"id": i + 1, "name": f"release-candidate-100-1-{entry['target']}",
+                 "size": 100, "digest": "sha256:" + "a" * 64}
+                for i, entry in enumerate(PROMOTION.VALIDATOR.release_matrix()["include"])
+            ],
+            "assets": [
+                {"name": asset["name"], "target": asset["target"], "size": 100, "sha256": "b" * 64}
+                for asset in PROMOTION.release_assets()
+            ],
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            path = root / "closed.json"
+            PROMOTION.VALIDATOR.write_validated_receipt(path, receipt)
+            PROMOTION.VALIDATOR.close_receipt(
+                path, artifact_name=assets["name"], artifact_id=500,
+                artifact_digest="d" * 64, observer_run_id=300, observer_run_attempt=1,
+                observer_workflow_id=10, observer_code_sha=fixtures.BASE_SHA,
+            )
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+                archive.writestr("validated-release-receipt.json", path.read_bytes())
+            wrapper = buffer.getvalue()
+            artifact = {
+                "id": 400, "name": "validated-release-receipt-100-1", "expired": False,
+                "size_in_bytes": len(wrapper), "digest": "sha256:" + hashlib.sha256(wrapper).hexdigest(),
+                "workflow_run": {"id": 300},
+            }
+            class Api:
+                def get_json(self, route, *, params=None):
+                    prefix = f"/repos/{REPOSITORY}"
+                    if route == f"{prefix}/git/commits/{queue_sha}":
+                        return {"tree": {"sha": fixtures.HEAD_TREE_SHA}}
+                    if route == f"{prefix}/commits/{fixtures.HEAD_SHA}/check-runs":
+                        return {"check_runs": [{
+                            "name": "conclusion", "status": "completed", "conclusion": "success",
+                            "head_sha": fixtures.HEAD_SHA, "app": {"slug": "github-actions"},
+                            "check_suite": {"id": 11},
+                        }]}
+                    if route == f"{prefix}/actions/workflows/ci.yml/runs":
+                        return {"total_count": 1, "workflow_runs": [source if params["event"] == "pull_request" else main]}
+                    if route == f"{prefix}/actions/runs/200":
+                        return main
+                    if route in [f"{prefix}/actions/workflows/9", f"{prefix}/actions/workflows/10"]:
+                        workflow_id = int(route.rsplit("/", 1)[1])
+                        return {"id": workflow_id, "state": "active", "path": (
+                            PROMOTION.CI_WORKFLOW_PATH if workflow_id == 9 else PROMOTION.OBSERVER_WORKFLOW_PATH)}
+                    if route == f"{prefix}/actions/workflows/release-candidate-observer.yml/runs":
+                        return {"workflow_runs": [observer]}
+                    if route == f"{prefix}/actions/artifacts":
+                        return {"total_count": 1, "artifacts": [artifact]}
+                    if route == f"{prefix}/actions/runs/300/attempts/1":
+                        return observer
+                    if route == f"{prefix}/actions/artifacts/500":
+                        return assets
+                    return content.get_json(route, params=params)
+
+                def download(self, route, destination, maximum_bytes):
+                    if route != f"/repos/{REPOSITORY}/actions/artifacts/400/zip":
+                        raise AssertionError(f"unexpected download: {route}")
+                    destination.write_bytes(wrapper)
+                    return len(wrapper), hashlib.sha256(wrapper).hexdigest()
+
+            # No internal verifier is mocked: semantic validation, exact runs,
+            # archive bytes/digest, closed schema and observer/asset metadata compose.
+            result = PROMOTION.verify_queue(Api(), REPOSITORY, event, root)
+            self.assertEqual(result.state, "validated", result.reason)
+            for field, replacement, reason in [
+                ("digest", "sha256:" + "e" * 64, "REST metadata differs"),
+                ("expired", True, "REST metadata differs"),
+            ]:
+                previous = assets[field]
+                assets[field] = replacement
+                result = PROMOTION.verify_queue(Api(), REPOSITORY, event, root)
+                self.assertEqual(result.state, "blocked")
+                self.assertIn(reason, result.reason)
+                assets[field] = previous
+
     def _validated_assets_fixture(self) -> tuple[object, dict, dict]:
         """Build an exact single-asset promotion plan and its download API."""
 

@@ -33,6 +33,7 @@ jobs:
   detect-changes:
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       checks: read
       pull-requests: read
@@ -61,7 +62,9 @@ jobs:
       macos-archive-contract: ${{ steps.filter.outputs.macos-archive-contract }}
       runtime-image: ${{ steps.filter.outputs.runtime-image }}
       trusted-release-candidate: ${{ steps.release-candidate-trust.outputs.trusted-release-candidate }}
-      verified-release-merge: ${{ steps.release-proof.outputs.verified-release-merge }}
+      # Compatibility routing output: both proofs bind the immutable release
+      # tree. Only release-proof may produce a main promotion receipt below.
+      verified-release-merge: ${{ steps.release-proof.outputs.verified-release-merge == 'true' || steps.queue-proof.outputs.verified-release-merge == 'true' }}
       release-gate-state: ${{ steps.release-proof.outputs.release-gate-state }}
       test-plan: ${{ steps.test-plan.outputs.test-plan }}
       workspace-lib-required: ${{ steps.test-plan.outputs.workspace-lib-required }}
@@ -146,6 +149,24 @@ jobs:
             exit 1
           fi
           echo "release PR #$number queue entry matches its proven head tree $pr_tree"
+      - name: Verify reusable release queue
+        id: queue-proof
+        if: github.event_name == 'merge_group'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          verifier=trusted-release-gate/scripts/release-promotion.py
+          if [ -f "$verifier" ] && grep -q '^def verify_queue(' "$verifier"; then
+            python3 "$verifier" gate-queue \
+              --repository "$GITHUB_REPOSITORY" \
+              --event "$GITHUB_EVENT_PATH" \
+              --temp-root "$RUNNER_TEMP" \
+              --github-output "$GITHUB_OUTPUT"
+          else
+            # The introducing PR's immutable base predates this verifier.
+            # Keep the full matrix until the trusted base supports the proof.
+            echo "verified-release-merge=false" >> "$GITHUB_OUTPUT"
+          fi
       # dorny/paths-filter reads pull-request files through the REST API, whose
       # response is capped at 3,000 files. Reject a larger PR before routing a
       # silently truncated inventory.
@@ -845,18 +866,19 @@ jobs:
       - name: Verify local hook routing contracts
         run: bash scripts/git-hooks.test.sh
       - name: Set up Rust for affected-test planning
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
         with:
           toolchain: 1.95.0
       - name: Test CI impact planner
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         run: |
           python3 scripts/ci_test_plan.test.py
           python3 scripts/ci_measure_plan.test.py
+          python3 scripts/ci-release-throughput.test.py
       - name: Plan affected Rust tests
         id: test-plan
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         env:
           CHANGED_FILES_JSON: ${{ steps.filter.outputs.impact_files }}
           CI_EVENT_NAME: ${{ github.event_name }}
@@ -869,7 +891,7 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
       - name: Plan affected platform behavior tests
         id: platform-test-plan
-        if: steps.release-proof.outputs.verified-release-merge != 'true'
+        if: steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true'
         env:
           MACOS_FILES_JSON: ${{ steps.filter.outputs.macos_files }}
           MACOS_M4_FILES_JSON: ${{ steps.filter.outputs['macos-m4_files'] }}
@@ -927,7 +949,7 @@ jobs:
       # latter while rust-ci-required is false; do not leave its artifact out.
       - name: Mark FastEmbed model demand
         id: fastembed-demand
-        if: "steps.release-proof.outputs.verified-release-merge != 'true' && (steps.test-plan.outputs.rust-ci-required == 'true' || ((github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || steps.filter.outputs.release-preflight == 'true') && contains(steps.release-preflight-targets.outputs.release-preflight-targets, 'x86_64-pc-windows-msvc')))"
+        if: "steps.release-proof.outputs.verified-release-merge != 'true' && steps.queue-proof.outputs.verified-release-merge != 'true' && (steps.test-plan.outputs.rust-ci-required == 'true' || ((github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--branches--') || steps.filter.outputs.release-preflight == 'true') && contains(steps.release-preflight-targets.outputs.release-preflight-targets, 'x86_64-pc-windows-msvc')))"
         run: echo "required=true" >> "$GITHUB_OUTPUT"
       - name: Restore portable FastEmbed model
         id: fastembed-portable-restore
@@ -978,10 +1000,11 @@ jobs:
     if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate == 'true'
     runs-on: ubuntu-24.04
     # The release branch is pushed seconds after the main merge, so this proof
-    # starts while the base's own push CI is still running. Recent main push CI
-    # runs take 18-27 minutes, so the wait window must outlast a slow main run;
-    # a shorter one fails the release PR on a pure start-order race.
-    timeout-minutes: 45
+    # starts while the base's own push CI is still running. Include concurrency
+    # waiting as well as execution: Oct 26-28 main p90 was 51 minutes, and the
+    # old 40-minute budget failed a healthy main. Keep a finite 90-minute wait
+    # plus teardown margin; pending is never accepted as successful evidence.
+    timeout-minutes: 95
     permissions:
       actions: read
       contents: read
@@ -1000,7 +1023,7 @@ jobs:
           python3 trusted-main-ci-proof/scripts/release-promotion.py verify-main-ci
           --repository "$GITHUB_REPOSITORY"
           --sha "${{ github.event.pull_request.base.sha }}"
-          --wait-seconds 2400
+          --wait-seconds 5400
 
   # On PRs and main pushes, Rust fmt + lint run only when their exact source
   # classes changed. Non-Rust changes still get the required aggregate
@@ -2832,6 +2855,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
     timeout-minutes: 120
+    env:
+      # Match the explicit sidecar build and tauri --target below.
+      TARGET_TRIPLE: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13

@@ -586,6 +586,9 @@ jobs:
       - name: Build macOS desktop app bundle
         shell: bash
         env:
+          # Match Tauri's explicit --target so the hook and app share Cargo
+          # dependencies instead of compiling host and explicit-target copies.
+          TARGET_TRIPLE: aarch64-apple-darwin
           CXXFLAGS: "-std=c++17"
           # Ad-hoc sign ("-") when no Apple Developer cert is configured.
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
@@ -1114,13 +1117,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # No explicit daemon build step: tauri.conf.json's beforeBuildCommand runs
-      # prepare-sidecars.sh, which compiles the daemon, CLI, and MCP for
-      # TAURI_ENV_TARGET_TRIPLE itself. Adding one here would also trip the
-      # contract test's rule that a tag release never recompiles on its own.
+      # The hook builds sidecars in the same explicit target directory as the
+      # app. TAURI_ENV_TARGET_TRIPLE alone selects the host directory for a
+      # native build, which otherwise compiles shared dependencies twice.
       - name: Build Windows desktop app bundle
         shell: bash
         env:
+          TARGET_TRIPLE: x86_64-pc-windows-msvc
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target x86_64-pc-windows-msvc
