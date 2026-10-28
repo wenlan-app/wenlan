@@ -85,6 +85,9 @@ export function onUpdateStatus(status: UpdateStatusPayload): void {
   if (status.state === "current") {
     retrying = false;
     setUpdateNotice(null);
+  } else if (status.state === "available" && status.version && update.phase === "installing") {
+    // The install-time check may replace an offer held open across releases.
+    setUpdateNotice({ ...update, version: status.version });
   } else if (status.state === "error" && update.phase === "installing") {
     retrying = false;
     setUpdateNotice({ ...update, phase: "failed", pct: null });

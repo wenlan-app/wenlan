@@ -366,6 +366,15 @@ async fn prompt_via_overlay(app: &AppHandle, version: &str) -> bool {
     accepted
 }
 
+/// Resolve the release again after consent, immediately before downloading.
+/// The manifest points at one immutable release, so an offer held open while a
+/// newer release is published must not keep the older asset alive.
+async fn refresh_update(
+    updater: &tauri_plugin_updater::Updater,
+) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    updater.check().await.map_err(|error| error.to_string())
+}
+
 async fn check_once_after_begin(
     app: &AppHandle,
     state: &SharedLifecycleState,
@@ -384,7 +393,7 @@ async fn check_once_after_begin(
         }
     };
 
-    let mut update = match updater.check().await {
+    let update = match updater.check().await {
         Ok(Some(update)) => update,
         Ok(None) => {
             set_status(app, state, KnownStatus::current());
@@ -401,6 +410,10 @@ async fn check_once_after_begin(
     };
 
     let version = update.version.clone();
+    // Retain only the version while the user considers the offer. The Update
+    // itself carries a release-specific URL that may age while the prompt is
+    // open; the accepted path resolves a fresh Update before installing.
+    drop(update);
     let suppressed = !should_prompt(trigger, was_recently_dismissed(app, &version));
     if !suppressed {
         // Mark the prompt pending before publishing availability so a
@@ -431,6 +444,31 @@ async fn check_once_after_begin(
         return;
     }
 
+    set_phase(state, LifecyclePhase::Checking);
+    let mut update = match refresh_update(&updater).await {
+        Ok(Some(update)) => update,
+        Ok(None) => {
+            set_status(app, state, KnownStatus::current());
+            set_phase(state, LifecyclePhase::Idle);
+            return;
+        }
+        Err(error) => {
+            log::warn!("update recheck failed: {error}");
+            set_status(app, state, KnownStatus::error(error));
+            set_phase(state, LifecyclePhase::Idle);
+            return;
+        }
+    };
+    let version = update.version.clone();
+    set_status(
+        app,
+        state,
+        KnownStatus {
+            state: StatusState::Available,
+            version: Some(version.clone()),
+            error: None,
+        },
+    );
     set_phase(state, LifecyclePhase::Installing);
     let app_chunk = app.clone();
     let on_chunk = move |chunk_len: usize, total: Option<u64>| {
