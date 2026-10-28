@@ -155,8 +155,8 @@ describe("ReviewDialog page-target revision card", () => {
 
   it.each([
     ["en", "page", "page_write", "Page update"],
-    ["zh-Hant", "page", "page_write", "頁面更新"],
-    ["zh-Hans", "page", "page_write", "页面更新"],
+    ["zh-Hant", "page", "page_write", "筆記更新"],
+    ["zh-Hans", "page", "page_write", "笔记更新"],
     ["en", "page", "claude-code", "proposed by claude-code"],
     ["zh-Hant", "page", "claude-code", "由 claude-code 提議"],
     ["zh-Hans", "page", "claude-code", "由 claude-code 提议"],

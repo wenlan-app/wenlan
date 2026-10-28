@@ -180,7 +180,7 @@ describe("ActivityFeed i18n", () => {
 
     renderActivityFeed();
 
-    expect(await screen.findByText("Wenlan 文瀾解決了 10 個記憶矛盾")).toBeInTheDocument();
+    expect(await screen.findByText("文瀾解決了 10 個記憶矛盾")).toBeInTheDocument();
     expect(screen.getAllByText("解決精煉").length).toBeGreaterThan(0);
     expect(screen.getByText("將記憶矛盾標記為已忽略")).toBeInTheDocument();
     expect(screen.queryByText("REFINEMENT_RESOLVE")).not.toBeInTheDocument();

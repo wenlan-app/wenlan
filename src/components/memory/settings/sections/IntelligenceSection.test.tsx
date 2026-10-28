@@ -453,7 +453,7 @@ describe("IntelligenceSection", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Details: Beta" }));
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Background synthesis is in Beta");
-    expect(tooltip).toHaveTextContent("Wenlan's plugin or MCP with Claude or Codex");
+    expect(tooltip).toHaveTextContent("Your AI tool can also create and update pages through Wenlan's plugin or MCP");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Details: Beta" })).toHaveFocus();
