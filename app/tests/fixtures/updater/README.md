@@ -9,3 +9,12 @@ are retained; these are unrelated to Wenlan's release signing key.
 the real macOS updater at a temporary fake app. The tests do not launch or
 replace Wenlan, access its daemon/data, use production endpoints, or restart.
 The same test also rejects a tampered archive and preserves the old fixture.
+
+`install-fault.c` is compiled into a temporary dyld interposer by the macOS
+rollback regression test. The parent test process does not load it. A bounded
+child test process uses it to reject the updater's atomic app swap with
+`ENOTSUP`, then fail the staged-app replacement with `EIO` once. The test
+checks that the previous executable remains byte-identical and that a retry
+without injected faults installs the signed v2 fixture. The interposer requires
+an exact temporary app path and a one-shot marker supplied only to the child;
+it has no persistent environment or production fault hooks.

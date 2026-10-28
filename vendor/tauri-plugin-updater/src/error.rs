@@ -66,6 +66,9 @@ pub enum Error {
     /// Temp dir is not on same mount mount. This prevents our updater to rename the AppImage to a temp file.
     #[error("temp directory is not on the same mount point as the AppImage")]
     TempDirNotOnSameMountPoint,
+    /// Installation and restoration both failed; the previous app is preserved here.
+    #[error("failed to install the update and to restore the previous app, which was left at {0}")]
+    PreviousAppNotRestored(std::path::PathBuf),
     #[error("binary for the current target not found in the archive")]
     BinaryNotFoundInArchive,
     #[error("failed to create temporary directory")]

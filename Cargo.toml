@@ -120,6 +120,6 @@ lto = "off"
 strip = "debuginfo"
 incremental = false
 
-# Temporary Windows recovery fix; see vendor/tauri-plugin-updater/WENLAN-PATCH.md.
+# Installer safety backports; see vendor/tauri-plugin-updater/WENLAN-PATCH.md.
 [patch.crates-io]
 tauri-plugin-updater = { path = "vendor/tauri-plugin-updater" }

@@ -48,6 +48,22 @@ describe("About Wenlan", () => {
     act(() => handler({ payload: { state: "current" } }));
     expect(document.querySelector(".about-wenlan-feedback")).toBeNull();
   });
+  it("shows backend recovery details only for an error status", async () => {
+    render(<AboutWenlanDialog open onClose={vi.fn()} />);
+    await waitFor(() => expect(api.emit).toHaveBeenCalledWith("updater://ui-ready"));
+    const handler = api.listen.mock.calls[0][1];
+    const error = "Previous app could not be restored; backup kept at /tmp/tauri-backup/Fixture.app";
+
+    act(() => handler({ payload: { state: "error", error } }));
+    const details = screen.getByText(error);
+    expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check for updates. Try again.");
+    expect(details).toHaveClass("select-text", "break-words");
+
+    act(() => handler({ payload: { state: "checking" } }));
+    expect(screen.queryByText(error)).not.toBeInTheDocument();
+    act(() => handler({ payload: { state: "current" } }));
+    expect(screen.queryByText(error)).not.toBeInTheDocument();
+  });
   it.each([false, true])("explains the isolated runtime guard, including after a manual request (%s)", async (manual) => {
     api.open.mockResolvedValue(undefined);
     render(<AboutWenlanDialog open onClose={vi.fn()} />);

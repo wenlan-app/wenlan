@@ -2740,6 +2740,8 @@ jobs:
         run: cargo clippy -p wenlan-app --all-targets -- -D warnings
       - name: Rust tests (app)
         run: cargo test -p wenlan-app --lib
+      - name: macOS updater bundle recovery tests
+        run: cargo test -p tauri-plugin-updater --lib
       - name: macOS app installer tests
         run: bash scripts/test-install-macos-app.sh
       - name: TypeScript check

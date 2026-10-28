@@ -115,6 +115,11 @@ export default function AboutWenlanDialog({ open, onClose }: AboutWenlanDialogPr
         <section className="about-wenlan-updates" aria-labelledby="about-updates-title">
           <h3 id="about-updates-title">{t("aboutWenlan.updates")}</h3>
           <p role="status">{statusText}</p>
+          {status?.state === "error" && status.error && (
+            <p className="select-text break-words text-xs text-[var(--mem-text-secondary)]">
+              {status.error}
+            </p>
+          )}
           {status?.state === "unavailable" ? (
             <button type="button" className="about-wenlan-check" onClick={() => {
               setLinkFailed(false);
