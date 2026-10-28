@@ -140,17 +140,65 @@ fn conversation_files(
                 source,
             })?;
         drop(entry);
-        let manifest: RawExportManifest =
+        let manifest: serde_json::Value =
             serde_json::from_str(&buf).map_err(|source| ImportError::Json {
                 path: "export_manifest.json".into(),
                 source,
             })?;
-        let logical_value = manifest
-            .logical_files
-            .get("conversations.json")
+        let manifest = manifest
+            .as_object()
             .ok_or_else(|| ImportError::InvalidFormat {
-                reason: "export manifest has no conversations.json logical file".into(),
+                reason: "export manifest must be a JSON object".into(),
             })?;
+        let Some(logical_files_value) = manifest.get("logical_files") else {
+            if let Some(export_files) = manifest.get("export_files") {
+                let export_files =
+                    export_files
+                        .as_array()
+                        .ok_or_else(|| ImportError::InvalidFormat {
+                            reason: "export manifest export_files must be an array".into(),
+                        })?;
+                for file in export_files {
+                    let file = file.as_object().ok_or_else(|| ImportError::InvalidFormat {
+                        reason: "export manifest export_files entries must be objects".into(),
+                    })?;
+                    let path = file
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| ImportError::InvalidFormat {
+                            reason: "export manifest export_files entries need a string path"
+                                .into(),
+                        })?;
+                    if is_numbered_conversation_shard(path) {
+                        return Err(ImportError::InvalidFormat {
+                            reason: "export manifest inventory declares sharded conversations without logical_files".into(),
+                        });
+                    }
+                }
+            }
+            let has_legacy_root = archive
+                .file_names()
+                .any(|name| name == "conversations.json");
+            let has_numbered_shards = archive.file_names().any(is_numbered_conversation_shard);
+            if has_legacy_root && !has_numbered_shards {
+                return Ok(vec!["conversations.json".into()]);
+            }
+            return Err(ImportError::InvalidFormat {
+                reason: "export manifest has no conversations.json logical file".into(),
+            });
+        };
+        let logical_files =
+            logical_files_value
+                .as_object()
+                .ok_or_else(|| ImportError::InvalidFormat {
+                    reason: "export manifest logical_files must be an object".into(),
+                })?;
+        let logical_value =
+            logical_files
+                .get("conversations.json")
+                .ok_or_else(|| ImportError::InvalidFormat {
+                    reason: "export manifest has no conversations.json logical file".into(),
+                })?;
         let logical: RawLogicalFile =
             serde_json::from_value(logical_value.clone()).map_err(|source| ImportError::Json {
                 path: "export_manifest.json logical_files.conversations.json".into(),
@@ -225,9 +273,10 @@ fn conversation_files(
 }
 
 fn is_conversation_export_path(path: &str) -> bool {
-    if path == "conversations.json" {
-        return true;
-    }
+    path == "conversations.json" || is_numbered_conversation_shard(path)
+}
+
+fn is_numbered_conversation_shard(path: &str) -> bool {
     let Some(shard) = path
         .strip_prefix("conversations-")
         .and_then(|p| p.strip_suffix(".json"))
@@ -235,11 +284,6 @@ fn is_conversation_export_path(path: &str) -> bool {
         return false;
     };
     !shard.is_empty() && shard.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-#[derive(Deserialize)]
-struct RawExportManifest {
-    logical_files: HashMap<String, serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -673,6 +717,132 @@ mod tests {
         assert!(batch.conversations[1].messages[0]
             .content
             .contains("second user"));
+    }
+
+    #[test]
+    fn inventory_only_manifest_preserves_legacy_root_conversations() {
+        let inventory_manifest = serde_json::json!({
+            "export_files": [{ "path": "conversations.json", "size_bytes": 1 }]
+        })
+        .to_string();
+        let zip = make_zip(&[
+            (
+                "conversations.json",
+                min_chatgpt_conversations_json().as_bytes(),
+            ),
+            ("message_feedback.json", b"[]"),
+            ("export_manifest.json", inventory_manifest.as_bytes()),
+        ]);
+        assert_eq!(
+            parse_zip(&zip)
+                .expect("legacy export with inventory manifest parses")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn inventory_only_manifest_does_not_fallback_when_a_shard_is_missing() {
+        let inventory_manifest = serde_json::json!({
+            "export_files": [
+                { "path": "conversations.json", "size_bytes": 1 },
+                { "path": "conversations-001.json", "size_bytes": 1 }
+            ]
+        })
+        .to_string();
+        let zip = make_zip(&[
+            (
+                "conversations.json",
+                min_chatgpt_conversations_json().as_bytes(),
+            ),
+            ("message_feedback.json", b"[]"),
+            ("export_manifest.json", inventory_manifest.as_bytes()),
+        ]);
+        assert!(matches!(
+            parse_zip(&zip),
+            Err(ImportError::InvalidFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_present_export_inventory_does_not_fallback_to_legacy_root() {
+        for export_files in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!([null]),
+            serde_json::json!([{}]),
+            serde_json::json!([{ "path": null }]),
+            serde_json::json!([{ "path": 7 }]),
+        ] {
+            let inventory_manifest =
+                serde_json::json!({ "export_files": export_files }).to_string();
+            let zip = make_zip(&[
+                (
+                    "conversations.json",
+                    min_chatgpt_conversations_json().as_bytes(),
+                ),
+                ("message_feedback.json", b"[]"),
+                ("export_manifest.json", inventory_manifest.as_bytes()),
+            ]);
+            assert!(matches!(
+                parse_zip(&zip),
+                Err(ImportError::InvalidFormat { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn inventory_only_manifest_does_not_fallback_when_shards_exist() {
+        let inventory_manifest = serde_json::json!({
+            "export_files": [
+                { "path": "conversations.json", "size_bytes": 1 },
+                { "path": "conversations-000.json", "size_bytes": 1 }
+            ]
+        })
+        .to_string();
+        let zip = make_zip(&[
+            (
+                "conversations.json",
+                min_chatgpt_conversations_json().as_bytes(),
+            ),
+            ("conversations-000.json", b"[]"),
+            ("message_feedback.json", b"[]"),
+            ("export_manifest.json", inventory_manifest.as_bytes()),
+        ]);
+        assert!(matches!(
+            parse_zip(&zip),
+            Err(ImportError::InvalidFormat { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_present_logical_files_does_not_fallback_to_legacy_root() {
+        for logical_files in [
+            serde_json::Value::Null,
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!({"conversations.json": null}),
+            serde_json::json!({"conversations.json": []}),
+            serde_json::json!("not-an-object"),
+        ] {
+            let inventory_manifest = serde_json::json!({
+                "export_files": [{ "path": "conversations.json", "size_bytes": 1 }],
+                "logical_files": logical_files,
+            })
+            .to_string();
+            let zip = make_zip(&[
+                (
+                    "conversations.json",
+                    min_chatgpt_conversations_json().as_bytes(),
+                ),
+                ("message_feedback.json", b"[]"),
+                ("export_manifest.json", inventory_manifest.as_bytes()),
+            ]);
+            assert!(matches!(
+                parse_zip(&zip),
+                Err(ImportError::InvalidFormat { .. }) | Err(ImportError::Json { .. })
+            ));
+        }
     }
 
     #[test]
