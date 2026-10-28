@@ -12,6 +12,7 @@ import {
 import { clipboardWrite, getBackgroundAiEnabled, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
 import type { WritePagesState } from "../memory/askAi/WritePages";
 import { AskAiDialog } from "../memory/askAi/AskAiDialog";
+import { frontDoorFor } from "../memory/askAi/askInTool";
 import { resolveAgentActionName } from "../../lib/agents";
 import {
   askablePages,
@@ -142,9 +143,13 @@ export function GettingStarted({
   const promptTool = askable != null && !writing && progress.tool && !progress.recall && promptFamily != null
     ? resolveAgentActionName(promptFamily, agents)
     : null;
-  const promptText = promptTool && askable
+  // In a tool with the plugin the question goes through its front door, so
+  // the first thing the user sends there also teaches them where to ask.
+  const frontDoor = promptFamily != null ? frontDoorFor(promptFamily) : null;
+  const question = promptTool && askable
     ? t("firstUse.checklist.steps.recall.prompt", { title: askable.title })
     : null;
+  const promptText = question && frontDoor ? `${frontDoor} ${question}` : question;
   // A page started by hand stays a draft until the editor is left; recall
   // cannot see it yet, so the pages step says how to finish it.
   const draftPending = !progress.pages && pages.some((page) => page.status === "draft");

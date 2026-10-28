@@ -1540,6 +1540,7 @@ export default function Main({
             <PageDraftEditor
               key={view.sessionKey ?? view.draftId ?? "new"}
               draftId={view.draftId}
+              askInstead={gettingStarted.visible}
               onDraftIdentity={reportPrimaryDraftIdentity}
               onTitleChange={handleDraftTitleChange}
               onBack={() => {

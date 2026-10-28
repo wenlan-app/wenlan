@@ -2487,7 +2487,7 @@ export function DoneStep({
         {assurance && <p style={routingSummaryStyle}>{assurance}</p>}
       </div>
 
-      <ConnectedHint />
+      <ConnectedHint justConnected={connectedAgents} />
 
       {/* Import stats card — surfaces the essential value Wenlan extracted:
           memories in, topics (entities) pulled out, and a forward line about

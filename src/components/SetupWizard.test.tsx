@@ -19,6 +19,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 vi.mock("../lib/tauri", () => ({
+  PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
+  openToolWithPrompt: vi.fn(),
   importChatExport: vi.fn(),
   saveTempFile: vi.fn(),
   listPendingImports: vi.fn(),

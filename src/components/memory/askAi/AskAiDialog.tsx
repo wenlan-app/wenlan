@@ -19,9 +19,12 @@ import {
   askAiCommand,
   askAiTasksFor,
   defaultAskAiTool,
+  toolOfFamily,
   type AskAiTaskId,
   type AskAiTool,
 } from "./askAiCommands";
+import { AskInToolButton } from "./askInTool";
+import { connectedTools } from "./WritePages";
 import "./askAiDialog.css";
 
 const COPIED_MS = 2_000;
@@ -62,6 +65,8 @@ export function AskAiDialog({ onClose, onConnectTool }: AskAiDialogProps) {
     };
   }, []);
 
+  // The connected tool this tab is about, so each task can go straight there.
+  const target = connectedTools(agents.data ?? []).find((candidate) => toolOfFamily(candidate.family) === tool) ?? null;
   const tasks = askAiTasksFor(tool);
   const groups = (["daily", "sometimes"] as const).map((group) => ({
     group,
@@ -166,15 +171,26 @@ export function AskAiDialog({ onClose, onConnectTool }: AskAiDialogProps) {
                           <p role="alert" className="ask-ai-copy-error">{t("askAi.copyFailed")}</p>
                         ) : null}
                       </div>
-                      <button
-                        type="button"
-                        className="ask-ai-copy-button"
-                        aria-label={`${copied ? t("askAi.copied") : t("askAi.copy")}: ${title}`}
-                        title={copied ? t("askAi.copied") : t("askAi.copy")}
-                        onClick={() => void copy(task.id, text)}
-                      >
-                        {copied ? <Check aria-hidden="true" weight="bold" /> : <Copy aria-hidden="true" weight="regular" />}
-                      </button>
+                      {target ? (
+                        <AskInToolButton
+                          family={target.family}
+                          tool={target.name}
+                          text={text}
+                          label={t("askAi.tryIn", { tool: target.name })}
+                          className="ask-in-tool ask-ai-row-action"
+                          testId={`ask-ai-try-${task.id}`}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="ask-ai-copy-button"
+                          aria-label={`${copied ? t("askAi.copied") : t("askAi.copy")}: ${title}`}
+                          title={copied ? t("askAi.copied") : t("askAi.copy")}
+                          onClick={() => void copy(task.id, text)}
+                        >
+                          {copied ? <Check aria-hidden="true" weight="bold" /> : <Copy aria-hidden="true" weight="regular" />}
+                        </button>
+                      )}
                     </li>
                   );
                 })}

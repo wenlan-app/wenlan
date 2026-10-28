@@ -90,3 +90,86 @@
   outline: 2px solid var(--mem-accent-indigo);
   outline-offset: 1px;
 }
+
+/* Where to ask next, with the button that goes there. A plain line with no
+   box around it, so the command in it never reads as a field to type in. */
+.ask-ai-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px auto 0;
+  max-width: min(100%, 640px);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ask-ai-next-text {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+  color: var(--mem-text-secondary);
+  font: 13.5px/1.5 var(--mem-font-body);
+}
+
+.ask-ai-next-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.ask-in-tool {
+  flex-shrink: 0;
+  border: 1px solid var(--mem-border);
+  border-radius: var(--mem-radius-md);
+  background: none;
+  color: var(--mem-text);
+  cursor: pointer;
+  font: 500 13px/1.3 var(--mem-font-body);
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.ask-in-tool:hover {
+  background-color: var(--mem-hover);
+}
+
+.ask-in-tool[data-result] {
+  border-color: var(--mem-border);
+  background: none;
+  color: var(--mem-text-secondary);
+}
+
+.ask-in-tool:focus-visible {
+  outline: 2px solid var(--mem-accent-indigo);
+  outline-offset: 1px;
+}
+
+.ask-ai-next--quiet {
+  margin: 0 0 12px;
+  max-width: none;
+}
+
+.ask-ai-next--quiet .ask-ai-next-text {
+  flex: 0 1 auto;
+  color: var(--mem-text-tertiary);
+  font-size: 13px;
+}
+
+.ask-in-tool--link {
+  padding: 2px 0;
+  border: none;
+  color: var(--mem-text-secondary);
+  font-weight: 400;
+  text-decoration: underline;
+  text-decoration-color: var(--mem-border);
+  text-underline-offset: 3px;
+}
+
+.ask-in-tool--link:hover,
+.ask-in-tool--link[data-result] {
+  border: none;
+  background: none;
+  color: var(--mem-text);
+}

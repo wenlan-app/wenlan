@@ -408,7 +408,8 @@ describe("GettingStarted", () => {
     renderAskStep();
     await screen.findByRole("heading", { name: title() });
 
-    const prompt = ask("prompt", { title: "Kyoto itinerary" });
+    // Claude Code takes it through the plugin's front door.
+    const prompt = `/wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`;
     expect(screen.getByText(ask("question", { title: "Kyoto itinerary" }))).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Claude Code" }) }));
     await vi.waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", prompt));
@@ -430,7 +431,7 @@ describe("GettingStarted", () => {
 
       fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
       expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
-      expect(clipboardWrite).toHaveBeenCalledWith(ask("prompt", { title: "Kyoto itinerary" }));
+      expect(clipboardWrite).toHaveBeenCalledWith(`$wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`);
       expect(screen.getByText(ask("askLine", { tool: "Codex", title: "Kyoto itinerary" }))).toBeInTheDocument();
     },
   );
@@ -443,6 +444,8 @@ describe("GettingStarted", () => {
 
     fireEvent.click(screen.getByRole("button", { name: ask("copy") }));
     expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
+    // No plugin there, so the question goes as plain words.
+    expect(clipboardWrite).toHaveBeenCalledWith(ask("prompt", { title: "Kyoto itinerary" }));
     expect(openToolWithPrompt).not.toHaveBeenCalled();
   });
 

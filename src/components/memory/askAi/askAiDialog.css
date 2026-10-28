@@ -206,3 +206,8 @@
   color: var(--mem-text-tertiary);
   font: 12px/1.5 var(--mem-font-body);
 }
+
+.ask-ai-row-action {
+  padding: 5px 10px;
+  font-size: 12.5px;
+}

@@ -3,11 +3,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
-import { clipboardWrite, listAgents, type AgentConnection } from "../../../lib/tauri";
+import { clipboardWrite, listAgents, openToolWithPrompt, type AgentConnection } from "../../../lib/tauri";
 import { AskAiDialog } from "./AskAiDialog";
 import { defaultAskAiTool } from "./askAiCommands";
 
 vi.mock("../../../lib/tauri", () => ({
+  PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
+  openToolWithPrompt: vi.fn(),
   clipboardWrite: vi.fn(),
   listAgents: vi.fn(),
 }));
@@ -72,6 +74,23 @@ describe("AskAiDialog", () => {
     fireEvent.click(screen.getByTestId("ask-ai-tab-claude"));
     expect(command("steep")).toBe("/wenlan steep");
     expect(command("capture")).toBe("/capture we switched to SQLite");
+  });
+
+  it("sends a task straight to the connected tool, and keeps copy for a tool that is not connected", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("codex", 1)]);
+    vi.mocked(clipboardWrite).mockResolvedValue(undefined);
+    vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
+    renderDialog();
+
+    const tryIt = await screen.findByTestId("ask-ai-try-steep");
+    expect(tryIt).toHaveTextContent("Try in Codex");
+    fireEvent.click(tryIt);
+    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("codex", "$wenlan steep"));
+    expect(await screen.findByTestId("ask-ai-try-steep")).toHaveTextContent("Opened in Codex.");
+
+    fireEvent.click(screen.getByTestId("ask-ai-tab-claude"));
+    expect(screen.queryByTestId("ask-ai-try-steep")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Copy:/ }).length).toBeGreaterThan(0);
   });
 
   it("asks other tools in a sentence and leaves out what only the plugin can do", async () => {
