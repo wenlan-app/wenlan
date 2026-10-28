@@ -307,7 +307,7 @@ async fn brief_tells_a_new_user_the_next_step_even_without_a_project() {
         (
             GettingStarted { pages: 0, waiting: 12, held: 0, next: GettingStartedStep::WritePages },
             "Getting started (whole library): no pages yet, 12 items (notes, chats, files or captures) waiting to be written into pages.",
-            "/wenlan steep (Codex: $wenlan steep",
+            "in Claude Code they type /wenlan write my pages, in Codex $wenlan write my pages",
         ),
         (
             GettingStarted { pages: 3, waiting: 0, held: 0, next: GettingStartedStep::Ask },

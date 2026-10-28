@@ -174,6 +174,20 @@
   }
 }
 
+/* A step's button with "Use another tool" under it when several are connected. */
+.getting-started-actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: flex-end;
+  align-self: center;
+  gap: 4px;
+}
+
+.getting-started-actions .getting-started-action {
+  align-self: auto;
+}
+
 .getting-started-link {
   padding: 0;
   border: none;

@@ -2236,7 +2236,7 @@ fn getting_started_lines(getting_started: &wenlan_types::GettingStarted) -> Stri
             "add notes, files or past AI chats in the Wenlan app (Add a source), then come back here".to_string()
         }
         GettingStartedStep::WritePages => {
-            "have this AI tool write the waiting items into pages: /wenlan steep (Codex: $wenlan steep; other tools: ask to steep Wenlan's new material)".to_string()
+            "have this AI tool write the waiting items into pages. Say it in plain words, without the word steep: in Claude Code they type /wenlan write my pages, in Codex $wenlan write my pages, elsewhere they just ask".to_string()
         }
         GettingStartedStep::Writing => {
             "an AI tool is writing them now; wait for the pages to appear in the Wenlan app".to_string()
@@ -2244,7 +2244,7 @@ fn getting_started_lines(getting_started: &wenlan_types::GettingStarted) -> Stri
         GettingStartedStep::Ask => {
             let mut next = "ask a question about their pages in plain words; recall answers it".to_string();
             if getting_started.waiting > 0 {
-                next.push_str("; /wenlan steep writes the rest (Codex: $wenlan steep)");
+                next.push_str("; /wenlan write my pages writes the rest (Codex: $wenlan write my pages)");
             }
             next
         }

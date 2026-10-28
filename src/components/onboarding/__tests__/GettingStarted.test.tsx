@@ -436,6 +436,37 @@ describe("GettingStarted", () => {
     },
   );
 
+  it("asks in the tool picked under Use another tool when several are connected", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code"), agent("codex")]);
+    vi.mocked(clipboardWrite).mockResolvedValue(undefined);
+    vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
+    const chooseTool = vi.fn();
+    const tools = [{ family: "claude-code", name: "Claude Code" }, { family: "codex", name: "Codex" }];
+    const done = { kind: "hidden" };
+    const state = {
+      view: done, stepView: done, cardView: done, waitingTotal: 0, onDemand: true, loaded: true, run: null,
+      tool: tools[1], tools, chooseTool, toolName: "Codex", opensTool: true, command: "$wenlan steep",
+      copied: false, waiting: null, start: vi.fn(), copyCommand: vi.fn(), close: vi.fn(),
+    } as unknown as WritePagesState;
+    renderCard([page({ id: "newest", title: "Kyoto itinerary", last_modified: "2026-10-02T00:00:00Z" })], {}, state);
+    await screen.findByRole("heading", { name: title() });
+
+    fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
+    await vi.waitFor(() =>
+      expect(openToolWithPrompt).toHaveBeenCalledWith("codex", `$wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`));
+
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("askAi.writePages.importCard.useAnother") }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Claude Code" }));
+    expect(chooseTool).toHaveBeenCalledWith("claude-code");
+  });
+
+  it("offers no other tool when only one is connected", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    renderAskStep();
+    await screen.findByRole("heading", { name: title() });
+    expect(screen.queryByRole("button", { name: i18n.t("askAi.writePages.importCard.useAnother") })).toBeNull();
+  });
+
   it("only copies the question for a tool no link can open", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);

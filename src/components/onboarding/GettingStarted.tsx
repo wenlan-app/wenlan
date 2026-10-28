@@ -22,6 +22,7 @@ import {
   type GettingStartedStepId,
 } from "./useGettingStartedState";
 import { WritePagesStep } from "./WritePagesStep";
+import { ToolPicker } from "../memory/askAi/ToolPicker";
 import { ImportOrganize, useOrganizeActions } from "../memory/askAi/TurnIntoPages";
 import { forgetAddedFolder, useFolderImportFinish } from "../memory/sources/FolderImportOrganize";
 import "./gettingStarted.css";
@@ -138,7 +139,10 @@ export function GettingStarted({
   // the page.
   const askable = askablePages(pages)[0];
   const families = connectedToolFamilies(agents);
-  const promptFamily = families.find((family) => PROMPT_LINK_FAMILIES.includes(family)) ?? families[0];
+  // The tool picked under "Use another tool" when there is one, so both
+  // steps hand over to the same tool.
+  const promptFamily = writePages?.tool?.family
+    ?? families.find((family) => PROMPT_LINK_FAMILIES.includes(family)) ?? families[0];
   const opensTool = promptFamily != null && PROMPT_LINK_FAMILIES.includes(promptFamily);
   const promptTool = askable != null && !writing && progress.tool && !progress.recall && promptFamily != null
     ? resolveAgentActionName(promptFamily, agents)
@@ -272,34 +276,47 @@ export function GettingStarted({
                 {done ? null : <p className="getting-started-step-body">{body}</p>}
               </div>
               {done ? null : asking ? (
-                <button
-                  type="button"
-                  className="getting-started-action"
-                  aria-live="polite"
-                  onClick={() => {
-                    void copyText(promptText).then(async (ok) => {
-                      if (opensTool && promptFamily != null) {
-                        try {
-                          await openToolWithPrompt(promptFamily, promptText);
-                          setHandedOver("opened");
-                          return;
-                        } catch {
-                          // Not installed here; the copied question still works.
+                <div className="getting-started-actions">
+                  <button
+                    type="button"
+                    className="getting-started-action"
+                    aria-live="polite"
+                    onClick={() => {
+                      void copyText(promptText).then(async (ok) => {
+                        if (opensTool && promptFamily != null) {
+                          try {
+                            await openToolWithPrompt(promptFamily, promptText);
+                            setHandedOver("opened");
+                            return;
+                          } catch {
+                            // Not installed here; the copied question still works.
+                          }
                         }
-                      }
-                      if (ok) {
-                        setHandedOver("copied");
-                        setCopied(true);
-                      }
-                    });
-                  }}
-                >
-                  {copied
-                    ? t("firstUse.checklist.steps.recall.copied")
-                    : opensTool && handedOver !== "copied"
-                      ? t("firstUse.checklist.steps.recall.askIn", { tool: promptTool })
-                      : t("firstUse.checklist.steps.recall.copy")}
-                </button>
+                        if (ok) {
+                          setHandedOver("copied");
+                          setCopied(true);
+                        }
+                      });
+                    }}
+                  >
+                    {copied
+                      ? t("firstUse.checklist.steps.recall.copied")
+                      : opensTool && handedOver !== "copied"
+                        ? t("firstUse.checklist.steps.recall.askIn", { tool: promptTool })
+                        : t("firstUse.checklist.steps.recall.copy")}
+                  </button>
+                  {writePages && writePages.tools.length > 1 && writePages.tool ? (
+                    <ToolPicker
+                      tools={writePages.tools}
+                      current={writePages.tool.family}
+                      onChoose={(family) => {
+                        writePages.chooseTool(family);
+                        setHandedOver(null);
+                      }}
+                      align="end"
+                    />
+                  ) : null}
+                </div>
               ) : id === "recall" ? null : (
                 // The example sits in the pages step; asking needs a page first.
                 <button

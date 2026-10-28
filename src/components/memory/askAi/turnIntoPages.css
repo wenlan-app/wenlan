@@ -203,6 +203,11 @@
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.25);
 }
 
+.turn-pages-picker--end .turn-pages-picker-menu {
+  right: 0;
+  left: auto;
+}
+
 .turn-pages-picker-item {
   display: flex;
   align-items: center;

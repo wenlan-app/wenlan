@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Check, CheckCircle, CircleNotch, Sparkle, X } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, Sparkle, X } from "@phosphor-icons/react";
 import { getOnDeviceModel, getResolvedRouting } from "../../../lib/tauri";
 import { chooseSteepMode, useSteepOnDemand } from "../../../lib/steepMode";
 import { ANTHROPIC_MODELS } from "../../intelligence/IntelligenceSetup";
@@ -16,6 +16,7 @@ import {
   type WritePagesState,
   type WritePagesView,
 } from "./WritePages";
+import { ToolPicker } from "./ToolPicker";
 import "./turnIntoPages.css";
 
 /**
@@ -452,74 +453,5 @@ export function TurnIntoPagesView({
       ) : null}
     </>,
     "done",
-  );
-}
-
-/** "Use another tool": which connected tool the button hands the pages to.
- *  Shown only with more than one tool connected; the pick is remembered. */
-function ToolPicker({
-  tools,
-  current,
-  onChoose,
-}: {
-  readonly tools: readonly { family: string; name: string }[];
-  readonly current: string;
-  readonly onChoose: (family: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const menuId = useId();
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-  return (
-    <div className="turn-pages-picker" ref={root}>
-      <button
-        type="button"
-        className="turn-pages-link"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {t("askAi.writePages.importCard.useAnother")}
-      </button>
-      {open ? (
-        <ul className="turn-pages-picker-menu" id={menuId} role="menu" aria-label={t("askAi.writePages.importCard.useAnother")}>
-          {tools.map((tool) => (
-            <li key={tool.family} role="none">
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={tool.family === current}
-                className="turn-pages-picker-item"
-                onClick={() => {
-                  onChoose(tool.family);
-                  setOpen(false);
-                }}
-              >
-                <span className="turn-pages-picker-check" aria-hidden="true">
-                  {tool.family === current ? <Check weight="bold" /> : null}
-                </span>
-                {tool.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
   );
 }

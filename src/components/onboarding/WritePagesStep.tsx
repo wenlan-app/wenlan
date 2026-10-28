@@ -12,6 +12,7 @@ import {
   type WritePagesState,
 } from "../memory/askAi/WritePages";
 import { newestPages } from "../memory/pages/NewPagesList";
+import { ToolPicker } from "../memory/askAi/ToolPicker";
 
 interface WritePagesStepProps {
   /** Null outside the Wiki home, where nothing can be handed over. */
@@ -163,14 +164,19 @@ export function WritePagesStep({
           {pasteHint}
         </div>
         {startLabel ? (
-          <button
-            type="button"
-            className="getting-started-action"
-            disabled={state.command === null}
-            onClick={() => void state.start()}
-          >
-            {startLabel}
-          </button>
+          <div className="getting-started-actions">
+            <button
+              type="button"
+              className="getting-started-action"
+              disabled={state.command === null}
+              onClick={() => void state.start()}
+            >
+              {startLabel}
+            </button>
+            {state.tools.length > 1 && state.tool ? (
+              <ToolPicker tools={state.tools} current={state.tool.family} onChoose={state.chooseTool} align="end" />
+            ) : null}
+          </div>
         ) : onUseLocalModel ? (
           <button type="button" className="getting-started-action" onClick={onUseLocalModel}>
             {t("askAi.writePages.useLocalModel")}

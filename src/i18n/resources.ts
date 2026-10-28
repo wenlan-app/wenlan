@@ -749,7 +749,7 @@ const en = {
     label: "Page tips",
     tips: {
       sources: "Each sentence ends with its source. Click one to read the original.",
-      unverified: "Wenlan couldn't find this in the source. Check it before you rely on it.",
+      unverified: "Your sources don't back this sentence. Check the original before you rely on it.",
       edit: "This page is yours to change. When Wenlan updates it later, it asks you first and keeps your edits.",
     },
     count: "{{n}} of {{total}}",
@@ -3761,7 +3761,7 @@ const zhHans = {
     label: "笔记小提示",
     tips: {
       sources: "每句后面是它的出处，点开看原文。",
-      unverified: "这句文澜在来源里找不到根据，用之前可以核对一下。",
+      unverified: "这句在你的资料里找不到，用之前看一眼原文。",
       edit: "这篇是你的，可以直接改。文澜之后更新会先问你，不会盖掉你改的。",
     },
     count: "{{n}} / {{total}}",
@@ -6729,7 +6729,7 @@ const zhHant = {
     label: "筆記小提示",
     tips: {
       sources: "每句後面是它的出處，點開看原文。",
-      unverified: "這句文瀾在來源裡找不到根據，用之前可以核對一下。",
+      unverified: "這句在你的資料裡找不到，用之前看一眼原文。",
       edit: "這篇是你的，可以直接改。文瀾之後更新會先問你，不會蓋掉你改的。",
     },
     count: "{{n}} / {{total}}",
