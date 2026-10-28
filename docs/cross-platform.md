@@ -9,9 +9,15 @@ Supported builds and prebuilt releases cover macOS arm64, Linux x86_64/aarch64 w
 |---|---|---|
 | macOS | `~/Library/Application Support/wenlan/` | launchd via `~/Library/LaunchAgents/com.wenlan.server.plist` (user-level) |
 | Linux | `~/.local/share/wenlan/` (or `$XDG_DATA_HOME/wenlan`) | systemd user unit at `~/.config/systemd/user/wenlan-server.service` (qualifier dropped per `ServiceLabel::to_script_name()`). Enable lingering with `loginctl enable-linger` if you want the service alive after logout. |
-| Windows | `%LOCALAPPDATA%\wenlan\` | Per-user Task Scheduler ONLOGON task registered via `schtasks.exe /create /tn WenlanServer /sc ONLOGON /tr <exe> /f`. `wenlan background on` short-circuits before service-manager and drives schtasks directly (wenlan-server is a plain console app and would otherwise time out at 30s under sc.exe + the Windows Service Control Protocol). `wenlan background off` stops the running task with `schtasks /end /tn WenlanServer` while preserving its registration. |
+| Windows | `%LOCALAPPDATA%\wenlan\` | Per-user Task Scheduler ONLOGON task registered via `schtasks.exe /create /tn <task-name> /xml <definition.xml> /f`. The XML separates the executable from its arguments and records the selected data root, bind address, and port. The default root uses `WenlanServer`; custom roots use `WenlanServer-<root-hash>`. |
 
-`wenlan background on` / `wenlan background off` work on macOS, Linux, and Windows. macOS + Linux go through the `service-manager` crate (launchd / systemd-user); Windows takes the schtasks path described above so the daemon does not need a service dispatcher.
+`wenlan background on` / `wenlan background off` work on macOS, Linux, and Windows,
+using launchd, systemd-user, or Task Scheduler for registration and startup.
+Stopping uses the daemon's root-checked HTTP shutdown endpoint, verifies that the
+selected instance has stopped, and writes its autostart-off marker while preserving
+the registration. An unknown or mismatched instance is refused; stopping does not
+fall back to a supervisor force-stop. See the ownership checks and legacy upgrade
+steps below.
 
 The Windows desktop app installs to `%LOCALAPPDATA%\Programs\Wenlan`:
 `app/windows/installer-hooks.nsh` moves the NSIS per-user default off
