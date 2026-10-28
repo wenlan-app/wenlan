@@ -98,12 +98,13 @@ describe("ask-AI hints", () => {
     expect(await screen.findByRole("button", { name: "Opened in Claude Code. Press Enter there." })).toBeInTheDocument();
   });
 
-  it("before any page, points at adding material rather than asking", async () => {
+  it("before any page, stays quiet: the Wiki's checklist says what comes next", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listAllActivePagesExplicitBrowse).mockResolvedValue([]);
     wrap(<ConnectedHint />);
-    await waitFor(() => expect(screen.getByTestId("ask-ai-hint-connected")).toHaveAttribute("data-next", "material"));
-    expect(screen.getByTestId("ask-ai-hint-connected")).toHaveTextContent("Next: go back to the Wiki and add your material.");
+    await waitFor(() => expect(listAllActivePagesExplicitBrowse).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId("ask-ai-hint-connected")).toBeNull();
     expect(screen.queryByRole("button", { name: "Open Claude Code" })).toBeNull();
   });
 

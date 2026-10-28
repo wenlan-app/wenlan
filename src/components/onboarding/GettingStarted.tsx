@@ -10,7 +10,6 @@ import {
 } from "@phosphor-icons/react";
 import { clipboardWrite, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
 import type { WritePagesState } from "../memory/askAi/WritePages";
-import { AskAiDialog } from "../memory/askAi/AskAiDialog";
 import { frontDoorFor } from "../memory/askAi/askInTool";
 import { resolveAgentActionName } from "../../lib/agents";
 import {
@@ -24,6 +23,7 @@ import { WritePagesStep } from "./WritePagesStep";
 import { ToolPicker } from "../memory/askAi/ToolPicker";
 import { ImportOrganize, useOrganizeActions } from "../memory/askAi/TurnIntoPages";
 import { forgetAddedFolder, useFolderImportFinish } from "../memory/sources/FolderImportOrganize";
+import { useHoldOnboardingStage } from "./onboardingStage";
 import "./gettingStarted.css";
 
 const COPIED_MS = 2_000;
@@ -69,7 +69,6 @@ export function GettingStarted({
 }: GettingStartedProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
-  const [askAiOpen, setAskAiOpen] = useState(false);
   // "opened": the tool has the question typed in. "copied": it could not be
   // opened, so the question is on the clipboard to paste there instead.
   const [handedOver, setHandedOver] = useState<"opened" | "copied" | null>(null);
@@ -86,6 +85,7 @@ export function GettingStarted({
   // first read has stored something: its import finish takes the pages step.
   const folderFinish = useFolderImportFinish();
   const organize = useOrganizeActions() !== null;
+  useHoldOnboardingStage(visible && savedProgress !== null && !dismissed);
 
   useEffect(() => {
     if (!copied) return;
@@ -317,28 +317,6 @@ export function GettingStarted({
           );
         })}
       </ol>
-      {/* One quiet line under the steps: the full list of what to ask the
-          AI tool (it stays in the account menu after the checklist is gone).
-          A local model is offered where pages are handed over, not here. */}
-      <p className="getting-started-extra" data-testid="getting-started-extra">
-        <button
-          type="button"
-          className="getting-started-link"
-          data-testid="getting-started-ask-ai"
-          onClick={() => setAskAiOpen(true)}
-        >
-          {t("firstUse.checklist.askAi.action")}
-        </button>
-      </p>
-      {askAiOpen ? (
-        <AskAiDialog
-          onClose={() => setAskAiOpen(false)}
-          onConnectTool={() => {
-            setAskAiOpen(false);
-            onConnectTool();
-          }}
-        />
-      ) : null}
     </section>
   );
 }

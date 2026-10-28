@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X } from "@phosphor-icons/react";
 import { AskInToolButton, frontDoorFor } from "../memory/askAi/askInTool";
+import { useHoldOnboardingStage } from "./onboardingStage";
 
 import "./everydayUse.css";
 
@@ -58,6 +59,7 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
   const titleId = useId();
   const panel = useRef<HTMLElement | null>(null);
   const closed = useSyncExternalStore(subscribe, () => closedThisSession || readClosed(), () => false);
+  useHoldOnboardingStage(!closed);
   useEffect(() => {
     if (!closed) panel.current?.focus();
   }, [closed]);

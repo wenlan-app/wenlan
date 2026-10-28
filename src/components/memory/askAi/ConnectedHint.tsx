@@ -29,14 +29,9 @@ export function ConnectedHint({ justConnected = [] }: {
   const beforePages = checklist.progress !== null && !checklist.progress.pages;
   if (!tool) return null;
   const command = frontDoorFor(tool.family);
-  if (beforePages) {
-    return (
-      <div className="ask-ai-next" data-testid="ask-ai-hint-connected" data-next="material">
-        <Sparkle aria-hidden="true" weight="regular" className="ask-ai-hint-icon" />
-        <p className="ask-ai-next-text">{t("askAi.hints.connectedFirstMaterial", { tool: tool.name })}</p>
-      </div>
-    );
-  }
+  // With no pages yet the Wiki's checklist says what comes next; the setup
+  // screen stays quiet so only one place talks.
+  if (beforePages) return null;
   return (
     <>
       <div className="ask-ai-next" data-testid="ask-ai-hint-connected">

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getPage, type Page } from "../../lib/tauri";
 import { useMilestones } from "./useMilestones";
 import { FirstPageModal } from "./FirstPageModal";
+import { useOnboardingOnStage } from "./onboardingStage";
 
 const FIRST_CONCEPT_SHOWN_KEY = "onboarding:firstConceptShownCount";
 const MAX_MODAL_SHOWS = 3;
@@ -13,6 +14,8 @@ export function FirstPageMilestone({ pages, onSelectPage }: {
   onSelectPage?: (pageId: string) => void;
 }) {
   const { milestones, acknowledge } = useMilestones();
+  // A new user's checklist lists the first page in its own step.
+  const onStage = useOnboardingOnStage();
 
   const firstConceptMs = milestones.find(
     (m) => m.id === "first-concept" && m.acknowledged_at == null,
@@ -42,7 +45,13 @@ export function FirstPageMilestone({ pages, onSelectPage }: {
   // modal instance, so StrictMode double-invokes don't double-count.
   const incrementedOnMountRef = useRef(false);
   useEffect(() => {
-    if (!firstConcept || !firstConceptMs) return;
+    if (!onStage || !firstConceptMs) return;
+    acknowledge("first-concept");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onStage, firstConceptMs?.id]);
+
+  useEffect(() => {
+    if (onStage || !firstConcept || !firstConceptMs) return;
     if (incrementedOnMountRef.current) return;
     incrementedOnMountRef.current = true;
     const current = parseInt(
@@ -55,13 +64,14 @@ export function FirstPageMilestone({ pages, onSelectPage }: {
       acknowledge("first-concept");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstConcept?.id, firstConceptMs?.id]);
+  }, [onStage, firstConcept?.id, firstConceptMs?.id]);
 
   const firstConceptShownCount = parseInt(
     localStorage.getItem(FIRST_CONCEPT_SHOWN_KEY) || "0",
     10,
   );
   const shouldShowFirstConceptModal =
+    !onStage &&
     !!firstConcept &&
     !!firstConceptMs &&
     firstConceptShownCount <= MAX_MODAL_SHOWS;

@@ -104,9 +104,6 @@ export const enFirstUse = {
         waiting: "The question is ready in {{tool}}. Send it, and this step checks itself once it reads your page.",
       },
     },
-    askAi: {
-      action: "What your AI can do",
-    },
   },
   live: {
     title: "Your knowledge, live",
@@ -237,9 +234,6 @@ export const hansFirstUse = {
         waiting: "问题已填好，在 {{tool}} 按下送出。它读到你的笔记后，这一步会自动打勾。",
       },
     },
-    askAi: {
-      action: "AI 能做什么",
-    },
   },
   live: {
     title: "你的知识 · 实时",
@@ -366,9 +360,6 @@ export const hantFirstUse = {
         question: "問題：我的筆記裡關於「{{title}}」怎麼說？",
         waiting: "問題已填好，在 {{tool}} 按下送出。它讀到你的筆記後，這一步會自動打勾。",
       },
-    },
-    askAi: {
-      action: "AI 能做什麼",
     },
   },
   live: {

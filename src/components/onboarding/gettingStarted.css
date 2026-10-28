@@ -204,17 +204,6 @@
   color: var(--mem-text);
 }
 
-/* Spacing and a quieter color set it apart from the steps; no rule line. */
-.getting-started-extra {
-  margin: 4px 0 12px;
-  color: var(--mem-text-tertiary);
-  font: 12px/1.5 var(--mem-font-body);
-}
-
-.getting-started-extra-dot {
-  margin: 0 8px;
-}
-
 /* The step that waits on the one before it: present, but quieter, so the
    eye goes to what can be done now. */
 .getting-started-steps > li[data-later="true"] .getting-started-icon {
@@ -270,10 +259,6 @@
 .wiki-reading-start[data-onboarding="true"] .getting-started-action {
   font-size: 14px;
   padding: 8px 14px;
-}
-
-.wiki-reading-start[data-onboarding="true"] .getting-started-extra {
-  font-size: 13px;
 }
 
 /* The pages a run writes, listed in the "turn your material into pages" row. */

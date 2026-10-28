@@ -217,13 +217,11 @@ describe("GettingStarted", () => {
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
 
-  it("opens what your AI can do from under the steps", async () => {
+  it("keeps to its steps, with nothing extra underneath", async () => {
     renderCard();
     expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
-    expect(screen.getByTestId("getting-started-ask-ai")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.action"));
-
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.askAi.action") }));
-    expect(screen.getByRole("dialog", { name: i18n.t("askAi.title") })).toBeInTheDocument();
+    // What to ask the AI tool comes once the steps are done, as its own overlay.
+    expect(screen.queryByTestId("getting-started-extra")).toBeNull();
   });
 
   it("stays away when a read fails rather than claim a step is undone", async () => {
@@ -479,11 +477,10 @@ describe("GettingStarted", () => {
     expect(openToolWithPrompt).not.toHaveBeenCalled();
   });
 
-  it("keeps the local model out of the footer, where only what to ask stays", async () => {
+  it("keeps the local model out from under the steps", async () => {
     vi.mocked(getBackgroundAiEnabled).mockResolvedValue(false);
     renderCard([], { onTurnOnSteeping: vi.fn() });
     await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-extra")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.action"));
     expect(screen.queryByTestId("getting-started-steep")).toBeNull();
   });
 

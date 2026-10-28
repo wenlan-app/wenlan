@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { MilestoneToaster } from "../MilestoneToaster";
 import { AppToaster } from "../../AppToaster";
 import { FirstPageModal } from "../FirstPageModal";
+import { useHoldOnboardingStage } from "../onboardingStage";
 import type { MilestoneRecord } from "../../../lib/tauri";
 
 const recentRecall: MilestoneRecord = {
@@ -113,6 +114,23 @@ describe("MilestoneToaster", () => {
     expect(screen.queryByText(/recalled for you/i)).toBeNull();
     view.rerender(<MilestoneToaster />);
     await waitFor(() => expect(screen.getByText(/recalled for you/i)).toBeInTheDocument());
+  });
+
+  it("stays quiet while a new user's checklist holds the stage, taking what it shows as seen", async () => {
+    mockList.mockResolvedValue([recentRecall]);
+    function Checklist() {
+      useHoldOnboardingStage(true);
+      return null;
+    }
+    render(
+      <>
+        <MilestoneToaster />
+        <Checklist />
+      </>,
+      { wrapper },
+    );
+    await waitFor(() => expect(mockAcknowledge).toHaveBeenCalledWith("first-recall"));
+    expect(screen.queryByText(/recalled for you/i)).toBeNull();
   });
 
   it("does not render a toast for milestones older than 24h", async () => {
