@@ -488,6 +488,7 @@ SHARED_PLUGIN_SCRIPTS = (
     ("scripts/version-drift.sh", "bin/version-drift.sh"),
     ("scripts/test/test-resolve-space.sh", "bin/test/test-resolve-space.sh"),
     ("scripts/test/test-version-drift.sh", "bin/test/test-version-drift.sh"),
+    ("scripts/test/test-mcp-runner.sh", "bin/test/test-mcp-runner.sh"),
 )
 
 

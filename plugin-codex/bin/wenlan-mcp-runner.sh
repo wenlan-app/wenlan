@@ -9,9 +9,11 @@
 #   2. Sibling file `bin/wenlan-mcp.local` next to this script.
 #   3. An installed binary, in this order (mirrors the order the Wenlan app
 #      uses when it writes its own MCP entry, app/src/mcp_config.rs):
-#        a. The Wenlan desktop app's bundled copy:
-#           Wenlan.app/Contents/MacOS/wenlan-mcp under /Applications or
-#           ~/Applications (WENLAN_APP_DIRS, colon-separated, overrides both).
+#        a. The Wenlan desktop app's bundled copy: first the path the app
+#           records for itself on every launch (~/.wenlan/bin/wenlan-mcp.path),
+#           then Wenlan.app/Contents/MacOS/wenlan-mcp under /Applications or
+#           ~/Applications (WENLAN_APP_DIRS, colon-separated, overrides both),
+#           then wenlan-mcp.exe in the Windows installer's folders.
 #        b. ~/.wenlan/bin/wenlan-mcp, installed by install.sh.
 #        c. ~/.cargo/bin/wenlan-mcp — `cargo install`.
 #        d. `wenlan-mcp` on PATH, for example from a package manager.
@@ -41,12 +43,39 @@ if [ -f "${local_bin}" ] && [ -x "${local_bin}" ]; then
 fi
 
 # Installed binaries. `-f` as well as `-x`: a directory is "executable" too.
-app_dirs="${WENLAN_APP_DIRS:-/Applications:${HOME}/Applications}"
 candidates=()
+
+# The path the Wenlan app records for its own bundled wenlan-mcp every time it
+# starts (app/src/mcp_config.rs, `record_app_wenlan_mcp_path`), so an app run
+# from anywhere (outside /Applications, a custom Windows install folder) is
+# found. One line, read as data and never sourced; a stale path (the app was
+# moved or removed) fails the checks below like any other candidate.
+recorded_path_file="${HOME}/.wenlan/bin/wenlan-mcp.path"
+if [ -f "${recorded_path_file}" ]; then
+  recorded=""
+  IFS= read -r recorded < "${recorded_path_file}" || true
+  recorded="${recorded%$'\r'}"
+  recorded="${recorded//\\//}"
+  if [ -n "${recorded}" ]; then
+    candidates+=("${recorded}")
+  fi
+fi
+
+app_dirs="${WENLAN_APP_DIRS:-/Applications:${HOME}/Applications}"
 IFS=":" read -r -a app_dir_list <<< "${app_dirs}"
 for app_dir in "${app_dir_list[@]}"; do
   if [ -n "${app_dir}" ]; then
     candidates+=("${app_dir}/Wenlan.app/Contents/MacOS/wenlan-mcp")
+  fi
+done
+# The Windows installer's folders, for an app too old to record its path:
+# the per-user default (%LOCALAPPDATA%\Programs\Wenlan), the default before
+# that move (%LOCALAPPDATA%\Wenlan), and a machine-wide install. Git Bash
+# passes these through as Windows paths; forward slashes are what it accepts.
+for win_dir in "${LOCALAPPDATA:+${LOCALAPPDATA}/Programs}" "${LOCALAPPDATA:-}" \
+  "${PROGRAMFILES:-${ProgramFiles:-}}"; do
+  if [ -n "${win_dir}" ]; then
+    candidates+=("${win_dir//\\//}/Wenlan/wenlan-mcp.exe")
   fi
 done
 candidates+=("${HOME}/.wenlan/bin/wenlan-mcp" "${HOME}/.wenlan/bin/wenlan-mcp.exe")

@@ -1964,6 +1964,84 @@ pub(crate) fn wenlan_mcp_candidate_sources_for(
     candidates
 }
 
+/// Where the app records the path of its own bundled `wenlan-mcp`, under the
+/// home directory. The Claude Code and Codex plugin runners
+/// (`plugin/scripts/wenlan-mcp-runner.sh`, `plugin-codex/bin/...`) read it
+/// before their fixed install locations, so an app run from anywhere (outside
+/// /Applications on a Mac, a custom install folder on Windows) is found instead
+/// of falling back to an `npx` download that outlasts the MCP handshake.
+const RECORDED_WENLAN_MCP_PATH_FILE: &str = ".wenlan/bin/wenlan-mcp.path";
+
+/// The line recorded for `bundled`. Windows paths are written with forward
+/// slashes, which Git Bash (the runners' shell there) accepts as-is.
+fn recorded_wenlan_mcp_line(bundled: &Path, host: HostKind) -> String {
+    let line = bundled.to_string_lossy();
+    if host == HostKind::Windows {
+        let line = line.replace('\\', "/");
+        return line.strip_prefix("//?/").unwrap_or(&line).to_string();
+    }
+    line.into_owned()
+}
+
+/// Record the bundled `wenlan-mcp` next to `exe_dir` in `home`'s recorded-path
+/// file. Writes nothing when there is no bundled binary (a bare `cargo run`)
+/// or the file already holds this path; returns whether it wrote.
+fn record_app_wenlan_mcp_path_in(
+    home: &Path,
+    exe_dir: &Path,
+    host: HostKind,
+) -> std::io::Result<bool> {
+    let bundled = with_exe_suffix(exe_dir.join("wenlan-mcp"), host);
+    if !bundled.is_file() {
+        return Ok(false);
+    }
+    let line = recorded_wenlan_mcp_line(&bundled, host);
+    let file = home.join(RECORDED_WENLAN_MCP_PATH_FILE);
+    if std::fs::read_to_string(&file).is_ok_and(|current| current.trim_end() == line) {
+        return Ok(false);
+    }
+    let dir = file.parent().expect("the recorded-path file has a parent");
+    std::fs::create_dir_all(dir)?;
+    // Write then rename, so a runner starting at the same moment reads the old
+    // path or the new one, never half a line.
+    let partial = dir.join(".wenlan-mcp.path.partial");
+    std::fs::write(&partial, format!("{line}\n"))?;
+    std::fs::rename(&partial, &file)?;
+    Ok(true)
+}
+
+/// Record this app's bundled `wenlan-mcp` for the plugin runners. Called once
+/// at launch. Only an installed release app records: a debug build or a run
+/// with its own data root (`WENLAN_DATA_DIR`, as every test copy sets) must not
+/// point the user's real Claude Code at a test binary.
+pub(crate) fn record_app_wenlan_mcp_path() {
+    if cfg!(debug_assertions)
+        || crate::identity_paths::isolated_dev_state_dir().is_some()
+        || std::env::var_os("WENLAN_DATA_DIR").is_some()
+        || std::env::var_os("ORIGIN_DATA_DIR").is_some()
+    {
+        return;
+    }
+    let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        log::warn!("[mcp] could not read the app's own path; wenlan-mcp path not recorded");
+        return;
+    };
+    let Some(home) = dirs::home_dir() else {
+        log::warn!("[mcp] no home directory; wenlan-mcp path not recorded");
+        return;
+    };
+    match record_app_wenlan_mcp_path_in(&home, &exe_dir, HostKind::current()) {
+        Ok(true) => {
+            log::info!("[mcp] recorded the bundled wenlan-mcp path for the AI tool plugins")
+        }
+        Ok(false) => {}
+        Err(error) => log::warn!("[mcp] could not record the bundled wenlan-mcp path: {error}"),
+    }
+}
+
 #[cfg(test)]
 fn wenlan_mcp_candidates(
     home: Option<&Path>,
@@ -3724,6 +3802,79 @@ mod tests {
             },
             "the bundled {} was not found; the app would write the npx fallback",
             bundled.display()
+        );
+    }
+
+    /// The plugin runners find an app run from anywhere through the path it
+    /// records at launch; the runner side is `plugin/scripts/test/test-mcp-runner.sh`.
+    #[test]
+    fn the_app_records_its_bundled_wenlan_mcp_path_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp
+            .path()
+            .join("Downloads")
+            .join("Wenlan.app/Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let bundled = installed_wenlan_mcp(&exe_dir);
+        write_binary_fixture(&bundled);
+        let host = HostKind::current();
+
+        assert!(record_app_wenlan_mcp_path_in(&home, &exe_dir, host).unwrap());
+        let recorded = std::fs::read_to_string(home.join(RECORDED_WENLAN_MCP_PATH_FILE)).unwrap();
+        assert_eq!(
+            recorded,
+            format!("{}\n", recorded_wenlan_mcp_line(&bundled, host))
+        );
+        assert!(
+            !record_app_wenlan_mcp_path_in(&home, &exe_dir, host).unwrap(),
+            "an unchanged path is not rewritten on every launch"
+        );
+    }
+
+    #[test]
+    fn a_moved_app_replaces_the_recorded_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let host = HostKind::current();
+        let old_dir = tmp.path().join("old");
+        let new_dir = tmp.path().join("new");
+        for dir in [&old_dir, &new_dir] {
+            std::fs::create_dir_all(dir).unwrap();
+            write_binary_fixture(&installed_wenlan_mcp(dir));
+        }
+        record_app_wenlan_mcp_path_in(&home, &old_dir, host).unwrap();
+
+        assert!(record_app_wenlan_mcp_path_in(&home, &new_dir, host).unwrap());
+        let recorded = std::fs::read_to_string(home.join(RECORDED_WENLAN_MCP_PATH_FILE)).unwrap();
+        assert_eq!(
+            recorded.trim_end(),
+            recorded_wenlan_mcp_line(&installed_wenlan_mcp(&new_dir), host)
+        );
+    }
+
+    #[test]
+    fn nothing_is_recorded_without_a_bundled_wenlan_mcp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let exe_dir = tmp.path().join("target").join("release");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+
+        assert!(!record_app_wenlan_mcp_path_in(&home, &exe_dir, HostKind::current()).unwrap());
+        assert!(!home.join(RECORDED_WENLAN_MCP_PATH_FILE).exists());
+    }
+
+    #[test]
+    fn a_recorded_windows_path_uses_forward_slashes() {
+        let bundled = Path::new(r"C:\Users\Ann Lee\AppData\Local\Programs\Wenlan\wenlan-mcp.exe");
+        assert_eq!(
+            recorded_wenlan_mcp_line(bundled, HostKind::Windows),
+            "C:/Users/Ann Lee/AppData/Local/Programs/Wenlan/wenlan-mcp.exe"
+        );
+        let verbatim = Path::new(r"\\?\C:\Program Files\Wenlan\wenlan-mcp.exe");
+        assert_eq!(
+            recorded_wenlan_mcp_line(verbatim, HostKind::Windows),
+            "C:/Program Files/Wenlan/wenlan-mcp.exe"
         );
     }
 

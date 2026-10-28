@@ -2621,6 +2621,8 @@ jobs:
         run: |
           bash plugin/scripts/test/test-resolve-space.sh
           bash plugin/scripts/test/test-version-drift.sh
+          bash plugin/scripts/test/test-mcp-runner.sh
+          bash plugin-codex/bin/test/test-mcp-runner.sh
       - name: Verb list is generated from plugin/skills/verbs.json
         run: |
           node scripts/gen-plugin-verbs.mjs --check

@@ -871,6 +871,10 @@ pub fn run() {
 
             build_main_window(&handle)?;
 
+            // Tell the Claude Code and Codex plugins where this app's
+            // wenlan-mcp is, wherever the app was installed or run from.
+            tauri::async_runtime::spawn_blocking(mcp_config::record_app_wenlan_mcp_path);
+
             // Keep the app LaunchServices-friendly: the UI process is a normal
             // Dock app from startup, while close/hide only affects the window.
             #[cfg(target_os = "macos")]

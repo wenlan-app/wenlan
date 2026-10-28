@@ -31,12 +31,13 @@ assert_eq() {
     fi
 }
 
-if grep -q -- '--agent-name' "$RUNNER_SRC"; then
+# Both runners pass --agent-name; the default value tells them apart.
+if grep -q 'WENLAN_MCP_AGENT_NAME:-codex' "$RUNNER_SRC"; then
     flavor=codex
     agent_args='--agent-name codex '
 else
     flavor=claude
-    agent_args=''
+    agent_args='--agent-name claude-code '
 fi
 
 # A runner copy in a throwaway plugin tree: `here` resolves to the copy's dir,
@@ -52,7 +53,7 @@ if [ "$flavor" = codex ]; then
     expected_npx='NPX:-y wenlan-mcp@^9.8.7 --agent-name codex'
 else
     pin="$(sed -n 's/^exec npx -y \(wenlan-mcp@[^ ]*\) .*/\1/p' "$RUNNER_SRC")"
-    expected_npx="NPX:-y $pin"
+    expected_npx="NPX:-y $pin --agent-name claude-code"
 fi
 
 # make_bin PATH LABEL: an executable that reports which binary ran.
@@ -92,8 +93,79 @@ make_bin "$case_dir/$installed" installed
 make_bin "$case_dir/$bundle" bundle
 make_bin "$case_dir/$cargo_bin" cargo
 make_bin "$path_dir/wenlan-mcp" path
-assert_eq 'HOME/.wenlan/bin wins over bundle, cargo, PATH and npx' \
+assert_eq 'the Wenlan.app bundle wins over HOME/.wenlan/bin, cargo, PATH and npx' \
+    "BIN:bundle:${agent_args}tool-arg" "$(run_runner)"
+
+new_case
+make_bin "$case_dir/$installed" installed
+make_bin "$case_dir/$cargo_bin" cargo
+make_bin "$path_dir/wenlan-mcp" path
+assert_eq 'HOME/.wenlan/bin wins over cargo, PATH and npx' \
     "BIN:installed:${agent_args}tool-arg" "$(run_runner)"
+
+# The path the app records for its own bundled copy, wherever it was run from.
+recorded_file="home/.wenlan/bin/wenlan-mcp.path"
+
+new_case
+make_bin "$case_dir/Downloads/Wenlan.app/Contents/MacOS/wenlan-mcp" recorded
+make_bin "$case_dir/$bundle" bundle
+make_bin "$case_dir/$installed" installed
+mkdir -p "$(dirname "$case_dir/$recorded_file")"
+printf '%s\n' "$case_dir/Downloads/Wenlan.app/Contents/MacOS/wenlan-mcp" \
+    > "$case_dir/$recorded_file"
+assert_eq 'the path the app recorded wins over the /Applications bundle' \
+    "BIN:recorded:${agent_args}tool-arg" "$(run_runner)"
+
+new_case
+make_bin "$case_dir/Program Files/Wenlan/wenlan-mcp.exe" recorded
+make_bin "$case_dir/$installed" installed
+mkdir -p "$(dirname "$case_dir/$recorded_file")"
+printf '%s\r\n' "$case_dir/Program Files/Wenlan/wenlan-mcp.exe" \
+    | tr '/' '\\' > "$case_dir/$recorded_file"
+assert_eq 'a recorded Windows path (backslashes, CRLF, a space) is found' \
+    "BIN:recorded:${agent_args}tool-arg" "$(run_runner)"
+
+new_case
+make_bin "$case_dir/$installed" installed
+mkdir -p "$(dirname "$case_dir/$recorded_file")"
+printf '%s\n' "$case_dir/moved-away/wenlan-mcp" > "$case_dir/$recorded_file"
+assert_eq 'a stale recorded path falls through to the next candidate' \
+    "BIN:installed:${agent_args}tool-arg" "$(run_runner)"
+
+new_case
+make_bin "$case_dir/$installed" installed
+mkdir -p "$case_dir/recorded-dir"
+printf '%s\n' "$case_dir/recorded-dir" > "$case_dir/$recorded_file"
+assert_eq 'a recorded path naming a directory is skipped, not exec-ed' \
+    "BIN:installed:${agent_args}tool-arg" "$(run_runner)"
+
+new_case
+make_bin "$case_dir/$installed" installed
+mkdir -p "$(dirname "$case_dir/$recorded_file")"
+printf 'echo SOURCED; %s\n' "$case_dir/x" > "$case_dir/$recorded_file"
+assert_eq 'the recorded path file is read as a path, never run as shell' \
+    "BIN:installed:${agent_args}tool-arg" "$(run_runner)"
+
+# The Windows installer's folders, for an app that predates the recorded path.
+new_case
+make_bin "$case_dir/LocalAppData/Programs/Wenlan/wenlan-mcp.exe" win-user
+make_bin "$case_dir/LocalAppData/Wenlan/wenlan-mcp.exe" win-old
+make_bin "$case_dir/$installed" installed
+assert_eq 'LOCALAPPDATA/Programs/Wenlan (the per-user install) wins over HOME/.wenlan/bin' \
+    "BIN:win-user:${agent_args}tool-arg" \
+    "$(run_runner LOCALAPPDATA="$(printf '%s' "$case_dir/LocalAppData" | tr '/' '\\')")"
+
+new_case
+make_bin "$case_dir/LocalAppData/Wenlan/wenlan-mcp.exe" win-old
+make_bin "$case_dir/$installed" installed
+assert_eq 'LOCALAPPDATA/Wenlan (the older per-user default) is found' \
+    "BIN:win-old:${agent_args}tool-arg" "$(run_runner LOCALAPPDATA="$case_dir/LocalAppData")"
+
+new_case
+make_bin "$case_dir/Program Files/Wenlan/wenlan-mcp.exe" win-machine
+make_bin "$case_dir/$installed" installed
+assert_eq 'a machine-wide Program Files/Wenlan install is found' \
+    "BIN:win-machine:${agent_args}tool-arg" "$(run_runner PROGRAMFILES="$case_dir/Program Files")"
 
 new_case
 make_bin "$case_dir/$bundle" bundle
