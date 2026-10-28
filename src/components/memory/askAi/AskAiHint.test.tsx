@@ -103,7 +103,7 @@ describe("ask-AI hints", () => {
     vi.mocked(listAllActivePagesExplicitBrowse).mockResolvedValue([]);
     wrap(<ConnectedHint />);
     await waitFor(() => expect(screen.getByTestId("ask-ai-hint-connected")).toHaveAttribute("data-next", "material"));
-    expect(screen.getByTestId("ask-ai-hint-connected")).toHaveTextContent("Next: add your material on the Wiki so Claude Code can write pages.");
+    expect(screen.getByTestId("ask-ai-hint-connected")).toHaveTextContent("Next: go back to the Wiki and add your material.");
     expect(screen.queryByRole("button", { name: "Open Claude Code" })).toBeNull();
   });
 
