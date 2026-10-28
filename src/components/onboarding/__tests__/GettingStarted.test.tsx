@@ -388,7 +388,7 @@ describe("GettingStarted", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard();
     await screen.findByRole("region", { name: title() });
-    expect(screen.getByTestId("getting-started-pages").querySelectorAll(".getting-started-choice")).toHaveLength(2);
+    expect(screen.getByTestId("getting-started-pages").querySelectorAll(".source-add-option")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   });
 

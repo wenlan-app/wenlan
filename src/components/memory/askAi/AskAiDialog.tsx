@@ -30,7 +30,8 @@ import "./askAiDialog.css";
 
 const COPIED_MS = 2_000;
 
-const ICONS: Record<AskAiTaskId, React.ReactNode> = {
+/** One icon per task, shared with the Day to day overlay so a task looks the same in both. */
+export const ASK_AI_ICONS: Record<AskAiTaskId, React.ReactNode> = {
   capture: <PushPin weight="regular" />,
   recall: <MagnifyingGlass weight="regular" />,
   brief: <Play weight="regular" />,
@@ -165,7 +166,7 @@ export function AskAiDialog({ onClose, onConnectTool }: AskAiDialogProps) {
                   const copied = copiedId === task.id;
                   return (
                     <li key={task.id} data-testid={`ask-ai-task-${task.id}`}>
-                      <span className="ask-ai-icon" aria-hidden="true">{ICONS[task.id]}</span>
+                      <span className="ask-ai-icon" aria-hidden="true">{ASK_AI_ICONS[task.id]}</span>
                       <div className="ask-ai-copy">
                         <p className="ask-ai-task-title">{title}</p>
                         <code className={tool === "other" ? "ask-ai-command ask-ai-command--plain" : "ask-ai-command"}>{text}</code>

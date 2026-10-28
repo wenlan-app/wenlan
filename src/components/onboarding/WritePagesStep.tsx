@@ -14,6 +14,7 @@ import {
 } from "../memory/askAi/WritePages";
 import { newestPages } from "../memory/pages/NewPagesList";
 import { ToolPicker } from "../memory/askAi/ToolPicker";
+import "../memory/sources/source-access.css";
 
 interface WritePagesStepProps {
   /** Null outside the Wiki home, where nothing can be handed over. */
@@ -175,7 +176,7 @@ export function WritePagesStep({
           <div className="getting-started-actions">
             <button
               type="button"
-              className="getting-started-action"
+              className="turn-pages-primary"
               disabled={state.command === null}
               onClick={() => void state.start()}
             >
@@ -215,12 +216,12 @@ export function WritePagesStep({
           <button
             key={choice.key}
             type="button"
-            className="getting-started-choice"
+            className="source-add-option"
             data-testid={`getting-started-pages-${choice.key}`}
             onClick={choice.onClick}
           >
-            <span className="getting-started-choice-icon" aria-hidden="true">{choice.icon}</span>
-            <span className="getting-started-choice-copy">
+            <span className="getting-started-choice-icon" data-resource-icon={choice.key} aria-hidden="true">{choice.icon}</span>
+            <span className="source-add-option-copy">
               <strong>{t(`firstUse.checklist.steps.pages.${choice.key}.title`)}</strong>
               <span>{t(`firstUse.checklist.steps.pages.${choice.key}.hint`)}</span>
             </span>

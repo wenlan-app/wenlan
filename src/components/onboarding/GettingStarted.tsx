@@ -25,6 +25,7 @@ import { ToolPicker } from "../memory/askAi/ToolPicker";
 import { ImportOrganize, useOrganizeActions } from "../memory/askAi/TurnIntoPages";
 import { forgetAddedFolder, useFolderImportFinish } from "../memory/sources/FolderImportOrganize";
 import { useHoldOnboardingStage } from "./onboardingStage";
+import "../memory/askAi/turnIntoPages.css";
 import "./gettingStarted.css";
 
 const COPIED_MS = 2_000;
@@ -274,7 +275,7 @@ export function GettingStarted({
                 <div className="getting-started-actions">
                   <button
                     type="button"
-                    className="getting-started-action"
+                    className="turn-pages-primary"
                     aria-live="polite"
                     onClick={() => {
                       void copyText(promptText).then(async (ok) => {
@@ -316,7 +317,7 @@ export function GettingStarted({
                 // The example sits in the pages step; asking needs a page first.
                 <button
                   type="button"
-                  className="getting-started-action"
+                  className="turn-pages-primary"
                   onClick={step.onAction}
                 >
                   {t(`firstUse.checklist.steps.${id}.action`)}

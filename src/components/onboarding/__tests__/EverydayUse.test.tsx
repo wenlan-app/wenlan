@@ -8,6 +8,7 @@ vi.mock("../../memory/askAi/askInTool", async (importOriginal) => {
 });
 
 vi.mock("../../memory/askAi/AskAiDialog", () => ({
+  ASK_AI_ICONS: {},
   AskAiDialog: ({ onClose }: { onClose: () => void }) => (
     <div role="dialog" aria-label="What your AI can do">
       <button type="button" onClick={onClose}>Close all commands</button>

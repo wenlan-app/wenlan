@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { X } from "@phosphor-icons/react";
 import { AskInToolButton, frontDoorFor } from "../memory/askAi/askInTool";
-import { AskAiDialog } from "../memory/askAi/AskAiDialog";
+import { ASK_AI_ICONS, AskAiDialog } from "../memory/askAi/AskAiDialog";
 import { useHoldOnboardingStage } from "./onboardingStage";
 
 import "./everydayUse.css";
@@ -121,6 +121,7 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
           const skillText = frontDoor ? `${frontDoor.charAt(0)}${skill}` : null;
           return (
             <li key={moment} data-testid={`everyday-use-${moment}`}>
+              <span className="ask-ai-icon" aria-hidden="true">{ASK_AI_ICONS[skill]}</span>
               <div className="everyday-use-copy">
                 {/* When, then what it keeps: "remember" keeps one thing, "wrap up"
                     the whole chat, so the two read as different. */}

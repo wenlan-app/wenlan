@@ -5,20 +5,25 @@
 .everyday-use-rows {
   display: grid;
   gap: 10px;
-  margin: 8px 0 14px;
+  margin: 8px 0 0;
   padding: 0;
   list-style: none;
 }
 
+/* Rows read like the same tasks in "What your AI can do": icon, words, button. */
 .everyday-use-rows li {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 12px;
 }
 
 .everyday-use-copy {
+  flex: 1;
   min-width: 0;
+}
+
+.everyday-use-rows .everyday-use-action {
+  align-self: center;
 }
 
 .everyday-use-copy p {
@@ -70,10 +75,23 @@
   background: rgb(0 0 0 / 40%);
 }
 
+/* The app's one dialog frame, as in confirmDialog.css and source-access.css:
+   same padding, shadow, title and lead as every other dialog. */
 .getting-started.everyday-use {
   max-width: min(100%, 560px);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  padding: 20px;
+  border: none;
+  box-shadow: var(--mem-shadow-overlay);
   outline: none;
+}
+
+.everyday-use .getting-started-header h2 {
+  font: 600 19px/1.35 var(--mem-font-body);
+}
+
+.everyday-use .getting-started-lead {
+  margin: 4px 0 12px;
+  font-size: 14px;
 }

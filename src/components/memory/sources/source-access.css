@@ -5,7 +5,8 @@
 .source-dialog-heading { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .source-dialog .source-dialog-lead { margin:0; font-size:14px; color:var(--mem-text-secondary); }
 .source-dialog h2 { margin:0; font:600 19px/1.35 var(--mem-font-body); color:var(--mem-text); }
-.source-add-option { display:flex; flex-direction:column; gap:4px; width:100%; text-align:left; padding:12px; border:0; border-radius:var(--mem-radius-md); background:transparent; color:var(--mem-text); cursor:pointer; font:inherit; }
+/* The one option row, used wherever a choice is offered: icon, name, one line, arrow. */
+.source-add-option { display:flex; flex-direction:row; align-items:center; gap:12px; width:100%; text-align:left; padding:12px; border:0; border-radius:var(--mem-radius-md); background:transparent; color:var(--mem-text); cursor:pointer; font:inherit; }
 .source-add-option:hover { background:var(--mem-hover); }
 .source-add-option span,.source-dialog p,.source-preview-note { font-size:13px; line-height:1.6; color:var(--mem-text-secondary); }
 .source-dialog label { display:flex; flex-direction:column; gap:6px; margin:14px 0; font-size:13px; }
@@ -37,9 +38,7 @@
 
 .source-preview-open { flex:0 0 auto; white-space:nowrap; margin-left:auto; }
 
-.source-dialog .source-add-option { flex-direction:row; align-items:center; gap:12px; }
-/* Every option row reads the same: icon, name, one line, and an arrow at the end. */
-.source-dialog .source-add-option::after { content:"›"; margin-left:auto; padding-left:8px; color:var(--mem-text-tertiary); font-size:18px; line-height:1; }
+.source-add-option::after { content:"›"; margin-left:auto; padding-left:8px; color:var(--mem-text-tertiary); font-size:18px; line-height:1; }
 .source-add-option > [data-resource-icon] { flex:0 0 20px; color:var(--mem-text-secondary); }
 .source-add-option-copy { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .source-add-option-copy strong { font-size:14px; font-weight:500; color:var(--mem-text); }
