@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Offline regressions for release proof routing and Cargo dependency reuse."""
 
 from __future__ import annotations
