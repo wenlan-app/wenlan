@@ -340,6 +340,29 @@ impl MemoryDB {
         .await
     }
 
+    /// How many notes organize material, leaving out copies of brought-in
+    /// files (`imported`) as the app's getting-started checklist does.
+    pub(crate) async fn count_notes(&self) -> Result<i64, WenlanError> {
+        let conn = self.conn.lock().await;
+        let mut rows = conn
+            .query(
+                &format!(
+                    "SELECT COUNT(*) FROM pages p WHERE {ORGANIZING} \
+                     AND COALESCE(p.creation_kind, 'distilled') <> 'imported'"
+                ),
+                (),
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("count_notes: {e}")))?;
+        let row = rows
+            .next()
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("count_notes next: {e}")))?
+            .ok_or_else(|| WenlanError::Generic("count_notes: no rows".into()))?;
+        row.get::<i64>(0)
+            .map_err(|e| WenlanError::VectorDb(format!("count_notes get: {e}")))
+    }
+
     async fn note_rows(
         &self,
         sql: &str,

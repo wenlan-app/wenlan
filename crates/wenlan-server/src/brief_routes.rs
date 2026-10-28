@@ -111,6 +111,15 @@ pub async fn handle_read_brief(
         let state = state.read().await;
         state.db.clone().ok_or(ServerError::DbNotInitialized)?
     };
+    // Counts only, no page content, so every answer below carries it, the
+    // unresolved one included: a new user's folder is rarely a project.
+    let getting_started = match wenlan_core::steep_new::getting_started(&db).await {
+        Ok(getting_started) => getting_started,
+        Err(error) => {
+            tracing::warn!("[brief] getting started: {error}");
+            None
+        }
+    };
     let Some(space) = resolve_space(&db, request.space.as_deref(), header_space.as_deref()).await?
     else {
         return Ok(Json(BriefReadResponse {
@@ -120,6 +129,7 @@ pub async fn handle_read_brief(
             related_context: None,
             code_basis_pending: None,
             code_basis_pending_explained: false,
+            getting_started,
         }));
     };
     let Some(brief) = db.get_brief_by_space_name(&space).await? else {
@@ -132,6 +142,7 @@ pub async fn handle_read_brief(
             related_context: None,
             code_basis_pending,
             code_basis_pending_explained,
+            getting_started,
         }));
     };
 
@@ -233,6 +244,7 @@ pub async fn handle_read_brief(
         related_context,
         code_basis_pending,
         code_basis_pending_explained,
+        getting_started,
     }))
 }
 

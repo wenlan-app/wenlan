@@ -360,6 +360,7 @@ mod tests {
             }),
             code_basis_pending: None,
             code_basis_pending_explained: false,
+            getting_started: None,
         };
 
         let output = format_brief(&response);
@@ -440,6 +441,7 @@ mod tests {
             related_context: None,
             code_basis_pending: None,
             code_basis_pending_explained: false,
+            getting_started: None,
         });
 
         assert!(output.starts_with("Version 1 ("));
@@ -456,6 +458,7 @@ mod tests {
             related_context: None,
             code_basis_pending: None,
             code_basis_pending_explained: false,
+            getting_started: None,
         };
 
         let output = format_brief(&response);

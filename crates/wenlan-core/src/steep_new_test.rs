@@ -575,3 +575,44 @@ fn vault_note_names_come_from_the_file_and_the_link() {
         vec!["Kiln".to_string(), "Mira studio".to_string()]
     );
 }
+
+#[tokio::test]
+async fn getting_started_follows_a_new_library_from_adding_to_asking() {
+    use wenlan_types::GettingStartedStep as Step;
+    let (db, _dir) = test_db().await;
+    let step = |s: &wenlan_types::GettingStarted| (s.pages, s.waiting, s.held, s.next);
+
+    let empty = getting_started(&db).await.unwrap().unwrap();
+    assert_eq!(step(&empty), (0, 0, 0, Step::AddMaterial));
+
+    capture(&db, "gs_a", BREAD_1).await;
+    capture(&db, "gs_b", BREAD_2).await;
+    let waiting = getting_started(&db).await.unwrap().unwrap();
+    assert_eq!(step(&waiting), (0, 2, 0, Step::WritePages));
+
+    let items = vec!["gs_a".to_string(), "gs_b".to_string()];
+    let claim = claim_new(&db, &ReadScope::Global, &items, None)
+        .await
+        .unwrap();
+    let writing = getting_started(&db).await.unwrap().unwrap();
+    assert_eq!(step(&writing), (0, 2, 2, Step::Writing));
+
+    commit_new(
+        &db,
+        &claim.token,
+        "Sourdough timing",
+        BODY,
+        "claude-code",
+        None,
+    )
+    .await
+    .unwrap();
+    let written = getting_started(&db).await.unwrap().unwrap();
+    assert_eq!(step(&written), (1, 0, 0, Step::Ask));
+
+    // Asking about the pages is the last step: the next step goes away.
+    db.record_milestone(crate::onboarding::MilestoneId::FirstRecall, None)
+        .await
+        .unwrap();
+    assert!(getting_started(&db).await.unwrap().is_none());
+}

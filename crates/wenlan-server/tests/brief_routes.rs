@@ -77,6 +77,15 @@ async fn unresolved_read_is_typed_and_write_free() {
     let response: BriefReadResponse = serde_json::from_value(body).unwrap();
     assert_eq!(response.state, BriefReadState::SpaceNotResolved);
     assert!(db.list_spaces().await.unwrap().is_empty());
+    // A new library gets its next step even when the folder is no project.
+    let getting_started = response
+        .getting_started
+        .expect("a new library has a next step");
+    assert_eq!(getting_started.pages, 0);
+    assert_eq!(
+        getting_started.next,
+        wenlan_types::GettingStartedStep::AddMaterial
+    );
 }
 
 #[tokio::test]

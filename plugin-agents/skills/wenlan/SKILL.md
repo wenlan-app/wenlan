@@ -36,8 +36,19 @@ the three checks in order; only a failed connection check stops early.
 3. Waiting items: call `list_pending_revisions(limit=10)`. If exactly 10 come
    back, say "at least 10".
 
-Answer in one to three short, plain sentences, the way you would tell a
-person: that Wenlan is connected, which project this folder belongs to (or
+**New user.** When `brief` ends with a "Getting started" line, the person is
+new to Wenlan: answer with that instead of the usual status. In one or two
+plain sentences say that Wenlan is connected, how far they are (pages so far,
+items waiting), and the one next step it names, as the exact thing to type or
+do. Leave out the project sentence and the waiting-changes count. For example:
+"Wenlan is connected. 12 of your notes are waiting to become pages; type
+`/wenlan steep` and I'll write them." or "Wenlan is connected and you have 8
+pages. Ask me anything about them, like `/wenlan what do my pages say about the
+trip?`". Use a real page title only when you already know one. Do not ask
+them to link a project. Then stop; no second list of examples.
+
+Otherwise, answer in one to three short, plain sentences, the way you
+would tell a person: that Wenlan is connected, which project this folder belongs to (or
 that it is not linked to one yet), and how many changes wait for their OK
 (leave this out when there are none). For example: "Wenlan is connected.
 This folder is not linked to a project yet." No label
@@ -57,6 +68,7 @@ Match the request to one row. Old command words count as their row.
 
 | The user wants | Workflow | Example |
 |---|---|---|
+| Just starting, or not sure what to do next | the status in step 1 | `/wenlan 怎麼開始`, `/wenlan what now?` |
 | Set up, repair, upgrade, check it works | setup | `/wenlan setup`, `/wenlan 好像壞了` |
 | Turn what was imported or saved into notes, and bring out of date notes up to date, with this AI tool | steep | `/wenlan steep`, `/wenlan 整理成筆記`, `/wenlan 沉澱`, `/wenlan 把過期的筆記更新` |
 | Rebuild one note from its sources, or a clustering pass by hand (advanced) | distill | `/wenlan distill rebuild <note>`, `/wenlan distill` |
