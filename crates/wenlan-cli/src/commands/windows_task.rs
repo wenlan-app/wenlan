@@ -152,9 +152,35 @@ pub(super) fn task_xml(
     )
 }
 
+/// Close the writer before Task Scheduler opens the XML. Keep automatic
+/// cleanup through TempPath until registration has finished.
+pub(super) fn write_task_definition(xml: &str) -> std::io::Result<tempfile::TempPath> {
+    let mut definition = tempfile::Builder::new().suffix(".xml").tempfile()?;
+    std::io::Write::write_all(&mut definition, xml.as_bytes())?;
+    Ok(definition.into_temp_path())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn task_definition_is_closed_before_an_external_reader_opens_it() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let xml = "<Task>fixture</Task>";
+        let definition = write_task_definition(xml).unwrap();
+        let path = definition.to_path_buf();
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .expect("Task Scheduler must be able to open the XML exclusively");
+        drop(reader);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), xml);
+        drop(definition);
+        assert!(!path.exists());
+    }
+
     #[test]
     #[cfg(windows)]
     fn scheduler_parses_the_production_action_without_registering_a_task() {

@@ -636,10 +636,8 @@ pub async fn install() -> Result<()> {
             .map(|path| path.to_str().context("data path is not Unicode"))
             .transpose()?;
         let xml = windows_task::task_xml(program_str, data_root, bind);
-        let mut definition = tempfile::Builder::new().suffix(".xml").tempfile()?;
-        std::io::Write::write_all(&mut definition, xml.as_bytes())?;
+        let definition = windows_task::write_task_definition(&xml)?;
         let definition_path = definition
-            .path()
             .to_str()
             .context("task definition path is not Unicode")?;
         if is_installed() {
