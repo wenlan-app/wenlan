@@ -1181,8 +1181,10 @@ mod tests {
                 .await
                 .is_err());
         }
-        let mut server = ServerState::default();
-        server.db = Some(db.clone());
+        let server = ServerState {
+            db: Some(db.clone()),
+            ..ServerState::default()
+        };
         assert!(handle_remove_source(
             State(Arc::new(RwLock::new(server))),
             Path("directory-notes".into())

@@ -1322,8 +1322,10 @@ mod recent_endpoints_tests {
     #[tokio::test]
     async fn shutdown_rechecks_instance_identity_before_signalling() {
         let root = tempfile::tempdir().unwrap();
-        let mut server = ServerState::default();
-        server.presence_root = Some(root.path().to_path_buf());
+        let server = ServerState {
+            presence_root: Some(root.path().to_path_buf()),
+            ..ServerState::default()
+        };
         let state = Arc::new(RwLock::new(server));
         let shutdown = crate::lifecycle::ShutdownHandle::default();
         let mut headers = axum::http::HeaderMap::new();

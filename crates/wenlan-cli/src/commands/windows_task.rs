@@ -17,9 +17,27 @@ pub(super) fn same_root(left: &std::path::Path, right: &std::path::Path) -> bool
 }
 
 fn normalized_root(root: &std::path::Path) -> String {
-    let root = std::fs::canonicalize(root)
-        .or_else(|_| std::path::absolute(root))
-        .unwrap_or_else(|_| root.to_path_buf());
+    // The final directory may not exist yet. Canonicalize its nearest existing
+    // ancestor too, so short Windows names and junctions cannot change the task
+    // identity merely because installation creates the final directory.
+    let absolute = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = absolute
+        .ancestors()
+        .find_map(|ancestor| {
+            let mut resolved = std::fs::canonicalize(ancestor).ok()?;
+            let suffix = absolute.strip_prefix(ancestor).ok()?;
+            for part in suffix.components() {
+                match part {
+                    std::path::Component::ParentDir => {
+                        resolved.pop();
+                    }
+                    std::path::Component::CurDir => {}
+                    _ => resolved.push(part.as_os_str()),
+                }
+            }
+            Some(resolved)
+        })
+        .unwrap_or(absolute);
     let normalized = root.to_string_lossy().replace('\\', "/");
     let normalized = normalized.strip_prefix("//?/").unwrap_or(&normalized);
     let normalized = normalized
@@ -212,6 +230,50 @@ mod tests {
         let before = task_name(Some(&root));
         std::fs::create_dir(&root).unwrap();
         assert_eq!(before, task_name(Some(&root)));
+    }
+    #[test]
+    fn missing_roots_use_the_existing_parents_filesystem_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("中文 long parent");
+        std::fs::create_dir(&parent).unwrap();
+        let canonical_parent = std::fs::canonicalize(&parent).unwrap();
+        let missing = parent.join("not-created/../new-root");
+        assert_eq!(
+            task_name(Some(&missing)),
+            task_name(Some(&canonical_parent.join("new-root")))
+        );
+        std::fs::create_dir_all(&missing).unwrap();
+        assert_eq!(
+            task_name(Some(&missing)),
+            task_name(Some(&canonical_parent.join("new-root")))
+        );
+    }
+    #[test]
+    #[cfg(windows)]
+    fn windows_short_parent_names_keep_the_same_task_identity() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetShortPathNameW(path: *const u16, short: *mut u16, size: u32) -> u32;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("Long parent with spaces");
+        std::fs::create_dir(&parent).unwrap();
+        let input: Vec<_> = parent.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut short = vec![0u16; 32768];
+        // SAFETY: both buffers are valid for their declared lengths; input is
+        // NUL-terminated and the returned length bounds the output below.
+        let length =
+            unsafe { GetShortPathNameW(input.as_ptr(), short.as_mut_ptr(), short.len() as u32) };
+        assert!(length > 0 && (length as usize) < short.len());
+        let alias =
+            std::path::PathBuf::from(std::ffi::OsString::from_wide(&short[..length as usize]));
+        let selected = alias.join("new-root");
+        let expected = std::fs::canonicalize(&parent).unwrap().join("new-root");
+        let task = task_name(Some(&expected));
+        assert_eq!(task_name(Some(&selected)), task);
+        std::fs::create_dir(&selected).unwrap();
+        assert_eq!(task_name(Some(&selected)), task);
     }
     #[test]
     fn case_sensitive_roots_are_not_collapsed_into_one_task() {

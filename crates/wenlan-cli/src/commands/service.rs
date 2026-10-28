@@ -1426,13 +1426,24 @@ mod tests {
 
     #[tokio::test]
     async fn legacy_health_refusal_gives_migration_guidance_without_posting() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0u8; 4096];
-            stream.read(&mut request).await.unwrap();
+            {
+                let mut reader = tokio::io::BufReader::new(&mut stream);
+                let mut request = String::new();
+                assert!(reader.read_line(&mut request).await.unwrap() > 0);
+                assert!(request.starts_with("GET /api/health "));
+                loop {
+                    let mut header = String::new();
+                    assert!(reader.read_line(&mut header).await.unwrap() > 0);
+                    if header == "\r\n" {
+                        break;
+                    }
+                }
+            }
             let body = r#"{"status":"ok","db_initialized":true,"version":"legacy"}"#;
             stream
                 .write_all(

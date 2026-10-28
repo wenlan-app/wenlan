@@ -161,7 +161,6 @@ fn write_owned_launch_agent(runtime: &IsolatedRuntime, root: &Path) {
 #[cfg(target_os = "macos")]
 #[test]
 fn ownership_refusal_never_reaches_any_supervisor_control() {
-    use std::io::{Read, Write};
     for arguments in [
         vec!["background", "off"],
         vec!["restart"],
@@ -172,16 +171,8 @@ fn ownership_refusal_never_reaches_any_supervisor_control() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 4096];
-            stream.read(&mut request).unwrap();
             let body = r#"{"status":"ok","db_initialized":true,"version":"test","data_root_identity":"other-root"}"#;
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
+            answer_identity_probe(&listener, body);
         });
         let log = runtime.data.path().join("supervisor.log");
         cli_with_isolated_runtime(&runtime)
