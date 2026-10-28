@@ -1272,6 +1272,7 @@ fn structure_violations_with_children(
 
     let expected_main_files: BTreeSet<String> = [
         phase.startup_child().then_some("startup.rs"),
+        phase.startup_child().then_some("startup_paths.rs"),
         phase.runtime_child().then_some("runtime.rs"),
     ]
     .into_iter()
