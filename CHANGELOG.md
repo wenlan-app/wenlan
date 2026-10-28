@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.20.3](https://github.com/wenlan-app/wenlan/compare/v0.20.2...v0.20.3) (2026-10-28)
+
+
+### Bug Fixes
+
+* **app:** consistent first-run wording and no notification prompt on first import ([#1025](https://github.com/wenlan-app/wenlan/issues/1025)) ([551bf44](https://github.com/wenlan-app/wenlan/commit/551bf4403bc81cb8bab74cd20ac4b212ab6c3722))
+* **app:** restore page editing and recover first-run setup ([#1018](https://github.com/wenlan-app/wenlan/issues/1018)) ([0d0fee3](https://github.com/wenlan-app/wenlan/commit/0d0fee3cc9955cd43c6efcfb4c36572c1c011ef0))
+* **import:** support sharded ChatGPT export archives ([#1022](https://github.com/wenlan-app/wenlan/issues/1022)) ([d4eda9d](https://github.com/wenlan-app/wenlan/commit/d4eda9d39ac61b4cf60756d76e4d231d5e5044a9))
+* **plugin:** find the Wenlan app's wenlan-mcp wherever it is installed ([#1026](https://github.com/wenlan-app/wenlan/issues/1026)) ([ca42699](https://github.com/wenlan-app/wenlan/commit/ca42699180c2b1d549ce5579fe8decee1b319cb9))
+
 ## [0.20.2](https://github.com/wenlan-app/wenlan/compare/v0.20.1...v0.20.2) (2026-10-27)
 
 
