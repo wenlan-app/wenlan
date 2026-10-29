@@ -15,6 +15,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ ENV_KEYS = (
     "CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
     "CARGO_PROFILE_RELEASE_STRIP", "CARGO_PROFILE_RELEASE_INCREMENTAL",
     "CMAKE_PROJECT_INCLUDE", "CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER", "CCACHE_DISABLE",
+    "RUSTUP_TOOLCHAIN", "RUSTC", "RUSTDOC",
     "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER", "OPENSSL_SRC_PERL", "VULKAN_SDK",
 )
 ORIGINAL_HOOK = "pnpm prepare:sidecars:tauri-build && pnpm build"
@@ -75,6 +77,9 @@ def observe(command, cwd, env, prefix, *, shell=False, artifacts=False):
                     log.write(line)
                     stream.buffer.write(line)
                     stream.buffer.flush()
+                    plain = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", line).strip().lower()
+                    if re.match(rb"^info:\s+(syncing channel updates for|downloading component\b)", plain):
+                        errors.append("toolchain provisioning during timed command: " + line.decode("utf-8", errors="replace").strip())
                     if artifacts and suffix == ".stdout.log":
                         try:
                             record = json.loads(line)
@@ -86,6 +91,8 @@ def observe(command, cwd, env, prefix, *, shell=False, artifacts=False):
                                 "filenames", "executable")})
         except BaseException as error:
             errors.append(repr(error))
+        finally:
+            pipe.close()
 
     threads = [threading.Thread(target=pump, args=(process.stdout, sys.stdout, ".stdout.log")),
                threading.Thread(target=pump, args=(process.stderr, sys.stderr, ".stderr.log"))]
@@ -102,7 +109,7 @@ def observe(command, cwd, env, prefix, *, shell=False, artifacts=False):
                       fresh=sum(x["fresh"] is True for x in found))
     save(str(prefix) + ".json", result)
     if errors:
-        raise RuntimeError(f"incomplete process observation: {errors}")
+        raise RuntimeError(f"incomplete or contaminated process observation: {errors}")
     return result
 
 
@@ -221,7 +228,7 @@ def run_pair(args):
     if product_config["build"]["beforeBuildCommand"] != ORIGINAL_HOOK:
         raise RuntimeError("unexpected product hook")
     real_cargo = checked_output(["rustup", "which", "cargo"], repo)
-    compiler = checked_output(["rustc", "-vV"], repo)
+    compiler = checked_output([os.environ.get("RUSTC", "rustc"), "-vV"], repo)
     if f"host: {args.target}" not in compiler:
         raise RuntimeError("A/B expects native host == explicit target")
     locks = {name: digest(repo / name) for name in ("Cargo.lock", "pnpm-lock.yaml")}

@@ -44,6 +44,19 @@ class BenchmarkTests(unittest.TestCase):
                 bench.safe_member(path)
         self.assertEqual(str(bench.safe_member("lib/libonnxruntime.a")), "lib/libonnxruntime.a")
 
+    def test_toolchain_provisioning_with_exit_zero_cannot_be_scored(self):
+        with tempfile.TemporaryDirectory(prefix="timing-contamination-") as raw:
+            prefix = Path(raw) / "observed"
+            with self.assertRaisesRegex(RuntimeError, "contaminated"):
+                bench.observe([sys.executable, "-c", "print('\\x1b[1minfo\\x1b[0m: syncing channel updates for fixture')"],
+                              Path(raw), dict(os.environ), prefix)
+            receipt = json.loads(Path(str(prefix) + ".json").read_text())
+            self.assertEqual(receipt["exit_code"], 0)
+            self.assertTrue(receipt["observation_errors"])
+            ordinary = bench.observe([sys.executable, "-c", "import json; print(json.dumps({'message':'info: syncing channel updates for quoted text'}))"],
+                                     Path(raw), dict(os.environ), Path(raw) / "ordinary")
+            self.assertEqual(ordinary["observation_errors"], [])
+
     def test_actual_cmake_injection_disables_default_native_cache_and_guard_rejects_on(self):
         with tempfile.TemporaryDirectory(prefix="native-cache-control-") as raw:
             root = Path(raw)
@@ -79,7 +92,7 @@ class BenchmarkTests(unittest.TestCase):
             (root / "Cargo.toml").write_text('[package]\nname="observer-fixture"\nversion="0.1.0"\nedition="2021"\n[workspace]\n', encoding="utf-8")
             (root / "src/lib.rs").write_text("pub fn value() -> u32 { 42 }", encoding="utf-8")
             # --offline must not become the ORT-breaking environment variable.
-            (root / "build.rs").write_text('fn main() { println!("cargo:rerun-if-changed=build.rs"); assert!(std::env::var_os("CARGO_NET_OFFLINE").is_none()); }', encoding="utf-8")
+            (root / "build.rs").write_text('fn main() { println!("cargo:rerun-if-changed=build.rs"); assert!(std::env::var_os("CARGO_NET_OFFLINE").is_none()); assert!(std::process::Command::new("rustup").args(["which", "rustc"]).output().unwrap().status.success()); }', encoding="utf-8")
             shim = root / ("cargo.exe" if os.name == "nt" else "cargo")
             (root / "shim.rs").write_text(bench.SHIM, encoding="utf-8")
             subprocess.run(["rustc", str(root / "shim.rs"), "-o", str(shim)], check=True, capture_output=True)
@@ -90,6 +103,16 @@ class BenchmarkTests(unittest.TestCase):
                 env.pop(key, None)
             env.update(BENCH_PYTHON=sys.executable, BENCH_DRIVER=str(Path(bench.__file__).resolve()),
                        BENCH_REAL_CARGO=real, BENCH_ARM_RECEIPTS=str(root / "receipts"), CARGO_TARGET_DIR=str(root / "target"))
+            env["RUSTC"] = subprocess.check_output(["rustup", "which", "rustc"], text=True).strip()
+            env["RUSTUP_TOOLCHAIN"] = subprocess.check_output(["rustup", "show", "active-toolchain"], text=True).split()[0]
+            # A dependency-local file must not replace the observer's pinned
+            # compiler context. The missing custom toolchain fails locally;
+            # there is no diagnostic download or installation.
+            (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel="fixture-missing-toolchain"\n', encoding="utf-8")
+            unpinned = dict(env)
+            unpinned.pop("RUSTUP_TOOLCHAIN", None)
+            refused = subprocess.run(["rustup", "which", "rustc"], cwd=root, env=unpinned, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(refused.returncode, 0)
             for expected_fresh in (False, True):
                 done = subprocess.run([str(shim), "build", "--manifest-path", str(root / "Cargo.toml"), "--release"], env=env, cwd=root, capture_output=True, text=True)
                 self.assertEqual(done.returncode, 0, done.stderr)

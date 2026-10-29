@@ -679,6 +679,7 @@ jobs:
         with:
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
+          components: rust-src, rustfmt, clippy, rust-analyzer
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           package_json_file: product/package.json
@@ -694,6 +695,18 @@ jobs:
           git rev-parse HEAD > ../benchmark-receipts/product-sha.txt
           git -C ../control rev-parse HEAD > ../benchmark-receipts/control-sha.txt
           rustc -vV > ../benchmark-receipts/rustc.txt
+          # The observer delegates to the real Cargo binary. Preserve the
+          # toolchain context normally fixed by the rustup cargo proxy, so
+          # dependency-local rust-toolchain files cannot install components
+          # concurrently during the timed region.
+          host="$(rustc -vV | awk '/^host:/ { print $2 }')"
+          real_rustc="$(rustup which --toolchain 1.95.0 rustc)"
+          real_rustdoc="$(rustup which --toolchain 1.95.0 rustdoc)"
+          {
+            echo "RUSTUP_TOOLCHAIN=1.95.0-$host"
+            echo "RUSTC=$real_rustc"
+            echo "RUSTDOC=$real_rustdoc"
+          } >> "$GITHUB_ENV"
           node --version > ../benchmark-receipts/node.txt
           pnpm --version > ../benchmark-receipts/pnpm.txt
       - name: Record Windows hardware and release linker inputs
