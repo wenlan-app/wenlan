@@ -3818,13 +3818,8 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         }
     }
 
-    async fn insert_long_folder_source_page(
-        db: &MemoryDB,
-        page_id: &str,
-        source_id: &str,
-        content: String,
-    ) {
-        db.upsert_documents(vec![RawDocument {
+    fn long_folder_source_document(source_id: &str, content: String) -> RawDocument {
+        RawDocument {
             source: "memory".to_string(),
             source_id: source_id.to_string(),
             title: "Cedar Atlas project notes".to_string(),
@@ -3835,9 +3830,10 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
             source_agent: Some("folder".to_string()),
             confirmed: Some(true),
             ..Default::default()
-        }])
-        .await
-        .unwrap();
+        }
+    }
+
+    async fn insert_stale_folder_source_page(db: &MemoryDB, page_id: &str, source_id: &str) {
         let now = chrono::Utc::now().to_rfc3339();
         db.insert_page(
             page_id,
@@ -3852,6 +3848,18 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
         .await
         .unwrap();
         db.set_page_stale(page_id, "source_updated").await.unwrap();
+    }
+
+    async fn insert_long_folder_source_page(
+        db: &MemoryDB,
+        page_id: &str,
+        source_id: &str,
+        content: String,
+    ) {
+        db.upsert_documents(vec![long_folder_source_document(source_id, content)])
+            .await
+            .unwrap();
+        insert_stale_folder_source_page(db, page_id, source_id).await;
     }
 
     #[tokio::test]
@@ -3985,16 +3993,58 @@ The app process is the only writer [3].\n\n## Backup\n\nNightly copy to iCloud D
     #[tokio::test]
     async fn refresh_page_blocks_a_source_needing_too_many_parts_without_writing() {
         let (db, _db_dir) = crate::db::tests::test_db().await;
+        let source_id = "folder-docs::cedar-long.md";
         let source = "Background notes retain the project setup record.\n".repeat(2_000);
-        insert_long_folder_source_page(&db, "page_too_long", "folder-docs::cedar-long.md", source)
-            .await;
+        // Refresh reads the complete stored source without vector search. Keep
+        // the oversized input, but defer vectors this rejection never consumes.
+        db.upsert_documents_without_embeddings(vec![long_folder_source_document(
+            source_id, source,
+        )])
+        .await
+        .unwrap();
+        insert_stale_folder_source_page(&db, "page_too_long", source_id).await;
+        {
+            let conn = db.test_primary_session().await;
+            let mut rows = conn
+                .query(
+                    "SELECT COUNT(*), COUNT(embedding) FROM memories WHERE source = 'memory' AND source_id = ?1",
+                    libsql::params![source_id],
+                )
+                .await
+                .unwrap();
+            let row = rows.next().await.unwrap().unwrap();
+            assert!(
+                row.get::<i64>(0).unwrap() > 1,
+                "the source must span chunks"
+            );
+            assert_eq!(
+                row.get::<i64>(1).unwrap(),
+                0,
+                "source vectors remain deferred"
+            );
+        }
+        let input_budget = 1_500;
         let provider = Arc::new(PartsReadingProvider::new(
             "never present",
             "unexpected generation [1]",
-            1_500,
+            input_budget,
         ));
         let llm: Arc<dyn LlmProvider> = provider.clone();
         let before = db.get_page("page_too_long").await.unwrap().unwrap();
+        let stored_sources = db
+            .get_refresh_source_contents_by_ids(&[source_id.to_string()])
+            .await
+            .unwrap();
+        assert_eq!(stored_sources.len(), 1);
+        assert_eq!(stored_sources[0].0, source_id);
+        let framing_bytes =
+            crate::prompts::defaults::REFRESH_SOURCE_NOTES.len() + before.title.len() + 96;
+        let part_bytes = input_budget.saturating_mul(3).saturating_sub(framing_bytes) / 4 * 3;
+        assert!(
+            split_source_parts(&stored_sources[0].1, part_bytes).len()
+                > REFRESH_SOURCE_PART_CALL_CAP,
+            "the real stored source must still exceed the part-call cap"
+        );
         let outcome = refresh_page(
             &db,
             &llm,

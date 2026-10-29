@@ -31,9 +31,11 @@ fn legacy_doc(path: &str, content: &str) -> RawDocument {
 }
 
 fn multi_chunk_legacy_content() -> String {
+    // Exercise whole-group retirement with a few real chunks; this is not a
+    // large-file embedding benchmark. Both tokenizer and fallback must split it.
     format!(
         "The Cedar project chose the amber kestrel marker for the next client review.\n{}",
-        "Additional generated file context remains in this older copy. ".repeat(1800)
+        "Additional generated file context remains in this older copy. ".repeat(60)
     )
 }
 
@@ -142,6 +144,10 @@ async fn retirement_removes_old_copy_from_search_and_preserves_its_rows() {
     assert!(
         stored_legacy_chunks > 1,
         "fixture must exercise a multi-chunk legacy file"
+    );
+    assert!(
+        stored_legacy_chunks <= 8,
+        "keep this correctness fixture bounded, got {stored_legacy_chunks} chunks"
     );
     let changed = db
         .retire_legacy_directory_copies(

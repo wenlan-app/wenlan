@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict, deque
 from pathlib import Path, PurePosixPath
 from typing import Iterable
@@ -157,8 +158,8 @@ def _bin_test_args(names) -> list[str]:
 
 
 # The Tauri desktop app crate plus the root-level frontend dirs it shares a
-# release pipeline with. All of it runs under the separate app-check job
-# (macos-15), never the Rust workspace plan.
+# release pipeline with. Native checks run in app-check (macos-15), with
+# portable frontend checks beside them; never select the Rust app here.
 APP_JOB_PREFIXES = ("app", "src", "e2e", "preview", "review", "public")
 APP_JOB_FILES = {
     "package.json",
@@ -175,9 +176,8 @@ APP_JOB_FILES = {
     "playwright.review.config.ts",
     "scripts/prepare-sidecars.sh",
     "scripts/prepare-tauri-build-sidecars.sh",
-    # app-check is the only job that installs the package, so it is the only
-    # one that runs the postinstall hook installer and the Vitest suites that
-    # assert on the dev entry points and their Node launchers.
+    # The app jobs install the package and run postinstall/dev-launcher
+    # contracts; retain native script coverage alongside full frontend tests.
     "scripts/dev-all.sh",
     "scripts/dev-runtime.sh",
     "scripts/install-git-hooks.mjs",
@@ -192,6 +192,7 @@ APP_JOB_FILES = {
     "scripts/release-version-sync.test.ts",
     "scripts/resolve-backend-dir.sh",
     "scripts/verify-review-bundle.mjs",
+    "scripts/vite-cache.test.ts",
 }
 
 SUITE_OUTPUT_KEYS = {
@@ -1581,7 +1582,9 @@ def _cargo_metadata() -> object:
         raise PlanError("cargo metadata emitted invalid JSON") from error
 
 
-def _require_nextest_match(command: list[str], *, label: str) -> None:
+def _require_nextest_match(
+    command: list[str], *, label: str, extract_to: str | None = None
+) -> dict:
     if command[:3] != ["cargo", "nextest", "run"]:
         raise PlanError(f"cannot validate non-nextest command: {command!r}")
     unpartitioned = command
@@ -1603,6 +1606,8 @@ def _require_nextest_match(command: list[str], *, label: str) -> None:
         "--message-format",
         "json",
     ]
+    if extract_to is not None:
+        list_command.extend(["--extract-to", extract_to])
     print("+", " ".join(list_command), flush=True)
     result = subprocess.run(
         list_command,
@@ -1631,6 +1636,71 @@ def _require_nextest_match(command: list[str], *, label: str) -> None:
     if matched == 0:
         raise PlanError(f"{label} selected zero tests; archived ownership has drifted")
     print(f"{label} matched {matched} tests")
+    return listing
+
+
+def _run_macos_archive(command: list[str], *, label: str) -> None:
+    """Validate the full selector, then reuse that exact extracted build.
+
+    An empty partition is allowed only after the unpartitioned selector has
+    matched real tests. Reopening --archive-file for the run would decompress
+    all the same binaries a second time. Nextest's documented metadata reuse
+    keeps both checks on one extraction without invoking Cargo compilation.
+    """
+    if command[:3] != ["cargo", "nextest", "run"] or "--archive-file" not in command:
+        raise PlanError("macOS archive run requires a nextest archive")
+    archive_index = command.index("--archive-file")
+    if archive_index + 1 >= len(command):
+        raise PlanError("macOS archive run has no archive path")
+    archive = Path(command[archive_index + 1])
+    with tempfile.TemporaryDirectory(prefix="wenlan-nextest-", dir=archive.parent) as extracted:
+        listing = _require_nextest_match(command, label=label, extract_to=extracted)
+        target = Path(extracted) / "target"
+        metadata = target / "nextest"
+        cargo_metadata = metadata / "cargo-metadata.json"
+        binaries_metadata = metadata / "binaries-metadata.json"
+        if not cargo_metadata.is_file() or not binaries_metadata.is_file():
+            raise PlanError(f"{label} extraction is missing nextest build metadata")
+        # The archive reader remaps Rust standard-library directories as well
+        # as target paths. Raw archived metadata still names the producer's
+        # toolchain. Carry only the platforms already resolved by nextest's
+        # successful listing; leave binary/build paths for --target-dir-remap.
+        try:
+            binaries = json.loads(binaries_metadata.read_text(encoding="utf-8"))
+            raw_build = binaries["rust-build-meta"]
+            platforms = listing["rust-build-meta"]["platforms"]
+            if not isinstance(raw_build, dict) or not isinstance(platforms, dict):
+                raise TypeError("build metadata and platforms must be objects")
+            identities = []
+            for value in (raw_build["platforms"], platforms):
+                if not isinstance(value, dict) or not isinstance(value.get("targets"), list):
+                    raise TypeError("platforms must describe host and targets")
+                entries = [value["host"], *value["targets"]]
+                if any(
+                    not isinstance(entry, dict)
+                    or not isinstance(entry.get("platform"), dict)
+                    or not isinstance(entry.get("libdir"), dict)
+                    for entry in entries
+                ):
+                    raise TypeError("each platform must describe its identity and libdir")
+                identities.append([entry["platform"] for entry in entries])
+            if identities[0] != identities[1]:
+                raise PlanError(f"{label} listed and archived platform identities differ")
+            raw_build["platforms"] = platforms
+        except (KeyError, TypeError, json.JSONDecodeError) as error:
+            raise PlanError(f"{label} has invalid nextest platform metadata") from error
+        reuse_metadata = metadata / "reuse-binaries-metadata.json"
+        reuse_metadata.write_text(json.dumps(binaries), encoding="utf-8")
+        reuse_command = [
+            *command[:archive_index],
+            "--cargo-metadata", str(cargo_metadata),
+            "--binaries-metadata", str(reuse_metadata),
+            "--target-dir-remap", str(target),
+            *command[archive_index + 2:],
+        ]
+        executable_command = _executable_command(reuse_command)
+        print("+", " ".join(executable_command), flush=True)
+        subprocess.run(executable_command, check=True)
 
 
 def _require_filterset_match(command: list[str]) -> None:
@@ -1815,10 +1885,7 @@ def _main(argv: list[str]) -> int:
         if not commands:
             raise PlanError("macOS archive route selected no tests")
         for index, command in enumerate(commands, start=1):
-            _require_nextest_match(command, label=f"macOS archive {index}")
-            executable_command = _executable_command(command)
-            print("+", " ".join(executable_command), flush=True)
-            subprocess.run(executable_command, check=True)
+            _run_macos_archive(command, label=f"macOS archive {index}")
         return 0
 
     commands = command_groups_for(
