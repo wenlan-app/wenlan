@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "../navigation/WorkspacePaneHost";
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import PageInfoDrawer from "../page/PageInfoDrawer";
+import { AskInsteadHint } from "../askAi/AskInsteadHint";
 import { getPage, publishPageDraft, type Page } from "../../../lib/tauri";
 import {
   usePageDraftAutosave,
@@ -47,6 +48,9 @@ type PageDraftEditorProps = {
   readonly onOpenExisting: (pageId: string) => void;
   readonly onPublished: (pageId: string, projectionIssue?: PageProjectionIssue) => void;
   readonly space: string | null;
+  /** While the user is getting started, a blank page says where questions
+   *  go instead. */
+  readonly askInstead?: boolean;
 };
 
 function errorProperty(error: unknown, ...keys: string[]): string | null {
@@ -76,6 +80,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     onEscapeBeforeLeave,
     onPublished,
     space: initialSpace,
+    askInstead = false,
   }, ref) {
     const { t } = useTranslation();
     const noteGroup = useContext(WorkspaceNoteGroupContext);
@@ -420,6 +425,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
               </div>
             )}
           </div>
+          {askInstead ? <AskInsteadHint blank={title === "" && content === ""} /> : null}
           <input
             aria-label={t("pages.editor.titleLabel")}
             autoFocus

@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import "./source-access.css";
 
-export default function SourceDialog({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}) {
+export default function SourceDialog({title,lead,onClose,children}:{title:string;lead?:string;onClose:()=>void;children:ReactNode}) {
   const {t}=useTranslation();
   const titleId=useId();
   const ref=useRef<HTMLDivElement>(null);
@@ -28,7 +28,7 @@ export default function SourceDialog({title,onClose,children}:{title:string;onCl
   },[]);
   return createPortal(<div className="source-dialog-overlay" onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
     <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="source-dialog" ref={ref}>
-      <header><h2 id={titleId}>{title}</h2><button type="button" className="mem-icon-action" aria-label={t('sourceAccess.close')} onClick={onClose}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m6 6 12 12M6 18 18 6"/></svg></button></header>
+      <header><div className="source-dialog-heading"><h2 id={titleId}>{title}</h2>{lead?<p className="source-dialog-lead">{lead}</p>:null}</div><button type="button" className="mem-icon-action" aria-label={t('sourceAccess.close')} onClick={onClose}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m6 6 12 12M6 18 18 6"/></svg></button></header>
       {children}
     </div>
   </div>,document.body);

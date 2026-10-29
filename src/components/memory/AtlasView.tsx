@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
+import { TabEmptyMark } from "../onboarding/TabIntro";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -1405,6 +1406,7 @@ export default function AtlasView({ onNodeClick, focusEntityId, focusPageId, onB
   if (entities.length === 0 && graph.pages.length === 0) {
     return (
       <div data-testid="atlas-view" style={statusStyle}>
+        <TabEmptyMark tab="graph" />
         <span className="entity-empty">{t("constellationMap.empty")}</span>
       </div>
     );

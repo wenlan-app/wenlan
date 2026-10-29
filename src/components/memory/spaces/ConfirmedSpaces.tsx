@@ -1,4 +1,5 @@
 import type { Space } from "../../../lib/tauri";
+import { TabEmptyMark } from "../../onboarding/TabIntro";
 import type { AssetLens } from "../../../lib/assetLens";
 import { findReorderTarget } from "./spaceHelpers";
 import { SpaceCard } from "./SpaceCard";
@@ -40,7 +41,7 @@ export function ConfirmedSpaces(props: ConfirmedSpacesProps) {
       {props.noResults ? (
         <p className="spaces-empty">{props.labels.noResults}</p>
       ) : props.spaces.length === 0 ? (
-        props.filter.trim() ? null : <p className="spaces-empty">{props.labels.noConfirmed}</p>
+        props.filter.trim() ? null : <p className="spaces-empty"><TabEmptyMark tab="spaces" />{props.labels.noConfirmed}</p>
       ) : props.lens === "cards" ? (
         <div className="asset-cards" data-testid="spaces-cards">
           {props.spaces.map((space) => (

@@ -88,6 +88,38 @@ pub struct BriefReadResponse {
     /// otherwise.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub code_basis_pending_explained: bool,
+    /// Where a new library stands, so whichever AI tool reads the Brief can
+    /// tell the user what to do next. Library-wide, not per Space. Absent once
+    /// the library is established or the user has asked about their notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub getting_started: Option<GettingStarted>,
+}
+
+/// The next thing a new user does, in the same order as the app's
+/// getting-started checklist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GettingStartedStep {
+    /// No pages and nothing waiting: bring notes, files or AI chats in.
+    AddMaterial,
+    /// Material waits and no page exists yet: an AI tool writes the pages.
+    WritePages,
+    /// An AI tool holds every waiting item and is writing them now.
+    Writing,
+    /// Pages exist: ask the AI tool about them.
+    Ask,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GettingStarted {
+    /// Pages written from material or by hand; copies of brought-in files
+    /// and entity pages do not count.
+    pub pages: u32,
+    /// Items (a note, chat, file or capture) no page uses yet.
+    pub waiting: u32,
+    /// Of those, the ones an AI tool is writing up right now.
+    pub held: u32,
+    pub next: GettingStartedStep,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

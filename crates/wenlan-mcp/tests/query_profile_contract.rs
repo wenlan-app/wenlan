@@ -147,7 +147,7 @@ async fn query_brief_projects_ready_and_related_context() {
             "brief":{"last_session_summary":"Current work", "active":[{"text":"Review evidence",
                 "gate":"Approval required"}], "backlog":[]},
             "related_context":{"query":"evidence", "results":[expected_hit()]},
-            "code_basis_pending":null}),
+            "code_basis_pending":null, "getting_started":null}),
         );
         let standard = server(&mock, transport, ToolProfile::Standard)
             .brief_impl(brief_params())
@@ -183,9 +183,33 @@ async fn query_brief_preserves_empty_states() {
         assert_output(
             &result,
             json!({"state":state, "space":space, "brief":null, "related_context":null,
-                "code_basis_pending":null}),
+                "code_basis_pending":null, "getting_started":null}),
         );
     }
+}
+
+#[tokio::test]
+async fn query_brief_carries_a_new_users_next_step() {
+    let mock = MockServer::start().await;
+    let mut payload = serde_json::to_value(brief()).unwrap();
+    payload["state"] = json!("space_not_resolved");
+    payload["space"] = Value::Null;
+    payload["getting_started"] = json!({"pages":0, "waiting":12, "held":0, "next":"write_pages"});
+    Mock::given(method("POST"))
+        .and(path("/api/brief"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(payload))
+        .mount(&mock)
+        .await;
+    let result = server(&mock, TransportMode::Http, ToolProfile::QueryOnly)
+        .brief_impl(brief_params())
+        .await
+        .unwrap();
+    assert_output(
+        &result,
+        json!({"state":"space_not_resolved", "space":null, "brief":null, "related_context":null,
+            "code_basis_pending":null,
+            "getting_started":{"pages":0, "waiting":12, "held":0, "next":"write_pages"}}),
+    );
 }
 
 #[tokio::test]

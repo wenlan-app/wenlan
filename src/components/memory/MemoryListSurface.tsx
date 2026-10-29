@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ReactNode } from "react";
+import { TabEmptyMark } from "../onboarding/TabIntro";
 import { useTranslation } from "react-i18next";
 import type { MemoryItem } from "../../lib/tauri";
 
@@ -45,6 +46,7 @@ export default function MemoryListSurface({
         </div>
       ) : (
         <div className="memory-list-empty">
+          <TabEmptyMark tab="memories" />
           <span>{t("memoryList.noMemoriesYet")}</span>
         </div>
       )}

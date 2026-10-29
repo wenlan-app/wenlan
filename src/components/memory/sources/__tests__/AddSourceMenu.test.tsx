@@ -41,9 +41,9 @@ describe("AddSourceMenu", () => {
   it("shows file, folder and web excerpt entry points on a current daemon", async () => {
     mocks.getDaemonVersion.mockResolvedValue("0.11.0");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    await screen.findByText("Connect a folder");
-    expect(screen.getByText("Add files")).toBeInTheDocument();
-    expect(screen.getByText("Add a link with text")).toBeInTheDocument();
+    await screen.findByText("Folder");
+    expect(screen.getByText("Files")).toBeInTheDocument();
+    expect(screen.getByText("Link and text")).toBeInTheDocument();
     expect(screen.queryByText("Your daemon needs an update to index files.")).toBeNull();
   });
 
@@ -52,6 +52,28 @@ describe("AddSourceMenu", () => {
     fireEvent.click(await screen.findByText("Past AI chats"));
     expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
+  });
+
+  it("offers the quick and the full way for past AI chats side by side where both exist", async () => {
+    const onClose = vi.fn();
+    const onQuickChats = vi.fn();
+    render(wrap(<AddSourceMenu start="chats" onQuickChats={onQuickChats} onClose={onClose} />));
+    expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
+    expect(screen.getByTestId("source-chats-quick")).toHaveTextContent("Quick, about a minute");
+    expect(screen.getByTestId("source-chats-full")).toHaveTextContent("Full chat history");
+    expect(screen.queryByTestId("chat-import-drop-zone")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("source-chats-full"));
+    expect(screen.getByTestId("chat-import-drop-zone")).toBeInTheDocument();
+  });
+
+  it("hands the quick way to the paste-back import and closes", async () => {
+    const onClose = vi.fn();
+    const onQuickChats = vi.fn();
+    render(wrap(<AddSourceMenu start="chats" onQuickChats={onQuickChats} onClose={onClose} />));
+    fireEvent.click(await screen.findByTestId("source-chats-quick"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onQuickChats).toHaveBeenCalledTimes(1);
   });
 
   it("shows the update-daemon notice on an old daemon", async () => {
@@ -65,42 +87,59 @@ describe("AddSourceMenu", () => {
     mocks.openDialog.mockResolvedValue("/Users/me/paper.pdf");
     mocks.uploadSourceFile.mockResolvedValue({ id: "directory-sources" });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Add files"));
+    fireEvent.click(await screen.findByText("Files"));
     await waitFor(() => expect(mocks.uploadSourceFile).toHaveBeenCalledWith("/Users/me/paper.pdf"));
   });
+  it("opened from the welcome's folder row, goes straight to the folder picker once", async () => {
+    mocks.openDialog.mockResolvedValue("/Users/me/vault");
+    render(wrap(<AddSourceMenu start="folder" onClose={() => {}} />));
+    expect(await screen.findByRole("dialog", { name: "Sync or import once?" })).toBeInTheDocument();
+    expect(mocks.openDialog).toHaveBeenCalledOnce();
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Folder", directory: true, multiple: false });
+  });
+
+  it("a cancelled picker from the welcome leaves the menu with every other way in", async () => {
+    mocks.openDialog.mockResolvedValue(null);
+    render(wrap(<AddSourceMenu start="folder" onClose={() => {}} />));
+    await waitFor(() => expect(mocks.openDialog).toHaveBeenCalledOnce());
+    expect(await screen.findByText("Past AI chats")).toBeInTheDocument();
+  });
+
   it("opens the system folder picker directly and connects the selected folder", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     const close = vi.fn();
     render(wrap(<AddSourceMenu onClose={close} />));
-    fireEvent.click(await screen.findByText("Connect a folder"));
+    fireEvent.click(await screen.findByText("Folder"));
     expect(await screen.findByRole("dialog", { name: "Sync or import once?" })).toBeInTheDocument();
     expect(screen.getByText("/Users/me/research")).toBeInTheDocument();
     expect(mocks.addSource).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText("Keep in sync"));
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("directory", "/Users/me/research", true));
-    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect a folder", directory: true, multiple: false });
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Folder", directory: true, multiple: false });
     expect(mocks.detectVault).toHaveBeenCalledWith("/Users/me/research");
     await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
     expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("connected");
   });
 
-  it("gives Obsidian a distinct first entry and connects it with its own source type", async () => {
+  it("lists past AI chats first, then Obsidian, and connects a vault with its own source type", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/vault");
     mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    const vault = await screen.findByText("Connect Obsidian vault");
-    expect(vault.closest("button")).toHaveClass("source-add-option--vault");
+    const vault = await screen.findByText("Obsidian vault");
+    const options = screen.getAllByRole("button").filter((button) => button.classList.contains("source-add-option"));
+    expect(options[0]).toHaveTextContent("Past AI chats");
+    expect(options[1]).toBe(vault.closest("button"));
     fireEvent.click(vault);
     fireEvent.click(await screen.findByText("Keep in sync"));
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));
-    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect Obsidian vault", directory: true, multiple: false });
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Obsidian vault", directory: true, multiple: false });
   });
 
   it("does not register a source when the native folder picker is cancelled", async () => {
     mocks.openDialog.mockResolvedValue(null);
     const close = vi.fn();
     render(wrap(<AddSourceMenu onClose={close} />));
-    fireEvent.click(await screen.findByText("Connect a folder"));
+    fireEvent.click(await screen.findByText("Folder"));
     await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
     expect(mocks.detectVault).not.toHaveBeenCalled();
     expect(mocks.addSource).not.toHaveBeenCalled();
@@ -110,7 +149,7 @@ describe("AddSourceMenu", () => {
   it("does not label a normal folder as an Obsidian vault", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Connect Obsidian vault"));
+    fireEvent.click(await screen.findByText("Obsidian vault"));
     // Shown in the dialog, next to the choice that failed.
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Could not add the source");
@@ -122,7 +161,7 @@ describe("AddSourceMenu", () => {
     mocks.openDialog.mockResolvedValue("/Users/me/vault");
     mocks.detectVault.mockResolvedValue({ isVault: true, sourceType: "obsidian", unreadable: false });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Connect a folder"));
+    fireEvent.click(await screen.findByText("Folder"));
     fireEvent.click(await screen.findByText("Keep in sync"));
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", true));
   });
@@ -133,7 +172,7 @@ describe("AddSourceMenu", () => {
     mocks.addSource.mockResolvedValue({ id: "obsidian-vault", path: "/Users/me/vault", source_type: "obsidian", status: "Paused" });
     const close = vi.fn();
     render(wrap(<AddSourceMenu onClose={close} />));
-    fireEvent.click(await screen.findByText("Connect Obsidian vault"));
+    fireEvent.click(await screen.findByText("Obsidian vault"));
     fireEvent.click(await screen.findByText("Import once"));
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("obsidian", "/Users/me/vault", false));
     await waitFor(() => expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("obsidian-vault"));
@@ -144,7 +183,7 @@ describe("AddSourceMenu", () => {
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     const close = vi.fn();
     render(wrap(<AddSourceMenu onClose={close} />));
-    fireEvent.click(await screen.findByText("Connect a folder"));
+    fireEvent.click(await screen.findByText("Folder"));
     await screen.findByRole("dialog", { name: "Sync or import once?" });
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(close).toHaveBeenCalledTimes(1);
@@ -156,17 +195,17 @@ describe("AddSourceMenu", () => {
     mocks.detectVault.mockResolvedValue({ isVault: true, isLogseqGraph: true, sourceType: "obsidian", unreadable: false });
     mocks.addSource.mockResolvedValue({ id: "logseq-graph", path: "/Users/me/graph", source_type: "logseq" });
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Connect Logseq graph"));
+    fireEvent.click(await screen.findByText("Logseq graph"));
     fireEvent.click(await screen.findByText("Keep in sync"));
     await waitFor(() => expect(mocks.addSource).toHaveBeenCalledWith("logseq", "/Users/me/graph", true));
-    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Connect Logseq graph", directory: true, multiple: false });
+    expect(mocks.openDialog).toHaveBeenCalledWith({ title: "Logseq graph", directory: true, multiple: false });
     await waitFor(() => expect(mocks.syncRegisteredSource).toHaveBeenCalledWith("logseq-graph"));
   });
 
   it("does not label a normal folder as a Logseq graph", async () => {
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Connect Logseq graph"));
+    fireEvent.click(await screen.findByText("Logseq graph"));
     // Shown in the dialog, next to the choice that failed.
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Could not add the source");
@@ -179,7 +218,7 @@ describe("AddSourceMenu", () => {
     mocks.openDialog.mockResolvedValue("/Users/me/research");
     mocks.syncRegisteredSource.mockRejectedValue(new Error("offline"));
     render(wrap(<AddSourceMenu onClose={() => {}} />));
-    fireEvent.click(await screen.findByText("Connect a folder"));
+    fireEvent.click(await screen.findByText("Folder"));
     fireEvent.click(await screen.findByText("Import once"));
     await waitFor(() => expect(toast).toHaveBeenLastCalledWith("Source connected", {
       id: expect.stringMatching(/^source-connected-/),

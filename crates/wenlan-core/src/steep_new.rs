@@ -373,6 +373,49 @@ pub async fn new_material_count(db: &MemoryDB, scope: &ReadScope) -> Result<usiz
     Ok(new_material(db, scope).await?.len())
 }
 
+/// A library with this many notes is established and no longer gets the
+/// getting-started next step. The app's checklist uses the same line.
+pub const ESTABLISHED_LIBRARY_NOTES: i64 = 10;
+
+/// Where a new library stands and what the user does next, for every AI tool
+/// that reads the Brief. `None` once the library is established or the user
+/// has asked an AI tool about their notes (the checklist's last step).
+pub async fn getting_started(
+    db: &MemoryDB,
+) -> Result<Option<wenlan_types::GettingStarted>, WenlanError> {
+    use wenlan_types::GettingStartedStep;
+    let notes = db.count_notes().await?;
+    if notes >= ESTABLISHED_LIBRARY_NOTES {
+        return Ok(None);
+    }
+    let asked = db
+        .list_milestones()
+        .await?
+        .iter()
+        .any(|milestone| milestone.id == crate::onboarding::MilestoneId::FirstRecall);
+    if asked && notes > 0 {
+        return Ok(None);
+    }
+    let material = new_material(db, &ReadScope::Global).await?;
+    let waiting = material.len();
+    let held = material.iter().filter(|m| m.item.held).count();
+    let next = if notes > 0 {
+        GettingStartedStep::Ask
+    } else if waiting > 0 && held == waiting {
+        GettingStartedStep::Writing
+    } else if waiting > 0 {
+        GettingStartedStep::WritePages
+    } else {
+        GettingStartedStep::AddMaterial
+    };
+    Ok(Some(wenlan_types::GettingStarted {
+        pages: u32::try_from(notes).unwrap_or(u32::MAX),
+        waiting: u32::try_from(waiting).unwrap_or(u32::MAX),
+        held: u32::try_from(held).unwrap_or(u32::MAX),
+        next,
+    }))
+}
+
 /// A page of [`new_material`]: `(items, total, next cursor)`. The cursor is
 /// the offset of the next page.
 pub async fn list_new(

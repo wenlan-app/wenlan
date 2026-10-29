@@ -31,6 +31,9 @@ import MemoryStream from "./MemoryStream";
 import type { SortMode } from "./MemoryStream";
 import { FirstUseGuide } from "../onboarding/FirstUseGuide";
 import { useGettingStartedState } from "../onboarding/useGettingStartedState";
+import { TabIntro, type IntroTab } from "../onboarding/TabIntro";
+import { ExampleWikiBanner, useExampleWikiSwitch } from "../onboarding/ExampleWikiBanner";
+import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
 import { SearchResults } from "./SearchResults";
@@ -145,7 +148,7 @@ function sameDestination(current: View, next: View): boolean {
     case "space": return next.kind === "space" && (current.spaceId && next.spaceId
       ? current.spaceId === next.spaceId : current.spaceName === next.spaceName);
     case "spaces": return next.kind === "spaces" && !!current.create === !!next.create;
-    case "import": return next.kind === "import" && !!current.fromFirstUse === !!next.fromFirstUse;
+    case "import": return next.kind === "import" && !!current.fromFirstUse === !!next.fromFirstUse && !!current.fromHome === !!next.fromHome;
     case "first-use": return next.kind === "first-use"
       && !!current.showKnowledge === !!next.showKnowledge && current.batchId === next.batchId;
     case "page-draft": return next.kind === "page-draft" && current.space === next.space
@@ -170,6 +173,17 @@ function navigationSettlement(callback?: () => void) {
     },
   };
 }
+
+
+/** The tabs that get a one-line explanation the first time a new user opens them. */
+const INTRO_TABS: Partial<Record<View["kind"], IntroTab>> = {
+  stream: "memories",
+  sources: "sources",
+  entities: "topics",
+  graph: "graph",
+  spaces: "spaces",
+  activity: "activity",
+};
 
 export default function Main({
   initialView,
@@ -284,6 +298,7 @@ export default function Main({
       primaryDraftIdentityByTab.current.set(primaryDraftTabKey, draftId);
     }
   }, [primaryDraftTabKey]);
+  const exampleWiki = useExampleWikiActive();
   const [viewHistory, setViewHistory] = useState<View[]>([]);
   const viewHistoryRef = useRef<View[]>([]);
   const [viewForward, setViewForward] = useState<View[]>([]);
@@ -294,6 +309,18 @@ export default function Main({
     setViewHistory(past);
     setViewForward(forward);
   };
+  // Opening or leaving the example wiki starts the workspace over, so no
+  // tab, split or step back leads from one wiki into the other.
+  const exampleWikiShown = useRef(exampleWiki);
+  useEffect(() => {
+    if (exampleWikiShown.current === exampleWiki) return;
+    exampleWikiShown.current = exampleWiki;
+    noteTabsRef.current = [];
+    setNoteTabs([]);
+    updateHistory([], []);
+    setSecondaryOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on the switch
+  }, [exampleWiki]);
   const dismissSearch = () => {
     pendingDraftSearchCancelRef.current?.();
     pendingDraftSearchCancelRef.current = null;
@@ -990,12 +1017,12 @@ export default function Main({
   const { data: spaces } = useQuery({ queryKey: ["spaces"], queryFn: listSpaces });
   // The directory has nothing to say to a brand-new library, and it reads as a
   // second sidebar next to the open getting-started checklist, so both give the
-  // Wiki a single column; see WikiWorkspace `directoryHidden`. Once the card is
-  // down to its one-line form the pages are the home again, directory included.
+  // Wiki a single column; see WikiWorkspace `directoryHidden`.
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
+  const exampleWikiSwitch = useExampleWikiSwitch();
   const liveDirectoryHidden = libraryEmpty
-    || (gettingStarted.visible && !gettingStarted.dismissed && !gettingStarted.compact);
+    || (gettingStarted.visible && !gettingStarted.dismissed);
   // Until both reads answer (they wait on the daemon at launch), keep the
   // layout of last time so the Wiki does not collapse under the user.
   const layoutKnown = gettingStarted.loaded || libraryEmpty;
@@ -1391,12 +1418,18 @@ export default function Main({
 
         {/* Main content */}
         <main ref={mainContentRef} className={`flex-1 ${view.kind === "graph" || view.kind === "sources" || view.kind === "connect-agent" ? "min-w-0 overflow-hidden p-0" : isWikiWorkspaceView ? "memory-main-content memory-main-content--wiki overflow-hidden" : `memory-main-content overflow-y-auto${view.kind === "memory" || view.kind === "source-document" || view.kind === "entity" ? " memory-main-content--page" : ["spaces", "entities", "stream"].includes(view.kind) ? " memory-main-content--collection" : ""}`}`}>
+          <TabIntro tab={INTRO_TABS[view.kind] ?? null} newUser={gettingStarted.newLibrary} areaRef={mainContentRef} />
           {view.kind === "import" ? (
             <ImportView
               onBack={navigateBack}
-              completeLabel={view.fromFirstUse ? t("firstUse.guide.seeKnowledge") : undefined}
+              completeLabel={view.fromFirstUse ? t("firstUse.guide.seeKnowledge") : view.fromHome ? t("setup.done.backToWiki") : undefined}
+              title={view.fromHome ? t("sourceAccess.chatQuickTitle") : undefined}
               onComplete={(_source, result) => {
-                if (view.fromFirstUse) {
+                if (view.fromHome) {
+                  // From the getting-started checklist: back to it, where the
+                  // next step hands the imported chats to the AI tool.
+                  navigateBack();
+                } else if (view.fromFirstUse) {
                   showView({
                     kind: "first-use",
                     showKnowledge: true,
@@ -1453,7 +1486,11 @@ export default function Main({
                 onSelectPage={(id) => navigateTo({ kind: "page", pageId: id, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
-                onSeeExample={() => navigateTo({ kind: "first-use" })}
+                onSeeExample={() => {
+                  exampleWikiSwitch.open();
+                  navigateTo({ kind: "pages" });
+                }}
+                onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
                 onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
                 onOpenNoteSuggestion={(container) => {
@@ -1541,6 +1578,7 @@ export default function Main({
             <PageDraftEditor
               key={view.sessionKey ?? view.draftId ?? "new"}
               draftId={view.draftId}
+              askInstead={gettingStarted.visible}
               onDraftIdentity={reportPrimaryDraftIdentity}
               onTitleChange={handleDraftTitleChange}
               onBack={() => {
@@ -1608,6 +1646,7 @@ export default function Main({
               onPageClick={(id) => navigateTo({ kind: "page", pageId: id })}
               onEntityClick={handleEntityClick}
               onSavePendingChange={reportPageSaving}
+              pageTour={gettingStarted.visible || exampleWiki}
             />
             </WikiWorkspace>
           ) : view.kind === "distill-review" ? (
@@ -1621,7 +1660,6 @@ export default function Main({
           ) : view.kind === "first-use" ? (
             <FirstUseGuide
               onBack={() => navigatePages()}
-              initialView={view.showKnowledge ? "live" : "sample"}
               batchId={view.batchId}
               onImport={() => navigateTo({ kind: "import", fromFirstUse: true })}
               onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
@@ -1687,6 +1725,8 @@ export default function Main({
           )}
         </main>
       </div>
+      {/* While the example wiki is open, one line says so and leads back. */}
+      <ExampleWikiBanner onLeave={() => navigateTo({ kind: "pages" })} areaRef={mainContentRef} />
 
       {ownershipNotice && <div className="note-owner-notice" role="status">
         <span>{t(ownershipNotice.side === "secondary" ? "pages.groups.openInRight" : "pages.groups.openInCentral")}</span>

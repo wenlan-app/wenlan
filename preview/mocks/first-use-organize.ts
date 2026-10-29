@@ -16,6 +16,9 @@
 //   folder     An Obsidian vault was just added and its first read stored
 //              12 notes: the folder import's finish, On demand, Codex
 //              connected. `view=sources` opens the Sources library.
+//
+// `&asked=1` adds the first-recall milestone, so with `done` all three
+// checklist steps are done and the everyday-use card shows instead.
 import type { Page, RegisteredSource } from "../../src/lib/tauri";
 import { rememberAddedFolder } from "../../src/components/memory/sources/FolderImportOrganize";
 
@@ -51,6 +54,21 @@ function pagesFor(scenario: string | null, base: Page | undefined): Page[] {
     updated_at: iso(runStartedAt + 30_000 + i * 15_000),
     source_memory_ids: Array.from({ length: 2 + (i % 3) }, (_, n) => `organize-memory-${i}-${n}`),
   }));
+}
+
+const locale = params.get("locale") ?? "en";
+const WRITTEN_BODY = locale.startsWith("zh")
+  ? `每年十二月前先列好送禮名單，預算抓在每人五十美元以內。[1] 媽媽說過想要一台好一點的咖啡機。[2]\n\n## 已經想好的\n\n弟弟今年開始跑步，可以送跑步襪和水壺。[3]`
+  : `Make the gift list before December and keep it under $50 a person.[1] Mom said she wants a better coffee maker.[2]\n\n## Already decided\n\nMy brother started running this year, so running socks and a water bottle.[3]`;
+
+function writtenPage(page: Page): Page {
+  const cite = (n: number, status: "verified" | "unverified") => ({
+    occurrence: n, marker: n, source_kind: "memory", locator: `organize-memory-0-${n}`, score: 0.9, status, scope: "sentence",
+  });
+  return {
+    ...page, content: `# ${page.title}\n\n${WRITTEN_BODY}`, summary: null, version: 1,
+    citations: [cite(1, "verified"), cite(2, "unverified"), cite(3, "verified")],
+  } as unknown as Page;
 }
 
 function agent(name: string, displayName: string) {
@@ -97,6 +115,10 @@ export function organizeInvoke(command: string, args: Record<string, unknown> | 
   if (!scenario) return undefined;
   switch (command) {
     case "get_background_ai_enabled": return { value: scenario === "automatic" };
+    case "list_onboarding_milestones":
+      return params.get("asked")
+        ? { value: [{ id: "first-recall", first_triggered_at: Math.floor(now / 1000) - 60, acknowledged_at: null, payload: null }] }
+        : undefined;
     case "list_agents": {
       if (scenario === "none") return { value: [] };
       if (scenario === "kimi") return { value: [agent("kimi-code", "Kimi Code")] };
@@ -114,6 +136,13 @@ export function organizeInvoke(command: string, args: Record<string, unknown> | 
       const status = typeof args?.status === "string" ? args.status : undefined;
       const offset = typeof args?.offset === "number" ? args.offset : 0;
       return { value: status === "draft" || offset > 0 ? [] : pagesFor(scenario, basePage) };
+    }
+    case "get_page":
+    case "get_page_explicit_browse": {
+      // A written page to open, with one sentence its source does not back,
+      // so the first-page tips have all three things to point at.
+      const page = pagesFor(scenario, basePage).find((candidate) => candidate.id === args?.id);
+      return page ? { value: writtenPage(page) } : undefined;
     }
     case "open_tool_with_prompt": return { value: null };
     case "get_resolved_routing": {

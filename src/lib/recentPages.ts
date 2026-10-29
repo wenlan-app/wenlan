@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { Page } from "./tauri";
+import { exampleWikiActive } from "./exampleWiki/mode";
 
 export const RECENT_PAGES_STORAGE_KEY = "wenlan:recent-pages:v1";
 
@@ -156,7 +157,8 @@ export function recordRecentPageVisit(
   page: Pick<Page, "id" | "status" | "title">,
   runtime?: RecentPagesRuntime,
 ): void {
-  if (page.status !== "active") return;
+  // The example wiki's pages are not the user's to come back to.
+  if (page.status !== "active" || exampleWikiActive()) return;
   const now = runtime?.now ?? Date.now();
   const existing = readRecentPageHistory(runtime).entries
     .filter(({ id }) => id !== page.id);

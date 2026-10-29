@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
 import type { WikiInventoryScope } from "./pageInventory";
@@ -6,8 +6,11 @@ import { useLibraryInventory } from "./useLibraryInventory";
 import "./wikiInventoryOverview.css";
 import { FirstPageMilestone } from "../../onboarding/FirstPageMilestone";
 import { GettingStarted } from "../../onboarding/GettingStarted";
+import { EverydayUse } from "../../onboarding/EverydayUse";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
+import { onStartIntent, peekStartIntent, takeStartIntent } from "../../onboarding/startIntent";
+import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
 import { NoteSuggestionsSummary } from "../sources/VaultNotes";
@@ -28,6 +31,8 @@ interface PagesOverviewProps {
    *  source opens its dialog in place and needs no destination. */
   readonly onConnectTool?: () => void;
   readonly onSeeExample?: () => void;
+  /** Opens the paste-back import, the quick way to bring past AI chats in. */
+  readonly onImportChatsQuick?: () => void;
   readonly onOpenIntelligence?: () => void;
   /** Open the review group for notes whose source note changed. */
   readonly onOpenBasisUpdates?: () => void;
@@ -41,6 +46,7 @@ export function PagesOverview({
   onSelectPage,
   onConnectTool,
   onSeeExample,
+  onImportChatsQuick,
   onOpenIntelligence,
   onOpenBasisUpdates,
   onOpenNoteSuggestion,
@@ -48,7 +54,27 @@ export function PagesOverview({
   const { t } = useTranslation();
   const { pages, empty } = useLibraryInventory();
   const checklist = useGettingStartedState();
-  const [adding, setAdding] = useState<"menu" | "chats" | null>(null);
+  const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
+  // What the user picked on the welcome screen happens here, once: the
+  // folder picker, the past-chats choice, or a new page. Leaving the example
+  // wiki sets one while this home may stay mounted or be replaced, so it is
+  // read on arrival and whenever one is set, and a dialog's intent is only
+  // let go when that dialog closes.
+  const [intentSet, setIntentSet] = useState(0);
+  useEffect(() => onStartIntent(() => setIntentSet((count) => count + 1)), []);
+  useEffect(() => {
+    const intent = peekStartIntent();
+    if (intent === "empty") {
+      takeStartIntent();
+      onCreatePage(null);
+    } else if (intent === "material") setAdding("menu");
+    else if (intent) setAdding(intent);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on arrival and when an intent is set
+  }, [intentSet]);
+  const closeAdding = () => {
+    takeStartIntent();
+    setAdding(false);
+  };
   const writePages = useWritePages(pages);
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
@@ -62,7 +88,6 @@ export function PagesOverview({
       onWriteNote={() => onCreatePage(null)}
       onConnectTool={onConnectTool}
       onAddSources={() => setAdding("menu")}
-      onImportChats={() => setAdding("chats")}
       onSeeExample={onSeeExample}
       onTurnOnSteeping={onOpenIntelligence}
       writePages={writePages}
@@ -70,14 +95,16 @@ export function PagesOverview({
     />
   ) : null;
   const open = gettingStarted !== null && checklist.visible && !checklist.dismissed;
-  // While the AI tool is writing, the pages step is the place to follow it,
-  // so the card stays whole even if writing a page by hand is all that's left.
-  const writing = writePages.loaded && writePages.stepView.kind === "working";
-  const compact = open && checklist.compact && !writing;
+  // Once the three steps are done, a still-new library gets the everyday
+  // sentences, once, as an overlay.
+  const example = useExampleWikiActive();
+  const everyday = !example && gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
+    ? <EverydayUse tool={writePages.tool} />
+    : null;
   // While the open checklist is the screen's content the panel above it shrinks
   // to its title, and the new pages sit inside its "write pages" step, so the
   // home is one card that fits the default window.
-  const onboarding = open && !compact;
+  const onboarding = open;
   const newPages = onboarding
     ? null
     : (
@@ -109,7 +136,7 @@ export function PagesOverview({
           onUseLocalModel={onOpenIntelligence}
         />
       )}
-      <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />
+      {example ? null : <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />}
       {daemonReady && (
         <div className="wiki-reading-start-panel">
           <PageIcon className="wiki-reading-start-icon" size={32} />
@@ -124,12 +151,12 @@ export function PagesOverview({
           <p>{t("pages.overview.unavailableDescription")}</p>
         </div>
       )}
-      {/* The one-line card says what is left above the pages; otherwise the
-          pages come first and the card (or its "show" line) follows. */}
-      {compact ? gettingStarted : null}
+      {/* The pages come first and the card (or its "show" line) follows;
+          the everyday overlay floats over both. */}
       {newPages}
-      {compact ? null : gettingStarted}
-      {adding ? <AddSourceMenu start={adding} onClose={() => setAdding(null)} /> : null}
+      {gettingStarted}
+      {everyday}
+      {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
     </section>
   );
 }

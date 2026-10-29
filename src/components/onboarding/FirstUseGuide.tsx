@@ -15,11 +15,8 @@ import {
   importSourceLabel,
   summarizeImportBatches,
 } from "../memory/ImportPhases";
-import { FirstUseSample } from "./FirstUseSample";
 import "./firstUseGuide.css";
 import { useSteepOnDemand } from "../../lib/steepMode";
-
-export type FirstUseGuideView = "sample" | "live";
 
 export interface FirstUseGuideProps {
   /** The single way out of either view: back to the Wiki home. */
@@ -27,14 +24,12 @@ export interface FirstUseGuideProps {
   onImport: () => void;
   onOpenIntelligence: () => void;
   onOpenPage: (id: string) => void;
-  /** Entry view. The parent passes "live" when returning from a real import. */
-  initialView?: FirstUseGuideView;
   /** The import just completed, if this guide was opened from that import. */
   batchId?: string;
 }
 
-/** Live queries poll only while the live view is mounted: entering the view
- *  mounts them, leaving it unmounts them. The sample view mounts no queries. */
+/** Live queries poll only while the guide is mounted: entering it mounts
+ *  them, leaving it unmounts them. */
 const LIVE_BATCH_POLL_MS = 5_000;
 /** Library pages re-read on this cadence so a newly distilled page appears
  *  without a manual refresh. Batch phases keep their own faster poll. */
@@ -48,26 +43,20 @@ export function FirstUseGuide({
   onImport,
   onOpenIntelligence,
   onOpenPage,
-  initialView = "sample",
   batchId,
 }: FirstUseGuideProps) {
   return (
     <div
       data-testid="first-use-guide"
-      data-view={initialView}
       className="fug-root"
     >
-      {initialView === "sample" ? (
-        <FirstUseSample onBack={onBack} onFinish={onBack} />
-      ) : (
-        <FirstUseLive
-          onBack={onBack}
-          onImport={onImport}
-          onOpenIntelligence={onOpenIntelligence}
-          onOpenPage={onOpenPage}
-          batchId={batchId}
-        />
-      )}
+      <FirstUseLive
+        onBack={onBack}
+        onImport={onImport}
+        onOpenIntelligence={onOpenIntelligence}
+        onOpenPage={onOpenPage}
+        batchId={batchId}
+      />
     </div>
   );
 }

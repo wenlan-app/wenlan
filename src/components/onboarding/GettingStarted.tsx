@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
+  Check,
   CheckCircle,
   MagicWand,
-  NotePencil,
   PlugsConnected,
   Sparkle,
   X,
 } from "@phosphor-icons/react";
-import { clipboardWrite, getBackgroundAiEnabled, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
+import { clipboardWrite, openToolWithPrompt, PROMPT_LINK_FAMILIES } from "../../lib/tauri";
 import type { WritePagesState } from "../memory/askAi/WritePages";
-import { AskAiDialog } from "../memory/askAi/AskAiDialog";
+import { frontDoorFor } from "../memory/askAi/askInTool";
 import { resolveAgentActionName } from "../../lib/agents";
 import {
   askablePages,
@@ -22,8 +21,11 @@ import {
   type GettingStartedStepId,
 } from "./useGettingStartedState";
 import { WritePagesStep } from "./WritePagesStep";
+import { ToolPicker } from "../memory/askAi/ToolPicker";
 import { ImportOrganize, useOrganizeActions } from "../memory/askAi/TurnIntoPages";
 import { forgetAddedFolder, useFolderImportFinish } from "../memory/sources/FolderImportOrganize";
+import { useHoldOnboardingStage } from "./onboardingStage";
+import "../memory/askAi/turnIntoPages.css";
 import "./gettingStarted.css";
 
 const COPIED_MS = 2_000;
@@ -47,9 +49,6 @@ export interface GettingStartedProps {
   readonly onWriteNote: () => void;
   readonly onConnectTool: () => void;
   readonly onAddSources: () => void;
-  /** Opens the add-source dialog straight at importing past AI chats. Falls
-   *  back to the full dialog. */
-  readonly onImportChats?: () => void;
   readonly onSeeExample: () => void;
   /** Opens the setting that turns background steeping on. Without it the
    *  optional steeping line is not offered. */
@@ -65,7 +64,6 @@ export function GettingStarted({
   onWriteNote,
   onConnectTool,
   onAddSources,
-  onImportChats,
   onSeeExample,
   onTurnOnSteeping,
   writePages = null,
@@ -73,32 +71,22 @@ export function GettingStarted({
 }: GettingStartedProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
-  const [askAiOpen, setAskAiOpen] = useState(false);
   // "opened": the tool has the question typed in. "copied": it could not be
   // opened, so the question is on the clipboard to paste there instead.
   const [handedOver, setHandedOver] = useState<"opened" | "copied" | null>(null);
   const {
     visible,
     progress: savedProgress,
-    doneCount: savedDoneCount,
     dismissed,
     setDismissed,
-    pagesSkipped,
-    setPagesSkipped,
     pages,
     agents,
-    compact,
   } = useGettingStartedState();
   // A folder, vault or graph added from here (or anywhere this session) whose
   // first read has stored something: its import finish takes the pages step.
   const folderFinish = useFolderImportFinish();
   const organize = useOrganizeActions() !== null;
-  // Same key as the Intelligence settings, so turning it on there hides the line here.
-  const backgroundAi = useQuery({
-    queryKey: ["backgroundAiEnabled"],
-    queryFn: getBackgroundAiEnabled,
-    enabled: visible && onTurnOnSteeping != null,
-  });
+  useHoldOnboardingStage(visible && savedProgress !== null && !dismissed);
 
   useEffect(() => {
     if (!copied) return;
@@ -112,10 +100,8 @@ export function GettingStarted({
   // its first page is in, and asking about that page would interrupt the run.
   const writing = writePages?.loaded === true && writePages.stepView.kind === "working";
   const progress = writing && savedProgress.pages ? { ...savedProgress, pages: false } : savedProgress;
-  const doneCount = progress === savedProgress ? savedDoneCount : savedDoneCount - 1;
 
   const stepsById: Record<GettingStartedStepId, { icon: React.ReactNode; onAction: () => void }> = {
-    note: { icon: <NotePencil weight="regular" />, onAction: onWriteNote },
     tool: { icon: <PlugsConnected weight="regular" />, onAction: onConnectTool },
     // Its row draws its own copy and action.
     pages: { icon: <MagicWand weight="regular" />, onAction: () => undefined },
@@ -135,38 +121,6 @@ export function GettingStarted({
     );
   }
 
-  // Only writing a page by hand is left: the card steps back to one line and
-  // the pages are the home.
-  if (compact && !writing) {
-    return (
-      <section
-        className="getting-started getting-started--compact"
-        data-testid="getting-started"
-        aria-label={t("firstUse.checklist.title")}
-      >
-        <p className="getting-started-compact-text">
-          {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
-          {" · "}
-          {t("firstUse.checklist.steps.note.title")}
-        </p>
-        <div className="getting-started-compact-actions">
-          <button type="button" className="getting-started-action" onClick={onWriteNote}>
-            {t("firstUse.checklist.steps.note.action")}
-          </button>
-          <button
-            type="button"
-            className="getting-started-hide"
-            aria-label={t("firstUse.checklist.hide")}
-            title={t("firstUse.checklist.hide")}
-            onClick={() => setDismissed(true)}
-          >
-            <X aria-hidden="true" weight="regular" />
-          </button>
-        </div>
-      </section>
-    );
-  }
-
   // The moment the whole thing is for happens outside Wenlan, in the AI tool.
   // Once there is a page to ask about and a tool is connected, open that tool
   // with the question about it already typed in (a tool that cannot be opened
@@ -174,24 +128,49 @@ export function GettingStarted({
   // the page.
   const askable = askablePages(pages)[0];
   const families = connectedToolFamilies(agents);
-  const promptFamily = families.find((family) => PROMPT_LINK_FAMILIES.includes(family)) ?? families[0];
+  // The tool picked under "Use another tool" when there is one, so both
+  // steps hand over to the same tool.
+  const promptFamily = writePages?.tool?.family
+    ?? families.find((family) => PROMPT_LINK_FAMILIES.includes(family)) ?? families[0];
   const opensTool = promptFamily != null && PROMPT_LINK_FAMILIES.includes(promptFamily);
   const promptTool = askable != null && !writing && progress.tool && !progress.recall && promptFamily != null
     ? resolveAgentActionName(promptFamily, agents)
     : null;
-  const promptText = promptTool && askable
+  // In a tool with the plugin the question goes through its front door, so
+  // the first thing the user sends there also teaches them where to ask.
+  const frontDoor = promptFamily != null ? frontDoorFor(promptFamily) : null;
+  const question = promptTool && askable
     ? t("firstUse.checklist.steps.recall.prompt", { title: askable.title })
     : null;
-  const onlyDrafts = !progress.note && pages.some((page) => page.status === "draft");
+  const promptText = question && frontDoor ? `${frontDoor} ${question}` : question;
+  // A page started by hand stays a draft until the editor is left; recall
+  // cannot see it yet, so the pages step says how to finish it.
+  const draftPending = !progress.pages && pages.some((page) => page.status === "draft");
+
+  // One step at a time: only the first step not yet done shows, with a line
+  // saying what the step before it achieved.
+  const current = order.find((id) => !progress[id]) ?? order[order.length - 1]!;
+  const stepNumber = order.indexOf(current) + 1;
+  const toolName = promptFamily != null ? resolveAgentActionName(promptFamily, agents) : null;
+  const doneLine = current === "tool"
+    ? writePages && writePages.waitingTotal > 0 && writePages.waiting
+      ? t("firstUse.checklist.doneLine.material", { what: writePages.waiting })
+      : null
+    : current === "pages"
+      ? toolName ? t("firstUse.checklist.doneLine.tool", { tool: toolName }) : null
+      : t("firstUse.checklist.doneLine.pages", { count: askablePages(pages).length });
 
   return (
     <section
-      className="getting-started"
+      className="getting-started getting-started-one"
       data-testid="getting-started"
-      aria-labelledby="getting-started-title"
+      data-step={current}
+      aria-label={t("firstUse.checklist.title")}
     >
       <header className="getting-started-header">
-        <h2 id="getting-started-title">{t("firstUse.checklist.title")}</h2>
+        <p className="getting-started-step-of" data-testid="getting-started-step-of">
+          {t("firstUse.checklist.stepOf", { n: stepNumber, total: order.length })}
+        </p>
         <button
           type="button"
           className="getting-started-hide"
@@ -202,22 +181,14 @@ export function GettingStarted({
           <X aria-hidden="true" weight="regular" />
         </button>
       </header>
-      {/* Why any of this: the one sentence a new user needs first. */}
-      <p className="getting-started-lead">{t("firstUse.checklist.lead")}</p>
-      <p className="getting-started-progress">
-        {t("firstUse.checklist.progress", { done: doneCount, total: order.length })}
-        {/* Once the ask row offers its own button, the sample moves up here. */}
-        {progress.recall || promptText ? (
-          <>
-            {" · "}
-            <button type="button" className="getting-started-link" onClick={onSeeExample}>
-              {t("firstUse.checklist.steps.recall.action")}
-            </button>
-          </>
-        ) : null}
-      </p>
+      {doneLine ? (
+        <p className="getting-started-done-line" data-testid="getting-started-done-line">
+          <Check aria-hidden="true" weight="bold" />
+          {doneLine}
+        </p>
+      ) : null}
       <ol className="getting-started-steps">
-        {order.map((id) => {
+        {[current].map((id) => {
           const step = stepsById[id];
           const done = progress[id];
           const icon = (
@@ -254,10 +225,9 @@ export function GettingStarted({
                   state={writePages}
                   pages={pages}
                   done={done}
-                  skipped={pagesSkipped}
-                  onSkip={setPagesSkipped}
+                  draftPending={draftPending}
+                  onWriteNote={onWriteNote}
                   onAddSources={onAddSources}
-                  onImportChats={onImportChats ?? onAddSources}
                   onSeeExample={onSeeExample}
                   onSelectPage={onSelectPage}
                   onUseLocalModel={onTurnOnSteeping}
@@ -269,24 +239,27 @@ export function GettingStarted({
           // others: the question as its one line, and one button that opens the
           // tool with it typed in (or copies it where that is not possible).
           const asking = !done && id === "recall" && promptTool != null && promptText != null;
-          const body = id === "note" && onlyDrafts
-            ? t("firstUse.checklist.steps.note.draftBody")
-            : asking && handedOver === "opened"
-              ? t("firstUse.checklist.steps.recall.waiting", { tool: promptTool })
-              : asking && opensTool && handedOver !== "copied"
-                // The button already names the tool, so the line is just the question.
-                ? t("firstUse.checklist.steps.recall.question", { title: askable?.title })
-                : asking
-                  ? t("firstUse.checklist.steps.recall.askLine", { tool: promptTool, title: askable?.title })
-                  : id === "recall" && progress.tool
-                    // Connected, with no page to ask about yet.
-                    ? t("firstUse.checklist.steps.recall.bodyConnected")
-                    : t(`firstUse.checklist.steps.${id}.body`);
+          const body = asking && handedOver === "opened"
+            ? t("firstUse.checklist.steps.recall.waiting", { tool: promptTool })
+            : asking && opensTool && handedOver !== "copied"
+              // The button already names the tool, so the line is just the question.
+              ? t("firstUse.checklist.steps.recall.question", { title: askable?.title })
+              : asking
+                ? t("firstUse.checklist.steps.recall.askLine", { tool: promptTool, title: askable?.title })
+                : id === "recall"
+                  // Nothing to ask about yet: the step waits for the pages
+                  // step, and says only that.
+                  ? t("firstUse.checklist.steps.recall.later")
+                  : t(`firstUse.checklist.steps.${id}.body`);
+          // Asking needs a page first, so until then the row reads as the
+          // step that comes next rather than one to do now.
+          const later = !done && id === "recall" && !asking;
           return (
             <li
               key={id}
               data-testid={`getting-started-${id}`}
               data-done={done ? "true" : "false"}
+              data-later={later ? "true" : undefined}
             >
               {icon}
               <div className="getting-started-copy">
@@ -299,39 +272,52 @@ export function GettingStarted({
                 {done ? null : <p className="getting-started-step-body">{body}</p>}
               </div>
               {done ? null : asking ? (
-                <button
-                  type="button"
-                  className="getting-started-action"
-                  aria-live="polite"
-                  onClick={() => {
-                    void copyText(promptText).then(async (ok) => {
-                      if (opensTool && promptFamily != null) {
-                        try {
-                          await openToolWithPrompt(promptFamily, promptText);
-                          setHandedOver("opened");
-                          return;
-                        } catch {
-                          // Not installed here; the copied question still works.
+                <div className="getting-started-actions">
+                  <button
+                    type="button"
+                    className="turn-pages-primary"
+                    aria-live="polite"
+                    onClick={() => {
+                      void copyText(promptText).then(async (ok) => {
+                        if (opensTool && promptFamily != null) {
+                          try {
+                            await openToolWithPrompt(promptFamily, promptText);
+                            setHandedOver("opened");
+                            return;
+                          } catch {
+                            // Not installed here; the copied question still works.
+                          }
                         }
-                      }
-                      if (ok) {
-                        setHandedOver("copied");
-                        setCopied(true);
-                      }
-                    });
-                  }}
-                >
-                  {copied
-                    ? t("firstUse.checklist.steps.recall.copied")
-                    : opensTool && handedOver !== "copied"
-                      ? t("firstUse.checklist.steps.recall.askIn", { tool: promptTool })
-                      : t("firstUse.checklist.steps.recall.copy")}
-                </button>
+                        if (ok) {
+                          setHandedOver("copied");
+                          setCopied(true);
+                        }
+                      });
+                    }}
+                  >
+                    {copied
+                      ? t("firstUse.checklist.steps.recall.copied")
+                      : opensTool && handedOver !== "copied"
+                        ? t("firstUse.checklist.steps.recall.askIn", { tool: promptTool })
+                        : t("firstUse.checklist.steps.recall.copy")}
+                  </button>
+                  {writePages && writePages.tools.length > 1 && writePages.tool ? (
+                    <ToolPicker
+                      tools={writePages.tools}
+                      current={writePages.tool.family}
+                      onChoose={(family) => {
+                        writePages.chooseTool(family);
+                        setHandedOver(null);
+                      }}
+                      align="end"
+                    />
+                  ) : null}
+                </div>
               ) : id === "recall" ? null : (
                 // The example sits in the pages step; asking needs a page first.
                 <button
                   type="button"
-                  className="getting-started-action"
+                  className="turn-pages-primary"
                   onClick={step.onAction}
                 >
                   {t(`firstUse.checklist.steps.${id}.action`)}
@@ -341,33 +327,6 @@ export function GettingStarted({
           );
         })}
       </ol>
-      {/* The full list of what to ask the AI tool. After the checklist is
-          gone it stays in the account menu. */}
-      <p className="getting-started-extra" data-testid="getting-started-ask-ai">
-        {t("firstUse.checklist.askAi.line")}{" "}
-        <button type="button" className="getting-started-link" onClick={() => setAskAiOpen(true)}>
-          {t("firstUse.checklist.askAi.action")}
-        </button>
-      </p>
-      {askAiOpen ? (
-        <AskAiDialog
-          onClose={() => setAskAiOpen(false)}
-          onConnectTool={() => {
-            setAskAiOpen(false);
-            onConnectTool();
-          }}
-        />
-      ) : null}
-      {/* Optional, so it sits under the steps instead of being one of them.
-          Shown only when the setting is known to be off. */}
-      {onTurnOnSteeping && backgroundAi.data === false ? (
-        <p className="getting-started-extra" data-testid="getting-started-steep">
-          {t("firstUse.checklist.steep.line")}{" "}
-          <button type="button" className="getting-started-link" onClick={onTurnOnSteeping}>
-            {t("firstUse.checklist.steep.action")}
-          </button>
-        </p>
-      ) : null}
     </section>
   );
 }

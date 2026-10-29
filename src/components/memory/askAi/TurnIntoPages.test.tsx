@@ -100,7 +100,7 @@ describe("TurnIntoPagesView", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Write pages with Codex" }));
     expect(s.start).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Switch to Automatic" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Or let Wenlan write them in the background" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Later" })).toBeInTheDocument();
     expect(card.textContent).not.toMatch(/Claude|steep/i);
   });
@@ -123,7 +123,11 @@ describe("TurnIntoPagesView", () => {
         hasPages={false}
       />,
     ));
-    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Nothing happening? Check whether Codex is waiting for you.");
+    const card = screen.getByTestId("turn-into-pages");
+    expect(screen.getByTestId("write-pages-held")).toHaveTextContent("Waiting for Codex");
+    expect(card.querySelector(".write-pages-spin")).not.toBeNull();
+    expect(card).toHaveTextContent("It may be waiting for your answer.");
+    expect(screen.getByRole("button", { name: "Copy the command again" })).toBeInTheDocument();
   });
 
   it("copies the command for a tool with no prompt link, and says where to paste it", () => {
@@ -162,7 +166,7 @@ describe("TurnIntoPagesView", () => {
     const value = actions();
     render(wrap(<TurnIntoPagesView state={state(ready, { tool: null, toolName: "Your AI tool" })} hasPages={false} />, value));
     expect(screen.getByTestId("turn-into-pages")).toHaveAttribute("data-state", "no-tool");
-    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Connect your AI tool to write pages, or switch to Automatic.");
+    expect(screen.getByTestId("turn-into-pages")).toHaveTextContent("Connect your AI tool and it writes the pages for you.");
     fireEvent.click(screen.getByRole("button", { name: "Connect an AI tool" }));
     expect(value.onConnectTool).toHaveBeenCalled();
   });
@@ -229,19 +233,19 @@ describe("TurnIntoPagesView", () => {
   it("explains Automatic before changing anything, then switches and opens the model picker", async () => {
     const value = actions();
     render(wrap(<TurnIntoPagesView state={state(ready)} hasPages={false} />, value));
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Automatic" }));
+    fireEvent.click(screen.getByRole("button", { name: "Or let Wenlan write them in the background" }));
     const card = screen.getByTestId("turn-into-pages");
     expect(card).toHaveAttribute("data-state", "explain");
     expect(card).toHaveTextContent(
-      "Automatic: Wenlan keeps organizing in the background with a model you pick. A local model is free and runs on this computer, but it is slower and writes less well than Codex.",
+      "Wenlan can write pages in the background with a model you choose. A local model is free and runs on this computer, but it is slower and writes less well than Codex.",
     );
     expect(setBackgroundAiEnabled).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Keep On demand" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByTestId("turn-into-pages")).toHaveAttribute("data-state", "ready");
 
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Automatic" }));
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Automatic" }));
+    fireEvent.click(screen.getByRole("button", { name: "Or let Wenlan write them in the background" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose a model" }));
     await waitFor(() => expect(value.onOpenIntelligence).toHaveBeenCalled());
     expect(setBackgroundAiEnabled).toHaveBeenCalledWith(true);
     expect(fillUnsetPinsWithRetry).toHaveBeenCalled();
@@ -309,15 +313,15 @@ describe("ImportOrganize", () => {
     render(wrap(<><ImportedLead count={12} kind="note" /><ImportedLead count={1} kind="chat" /><ImportedLead count={3} kind="file" /></>));
     const leads = screen.getAllByTestId("import-lead").map((node) => node.textContent);
     expect(leads).toEqual([
-      "12 notes imported. You can search them now.",
-      "1 chat imported. You can search them now.",
-      "3 files imported. You can search them now.",
+      "12 notes imported.",
+      "1 chat imported.",
+      "3 files imported.",
     ]);
   });
 
   it("writes big counts with the locale's grouping", async () => {
     const { unmount } = render(wrap(<ImportedLead count={10000} kind="note" />));
-    expect(screen.getByTestId("import-lead")).toHaveTextContent("10,000 notes imported. You can search them now.");
+    expect(screen.getByTestId("import-lead")).toHaveTextContent("10,000 notes imported.");
     unmount();
     const written = Array.from({ length: 8 }, (_, i) => page(`p${i}`));
     render(wrap(<TurnIntoPagesView state={state({ kind: "done", written, updated: [], minutes: 3, left: 9962 }, { waiting: i18n.t("askAi.writePages.kinds.note", { count: 9962 }) })} hasPages />));
@@ -329,9 +333,9 @@ describe("ImportOrganize", () => {
     }
   });
 
-  it("says only the second half under a heading that already gives the count", () => {
+  it("says nothing more under a heading that already gives the count", () => {
     render(wrap(<ImportedLead count={12} kind="note" short />));
-    expect(screen.getByTestId("import-lead")).toHaveTextContent(/^You can search them now\.$/);
+    expect(screen.queryByTestId("import-lead")).toBeNull();
   });
 
   it("in Automatic, names the model writing pages and links to Activity, with no button", async () => {

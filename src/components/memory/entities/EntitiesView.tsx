@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TabEmptyMark } from "../../onboarding/TabIntro";
 import { useTranslation } from "react-i18next";
 import { Funnel } from "@phosphor-icons/react";
 import { TopicIcon } from "./TopicIcon";
@@ -232,6 +233,7 @@ export function EntitiesView({ onEntityClick }: EntitiesViewProps) {
         </div>
       ) : entities.length === 0 ? (
         <div className="entities-empty">
+          {!filtered && !archived ? <TabEmptyMark tab="topics" /> : null}
           <b>{t(emptyTitle)}</b>
           <p>{t(emptyBody)}</p>
         </div>

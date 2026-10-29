@@ -148,8 +148,13 @@ describe("WritePagesStep", () => {
 
   it("says the tool may be waiting while it holds material and nothing lands", () => {
     renderStep({ state: state({ kind: "working", written: [], writing: true, stuck: true }, { run: { startedAt: Date.now(), tool: "Claude Code", handedOver: "opened" } }) });
-    expect(screen.getByTestId("row")).toHaveTextContent("Claude Code is writing pages");
-    expect(screen.getByTestId("row")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
+    expect(screen.getByTestId("row")).toHaveTextContent("Waiting for Claude Code");
+    expect(screen.getByTestId("row")).not.toHaveTextContent("is writing pages");
+    // One spinning line and one line with the cause and the fallback.
+    expect(screen.getByTestId("write-pages-held").querySelector(".write-pages-spin")).not.toBeNull();
+    expect(screen.getByTestId("row")).toHaveTextContent("It may be waiting for your answer.");
+    expect(screen.getByRole("button", { name: "Copy the command again" })).toBeInTheDocument();
+    expect(screen.getByTestId("row")).not.toHaveTextContent("Didn't open?");
   });
 
   it("says Wenlan does it in Automatic mode", () => {

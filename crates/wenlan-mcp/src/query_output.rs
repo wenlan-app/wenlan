@@ -95,6 +95,49 @@ pub struct QueryBriefOutput {
     /// Notes in the Space that rely on code that changed or went missing.
     /// `None` when no note in the Space relies on code.
     pub code_basis_pending: Option<u32>,
+    /// While the library is new: how many pages exist, how many items wait to
+    /// be written into pages, and the user's next step. `None` once the
+    /// library is established.
+    pub getting_started: Option<QueryGettingStarted>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryGettingStartedStep {
+    /// Add notes, files or past AI chats in the Wenlan app.
+    AddMaterial,
+    /// Have a connected coding AI tool (or the app) write the waiting items into pages.
+    WritePages,
+    /// An AI tool is writing them now.
+    Writing,
+    /// Ask about the pages; recall answers.
+    Ask,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QueryGettingStarted {
+    pub pages: u32,
+    pub waiting: u32,
+    pub held: u32,
+    pub next: QueryGettingStartedStep,
+}
+
+impl From<&wenlan_types::GettingStarted> for QueryGettingStarted {
+    fn from(getting_started: &wenlan_types::GettingStarted) -> Self {
+        use wenlan_types::GettingStartedStep as Step;
+        Self {
+            pages: getting_started.pages,
+            waiting: getting_started.waiting,
+            held: getting_started.held,
+            next: match getting_started.next {
+                Step::AddMaterial => QueryGettingStartedStep::AddMaterial,
+                Step::WritePages => QueryGettingStartedStep::WritePages,
+                Step::Writing => QueryGettingStartedStep::Writing,
+                Step::Ask => QueryGettingStartedStep::Ask,
+            },
+        }
+    }
 }
 
 pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &'static str> {
@@ -151,6 +194,10 @@ pub fn project_brief(response: &BriefReadResponse) -> Result<QueryBriefOutput, &
         )
         .then_some(response.code_basis_pending)
         .flatten(),
+        getting_started: response
+            .getting_started
+            .as_ref()
+            .map(QueryGettingStarted::from),
     })
 }
 

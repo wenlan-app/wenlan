@@ -1,29 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { ChatsCircle, Eye, FolderSimplePlus } from "@phosphor-icons/react";
+import { Eye, FolderSimplePlus } from "@phosphor-icons/react";
 import type { Page } from "../../lib/tauri";
 import {
   copyAgainLabel,
   pagesWrittenSince,
   doneLine,
+  HeldNotice,
   waitingLine,
   workingHeadline,
   WrittenPages,
   type WritePagesState,
 } from "../memory/askAi/WritePages";
 import { newestPages } from "../memory/pages/NewPagesList";
+import { ToolPicker } from "../memory/askAi/ToolPicker";
+import "../memory/sources/source-access.css";
 
 interface WritePagesStepProps {
   /** Null outside the Wiki home, where nothing can be handed over. */
   readonly state: WritePagesState | null;
   readonly pages: readonly Page[];
   readonly done: boolean;
-  /** Done only because the user skipped it, with nothing to bring in. */
-  readonly skipped?: boolean;
-  readonly onSkip?: (value: boolean) => void;
+  /** A page started by hand is still a draft: say how to finish it. */
+  readonly draftPending?: boolean;
+  /** Opens the editor, for someone who would rather write a page themselves. */
+  readonly onWriteNote?: () => void;
   readonly onAddSources?: () => void;
-  readonly onImportChats?: () => void;
   readonly onSeeExample?: () => void;
   readonly onSelectPage?: (pageId: string) => void;
   /** Opens the steep settings, where the local model is chosen. */
@@ -32,9 +34,9 @@ interface WritePagesStepProps {
 
 /**
  * The checklist's "turn your material into pages" row, laid out by the
- * checklist like its other rows. With nothing in yet it asks where the
- * user's material is (a folder of any kind, past AI chats, or the sample for
- * someone with none); once material is in, from an import or from what AI
+ * checklist like its other rows. With nothing in yet it offers two equal
+ * choices: add your material (folders, files, past AI chats and the rest, in
+ * one dialog) or see the sample, for someone with none yet; once material is in, from an import or from what AI
  * tools saved, it hands it to the AI tool; then the same run the home line
  * follows shows here, so the pages appear in this row as they land. Once
  * done, the row keeps the newest pages, so the open checklist is the home's
@@ -44,23 +46,15 @@ export function WritePagesStep({
   state,
   pages,
   done,
-  skipped = false,
-  onSkip,
+  draftPending = false,
+  onWriteNote,
   onAddSources,
-  onImportChats,
   onSeeExample,
   onSelectPage,
   onUseLocalModel,
 }: WritePagesStepProps) {
   const { t } = useTranslation();
   const view = state?.loaded ? state.stepView : { kind: "hidden" as const };
-  const hasPages = pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft");
-  // Skipping was for having nothing to bring in. Once there is, the step
-  // comes back with its button.
-  const comeBack = skipped && !hasPages && view.kind === "ready";
-  useEffect(() => {
-    if (comeBack) onSkip?.(false);
-  }, [comeBack, onSkip]);
   const title = (
     <p className="getting-started-step-title">
       {t("firstUse.checklist.steps.pages.title")}
@@ -102,6 +96,15 @@ export function WritePagesStep({
     ? <p className="getting-started-step-hint">{t("askAi.writePages.copiesCommand", { tool: state.tool.name })}</p>
     : null;
 
+  if (state && view.kind === "working" && view.stuck && view.written.length === 0) {
+    return (
+      <div className="getting-started-copy">
+        {title}
+        <HeldNotice state={state} lineClassName="getting-started-step-body" linkClassName="getting-started-link" />
+      </div>
+    );
+  }
+
   if (state && view.kind === "working") {
     const headline = workingHeadline(state, view, t);
     const hint = view.stuck ? t("askAi.writePages.stuck", { tool: state.toolName }) : null;
@@ -123,7 +126,7 @@ export function WritePagesStep({
             </button>
           </p>
         ) : null}
-        {list(view.writing)}
+        {list(view.writing || view.stuck)}
       </div>
     );
   }
@@ -143,7 +146,7 @@ export function WritePagesStep({
     );
   }
 
-  if (done && !comeBack) {
+  if (done) {
     // Material that came in after the pages were written (or that a run
     // started outside this screen left): say so under them, with the same
     // one button.
@@ -156,7 +159,7 @@ export function WritePagesStep({
       </div>
     );
   }
-  if (done && !comeBack) return <div className="getting-started-copy">{title}</div>;
+  if (done) return <div className="getting-started-copy">{title}</div>;
 
   if (state && view.kind === "ready") {
     return (
@@ -170,14 +173,19 @@ export function WritePagesStep({
           {pasteHint}
         </div>
         {startLabel ? (
-          <button
-            type="button"
-            className="getting-started-action"
-            disabled={state.command === null}
-            onClick={() => void state.start()}
-          >
-            {startLabel}
-          </button>
+          <div className="getting-started-actions">
+            <button
+              type="button"
+              className="turn-pages-primary"
+              disabled={state.command === null}
+              onClick={() => void state.start()}
+            >
+              {startLabel}
+            </button>
+            {state.tools.length > 1 && state.tool ? (
+              <ToolPicker tools={state.tools} current={state.tool.family} onChoose={state.chooseTool} align="end" />
+            ) : null}
+          </div>
         ) : onUseLocalModel ? (
           <button type="button" className="getting-started-action" onClick={onUseLocalModel}>
             {t("askAi.writePages.useLocalModel")}
@@ -187,42 +195,48 @@ export function WritePagesStep({
     );
   }
 
-  // Nothing to hand over yet (or Wenlan writes the pages itself): where is
-  // the user's material?
+  // Nothing to hand over yet (or Wenlan writes the pages itself): bring
+  // material in, or look at the sample first.
   const choices = [
-    { key: "folder", icon: <FolderSimplePlus weight="regular" />, onClick: onAddSources },
-    { key: "chats", icon: <ChatsCircle weight="regular" />, onClick: onImportChats },
+    { key: "material", icon: <FolderSimplePlus weight="regular" />, onClick: onAddSources },
     { key: "sample", icon: <Eye weight="regular" />, onClick: onSeeExample },
   ] as const;
   return (
     <div className="getting-started-copy">
       {title}
       <p className="getting-started-step-body">
-        {state?.onDemand === false
-          ? t("firstUse.checklist.steps.pages.automatic")
-          : t("firstUse.checklist.steps.pages.body")}
+        {draftPending
+          ? t("firstUse.checklist.steps.pages.draftBody")
+          : state?.onDemand === false
+            ? t("firstUse.checklist.steps.pages.automatic")
+            : t("firstUse.checklist.steps.pages.body")}
       </p>
       <div className="getting-started-choices">
         {choices.map((choice) => choice.onClick ? (
           <button
             key={choice.key}
             type="button"
-            className="getting-started-choice"
+            className="source-add-option"
             data-testid={`getting-started-pages-${choice.key}`}
             onClick={choice.onClick}
           >
-            <span className="getting-started-choice-icon" aria-hidden="true">{choice.icon}</span>
-            <span className="getting-started-choice-copy">
+            <span className="getting-started-choice-icon" data-resource-icon={choice.key} aria-hidden="true">{choice.icon}</span>
+            <span className="source-add-option-copy">
               <strong>{t(`firstUse.checklist.steps.pages.${choice.key}.title`)}</strong>
               <span>{t(`firstUse.checklist.steps.pages.${choice.key}.hint`)}</span>
             </span>
           </button>
         ) : null)}
       </div>
-      {onSkip ? (
-        <p className="getting-started-step-body">
-          <button type="button" className="getting-started-link" onClick={() => onSkip(true)}>
-            {t("firstUse.checklist.steps.pages.skip")}
+      {onWriteNote ? (
+        <p className="getting-started-pages-own">
+          <button
+            type="button"
+            className="getting-started-link"
+            data-testid="getting-started-pages-write"
+            onClick={onWriteNote}
+          >
+            {t("firstUse.checklist.steps.pages.writeOwn")}
           </button>
         </p>
       ) : null}

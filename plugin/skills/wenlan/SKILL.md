@@ -48,8 +48,22 @@ the three checks in order; only a failed connection check stops early.
 3. Waiting items: call `list_pending_revisions(limit=10)`. If exactly 10 come
    back, say "at least 10".
 
-Answer in one to three short, plain sentences, the way you would tell a
-person: that Wenlan is connected, which project this folder belongs to (or
+**New user.** When `brief` ends with a "Getting started" line, the person is
+new to Wenlan: answer with that instead of the usual status. In one or two
+plain sentences say that Wenlan is connected, how far they are (pages so far,
+items waiting), and the one next step it names, as the exact thing to type or
+do, in the person's language. Leave out the project sentence and the
+waiting-changes count, and never say "steep", "distill" or other internal
+words: name writing pages in plain words. For example: "Wenlan is connected.
+12 of your notes are waiting to become pages; type `/wenlan write my pages`
+and I'll write them." (Chinese: `/wenlan 整理成筆記`) or "Wenlan is connected
+and you have 8 pages. Ask me anything about them, like `/wenlan what do my
+pages say about the trip?`". Use a real page title only when you already
+know one. Do not ask them to link a project. Then stop; no second list of
+examples.
+
+Otherwise, answer in one to three short, plain sentences, the way you
+would tell a person: that Wenlan is connected, which project this folder belongs to (or
 that it is not linked to one yet), and how many changes wait for their OK
 (leave this out when there are none). For example: "Wenlan is connected.
 This folder is not linked to a project yet." No label
@@ -69,8 +83,9 @@ Match the request to one row. Old command words count as their row.
 
 | The user wants | Workflow | Example |
 |---|---|---|
+| Just starting, or not sure what to do next | the status in step 1 | `/wenlan 怎麼開始`, `/wenlan what now?` |
 | Set up, repair, upgrade, check it works | setup | `/wenlan setup`, `/wenlan 好像壞了` |
-| Turn what was imported or saved into notes, and bring out of date notes up to date, with this AI tool | steep | `/wenlan steep`, `/wenlan 整理成筆記`, `/wenlan 沉澱`, `/wenlan 把過期的筆記更新` |
+| Turn what was imported or saved into notes, and bring out of date notes up to date, with this AI tool | steep | `/wenlan steep`, `/wenlan write my pages`, `/wenlan 整理成筆記`, `/wenlan 沉澱`, `/wenlan 把過期的筆記更新` |
 | Rebuild one note from its sources, or a clustering pass by hand (advanced) | distill | `/wenlan distill rebuild <note>`, `/wenlan distill` |
 | Get to know this repository; write a small wiki about it and keep it current | wiki | `/wenlan wiki`, `/wenlan 認識這個倉庫`, `/wenlan 幫這個倉庫建 wiki` |
 | List, find, open or print a note | pages | `/wenlan pages release`, `/wenlan 打開那篇筆記` |
@@ -79,8 +94,8 @@ Match the request to one row. Old command words count as their row.
 | Delete one memory by id | forget | `/wenlan forget mem_123` |
 | Save one memory, or save this conversation as one note | capture | `/wenlan 記住我們改用 SQLite` |
 | Look something up | recall | `/wenlan 我們上次怎麼決定資料庫` |
-| Catch up on the project | brief | `/wenlan 上次做到哪` |
-| End the session | handoff | `/wenlan 收工`, `/wenlan handoff` |
+| Catch up on the project | brief | `/wenlan 上次做到哪`, `/wenlan where did I leave off?` |
+| End the session | handoff | `/wenlan 收工`, `/wenlan wrap up`, `/wenlan handoff` |
 | What Wenlan can do, where data lives, how to read notes without the app | answer from "Reference" below | `/wenlan help`, `/wenlan 資料存在哪` |
 
 Rules:

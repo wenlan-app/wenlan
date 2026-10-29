@@ -385,7 +385,13 @@ async fn verify(root: &Path, preseeded: bool) {
         .await
         .unwrap(),
     );
-    assert_eq!(pinned, brief);
+    // The recall above may end the new-library hint in the background
+    // (first-recall milestone), so the hint is left out of the comparison.
+    let without_hint = |mut value: Value| {
+        value.as_object_mut().unwrap().remove("getting_started");
+        value
+    };
+    assert_eq!(without_hint(pinned), without_hint(brief.clone()));
 
     verify_http(format!("http://{addr}")).await;
 

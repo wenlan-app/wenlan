@@ -63,6 +63,7 @@ fn ready_response(topic: Option<&str>) -> BriefReadResponse {
         }),
         code_basis_pending: None,
         code_basis_pending_explained: false,
+        getting_started: None,
     }
 }
 
@@ -189,6 +190,7 @@ async fn brief_says_how_many_notes_rely_on_code_that_changed() {
                 related_context: None,
                 code_basis_pending: pending,
                 code_basis_pending_explained: false,
+                getting_started: None,
             }))
             .mount(&mock)
             .await;
@@ -278,6 +280,7 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
             related_context: None,
             code_basis_pending: None,
             code_basis_pending_explained: false,
+            getting_started: None,
         }))
         .mount(&mock)
         .await;
@@ -295,4 +298,55 @@ async fn missing_brief_explains_that_reads_do_not_create_it() {
         text_of(&result),
         "No Brief exists for Space `wenlan` yet. Reads never create one; the first handoff update can."
     );
+}
+
+#[tokio::test]
+async fn brief_tells_a_new_user_the_next_step_even_without_a_project() {
+    use wenlan_types::{GettingStarted, GettingStartedStep};
+    let cases = [
+        (
+            GettingStarted { pages: 0, waiting: 12, held: 0, next: GettingStartedStep::WritePages },
+            "Getting started (whole library): no pages yet, 12 items (notes, chats, files or captures) waiting to be written into pages.",
+            "in Claude Code they type /wenlan write my pages, in Codex $wenlan write my pages",
+        ),
+        (
+            GettingStarted { pages: 3, waiting: 0, held: 0, next: GettingStartedStep::Ask },
+            "Getting started (whole library): 3 pages, nothing waiting.",
+            "ask a question about their pages in plain words; recall answers it.",
+        ),
+        (
+            GettingStarted { pages: 0, waiting: 0, held: 0, next: GettingStartedStep::AddMaterial },
+            "Getting started (whole library): no pages yet, nothing waiting.",
+            "in the Wenlan app (Add a source)",
+        ),
+    ];
+    for (getting_started, counts, next) in cases {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/brief"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(BriefReadResponse {
+                state: BriefReadState::SpaceNotResolved,
+                space: None,
+                brief: None,
+                related_context: None,
+                code_basis_pending: None,
+                code_basis_pending_explained: false,
+                getting_started: Some(getting_started),
+            }))
+            .mount(&mock)
+            .await;
+        let result = make_server(&mock)
+            .brief_impl(BriefParams {
+                session: None,
+                topic: None,
+                space: None,
+            })
+            .await
+            .expect("unresolved Space is a successful read state");
+        let text = text_of(&result);
+        assert!(text.starts_with("Space not resolved."), "{text}");
+        assert!(text.contains(counts), "{text}");
+        assert!(text.contains("Next step for the user: "), "{text}");
+        assert!(text.contains(next), "{text}");
+    }
 }

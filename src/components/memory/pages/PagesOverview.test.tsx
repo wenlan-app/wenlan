@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   distillReview,
@@ -11,6 +11,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { PagesOverview } from "./PagesOverview";
+import { setStartIntent, takeStartIntent } from "../../onboarding/startIntent";
 import { setDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { DISTILL_REVIEW_SESSION_QUERY_KEY } from "./pageReviewSignals";
 import type { WikiInventoryScope } from "./pageInventory";
@@ -218,16 +219,64 @@ describe("PagesOverview reading workspace", () => {
     });
 
     it("opens the add-source dialog in place instead of leaving the Wiki", async () => {
+      // With a tool connected, the card's one step is writing pages.
+      vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
       renderOverview({ checklist: true });
-      fireEvent.click(await screen.findByRole("button", { name: /Folder or files/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /Add your material/ }));
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
       expect(screen.getByRole("heading", { level: 1, name: "Open a page" })).toBeInTheDocument();
     });
 
-    it("opens straight at importing AI chats", async () => {
+    it("keeps past AI chats inside the one material choice", async () => {
+      // With a tool connected, the card's one step is writing pages.
+      vi.mocked(listAgents).mockResolvedValue([{ id: "agent-claude-code", name: "claude-code", display_name: null, agent_type: "", description: null, enabled: true, trust_level: "full", last_seen_at: 1_790_000_000, memory_count: 0, created_at: 1_790_000_000, updated_at: 1_790_000_000 } as never]);
       renderOverview({ checklist: true });
+      expect(screen.queryByTestId("getting-started-pages-chats")).toBeNull();
+      fireEvent.click(await screen.findByRole("button", { name: /Add your material/ }));
       fireEvent.click(await screen.findByRole("button", { name: /Past AI chats/ }));
       expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });
+  });
+});
+
+describe("PagesOverview arriving from the welcome", () => {
+  beforeEach(() => {
+    takeStartIntent();
+  });
+
+  it("opens a new page for someone who chose to start empty, once", async () => {
+    setStartIntent("empty");
+    const { onCreatePage, unmount } = renderOverview();
+    await waitFor(() => expect(onCreatePage).toHaveBeenCalledExactlyOnceWith(null));
+    unmount();
+    const again = renderOverview();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(again.onCreatePage).not.toHaveBeenCalled();
+  });
+
+  it("opens past AI chats for someone who chose to bring them in", async () => {
+    setStartIntent("chats");
+    renderOverview();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("opens Add your material when the example wiki is left from a home already on screen", async () => {
+    renderOverview();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => setStartIntent("material"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("opens the dialog again if the home is replaced before it closes, and not after", async () => {
+    setStartIntent("material");
+    const first = renderOverview();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    first.unmount();
+    renderOverview();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(takeStartIntent()).toBeNull();
   });
 });

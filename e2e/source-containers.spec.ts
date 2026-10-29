@@ -178,7 +178,7 @@ for (const cfg of [
     await container.locator(".source-collection-breadcrumbs").getByRole("button", { name: t.sourceContainer.root, exact: true }).click();
     await page.getByRole("button", { name: t.sourceLibrary.add, exact: true }).click();
     const addMenu = page.getByRole("dialog", { name: t.sourceAccess.addTitle, exact: true });
-    await expect(addMenu.locator(".source-add-option").first()).toContainText(t.sourceAccess.obsidian);
+    await expect(addMenu.locator(".source-add-option").filter({ hasText: t.sourceAccess.obsidian })).toHaveCount(1);
     await capture("add-source-menu.png");
     await addMenu.getByRole("button", { name: new RegExp(t.sourceAccess.obsidian) }).click();
     expect(calls.filter(c => c.command === "plugin:dialog|open").at(-1)?.args.options).toMatchObject({ directory: true, multiple: false });

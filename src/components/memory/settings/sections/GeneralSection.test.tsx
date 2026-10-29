@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import GeneralSection from "./GeneralSection";
@@ -604,5 +604,19 @@ describe("GeneralSection OKF export", () => {
     expect(await screen.findByText(`Exported 1 page to ${TARGET}.`)).toBeInTheDocument();
     expect(screen.getByText("2 pages could not be written.")).toBeInTheDocument();
     expect(screen.queryByText(/not yet cleared/)).not.toBeInTheDocument();
+  });
+});
+
+describe("GeneralSection page tips", () => {
+  afterEach(() => localStorage.removeItem("onboarding:pageTour"));
+
+  it("brings the first-page tips back for the next page with sources", async () => {
+    localStorage.setItem("onboarding:pageTour", "seen");
+    renderGeneralSection();
+    expect(await screen.findByText("Page tips")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("settings-page-tips-replay"));
+    expect(localStorage.getItem("onboarding:pageTour")).toBe("replay");
+    expect(await screen.findByText("They'll show on the next page with sources you open.")).toBeInTheDocument();
+    expect(screen.getByTestId("settings-page-tips-replay")).toBeDisabled();
   });
 });

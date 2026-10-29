@@ -5,6 +5,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useMilestones } from "./useMilestones";
 import { useFirstPageModalOpen } from "./FirstPageModal";
+import { useOnboardingOnStage } from "./onboardingStage";
 import type { MilestoneId, MilestoneRecord } from "../../lib/tauri";
 
 const TOAST_CHANNEL_IDS: Record<MilestoneId, boolean> = {
@@ -16,6 +17,9 @@ const TOAST_CHANNEL_IDS: Record<MilestoneId, boolean> = {
   "graph-alive": false,
   "second-agent": true,
 };
+
+/** Moments the getting-started checklist shows as its own steps. */
+const SHOWN_BY_CHECKLIST = new Set<MilestoneId>(["first-memory", "first-recall"]);
 
 const TWENTY_FOUR_HOURS_S = 24 * 60 * 60;
 const AUTO_DISMISS_MS = 8_000;
@@ -136,6 +140,9 @@ export function MilestoneToaster() {
   const raised = useRef(new Set<string>());
   // The first-page dialog has the stage; toasts wait until it closes.
   const modalOpen = useFirstPageModalOpen();
+  // So does a new user's checklist, which already shows these moments as its
+  // own steps: those are taken as seen, the rest wait until it has gone.
+  const onStage = useOnboardingOnStage();
 
   const visible = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -152,8 +159,15 @@ export function MilestoneToaster() {
   }, [milestones, dismissed]);
 
   useEffect(() => {
+    if (!onStage) return;
+    for (const m of visible) {
+      if (SHOWN_BY_CHECKLIST.has(m.id as MilestoneId)) acknowledgeRef.current(m.id as MilestoneId);
+    }
+  }, [onStage, visible]);
+
+  useEffect(() => {
     // Cards already up leave while the dialog is open and come back after.
-    const shown = modalOpen ? [] : visible;
+    const shown = modalOpen || onStage ? [] : visible;
     const keys = new Set(shown.map(toastKey));
     for (const key of raised.current) {
       if (keys.has(key)) continue;
@@ -185,7 +199,7 @@ export function MilestoneToaster() {
         { id: key, duration: Infinity, onDismiss: forget },
       );
     }
-  }, [visible, modalOpen]);
+  }, [visible, modalOpen, onStage]);
 
   return null;
 }

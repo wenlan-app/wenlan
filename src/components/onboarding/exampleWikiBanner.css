@@ -1,0 +1,79 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The example wiki's line: the same floating pill as the first-visit tab
+   lines (tabIntro.css), centred at the foot of the content area. */
+.example-wiki-anchor {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 41;
+  transform: translateX(-50%);
+}
+
+/* A tab line shown at the same time sits just above it. */
+body:has(.example-wiki-anchor) .tab-intro-anchor {
+  bottom: 76px;
+}
+
+/* So do toasts; Sonner sets its offset inline, hence the !important. */
+body:has(.example-wiki-anchor) [data-sonner-toaster] {
+  --offset-bottom: 76px !important;
+}
+
+.example-wiki-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 6px 6px 6px 16px;
+  border-radius: 999px;
+  background: var(--mem-surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  color: var(--mem-text);
+  font: 13px/1.4 var(--mem-font-body);
+  white-space: nowrap;
+}
+
+.example-wiki-banner p {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+.example-wiki-banner p span {
+  overflow: hidden;
+  color: var(--mem-text-secondary);
+  text-overflow: ellipsis;
+}
+
+.example-wiki-banner-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 14px;
+}
+
+.example-wiki-banner .turn-pages-primary {
+  border-radius: 999px;
+}
+
+.example-wiki-banner .getting-started-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--mem-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--mem-border);
+  text-underline-offset: 3px;
+}
+
+.example-wiki-banner .getting-started-link:hover {
+  color: var(--mem-text);
+}
+
+.example-wiki-banner .getting-started-link:focus-visible {
+  outline: 2px solid var(--mem-focus-ring);
+  outline-offset: 2px;
+}

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { SourceImportProgress } from "./SourceImportProgress";
+import { TabEmptyMark } from "../../onboarding/TabIntro";
 import { FolderImportOrganize } from "./FolderImportOrganize";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -181,7 +182,7 @@ export default function SourceLibrary({ onAdd, onOpenDocument, state, onStateCha
 
       {collectionItems.length > 0 && <SourceCollection items={collectionItems} lens={lens} label={t("sourceLibrary.listLabel")} />}
 
-      {realEmpty && <div className="source-library-empty"><SourceTypeIcon kind="file" size={32} /><h2>{t("sourceLibrary.emptyTitle")}</h2><p>{t("sourceLibrary.emptyBody")}</p><p className="source-library-support">{t("sourceLibrary.supportedFiles")}</p><button className="source-library-add" onClick={onAdd}><Plus size={16} aria-hidden="true" />{t("sourceLibrary.add")}</button></div>}
+      {realEmpty && <div className="source-library-empty"><TabEmptyMark tab="sources" /><SourceTypeIcon kind="file" size={32} /><h2>{t("sourceLibrary.emptyTitle")}</h2><p>{t("sourceLibrary.emptyBody")}</p><p className="source-library-support">{t("sourceLibrary.supportedFiles")}</p><button className="source-library-add" onClick={onAdd}><Plus size={16} aria-hidden="true" />{t("sourceLibrary.add")}</button></div>}
       {filteredEmpty && <div className="source-library-empty"><Funnel size={28} aria-hidden="true" /><h2>{t("sourceLibrary.noMatches")}</h2><p>{t("sourceLibrary.noMatchesBody")}</p><button className="source-library-manage" onClick={clearFilters}>{t("sourceLibrary.clearFilters")}</button></div>}
     </section>
   );

@@ -9,7 +9,7 @@ const fixture = createSpacesNavigationFixture();
 const organizeBasePage = fixture.pages[0] as unknown as Page | undefined;
 seedOrganizeRun();
 const runtime = new TauriMockRuntime(scenario === "ready" ? fixture : {
-  ...fixture, pages: [], memories: [], entities: [], entityDetails: [], refinements: [],
+  ...fixture, spaces: [], pages: [], memories: [], entities: [], entityDetails: [], refinements: [],
   distillReview: { ...fixture.distillReview, pending: [], stale_pages: [], orphan_topics: [] },
 });
 const phases: ImportPhase[] = ["ingest", "store", "detect", "enrich", "link", "distill"];

@@ -73,6 +73,10 @@ export async function invoke(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<unknown> {
+  // `pages=0` previews a new library: no pages and no milestone reached yet.
+  if ((cmd === "list_pages" || cmd === "list_pages_explicit_browse" || cmd === "list_onboarding_milestones") && new URLSearchParams(location.search).get("pages") === "0") {
+    return [];
+  }
   if (!(window as { __PREVIEW_FIXTURES__?: boolean }).__PREVIEW_FIXTURES__) {
     return liveInvoke(cmd, args);
   }

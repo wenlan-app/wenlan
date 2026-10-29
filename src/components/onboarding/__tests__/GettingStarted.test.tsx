@@ -92,14 +92,13 @@ function mockLibrary(pages: Page[]) {
 
 function renderCard(
   pages: Page[] = [],
-  handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onImportChats" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {},
+  handlers: Partial<Record<"onWriteNote" | "onConnectTool" | "onAddSources" | "onSeeExample" | "onTurnOnSteeping", () => void>> = {},
   writePages: WritePagesState | null = null,
 ) {
   const props = {
     onWriteNote: vi.fn(),
     onConnectTool: vi.fn(),
     onAddSources: vi.fn(),
-    onImportChats: vi.fn(),
     onSeeExample: vi.fn(),
     ...handlers,
     writePages,
@@ -119,13 +118,13 @@ const title = () => i18n.t("firstUse.checklist.title");
 describe("gettingStartedProgress", () => {
   it("reads every step from the library as it stands", () => {
     expect(gettingStartedProgress({ pages: [], agents: [], milestones: [] }))
-      .toEqual({ note: false, tool: false, pages: false, recall: false });
+      .toEqual({ tool: false, pages: false, recall: false });
     expect(gettingStartedProgress({
       pages: [page(), written],
       agents: [agent("claude-code")],
      
       milestones: [recall],
-    })).toEqual({ note: true, tool: true, pages: true, recall: true });
+    })).toEqual({ tool: true, pages: true, recall: true });
   });
 
   it("does not count Wenlan's own identities", () => {
@@ -158,7 +157,13 @@ describe("gettingStartedProgress", () => {
   it("does not count a draft as a saved note, because recall cannot see it yet", () => {
     expect(gettingStartedProgress({
       pages: [page({ status: "draft" })], agents: [], milestones: [],
-    }).note).toBe(false);
+    }).pages).toBe(false);
+  });
+
+  it("counts a page the user wrote as the pages step", () => {
+    expect(gettingStartedProgress({
+      pages: [page()], agents: [], milestones: [],
+    })).toMatchObject({ pages: true, recall: false });
   });
 
   it("does not count copies of brought-in files as a page the user wrote or one written from material", () => {
@@ -166,14 +171,14 @@ describe("gettingStartedProgress", () => {
       const progress = gettingStartedProgress({
         pages: [page({ creation_kind: kind })], agents: [], milestones: [],
       });
-      expect(progress).toMatchObject({ note: false, pages: false });
+      expect(progress).toMatchObject({ pages: false });
     }
   });
 
-  it("counts a page written from material as that step, not as writing or asking", () => {
+  it("counts a page written from material as that step, not as asking", () => {
     expect(gettingStartedProgress({
       pages: [written], agents: [], milestones: [],
-    })).toMatchObject({ pages: true, note: false, recall: false });
+    })).toMatchObject({ pages: true, recall: false });
   });
 });
 
@@ -187,36 +192,44 @@ describe("GettingStarted", () => {
     vi.mocked(listOnboardingMilestones).mockResolvedValue([]);
   });
 
-  it("offers each unfinished step with an action that leads to it", async () => {
+  it("starts with connecting a tool, the one step there is to do", async () => {
+    const props = renderCard();
+    expect(await screen.findByRole("region", { name: title() })).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 1, total: 3 }));
+    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
+    expect(screen.queryByTestId("getting-started-recall")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.tool.action") }));
+    expect(props.onConnectTool).toHaveBeenCalledOnce();
+  });
+
+  it("shows only the next step, numbered, with what the one before it achieved", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     const props = renderCard();
 
-    expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
-    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
-    expect(screen.getByTestId("getting-started-tool")).toHaveAttribute("data-done", "true");
-    expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.tool.action") })).toBeNull();
+    expect(await screen.findByRole("region", { name: title() })).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 2, total: 3 }));
+    expect(screen.getByTestId("getting-started-done-line")).toHaveTextContent(i18n.t("firstUse.checklist.doneLine.tool", { tool: "Claude Code" }));
+    // Done steps are not listed again, and the next one waits its turn.
+    expect(screen.queryByTestId("getting-started-tool")).toBeNull();
+    expect(screen.queryByTestId("getting-started-recall")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.note.action") }));
-    fireEvent.click(screen.getByTestId("getting-started-pages-folder"));
-    fireEvent.click(screen.getByTestId("getting-started-pages-chats"));
+    fireEvent.click(screen.getByTestId("getting-started-pages-write"));
+    expect(screen.getByTestId("getting-started-pages-write")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.writeOwn"));
+    // Material of any kind behind one choice, the sample beside it.
+    expect(screen.queryByTestId("getting-started-pages-chats")).toBeNull();
+    fireEvent.click(screen.getByTestId("getting-started-pages-material"));
     fireEvent.click(screen.getByTestId("getting-started-pages-sample"));
     expect(props.onWriteNote).toHaveBeenCalledOnce();
     expect(props.onAddSources).toHaveBeenCalledOnce();
-    expect(props.onImportChats).toHaveBeenCalledOnce();
     expect(props.onSeeExample).toHaveBeenCalledOnce();
-    // The example is offered once, in the pages step; asking waits for a page.
-    expect(screen.getByTestId("getting-started-recall")).toHaveTextContent(i18n.t("firstUse.checklist.steps.recall.bodyConnected"));
-    expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.action") })).toBeNull();
     expect(props.onConnectTool).not.toHaveBeenCalled();
   });
 
-  it("opens what your AI can do from under the steps", async () => {
+  it("keeps to its steps, with nothing extra underneath", async () => {
     renderCard();
-    expect(await screen.findByRole("heading", { name: title() })).toBeInTheDocument();
-    expect(screen.getByTestId("getting-started-ask-ai")).toHaveTextContent(i18n.t("firstUse.checklist.askAi.line"));
-
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.askAi.action") }));
-    expect(screen.getByRole("dialog", { name: i18n.t("askAi.title") })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: title() })).toBeInTheDocument();
+    // What to ask the AI tool comes once the steps are done, as its own overlay.
+    expect(screen.queryByTestId("getting-started-extra")).toBeNull();
   });
 
   it("stays away when a read fails rather than claim a step is undone", async () => {
@@ -253,43 +266,39 @@ describe("GettingStarted", () => {
     expect(screen.queryByTestId("getting-started")).toBeNull();
   });
 
-  it("steps back to one line when writing a page by hand is all that is left", async () => {
+  it("asks about a page the user wrote once a tool is connected", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
-    vi.mocked(listOnboardingMilestones).mockResolvedValue([recall]);
-    const props = renderCard([written]);
-    const card = await screen.findByTestId("getting-started");
-    expect(card).toHaveTextContent(i18n.t("firstUse.checklist.progress", { done: 3, total: 4 }));
-    expect(card).toHaveTextContent(i18n.t("firstUse.checklist.steps.note.title"));
-    expect(screen.queryByRole("heading", { name: title() })).toBeNull();
+    renderCard([page({ title: "Garden plan" })]);
+    await screen.findByRole("region", { name: title() });
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 3, total: 3 }));
+    expect(screen.getByTestId("getting-started-done-line")).toHaveTextContent(i18n.t("firstUse.checklist.doneLine.pages", { count: 1 }));
     expect(screen.queryByTestId("getting-started-pages")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.note.action") }));
-    expect(props.onWriteNote).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.hide") }));
-    expect(screen.getByRole("button", { name: i18n.t("firstUse.checklist.reopen") })).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-recall")).not.toHaveAttribute("data-later");
   });
 
   it("tells a user whose only note is a draft to leave the editor so AI can find it", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ status: "draft" })]);
-    await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-note")).toHaveAttribute("data-done", "false");
-    expect(screen.getByText(i18n.t("firstUse.checklist.steps.note.draftBody"))).toBeInTheDocument();
+    await screen.findByRole("region", { name: title() });
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
+    expect(screen.getByText(i18n.t("firstUse.checklist.steps.pages.draftBody"))).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.copy") })).toBeNull();
   });
 
   it("does not mistake copies of brought-in files for a draft or a page to ask about", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" })]);
-    await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-note")).toHaveAttribute("data-done", "false");
-    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.note.draftBody"))).toBeNull();
+    await screen.findByRole("region", { name: title() });
+    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
+    expect(screen.queryByText(i18n.t("firstUse.checklist.steps.pages.draftBody"))).toBeNull();
     expect(screen.queryByText(/ISP Outage Runbook/)).toBeNull();
   });
 
   it("asks about a page written from material before anything else", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard([page({ id: "src", title: "ISP Outage Runbook (section_h1)", creation_kind: "source" }), written]);
-    await screen.findByRole("heading", { name: title() });
-    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
+    await screen.findByRole("region", { name: title() });
+    expect(screen.queryByTestId("getting-started-pages")).toBeNull();
     expect(screen.getByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeInTheDocument();
   });
 
@@ -316,9 +325,9 @@ describe("GettingStarted", () => {
       close: vi.fn(),
     } as unknown as WritePagesState;
     renderCard([written], {}, working);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "false");
-    expect(screen.getByText(i18n.t("firstUse.checklist.progress", { done: 1, total: 4 }))).toBeInTheDocument();
+    expect(screen.getByTestId("getting-started-step-of")).toHaveTextContent(i18n.t("firstUse.checklist.stepOf", { n: 2, total: 3 }));
     expect(screen.queryByText(i18n.t("firstUse.checklist.steps.recall.question", { title: "Bread proofing" }))).toBeNull();
   });
 
@@ -359,10 +368,10 @@ describe("GettingStarted", () => {
           </OrganizeActionsContext.Provider>
         </QueryClientProvider>,
       );
-      await screen.findByRole("heading", { name: title() });
+      await screen.findByRole("region", { name: title() });
       await waitFor(() => expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-finish", "folder"));
       const step = screen.getByTestId("getting-started-pages");
-      expect(step).toHaveTextContent("12 files imported. You can search them now.");
+      expect(step).toHaveTextContent("12 files imported.");
       expect(await screen.findByRole("button", { name: "Write pages with Codex" })).toBeInTheDocument();
       // The checklist's own "Ask in Codex" offer is not shown beside it.
       expect(screen.queryByRole("button", { name: i18n.t("askAi.writePages.askIn", { tool: "Codex" }) })).toBeNull();
@@ -375,17 +384,18 @@ describe("GettingStarted", () => {
     }
   });
 
-  it("can skip the pages step when there is nothing to bring in", async () => {
+  it("keeps the pages step to two choices and writing one yourself, with no skip link", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard();
-    await screen.findByRole("heading", { name: title() });
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steps.pages.skip") }));
-    expect(screen.getByTestId("getting-started-pages")).toHaveAttribute("data-done", "true");
-    expect(localStorage.getItem("onboarding:pagesStepSkipped")).toBe("1");
+    await screen.findByRole("region", { name: title() });
+    expect(screen.getByTestId("getting-started-pages").querySelectorAll(".source-add-option")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
   });
 
   it("says what the pages step will do before there is anything to hand over", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     renderCard();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.getByTestId("getting-started-pages")).toHaveTextContent(i18n.t("firstUse.checklist.steps.pages.body"));
   });
 
@@ -405,16 +415,15 @@ describe("GettingStarted", () => {
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);
     vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
     renderAskStep();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
 
-    const prompt = ask("prompt", { title: "Kyoto itinerary" });
+    // Claude Code takes it through the plugin's front door.
+    const prompt = `/wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`;
     expect(screen.getByText(ask("question", { title: "Kyoto itinerary" }))).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Claude Code" }) }));
     await vi.waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", prompt));
     expect(clipboardWrite).toHaveBeenCalledWith(prompt);
     expect(await screen.findByText(ask("waiting", { tool: "Claude Code" }))).toBeInTheDocument();
-    // The example stays one click away in the header for whoever wants to see it first.
-    expect(screen.getAllByRole("button", { name: ask("action") })).toHaveLength(1);
   });
 
   it.each(["en", "zh-Hans", "zh-Hant"] as const)(
@@ -425,47 +434,69 @@ describe("GettingStarted", () => {
       vi.mocked(clipboardWrite).mockResolvedValue(undefined);
       vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
       renderAskStep();
-      await screen.findByRole("heading", { name: title() });
+      await screen.findByRole("region", { name: title() });
 
       fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
       expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
-      expect(clipboardWrite).toHaveBeenCalledWith(ask("prompt", { title: "Kyoto itinerary" }));
+      expect(clipboardWrite).toHaveBeenCalledWith(`$wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`);
       expect(screen.getByText(ask("askLine", { tool: "Codex", title: "Kyoto itinerary" }))).toBeInTheDocument();
     },
   );
+
+  it("asks in the tool picked under Use another tool when several are connected", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code"), agent("codex")]);
+    vi.mocked(clipboardWrite).mockResolvedValue(undefined);
+    vi.mocked(openToolWithPrompt).mockResolvedValue(undefined);
+    const chooseTool = vi.fn();
+    const tools = [{ family: "claude-code", name: "Claude Code" }, { family: "codex", name: "Codex" }];
+    const done = { kind: "hidden" };
+    const state = {
+      view: done, stepView: done, cardView: done, waitingTotal: 0, onDemand: true, loaded: true, run: null,
+      tool: tools[1], tools, chooseTool, toolName: "Codex", opensTool: true, command: "$wenlan steep",
+      copied: false, waiting: null, start: vi.fn(), copyCommand: vi.fn(), close: vi.fn(),
+    } as unknown as WritePagesState;
+    renderCard([page({ id: "newest", title: "Kyoto itinerary", last_modified: "2026-10-02T00:00:00Z" })], {}, state);
+    await screen.findByRole("region", { name: title() });
+
+    fireEvent.click(screen.getByRole("button", { name: ask("askIn", { tool: "Codex" }) }));
+    await vi.waitFor(() =>
+      expect(openToolWithPrompt).toHaveBeenCalledWith("codex", `$wenlan ${ask("prompt", { title: "Kyoto itinerary" })}`));
+
+    fireEvent.click(screen.getByRole("button", { name: i18n.t("askAi.writePages.importCard.useAnother") }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Claude Code" }));
+    expect(chooseTool).toHaveBeenCalledWith("claude-code");
+  });
+
+  it("offers no other tool when only one is connected", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    renderAskStep();
+    await screen.findByRole("region", { name: title() });
+    expect(screen.queryByRole("button", { name: i18n.t("askAi.writePages.importCard.useAnother") })).toBeNull();
+  });
 
   it("only copies the question for a tool no link can open", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
     vi.mocked(clipboardWrite).mockResolvedValue(undefined);
     renderAskStep();
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
 
     fireEvent.click(screen.getByRole("button", { name: ask("copy") }));
     expect(await screen.findByRole("button", { name: ask("copied") })).toBeInTheDocument();
+    // No plugin there, so the question goes as plain words.
+    expect(clipboardWrite).toHaveBeenCalledWith(ask("prompt", { title: "Kyoto itinerary" }));
     expect(openToolWithPrompt).not.toHaveBeenCalled();
   });
 
-  it("offers background steeping under the steps while it is off", async () => {
+  it("keeps the local model out from under the steps", async () => {
     vi.mocked(getBackgroundAiEnabled).mockResolvedValue(false);
-    const onTurnOnSteeping = vi.fn();
-    renderCard([], { onTurnOnSteeping });
-    const line = await screen.findByTestId("getting-started-steep");
-    expect(line).toHaveTextContent(i18n.t("firstUse.checklist.steep.line"));
-    fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.steep.action") }));
-    expect(onTurnOnSteeping).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not offer steeping once it is on, or when its state is unknown", async () => {
-    vi.mocked(getBackgroundAiEnabled).mockResolvedValue(true);
     renderCard([], { onTurnOnSteeping: vi.fn() });
-    await screen.findByRole("heading", { name: title() });
-    await waitFor(() => expect(getBackgroundAiEnabled).toHaveBeenCalled());
+    await screen.findByRole("region", { name: title() });
     expect(screen.queryByTestId("getting-started-steep")).toBeNull();
   });
 
   it("keeps the prompt away until a tool has actually connected", async () => {
     renderCard([page()]);
-    await screen.findByRole("heading", { name: title() });
+    await screen.findByRole("region", { name: title() });
     expect(screen.queryByRole("button", { name: i18n.t("firstUse.checklist.steps.recall.copy") })).toBeNull();
   });
 
@@ -476,7 +507,7 @@ describe("GettingStarted", () => {
     expect(localStorage.getItem("onboarding:gettingStartedDismissed")).toBe("1");
 
     fireEvent.click(screen.getByRole("button", { name: i18n.t("firstUse.checklist.reopen") }));
-    expect(screen.getByRole("heading", { name: title() })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: title() })).toBeInTheDocument();
     expect(localStorage.getItem("onboarding:gettingStartedDismissed")).toBeNull();
   });
 });
@@ -513,7 +544,7 @@ describe("useGettingStartedState", () => {
     const { result } = renderState();
     await waitFor(() => expect(result.current.visible).toBe(true));
     expect(result.current.doneCount).toBe(2);
-    expect(result.current.progress).toMatchObject({ note: true, tool: true, pages: false, recall: false });
+    expect(result.current.progress).toMatchObject({ tool: true, pages: true, recall: false });
 
     act(() => result.current.setDismissed(true));
     expect(result.current.visible).toBe(true);

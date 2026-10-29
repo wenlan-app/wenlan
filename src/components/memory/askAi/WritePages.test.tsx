@@ -226,13 +226,13 @@ describe("WritePagesLine", () => {
     // One action: the copy fallback is not offered next to it.
     expect(screen.queryByRole("button", { name: "Copy command" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Have Claude Code write pages" }));
-    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan steep"));
+    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan write my pages"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveAttribute("data-state", "working"));
     // Typed in, not yet sent: it does not claim the tool is writing.
     expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Typed in Claude Code. Press Enter there to start.");
     // Only now, in case the tool did not open, the command can be copied.
     fireEvent.click(screen.getByRole("button", { name: "Didn't open? Copy the command" }));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("/wenlan steep"));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("/wenlan write my pages"));
     expect(await screen.findByRole("button", { name: "Copied" })).toBeInTheDocument();
   });
 
@@ -243,7 +243,7 @@ describe("WritePagesLine", () => {
     localStorage.setItem("askAi:writePages:tool", JSON.stringify("codex"));
     wrap(<Line pages={[]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
-    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("codex", "$wenlan steep"));
+    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("codex", "$wenlan write my pages"));
   });
 
   it("uses the most recent tool when the picked one is no longer connected", async () => {
@@ -287,7 +287,7 @@ describe("WritePagesLine", () => {
     vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
     wrap(<Line pages={[page("a", "2026-10-21T10:01:00Z", "distilled", 2)]} />);
     fireEvent.click(await screen.findByRole("button", { name: "Have Codex write pages" }));
-    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan write my pages"));
     await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Paste the command into Codex and press Enter."));
     // Said once, on the button that copied it.
     expect(screen.getByTestId("write-pages-line").textContent?.match(/Copied/g)).toHaveLength(1);
@@ -305,7 +305,8 @@ describe("WritePagesLine", () => {
       fireEvent.click(await screen.findByRole("button", {
         name: i18n.t("askAi.writePages.askIn", { tool: "Codex" }),
       }));
-      await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("$wenlan steep"));
+      // The command in the locale's own words, behind Codex's `$` front door.
+      await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith(`$wenlan ${i18n.t("askAi.tasks.steep.example").replace("/wenlan ", "")}`));
       await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent(
         i18n.t("askAi.writePages.pasteIt", { tool: "Codex" }),
       ));
@@ -380,8 +381,8 @@ describe("WritePagesLine", () => {
     vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
     vi.mocked(listNewMaterial).mockResolvedValue(material(16, { held: 12 }));
     wrap(<Line pages={[]} />);
-    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Claude Code is writing pages"));
-    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Nothing happening? Check whether Claude Code is waiting for you.");
+    await waitFor(() => expect(screen.getByTestId("write-pages-line")).toHaveTextContent("Waiting for Claude Code"));
+    expect(screen.getByTestId("write-pages-line")).toHaveTextContent("It may be waiting for your answer.");
   });
 
   it("does not call a run stopped when its material was written up", async () => {

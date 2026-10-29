@@ -19,6 +19,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 vi.mock("../lib/tauri", () => ({
+  PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
+  openToolWithPrompt: vi.fn(),
   importChatExport: vi.fn(),
   saveTempFile: vi.fn(),
   listPendingImports: vi.fn(),
@@ -30,6 +32,7 @@ vi.mock("../lib/tauri", () => ({
   installClientPlugin: vi.fn().mockResolvedValue(undefined),
   registerConnectedAgent: vi.fn().mockResolvedValue(true),
   listAgents: vi.fn().mockResolvedValue([]),
+  listOnboardingMilestones: vi.fn().mockResolvedValue([]),
   getWenlanMcpEntry: vi.fn().mockResolvedValue({ command: "npx", args: ["-y", "wenlan-mcp"] }),
   getRemoteAccessStatus: vi.fn().mockResolvedValue({ status: "off" }),
   toggleRemoteAccess: vi.fn().mockResolvedValue({ status: "off" }),
@@ -269,9 +272,9 @@ describe("SetupWizard", () => {
   it("starts with pages and an optional example, without setup questions", () => {
     renderWizard();
     expect(screen.getByText("Welcome to Wenlan")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Get started" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Try an example" })).toBeInTheDocument();
-    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: /Start empty/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Look around an example wiki/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(4);
     expect(screen.queryByTestId("wizard-action-bar")).not.toBeInTheDocument();
     expect(detectMcpClients).not.toHaveBeenCalled();
     expect(getWireState).not.toHaveBeenCalled();
@@ -336,13 +339,13 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(screen.getByText("欢迎使用文澜")).toBeInTheDocument();
-    expect(screen.getByText(/你和 AI 工具一起搭建的个人 Wiki/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "开始使用" })).toBeInTheDocument();
+    expect(screen.getByText(/你的 wiki 存在你自己的电脑上/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /从空白开始/ })).toBeInTheDocument();
   });
 
   it("opens pages directly without entering intelligence setup", async () => {
     const { onComplete } = renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(screen.getByRole("button", { name: /Start empty/ }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(screen.queryByText("Choose how Wenlan thinks")).not.toBeInTheDocument();
     expect(setSourcePin).not.toHaveBeenCalled();
@@ -1248,7 +1251,8 @@ describe("SetupWizard", () => {
     // must not render a second one. The badge is the affordance; `disabled`
     // never is.
     expect(screen.getAllByText("Added")).toHaveLength(1);
-    expect(screen.getByText("Already set up. Uncheck to skip it.")).toBeInTheDocument();
+    // The chip says it; no second sentence repeats it.
+    expect(screen.queryByText("Already connected.")).toBeNull();
     expect(cursorCheckbox).toBeEnabled();
 
     // And unchecking actually takes: the box clears, and Setting up gives it
@@ -1573,7 +1577,7 @@ describe("SetupWizard", () => {
       },
     });
     const { onComplete } = renderWizard();
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    fireEvent.click(screen.getByRole("button", { name: /Start empty/ }));
     await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
     expect(getBackgroundAiEnabled).not.toHaveBeenCalled();
     expect(getResolvedRouting).not.toHaveBeenCalled();
@@ -2590,7 +2594,7 @@ describe("SetupWizard", () => {
     renderWizard();
 
     expect(
-      await screen.findByText(/A personal Wiki you and your AI tools build together/),
+      await screen.findByText(/Your wiki lives on your computer/),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Welcome to Wenlan" }),
@@ -3458,7 +3462,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
 
     expect(await screen.findByText("Tools added")).toBeInTheDocument();
     expect(
-      screen.getByText("Restart these tools and they will read and write your library."),
+      screen.getByText("Restart these tools once. After that they can read and write your wiki."),
     ).toBeInTheDocument();
     expect(screen.queryByText("You're all set.")).not.toBeInTheDocument();
     expect(screen.queryByText(i18n.t("setup.done.allSetBody1"))).not.toBeInTheDocument();
@@ -3481,7 +3485,7 @@ describe("DoneStep and Setting up: Added versus Connected", () => {
     expect(screen.getByText(i18n.t("setup.done.allSetBody1"))).toBeInTheDocument();
     expect(screen.queryByText("Tools added")).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Restart these tools and they will read and write your library."),
+      screen.queryByText("Restart these tools once. After that they can read and write your wiki."),
     ).not.toBeInTheDocument();
   });
 

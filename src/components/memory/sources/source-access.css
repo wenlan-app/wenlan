@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 .source-dialog-overlay { position:fixed; inset:0; z-index:1200; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,.24); }
 .source-dialog { width:460px; max-width:100%; max-height:calc(100dvh - 32px); overflow:auto; padding:20px; color:var(--mem-text); background:var(--mem-surface); border-radius:var(--mem-radius-lg); box-shadow:var(--mem-shadow-overlay); }
-.source-dialog header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
-.source-dialog h2 { margin:0; font:500 20px/1.4 var(--mem-font-heading); }
-.source-add-option { display:flex; flex-direction:column; gap:4px; width:100%; text-align:left; padding:12px; border:0; border-radius:var(--mem-radius-md); background:transparent; color:var(--mem-text); cursor:pointer; font:inherit; }
+.source-dialog header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.source-dialog-heading { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.source-dialog .source-dialog-lead { margin:0; font-size:14px; color:var(--mem-text-secondary); }
+.source-dialog h2 { margin:0; font:600 19px/1.35 var(--mem-font-body); color:var(--mem-text); }
+/* The one option row, used wherever a choice is offered: icon, name, one line, arrow. */
+.source-add-option { display:flex; flex-direction:row; align-items:center; gap:12px; width:100%; text-align:left; padding:12px; border:0; border-radius:var(--mem-radius-md); background:transparent; color:var(--mem-text); cursor:pointer; font:inherit; }
 .source-add-option:hover { background:var(--mem-hover); }
 .source-add-option span,.source-dialog p,.source-preview-note { font-size:13px; line-height:1.6; color:var(--mem-text-secondary); }
 .source-dialog label { display:flex; flex-direction:column; gap:6px; margin:14px 0; font-size:13px; }
@@ -35,15 +38,21 @@
 
 .source-preview-open { flex:0 0 auto; white-space:nowrap; margin-left:auto; }
 
-.source-dialog .source-add-option { flex-direction:row; align-items:center; gap:12px; }
+.source-add-option::after { content:"›"; margin-left:auto; padding-left:8px; color:var(--mem-text-tertiary); font-size:18px; line-height:1; }
 .source-add-option > [data-resource-icon] { flex:0 0 20px; color:var(--mem-text-secondary); }
 .source-add-option-copy { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .source-add-option-copy strong { font-size:14px; font-weight:500; color:var(--mem-text); }
-.source-add-option--vault { background:var(--mem-indigo-bg); margin-bottom:8px; }
 .source-add-option:disabled { cursor:wait; opacity:.6; }
 
-.source-chat-export-steps { margin:8px 0 14px; padding:0; list-style:none; display:flex; flex-direction:column; gap:4px; font-size:13px; line-height:1.5; color:var(--mem-text-secondary); }
-.source-chat-export-steps strong { color:var(--mem-text); font-weight:500; margin-right:6px; }
+.source-chat-steps { margin:4px 0 16px; padding:0; list-style:none; display:flex; flex-direction:column; gap:14px; }
+.source-chat-steps > li { display:flex; align-items:flex-start; gap:12px; }
+.source-chat-step-number { flex:0 0 22px; height:22px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--mem-indigo-bg); color:var(--mem-accent-indigo); font:600 12px/1 var(--mem-font-body); font-variant-numeric:tabular-nums; margin-top:1px; }
+.source-chat-step-copy { display:flex; flex-direction:column; gap:4px; min-width:0; font-size:13px; line-height:1.5; color:var(--mem-text-secondary); }
+.source-chat-step-copy > strong { font-size:14px; font-weight:500; color:var(--mem-text); }
+.source-chat-export-steps { margin:2px 0 0; display:flex; flex-direction:column; gap:2px; }
+.source-chat-export-steps > div { display:flex; gap:8px; flex-wrap:wrap; }
+.source-chat-export-steps dt { color:var(--mem-text); font-weight:500; min-width:64px; }
+.source-chat-export-steps dd { margin:0; }
 .source-dialog .source-follow-path { overflow-wrap:anywhere; margin:0 0 4px; }
 .source-dialog .source-follow-choice { border:0; margin:14px 0 0; padding:0; }
 .source-dialog .source-follow-choice legend { font-size:13px; margin-bottom:4px; padding:0; }

@@ -8,31 +8,27 @@ import {
   type Page,
 } from "../../lib/tauri";
 import { OWN_IDENTITY, toolFamilyOf } from "../../lib/agents";
+import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { useLiveAgents } from "../connect/connectionState";
 import { useLibraryInventory } from "../memory/pages/useLibraryInventory";
 
 /** Per-viewer convenience only: losing it just shows the card again. */
 const DISMISSED_KEY = "onboarding:gettingStartedDismissed";
-/** "Skip for now" on the pages step, for someone with nothing to bring in.
- *  Cleared once material arrives, so the step comes back with its button. */
-const PAGES_SKIPPED_KEY = "onboarding:pagesStepSkipped";
 /** A library with this many pages written by the user or from their material
  *  is past first use; existing users upgrading into this card would read it as
  *  noise. Copies of brought-in files do not count (`libraryPagesForEstablished`),
  *  or one imported folder would hide the card from a new user. */
 export const ESTABLISHED_LIBRARY_PAGES = 10;
 
-export type GettingStartedStepId = "note" | "tool" | "pages" | "recall";
+export type GettingStartedStepId = "tool" | "pages" | "recall";
 
-/** The path most people take: bring material in and have it turned into
- *  pages (one step, so someone with nothing to bring is not left with an
- *  empty one), then ask about them. Writing a page by hand is last. */
-export const GETTING_STARTED_ORDER: readonly GettingStartedStepId[] = ["tool", "pages", "recall", "note"];
+/** Connect a tool, get pages (written from material, or by hand), then ask
+ *  about them. Asking is last because it needs a page to ask about. */
+export const GETTING_STARTED_ORDER: readonly GettingStartedStepId[] = ["tool", "pages", "recall"];
 
 export interface GettingStartedProgress {
-  readonly note: boolean;
   readonly tool: boolean;
-  /** A page written from material, or the user chose to skip the step. */
+  /** A page written from material, or one the user wrote themselves. */
   readonly pages: boolean;
   readonly recall: boolean;
 }
@@ -90,17 +86,15 @@ export function gettingStartedProgress({
   pages,
   agents,
   milestones,
-  pagesSkipped = false,
 }: {
   pages: readonly Page[];
   agents: readonly AgentConnection[];
   milestones: readonly MilestoneRecord[];
-  pagesSkipped?: boolean;
 }): GettingStartedProgress {
   return {
-    note: writtenPages(pages).length > 0,
     tool: connectedToolFamilies(agents).length > 0,
-    pages: pagesSkipped || pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft"),
+    pages: writtenPages(pages).length > 0
+      || pages.some((page) => page.creation_kind === "distilled" && page.status !== "draft"),
     recall: milestones.some((milestone) => milestone.id === "first-recall"),
   };
 }
@@ -143,7 +137,6 @@ function flagStore(key: string) {
 }
 
 const dismissedFlag = flagStore(DISMISSED_KEY);
-const pagesSkippedFlag = flagStore(PAGES_SKIPPED_KEY);
 
 /**
  * Whether the getting-started checklist is on the Wiki home, and how far along
@@ -162,28 +155,20 @@ export interface GettingStartedState {
   readonly doneCount: number;
   readonly dismissed: boolean;
   readonly setDismissed: (value: boolean) => void;
-  readonly pagesSkipped: boolean;
-  readonly setPagesSkipped: (value: boolean) => void;
   readonly pages: readonly Page[];
   readonly agents: AgentConnection[];
   /** Whether `visible` is an answer yet: false until the library, agents and
    *  milestones have all loaded (an established library needs only pages). */
   readonly loaded: boolean;
-  /** Only writing a page by hand is left, and there are pages to read: the
-   *  card shrinks to one line and the pages take the home. */
-  readonly compact: boolean;
-}
-
-/** Writing a page by hand is the one step left, and the library already has
- *  pages worth reading. For many people that step is not the goal, so the
- *  card stops taking the screen. */
-export function onlyOwnPageLeft(progress: GettingStartedProgress | null, pages: readonly Page[]): boolean {
-  return progress !== null && progress.tool && progress.pages && progress.recall && !progress.note
-    && askablePages(pages).length > 0;
+  /** A library still being built (fewer pages than an established one),
+   *  whether or not the checklist is done: first-visit explanations and the
+   *  everyday-use card are for this person. False until pages have loaded. */
+  readonly newLibrary: boolean;
 }
 
 export function useGettingStartedState(): GettingStartedState {
   const { pages, ready } = useLibraryInventory();
+  const example = useExampleWikiActive();
   const established = libraryPagesForEstablished(pages).length >= ESTABLISHED_LIBRARY_PAGES;
   const checking = !established;
   const agentsQuery = useLiveAgents(undefined, checking);
@@ -197,11 +182,14 @@ export function useGettingStartedState(): GettingStartedState {
   });
   const dismissed = useSyncExternalStore(dismissedFlag.subscribe, dismissedFlag.read, () => false);
   const setDismissed = useCallback((value: boolean) => dismissedFlag.write(value), []);
-  const pagesSkipped = useSyncExternalStore(pagesSkippedFlag.subscribe, pagesSkippedFlag.read, () => false);
-  const setPagesSkipped = useCallback((value: boolean) => pagesSkippedFlag.write(value), []);
-  const flags = { dismissed, setDismissed, pagesSkipped, setPagesSkipped };
+  const flags = { dismissed, setDismissed };
 
   const loaded = ready && agentsQuery.isSuccess && milestonesQuery.isSuccess;
+  // The example wiki is not the user's: no checklist over it, though its
+  // tips and first-visit lines still teach (they count as seen for later).
+  if (example) {
+    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [], loaded: true, newLibrary: true };
+  }
   if (!loaded || established) {
     return {
       visible: false,
@@ -210,15 +198,14 @@ export function useGettingStartedState(): GettingStartedState {
       ...flags,
       pages,
       agents: [],
-      compact: false,
       loaded: loaded || (ready && established),
+      newLibrary: ready && !established,
     };
   }
   const progress = gettingStartedProgress({
     pages,
     agents: agentsQuery.data,
     milestones: milestonesQuery.data,
-    pagesSkipped,
   });
   const doneCount = GETTING_STARTED_ORDER.filter((id) => progress[id]).length;
   const visible = doneCount < GETTING_STARTED_ORDER.length;
@@ -230,7 +217,7 @@ export function useGettingStartedState(): GettingStartedState {
     ...flags,
     pages,
     agents: agentsQuery.data,
-    compact: onlyOwnPageLeft(shown, pages),
     loaded: true,
+    newLibrary: true,
   };
 }

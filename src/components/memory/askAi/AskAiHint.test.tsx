@@ -5,17 +5,30 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../../i18n";
 import {
+  clipboardWrite,
   getBackgroundAiEnabled,
   listAgents,
+  openToolWithPrompt,
   type AgentConnection,
 } from "../../../lib/tauri";
+import { listAllActivePagesExplicitBrowse } from "../pages/listAllPages";
 import { AskAiHint } from "./AskAiHint";
+import { AskInsteadHint } from "./AskInsteadHint";
 import { ConnectedHint } from "./ConnectedHint";
 
 vi.mock("../../../lib/tauri", () => ({
+  PROMPT_LINK_FAMILIES: ["claude-desktop", "claude-code", "codex", "cursor"],
+  openToolWithPrompt: vi.fn(),
   clipboardWrite: vi.fn(),
   getBackgroundAiEnabled: vi.fn(),
   listAgents: vi.fn(),
+  listOnboardingMilestones: vi.fn(async () => []),
+}));
+vi.mock("../pages/listAllPages", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pages/listAllPages")>()),
+  // One written page, so the connected hint is past "add your material".
+  listAllActivePagesExplicitBrowse: vi.fn(async () => [{ id: "p1", title: "Trip", status: "active", creation_kind: "distilled" }]),
+  listAllDraftPagesExplicitBrowse: vi.fn(async () => []),
 }));
 
 function agent(name: string): AgentConnection {
@@ -43,14 +56,17 @@ describe("ask-AI hints", () => {
   beforeEach(async () => {
     localStorage.clear();
     vi.mocked(listAgents).mockReset();
+    vi.mocked(listAllActivePagesExplicitBrowse).mockResolvedValue([{ id: "p1", title: "Trip", status: "active", creation_kind: "distilled" }] as never);
     vi.mocked(getBackgroundAiEnabled).mockReset();
+    vi.mocked(clipboardWrite).mockReset().mockResolvedValue(undefined);
+    vi.mocked(openToolWithPrompt).mockReset().mockResolvedValue(undefined);
     await i18n.changeLanguage("en");
   });
 
   it("names the command in the user's own tool and hides a task that tool cannot do", async () => {
     vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
     const { unmount } = wrap(<AskAiHint task="steep" lead="Waiting." testId="hint" />);
-    await waitFor(() => expect(screen.getByTestId("hint")).toHaveTextContent("$wenlan steep"));
+    await waitFor(() => expect(screen.getByTestId("hint")).toHaveTextContent("$wenlan write my pages"));
     unmount();
 
     vi.mocked(listAgents).mockResolvedValue([agent("cursor")]);
@@ -68,5 +84,61 @@ describe("ask-AI hints", () => {
     await screen.findByTestId("ask-ai-hint-connected");
     fireEvent.click(screen.getByRole("button", { name: "See all" }));
     expect(screen.getByTestId("ask-ai-dialog")).toBeInTheDocument();
+  });
+
+  it("says where to ask once connected, as a line with no box, and opens the tool with /wenlan typed in", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    wrap(<ConnectedHint />);
+    const hint = await screen.findByTestId("ask-ai-hint-connected");
+    expect(hint).toHaveTextContent("Next, start a new chat in Claude Code and type /wenlan to ask about your notes.");
+    expect(hint.querySelector("code, input, textarea")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open Claude Code" }));
+    await waitFor(() => expect(openToolWithPrompt).toHaveBeenCalledWith("claude-code", "/wenlan"));
+    expect(clipboardWrite).toHaveBeenCalledWith("/wenlan");
+    expect(await screen.findByRole("button", { name: "Opened in Claude Code. Press Enter there." })).toBeInTheDocument();
+  });
+
+  it("before any page, stays quiet: the Wiki's checklist says what comes next", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("claude-code")]);
+    vi.mocked(listAllActivePagesExplicitBrowse).mockResolvedValue([]);
+    wrap(<ConnectedHint />);
+    await waitFor(() => expect(listAllActivePagesExplicitBrowse).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByTestId("ask-ai-hint-connected")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open Claude Code" })).toBeNull();
+  });
+
+  it("copies plain words for a tool without the plugin, and says so", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("gemini-cli")]);
+    wrap(<ConnectedHint />);
+    const hint = await screen.findByTestId("ask-ai-hint-connected");
+    expect(hint).toHaveTextContent("ask about your notes in plain words");
+    expect(hint).not.toHaveTextContent("/wenlan");
+    fireEvent.click(screen.getByTestId("ask-ai-hint-open"));
+    await waitFor(() => expect(clipboardWrite).toHaveBeenCalledWith("Use Wenlan: what do my notes cover so far?"));
+    expect(openToolWithPrompt).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("ask-ai-hint-open")).toHaveTextContent("Copied.");
+  });
+
+  it("falls back to the clipboard when the tool cannot be opened", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
+    vi.mocked(openToolWithPrompt).mockRejectedValue(new Error("not installed"));
+    wrap(<ConnectedHint />);
+    await screen.findByTestId("ask-ai-hint-connected");
+    fireEvent.click(screen.getByRole("button", { name: "Open Codex" }));
+    expect(await screen.findByRole("button", { name: "Copied. Paste it into Codex." })).toBeInTheDocument();
+    expect(clipboardWrite).toHaveBeenCalledWith("$wenlan");
+  });
+
+  it("points a blank new page at the AI tool, and only while it is blank", async () => {
+    vi.mocked(listAgents).mockResolvedValue([agent("codex")]);
+    const { rerender } = wrap(<AskInsteadHint blank />);
+    expect(await screen.findByTestId("ask-instead-hint")).toHaveTextContent("Want to ask a question? Type $wenlan in Codex.");
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <AskInsteadHint blank={false} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByTestId("ask-instead-hint")).toBeNull();
   });
 });

@@ -188,9 +188,8 @@ test("an import hands background work to Activity after returning to the workspa
     window.__releaseHandoffImport = true;
   });
 
-  // ── The handoff: searchable now, and the next step turns them into pages ──
+  // ── The handoff: imported, and the next step turns them into pages ──
   await expect(page.getByText(/3 memories imported/i)).toBeVisible();
-  await expect(page.getByText("You can search them now.", { exact: true })).toBeVisible();
   // The next step sits under it. This mock reports no new material waiting,
   // so the "Turn them into pages" offer stays hidden (TurnIntoPages tests
   // cover its faces), and nothing here uses the word "steep".

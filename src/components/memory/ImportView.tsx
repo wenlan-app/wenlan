@@ -28,6 +28,8 @@ interface ImportViewProps {
   onSkip?: () => void;
   /** Optional onboarding copy rendered above the import form. */
   wizardHint?: React.ReactNode;
+  /** The page title, when the way here named the import otherwise. */
+  title?: string;
 }
 
 type Phase = "input" | "progress" | "summary";
@@ -58,7 +60,7 @@ const TYPE_BADGE_STYLES: Record<string, { bg: string; text: string }> = {
   goal: { bg: "color-mix(in srgb, var(--mem-accent-sage) 15%, transparent)", text: "var(--mem-accent-sage)" },
 };
 
-export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPhaseChange, onSkip, wizardHint }: ImportViewProps) {
+export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPhaseChange, onSkip, wizardHint, title }: ImportViewProps) {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
   const onDemand = useSteepOnDemand() === true;
@@ -233,7 +235,7 @@ export function ImportView({ onBack, onComplete, completeLabel, wizardMode, onPh
               color: "var(--mem-text)",
             }}
           >
-            {t("importView.title")}
+            {title ?? t("importView.title")}
           </h1>
           <div className="flex gap-1 ml-auto shrink-0">
             {(["chatgpt", "claude", "other"] as Source[]).map((s) => (

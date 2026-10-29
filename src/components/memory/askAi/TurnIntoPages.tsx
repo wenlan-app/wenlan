@@ -2,13 +2,14 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Check, CheckCircle, CircleNotch, Sparkle } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, Sparkle, X } from "@phosphor-icons/react";
 import { getOnDeviceModel, getResolvedRouting } from "../../../lib/tauri";
 import { chooseSteepMode, useSteepOnDemand } from "../../../lib/steepMode";
 import { ANTHROPIC_MODELS } from "../../intelligence/IntelligenceSetup";
 import { useLibraryInventory } from "../pages/useLibraryInventory";
 import {
   copyAgainLabel,
+  HeldNotice,
   PAGES_PER_RUN,
   useWritePages,
   workingHeadline,
@@ -16,6 +17,7 @@ import {
   type WritePagesState,
   type WritePagesView,
 } from "./WritePages";
+import { ToolPicker } from "./ToolPicker";
 import "./turnIntoPages.css";
 
 /**
@@ -60,8 +62,8 @@ interface ImportOrganizeProps {
   readonly onLater?: () => void;
 }
 
-/** "12 notes imported. You can search them now." Under a heading that
- *  already gives the count, `short` says only the second half. */
+/** "12 notes imported." Under a heading that already gives the count,
+ *  `short` says nothing more. */
 export function ImportedLead({
   count,
   kind,
@@ -74,11 +76,10 @@ export function ImportedLead({
   readonly short?: boolean;
 }) {
   const { t } = useTranslation();
+  if (short) return null;
   return (
     <p className={className ?? "turn-pages-lead"} data-testid="import-lead">
-      {short
-        ? t("askAi.writePages.importCard.leadShort")
-        : t("askAi.writePages.importCard.lead", { items: t(`askAi.writePages.kinds.${kind}`, { count }) })}
+      {t("askAi.writePages.importCard.lead", { items: t(`askAi.writePages.kinds.${kind}`, { count }) })}
     </p>
   );
 }
@@ -256,7 +257,13 @@ export function TurnIntoPagesView({
   const toolName = state.tool?.name ?? state.run?.tool ?? null;
   const inlineTool = toolName ?? t("askAi.writePages.importCard.yourTool");
 
-  const shell = (body: ReactNode, cardState: string) => (
+  const putOff = () => {
+    setLater(true);
+    onLater?.();
+  };
+  // An offer the user can put off closes from its corner, so the card's own
+  // row holds only the one thing to do.
+  const shell = (body: ReactNode, cardState: string, closable = false) => (
     <section
       className={`turn-pages${bare ? " turn-pages--bare" : ""}`}
       data-testid="turn-into-pages"
@@ -264,6 +271,7 @@ export function TurnIntoPagesView({
       aria-labelledby={titleId}
       aria-live="polite"
     >
+      <div className="turn-pages-head">
       <h3 id={titleId} className="turn-pages-title">
         {cardState === "done" ? (
           <CheckCircle aria-hidden="true" weight="fill" className="turn-pages-icon turn-pages-icon--done" />
@@ -274,6 +282,19 @@ export function TurnIntoPagesView({
         )}
         {t("askAi.writePages.importCard.title")}
       </h3>
+      {closable ? (
+        <button
+          type="button"
+          className="turn-pages-close"
+          data-testid="turn-into-pages-later"
+          aria-label={t("askAi.writePages.importCard.later")}
+          title={t("askAi.writePages.importCard.later")}
+          onClick={putOff}
+        >
+          <X aria-hidden="true" weight="regular" />
+        </button>
+      ) : null}
+      </div>
       {body}
     </section>
   );
@@ -311,22 +332,13 @@ export function TurnIntoPagesView({
     );
   }
 
+  // The other way to get pages, as one quiet line under the actions.
   const secondary = (
-    <>
+    <p className="turn-pages-alt">
       <button type="button" className="turn-pages-link" onClick={() => setExplaining(true)}>
         {t("askAi.writePages.importCard.switchToAutomatic")}
       </button>
-      <button
-        type="button"
-        className="turn-pages-link"
-        onClick={() => {
-          setLater(true);
-          onLater?.();
-        }}
-      >
-        {t("askAi.writePages.importCard.later")}
-      </button>
-    </>
+    </p>
   );
 
   if (kind === "noTool") {
@@ -339,10 +351,11 @@ export function TurnIntoPagesView({
               {t("askAi.writePages.connect")}
             </button>
           ) : null}
-          {secondary}
         </div>
+        {secondary}
       </>,
       "no-tool",
+      true,
     );
   }
 
@@ -380,10 +393,18 @@ export function TurnIntoPagesView({
           {state.tools.length > 1 && state.tool ? (
             <ToolPicker tools={state.tools} current={state.tool.family} onChoose={state.chooseTool} />
           ) : null}
-          {secondary}
         </div>
+        {secondary}
       </>,
       "ready",
+      true,
+    );
+  }
+
+  if (view.kind === "working" && view.stuck && view.written.length === 0) {
+    return shell(
+      <HeldNotice state={state} lineClassName="turn-pages-body" linkClassName="turn-pages-link" />,
+      "working",
     );
   }
 
@@ -407,7 +428,7 @@ export function TurnIntoPagesView({
             </button>
           </div>
         ) : null}
-        <WrittenPages rows={view.written} writing={view.writing} onSelectPage={selectPage} />
+        <WrittenPages rows={view.written} writing={view.writing || view.stuck} onSelectPage={selectPage} />
       </>,
       "working",
     );
@@ -439,74 +460,5 @@ export function TurnIntoPagesView({
       ) : null}
     </>,
     "done",
-  );
-}
-
-/** "Use another tool": which connected tool the button hands the pages to.
- *  Shown only with more than one tool connected; the pick is remembered. */
-function ToolPicker({
-  tools,
-  current,
-  onChoose,
-}: {
-  readonly tools: readonly { family: string; name: string }[];
-  readonly current: string;
-  readonly onChoose: (family: string) => void;
-}) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const menuId = useId();
-  const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const away = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", away);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("mousedown", away);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-  return (
-    <div className="turn-pages-picker" ref={root}>
-      <button
-        type="button"
-        className="turn-pages-link"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {t("askAi.writePages.importCard.useAnother")}
-      </button>
-      {open ? (
-        <ul className="turn-pages-picker-menu" id={menuId} role="menu" aria-label={t("askAi.writePages.importCard.useAnother")}>
-          {tools.map((tool) => (
-            <li key={tool.family} role="none">
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={tool.family === current}
-                className="turn-pages-picker-item"
-                onClick={() => {
-                  onChoose(tool.family);
-                  setOpen(false);
-                }}
-              >
-                <span className="turn-pages-picker-check" aria-hidden="true">
-                  {tool.family === current ? <Check weight="bold" /> : null}
-                </span>
-                {tool.name}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
   );
 }

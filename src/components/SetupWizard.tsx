@@ -273,9 +273,9 @@ function WelcomeStep({
       <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
         <h1
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
             letterSpacing: "-0.02em",
           }}
@@ -431,9 +431,9 @@ function IntelligenceChoiceStep({
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
         <h1
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
           }}
         >
@@ -541,7 +541,7 @@ function ImportStep({
       >
         <div className="flex flex-col" style={{ gap: "24px", paddingTop: "24px" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            <h1 style={{ fontFamily: "var(--mem-font-heading)", fontSize: "var(--mem-text-2xl)", fontWeight: 500, color: "var(--mem-text)" }}>
+            <h1 style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-2xl)", fontWeight: 600, color: "var(--mem-text)" }}>
               {t("setup.import.title")}
             </h1>
             <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "13px", color: "var(--mem-text-secondary)", lineHeight: "1.5" }}>
@@ -572,7 +572,7 @@ function ImportStep({
     >
     <div className="flex flex-col" style={{ gap: "24px", paddingTop: "24px" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        <h1 style={{ fontFamily: "var(--mem-font-heading)", fontSize: "var(--mem-text-2xl)", fontWeight: 500, color: "var(--mem-text)" }}>
+        <h1 style={{ fontFamily: "var(--mem-font-body)", fontSize: "var(--mem-text-2xl)", fontWeight: 600, color: "var(--mem-text)" }}>
           {t("setup.import.title")}
         </h1>
         <p style={{ fontFamily: "var(--mem-font-body)", fontSize: "13px", color: "var(--mem-text-secondary)", lineHeight: "1.5" }}>
@@ -737,9 +737,9 @@ function ConnectStep({
       <div>
         <h1
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
           }}
         >
@@ -865,7 +865,9 @@ function ConnectStep({
                     />
                   }
                 >
-                  {isConfigured ? (
+                  {/* The row's chip already says Added; only a repair needs a
+                      sentence, saying what Continue will do about it. */}
+                  {isConfigured && needsRepair ? (
                     <p
                       style={{
                         fontFamily: "var(--mem-font-body)",
@@ -874,9 +876,7 @@ function ConnectStep({
                         lineHeight: "1.5",
                       }}
                     >
-                      {needsRepair
-                        ? t("setup.connect.repairOnContinue")
-                        : t("setup.connect.alreadySetUp")}
+                      {t("setup.connect.repairOnContinue")}
                     </p>
                   ) : null}
                 </ClientRow>
@@ -1777,9 +1777,9 @@ function SettingUpStep({
       <div>
         <h1
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
           }}
         >
@@ -2143,9 +2143,9 @@ function Stat({ label, value }: { label: string; value: number }) {
     >
       <span
         style={{
-          fontFamily: "var(--mem-font-heading)",
+          fontFamily: "var(--mem-font-body)",
           fontSize: "var(--mem-text-xl)",
-          fontWeight: 500,
+          fontWeight: 600,
           color: "var(--mem-text)",
           lineHeight: 1.1,
           fontVariantNumeric: "tabular-nums",
@@ -2364,9 +2364,9 @@ export function DoneStep({
       >
         <h1
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
           }}
         >
@@ -2463,9 +2463,9 @@ export function DoneStep({
       >
         <p
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
             margin: 0,
           }}
@@ -2487,7 +2487,6 @@ export function DoneStep({
         {assurance && <p style={routingSummaryStyle}>{assurance}</p>}
       </div>
 
-      <ConnectedHint />
 
       {/* Import stats card — surfaces the essential value Wenlan extracted:
           memories in, topics (entities) pulled out, and a forward line about
@@ -2614,6 +2613,11 @@ export function DoneStep({
           ))}
         </ul>
       )}
+
+      {/* What to do next, under what was set up and as wide as it. */}
+      <div className="setup-done-next">
+        <ConnectedHint justConnected={connectedAgents} />
+      </div>
     </div>
     </StepShell>
   );
@@ -2703,6 +2707,13 @@ function SetupWizardFlow({
       <ConnectStep
         hideDots={hideDots}
         onNext={(selected) => {
+          // Opened from inside the app with nothing picked: there is nothing
+          // to set up, so go straight back instead of through the setup and
+          // "ready" screens of a first launch.
+          if (startStep === "connect" && selected.length === 0) {
+            void onComplete();
+            return;
+          }
           setSelectedClients(selected);
           setStep("setting-up");
         }}
@@ -2753,9 +2764,9 @@ function StartupPreflightFailure() {
       >
         <h1
           style={{
-            fontFamily: "var(--mem-font-heading)",
+            fontFamily: "var(--mem-font-body)",
             fontSize: "var(--mem-text-2xl)",
-            fontWeight: 500,
+            fontWeight: 600,
             color: "var(--mem-text)",
           }}
         >

@@ -2215,6 +2215,43 @@ fn code_basis_drift_line(count: Option<u32>, explained: bool) -> Option<String> 
     })
 }
 
+/// Where a new library stands and the user's next step, for the AI tool to
+/// pass on in plain words. Library-wide, whatever the Space.
+fn getting_started_lines(getting_started: &wenlan_types::GettingStarted) -> String {
+    use wenlan_types::GettingStartedStep;
+    let pages = match getting_started.pages {
+        0 => "no pages yet".to_string(),
+        1 => "1 page".to_string(),
+        count => format!("{count} pages"),
+    };
+    let waiting = match getting_started.waiting {
+        0 => "nothing waiting".to_string(),
+        1 => "1 item (a note, chat, file or capture) waiting to be written into pages".to_string(),
+        count => format!(
+            "{count} items (notes, chats, files or captures) waiting to be written into pages"
+        ),
+    };
+    let next = match getting_started.next {
+        GettingStartedStep::AddMaterial => {
+            "add notes, files or past AI chats in the Wenlan app (Add a source), then come back here".to_string()
+        }
+        GettingStartedStep::WritePages => {
+            "have this AI tool write the waiting items into pages. Say it in plain words, without the word steep: in Claude Code they type /wenlan write my pages, in Codex $wenlan write my pages, elsewhere they just ask".to_string()
+        }
+        GettingStartedStep::Writing => {
+            "an AI tool is writing them now; wait for the pages to appear in the Wenlan app".to_string()
+        }
+        GettingStartedStep::Ask => {
+            let mut next = "ask a question about their pages in plain words; recall answers it".to_string();
+            if getting_started.waiting > 0 {
+                next.push_str("; /wenlan write my pages writes the rest (Codex: $wenlan write my pages)");
+            }
+            next
+        }
+    };
+    format!("Getting started (whole library): {pages}, {waiting}.\nNext step for the user: {next}.")
+}
+
 /// One Brief item list as text, keeping the stable item ids and versions the
 /// handoff skill reconciles against.
 fn render_brief_items(output: &mut String, label: &str, items: &[wenlan_types::BriefItem]) {
@@ -2651,13 +2688,16 @@ impl WenlanMcpServer {
                 output
             }
         };
-        let output = match response.state {
+        let mut output = match response.state {
             wenlan_types::BriefReadState::SpaceNotResolved => output,
             _ => {
                 self.with_steep_line(&client, response.space.as_deref(), output)
                     .await
             }
         };
+        if let Some(getting_started) = response.getting_started.as_ref() {
+            output.push_str(&format!("\n\n{}\n", getting_started_lines(getting_started)));
+        }
 
         Ok(CallToolResult::success(vec![ContentBlock::text(output)]))
     }
@@ -5654,6 +5694,11 @@ impl ServerHandler for WenlanMcpServer {
                      General knowledge unrelated to the library does not require these tools. \
                      recall records the query and access activity in the connected library. \
                      When citing a result, cite its returned human-readable title: a source_id is an opaque tool identifier that may contain a local path, so never use it as the citation label and never invent a URL for it; preserve exact IDs verbatim for follow-up calls. \
+                     While the library is new, brief also returns getting_started: how many pages exist, how many items \
+                     wait to be written into pages, and the user's next step. When the user is starting out or asks what to \
+                     do, say that step in one plain sentence: add_material means adding notes, files or past AI chats in the \
+                     Wenlan app; write_pages means having their coding AI tool or the Wenlan app write them, which this \
+                     connector cannot do; ask means asking about their pages here. \
                      This profile limits tool exposure; it does not establish user or Space authorization.",
                 );
         }
@@ -5680,6 +5725,11 @@ impl ServerHandler for WenlanMcpServer {
                      General knowledge unrelated to the library does not require these tools. \
                      recall records the query and access activity in the connected library. \
                      When citing a result, cite its returned human-readable title: a source_id is an opaque tool identifier that may contain a local path, so never use it as the citation label and never invent a URL for it; preserve exact IDs verbatim for follow-up calls. \
+                     While the library is new, brief also returns getting_started: how many pages exist, how many items \
+                     wait to be written into pages, and the user's next step. When the user is starting out or asks what to \
+                     do, say that step in one plain sentence: add_material means adding notes, files or past AI chats in the \
+                     Wenlan app; write_pages means having their coding AI tool or the Wenlan app write them; ask means \
+                     asking about their pages here. \
                      This profile limits tool exposure and keeps writes inside the connected Space; it does not establish user authorization beyond that.",
                 );
         }

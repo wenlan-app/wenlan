@@ -174,6 +174,20 @@
   }
 }
 
+/* A step's button with "Use another tool" under it when several are connected. */
+.getting-started-actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  align-items: flex-end;
+  align-self: center;
+  gap: 4px;
+}
+
+.getting-started-actions .getting-started-action {
+  align-self: auto;
+}
+
 .getting-started-link {
   padding: 0;
   border: none;
@@ -190,18 +204,15 @@
   color: var(--mem-text);
 }
 
-/* Spacing and a quieter color set it apart from the steps; no rule line. */
-.getting-started-extra {
-  margin: 4px 0 12px;
-  color: var(--mem-text-tertiary);
-  font: 12px/1.5 var(--mem-font-body);
+/* The step that waits on the one before it: present, but quieter, so the
+   eye goes to what can be done now. */
+.getting-started-steps > li[data-later="true"] .getting-started-icon {
+  opacity: 0.55;
 }
 
-/* Extra lines in a row share the one rule above them. */
-.getting-started-extra + .getting-started-extra {
-  margin-top: -6px;
-  padding-top: 0;
-  border-top: none;
+.getting-started-steps > li[data-later="true"] .getting-started-step-title,
+.getting-started-steps > li[data-later="true"] .getting-started-step-body {
+  color: var(--mem-text-tertiary);
 }
 
 .getting-started-link:focus-visible {
@@ -250,10 +261,6 @@
   padding: 8px 14px;
 }
 
-.wiki-reading-start[data-onboarding="true"] .getting-started-extra {
-  font-size: 13px;
-}
-
 /* The pages a run writes, listed in the "turn your material into pages" row. */
 .getting-started-copy .write-pages-list {
   margin: 6px 0 0 -2px;
@@ -268,61 +275,19 @@
   margin-top: 10px;
 }
 
-/* Where the user's material is: three equal choices in the pages row. */
+/* Where the user's material is: the same option rows the add-material
+   dialog uses, stacked, with the dialog's row style. */
 .getting-started-choices {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.getting-started-choice {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--mem-border);
-  border-radius: var(--mem-radius-md);
-  background: none;
-  color: var(--mem-text);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.getting-started-choice:hover {
-  background-color: var(--mem-hover);
-}
-
-.getting-started-choice:focus-visible {
-  outline: 2px solid var(--mem-focus-ring);
-  outline-offset: 2px;
-}
-
-.getting-started-choice-icon {
-  flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--mem-accent-indigo);
-  font-size: 16px;
-}
-
-.getting-started-choice-copy {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 2px;
+  margin: 8px 0 0 -12px;
 }
 
-.getting-started-choice-copy strong {
-  font: 500 13px/1.4 var(--mem-font-body);
-}
-
-.getting-started-choice-copy span {
-  color: var(--mem-text-tertiary);
-  font: 12px/1.4 var(--mem-font-body);
-  /* Chinese breaks at 、 and spaces, not inside a word. */
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+.getting-started-choices .getting-started-choice-icon {
+  display: inline-flex;
+  flex: 0 0 20px;
+  font-size: 20px;
 }
 
 /* How the command reaches a tool the app cannot open, under the step body. */
@@ -368,4 +333,61 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.getting-started-pages-own {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+}
+
+/* One step at a time: the step's own title leads, a quiet "Step n of 3"
+   above it, and one line on what the step before it achieved. */
+.getting-started-one .getting-started-header {
+  align-items: center;
+}
+
+.getting-started-step-of {
+  margin: 0;
+  color: var(--mem-text-tertiary);
+  font: 12.5px/1.5 var(--mem-font-body);
+}
+
+.getting-started-done-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  color: var(--mem-accent-sage-text);
+  font: 13px/1.5 var(--mem-font-body);
+}
+
+.getting-started-one .getting-started-icon {
+  display: none;
+}
+
+.getting-started-one .getting-started-steps > li {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 10px 0 16px;
+}
+
+.getting-started-one .getting-started-step-title,
+.wiki-reading-start[data-onboarding="true"] .getting-started-one .getting-started-step-title {
+  margin: 0;
+  font: 600 19px/1.35 var(--mem-font-body);
+}
+
+.getting-started-one .getting-started-step-body {
+  margin-top: 6px;
+}
+
+.getting-started-one .turn-pages-primary,
+.getting-started-one .getting-started-actions {
+  align-self: flex-start;
+  margin-left: 0;
+}
+
+.getting-started-one .getting-started-actions {
+  align-items: flex-start;
 }

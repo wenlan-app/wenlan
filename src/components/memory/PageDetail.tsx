@@ -49,6 +49,7 @@ import {
 // barrel, and a mocked module would shadow the value this must stay bound to.
 import { PAGE_EDIT_DAEMON_FLOOR } from "../../lib/daemonVersion";
 import { confirmAction } from "../../lib/confirmAction";
+import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { EXPLICIT_BROWSE_QUERY_POLICY, useTruthStatus } from "../../hooks/useTruthStatus";
 import { PageTruthBadges } from "./PageTruthBadges";
 import ContentRenderer from "./ContentRenderer";
@@ -67,6 +68,7 @@ import { processCitations, stripCitationLinks } from "../../lib/pageCitations";
 import { folderName } from "../../lib/dateFormat";
 import { stripLedeLabel } from "../../lib/pageLede";
 import CitationChip from "./page/CitationChip";
+import { PageTour } from "../onboarding/PageTour";
 import { ReferencePreview } from "./links/ReferencePreview";
 import { ReferenceNavigationProvider } from "./links/ReferenceNavigationContext";
 import type { ReferencePreviewRequest, ReferenceTarget } from "./links/referenceTypes";
@@ -127,6 +129,8 @@ interface PageDetailProps {
   onEditDirtyChange?: (dirty: boolean) => void;
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
   showAttachedPageNotice?: boolean;
+  /** Someone still getting started: the first page Wenlan writes shows its tips. */
+  pageTour?: boolean;
 }
 
 /** How often an open page checks for edits made outside Wenlan. */
@@ -273,6 +277,7 @@ export default function PageDetail({
   onEditDirtyChange,
   onRegisterFlush,
   showAttachedPageNotice = false,
+  pageTour = false,
 }: PageDetailProps) {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -346,6 +351,7 @@ export default function PageDetail({
   const [conflictLatest, setConflictLatest] =
     useState<ConflictLatestSource>({ kind: "idle" });
   const [editValidation, setEditValidation] = useState<string | null>(null);
+  const exampleWiki = useExampleWikiActive();
   const [editorFallbackSessionId, setEditorFallbackSessionId] =
     useState<string | null>(null);
   const [editorShortcutModifier, setEditorShortcutModifier] =
@@ -2040,7 +2046,7 @@ export default function PageDetail({
   const reviewLockPending = reviewRequiredMutation.isPending && reviewRequiredMutation.variables?.id === page.id;
   const humanOwned = page.user_edited === true || page.creation_kind === "authored";
   const hasRail = pageEntities.length > 0 || outboundLinks.length > 0;
-  const canRenamePage = page.status === "active" &&
+  const canRenamePage = !exampleWiki && page.status === "active" &&
     page.creation_kind !== "entity" && page.creation_kind !== "source" &&
     page.creation_kind !== "imported";
   const renameDisabled = storedActionPending || canvasSwitchPending || editing || editDirty || saveState.phase !== "idle" ||
@@ -2190,6 +2196,8 @@ export default function PageDetail({
         >
           <ArrowLeft aria-hidden="true" size={16} />
         </WorkspaceBackButton>
+      {/* The example wiki is for looking at: nothing in it can be moved, renamed or deleted. */}
+      {!exampleWiki && (
       <div className="page-detail-actions-anchor" ref={actionMenuRef}>
                 <button
                   ref={actionMenuTriggerRef}
@@ -2315,6 +2323,7 @@ export default function PageDetail({
                   </div>
                 ) : null}
               </div>
+      )}
     </div>
   );
 
@@ -2394,7 +2403,7 @@ export default function PageDetail({
         {onOpenReview && <NoteReviewNotice key={pageId} page={page}
           onReview={onOpenReview}
           onShowSources={() => void requestPageInfo()}
-          disabled={storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}
+          disabled={exampleWiki || storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}
           basis={{
             actions: basisActions,
             onEditToConfirm: startConfirmEdit,
@@ -2754,7 +2763,7 @@ export default function PageDetail({
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
                   sessionId={editorSessionId}
-                  disabled={storedActionPending}
+                  disabled={storedActionPending || exampleWiki}
                   seamless
                   ariaLabel={t("pageDetail.editor.label")}
                   describedBy="page-markdown-editor-description"
@@ -3016,6 +3025,12 @@ export default function PageDetail({
         space={page.space ?? undefined}
         onClose={() => setSourcePreview(null)}
       />}
+      <PageTour
+        rootRef={pageDetailRootRef}
+        eligible={page.creation_kind === "distilled" && page.status === "active" && !showCanvas}
+        newUser={pageTour}
+        pageKey={page.id}
+      />
     </div>
   );
 }

@@ -326,7 +326,7 @@ describe("ImportPhaseList inside the main window", () => {
         </OrganizeActionsContext.Provider>
       </QueryClientProvider>,
     );
-    expect(screen.getByTestId("import-lead")).toHaveTextContent("10 notes imported. You can search them now.");
+    expect(screen.getByTestId("import-lead")).toHaveTextContent("10 notes imported.");
     expect(screen.queryByTestId("import-handoff")).not.toBeInTheDocument();
     expect(screen.getByTestId("import-organize").textContent).not.toMatch(/steep/i);
   });
