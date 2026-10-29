@@ -2134,7 +2134,6 @@ jobs:
         id: windows-release-cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          env-vars: OPENSSL_ROOT_DIR
           # The nested CACHEDIR.TAG makes rust-cache preserve the explicit
           # target while this top-level root also carries host build artifacts.
           # v4 rotates the immutable cache for the shipped no-LTO release
