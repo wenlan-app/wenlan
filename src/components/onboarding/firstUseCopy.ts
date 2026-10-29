@@ -79,7 +79,7 @@ export const enFirstUse = {
     steps: {
       tool: {
         title: "Connect an AI tool",
-        body: "Let Claude Code, Codex, Cursor and more use your pages.",
+        body: "Claude Code, Codex, Cursor and more can use your pages, all sharing one wiki.",
         action: "Connect a tool",
       },
       sources: {
@@ -216,7 +216,7 @@ export const hansFirstUse = {
     steps: {
       tool: {
         title: "连接一个 AI 工具",
-        body: "让 Claude Code、Codex、Cursor 等工具读写你的笔记库。",
+        body: "让 Claude Code、Codex、Cursor 等工具读写你的笔记库。接几个都行，用的是同一份。",
         action: "连接工具",
       },
       sources: {
@@ -350,7 +350,7 @@ export const hantFirstUse = {
     steps: {
       tool: {
         title: "連接一個 AI 工具",
-        body: "讓 Claude Code、Codex、Cursor 等工具讀寫你的筆記庫。",
+        body: "讓 Claude Code、Codex、Cursor 等工具讀寫你的筆記庫。接幾個都行，用的是同一份。",
         action: "連接工具",
       },
       sources: {

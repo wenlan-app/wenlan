@@ -2,9 +2,10 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X } from "@phosphor-icons/react";
+import { ChatCircleText, Quotes, TextUnderline, X } from "@phosphor-icons/react";
 import { AskInToolButton, frontDoorFor } from "../memory/askAi/askInTool";
 import { ASK_AI_ICONS, AskAiDialog } from "../memory/askAi/AskAiDialog";
+import { useSteepOnDemand } from "../../lib/steepMode";
 import { useHoldOnboardingStage } from "./onboardingStage";
 
 import "./everydayUse.css";
@@ -39,12 +40,23 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** The day's rhythm, in the order it happens: start, while working, wrap up,
- *  each with the plugin skill that does the same thing. */
+/** What a person says to their AI tool on an ordinary day, each with the
+ *  plugin skill that does the same thing. Writing pages has no second name:
+ *  its front-door words are the whole command. */
 const MOMENTS = [
-  { id: "start", skill: "brief" },
-  { id: "remember", skill: "capture" },
-  { id: "wrapUp", skill: "handoff" },
+  { id: "ask", skill: "recall", named: true },
+  { id: "write", skill: "steep", named: false },
+  { id: "remember", skill: "capture", named: true },
+  { id: "wrapUp", skill: "handoff", named: true },
+] as const;
+
+/** What to look at in Wenlan itself: where a sentence came from, a sentence
+ *  its sources don't back, and the question Wenlan asks before changing an
+ *  edited page. */
+const IN_APP = [
+  { id: "sources", icon: <Quotes weight="regular" /> },
+  { id: "check", icon: <TextUnderline weight="regular" /> },
+  { id: "asks", icon: <ChatCircleText weight="regular" /> },
 ] as const;
 
 /**
@@ -62,6 +74,7 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
   const closed = useSyncExternalStore(subscribe, () => closedThisSession || readClosed(), () => false);
   // "See all commands" swaps this for the full list; closing that closes both.
   const [more, setMore] = useState(false);
+  const onDemand = useSteepOnDemand();
   useHoldOnboardingStage(!closed);
   useEffect(() => {
     if (!closed && !more) panel.current?.focus();
@@ -109,45 +122,68 @@ export function EverydayUse({ tool }: { readonly tool: { readonly family: string
           {t("everydayUse.more")}
         </button>
       </p>
-      <ul className="everyday-use-rows">
-        {MOMENTS.map(({ id: moment, skill }) => {
-          // A tool with the plugin takes the front door and a few words, and
-          // names the skill that does the same; any other tool is asked in a
-          // plain sentence.
-          const text = frontDoor
-            ? `${frontDoor} ${t(`everydayUse.moments.${moment}.words`)}`
-            : t(`everydayUse.moments.${moment}.sentence`);
-          // Codex calls plugin skills with `$`, Claude Code with `/`.
-          const skillText = frontDoor ? `${frontDoor.charAt(0)}${skill}` : null;
-          return (
-            <li key={moment} data-testid={`everyday-use-${moment}`}>
-              <span className="ask-ai-icon" aria-hidden="true">{ASK_AI_ICONS[skill]}</span>
-              <div className="everyday-use-copy">
-                {/* When, then what it keeps: "remember" keeps one thing, "wrap up"
-                    the whole chat, so the two read as different. */}
-                <p>
-                  <strong>{t(`everydayUse.moments.${moment}.when`)}</strong>{" "}
-                  {t(`everydayUse.moments.${moment}.does`)}
-                </p>
-                <code className={frontDoor ? undefined : "everyday-use-plain"}>{text}</code>
-                {skillText ? (
-                  <span className="everyday-use-skill">
-                    {t("everydayUse.orSkill")} <code>{skillText}</code>
-                  </span>
-                ) : null}
-              </div>
-              <AskInToolButton
-                family={tool.family}
-                tool={tool.name}
-                text={text}
-                label={t("askAi.tryIn", { tool: tool.name })}
-                className="ask-in-tool everyday-use-action"
-                testId={`everyday-use-try-${moment}`}
-              />
+      <section className="ask-ai-group" aria-label={t("everydayUse.inTool", { tool: tool.name })}>
+        <h3>{t("everydayUse.inTool", { tool: tool.name })}</h3>
+        <ul className="everyday-use-rows">
+          {MOMENTS.map(({ id: moment, skill, named }) => {
+            // A tool with the plugin takes the front door and a few words, and
+            // names the skill that does the same; any other tool is asked in a
+            // plain sentence.
+            const text = frontDoor
+              ? `${frontDoor} ${t(`everydayUse.moments.${moment}.words`)}`
+              : t(`everydayUse.moments.${moment}.sentence`);
+            // Codex calls plugin skills with `$`, Claude Code with `/`.
+            const skillText = frontDoor && named ? `${frontDoor.charAt(0)}${skill}` : null;
+            // With pages written in the background, the row says so and offers the words for "now".
+            const does = moment === "write" && onDemand === false
+              ? t("everydayUse.moments.write.doesAutomatic")
+              : t(`everydayUse.moments.${moment}.does`);
+            return (
+              <li key={moment} data-testid={`everyday-use-${moment}`}>
+                <span className="ask-ai-icon" aria-hidden="true">{ASK_AI_ICONS[skill]}</span>
+                <div className="everyday-use-copy">
+                  {/* When, then what it keeps: "remember" keeps one thing, "wrap up"
+                      the whole chat, so the two read as different. */}
+                  <p>
+                    <strong>{t(`everydayUse.moments.${moment}.when`)}</strong>{" "}
+                    {does}
+                  </p>
+                  <code className={frontDoor ? undefined : "everyday-use-plain"}>{text}</code>
+                  {skillText ? (
+                    <span className="everyday-use-skill">
+                      {t("everydayUse.orSkill")} <code>{skillText}</code>
+                    </span>
+                  ) : null}
+                </div>
+                <AskInToolButton
+                  family={tool.family}
+                  tool={tool.name}
+                  text={text}
+                  label={t("askAi.tryIn", { tool: tool.name })}
+                  className="ask-in-tool everyday-use-action"
+                  testId={`everyday-use-try-${moment}`}
+                />
+              </li>
+            );
+          })}
+        </ul>
+        <p className="everyday-use-note" data-testid="everyday-use-repo">
+          {frontDoor
+            ? t("everydayUse.repo", { command: `${frontDoor} wiki` })
+            : t("everydayUse.repoPlain")}
+        </p>
+      </section>
+      <section className="ask-ai-group" aria-label={t("everydayUse.inWenlan")}>
+        <h3>{t("everydayUse.inWenlan")}</h3>
+        <ul className="everyday-use-rows">
+          {IN_APP.map(({ id, icon }) => (
+            <li key={id} data-testid={`everyday-use-app-${id}`}>
+              <span className="ask-ai-icon" aria-hidden="true">{icon}</span>
+              <p className="everyday-use-line">{t(`everydayUse.app.${id}`)}</p>
             </li>
-          );
-        })}
-      </ul>
+          ))}
+        </ul>
+      </section>
     </section>
     </div>,
     document.body,

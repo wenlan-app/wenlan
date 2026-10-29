@@ -16,19 +16,45 @@ vi.mock("../../memory/askAi/AskAiDialog", () => ({
   ),
 }));
 
+const steep = vi.hoisted(() => ({ onDemand: true as boolean | undefined }));
+vi.mock("../../../lib/steepMode", () => ({ useSteepOnDemand: () => steep.onDemand }));
+
 import { EverydayUse } from "../EverydayUse";
 
 describe("EverydayUse", () => {
   afterEach(() => localStorage.removeItem("onboarding:everydayUse"));
 
-  it("gives the three everyday sentences through the front door of a plugin tool", () => {
+  it("gives the everyday sentences through the front door of a plugin tool", () => {
     render(<EverydayUse tool={{ family: "codex", name: "Codex" }} />);
-    expect(screen.getByTestId("everyday-use-start")).toHaveTextContent("$wenlan where did I leave off?");
+    expect(screen.getByRole("heading", { name: "In Codex" })).toBeInTheDocument();
+    expect(screen.getByTestId("everyday-use-ask")).toHaveTextContent("$wenlan how did we choose the database?");
+    expect(screen.getByTestId("everyday-use-write")).toHaveTextContent("$wenlan write my pages");
     expect(screen.getByTestId("everyday-use-remember")).toHaveTextContent("$wenlan remember we switched to SQLite");
     expect(screen.getByTestId("everyday-use-wrapUp")).toHaveTextContent("$wenlan wrap up");
     // The skill that does the same, for people who like the short form.
-    expect(screen.getByTestId("everyday-use-start")).toHaveTextContent("or $brief");
+    expect(screen.getByTestId("everyday-use-ask")).toHaveTextContent("or $recall");
     expect(screen.getByTestId("everyday-use-wrapUp")).toHaveTextContent("or $handoff");
+    // Writing pages is named only by its words, never by its internal name.
+    expect(screen.getByTestId("everyday-use-write")).not.toHaveTextContent(/steep/);
+    expect(screen.getByTestId("everyday-use-repo")).toHaveTextContent("$wenlan wiki");
+  });
+
+  it("says pages are written on their own when that is the mode", () => {
+    steep.onDemand = false;
+    try {
+      render(<EverydayUse tool={{ family: "claude-code", name: "Claude Code" }} />);
+      expect(screen.getByTestId("everyday-use-write")).toHaveTextContent("Wenlan writes pages on its own");
+    } finally {
+      steep.onDemand = true;
+    }
+  });
+
+  it("names what to look at in Wenlan itself", () => {
+    render(<EverydayUse tool={{ family: "claude-code", name: "Claude Code" }} />);
+    expect(screen.getByRole("heading", { name: "In Wenlan" })).toBeInTheDocument();
+    expect(screen.getByTestId("everyday-use-app-sources")).toHaveTextContent("ends with its source");
+    expect(screen.getByTestId("everyday-use-app-check")).toHaveTextContent("dashed underline");
+    expect(screen.getByTestId("everyday-use-app-asks")).toHaveTextContent("asks before changing it");
   });
 
   it("asks other tools in plain sentences", () => {
@@ -36,6 +62,7 @@ describe("EverydayUse", () => {
     expect(screen.getByTestId("everyday-use-wrapUp")).toHaveTextContent("Ask Wenlan to save where I stopped");
     expect(screen.queryByText(/wenlan wrap up/)).toBeNull();
     expect(screen.queryByText(/handoff/)).toBeNull();
+    expect(screen.getByTestId("everyday-use-repo")).toHaveTextContent("ask Wenlan to write a wiki for it");
   });
 
   it("stays closed once closed", () => {
@@ -52,7 +79,7 @@ describe("EverydayUse", () => {
     vi.resetModules();
     const { EverydayUse: Fresh } = await import("../EverydayUse");
     render(<Fresh tool={{ family: "claude-code", name: "Claude Code" }} />);
-    expect(screen.getByTestId("everyday-use")).toHaveTextContent("These are all you need. Wenlan does the rest.");
+    expect(screen.getByTestId("everyday-use")).toHaveTextContent("These are all you need.");
     fireEvent.click(screen.getByRole("button", { name: "See all commands" }));
     // The full list takes its place; closing it closes both.
     expect(screen.queryByTestId("everyday-use")).toBeNull();
