@@ -203,6 +203,38 @@ def checked_output(command, cwd):
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
 
 
+def compile_observer(directory, real_cargo, receipts=None):
+    """Bootstrap outside timing through Cargo's production linker selection."""
+    directory = Path(directory).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "Cargo.toml").write_text(
+        '[package]\nname="desktop-cargo-observer"\nversion="0.0.0"\nedition="2021"\n'
+        '[workspace]\n[[bin]]\nname="cargo"\npath="shim.rs"\n', encoding="utf-8")
+    (directory / "shim.rs").write_text(SHIM, encoding="utf-8")
+    prefix = Path(receipts) if receipts else directory / "bootstrap"
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    manifest = str(directory / "Cargo.toml")
+    target = directory / "target"
+    commands = [
+        [real_cargo, "generate-lockfile", "--offline", "--manifest-path", manifest],
+        [real_cargo, "build", "--offline", "--locked", "--release", "--manifest-path", manifest, "--target-dir", str(target)],
+    ]
+    for index, command in enumerate(commands):
+        done = subprocess.run(command, cwd=directory, capture_output=True)
+        Path(f"{prefix}-{index}.stdout.log").write_bytes(done.stdout)
+        Path(f"{prefix}-{index}.stderr.log").write_bytes(done.stderr)
+        save(f"{prefix}-{index}.json", dict(command=command, exit_code=done.returncode,
+                                           environment={k: os.environ.get(k) for k in ENV_KEYS}))
+        if done.returncode:
+            raise RuntimeError(f"observer bootstrap failed (exit {done.returncode}): {command}\n"
+                               + done.stdout.decode("utf-8", errors="replace")
+                               + done.stderr.decode("utf-8", errors="replace"))
+    binary = target / "release" / ("cargo.exe" if os.name == "nt" else "cargo")
+    if not binary.is_file():
+        raise RuntimeError("observer bootstrap succeeded without its executable")
+    return binary
+
+
 def check_arm(result):
     if result["exit_code"] != 0:
         raise RuntimeError("desktop build failed; retain partial receipt, do not score timing")
@@ -236,12 +268,11 @@ def run_pair(args):
     control.mkdir(parents=True, exist_ok=True)
     driver = control / "driver.py"
     shutil.copyfile(Path(__file__), driver)
-    shim_source = control / "cargo-shim.rs"
-    shim_source.write_text(SHIM, encoding="utf-8")
     shim_dir = control / "bin"
     shim_dir.mkdir(exist_ok=True)
-    subprocess.run(["rustc", str(shim_source), "-o", str(shim_dir / ("cargo.exe" if os.name == "nt" else "cargo"))],
-                   cwd=repo, check=True)
+    compiled = compile_observer(control / "observer-tool", real_cargo, output / "observer-bootstrap")
+    shutil.copyfile(compiled, shim_dir / ("cargo.exe" if os.name == "nt" else "cargo"))
+    (shim_dir / ("cargo.exe" if os.name == "nt" else "cargo")).chmod(0o755)
     hook_command = subprocess.list2cmdline([sys.executable, str(driver), "hook"]) if os.name == "nt" else \
         __import__("shlex").join([sys.executable, str(driver), "hook"])
     overlay = control / "tauri-measurement.json"

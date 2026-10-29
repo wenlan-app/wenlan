@@ -648,14 +648,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             order: BA
             python: python
-          - os: macos-15
-            target: aarch64-apple-darwin
-            order: AB
-            python: python3
-          - os: macos-15
-            target: aarch64-apple-darwin
-            order: BA
-            python: python3
     defaults:
       run:
         working-directory: product

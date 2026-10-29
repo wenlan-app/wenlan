@@ -85,6 +85,20 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(len(evidence), 1)
             self.assertIn("GGML_CCACHE:BOOL=OFF", next(iter(evidence.values())))
 
+    def test_failed_observer_bootstrap_preserves_compiler_diagnostics(self):
+        with tempfile.TemporaryDirectory(prefix="bootstrap-error-control-") as raw:
+            real = subprocess.check_output(["rustup", "which", "cargo"], text=True).strip()
+            original = bench.SHIM
+            try:
+                bench.SHIM = "fn main() { MISSING_BOOTSTRAP_SYMBOL(); }"
+                with self.assertRaisesRegex(RuntimeError, "MISSING_BOOTSTRAP_SYMBOL"):
+                    bench.compile_observer(Path(raw) / "tool", real, Path(raw) / "receipt")
+                receipt = json.loads((Path(raw) / "receipt-1.json").read_text())
+                self.assertNotEqual(receipt["exit_code"], 0)
+                self.assertIn("MISSING_BOOTSTRAP_SYMBOL", (Path(raw) / "receipt-1.stderr.log").read_text(encoding="utf-8"))
+            finally:
+                bench.SHIM = original
+
     def test_native_cargo_shim_preserves_json_and_real_freshness(self):
         with tempfile.TemporaryDirectory(prefix="desktop-observer-test-") as raw:
             root = Path(raw)
@@ -93,10 +107,8 @@ class BenchmarkTests(unittest.TestCase):
             (root / "src/lib.rs").write_text("pub fn value() -> u32 { 42 }", encoding="utf-8")
             # --offline must not become the ORT-breaking environment variable.
             (root / "build.rs").write_text('fn main() { println!("cargo:rerun-if-changed=build.rs"); assert!(std::env::var_os("CARGO_NET_OFFLINE").is_none()); assert!(std::process::Command::new("rustup").args(["which", "rustc"]).output().unwrap().status.success()); }', encoding="utf-8")
-            shim = root / ("cargo.exe" if os.name == "nt" else "cargo")
-            (root / "shim.rs").write_text(bench.SHIM, encoding="utf-8")
-            subprocess.run(["rustc", str(root / "shim.rs"), "-o", str(shim)], check=True, capture_output=True)
             real = subprocess.check_output(["rustup", "which", "cargo"], text=True).strip()
+            shim = bench.compile_observer(root / "observer-tool", real)
             subprocess.run([real, "generate-lockfile", "--offline", "--manifest-path", str(root / "Cargo.toml")], check=True, capture_output=True)
             env = dict(os.environ)
             for key in ("CARGO_NET_OFFLINE", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"):
