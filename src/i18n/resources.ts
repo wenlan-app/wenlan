@@ -754,8 +754,8 @@ const en = {
   },
   exampleWiki: {
     label: "Example wiki",
-    title: "Example: an app launch",
-    line: "A small team's notes, made into a wiki.",
+    title: "Example: Maya's app launch notes",
+    line: "One person's notes and chats, as a wiki.",
     back: "Back to my wiki",
     startOwn: "Start my own",
     readOnly: "The example can't be changed. Start your own to write pages.",
@@ -3815,8 +3815,8 @@ const zhHans = {
   },
   exampleWiki: {
     label: "范例 wiki",
-    title: "范例：一个 App 上线",
-    line: "一个小团队的笔记写成的 wiki。",
+    title: "范例：Maya 的 App 上线笔记",
+    line: "一个人的笔记、AI 聊天和文件写成的 wiki。",
     back: "回到我的 wiki",
     startOwn: "开始建我自己的",
     readOnly: "范例不能改。开始建自己的 wiki，就能写笔记了。",
@@ -6832,8 +6832,8 @@ const zhHant = {
   },
   exampleWiki: {
     label: "範例 wiki",
-    title: "範例：一個 App 上線",
-    line: "一個小團隊的筆記寫成的 wiki。",
+    title: "範例：Maya 的 App 上線筆記",
+    line: "一個人的筆記、AI 聊天和檔案寫成的 wiki。",
     back: "回到我的 wiki",
     startOwn: "開始建我自己的",
     readOnly: "範例不能改。開始建自己的 wiki，就能寫筆記了。",

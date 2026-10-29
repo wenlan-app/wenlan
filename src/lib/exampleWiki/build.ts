@@ -32,8 +32,8 @@ const iso = (day: number, minutesEarlier = 0) => new Date((at(day) - minutesEarl
 /** Pages were last written the day after the Oct 21 sync. */
 const WRITTEN_DAY = 22;
 
-/** The folder the notes, interviews and PDF came from. */
-const NOTES_FOLDER = "~/Kestrel team";
+/** Maya's Obsidian vault, where the notes, interviews and PDF came from. */
+const NOTES_FOLDER = "~/Notes";
 
 const MEMORY_TYPE: Record<ExampleSource["kind"], string> = {
   notes: "fact", chat: "decision", session: "fact", pdf: "fact", web: "fact", interview: "fact",

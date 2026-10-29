@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Generated content for the example wiki: a small team getting v2 of their
-// app out. Simplified Chinese is converted from Traditional Chinese.
+// Generated content for the example wiki: one person's notes, chats and
+// documents while getting v2 of her app out. Simplified Chinese is converted
+// from Traditional Chinese.
 import type { ExampleWikiContent } from "./types";
 
 export const EXAMPLE_WIKI: ExampleWikiContent = {
@@ -182,14 +183,14 @@ export const EXAMPLE_WIKI: ExampleWikiContent = {
       "space": "Research",
       "day": 3,
       "title": {
-        "en": "Team page",
-        "zh-Hant": "團隊介紹",
-        "zh-Hans": "团队介绍"
+        "en": "People I work with",
+        "zh-Hant": "一起工作的人",
+        "zh-Hans": "一起工作的人"
       },
       "body": {
-        "en": "Maya Chen, product, runs the launch. Pam Okafor, payments. Dev Patel, release notes and the website. Jonas Weber, backend. Sofia Rossi, support.",
-        "zh-Hant": "Maya Chen，產品，負責整個上線。Pam Okafor，付款。Dev Patel，版本說明和網站。Jonas Weber，後端。Sofia Rossi，客服。",
-        "zh-Hans": "Maya Chen，产品，负责整个上线。Pam Okafor，付款。Dev Patel，版本说明和网站。Jonas Weber，后端。Sofia Rossi，客服。"
+        "en": "Me, Maya Chen: product, running the launch. Pam Okafor, payments. Dev Patel, release notes and the website. Jonas Weber, backend. Sofia Rossi, support.",
+        "zh-Hant": "我，Maya Chen：產品，負責整個上線。Pam Okafor，付款。Dev Patel，版本說明和網站。Jonas Weber，後端。Sofia Rossi，客服。",
+        "zh-Hans": "我，Maya Chen：产品，负责整个上线。Pam Okafor，付款。Dev Patel，版本说明和网站。Jonas Weber，后端。Sofia Rossi，客服。"
       }
     }
   ],
@@ -274,9 +275,9 @@ export const EXAMPLE_WIKI: ExampleWikiContent = {
             },
             {
               "text": {
-                "en": "The team expects 400 paying customers in the first month.",
-                "zh-Hant": "團隊預計第一個月會有 400 個付費客戶。",
-                "zh-Hans": "团队预计第一个月会有 400 个付费客户。"
+                "en": "We expect 400 paying customers in the first month.",
+                "zh-Hant": "預計第一個月會有 400 個付費客戶。",
+                "zh-Hans": "预计第一个月会有 400 个付费客户。"
               },
               "sources": [
                 "ex-m-sync-1021"
@@ -529,9 +530,9 @@ export const EXAMPLE_WIKI: ExampleWikiContent = {
       "id": "ex-page-decisions",
       "space": "Launch",
       "title": {
-        "en": "Team decisions log",
-        "zh-Hant": "團隊決定紀錄",
-        "zh-Hans": "团队决定记录"
+        "en": "Decisions log",
+        "zh-Hant": "決定紀錄",
+        "zh-Hans": "决定记录"
       },
       "sections": [
         {
@@ -795,9 +796,9 @@ export const EXAMPLE_WIKI: ExampleWikiContent = {
         "zh-Hans": "研究"
       },
       "description": {
-        "en": "What customers and competitors told us.",
-        "zh-Hant": "客戶和競品告訴我們的事。",
-        "zh-Hans": "客户和竞品告诉我们的事。"
+        "en": "What customers and competitors said.",
+        "zh-Hant": "客戶和競品怎麼說。",
+        "zh-Hans": "客户和竞品怎么说。"
       }
     }
   ],
