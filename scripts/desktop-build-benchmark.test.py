@@ -44,6 +44,34 @@ class BenchmarkTests(unittest.TestCase):
                 bench.safe_member(path)
         self.assertEqual(str(bench.safe_member("lib/libonnxruntime.a")), "lib/libonnxruntime.a")
 
+    def test_actual_cmake_injection_disables_default_native_cache_and_guard_rejects_on(self):
+        with tempfile.TemporaryDirectory(prefix="native-cache-control-") as raw:
+            root = Path(raw)
+            source = root / "source"
+            source.mkdir()
+            (source / "bin").mkdir()
+            fake = source / "bin" / ("ccache.exe" if os.name == "nt" else "ccache")
+            fake.write_bytes(b"fixture is found but never executed")
+            fake.chmod(0o755)
+            (source / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(CacheControl NONE)\noption(GGML_CCACHE "native cache" ON)\nif(GGML_CCACHE)\nfind_program(CCACHE_TOOL NAMES ccache PATHS "${CMAKE_CURRENT_SOURCE_DIR}/bin" NO_DEFAULT_PATH REQUIRED)\nendif()\n', encoding="utf-8")
+            control = root / "control.cmake"
+            control.write_text(bench.NATIVE_CACHE_CONTROL, encoding="utf-8")
+            for mode in ("old", "new"):
+                build = root / mode / "release/build/llama-cpp-sys-2-fixture/out/build"
+                command = ["cmake", "-S", str(source), "-B", str(build)]
+                if mode == "new":
+                    command.append("-DCMAKE_PROJECT_INCLUDE=" + control.as_posix())
+                done = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                incidental = build / "CMakeFiles/TryCompile-fixture/CMakeCache.txt"
+                incidental.parent.mkdir(parents=True, exist_ok=True)
+                incidental.write_text("UNRELATED:BOOL=ON\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "did not disable"):
+                bench.native_cache_evidence(root / "old")
+            evidence = bench.native_cache_evidence(root / "new")
+            self.assertEqual(len(evidence), 1)
+            self.assertIn("GGML_CCACHE:BOOL=OFF", next(iter(evidence.values())))
+
     def test_native_cargo_shim_preserves_json_and_real_freshness(self):
         with tempfile.TemporaryDirectory(prefix="desktop-observer-test-") as raw:
             root = Path(raw)
@@ -68,7 +96,7 @@ class BenchmarkTests(unittest.TestCase):
                 messages = [json.loads(line) for line in done.stdout.splitlines()]
                 artifact = next(x for x in messages if x.get("reason") == "compiler-artifact" and x["target"]["kind"] == ["lib"])
                 self.assertEqual(artifact["fresh"], expected_fresh)
-            receipts = [p for p in (root / "receipts").glob("cargo-*.json") if not p.name.endswith(".fingerprints.json")]
+            receipts = [p for p in (root / "receipts").glob("cargo-*.json") if len(p.suffixes) == 1]
             self.assertEqual(len(receipts), 2)
             self.assertTrue(all(json.loads(p.read_text())["exit_code"] == 0 for p in receipts))
 

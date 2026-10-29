@@ -34,9 +34,11 @@ ENV_KEYS = (
     "ORT_CACHE_DIR", "ORT_SKIP_DOWNLOAD", "CARGO_NET_OFFLINE",
     "CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
     "CARGO_PROFILE_RELEASE_STRIP", "CARGO_PROFILE_RELEASE_INCREMENTAL",
+    "CMAKE_PROJECT_INCLUDE", "CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER", "CCACHE_DISABLE",
     "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER", "OPENSSL_SRC_PERL", "VULKAN_SDK",
 )
 ORIGINAL_HOOK = "pnpm prepare:sidecars:tauri-build && pnpm build"
+NATIVE_CACHE_CONTROL = 'set(GGML_CCACHE OFF CACHE BOOL "benchmark disables native compiler cache" FORCE)\n'
 
 
 def utc():
@@ -116,6 +118,18 @@ def fingerprints(target):
     return answer
 
 
+def native_cache_evidence(target):
+    evidence = {}
+    roots = [target / "release/build", *target.glob("*/release/build")]
+    for root in roots:
+        for path in root.glob("llama-cpp-sys-*/out/build/CMakeCache.txt"):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "GGML_CCACHE:BOOL=OFF" not in text.splitlines():
+                raise RuntimeError("actual llama CMake build did not disable native compiler cache")
+            evidence[str(path.relative_to(target))] = text
+    return evidence
+
+
 def cargo_mode(arguments):
     real = os.environ["BENCH_REAL_CARGO"]
     if not arguments or arguments[0] not in ("build", "rustc", "metadata"):
@@ -142,6 +156,7 @@ def cargo_mode(arguments):
     result["cwd"] = str(Path.cwd())
     save(str(invocation) + ".json", result)
     save(str(invocation) + ".fingerprints.json", fingerprints(Path(os.environ["CARGO_TARGET_DIR"])))
+    save(str(invocation) + ".native-cmake.json", native_cache_evidence(Path(os.environ["CARGO_TARGET_DIR"])))
     html_files = [path for path in timing_root.glob("*.html") if before_timings.get(str(path)) != digest(path)]
     if result["exit_code"] == 0 and not html_files:
         raise RuntimeError("successful Cargo build has no timing evidence")
@@ -198,7 +213,8 @@ def run_pair(args):
     dirty = checked_output(["git", "status", "--porcelain", "--untracked-files=no"], repo)
     if dirty:
         raise RuntimeError("tracked product source is dirty")
-    for key in ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_BUILD_DIR", "CARGO_NET_OFFLINE", "WENLAN_BACKEND_DIR"):
+    for key in ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_BUILD_DIR", "CARGO_NET_OFFLINE", "WENLAN_BACKEND_DIR",
+                "CMAKE_PROJECT_INCLUDE", "CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER"):
         if os.environ.get(key):
             raise RuntimeError(f"uncontrolled build input {key} is set")
     product_config = json.loads((repo / "app/tauri.conf.json").read_text(encoding="utf-8"))
@@ -222,6 +238,8 @@ def run_pair(args):
     hook_command = subprocess.list2cmdline([sys.executable, str(driver), "hook"]) if os.name == "nt" else \
         __import__("shlex").join([sys.executable, str(driver), "hook"])
     overlay = control / "tauri-measurement.json"
+    native_control = control / "disable-native-cache.cmake"
+    native_control.write_bytes(NATIVE_CACHE_CONTROL.encode("utf-8"))
     save(overlay, {"build": {"beforeBuildCommand": hook_command},
                    "bundle": {"createUpdaterArtifacts": False, "macOS": {"signingIdentity": "-"}}})
     manifest = dict(schema=1, source_sha=actual,
@@ -231,7 +249,8 @@ def run_pair(args):
                     cargo=checked_output([real_cargo, "--version"], repo),
                     node=checked_output(["node", "--version"], repo),
                     lock_sha256=locks, original_hook=ORIGINAL_HOOK,
-                    exclusions=["updater archives/signatures", "external signing/notarization", "publication", "runner queue"],
+                    native_cache_control=dict(text=NATIVE_CACHE_CONTROL, sha256=digest(native_control)),
+                    exclusions=["updater archives/signatures", "external signing/notarization", "publication", "runner queue", "warm native compiler cache behavior"],
                     runner={k: os.environ.get(k) for k in ("RUNNER_OS", "RUNNER_ARCH", "RUNNER_NAME", "ImageOS", "ImageVersion", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")},
                     environment={k: os.environ.get(k) for k in ENV_KEYS}, arms=[])
     save(output / "pair.json", manifest)
@@ -247,6 +266,7 @@ def run_pair(args):
         if arm == "B":
             env["TARGET_TRIPLE"] = args.target
         env.update(CARGO_TARGET_DIR=str(target), WENLAN_NO_AUTOSTART="1",
+                   CMAKE_PROJECT_INCLUDE=native_control.as_posix(), CCACHE_DISABLE="1",
                    BENCH_REAL_CARGO=real_cargo, BENCH_PYTHON=sys.executable,
                    BENCH_DRIVER=str(driver), BENCH_ARM_RECEIPTS=str(arm_dir),
                    BENCH_ORIGINAL_HOOK=ORIGINAL_HOOK,
@@ -277,9 +297,11 @@ def run_pair(args):
         save(output / "pair.json", manifest)
         check_arm(result)
         cargo_receipts = [json.loads(path.read_text(encoding="utf-8")) for path in arm_dir.glob("cargo-*.json")
-                          if not path.name.endswith(".fingerprints.json")]
+                          if len(path.suffixes) == 1]
         if len(cargo_receipts) < 2 or any(x["exit_code"] or not x["artifacts"] for x in cargo_receipts):
             raise RuntimeError("did not observe successful actual sidecar and app Cargo builds")
+        if not native_cache_evidence(target):
+            raise RuntimeError("actual llama CMake configuration evidence is missing")
         hook = json.loads((arm_dir / "sidecars-hook.json").read_text(encoding="utf-8"))
         frontend = json.loads((arm_dir / "frontend.json").read_text(encoding="utf-8"))
         app = [x for x in cargo_receipts if any("wenlan-app" in a["package_id"] for a in x["artifacts"]) ]
