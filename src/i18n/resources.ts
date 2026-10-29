@@ -766,9 +766,8 @@ const en = {
     more: "See all commands",
     orSkill: "or",
     close: "Close",
-    inTool: "In {{tool}}",
-    inWenlan: "In Wenlan",
     moments: {
+      start: { when: "Starting work", does: "brings back what you saved last time", words: "where did I leave off?", sentence: "Ask Wenlan where I left off" },
       ask: { when: "Looking back", does: "answers from your wiki, with sources", words: "how did we choose the database?", sentence: "Ask Wenlan how we chose the database" },
       write: { when: "New material in", does: "writes it into pages and updates old ones", doesAutomatic: "Wenlan writes pages on its own. Say this to do it now", words: "write my pages", sentence: "Use Wenlan to write my new material into pages" },
       remember: { when: "Something worth keeping", does: "saves just this one thing", words: "remember we switched to SQLite", sentence: "Wenlan, remember: we switched to SQLite" },
@@ -776,11 +775,6 @@ const en = {
     },
     repo: "In a code repo, {{command}} writes pages about the code.",
     repoPlain: "In a code repo, ask Wenlan to write a wiki for it.",
-    app: {
-      sources: "Every sentence ends with its source. Click it to read the original.",
-      check: "A dashed underline means the sources don't back it. Check first.",
-      asks: "Edited a page? Wenlan asks before changing it, under Review changes.",
-    },
   },
   tabIntro: {
     memories: "Memories: small things your AI tools saved or you imported. Wenlan writes them into pages.",
@@ -796,7 +790,7 @@ const en = {
     tips: {
       sources: "Each sentence ends with its source. Click one to read the original.",
       unverified: "Your sources don't back this sentence. Check the original before you rely on it.",
-      edit: "Yours to change, here or in any Markdown editor like Obsidian. Once you edit it, Wenlan asks before updating it.",
+      edit: "Yours to change, here or in any Markdown editor like Obsidian. After you edit, Wenlan asks first: look for Review changes.",
     },
     count: "{{n}} of {{total}}",
     next: "Next",
@@ -3827,9 +3821,8 @@ const zhHans = {
     more: "看全部指令",
     orSkill: "或",
     close: "关闭",
-    inTool: "在 {{tool}} 里",
-    inWenlan: "在文澜里",
     moments: {
+      start: { when: "开工时", does: "接回上次存下的进度", words: "上次做到哪", sentence: "问文澜我上次做到哪" },
       ask: { when: "想查以前的事", does: "从你的 wiki 找答案，附上出处", words: "我们上次怎么决定数据库", sentence: "问文澜我们上次怎么决定数据库" },
       write: { when: "有新资料时", does: "写成笔记，也更新旧的", doesAutomatic: "文澜会自己写，想马上写就说这句", words: "整理成笔记", sentence: "用文澜把新资料整理成笔记" },
       remember: { when: "想记一件事", does: "只记这一句", words: "记住我们改用 SQLite", sentence: "用文澜记住：我们改用 SQLite" },
@@ -3837,11 +3830,6 @@ const zhHans = {
     },
     repo: "在代码仓库里，{{command}} 会把代码写成笔记。",
     repoPlain: "在代码仓库里，请文澜帮这个仓库写一份 wiki。",
-    app: {
-      sources: "每句话后面都有出处，点开看原文。",
-      check: "下面是虚线的句子，来源撑不住，用之前先看原文。",
-      asks: "你改过的笔记，文澜要更新前会先问你，在笔记上方点「审阅更改」。",
-    },
   },
   tabIntro: {
     memories: "记忆：AI 工具帮你记下或你导入的一条条小事，文澜会把它们写进笔记。",
@@ -3857,7 +3845,7 @@ const zhHans = {
     tips: {
       sources: "每句后面是它的出处，点开看原文。",
       unverified: "这句在你的资料里找不到，用之前看一眼原文。",
-      edit: "这篇是你的，在这里或用 Obsidian 这类 Markdown 编辑器改都行。你改过之后，文澜要更新会先问你。",
+      edit: "这篇是你的，在这里或用 Obsidian 这类 Markdown 编辑器改都行。你改过之后，文澜要更新会先问你，在笔记上方点「审阅更改」。",
     },
     count: "{{n}} / {{total}}",
     next: "下一个",
@@ -6844,9 +6832,8 @@ const zhHant = {
     more: "看全部指令",
     orSkill: "或",
     close: "關閉",
-    inTool: "在 {{tool}} 裡",
-    inWenlan: "在文瀾裡",
     moments: {
+      start: { when: "開工時", does: "接回上次存下的進度", words: "上次做到哪", sentence: "問文瀾我上次做到哪" },
       ask: { when: "想查以前的事", does: "從你的 wiki 找答案，附上出處", words: "我們上次怎麼決定資料庫", sentence: "問文瀾我們上次怎麼決定資料庫" },
       write: { when: "有新資料時", does: "寫成筆記，也更新舊的", doesAutomatic: "文瀾會自己寫，想馬上寫就說這句", words: "整理成筆記", sentence: "用文瀾把新資料整理成筆記" },
       remember: { when: "想記一件事", does: "只記這一句", words: "記住我們改用 SQLite", sentence: "用文瀾記住：我們改用 SQLite" },
@@ -6854,11 +6841,6 @@ const zhHant = {
     },
     repo: "在程式碼倉庫裡，{{command}} 會把程式碼寫成筆記。",
     repoPlain: "在程式碼倉庫裡，請文瀾幫這個倉庫寫一份 wiki。",
-    app: {
-      sources: "每句話後面都有出處，點開看原文。",
-      check: "下面是虛線的句子，來源撐不住，用之前先看原文。",
-      asks: "你改過的筆記，文瀾要更新前會先問你，在筆記上方點「審閱變更」。",
-    },
   },
   tabIntro: {
     memories: "記憶：AI 工具幫你記下或你匯入的一條條小事，文瀾會把它們寫進筆記。",
@@ -6874,7 +6856,7 @@ const zhHant = {
     tips: {
       sources: "每句後面是它的出處，點開看原文。",
       unverified: "這句在你的資料裡找不到，用之前看一眼原文。",
-      edit: "這篇是你的，在這裡或用 Obsidian 這類 Markdown 編輯器改都行。你改過之後，文瀾要更新會先問你。",
+      edit: "這篇是你的，在這裡或用 Obsidian 這類 Markdown 編輯器改都行。你改過之後，文瀾要更新會先問你，在筆記上方點「審閱變更」。",
     },
     count: "{{n}} / {{total}}",
     next: "下一個",

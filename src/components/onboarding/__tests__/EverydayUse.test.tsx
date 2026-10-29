@@ -26,7 +26,10 @@ describe("EverydayUse", () => {
 
   it("gives the everyday sentences through the front door of a plugin tool", () => {
     render(<EverydayUse tool={{ family: "codex", name: "Codex" }} />);
-    expect(screen.getByRole("heading", { name: "In Codex" })).toBeInTheDocument();
+    // Only what to say to the AI tool: reading a page is taught on the page itself.
+    expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
+    expect(screen.getByTestId("everyday-use-start")).toHaveTextContent("$wenlan where did I leave off?");
+    expect(screen.getByTestId("everyday-use-start")).toHaveTextContent("or $brief");
     expect(screen.getByTestId("everyday-use-ask")).toHaveTextContent("$wenlan how did we choose the database?");
     expect(screen.getByTestId("everyday-use-write")).toHaveTextContent("$wenlan write my pages");
     expect(screen.getByTestId("everyday-use-remember")).toHaveTextContent("$wenlan remember we switched to SQLite");
@@ -47,14 +50,6 @@ describe("EverydayUse", () => {
     } finally {
       steep.onDemand = true;
     }
-  });
-
-  it("names what to look at in Wenlan itself", () => {
-    render(<EverydayUse tool={{ family: "claude-code", name: "Claude Code" }} />);
-    expect(screen.getByRole("heading", { name: "In Wenlan" })).toBeInTheDocument();
-    expect(screen.getByTestId("everyday-use-app-sources")).toHaveTextContent("ends with its source");
-    expect(screen.getByTestId("everyday-use-app-check")).toHaveTextContent("dashed underline");
-    expect(screen.getByTestId("everyday-use-app-asks")).toHaveTextContent("asks before changing it");
   });
 
   it("asks other tools in plain sentences", () => {

@@ -96,19 +96,6 @@
   font-size: 14px;
 }
 
-/* The two halves reuse the group heading from "What your AI can do". */
-.everyday-use .ask-ai-group:first-of-type h3 {
-  margin-top: 0;
-}
-
-/* In-app rows are one line of text next to the same icon column. */
-.everyday-use .everyday-use-rows li .everyday-use-line {
-  flex: 1;
-  margin: 0;
-  color: var(--mem-text-secondary);
-  font: 13px/1.5 var(--mem-font-body);
-}
-
 .everyday-use-note {
   margin: 8px 0 0 40px;
   color: var(--mem-text-tertiary);
