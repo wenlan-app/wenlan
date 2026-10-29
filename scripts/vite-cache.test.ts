@@ -23,11 +23,12 @@ beforeAll(async () => {
 });
 
 describe("worktree Vite cache", () => {
-  for (const configured of [undefined, "target/vite cache [checks]+", resolve("target/absolute cache [checks]+")] as const) {
-    it(`skips optimized dependencies in ${configured ?? "the default cache"} while preserving app transforms`, async () => {
+  for (const configured of [undefined, "", "target/vite cache [checks]+", resolve("target/absolute cache [checks]+")] as const) {
+    it(`skips optimized dependencies in ${configured === undefined ? "the default cache" : configured === "" ? "an empty override" : configured} while preserving app transforms`, async () => {
       vi.stubEnv("WENLAN_VITE_CACHE_DIR", configured);
       const config = await resolveConfig({ configFile: resolve("vite.config.ts") }, "serve");
-      const cache = normalizePath(resolve(configured ?? ".vite"));
+      const cache = normalizePath(resolve(configured || ".vite"));
+      expect(normalizePath(config.cacheDir)).toBe(cache);
       expect(await transform(config, `${cache}/deps/prebuilt.js?v=fixture`), "optimized dependencies must bypass Babel").toBeUndefined();
       expect(await transform(config, `${cache}/deps/nested/prebuilt.js`)).toBeUndefined();
       expect(await transform(config, normalizePath(resolve("node_modules/prebuilt.js")))).toBeUndefined();

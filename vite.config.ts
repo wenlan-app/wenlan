@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 const host = process.env.TAURI_DEV_HOST;
 const devPort = Number.parseInt(process.env.WENLAN_DEV_UI_PORT ?? "1420", 10);
-const cacheDir = process.env.WENLAN_VITE_CACHE_DIR ?? ".vite";
+const cacheDir = process.env.WENLAN_VITE_CACHE_DIR || ".vite";
 // The worktree-owned cache is outside node_modules. React's default exclusion
 // therefore misses its prebundled dependencies and Babel processes them again.
 const cachePrefix = normalizePath(resolve(cacheDir)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
