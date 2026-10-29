@@ -436,6 +436,8 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'scripts/ci_test_plan.test.py'
             macos:
+              - 'scripts/setup-macos-openssl.sh'
+              - 'scripts/setup-macos-openssl.test.sh'
               # macOS owns launchd/host-activity behavior and native code.
               # Shared CLI/server/MCP code stays on the Ubuntu canonical lane;
               # drift_guard fails if a cfg-bearing source lacks an owner here
@@ -733,6 +735,8 @@ jobs:
               - 'scripts/setup-msvc-ninja-windows.ps1'
               - 'scripts/setup-msvc-ninja-windows.test.ps1'
             release-preflight:
+              - 'scripts/setup-macos-openssl.sh'
+              - 'scripts/setup-macos-openssl.test.sh'
               # Keep release-profile builds off ordinary shared-code PRs,
               # while native linkage, build tooling, and packaged entrypoints
               # still prove three shipped profiles before merge. Windows PRs
@@ -1244,8 +1248,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
         with:
           toolchain: 1.95.0
+      - name: Select compatible macOS OpenSSL
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/setup-macos-openssl.test.sh
+          bash scripts/setup-macos-openssl.sh
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          # Cargo does not track llama's CMake root hint. Isolate both exact
+          # and fallback target caches when this native dependency changes.
+          env-vars: OPENSSL_ROOT_DIR
           shared-key: test
           cache-all-crates: "true"
           cache-targets: "true"
@@ -1265,6 +1278,8 @@ jobs:
             --plan-json "$CI_TEST_PLAN" \
             --archive-dir "$RUNNER_TEMP/wenlan-macos-nextest-${GITHUB_RUN_ID}" \
             --include-m4 "$M4_REQUIRED"
+          find "${CARGO_TARGET_DIR:-target}" -path '*/llama-cpp-sys-2-*/out/build/CMakeCache.txt' \
+            -print -exec grep -E '^OPENSSL_(INCLUDE_DIR|SSL_LIBRARY|CRYPTO_LIBRARY):' {} \;
       - name: Publish exact macOS nextest archives
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -1383,8 +1398,15 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Append
           "RUSTFLAGS=-C linker=$lld -C linker-flavor=lld-link" |
             Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Select compatible macOS OpenSSL
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/setup-macos-openssl.test.sh
+          bash scripts/setup-macos-openssl.sh
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          env-vars: OPENSSL_ROOT_DIR
           shared-key: test
           cache-all-crates: "true"
           cache-targets: "true"
@@ -1720,8 +1742,15 @@ jobs:
         run: |
           & scripts/setup-msvc-ninja-windows.test.ps1
           & scripts/setup-msvc-ninja-windows.ps1
+      - name: Select compatible macOS OpenSSL
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/setup-macos-openssl.test.sh
+          bash scripts/setup-macos-openssl.sh
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          env-vars: OPENSSL_ROOT_DIR
           # A separate key prevents this short compile from winning the race
           # to save a partial cache before the full test matrix on main.
           shared-key: mcp-platform
@@ -2095,10 +2124,17 @@ jobs:
           # For information about cache directory tags see https://bford.info/cachedir/
           "@
           [IO.File]::WriteAllText($marker, $contents, [Text.UTF8Encoding]::new($false))
+      - name: Select compatible macOS OpenSSL
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/setup-macos-openssl.test.sh
+          bash scripts/setup-macos-openssl.sh
       - name: Cache release artifacts (main-owned)
         id: windows-release-cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          env-vars: OPENSSL_ROOT_DIR
           # The nested CACHEDIR.TAG makes rust-cache preserve the explicit
           # target while this top-level root also carries host build artifacts.
           # v4 rotates the immutable cache for the shipped no-LTO release
@@ -2277,7 +2313,12 @@ jobs:
           echo "release candidate $v"
       - name: Build and smoke shipped release binaries
         shell: bash
-        run: bash scripts/build-release-binaries.sh "${{ matrix.target }}"
+        run: |
+          bash scripts/build-release-binaries.sh "${{ matrix.target }}"
+          if [[ "$RUNNER_OS" == 'macOS' ]]; then
+            find "${CARGO_TARGET_DIR:-target}" -path '*/llama-cpp-sys-2-*/out/build/CMakeCache.txt' \
+              -print -exec grep -E '^OPENSSL_(INCLUDE_DIR|SSL_LIBRARY|CRYPTO_LIBRARY):' {} \;
+          fi
       - name: Native ORT smoke (Windows release preflight)
         if: matrix.target == 'x86_64-pc-windows-msvc' && !(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.draft == false && github.event.pull_request.user.login == '7xuanlu')
         shell: pwsh
@@ -2812,8 +2853,15 @@ jobs:
         with:
           toolchain: 1.95.0
           components: rustfmt, clippy
+      - name: Select compatible macOS OpenSSL
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bash scripts/setup-macos-openssl.test.sh
+          bash scripts/setup-macos-openssl.sh
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
+          env-vars: OPENSSL_ROOT_DIR
           shared-key: app-check
           cache-all-crates: "true"
           save-if: ${{ github.ref == 'refs/heads/main' }}
