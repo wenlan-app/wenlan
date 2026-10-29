@@ -2312,12 +2312,13 @@ jobs:
           echo "release candidate $v"
       - name: Build and smoke shipped release binaries
         shell: bash
+        run: bash scripts/build-release-binaries.sh "${{ matrix.target }}"
+      - name: Record native macOS OpenSSL inputs
+        if: runner.os == 'macOS'
+        shell: bash
         run: |
-          bash scripts/build-release-binaries.sh "${{ matrix.target }}"
-          if [[ "$RUNNER_OS" == 'macOS' ]]; then
-            find "${CARGO_TARGET_DIR:-target}" -path '*/llama-cpp-sys-2-*/out/build/CMakeCache.txt' \
-              -print -exec grep -E '^OPENSSL_(INCLUDE_DIR|SSL_LIBRARY|CRYPTO_LIBRARY):' {} \;
-          fi
+          find "${CARGO_TARGET_DIR:-target}" -path '*/llama-cpp-sys-2-*/out/build/CMakeCache.txt' \
+            -print -exec grep -E '^OPENSSL_(INCLUDE_DIR|SSL_LIBRARY|CRYPTO_LIBRARY):' {} \;
       - name: Native ORT smoke (Windows release preflight)
         if: matrix.target == 'x86_64-pc-windows-msvc' && !(github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'release-please--branches--main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.repo.fork == false && github.event.pull_request.draft == false && github.event.pull_request.user.login == '7xuanlu')
         shell: pwsh
