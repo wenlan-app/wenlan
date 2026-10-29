@@ -203,6 +203,43 @@ def checked_output(command, cwd):
     return subprocess.check_output(command, cwd=cwd, text=True).strip()
 
 
+def tracked_source_evidence(repo, prefix):
+    """Record source identity outside timing, including the reason for refusal."""
+    repo, prefix = Path(repo), Path(prefix)
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=repo)
+    Path(str(prefix) + ".status.txt").write_bytes(status)
+    names = subprocess.check_output(["git", "ls-files", "-z"], cwd=repo).split(b"\0")
+    hashes = {}
+    for raw in names:
+        if not raw:
+            continue
+        name = os.fsdecode(raw)
+        path = repo / name
+        if path.is_symlink():
+            hashes[name] = hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
+        else:
+            hashes[name] = digest(path) if path.is_file() else None
+    evidence = dict(status=status.decode("utf-8", errors="replace"), sha256=hashes)
+    save(str(prefix) + ".json", evidence)
+    if status:
+        patch = subprocess.check_output(
+            ["git", "diff", "--no-ext-diff", "--binary", "HEAD", "--"], cwd=repo)
+        Path(str(prefix) + ".diff.patch").write_bytes(patch)
+        raw = subprocess.check_output(["git", "diff", "--raw", "HEAD", "--"], cwd=repo)
+        Path(str(prefix) + ".diff-raw.txt").write_bytes(raw)
+    return evidence
+
+
+def require_unchanged_source(before, after):
+    changed = sorted(name for name in before["sha256"].keys() | after["sha256"].keys()
+                     if before["sha256"].get(name) != after["sha256"].get(name))
+    if after["status"] or changed:
+        raise RuntimeError("tracked product source changed during measured build; "
+                           f"changed hashes: {changed}; git status: {after['status'].strip()}")
+
+
 def compile_observer(directory, real_cargo, receipts=None):
     """Bootstrap outside timing through Cargo's production linker selection."""
     directory = Path(directory).resolve()
@@ -249,8 +286,8 @@ def run_pair(args):
     actual = checked_output(["git", "rev-parse", "HEAD"], repo)
     if actual != expected or len(expected) != 40:
         raise RuntimeError("product checkout does not match the immutable merged source SHA")
-    dirty = checked_output(["git", "status", "--porcelain", "--untracked-files=no"], repo)
-    if dirty:
+    source_before = tracked_source_evidence(repo, output / "source-before")
+    if source_before["status"]:
         raise RuntimeError("tracked product source is dirty")
     for key in ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_BUILD_DIR", "CARGO_NET_OFFLINE", "WENLAN_BACKEND_DIR",
                 "CMAKE_PROJECT_INCLUDE", "CMAKE_C_COMPILER_LAUNCHER", "CMAKE_CXX_COMPILER_LAUNCHER"):
@@ -333,7 +370,11 @@ def run_pair(args):
         save(arm_dir / "arm.json", result)
         manifest["arms"].append(result)
         save(output / "pair.json", manifest)
+        # Persist diagnostics even when the build or source guard fails. These
+        # reads occur after observe has stopped its clock.
+        source_after = tracked_source_evidence(repo, arm_dir / "source-after")
         check_arm(result)
+        require_unchanged_source(source_before, source_after)
         cargo_receipts = [json.loads(path.read_text(encoding="utf-8")) for path in arm_dir.glob("cargo-*.json")
                           if len(path.suffixes) == 1]
         if len(cargo_receipts) < 2 or any(x["exit_code"] or not x["artifacts"] for x in cargo_receipts):
@@ -377,12 +418,10 @@ def run_pair(args):
                       app_cargo_seconds=app[0]["seconds"],
                       packaging_and_cli_seconds=result["seconds"] - hook["seconds"] - frontend["seconds"] - app[0]["seconds"],
                       artifacts=outputs, cargo_invocations=len(cargo_receipts),
-                      compiled=sum(x["compiled"] for x in cargo_receipts), fresh=sum(x["fresh"] for x in cargo_receipts),
-                      observation_valid=True)
-        if checked_output(["git", "status", "--porcelain", "--untracked-files=no"], repo):
-            raise RuntimeError("tracked product source changed during measured build")
+                      compiled=sum(x["compiled"] for x in cargo_receipts), fresh=sum(x["fresh"] for x in cargo_receipts))
         if locks != {name: digest(repo / name) for name in locks}:
             raise RuntimeError("lockfile changed during measured build")
+        result["observation_valid"] = True
         save(arm_dir / "arm.json", result)
         save(output / "pair.json", manifest)
         # This exact directory was made above under our own mkdtemp root. Resolve

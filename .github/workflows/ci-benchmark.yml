@@ -655,6 +655,16 @@ jobs:
       WENLAN_NO_AUTOSTART: "1"
       BENCH_SOURCE_SHA: ${{ inputs.desktop_source_sha }}
     steps:
+      - name: Use canonical LF bytes for Windows measurement checkouts
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          # The vendored permission generator writes LF. A CRLF checkout can
+          # change only line endings during the build and trip source guards.
+          # Set checkout policy before either immutable source is materialized;
+          # post-build status/hash guards still reject any changed source.
+          git config --global core.autocrlf false
       - name: Checkout immutable measurement tools
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -686,6 +696,8 @@ jobs:
           mkdir -p ../benchmark-receipts
           git rev-parse HEAD > ../benchmark-receipts/product-sha.txt
           git -C ../control rev-parse HEAD > ../benchmark-receipts/control-sha.txt
+          git --version > ../benchmark-receipts/git-version.txt
+          git ls-files --eol vendor/tauri-plugin-updater/permissions > ../benchmark-receipts/checkout-eol.txt
           rustc -vV > ../benchmark-receipts/rustc.txt
           # The observer delegates to the real Cargo binary. Preserve the
           # toolchain context normally fixed by the rustup cargo proxy, so

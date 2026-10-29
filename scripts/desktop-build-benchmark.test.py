@@ -44,6 +44,39 @@ class BenchmarkTests(unittest.TestCase):
                 bench.safe_member(path)
         self.assertEqual(str(bench.safe_member("lib/libonnxruntime.a")), "lib/libonnxruntime.a")
 
+    def test_source_change_is_refused_with_persisted_status_patch_and_hashes(self):
+        with tempfile.TemporaryDirectory(prefix="source-guard-control-") as raw:
+            root = Path(raw)
+            repo = root / "product"
+            repo.mkdir()
+            for args in (["init", "--quiet"], ["config", "core.autocrlf", "false"],
+                         ["config", "user.name", "Fixture"], ["config", "user.email", "fixture@example.invalid"]):
+                subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+            source = repo / "source.txt"
+            source.write_bytes(b"original source\n")
+            subprocess.run(["git", "add", "source.txt"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "-c", "core.hooksPath=", "commit", "--quiet", "-m", "fixture"], cwd=repo, check=True, capture_output=True)
+            before = bench.tracked_source_evidence(repo, root / "before")
+            bench.require_unchanged_source(before, bench.tracked_source_evidence(repo, root / "clean"))
+            source.write_bytes(b"changed during build\n")
+            after = bench.tracked_source_evidence(repo, root / "after")
+            with self.assertRaisesRegex(RuntimeError, "tracked product source changed.*source.txt"):
+                bench.require_unchanged_source(before, after)
+            persisted = json.loads((root / "after.json").read_text())
+            self.assertIn("source.txt", persisted["status"])
+            self.assertNotEqual(before["sha256"]["source.txt"], persisted["sha256"]["source.txt"])
+            self.assertIn(b"+changed during build", (root / "after.diff.patch").read_bytes())
+            self.assertIn(b"source.txt", (root / "after.diff-raw.txt").read_bytes())
+            # Git can hide byte changes (for example through index flags).
+            # The independent bytes witness must still refuse the source.
+            source.write_bytes(b"original source\n")
+            subprocess.run(["git", "update-index", "--assume-unchanged", "source.txt"], cwd=repo, check=True, capture_output=True)
+            source.write_bytes(b"hidden source change\n")
+            hidden = bench.tracked_source_evidence(repo, root / "hidden")
+            self.assertEqual(hidden["status"], "")
+            with self.assertRaisesRegex(RuntimeError, "tracked product source changed.*source.txt"):
+                bench.require_unchanged_source(before, hidden)
+
     def test_toolchain_provisioning_with_exit_zero_cannot_be_scored(self):
         with tempfile.TemporaryDirectory(prefix="timing-contamination-") as raw:
             prefix = Path(raw) / "observed"
