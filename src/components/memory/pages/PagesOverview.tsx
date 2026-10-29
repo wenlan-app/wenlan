@@ -9,7 +9,7 @@ import { GettingStarted } from "../../onboarding/GettingStarted";
 import { EverydayUse } from "../../onboarding/EverydayUse";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
-import { takeStartIntent } from "../../onboarding/startIntent";
+import { onStartIntent, peekStartIntent, takeStartIntent } from "../../onboarding/startIntent";
 import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
@@ -56,14 +56,25 @@ export function PagesOverview({
   const checklist = useGettingStartedState();
   const [adding, setAdding] = useState<false | "menu" | "folder" | "chats">(false);
   // What the user picked on the welcome screen happens here, once: the
-  // folder picker, the past-chats choice, or a new page.
+  // folder picker, the past-chats choice, or a new page. Leaving the example
+  // wiki sets one while this home may stay mounted or be replaced, so it is
+  // read on arrival and whenever one is set, and a dialog's intent is only
+  // let go when that dialog closes.
+  const [intentSet, setIntentSet] = useState(0);
+  useEffect(() => onStartIntent(() => setIntentSet((count) => count + 1)), []);
   useEffect(() => {
-    const intent = takeStartIntent();
-    if (intent === "empty") onCreatePage(null);
-    else if (intent === "material") setAdding("menu");
+    const intent = peekStartIntent();
+    if (intent === "empty") {
+      takeStartIntent();
+      onCreatePage(null);
+    } else if (intent === "material") setAdding("menu");
     else if (intent) setAdding(intent);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on arrival and when an intent is set
+  }, [intentSet]);
+  const closeAdding = () => {
+    takeStartIntent();
+    setAdding(false);
+  };
   const writePages = useWritePages(pages);
   // "Use Search to find a page" is advice the workspace cannot honour until
   // the daemon answers; the sidebar says it is starting, so this stays quiet.
@@ -145,7 +156,7 @@ export function PagesOverview({
       {newPages}
       {gettingStarted}
       {everyday}
-      {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={() => setAdding(false)} /> : null}
+      {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
     </section>
   );
 }

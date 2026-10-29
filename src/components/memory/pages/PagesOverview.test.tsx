@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   distillReview,
@@ -11,7 +11,7 @@ import {
   type Page,
 } from "../../../lib/tauri";
 import { PagesOverview } from "./PagesOverview";
-import { setStartIntent } from "../../onboarding/startIntent";
+import { setStartIntent, takeStartIntent } from "../../onboarding/startIntent";
 import { setDaemonStartupPhase } from "../../../lib/daemonStartup";
 import { DISTILL_REVIEW_SESSION_QUERY_KEY } from "./pageReviewSignals";
 import type { WikiInventoryScope } from "./pageInventory";
@@ -240,6 +240,10 @@ describe("PagesOverview reading workspace", () => {
 });
 
 describe("PagesOverview arriving from the welcome", () => {
+  beforeEach(() => {
+    takeStartIntent();
+  });
+
   it("opens a new page for someone who chose to start empty, once", async () => {
     setStartIntent("empty");
     const { onCreatePage, unmount } = renderOverview();
@@ -254,5 +258,25 @@ describe("PagesOverview arriving from the welcome", () => {
     setStartIntent("chats");
     renderOverview();
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("opens Add your material when the example wiki is left from a home already on screen", async () => {
+    renderOverview();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => setStartIntent("material"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("opens the dialog again if the home is replaced before it closes, and not after", async () => {
+    setStartIntent("material");
+    const first = renderOverview();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    first.unmount();
+    renderOverview();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(takeStartIntent()).toBeNull();
   });
 });

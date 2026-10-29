@@ -132,11 +132,9 @@ test("a new user's home keeps one column and fits 1280x800 while getting started
   expect(overflow.document).toBeLessThanOrEqual(0);
   expect(overflow.content).toBeLessThanOrEqual(0);
 
-  // Adding a source opens its dialog without leaving the Wiki.
-  await checklist.getByRole("button", { name: /Folder or files/ }).click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // One step at a time: with pages written, the card offers only asking.
+  await expect(checklist.getByRole("listitem")).toHaveCount(1);
+  await expect(checklist.getByRole("button", { name: "Ask in Claude Code" })).toBeVisible();
 
   // Hiding the card brings the directory back.
   await checklist.getByRole("button", { name: "Hide getting started" }).click();
