@@ -1660,7 +1660,6 @@ export default function Main({
           ) : view.kind === "first-use" ? (
             <FirstUseGuide
               onBack={() => navigatePages()}
-              initialView={view.showKnowledge ? "live" : "sample"}
               batchId={view.batchId}
               onImport={() => navigateTo({ kind: "import", fromFirstUse: true })}
               onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}

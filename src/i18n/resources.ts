@@ -754,8 +754,8 @@ const en = {
   },
   exampleWiki: {
     label: "Example wiki",
-    title: "Team wiki: v2 launch",
-    line: "An example to look around in. Nothing here is yours.",
+    title: "Example: an app launch",
+    line: "A small team's notes, made into a wiki.",
     back: "Back to my wiki",
     startOwn: "Start my own",
     readOnly: "The example can't be changed. Start your own to write pages.",
@@ -3815,8 +3815,8 @@ const zhHans = {
   },
   exampleWiki: {
     label: "范例 wiki",
-    title: "团队 wiki：v2 上线",
-    line: "让你随便看看的范例，这里的东西都不是你的。",
+    title: "范例：一个 App 上线",
+    line: "一个小团队的笔记写成的 wiki。",
     back: "回到我的 wiki",
     startOwn: "开始建我自己的",
     readOnly: "范例不能改。开始建自己的 wiki，就能写笔记了。",
@@ -6832,8 +6832,8 @@ const zhHant = {
   },
   exampleWiki: {
     label: "範例 wiki",
-    title: "團隊 wiki：v2 上線",
-    line: "讓你隨便看看的範例，這裡的東西都不是你的。",
+    title: "範例：一個 App 上線",
+    line: "一個小團隊的筆記寫成的 wiki。",
     back: "回到我的 wiki",
     startOwn: "開始建我自己的",
     readOnly: "範例不能改。開始建自己的 wiki，就能寫筆記了。",

@@ -120,36 +120,9 @@ afterEach(() => {
 });
 
 describe("FirstUseGuide navigation", () => {
-  it("opens the sample walkthrough directly, with no guide or chooser, and stays query-silent", () => {
-    renderGuide();
-    expect(screen.getByTestId("first-use-sample")).toBeInTheDocument();
-    expect(screen.getByTestId("first-use-guide")).toHaveAttribute("data-view", "sample");
-    expect(screen.queryByRole("button", { name: "Bring my data" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Try an example" })).not.toBeInTheDocument();
-    expect(mockedListPages).not.toHaveBeenCalled();
-    expect(mockedBatches).not.toHaveBeenCalled();
-    expect(mockedMemoryStats).not.toHaveBeenCalled();
-  });
-
-  it("returns home from the sample header back button and from its final button", () => {
-    const onBack = vi.fn();
-    renderGuide({ onBack });
-    fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
-    expect(onBack).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Skip to result" }));
-    fireEvent.click(screen.getByRole("button", { name: "What else your AI can do" }));
-    expect(screen.queryByRole("button", { name: "Connect my AI" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Bring my data" })).not.toBeInTheDocument();
-    const [, finish] = screen.getAllByRole("button", { name: "Back to home" });
-    fireEvent.click(finish);
-    expect(onBack).toHaveBeenCalledTimes(2);
-    expect(mockedListPages).not.toHaveBeenCalled();
-    expect(mockedBatches).not.toHaveBeenCalled();
-  });
-
   it("returns home from the live view", async () => {
     const onBack = vi.fn();
-    renderGuide({ onBack, initialView: "live" });
+    renderGuide({ onBack });
     fireEvent.click(screen.getByRole("button", { name: "Back to home" }));
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(await screen.findByText("Nothing here yet")).toBeInTheDocument();
@@ -160,7 +133,7 @@ describe("FirstUseGuide live view", () => {
   it("shows the empty state with real actions when the library is empty", async () => {
     const onImport = vi.fn();
     const onOpenIntelligence = vi.fn();
-    renderGuide({ onImport, onOpenIntelligence, initialView: "live" });
+    renderGuide({ onImport, onOpenIntelligence });
     expect(await screen.findByText("Nothing here yet")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Import memories" }));
     fireEvent.click(screen.getByRole("button", { name: "Set up intelligence" }));
@@ -170,7 +143,7 @@ describe("FirstUseGuide live view", () => {
 
   it("reports a page-list failure as failure with retry, not as empty success", async () => {
     mockedListPages.mockRejectedValueOnce(new Error("down"));
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(
       await screen.findByText("Wenlan couldn't read this right now."),
     ).toBeInTheDocument();
@@ -183,7 +156,7 @@ describe("FirstUseGuide live view", () => {
   it("reports an active-batch failure as failure, not as progress", async () => {
     mockedBatches.mockRejectedValueOnce(new Error("down"));
     mockedListPages.mockResolvedValue([makePage()]);
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(
       await screen.findByText("Wenlan couldn't read this right now."),
     ).toBeInTheDocument();
@@ -203,7 +176,7 @@ describe("FirstUseGuide live view", () => {
       ],
     }));
     mockedBatches.mockResolvedValue({ batches: [] });
-    renderGuide({ initialView: "live", batchId: "batch-1" });
+    renderGuide({ batchId: "batch-1" });
     expect(await screen.findByText("Import progress")).toBeInTheDocument();
     expect(screen.getByText("Background work finished.")).toBeInTheDocument();
     expect(screen.getByText(/No page was created in this batch/)).toBeInTheDocument();
@@ -226,7 +199,7 @@ describe("FirstUseGuide live view", () => {
           entry("distill", "complete", 0, 0),
         ],
       }));
-    renderGuide({ initialView: "live", batchId: "batch-1" });
+    renderGuide({ batchId: "batch-1" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -260,7 +233,7 @@ describe("FirstUseGuide live view", () => {
         entry("distill", "pending", 0, 0),
       ],
     })] });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Import progress")).toBeInTheDocument();
     expect(screen.getByTestId("import-phase-store")).toHaveAttribute(
       "data-state",
@@ -279,7 +252,7 @@ describe("FirstUseGuide live view", () => {
     mockedBatches.mockResolvedValue({ batches: [
       makeBatch(), makeBatch({ batch_id: "batch-2", source: "claude" }),
     ] });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText(/8 memories imported from ChatGPT · Claude/)).toBeVisible();
   });
 
@@ -297,7 +270,7 @@ describe("FirstUseGuide live view", () => {
         entry("distill", "complete", 0, 0),
       ],
     }));
-    renderGuide({ onOpenIntelligence, initialView: "live", batchId: "batch-1" });
+    renderGuide({ onOpenIntelligence, batchId: "batch-1" });
     expect(await screen.findByText("Import progress")).toBeInTheDocument();
     expect(
       await screen.findByText(/Some items could not be processed/),
@@ -320,7 +293,7 @@ describe("FirstUseGuide live view", () => {
     const batch = makeBatch();
     mockedBatches.mockResolvedValue({ batches: [batch] });
     mockedBatchStatus.mockResolvedValue(batch);
-    renderGuide({ initialView: "live", batchId: "batch-1" });
+    renderGuide({ batchId: "batch-1" });
     expect(await screen.findByText("Import progress")).toBeInTheDocument();
     expect(screen.getByText(/4 memories imported from ChatGPT/)).toBeInTheDocument();
     expect(screen.queryByText(/8 memories imported from ChatGPT/)).not.toBeInTheDocument();
@@ -336,7 +309,7 @@ describe("FirstUseGuide live view", () => {
       }),
       makePage({ id: "page-real-7", title: "v2 launch plan" }),
     ]);
-    renderGuide({ onOpenPage, initialView: "live" });
+    renderGuide({ onOpenPage });
     expect(await screen.findByText("Your pages")).toBeInTheDocument();
     expect(screen.queryByText("Shadow entity page")).not.toBeInTheDocument();
     const live = screen.getByTestId("first-use-live");
@@ -345,14 +318,14 @@ describe("FirstUseGuide live view", () => {
     expect(onOpenPage).toHaveBeenCalledWith("page-real-7");
   });
 
-  it("enters the live view directly when initialView is live", async () => {
-    renderGuide({ initialView: "live" });
+  it("opens straight into the live view", async () => {
+    renderGuide({});
     expect(screen.getByTestId("first-use-live")).toBeInTheDocument();
     expect(await screen.findByText("Nothing here yet")).toBeInTheDocument();
   });
 
   it("uses the active endpoint for a direct live view without a targeted batch", async () => {
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Nothing here yet")).toBeInTheDocument();
     expect(mockedBatchStatus).not.toHaveBeenCalled();
     expect(mockedBatches).toHaveBeenCalled();
@@ -360,7 +333,7 @@ describe("FirstUseGuide live view", () => {
 
   it("keeps polling pages and batches while the live view is mounted", async () => {
     vi.useFakeTimers();
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     await act(async () => {});
     expect(mockedListPages.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(mockedBatches.mock.calls.length).toBeGreaterThanOrEqual(1);
@@ -383,7 +356,7 @@ describe("FirstUseGuide live view saved memories", () => {
       confirmed: 0,
       domains: [],
     });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Your memories are saved")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -406,7 +379,7 @@ describe("FirstUseGuide live view saved memories", () => {
       confirmed: 0,
       domains: [],
     });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(
       await screen.findByText(
         "1 memory is saved in your library. No pages have been written yet.",
@@ -431,7 +404,7 @@ describe("FirstUseGuide live view saved memories", () => {
       domains: [],
     });
     const onOpenIntelligence = vi.fn();
-    renderGuide({ initialView: "live", onOpenIntelligence });
+    renderGuide({ onOpenIntelligence });
     expect(await screen.findByText("Your memories are saved")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -448,7 +421,7 @@ describe("FirstUseGuide live view saved memories", () => {
   it("shows the loading state, not the empty card, while the memory count is pending", async () => {
     vi.useFakeTimers();
     mockedMemoryStats.mockImplementation(() => new Promise(() => {}));
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     // Let the page and batch queries settle first; the count query never
     // does, so the view must still read as pending afterward.
     await act(async () => {
@@ -461,7 +434,7 @@ describe("FirstUseGuide live view saved memories", () => {
 
   it("treats a memory-count failure as a failure, not an empty library, and recovers on retry", async () => {
     mockedMemoryStats.mockRejectedValueOnce(new Error("down"));
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(
       await screen.findByText("Wenlan couldn't read this right now."),
     ).toBeInTheDocument();
@@ -487,7 +460,7 @@ describe("FirstUseGuide live view saved memories", () => {
       confirmed: 0,
       domains: [],
     });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Your memories are saved")).toBeInTheDocument();
     mockedListPages.mockResolvedValue([makePage()]);
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -497,7 +470,7 @@ describe("FirstUseGuide live view saved memories", () => {
 
   it("does not read memory stats when the page list already decides the view", async () => {
     mockedListPages.mockResolvedValue([makePage()]);
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Your pages")).toBeInTheDocument();
     expect(mockedMemoryStats).not.toHaveBeenCalled();
   });
@@ -510,7 +483,7 @@ describe("FirstUseGuide live view saved memories", () => {
       domains: [],
     });
     mockedListPages.mockResolvedValue([makePage()]);
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Your pages")).toBeInTheDocument();
     expect(screen.queryByTestId("first-use-live-saved")).not.toBeInTheDocument();
     expect(screen.queryByText("Your memories are saved")).not.toBeInTheDocument();
@@ -518,7 +491,7 @@ describe("FirstUseGuide live view saved memories", () => {
 
   it("does not read memory stats when an active batch already decides the view", async () => {
     mockedBatches.mockResolvedValue({ batches: [makeBatch()] });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Import progress")).toBeInTheDocument();
     expect(mockedMemoryStats).not.toHaveBeenCalled();
   });
@@ -535,7 +508,7 @@ describe("FirstUseGuide live view saved memories", () => {
       confirmed: 0,
       domains: [],
     });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Your memories are saved")).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -566,7 +539,7 @@ describe("FirstUseGuide live view saved memories", () => {
       confirmed: 0,
       domains: [],
     });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Your memories are saved")).toBeInTheDocument();
     mockedBatches.mockResolvedValue({ batches: [makeBatch()] });
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
@@ -580,7 +553,7 @@ describe("live model availability", () => {
   it("shows model-status pending without hiding real import progress", async () => {
     vi.mocked(getResolvedRouting).mockReturnValue(new Promise(() => {}));
     mockedBatches.mockResolvedValue({ batches: [makeBatch()] });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByText("Checking whether an AI model is available to organize your pages.")).toBeVisible();
     expect(screen.getByTestId("import-phase-store")).toHaveAttribute("data-state", "complete");
     expect(screen.queryByTestId("import-phase-detect")).not.toBeInTheDocument();
@@ -591,7 +564,7 @@ describe("live model availability", () => {
     const healthyRouting = await getResolvedRouting();
     vi.mocked(getResolvedRouting).mockRejectedValue(new Error("routing unavailable"));
     mockedBatches.mockResolvedValue({ batches: [makeBatch()] });
-    renderGuide({ initialView: "live" });
+    renderGuide({});
     expect(await screen.findByRole("alert")).toHaveTextContent("Wenlan couldn't check the AI model.");
     expect(screen.getByTestId("import-phase-store")).toHaveAttribute("data-state", "complete");
     expect(screen.queryByTestId("import-phase-detect")).not.toBeInTheDocument();
@@ -609,7 +582,7 @@ describe("live model availability", () => {
     });
     mockedBatches.mockResolvedValue({ batches: [makeBatch()] });
     const onOpenIntelligence = vi.fn();
-    renderGuide({ initialView: "live", onOpenIntelligence });
+    renderGuide({ onOpenIntelligence });
     expect(await screen.findByText("Your data is saved. Set up an available AI model to continue organizing it into pages.")).toBeInTheDocument();
     expect(screen.queryByText(/Your data is queued for background work/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Set up intelligence" }));
