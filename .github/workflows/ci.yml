@@ -2678,7 +2678,7 @@ jobs:
 
   conclusion:
     name: conclusion
-    needs: [detect-changes, release-base-proof, fmt, lint, linux-nextest-build, linux-nextest, macos-nextest-build, macos-nextest, test, mcp-platform, canonical-acceptance, contract-integration, release-preflight, docs, windows-release-contract, plugin, plugin-rust-contract, npm, relay-check, runtime-image, app-check, app-e2e, native-platform-contracts]
+    needs: [detect-changes, release-base-proof, fmt, lint, linux-nextest-build, linux-nextest, macos-nextest-build, macos-nextest, test, mcp-platform, canonical-acceptance, contract-integration, release-preflight, docs, windows-release-contract, plugin, plugin-rust-contract, npm, relay-check, runtime-image, app-check, app-frontend, app-e2e, native-platform-contracts]
     # merge_group: still run after fail-fast cancels the run so the queue gets the failure; a PR run superseded by a newer push stays cancelled.
     if: always() && (github.event_name == 'merge_group' || !cancelled())
     runs-on: ubuntu-24.04
@@ -2736,6 +2736,7 @@ jobs:
           expect_job relay-check '${{ needs.detect-changes.outputs.relay == 'true' || github.event_name == 'workflow_dispatch' }}' '${{ needs.relay-check.result }}'
           expect_job runtime-image '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.runtime-image == 'true' }}' '${{ needs.runtime-image.result }}'
           expect_job app-check '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-check.result }}'
+          expect_job app-frontend '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-frontend.result }}'
           expect_job app-e2e '${{ needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true' }}' '${{ needs.app-e2e.result }}'
           expect_job native-platform-contracts '${{ needs.detect-changes.outputs.native-contracts == 'true' || github.event_name == 'workflow_dispatch' }}' '${{ needs.native-platform-contracts.result }}'
 
@@ -2892,6 +2893,30 @@ jobs:
         run: cargo test -p tauri-plugin-updater --lib
       - name: macOS app installer tests
         run: bash scripts/test-install-macos-app.sh
+      # Retain all host/process script contracts on macOS. The complete suite
+      # also runs on Ubuntu below; frontend-only checks need not wait for Rust.
+      - name: Native macOS script contracts
+        run: pnpm vitest run scripts --passWithNoTests=false
+      - name: Build + verify fixture-only Review app
+        run: pnpm review:build && pnpm review:verify
+
+  # Browser/TypeScript checks need no native app. Run them beside the macOS
+  # compile; the genuine .app build and verification remain in app-check.
+  app-frontend:
+    name: app-frontend
+    needs: detect-changes
+    if: needs.detect-changes.outputs.verified-release-merge != 'true' && needs.detect-changes.outputs.trusted-release-candidate != 'true' && needs.detect-changes.outputs.app == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install
       - name: TypeScript check
         run: pnpm exec tsc -b
       - name: TypeScript check (tools)
@@ -2911,10 +2936,8 @@ jobs:
         run: pnpm build && pnpm vitest run src/__tests__/firstPaint.test.ts
         env:
           WENLAN_REQUIRE_DIST: "1"
-      - name: Build + verify fixture-only Review app
-        run: pnpm review:build && pnpm review:verify
       - name: Install Playwright Chromium
-        run: pnpm exec playwright install chromium
+        run: pnpm exec playwright install --with-deps chromium
       - name: Review e2e
         run: pnpm test:e2e:review
 

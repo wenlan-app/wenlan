@@ -158,8 +158,8 @@ def _bin_test_args(names) -> list[str]:
 
 
 # The Tauri desktop app crate plus the root-level frontend dirs it shares a
-# release pipeline with. All of it runs under the separate app-check job
-# (macos-15), never the Rust workspace plan.
+# release pipeline with. Native checks run in app-check (macos-15), with
+# portable frontend checks beside them; never select the Rust app here.
 APP_JOB_PREFIXES = ("app", "src", "e2e", "preview", "review", "public")
 APP_JOB_FILES = {
     "package.json",
@@ -176,9 +176,8 @@ APP_JOB_FILES = {
     "playwright.review.config.ts",
     "scripts/prepare-sidecars.sh",
     "scripts/prepare-tauri-build-sidecars.sh",
-    # app-check is the only job that installs the package, so it is the only
-    # one that runs the postinstall hook installer and the Vitest suites that
-    # assert on the dev entry points and their Node launchers.
+    # The app jobs install the package and run postinstall/dev-launcher
+    # contracts; retain native script coverage alongside full frontend tests.
     "scripts/dev-all.sh",
     "scripts/dev-runtime.sh",
     "scripts/install-git-hooks.mjs",
@@ -193,6 +192,7 @@ APP_JOB_FILES = {
     "scripts/release-version-sync.test.ts",
     "scripts/resolve-backend-dir.sh",
     "scripts/verify-review-bundle.mjs",
+    "scripts/vite-cache.test.ts",
 }
 
 SUITE_OUTPUT_KEYS = {

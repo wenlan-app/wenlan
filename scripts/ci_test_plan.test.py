@@ -455,6 +455,64 @@ class ArchiveReuseTests(unittest.TestCase):
             self.exercise(list_failure=True)
 
 
+class AppFrontendJobTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        cls.predicate = (
+            "needs.detect-changes.outputs.verified-release-merge != 'true' && "
+            "needs.detect-changes.outputs.trusted-release-candidate != 'true' && "
+            "needs.detect-changes.outputs.app == 'true'"
+        )
+
+    def job(self, name):
+        match = re.search(r"(?ms)^  " + re.escape(name) + r":\n(.*?)(?=^  [a-z][\w-]*:|\Z)", self.workflow)
+        self.assertIsNotNone(match, f"missing required job {name}")
+        return match.group(1)
+
+    def test_native_frontend_and_browser_checks_start_in_parallel_with_same_guard(self):
+        for name in ("app-check", "app-frontend", "app-e2e"):
+            body = self.job(name)
+            self.assertRegex(body, r"(?m)^    needs: detect-changes$")
+            self.assertIn("    if: " + self.predicate + "\n", body)
+        self.assertIn("    runs-on: ubuntu-24.04\n", self.job("app-frontend"))
+
+    def test_frontend_keeps_full_suite_dist_guard_and_linux_browser_dependencies(self):
+        body = self.job("app-frontend")
+        commands = (
+            "pnpm exec tsc -b", "pnpm exec tsc -p tsconfig.tools.json",
+            "pnpm test:i18n", "pnpm test",
+            "pnpm build && pnpm vitest run src/__tests__/firstPaint.test.ts",
+            "pnpm exec playwright install --with-deps chromium", "pnpm test:e2e:review",
+        )
+        for command in commands:
+            self.assertEqual(len(re.findall(r"(?m)^        run: " + re.escape(command) + r"$", body)), 1)
+        paint = body.split("- name: First paint survives the production bundle\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn('WENLAN_REQUIRE_DIST: "1"', paint)
+        self.assertNotIn("review:build", body)
+        self.assertNotIn("cargo ", body)
+
+    def test_macos_keeps_real_review_bundle_and_nonempty_native_script_contracts(self):
+        body = self.job("app-check")
+        self.assertIn("runs-on: macos-15", body)
+        for command in (
+            "cargo clippy -p wenlan-app --all-targets -- -D warnings",
+            "cargo test -p wenlan-app --lib", "cargo test -p tauri-plugin-updater --lib",
+            "bash scripts/test-install-macos-app.sh",
+            "pnpm vitest run scripts --passWithNoTests=false",
+            "pnpm review:build && pnpm review:verify",
+        ):
+            self.assertIn("run: " + command + "\n", body)
+        self.assertNotIn("run: pnpm test\n", body)
+
+    def test_conclusion_requires_every_selected_app_lane(self):
+        body = self.job("conclusion")
+        needs = {name.strip() for name in body.split("needs: [", 1)[1].split("]", 1)[0].split(",")}
+        for name in ("app-check", "app-frontend", "app-e2e"):
+            self.assertIn(name, needs)
+            self.assertIn("expect_job " + name + " '${{ " + self.predicate + " }}' '${{ needs." + name + ".result }}'", body)
+
+
 class PackageClosureTests(unittest.TestCase):
     def test_server_source_runs_server_and_reverse_dependent_mcp_libs(self) -> None:
         plan = plan_for("crates/wenlan-server/src/routes.rs")
