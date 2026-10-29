@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from ci_test_plan import (
     APP_JOB_FILES,
     APP_JOB_PREFIXES,
     PlanError,
+    _run_macos_archive,
     affected_package_names,
     archive_command_for,
     build_plan,
@@ -340,6 +342,117 @@ else:
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(did_run)
+
+
+class ArchiveReuseTests(unittest.TestCase):
+    def exercise(
+        self, *, listing=None, missing_metadata=False, run_failure=False,
+        list_failure=False, missing_platforms=False, mismatched_platform=False
+    ):
+        if listing is None:
+            listing = {"rust-suites": {"fixture": {"testcases": {
+                "real_case": {"ignored": False, "filter-match": {"status": "matches"}}
+            }}}}
+        commands = []
+        extracted_paths = []
+
+        def nextest(command, **kwargs):
+            commands.append(command)
+            if command[1:3] == ["nextest", "list"]:
+                extracted = Path(command[command.index("--extract-to") + 1])
+                extracted_paths.append(extracted)
+                if list_failure:
+                    raise subprocess.CalledProcessError(1, command)
+                if not missing_metadata:
+                    metadata = extracted / "target" / "nextest"
+                    metadata.mkdir(parents=True)
+                    (metadata / "cargo-metadata.json").write_text("{}", encoding="utf-8")
+                    (metadata / "binaries-metadata.json").write_text(json.dumps({
+                        "rust-build-meta": {
+                            "target-directory": "/producer/target",
+                            "linked-paths": ["debug/native"],
+                            "platforms": {"host": {
+                                "platform": {"triple": "fixture-host"},
+                                "libdir": {"status": "available", "path": "/producer-only"},
+                            }, "targets": []},
+                        },
+                        "rust-binaries": {"fixture": "unchanged"},
+                    }), encoding="utf-8")
+                result = dict(listing)
+                if not missing_platforms:
+                    result["rust-build-meta"] = {"platforms": {
+                        "host": {
+                            "platform": {"triple": "other-host" if mismatched_platform else "fixture-host"},
+                            "libdir": {"status": "available", "path": str(extracted / "target/nextest/libdirs/host")},
+                        },
+                        "targets": [],
+                    }}
+                return subprocess.CompletedProcess(command, 0, json.dumps(result))
+            self.assertEqual(command[1:3], ["nextest", "run"])
+            self.assertTrue(extracted_paths[0].is_dir())
+            reused = json.loads(Path(command[command.index("--binaries-metadata") + 1]).read_text())
+            self.assertEqual(reused["rust-binaries"], {"fixture": "unchanged"})
+            self.assertEqual(reused["rust-build-meta"]["target-directory"], "/producer/target")
+            self.assertEqual(reused["rust-build-meta"]["linked-paths"], ["debug/native"])
+            self.assertEqual(reused["rust-build-meta"]["platforms"]["host"]["libdir"]["path"],
+                             str(extracted_paths[0] / "target/nextest/libdirs/host"))
+            if run_failure:
+                raise subprocess.CalledProcessError(100, command)
+            return subprocess.CompletedProcess(command, 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            command = [
+                "cargo", "nextest", "run", "--archive-file",
+                str(Path(directory) / "fixture.tar.zst"),
+                "--workspace-remap", "/repo", "-E", "test(real_case)",
+                "--no-tests=pass", "--partition", "slice:2/3",
+            ]
+            with mock.patch("ci_test_plan.subprocess.run", side_effect=nextest):
+                try:
+                    _run_macos_archive(command, label="fixture archive")
+                finally:
+                    self.assertEqual(len(extracted_paths), 1)
+                    self.assertFalse(extracted_paths[0].exists(), "extraction must be cleaned up")
+        return commands
+
+    def test_run_reuses_the_nonempty_unpartitioned_listing_extraction(self):
+        listing, run = self.exercise()
+        self.assertIn("--archive-file", listing)
+        self.assertIn("--extract-to", listing)
+        self.assertNotIn("--partition", listing)
+        self.assertNotIn("--no-tests=pass", listing)
+        self.assertNotIn("--archive-file", run)
+        self.assertNotIn("--extract-to", run)
+        for flag in ("--cargo-metadata", "--binaries-metadata", "--target-dir-remap"):
+            self.assertIn(flag, run)
+        for command in (listing, run):
+            self.assertEqual(command[command.index("-E") + 1], "test(real_case)")
+            self.assertEqual(command[command.index("--workspace-remap") + 1], "/repo")
+        self.assertEqual(run[-3:], ["--no-tests=pass", "--partition", "slice:2/3"])
+
+    def test_empty_selector_still_fails_before_run(self):
+        with self.assertRaisesRegex(PlanError, "selected zero tests"):
+            self.exercise(listing={"rust-suites": {}})
+
+    def test_missing_build_metadata_fails_before_run(self):
+        with self.assertRaisesRegex(PlanError, "missing nextest build metadata"):
+            self.exercise(missing_metadata=True)
+
+    def test_missing_mapped_platforms_fails_before_run(self):
+        with self.assertRaisesRegex(PlanError, "invalid nextest platform metadata"):
+            self.exercise(missing_platforms=True)
+
+    def test_mismatched_platform_identity_fails_before_run(self):
+        with self.assertRaisesRegex(PlanError, "platform identities differ"):
+            self.exercise(mismatched_platform=True)
+
+    def test_failed_test_run_propagates_and_cleans_up(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.exercise(run_failure=True)
+
+    def test_failed_extraction_propagates_and_cleans_up(self):
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.exercise(list_failure=True)
 
 
 class PackageClosureTests(unittest.TestCase):

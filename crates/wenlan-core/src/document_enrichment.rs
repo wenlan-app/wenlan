@@ -1160,6 +1160,22 @@ mod tests {
         path
     }
 
+    /// Corruption recovery needs three distinguishable chunks, not a large
+    /// prose document. Each paragraph fits the token budget, while two do not;
+    /// the same text also spans several character-fallback chunks.
+    fn write_prepared_generation_doc(dir: &Path) -> PathBuf {
+        let path = dir.join("doc.txt");
+        let mut body = String::new();
+        for index in 0..3 {
+            body.push_str(&format!(
+                "Section {index}. {}\n\n",
+                "go do no up by on in of to we ".repeat(31)
+            ));
+        }
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
     /// Markdown fixture whose parsed chunk title differs from the file stem.
     /// This exposes resume-title drift: a resumed run should reuse the stored
     /// parsed title from chunks instead of falling back to `file_stem`.
@@ -1268,7 +1284,7 @@ mod tests {
         corruption: PreparedGenerationCorruption,
     ) {
         let (db, dir) = test_db().await;
-        let path = write_doc(dir.path());
+        let path = write_prepared_generation_doc(dir.path());
         let file_path = path.to_string_lossy().to_string();
         let content_hash = file_hash(&path);
         db.enqueue_document("folder-notes", &file_path, Some(&content_hash))
@@ -1292,6 +1308,10 @@ mod tests {
         assert!(
             expected_inventory.len() >= 3,
             "{corruption:?}: fixture is multi-chunk"
+        );
+        assert!(
+            expected_inventory.len() <= 8,
+            "{corruption:?}: corruption fixture must stay bounded"
         );
         let first_id = expected_inventory[0].id.clone();
         let second_id = expected_inventory[1].id.clone();

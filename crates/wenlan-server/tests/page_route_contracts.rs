@@ -727,22 +727,104 @@ async fn export_okf_format_writes_bundle_and_enforces_safety() {
     );
 }
 
+/// These read/export contracts need a large population, not thousands of
+/// independent PageWrite/embedding calls. Start with a real confirmed authored
+/// PageWrite, then duplicate its canonical read fields in this isolated DB.
+/// Clones have distinct identities/history and no stale copied vector. Normal
+/// page creation is still exercised by the other route and PageWrite contracts.
+async fn seed_window_pages(
+    db: &Arc<wenlan_core::db::MemoryDB>,
+    directory: &std::path::Path,
+    title_prefix: &str,
+    count: usize,
+) -> Vec<String> {
+    assert!((2..=2000).contains(&count));
+    let seed = common::create_page_fixture(
+        db,
+        &format!("{title_prefix}0000"),
+        "body",
+        None,
+        &[],
+        "authored",
+    )
+    .await;
+    let fixture = libsql::Builder::new_local(directory.join("origin_memory.db"))
+        .build()
+        .await
+        .unwrap();
+    let conn = fixture.connect().unwrap();
+    conn.execute("BEGIN", ()).await.unwrap();
+    let inserted = conn
+        .execute(
+            "WITH RECURSIVE ordinal(n) AS (
+                 VALUES(1) UNION ALL SELECT n + 1 FROM ordinal WHERE n + 1 < ?1
+             )
+             INSERT INTO pages
+                (id,title,summary,content,entity_id,space,source_memory_ids,version,
+                 status,created_at,last_compiled,last_modified,creation_kind,
+                 review_status,workspace,citations,kind,incarnation)
+             SELECT p.id || '-' || printf('%04d',n), ?2 || printf('%04d',n),
+                    p.summary,p.content,p.entity_id,p.space,p.source_memory_ids,p.version,
+                    p.status,p.created_at,p.last_compiled,
+                    strftime('%Y-%m-%dT%H:%M:%SZ',strftime('%s',p.last_modified)+n,'unixepoch'),
+                    p.creation_kind,
+                    p.review_status,p.workspace,p.citations,p.kind,lower(hex(randomblob(16)))
+             FROM ordinal CROSS JOIN pages p WHERE p.id = ?3",
+            libsql::params![count as i64, title_prefix, seed.as_str()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(inserted, (count - 1) as u64);
+    let history = conn
+        .execute(
+            "INSERT INTO page_history
+                (page_id,version,title,content,source_memory_ids,edited_by,created_at)
+             SELECT id,version,title,content,source_memory_ids,'create',
+                    CAST(strftime('%s',created_at) AS INTEGER)
+             FROM pages WHERE id != ?1",
+            [seed.as_str()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(history, (count - 1) as u64);
+    conn.execute("COMMIT", ()).await.unwrap();
+    let mut rows = conn
+        .query(
+            "SELECT COUNT(*),COUNT(DISTINCT id),COUNT(DISTINCT title),
+                    COUNT(DISTINCT incarnation),
+                    SUM(status='active' AND creation_kind='authored'
+                        AND review_status='confirmed' AND version=1 AND space=workspace),
+                    SUM(id != ?1 AND embedding IS NOT NULL)
+             FROM pages",
+            [seed.as_str()],
+        )
+        .await
+        .unwrap();
+    let row = rows.next().await.unwrap().unwrap();
+    for column in 0..5 {
+        assert_eq!(row.get::<i64>(column).unwrap(), count as i64);
+    }
+    assert_eq!(
+        row.get::<i64>(5).unwrap(),
+        0,
+        "clones must not copy stale vectors"
+    );
+    drop(rows);
+    drop(conn);
+    let mut ids = vec![seed.clone()];
+    ids.extend((1..count).map(|index| format!("{seed}-{index:04}")));
+    let last = db.get_page(ids.last().unwrap()).await.unwrap().unwrap();
+    assert_eq!(last.title, format!("{title_prefix}{:04}", count - 1));
+    assert_eq!(last.content, "body");
+    ids
+}
+
 #[tokio::test]
 async fn export_okf_reads_past_the_obsidian_window() {
     let _guard = data_dir_lock().lock().await;
     let _config = WritableKnowledgeConfig::new();
     let (router, tmp, db) = common::test_app_no_gate_with_page_root().await;
-    for i in 0..1001 {
-        common::create_page_fixture(
-            &db,
-            &format!("Window Page {i:04}"),
-            "body",
-            None,
-            &[],
-            "authored",
-        )
-        .await;
-    }
+    seed_window_pages(&db, tmp.path(), "Window Page ", 1001).await;
     // The OKF branch reads every active page in one query, not the
     // Obsidian 1000-row window: all 1001 pages must be exported.
     let bundle = tmp.path().join("okf-window-bundle");
@@ -821,39 +903,14 @@ async fn page_list_windows_count_visible_pages_so_paging_reaches_the_end() {
     const LIMIT: usize = 500;
     let _guard = data_dir_lock().lock().await;
     let (router, tmp, db) = common::test_app_no_gate().await;
-    let mut ids = Vec::with_capacity(PAGES);
-    for index in 0..PAGES {
-        ids.push(
-            common::create_page_fixture(
-                &db,
-                &format!("Paged page {index:03}"),
-                &format!("Body of paged page {index:03}."),
-                None,
-                &[],
-                "authored",
-            )
-            .await,
-        );
-    }
+    let ids = seed_window_pages(&db, tmp.path(), "Paged page ", PAGES).await;
 
     let fixture = libsql::Builder::new_local(tmp.path().join("origin_memory.db"))
         .build()
         .await
         .unwrap();
     let conn = fixture.connect().unwrap();
-    // Distinct timestamps make the newest-first order, and so which window
-    // holds which page, deterministic.
-    for (index, id) in ids.iter().enumerate() {
-        let modified = chrono::DateTime::from_timestamp(1_700_000_000 + index as i64, 0)
-            .unwrap()
-            .to_rfc3339();
-        conn.execute(
-            "UPDATE pages SET last_modified = ?1 WHERE id = ?2",
-            libsql::params![modified, id.as_str()],
-        )
-        .await
-        .unwrap();
-    }
+    // seed_window_pages gives each successive page a distinct, newer timestamp.
     // Hide five of the newest pages, all inside the first window.
     let hidden: Vec<String> = ids
         .iter()
