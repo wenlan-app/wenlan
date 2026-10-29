@@ -112,7 +112,10 @@ export function buildExampleWiki(locale: ExampleLocale): ExampleWikiData {
           if (!cited.includes(sourceId)) cited.push(sourceId);
           return `[${marker}]`;
         });
-        return `${sentence.text[locale]}${markers.join("")}`;
+        const text = sentence.text[locale];
+        // Chinese puts the source before the full stop, so it never runs into the next sentence.
+        const stop = locale === "en" ? null : /[。！？]$/.exec(text);
+        return stop ? `${text.slice(0, -1)}${markers.join("")}${stop[0]}` : `${text}${markers.join("")}`;
       }).join(join);
       lines.push(paragraph);
     }

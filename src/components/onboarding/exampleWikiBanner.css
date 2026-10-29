@@ -14,6 +14,11 @@ body:has(.example-wiki-anchor) .tab-intro-anchor {
   bottom: 76px;
 }
 
+/* So do toasts; Sonner sets its offset inline, hence the !important. */
+body:has(.example-wiki-anchor) [data-sonner-toaster] {
+  --offset-bottom: 76px !important;
+}
+
 .example-wiki-banner {
   display: inline-flex;
   align-items: center;

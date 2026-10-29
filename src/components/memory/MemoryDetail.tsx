@@ -145,9 +145,10 @@ export default function MemoryDetail({
   const deletedRef = useRef(false);
   const registerContentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { contentFlushRef.current = flush; }, []);
   useEffect(() => {
-    onRegisterFlush?.(async () => deletedRef.current || (contentFlushRef.current ? contentFlushRef.current() : !revisionPending));
+    // Nothing in the example wiki is ever edited, so there is nothing to save before leaving.
+    onRegisterFlush?.(async () => exampleWiki || deletedRef.current || (contentFlushRef.current ? contentFlushRef.current() : !revisionPending));
     return () => onRegisterFlush?.(null);
-  }, [onRegisterFlush, revisionPending]);
+  }, [exampleWiki, onRegisterFlush, revisionPending]);
   const [reclassifyOpen, setReclassifyOpen] = useState(false);
   const [spacePickerOpen, setSpacePickerOpen] = useState(false);
   const [expandedVersion, setExpandedVersion] = useState<string | null>(null);
