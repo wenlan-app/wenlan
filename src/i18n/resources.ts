@@ -752,6 +752,14 @@ const en = {
     suggestedLabel: "Auto-created by an agent",
     viewAllEntities: "View all {{count}}",
   },
+  exampleWiki: {
+    label: "Example wiki",
+    title: "Team wiki: v2 launch",
+    line: "An example to look around in. Nothing here is yours.",
+    back: "Back to my wiki",
+    startOwn: "Start my own",
+    readOnly: "The example can't be changed. Start your own to write pages.",
+  },
   everydayUse: {
     title: "Day to day",
     lead: "These are all you need. Wenlan does the rest.",
@@ -3795,6 +3803,14 @@ const zhHans = {
     suggestedLabel: "由代理自动创建",
     viewAllEntities: "查看全部 {{count}} 个",
   },
+  exampleWiki: {
+    label: "范例 wiki",
+    title: "团队 wiki：v2 上线",
+    line: "让你随便看看的范例，这里的东西都不是你的。",
+    back: "回到我的 wiki",
+    startOwn: "开始建我自己的",
+    readOnly: "范例不能改。开始建自己的 wiki，就能写笔记了。",
+  },
   everydayUse: {
     title: "平常这样用",
     lead: "记得这三句就够了，其他交给文澜。",
@@ -6793,6 +6809,14 @@ const zhHant = {
     sourceCount_other: "{{count}} 個來源",
     suggestedLabel: "由代理自動建立",
     viewAllEntities: "檢視全部 {{count}} 個",
+  },
+  exampleWiki: {
+    label: "範例 wiki",
+    title: "團隊 wiki：v2 上線",
+    line: "讓你隨便看看的範例，這裡的東西都不是你的。",
+    back: "回到我的 wiki",
+    startOwn: "開始建我自己的",
+    readOnly: "範例不能改。開始建自己的 wiki，就能寫筆記了。",
   },
   everydayUse: {
     title: "平常這樣用",

@@ -303,7 +303,7 @@ describe("units", () => {
       params: { count: 10, done: 2, total: 10 },
     });
     expect(i18n.t("activityStatus.assetRunning.entities", { count: 10, done: 2, total: 10 })).toBe(
-      "2 of 10 memories scanned for entities",
+      "2 of 10 memories scanned for topics",
     );
   });
 
@@ -331,7 +331,7 @@ describe("units", () => {
     });
     const phrase = assetSentence(noModel, blocked);
     expect(i18n.t(phrase.key, phrase.params)).toBe(
-      "8 memories not yet scanned for entities",
+      "8 memories not yet scanned for topics",
     );
 
     const failed = assetSentence(activity(), {

@@ -5,6 +5,28 @@ import { useTranslation } from "react-i18next";
 import { X } from "@phosphor-icons/react";
 import "./tabIntro.css";
 
+/** Where the content area's middle is, so a line floating at its foot sits
+ *  centred on it rather than on the window. Shared with the example wiki's line. */
+export function useAreaCentre(areaRef: RefObject<HTMLElement | null>, active: boolean): number | null {
+  const [centre, setCentre] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const place = () => {
+      const rect = areaRef.current?.getBoundingClientRect();
+      setCentre(rect ? rect.left + rect.width / 2 : null);
+    };
+    place();
+    window.addEventListener("resize", place);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    if (areaRef.current) observer?.observe(areaRef.current);
+    return () => {
+      window.removeEventListener("resize", place);
+      observer?.disconnect();
+    };
+  }, [active, areaRef]);
+  return centre;
+}
+
 /** The tabs whose name alone does not say what is in them. */
 export type IntroTab = "memories" | "sources" | "topics" | "graph" | "spaces" | "activity";
 
@@ -100,22 +122,7 @@ export function TabIntro({ tab, newUser, areaRef }: {
   useEffect(() => {
     if (visible) displayed.current = true;
   }, [visible]);
-  const [centre, setCentre] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    if (!visible) return;
-    const place = () => {
-      const rect = areaRef.current?.getBoundingClientRect();
-      setCentre(rect ? rect.left + rect.width / 2 : null);
-    };
-    place();
-    window.addEventListener("resize", place);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
-    if (areaRef.current) observer?.observe(areaRef.current);
-    return () => {
-      window.removeEventListener("resize", place);
-      observer?.disconnect();
-    };
-  }, [visible, areaRef]);
+  const centre = useAreaCentre(areaRef, visible);
 
   if (!visible) return null;
   return createPortal(

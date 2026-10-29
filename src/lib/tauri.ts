@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { daemonStartupWait } from "./daemonStartup";
+import { exampleWikiActive } from "./exampleWiki/mode";
+import { exampleInvoke } from "./exampleWiki/invoke";
 import { KNOWN_CLIENT_DISPLAY_NAMES, resolveAgentDisplayName } from "./agents";
 import type {
   ApplyRepairRequest, PrepareRepairRequest, PrepareCurrentRepairRequest, RepairApplyReceipt, RepairLintQuery,
@@ -15,6 +17,8 @@ export { daemonMeetsFloor } from "./daemonVersion";
 // The arguments pass through exactly as given, so a call reads the same to
 // Tauri (and to tests that mock it) as it did before this wrapper existed.
 function invoke<T>(...call: Parameters<typeof tauriInvoke>): Promise<T> {
+  // The example wiki answers from its own data and never reaches the daemon.
+  if (exampleWikiActive()) return exampleInvoke<T>(call[0], call[1] as Record<string, unknown> | undefined);
   const wait = daemonStartupWait(call[0]);
   if (wait) return wait.then(() => tauriInvoke<T>(...call));
   return tauriInvoke<T>(...call);

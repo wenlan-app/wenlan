@@ -32,6 +32,8 @@ import type { SortMode } from "./MemoryStream";
 import { FirstUseGuide } from "../onboarding/FirstUseGuide";
 import { useGettingStartedState } from "../onboarding/useGettingStartedState";
 import { TabIntro, type IntroTab } from "../onboarding/TabIntro";
+import { ExampleWikiBanner, useExampleWikiSwitch } from "../onboarding/ExampleWikiBanner";
+import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
 import { SearchResults } from "./SearchResults";
@@ -296,6 +298,7 @@ export default function Main({
       primaryDraftIdentityByTab.current.set(primaryDraftTabKey, draftId);
     }
   }, [primaryDraftTabKey]);
+  const exampleWiki = useExampleWikiActive();
   const [viewHistory, setViewHistory] = useState<View[]>([]);
   const viewHistoryRef = useRef<View[]>([]);
   const [viewForward, setViewForward] = useState<View[]>([]);
@@ -306,6 +309,18 @@ export default function Main({
     setViewHistory(past);
     setViewForward(forward);
   };
+  // Opening or leaving the example wiki starts the workspace over, so no
+  // tab, split or step back leads from one wiki into the other.
+  const exampleWikiShown = useRef(exampleWiki);
+  useEffect(() => {
+    if (exampleWikiShown.current === exampleWiki) return;
+    exampleWikiShown.current = exampleWiki;
+    noteTabsRef.current = [];
+    setNoteTabs([]);
+    updateHistory([], []);
+    setSecondaryOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on the switch
+  }, [exampleWiki]);
   const dismissSearch = () => {
     pendingDraftSearchCancelRef.current?.();
     pendingDraftSearchCancelRef.current = null;
@@ -1005,6 +1020,7 @@ export default function Main({
   // Wiki a single column; see WikiWorkspace `directoryHidden`.
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
+  const exampleWikiSwitch = useExampleWikiSwitch();
   const liveDirectoryHidden = libraryEmpty
     || (gettingStarted.visible && !gettingStarted.dismissed);
   // Until both reads answer (they wait on the daemon at launch), keep the
@@ -1470,7 +1486,10 @@ export default function Main({
                 onSelectPage={(id) => navigateTo({ kind: "page", pageId: id, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
-                onSeeExample={() => navigateTo({ kind: "first-use" })}
+                onSeeExample={() => {
+                  exampleWikiSwitch.open();
+                  navigateTo({ kind: "pages" });
+                }}
                 onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
                 onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
@@ -1627,7 +1646,7 @@ export default function Main({
               onPageClick={(id) => navigateTo({ kind: "page", pageId: id })}
               onEntityClick={handleEntityClick}
               onSavePendingChange={reportPageSaving}
-              pageTour={gettingStarted.visible}
+              pageTour={gettingStarted.visible || exampleWiki}
             />
             </WikiWorkspace>
           ) : view.kind === "distill-review" ? (
@@ -1707,6 +1726,8 @@ export default function Main({
           )}
         </main>
       </div>
+      {/* While the example wiki is open, one line says so and leads back. */}
+      <ExampleWikiBanner onLeave={() => navigateTo({ kind: "pages" })} areaRef={mainContentRef} />
 
       {ownershipNotice && <div className="note-owner-notice" role="status">
         <span>{t(ownershipNotice.side === "secondary" ? "pages.groups.openInRight" : "pages.groups.openInCentral")}</span>

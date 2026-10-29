@@ -38,6 +38,7 @@ import ContentRenderer from "./ContentRenderer";
 import { DisclosureButton, PinIcon, RailPanelTitle } from "./MemoryDetailPrimitives";
 import { MemorySessionSource } from "./sessions/SessionSourceSection";
 import { formatRelativeEntityTime } from "./entity-detail/formatEntityMetadata";
+import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import "./memoryDetailReading.css";
 
 interface MemoryDetailProps {
@@ -135,6 +136,7 @@ export default function MemoryDetail({
   onNavigatePage,
 }: MemoryDetailProps) {
   const { t, i18n } = useTranslation();
+  const exampleWiki = useExampleWikiActive();
   const queryClient = useQueryClient();
   const [contentBusy, setContentBusy] = useState(false);
   const [revisionPending, setRevisionPending] = useState(false);
@@ -466,7 +468,7 @@ export default function MemoryDetail({
         {fetchedMemory !== null && <div className="memory-detail-actions">
           <InfoToggle ref={infoToggleRef} open={infoOpen} onClick={toggleInfo} />
 
-          <div
+          {!exampleWiki && <div
             className="page-detail-actions-anchor"
             ref={actionsRef}
           >
@@ -530,7 +532,7 @@ export default function MemoryDetail({
                 </button>
               </div>
             )}
-          </div>
+          </div>}
         </div>}
       </header>
 
@@ -541,7 +543,7 @@ export default function MemoryDetail({
           <div className="memory-detail-body-text"><ContentRenderer content={memory.content} structuredFields={memory.structured_fields} variant="detail" /></div>
         ) : (
           <MemoryDocumentEditor key={sourceId} memory={memory} canonical={fetchedMemory}
-            disabled={revisionPending || deleteMutation.isPending || confirmMutation.isPending}
+            disabled={exampleWiki || revisionPending || deleteMutation.isPending || confirmMutation.isPending}
             onBusyChange={setContentBusy} onRegisterFlush={registerContentFlush} />
         )}
         {revisionError ? <p role="alert">{t("infoActions.saveError")}</p> : null}

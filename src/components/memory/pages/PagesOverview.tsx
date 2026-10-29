@@ -10,6 +10,7 @@ import { EverydayUse } from "../../onboarding/EverydayUse";
 import { useGettingStartedState } from "../../onboarding/useGettingStartedState";
 import AddSourceMenu from "../sources/AddSourceMenu";
 import { takeStartIntent } from "../../onboarding/startIntent";
+import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { BasisUpdatesSummary } from "../page/BasisUpdatesSummary";
 import type { SourceContainerLocation } from "../sources/SourceContainer";
 import { NoteSuggestionsSummary } from "../sources/VaultNotes";
@@ -59,6 +60,7 @@ export function PagesOverview({
   useEffect(() => {
     const intent = takeStartIntent();
     if (intent === "empty") onCreatePage(null);
+    else if (intent === "material") setAdding("menu");
     else if (intent) setAdding(intent);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on arrival
   }, []);
@@ -84,7 +86,8 @@ export function PagesOverview({
   const open = gettingStarted !== null && checklist.visible && !checklist.dismissed;
   // Once the three steps are done, a still-new library gets the everyday
   // sentences, once, as an overlay.
-  const everyday = gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
+  const example = useExampleWikiActive();
+  const everyday = !example && gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
     ? <EverydayUse tool={writePages.tool} />
     : null;
   // While the open checklist is the screen's content the panel above it shrinks
@@ -122,7 +125,7 @@ export function PagesOverview({
           onUseLocalModel={onOpenIntelligence}
         />
       )}
-      <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />
+      {example ? null : <FirstPageMilestone pages={pages} onSelectPage={onSelectPage} />}
       {daemonReady && (
         <div className="wiki-reading-start-panel">
           <PageIcon className="wiki-reading-start-icon" size={32} />

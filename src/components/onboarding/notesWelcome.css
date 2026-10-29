@@ -56,25 +56,6 @@
   font-size: 13px;
 }
 
-.notes-welcome__main--sample {
-  display: block;
-}
-
-.notes-welcome__sample {
-  width: 100%;
-  max-width: 1000px;
-  margin: 0 auto;
-  font-family: var(--mem-font-body);
-}
-
-.notes-welcome__sample .fug-row {
-  flex-wrap: wrap;
-}
-
-.notes-welcome__sample .notes-welcome__error {
-  margin: 0 0 16px;
-}
-
 @media (max-height: 600px) {
   .notes-welcome__main {
     padding-block: 24px;

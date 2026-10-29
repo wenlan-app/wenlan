@@ -8,6 +8,7 @@ import {
   type Page,
 } from "../../lib/tauri";
 import { OWN_IDENTITY, toolFamilyOf } from "../../lib/agents";
+import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
 import { useLiveAgents } from "../connect/connectionState";
 import { useLibraryInventory } from "../memory/pages/useLibraryInventory";
 
@@ -167,6 +168,7 @@ export interface GettingStartedState {
 
 export function useGettingStartedState(): GettingStartedState {
   const { pages, ready } = useLibraryInventory();
+  const example = useExampleWikiActive();
   const established = libraryPagesForEstablished(pages).length >= ESTABLISHED_LIBRARY_PAGES;
   const checking = !established;
   const agentsQuery = useLiveAgents(undefined, checking);
@@ -183,6 +185,11 @@ export function useGettingStartedState(): GettingStartedState {
   const flags = { dismissed, setDismissed };
 
   const loaded = ready && agentsQuery.isSuccess && milestonesQuery.isSuccess;
+  // The example wiki is not the user's: no checklist over it, though its
+  // tips and first-visit lines still teach (they count as seen for later).
+  if (example) {
+    return { visible: false, progress: null, doneCount: 0, ...flags, pages, agents: [], loaded: true, newLibrary: true };
+  }
   if (!loaded || established) {
     return {
       visible: false,
