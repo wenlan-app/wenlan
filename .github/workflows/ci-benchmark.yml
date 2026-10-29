@@ -14,6 +14,11 @@ on:
           - p5-windows-drive
           - p6-release
           - all
+          - desktop-ab
+      desktop_source_sha:
+        description: Exact merged main SHA for non-publishing desktop A/B
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -621,6 +626,137 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: p6-release-${{ matrix.os }}-${{ matrix.profile }}-${{ matrix.cache_mode }}-${{ github.run_attempt }}
+          path: benchmark-receipts/
+          retention-days: 30
+          if-no-files-found: error
+
+  # Manual-only measurement; deliberately excluded from experiment=all.
+  desktop-ab:
+    name: Desktop A/B ${{ matrix.os }} ${{ matrix.order }}
+    if: inputs.experiment == 'desktop-ab'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            order: AB
+            python: python
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            order: BA
+            python: python
+          - os: macos-15
+            target: aarch64-apple-darwin
+            order: AB
+            python: python3
+          - os: macos-15
+            target: aarch64-apple-darwin
+            order: BA
+            python: python3
+    defaults:
+      run:
+        working-directory: product
+    env:
+      WENLAN_NO_AUTOSTART: "1"
+      BENCH_SOURCE_SHA: ${{ inputs.desktop_source_sha }}
+    steps:
+      - name: Checkout immutable measurement tools
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Checkout immutable merged product source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.desktop_source_sha }}
+          path: product
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master 2026-05-13
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: product/package.json
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+      - name: Record machine and measurement identity
+        shell: bash
+        env:
+          BENCH_CONTROL_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p ../benchmark-receipts
+          git rev-parse HEAD > ../benchmark-receipts/product-sha.txt
+          git -C ../control rev-parse HEAD > ../benchmark-receipts/control-sha.txt
+          rustc -vV > ../benchmark-receipts/rustc.txt
+          node --version > ../benchmark-receipts/node.txt
+          pnpm --version > ../benchmark-receipts/pnpm.txt
+      - name: Record Windows hardware and release linker inputs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @{cpu=@(Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors); os=Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory} |
+            ConvertTo-Json -Depth 5 | Set-Content ../benchmark-receipts/hardware.json
+          $gitBash = Join-Path $env:ProgramFiles 'Git/bin/bash.exe'
+          & $gitBash scripts/stabilize-rust-cache-toolchains.sh
+          if ($LASTEXITCODE -ne 0) { throw 'Toolchain stabilization failed' }
+          $sysroot = (rustc --print sysroot).Trim()
+          $lld = Join-Path $sysroot 'lib/rustlib/x86_64-pc-windows-msvc/bin/rust-lld.exe'
+          if (-not (Test-Path -LiteralPath $lld)) { throw 'rust-lld is missing' }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$lld" | Out-File $env:GITHUB_ENV -Append
+          "RUSTFLAGS=-C linker=$lld -C linker-flavor=lld-link" | Out-File $env:GITHUB_ENV -Append
+          $nativePerl = $null
+          foreach ($candidate in Get-Command perl.exe -CommandType Application -All) {
+            if ($candidate.Source -match '[\\/]Git[\\/]') { continue }
+            & $candidate.Source '-MLocale::Maketext::Simple' '-e' '1'
+            if ($LASTEXITCODE -eq 0) { $nativePerl = $candidate.Source; break }
+          }
+          if (-not $nativePerl) { throw 'Native Perl is missing' }
+          "OPENSSL_SRC_PERL=$nativePerl" | Out-File $env:GITHUB_ENV -Append
+      - name: Install Windows release prerequisites and stage verified DLLs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          vcpkg install sqlite3:x64-windows-static-md
+          if ($LASTEXITCODE -ne 0) { throw 'sqlite3 install failed' }
+          "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib;$env:LIB" | Out-File $env:GITHUB_ENV -Append
+          & scripts/setup-vulkan-sdk-windows.ps1
+          & scripts/setup-msvc-ninja-windows.ps1
+          & scripts/stage-onnxruntime-windows.ps1 -DestinationDirectory app/binaries
+          & scripts/stage-vulkan-loader-windows.ps1 -DestinationDirectory app/binaries
+      - name: Record macOS hardware
+        if: runner.os == 'macOS'
+        shell: bash
+        run: system_profiler SPHardwareDataType -json > ../benchmark-receipts/hardware.json
+      - name: Install locked frontend dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile
+      - name: Fetch locked Cargo dependencies outside timed region
+        run: cargo fetch --locked
+      - name: Prefetch checksum-verified native libraries and bundler tools
+        shell: bash
+        run: ${{ matrix.python }} ../control/scripts/desktop-build-benchmark.py prefetch --repo . --output ../benchmark-receipts
+      - name: Verify the measurement observer on this host
+        shell: bash
+        run: ${{ matrix.python }} ../control/scripts/desktop-build-benchmark.test.py -v
+      - name: Measure full local desktop builds without publishing
+        shell: bash
+        run: |
+          ${{ matrix.python }} ../control/scripts/desktop-build-benchmark.py \
+            --repo . --output ../benchmark-receipts --source-sha "$BENCH_SOURCE_SHA" \
+            --target '${{ matrix.target }}' --order '${{ matrix.order }}'
+      - name: Upload measurement receipts including failures
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: desktop-ab-${{ matrix.os }}-${{ matrix.order }}-${{ github.run_attempt }}
           path: benchmark-receipts/
           retention-days: 30
           if-no-files-found: error
