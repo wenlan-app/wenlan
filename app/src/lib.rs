@@ -1193,7 +1193,7 @@ pub fn run() {
                     WebviewUrl::App("index.html#quick-capture".into()),
                 )
                 .title("Quick Capture")
-                .inner_size(400.0, 160.0)
+                .inner_size(quick_capture::QC_WIDTH, quick_capture::QC_HEIGHT)
                 .decorations(false)
                 .transparent(true)
                 .skip_taskbar(true)

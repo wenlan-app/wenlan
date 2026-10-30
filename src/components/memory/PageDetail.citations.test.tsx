@@ -341,3 +341,93 @@ it("renders summary wikilinks as readable internal references, preserving aliase
   await user.click(link);
   expect(props.onPageClick).toHaveBeenCalledWith("page-2");
 });
+
+describe("PageDetail reading mode by page kind", () => {
+  const fence = "`".repeat(3);
+  const body = (title: string) => [
+    `# ${title}`,
+    "",
+    "First sentence stays put. See [[Related Page]] and [[Missing Page]] for more.",
+    "",
+    "| Name | Value |",
+    "| --- | --- |",
+    "| alpha | beta |",
+    "",
+    `${fence}md`,
+    "[[Related Page]] and a | b | c",
+    fence,
+    "",
+    "## Sources",
+    "My own bibliography, item [1].",
+  ].join("\n");
+  const links = { outbound: [{ label: "Related Page", target_page_id: "page-2" }], inbound: [] };
+
+  it("renders an authored page as written, with a title H1 dropped and unresolved links as labels", async () => {
+    tauriMocks.getPage.mockResolvedValue({
+      ...BASE_PAGE, creation_kind: "authored", citations: [], content: body("Cited Page"),
+    });
+    tauriMocks.getPageLinks.mockResolvedValue(links);
+    const { props, user } = renderPage();
+    const link = await screen.findByRole("link", { name: "Related Page" });
+    const reading = screen.getByTestId("page-document-reading");
+
+    // No pull quote: the first sentence reads in the body, where it was written.
+    expect(reading.querySelector(".page-detail-lede")).toBeNull();
+    expect(reading).toHaveTextContent("First sentence stays put.");
+    // The H1 repeating the title is the page heading; it is not shown twice.
+    expect(within(reading).queryByRole("heading", { name: "Cited Page" })).toBeNull();
+    // Tables, code and the writer's own Sources section stay as written.
+    expect(within(reading).getByRole("table")).toHaveTextContent("alphabeta");
+    expect(reading.querySelector("pre code")?.textContent).toBe("[[Related Page]] and a | b | c\n");
+    expect(within(reading).getByRole("heading", { name: "Sources", level: 2 })).toBeInTheDocument();
+    expect(reading).toHaveTextContent("My own bibliography, item [1].");
+    // An unresolved link reads as its label: no brackets, no link.
+    expect(reading).toHaveTextContent("See Related Page and Missing Page for more.");
+    expect(reading.textContent).not.toContain("[[Missing Page]]");
+    expect(within(reading).getAllByRole("link")).toHaveLength(1);
+    await user.click(link);
+    expect(props.onPageClick).toHaveBeenCalledWith("page-2");
+  });
+
+  it("keeps an authored first H1 that differs from the title", async () => {
+    tauriMocks.getPage.mockResolvedValue({
+      ...BASE_PAGE, creation_kind: "authored", citations: [], content: body("Another heading"),
+    });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Another heading", level: 1 })).toBeInTheDocument();
+  });
+
+  it("keeps the distilled reading: lede, chips, no H1, no Sources section, flattened pipes", async () => {
+    tauriMocks.getPage.mockResolvedValue({
+      ...BASE_PAGE,
+      creation_kind: "distilled",
+      content: [
+        "# Cited Page",
+        "",
+        "The daemon is local-first.[1] It uses libSQL.[2] See [[Missing Page]].",
+        "",
+        "| Name | Value |",
+        "",
+        "## Sources",
+        "- generated list",
+      ].join("\n"),
+    });
+    tauriMocks.getPageLinks.mockResolvedValue(links);
+    renderPage();
+    const lede = await waitForLede();
+    expect(lede).toHaveTextContent("The daemon is local-first.");
+    expect(within(lede).getByRole("button", { name: /Memory 1/ })).toBeInTheDocument();
+    const reading = screen.getByTestId("page-document-reading");
+    expect(screen.getByRole("button", { name: /Memory 2/ })).toBeInTheDocument();
+    expect(reading).toHaveTextContent("See Missing Page.");
+    expect(within(reading).queryByRole("heading", { name: "Cited Page" })).toBeNull();
+    expect(within(reading).queryByRole("heading", { name: "Sources" })).toBeNull();
+    expect(reading).not.toHaveTextContent("generated list");
+    expect(within(reading).queryByRole("table")).toBeNull();
+  });
+
+  async function waitForLede() {
+    await screen.findByRole("button", { name: /Memory 1/ });
+    return document.querySelector(".page-detail-lede") as HTMLElement;
+  }
+});

@@ -26,3 +26,17 @@ export function leadingMarkdownH1MatchesTitle(
   const normalizedHeading = normalizeTitle(heading);
   return Boolean(normalizedHeading) && normalizedHeading === normalizedTitle;
 }
+
+/**
+ * Reading view of a body without its first H1 when that heading repeats the
+ * page title (the page heading already shows it). Any other body, including
+ * one whose first H1 differs from the title, comes back unchanged.
+ */
+export function withoutLeadingTitleH1(source: string, title: string): string {
+  if (!leadingMarkdownH1MatchesTitle(source, title)) return source;
+  const withoutBom = source.startsWith("﻿") ? source.slice(1) : source;
+  return withoutBom.replace(
+    /^(?:[ \t]*(?:\r\n|\n|\r))*[ \t]{0,3}#[ \t]+[^\r\n]*(?:\r\n|\n|\r|$)/u,
+    "",
+  );
+}

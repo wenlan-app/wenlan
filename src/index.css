@@ -3866,6 +3866,34 @@ p.entity-error {
   padding: 0 !important;
   background-color: transparent !important;
 }
+/* A Markdown table someone wrote keeps its grid; a wide one scrolls inside
+   the reading column instead of widening the page. */
+.content-renderer table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 var(--content-para-gap, 0.75em);
+  color: var(--mem-text);
+  font-family: var(--mem-font-body);
+  font-size: var(--content-body-size, 14px);
+  line-height: var(--content-body-leading, 1.7);
+}
+.content-renderer th,
+.content-renderer td {
+  padding: 4px 12px;
+  border: 1px solid var(--mem-border);
+  vertical-align: top;
+}
+.content-renderer th {
+  background: var(--mem-hover);
+  font-weight: 600;
+}
+.content-renderer th:not([align]),
+.content-renderer td:not([align]) {
+  text-align: start;
+}
 
 /* Sidebar Activity button carries the global background state. The pulse fades gently only while
    steeping work can run, so the one moving thing on the page always means
@@ -4092,3 +4120,20 @@ p.entity-error {
 }
 .mem-toast-icon { display: flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-danger); }
 .mem-toast-icon svg { width: 14px; height: 14px; }
+
+/* Quick Capture: the Markdown editor scrolls inside the fixed window; state
+   lines sit between it and the bottom bar. */
+.quick-capture-editor { scrollbar-gutter: stable; }
+.quick-capture-note {
+  margin: 0 0 6px;
+  font: 11px/1.4 var(--mem-font-body);
+  color: var(--mem-text-tertiary);
+}
+.quick-capture-alert {
+  margin-top: 6px;
+  font: 11px/1.4 var(--mem-font-body);
+  color: var(--mem-status-danger-text);
+  overflow-wrap: anywhere;
+}
+.quick-capture-alert p { margin: 0; }
+.quick-capture-alert .quick-capture-alert-note { color: var(--mem-text-secondary); }

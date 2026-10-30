@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
-pub const QC_WIDTH: f64 = 400.0;
-pub const QC_HEIGHT: f64 = 160.0;
+pub const QC_WIDTH: f64 = 560.0;
+pub const QC_HEIGHT: f64 = 360.0;
 pub const QC_CORNER_PADDING: f64 = 16.0;
 pub const QC_OPENED_EVENT: &str = "quick-capture-opened";
 pub const QC_CLOSED_EVENT: &str = "quick-capture-closed";
@@ -104,8 +104,12 @@ fn position_bottom_right(win: &WebviewWindow) -> Result<(), String> {
             QC_CORNER_PADDING * scale,
         );
         let area = monitor.work_area();
-        let x = area.position.x as f64 + area.size.width as f64 - qw - pad;
-        let y = area.position.y as f64 + area.size.height as f64 - qh - pad;
+        // A short work area (a small screen at 150% or more) keeps the top
+        // edge, with the close button, on screen.
+        let x = (area.position.x as f64 + area.size.width as f64 - qw - pad)
+            .max(area.position.x as f64);
+        let y = (area.position.y as f64 + area.size.height as f64 - qh - pad)
+            .max(area.position.y as f64);
         win.set_size(tauri::PhysicalSize::new(
             qw.round() as u32,
             qh.round() as u32,
@@ -151,8 +155,10 @@ fn position_bottom_right(win: &WebviewWindow) -> Result<(), String> {
             win.set_size(LogicalSize::new(width, height))
                 .map_err(|e| e.to_string())?;
 
-            let x = visible.origin.x + visible.size.width - width - padding;
-            let y = screen_h - visible.origin.y - padding - height;
+            let x = (visible.origin.x + visible.size.width - width - padding).max(visible.origin.x);
+            // Top-left coordinates: keep the top edge below the menu bar.
+            let y = (screen_h - visible.origin.y - padding - height)
+                .max(screen_h - visible.origin.y - visible.size.height);
 
             log::debug!("[qc-pos] visible=({:.0},{:.0} {:.0}x{:.0}) screen_h={:.0} → size=({:.0},{:.0}) pos=({:.0},{:.0})",
                 visible.origin.x, visible.origin.y, visible.size.width, visible.size.height,

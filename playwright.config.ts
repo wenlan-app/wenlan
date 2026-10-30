@@ -42,7 +42,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `VITE_DISABLE_REACT_DEVTOOLS=1 pnpm exec vite --host 127.0.0.1 --port ${port} --strictPort`,
+    command: `pnpm exec vite --host 127.0.0.1 --port ${port} --strictPort`,
+    env: { VITE_DISABLE_REACT_DEVTOOLS: "1" },
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,
