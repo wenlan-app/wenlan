@@ -184,6 +184,10 @@ enum Outcome {
     Unchanged,
 }
 
+use crate::export::provenance::{
+    page_body_from_projection as projected_content, same_page_text_ignoring_save_noise,
+};
+
 async fn sync_one_file(
     db: &MemoryDB,
     relative: &str,
@@ -192,7 +196,7 @@ async fn sync_one_file(
     lock_my_pages: bool,
 ) -> Result<Outcome, WenlanError> {
     let (raw, _) = crate::export::knowledge::read_knowledge_markdown(knowledge_path, relative)?;
-    let (fm, body) = obsidian::extract_frontmatter(&raw);
+    let (fm, _) = obsidian::extract_frontmatter(&raw);
     let page_id = match fm.get_str("origin_id") {
         Some(s) if !s.trim().is_empty() => s.trim().to_string(),
         _ => return Ok(Outcome::SkippedNoOriginId),
@@ -217,21 +221,30 @@ async fn sync_one_file(
         return Ok(Outcome::SkippedDaemonAhead { page_id });
     }
 
-    // Strip the export-only delimiter Sources block from BOTH sides before
-    // the diff. The projected file always carries the generated block while
-    // Page.content never does; a raw compare would mark every page
+    // Decode BOTH sides with the projection's own envelope decoder: it drops
+    // the writer-owned separators and the export-only Sources block (which
+    // the projected file always carries and Page.content never does) and
+    // keeps every authored byte. Comparing against a fresh render of the DB
+    // row, link conversion included, means a fresh export is never mistaken
+    // for an external edit; a raw compare would mark every page
     // user_edited on the first tick and lock the refinery out.
-    let body_norm = crate::export::provenance::canonicalize_page_body(body);
-    let db_norm = crate::export::provenance::canonicalize_page_body(&existing.content);
-    if body_norm == db_norm {
-        // Canonicalized prose is identical, but the raw bytes may differ
-        // (user touched the protected Sources block). If so, re-project from
-        // DB truth so the file stops lying about its sources; otherwise it
-        // really is unchanged.
-        let raw_body = body.trim_end_matches('\n');
-        let fresh = crate::export::knowledge::render_markdown_for(&existing);
-        let (_, fresh_body) = obsidian::extract_frontmatter(&fresh);
-        if raw_body != fresh_body.trim_end_matches('\n') {
+    let body_norm = projected_content(&raw);
+    let fresh = crate::export::knowledge::render_markdown_for(&existing);
+    // Line endings and whitespace after the last visible character are what
+    // an editor changes on save without the author typing (see
+    // `same_page_text_ignoring_save_noise`); they are not a human edit.
+    // Indentation, leading blank lines and inner trailing spaces are.
+    if same_page_text_ignoring_save_noise(&body_norm, &projected_content(&fresh)) {
+        // The page text is unchanged, but the file's body bytes may still
+        // differ from what Wenlan writes: the user touched the protected
+        // Sources block, or an editor rewrote line endings or trailing
+        // whitespace. Re-project from DB truth so the file stops lying about
+        // its sources and holds the bytes the writer recorded. The writer
+        // accepts replacing such a file because its `adopted` check uses the
+        // same save-noise rule. Frontmatter-only differences are left alone.
+        let on_disk = obsidian::split_frontmatter_untrimmed(&raw).map(|(_, body)| body);
+        let projected = obsidian::split_frontmatter_untrimmed(&fresh).map(|(_, body)| body);
+        if on_disk != projected {
             let writer =
                 crate::export::knowledge::KnowledgeWriter::new(knowledge_path.to_path_buf(), db);
             // Only re-project if the writer already maps this page to a file (state
@@ -408,6 +421,362 @@ mod tests {
         }
     }
 
+    #[test]
+    fn projection_decoder_preserves_authored_boundaries_with_or_without_sources() {
+        let bodies = [
+            "\n\n# A note\n\ntext  \nnext\n\n",
+            "    indented code\n    second line\n\n",
+            "a final Markdown hard break  ",
+            "\u{feff}\r\n  mixed-line-ending source\t \r\n\r\n",
+        ];
+        for body in bodies {
+            for sources in [vec![], vec!["mem_seed".to_string()]] {
+                let mut page = sample_page("page_exact", "Exact", body);
+                page.source_memory_ids = sources;
+                let projected = crate::export::knowledge::render_markdown_for(&page);
+                assert_eq!(projected_content(&projected), body);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn published_body_survives_projection_readback_exactly() {
+        use crate::pages::PageDraftPublishOutcome;
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        for (index, body) in [
+            "\n\n# A note\n\ntext  \nnext\n\n",
+            "    indented code\n    second line\n\n",
+            "a final Markdown hard break  ",
+            "\u{feff}\r\n  mixed-line-ending source\t \r\n\r\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let title = format!("  Exact publish {index}  ");
+            let draft = db
+                .create_page_draft(&title, body, None, None)
+                .await
+                .unwrap();
+            let PageDraftPublishOutcome::Published(published) = db
+                .publish_page_draft(&draft.id, draft.version)
+                .await
+                .unwrap()
+            else {
+                panic!("draft must publish");
+            };
+            assert_eq!(published.title, title.trim());
+            assert_eq!(published.content, body);
+            let filename = project_page(&db, &writer, &published);
+            // This is the same read-back invoked when GET /api/pages/{id}
+            // opens a newly published Page, not just a direct DB assertion.
+            assert!(
+                !sync_page_file_if_changed(&db, knowledge_dir.path(), &published.id)
+                    .await
+                    .unwrap()
+            );
+            let after = db.get_page(&published.id).await.unwrap().unwrap();
+            assert_eq!(after.content, body);
+            assert_eq!(
+                after.version, published.version,
+                "fresh projection must not create an fs_edit"
+            );
+            assert_eq!(
+                std::fs::read_to_string(knowledge_dir.path().join(filename)).unwrap(),
+                crate::export::knowledge::render_markdown_for(&published)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn external_prose_edit_preserves_authored_boundaries_and_remains_stable() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let before = "\n\n    original code\n\nLast line  \n\n";
+        let edited = "\n\n    changed code\n\nLast line  \n\n\n";
+        for (index, source_ids) in [vec![], vec!["mem_seed"]].into_iter().enumerate() {
+            let id = format!("page_external_exact_{index}");
+            db.insert_page(
+                &id,
+                &format!("External exact {index}"),
+                None,
+                before,
+                None,
+                None,
+                &source_ids,
+                &chrono::Utc::now().to_rfc3339(),
+            )
+            .await
+            .unwrap();
+            let page = db.get_page(&id).await.unwrap().unwrap();
+            project_page(&db, &writer, &page);
+            let filename = writer.page_filename(&id).expect("projected relative path");
+            let path = knowledge_dir.path().join(&filename);
+            let projected = std::fs::read_to_string(&path).unwrap();
+            assert!(projected.contains(before));
+            std::fs::write(&path, projected.replacen(before, edited, 1)).unwrap();
+            let stats = sync_filesystem_edits_in(
+                &db,
+                knowledge_dir.path(),
+                false,
+                std::slice::from_ref(&filename),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                stats.applied, 1,
+                "external authored edit must be applied: {stats:?}"
+            );
+            let after = db.get_page(&id).await.unwrap().unwrap();
+            assert_eq!(after.content, edited);
+            assert_eq!(after.source_memory_ids, page.source_memory_ids);
+            assert_eq!(after.version, page.version + 1);
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, &[filename])
+                .await
+                .unwrap();
+            assert_eq!(stats.applied, 0, "reprojection must stabilize: {stats:?}");
+            assert_eq!(db.get_page(&id).await.unwrap().unwrap().content, edited);
+        }
+    }
+
+    async fn insert_projected_page(
+        db: &MemoryDB,
+        writer: &KnowledgeWriter,
+        id: &str,
+        body: &str,
+        source_ids: &[&str],
+    ) -> (Page, String) {
+        db.insert_page(
+            id,
+            &format!("Title {id}"),
+            None,
+            body,
+            None,
+            None,
+            source_ids,
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .await
+        .unwrap();
+        let page = db.get_page(id).await.unwrap().unwrap();
+        project_page(db, writer, &page);
+        let filename = writer.page_filename(id).expect("projected relative path");
+        (page, filename)
+    }
+
+    /// What an editor does when it rewrites every line ending of a file.
+    fn to_crlf(text: &str) -> String {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    }
+
+    /// Editors change line endings and end-of-file whitespace on save without
+    /// the author typing anything. None of that may version the page, flip
+    /// `user_edited`, or lock it for review; the file goes back to the exact
+    /// bytes Wenlan writes, so the writer's recorded digest matches again.
+    #[tokio::test]
+    async fn editor_save_noise_is_not_a_human_edit() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let bodies = [
+            "\n\n    indented code\n\nLast line  \n\n",
+            "a final Markdown hard break  ",
+            "line one\r\nline two with a CRLF the author typed\r\n",
+        ];
+        type Noise = (&'static str, fn(&str) -> String);
+        let noises: [Noise; 6] = [
+            ("appended final newline", |file| format!("{file}\n")),
+            ("two appended newlines", |file| format!("{file}\n\n")),
+            ("final newline removed", |file| {
+                file.trim_end_matches('\n').to_string()
+            }),
+            ("whitespace at end of file trimmed", |file| {
+                format!("{}\n", file.trim_end())
+            }),
+            ("whole file converted to CRLF", to_crlf),
+            ("CRLF plus appended newline", |file| {
+                to_crlf(&format!("{file}\n"))
+            }),
+        ];
+        let mut case = 0;
+        for body in bodies {
+            for source_ids in [vec![], vec!["mem_seed"]] {
+                for (noise, apply) in noises {
+                    case += 1;
+                    let id = format!("page_noise_{case}");
+                    let (page, filename) =
+                        insert_projected_page(&db, &writer, &id, body, &source_ids).await;
+                    let path = knowledge_dir.path().join(&filename);
+                    let projected = std::fs::read_to_string(&path).unwrap();
+                    std::fs::write(&path, apply(&projected)).unwrap();
+                    let stats = sync_filesystem_edits_in(
+                        &db,
+                        knowledge_dir.path(),
+                        true,
+                        std::slice::from_ref(&filename),
+                    )
+                    .await
+                    .unwrap();
+                    let context = format!("{noise} on {body:?} with sources {source_ids:?}");
+                    assert_eq!(
+                        (stats.applied, stats.skipped_unchanged, stats.errors),
+                        (0, 1, 0),
+                        "{context}: {stats:?}"
+                    );
+                    let after = db.get_page(&id).await.unwrap().unwrap();
+                    assert_eq!(after.content, body, "{context}");
+                    assert_eq!(after.version, page.version, "{context}");
+                    assert!(!after.user_edited, "{context}");
+                    assert!(!after.review_required, "{context}: page was locked");
+                    assert_eq!(
+                        std::fs::read_to_string(&path).unwrap(),
+                        projected,
+                        "{context}: file must be re-projected to Wenlan's bytes"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A file an editor saved with CRLF (or that Git checked out with
+    /// `autocrlf`) still carries real edits. They are applied once, read back
+    /// with LF because the CRLF is the editor's and not the author's, and the
+    /// writer accepts the CRLF file as holding the new text, so the file gets
+    /// the new version stamp instead of trailing the DB.
+    #[tokio::test]
+    async fn crlf_file_with_a_real_edit_is_applied_once_and_reprojected() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let before = "\n\n    original code\n\nLast line  \n";
+        let edited = "\n\n    changed code\n\nLast line  \n";
+        for (index, source_ids) in [vec![], vec!["mem_seed"]].into_iter().enumerate() {
+            let id = format!("page_crlf_edit_{index}");
+            let (page, filename) =
+                insert_projected_page(&db, &writer, &id, before, &source_ids).await;
+            let path = knowledge_dir.path().join(&filename);
+            let projected = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, to_crlf(&projected.replacen(before, edited, 1))).unwrap();
+            let changed = std::slice::from_ref(&filename);
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, changed)
+                .await
+                .unwrap();
+            assert_eq!(stats.applied, 1, "{stats:?}");
+            let after = db.get_page(&id).await.unwrap().unwrap();
+            assert_eq!(after.content, edited);
+            assert_eq!(after.version, page.version + 1);
+            assert!(after.user_edited);
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                crate::export::knowledge::render_markdown_for(&after),
+                "the edited file must be re-projected with the new version"
+            );
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, changed)
+                .await
+                .unwrap();
+            assert_eq!(
+                (stats.applied, stats.skipped_unchanged),
+                (0, 1),
+                "{stats:?}"
+            );
+        }
+    }
+
+    /// The other side of the save-noise rule: whitespace that changes what
+    /// the Markdown renders is the author's edit and is kept byte for byte,
+    /// including the first-human-edit lock.
+    #[tokio::test]
+    async fn whitespace_edits_that_change_the_markdown_are_human_edits() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let before = "intro\n\nfirst\nsecond\n";
+        let edits = [
+            (
+                "indented into a code block",
+                "intro\n\n    first\n    second\n",
+            ),
+            ("leading blank lines", "\n\nintro\n\nfirst\nsecond\n"),
+            ("hard line break", "intro\n\nfirst  \nsecond\n"),
+            ("paragraph split", "intro\n\nfirst\n\nsecond\n"),
+            ("tab indentation", "intro\n\n\tfirst\nsecond\n"),
+        ];
+        for (index, (edit, edited)) in edits.into_iter().enumerate() {
+            for source_ids in [vec![], vec!["mem_seed"]] {
+                let id = format!("page_ws_edit_{index}_{}", source_ids.len());
+                let (page, filename) =
+                    insert_projected_page(&db, &writer, &id, before, &source_ids).await;
+                let path = knowledge_dir.path().join(&filename);
+                let projected = std::fs::read_to_string(&path).unwrap();
+                std::fs::write(&path, projected.replacen(before, edited, 1)).unwrap();
+                let stats = sync_filesystem_edits_in(
+                    &db,
+                    knowledge_dir.path(),
+                    true,
+                    std::slice::from_ref(&filename),
+                )
+                .await
+                .unwrap();
+                assert_eq!(stats.applied, 1, "{edit}: {stats:?}");
+                let after = db.get_page(&id).await.unwrap().unwrap();
+                assert_eq!(after.content, edited, "{edit}");
+                assert_eq!(after.version, page.version + 1, "{edit}");
+                assert!(after.user_edited, "{edit}");
+                assert!(after.review_required, "{edit}: first human edit locks");
+            }
+        }
+    }
+
+    /// After save noise the file is not byte-for-byte Wenlan's, and the writer
+    /// refuses to replace a file holding an external edit. It must still
+    /// accept this one (same save-noise rule), or the file would trail the DB
+    /// version and the watcher would skip every later edit to it.
+    #[tokio::test]
+    async fn daemon_write_after_save_noise_still_reaches_the_file() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        for (index, source_ids) in [vec![], vec!["mem_seed"]].into_iter().enumerate() {
+            let id = format!("page_noise_then_write_{index}");
+            let (_, filename) =
+                insert_projected_page(&db, &writer, &id, "body text\n", &source_ids).await;
+            let path = knowledge_dir.path().join(&filename);
+            let projected = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, to_crlf(&format!("{projected}\n"))).unwrap();
+            sync_filesystem_edits_in(
+                &db,
+                knowledge_dir.path(),
+                false,
+                std::slice::from_ref(&filename),
+            )
+            .await
+            .unwrap();
+            let req = wenlan_types::requests::UpdatePageRequest {
+                content: "rewritten in the app".to_string(),
+                source_memory_ids: Vec::new(),
+                expected_version: None,
+                caller_id: None,
+                operation_id: None,
+            };
+            crate::post_write::update_page_preserving_sources(
+                &db,
+                &id,
+                req,
+                "manual_edit",
+                Some(knowledge_dir.path()),
+            )
+            .await
+            .unwrap();
+            let after = db.get_page(&id).await.unwrap().unwrap();
+            assert_eq!(after.content, "rewritten in the app");
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                crate::export::knowledge::render_markdown_for(&after)
+            );
+        }
+    }
     #[tokio::test]
     async fn applies_user_edit_when_md_body_differs() {
         let (db, _ddir) = fresh_db().await;
