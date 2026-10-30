@@ -18,9 +18,11 @@ pub(crate) fn is_setup_probe_agent(agent: &str) -> bool {
 }
 
 /// Evaluates onboarding milestones at well-defined callsites. Each `check_*`
-/// method is idempotent — it delegates to `MemoryDB::record_milestone` which
-/// is an `INSERT ... ON CONFLICT DO NOTHING`, so milestones fire exactly once
-/// even if the callsite runs many times. On first fire, the evaluator emits
+/// method is idempotent — it delegates to `MemoryDB::record_milestone`, an
+/// `INSERT ... ON CONFLICT` that keeps the first row, so milestones fire
+/// exactly once even if the callsite runs many times. The one exception is a
+/// `first-memory` row that an older build recorded for the setup probe: the
+/// first real memory replaces it, once. On first fire, the evaluator emits
 /// an `onboarding-milestone` event with the serialized `MilestoneRecord` as
 /// payload so the UI can toast it.
 ///
@@ -342,6 +344,44 @@ mod tests {
         assert_eq!(fires.len(), 1, "two real agents fire second-agent");
         assert!(fires[0].1.contains("second-agent"));
         assert!(fires[0].1.contains("cursor"));
+    }
+
+    #[tokio::test]
+    async fn legacy_setup_first_memory_is_hidden_and_replaced_only_once() {
+        let (db, _tmp) = crate::db::tests::test_db().await;
+        db.record_milestone(
+            MilestoneId::FirstMemory,
+            Some(serde_json::json!({
+                "source": SETUP_PROBE_AGENT, "memory_id": "old-probe", "preview": "setup check"
+            })),
+        )
+        .await
+        .unwrap();
+        db.acknowledge_milestone(MilestoneId::FirstMemory)
+            .await
+            .unwrap();
+        db.record_milestone(MilestoneId::IntelligenceReady, None)
+            .await
+            .unwrap();
+        assert_eq!(db.list_milestones().await.unwrap().len(), 1);
+
+        let emitter = Arc::new(CapturingEmitter::new());
+        let ev = MilestoneEvaluator::new(&db, emitter.clone());
+        ev.check_after_ingest("actual-first", "claude")
+            .await
+            .unwrap();
+        ev.check_after_ingest("actual-second", "cursor")
+            .await
+            .unwrap();
+        let milestones = db.list_milestones().await.unwrap();
+        assert_eq!(milestones.len(), 2);
+        let first = milestones
+            .iter()
+            .find(|m| m.id == MilestoneId::FirstMemory)
+            .unwrap();
+        assert!(first.acknowledged_at.is_none());
+        assert_eq!(first.payload.as_ref().unwrap()["memory_id"], "actual-first");
+        assert_eq!(emitter.events.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
