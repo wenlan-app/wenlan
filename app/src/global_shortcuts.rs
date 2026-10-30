@@ -37,6 +37,290 @@
 use serde::Serialize;
 use tauri_plugin_global_shortcut::Shortcut;
 
+// Kept independent of Tauri so the cross-window state has a small unit-test lane.
+mod editor_composition {
+    use std::sync::{Mutex, MutexGuard};
+    use std::time::{Duration, Instant};
+
+    /// A composition that has not been reported for this long is treated as
+    /// lost, so a missed `compositionend` cannot keep every global hotkey dead
+    /// for the rest of the session. The webview re-reports a live composition
+    /// every 10 s while it is typed into (`src/lib/inputComposition.ts`), so a
+    /// long Bopomofo phrase is not cut off.
+    pub const STALE_AFTER: Duration = Duration::from_secs(30);
+
+    /// The windows that host an editor, each with its own slot.
+    const EDITOR_WINDOWS: [&str; 2] = ["main", "quick-capture"];
+
+    /// Why a reported composition stopped blocking shortcuts without its
+    /// window reporting the end.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Released {
+        /// The window is no longer focused. WebView2 and WebKit finish the
+        /// composition when the webview loses focus, so it cannot still be
+        /// receiving keys.
+        Unfocused,
+        /// Nothing was reported for [`STALE_AFTER`].
+        Stale,
+    }
+
+    /// Which editor windows have an IME composition in progress, and when each
+    /// last said so. While one does, global hotkeys wait, so a hotkey cannot
+    /// steal focus or hide the window under a preedit the user is choosing.
+    #[derive(Default)]
+    pub struct EditorCompositionGuard(Mutex<[Option<Instant>; EDITOR_WINDOWS.len()]>);
+
+    impl EditorCompositionGuard {
+        fn slot(label: &str) -> Option<usize> {
+            EDITOR_WINDOWS.iter().position(|window| *window == label)
+        }
+
+        fn slots(&self) -> MutexGuard<'_, [Option<Instant>; EDITOR_WINDOWS.len()]> {
+            // The state is a plain array: a panic elsewhere cannot leave it half-written.
+            self.0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }
+
+        pub fn set_window_composing(
+            &self,
+            label: &str,
+            active: bool,
+            now: Instant,
+        ) -> Result<(), String> {
+            let slot = Self::slot(label)
+                .ok_or_else(|| "Only editor windows can report composition".to_string())?;
+            self.slots()[slot] = active.then_some(now);
+            Ok(())
+        }
+
+        /// Whether a global hotkey pressed at `now` must be ignored. A window's
+        /// composition counts only while that window is focused and has
+        /// reported within [`STALE_AFTER`]; any other is released here and
+        /// returned so the caller can log it.
+        pub fn blocks_shortcuts(
+            &self,
+            now: Instant,
+            is_focused: impl Fn(&str) -> bool,
+        ) -> (bool, Vec<(&'static str, Released)>) {
+            // Snapshot first: `is_focused` may wait on the window's thread, and
+            // must not do so while holding the lock a report needs.
+            let reported = *self.slots();
+            let mut blocks = false;
+            let mut released = Vec::new();
+            for (slot, label) in EDITOR_WINDOWS.iter().enumerate() {
+                let Some(at) = reported[slot] else { continue };
+                let reason = if now.saturating_duration_since(at) >= STALE_AFTER {
+                    Released::Stale
+                } else if !is_focused(label) {
+                    Released::Unfocused
+                } else {
+                    blocks = true;
+                    continue;
+                };
+                let mut slots = self.slots();
+                // A newer report made meanwhile is a live composition; keep it.
+                if slots[slot] == Some(at) {
+                    slots[slot] = None;
+                    released.push((*label, reason));
+                } else if slots[slot].is_some() {
+                    blocks = true;
+                }
+            }
+            (blocks, released)
+        }
+
+        pub fn clear_window(&self, label: &str) {
+            if let Some(slot) = Self::slot(label) {
+                self.slots()[slot] = None;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn focused(_: &str) -> bool {
+            true
+        }
+
+        fn blocks(guard: &EditorCompositionGuard, now: Instant) -> bool {
+            guard.blocks_shortcuts(now, focused).0
+        }
+
+        #[test]
+        fn either_editor_blocks_until_its_composition_ends() {
+            let now = Instant::now();
+            for label in EDITOR_WINDOWS {
+                let guard = EditorCompositionGuard::default();
+                assert!(!blocks(&guard, now));
+                guard.set_window_composing(label, true, now).unwrap();
+                assert!(blocks(&guard, now));
+                guard.set_window_composing(label, false, now).unwrap();
+                assert!(!blocks(&guard, now));
+            }
+        }
+
+        #[test]
+        fn one_window_cannot_release_the_other_windows_composition() {
+            let now = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true, now).unwrap();
+            guard
+                .set_window_composing("quick-capture", false, now)
+                .unwrap();
+            assert!(blocks(&guard, now));
+            guard
+                .set_window_composing("quick-capture", true, now)
+                .unwrap();
+            guard.set_window_composing("main", false, now).unwrap();
+            assert!(blocks(&guard, now));
+            guard
+                .set_window_composing("quick-capture", false, now)
+                .unwrap();
+            assert!(!blocks(&guard, now));
+        }
+
+        #[test]
+        fn unknown_window_cannot_set_or_clear_editor_state() {
+            let now = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            for label in ["", "toast", "tray-panel", "MAIN", "main/quick-capture"] {
+                assert!(guard.set_window_composing(label, true, now).is_err());
+                assert!(!blocks(&guard, now));
+            }
+            guard.set_window_composing("main", true, now).unwrap();
+            assert!(guard.set_window_composing("toast", false, now).is_err());
+            guard.clear_window("toast");
+            assert!(blocks(&guard, now));
+        }
+
+        #[test]
+        fn closing_a_window_clears_only_that_editor() {
+            let now = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true, now).unwrap();
+            guard
+                .set_window_composing("quick-capture", true, now)
+                .unwrap();
+            guard.clear_window("main");
+            assert!(blocks(&guard, now));
+            guard.clear_window("quick-capture");
+            assert!(!blocks(&guard, now));
+        }
+
+        #[test]
+        fn duplicate_notifications_are_idempotent_and_a_closed_label_can_reopen() {
+            let now = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true, now).unwrap();
+            guard.set_window_composing("main", true, now).unwrap();
+            guard.set_window_composing("main", false, now).unwrap();
+            assert!(!blocks(&guard, now));
+            guard.set_window_composing("main", true, now).unwrap();
+            guard.clear_window("main");
+            guard.clear_window("main");
+            assert!(!blocks(&guard, now));
+            guard.set_window_composing("main", true, now).unwrap();
+            assert!(blocks(&guard, now));
+        }
+
+        #[test]
+        fn a_composition_whose_window_lost_focus_is_released() {
+            // Alt+Tab away mid-composition and the end is never delivered:
+            // the next hotkey must work, and stays working after focus returns.
+            let now = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true, now).unwrap();
+            guard
+                .set_window_composing("quick-capture", true, now)
+                .unwrap();
+            let (blocked, released) = guard.blocks_shortcuts(now, |label| label == "quick-capture");
+            assert!(
+                blocked,
+                "the focused quick-capture composition still counts"
+            );
+            assert_eq!(released, vec![("main", Released::Unfocused)]);
+            guard
+                .set_window_composing("quick-capture", false, now)
+                .unwrap();
+            assert_eq!(guard.blocks_shortcuts(now, focused), (false, vec![]));
+        }
+
+        #[test]
+        fn a_composition_not_reported_within_the_bound_is_released() {
+            let start = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true, start).unwrap();
+            let almost = start + STALE_AFTER - Duration::from_millis(1);
+            assert_eq!(guard.blocks_shortcuts(almost, focused), (true, vec![]));
+            let (blocked, released) = guard.blocks_shortcuts(start + STALE_AFTER, focused);
+            assert!(!blocked);
+            assert_eq!(released, vec![("main", Released::Stale)]);
+            assert!(!blocks(&guard, start + STALE_AFTER));
+        }
+
+        #[test]
+        fn a_re_report_keeps_a_long_composition_blocking() {
+            let start = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true, start).unwrap();
+            let heartbeat = start + Duration::from_secs(20);
+            guard.set_window_composing("main", true, heartbeat).unwrap();
+            assert!(blocks(&guard, start + Duration::from_secs(45)));
+            assert!(!blocks(&guard, heartbeat + STALE_AFTER));
+        }
+
+        #[test]
+        fn focus_is_only_queried_for_a_window_that_reported_composition() {
+            let now = Instant::now();
+            let guard = EditorCompositionGuard::default();
+            let asked = std::cell::RefCell::new(Vec::new());
+            let (blocked, _) = guard.blocks_shortcuts(now, |label| {
+                asked.borrow_mut().push(label.to_string());
+                true
+            });
+            assert!(!blocked);
+            assert!(asked.borrow().is_empty());
+        }
+    }
+}
+
+pub use editor_composition::EditorCompositionGuard;
+
+/// The caller's injected window identity owns its slot; no label is accepted
+/// from the frontend payload.
+#[tauri::command]
+pub fn set_editor_composing(
+    window: tauri::WebviewWindow,
+    guard: tauri::State<'_, EditorCompositionGuard>,
+    active: bool,
+) -> Result<(), String> {
+    guard.set_window_composing(window.label(), active, std::time::Instant::now())
+}
+
+/// Whether a global hotkey pressed now must be ignored because an editor
+/// window is composing. Logs any composition released because its window lost
+/// focus or stopped reporting.
+pub fn composition_blocks_shortcuts(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let (blocks, released) = app.state::<EditorCompositionGuard>().blocks_shortcuts(
+        std::time::Instant::now(),
+        |label| {
+            app.get_webview_window(label)
+                .and_then(|window| window.is_focused().ok())
+                .unwrap_or(false)
+        },
+    );
+    for (label, reason) in released {
+        log::warn!(
+            "[shortcuts] released the {label} window's IME composition guard ({reason:?}); its compositionend never arrived"
+        );
+    }
+    blocks
+}
+
 /// Which of the app's shortcuts a spec is. An id rather than a comparison
 /// against the parsed `Shortcut`, so a shortcut that failed to register (and
 /// therefore has no parsed value to compare against) is still nameable.

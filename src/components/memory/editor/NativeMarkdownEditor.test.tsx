@@ -207,6 +207,20 @@ describe("NativeMarkdownEditor", () => {
     );
   });
 
+  it("leaves the IME's own keydown (before compositionstart) to the IME", () => {
+    const onSave = vi.fn();
+    const onCancel = vi.fn();
+    render(<NativeMarkdownEditor {...baseProps({ onSave, onCancel })} />);
+    const textbox = screen.getByRole("textbox");
+    fireEvent.keyDown(textbox, { key: "Enter", ctrlKey: true, keyCode: 229 });
+    fireEvent.keyDown(textbox, { key: "Escape", isComposing: true });
+    const save = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "s", ctrlKey: true, isComposing: true });
+    textbox.dispatchEvent(save);
+    expect(save.defaultPrevented).toBe(true);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
   it("updates disabled and accessibility attributes and focuses through its handle", () => {
     const ref = createRef<MarkdownEditorHandle>();
     const { rerender } = render(<NativeMarkdownEditor ref={ref} {...baseProps()} />);

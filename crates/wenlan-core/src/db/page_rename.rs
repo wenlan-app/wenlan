@@ -583,7 +583,7 @@ async fn snapshot_page_review(
     }))
 }
 
-fn validate_page_title(title: &str) -> Result<String, WenlanError> {
+pub(super) fn validate_page_title(title: &str) -> Result<String, WenlanError> {
     let trimmed = title.trim();
     let count = trimmed.chars().count();
     if count == 0 || count > PAGE_TITLE_MAX_CHARS || trimmed.chars().any(char::is_control) {

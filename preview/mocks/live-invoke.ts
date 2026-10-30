@@ -4,7 +4,8 @@
 // Commands with no daemon route get app-local defaults; unknown ones warn.
 
 import { daemonMeetsFloor } from "../../src/lib/daemonVersion";
-import type { RenamePageResponse } from "../../src/lib/tauri";
+import type { RenamePageResponse, RestorePageResponse } from "../../src/lib/tauri";
+import { restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 
 type Args = Record<string, unknown> | undefined;
 const PAGE_EDIT_DAEMON_FLOOR = "0.14.1";
@@ -473,6 +474,19 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
       title: String(a.title),
       expected_version: Number(a.expectedVersion),
     }),
+  restore_page: async (a): Promise<RestorePageResponse> => {
+    const id = String(a.id);
+    const local = PREVIEW_AUTHORED_PAGES.get(id);
+    if (local) {
+      const restored = restoreFixturePage(local, [...PREVIEW_AUTHORED_PAGES.values()], a.expectedVersion, a.title);
+      PREVIEW_AUTHORED_PAGES.set(id, restored.page);
+      return restored.response;
+    }
+    return post(`/api/pages/${enc(id)}/restore`, {
+      expected_version: a.expectedVersion,
+      title: a.title ?? null,
+    }, EXPLICIT_BROWSE_HEADERS);
+  },
   page_move: (a) => {
     if (PREVIEW_AUTHORED_PAGES.has(String(a.id))) {
       return Promise.reject(new Error(
@@ -1260,6 +1274,7 @@ export const DEFAULTS: Record<string, unknown> = {
   // wrong keys where the Rust command returns a struct doesn't just render empty —
   // it white-screens the step (RemoteAccessPanel reads status.status unguarded).
   set_traffic_lights_visible: null,
+  set_editor_composing: null,
   // No wenlan://pair link can reach a browser preview.
   take_remote_pairing_link: null,
   // Web access never runs in a browser preview, so it cannot stop on its own.

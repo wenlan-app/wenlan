@@ -2520,14 +2520,48 @@ pub async fn delete_bulk(
 
 // ── Quick capture / ingest ────────────────────────────────────────────
 
+fn quick_capture_source_id() -> String {
+    // Every submission is a new document. Ingest replaces all chunks with the
+    // same source ID, so a wall-clock timestamp can silently lose another note.
+    format!("manual_{}", uuid::Uuid::new_v4())
+}
+
+/// Refreshes the other windows only once the daemon has stored the capture.
+/// The event names the namespace the document was stored in (`memory`, see
+/// `build_quick_capture_ingest_request`), so a listener that looks the
+/// document up by source finds it.
+fn complete_quick_capture(
+    result: Result<responses::IngestResponse, String>,
+    summary: String,
+    emit: impl FnOnce(crate::state::CaptureEvent),
+) -> Result<usize, String> {
+    let response = result?;
+    if response.chunks_created > 0 {
+        emit(crate::state::CaptureEvent {
+            source: "memory".into(),
+            source_id: response.document_id,
+            summary,
+            chunks: response.chunks_created,
+            processing: false,
+        });
+    }
+    Ok(response.chunks_created)
+}
+
 // Native captures belong in the memory inventory. The manual_ ID prefix
-// identifies the producer without changing the record's source class.
+// identifies the producer without changing the record's source class, and the
+// `capture_source` metadata asks the daemon to keep the body exactly as typed.
 fn build_quick_capture_ingest_request(
     req: QuickCaptureRequest,
     source_id: String,
 ) -> requests::IngestMemoryRequest {
     let title = req.title.unwrap_or_else(|| {
-        let first_line = req.content.lines().next().unwrap_or("Untitled");
+        let first_line = req
+            .content
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("Untitled");
         if first_line.chars().count() > 60 {
             format!("{}...", first_line.chars().take(60).collect::<String>())
         } else {
@@ -2536,6 +2570,7 @@ fn build_quick_capture_ingest_request(
     });
 
     let mut metadata = HashMap::new();
+    metadata.insert("capture_source".to_string(), "manual".to_string());
     if let Some(tags) = &req.tags {
         metadata.insert("tags".to_string(), tags.join(","));
     }
@@ -2565,12 +2600,104 @@ pub async fn quick_capture(
     state: tauri::State<'_, State>,
     req: QuickCaptureRequest,
 ) -> Result<usize, String> {
-    let source_id = format!("manual_{}", chrono::Utc::now().timestamp());
+    let source_id = quick_capture_source_id();
     let client = daemon_client(&state).await;
     let ingest_req = build_quick_capture_ingest_request(req, source_id);
-    let resp: responses::IngestResponse =
-        client.post_json("/api/ingest/memory", &ingest_req).await?;
-    Ok(resp.chunks_created)
+    let result = client.post_json("/api/ingest/memory", &ingest_req).await;
+    // The write has finished before the state lock is taken, and the lock is
+    // not held across any await.
+    let state = state.read().await;
+    complete_quick_capture(result, ingest_req.title, |event| {
+        state.emit_capture_event(event)
+    })
+}
+
+#[cfg(test)]
+mod quick_capture_reliability_tests {
+    #[test]
+    fn rapid_captures_get_distinct_document_ids() {
+        let ids: std::collections::HashSet<_> =
+            (0..128).map(|_| super::quick_capture_source_id()).collect();
+        assert_eq!(ids.len(), 128);
+        for id in ids {
+            let uuid = uuid::Uuid::parse_str(id.strip_prefix("manual_").unwrap()).unwrap();
+            assert_eq!(uuid.get_version_num(), 4);
+        }
+    }
+
+    #[test]
+    fn capture_request_uses_visible_memory_namespace_and_keeps_input_fields() {
+        let request = super::build_quick_capture_ingest_request(
+            super::QuickCaptureRequest {
+                title: Some("My note".into()),
+                content: "Keep **Markdown**.".into(),
+                tags: Some(vec!["work".into()]),
+                memory_type: Some("decision".into()),
+                domain: Some("project".into()),
+            },
+            super::quick_capture_source_id(),
+        );
+        assert_eq!(request.source, "memory");
+        assert!(request.source_id.starts_with("manual_"));
+        assert_eq!(request.title, "My note");
+        assert_eq!(request.content, "Keep **Markdown**.");
+        assert_eq!(request.tags, Some(vec!["work".into()]));
+        let metadata = request.metadata.unwrap();
+        assert_eq!(metadata["capture_source"], "manual");
+        assert_eq!(metadata["tags"], "work");
+        assert_eq!(metadata["memory_type"], "decision");
+        assert_eq!(metadata["domain"], "project");
+    }
+
+    #[test]
+    fn capture_title_skips_blank_opening_lines_without_changing_the_body() {
+        let body = "\n   \n  A useful heading  \n\nKeep the trailing newline.\n";
+        let request = super::build_quick_capture_ingest_request(
+            super::QuickCaptureRequest {
+                title: None,
+                content: body.into(),
+                tags: None,
+                memory_type: None,
+                domain: None,
+            },
+            super::quick_capture_source_id(),
+        );
+        assert_eq!(request.title, "A useful heading");
+        assert_eq!(request.content, body);
+    }
+
+    #[test]
+    fn capture_event_is_emitted_once_only_after_a_successful_write() {
+        let mut events = Vec::new();
+        let count = super::complete_quick_capture(
+            Ok(wenlan_types::responses::IngestResponse {
+                chunks_created: 2,
+                document_id: "manual_saved".into(),
+                space: None,
+            }),
+            "Saved title".into(),
+            |event| events.push(event),
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].source, "memory");
+        assert_eq!(events[0].source_id, "manual_saved");
+        assert_eq!(events[0].summary, "Saved title");
+        assert_eq!(events[0].chunks, 2);
+        assert!(!events[0].processing);
+        assert!(super::complete_quick_capture(
+            Err("write failed".into()),
+            "Failed".into(),
+            |event| events.push(event)
+        )
+        .is_err());
+        assert_eq!(
+            events.len(),
+            1,
+            "failed writes must not refresh as successful captures"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -4151,6 +4278,28 @@ pub async fn rename_page(
         .post_json(
             &format!("/api/pages/{}/rename", percent_encode_path_segment(&id)),
             &request,
+        )
+        .await
+}
+
+/// Restore an archived page, optionally under a new title. The daemon owns
+/// every rule (version, title collision, Space); refusals come back with a
+/// typed `code` in the error text.
+#[tauri::command]
+pub async fn restore_page(
+    state: tauri::State<'_, State>,
+    id: String,
+    expected_version: i64,
+    title: Option<String>,
+) -> Result<responses::RestorePageResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json_explicit_browse(
+            &format!("/api/pages/{}/restore", percent_encode_path_segment(&id)),
+            &requests::RestorePageRequest {
+                expected_version,
+                title,
+            },
         )
         .await
 }

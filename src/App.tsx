@@ -29,8 +29,11 @@ import { RuntimeOverlays } from "./components/RuntimeOverlays";
 import { AppToaster } from "./components/AppToaster";
 import { setDaemonStartupPhase, type DaemonStartupPhase } from "./lib/daemonStartup";
 import { setServiceFallback } from "./lib/serviceNotices";
+import { commitInputComposition, isInputCompositionActive } from "./lib/inputComposition";
+import { useInputCompositionGuard } from "./lib/useInputCompositionGuard";
 
 export default function App() {
+  useInputCompositionGuard();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: showWizard, isPending: wizardPending, isError: wizardError } = useQuery({
@@ -229,6 +232,9 @@ export default function App() {
             ? document.activeElement
             : null;
           const attempt = (async () => {
+            // Quitting mid-composition keeps the preedit as typed text: commit
+            // it before the flush, which refuses to save a live composition.
+            if (isInputCompositionActive()) await commitInputComposition();
             try {
               await getCurrentWindow().hide();
             } catch {
@@ -312,14 +318,20 @@ export default function App() {
   // shortcut-registration change.)
   useEffect(() => {
     const unlisten = listen("toggle-spotlight", async () => {
+      // Rust already ignores the hotkey while a focused editor composes; these
+      // checks cover a composition that starts while this handler awaits.
+      if (isInputCompositionActive()) return;
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
-      if (!(await win.isVisible())) {
+      const visible = await win.isVisible();
+      if (isInputCompositionActive()) return;
+      if (!visible) {
         await win.show();
       }
       await win.setFocus();
       // Give Main a tick to mount, then signal it to focus the search input.
       await new Promise((r) => setTimeout(r, 30));
+      if (isInputCompositionActive()) return;
       await emit("focus-search");
     });
     return () => { unlisten.then((f) => f()); };

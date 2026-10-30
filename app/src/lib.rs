@@ -860,6 +860,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(RwLock::new(app_state)))
         .manage(pairing_link::PendingPairingLink::default())
+        .manage(global_shortcuts::EditorCompositionGuard::default())
         .manage(Arc::new(tokio::sync::Mutex::new(
             None::<indexer::FileWatcher>,
         )))
@@ -1277,6 +1278,12 @@ pub fn run() {
                                 use tauri::Emitter;
                                 use tauri_plugin_global_shortcut::ShortcutState;
                                 if event.state != ShortcutState::Pressed {
+                                    return;
+                                }
+                                // A focused editor window is mid-IME-composition: any
+                                // shortcut's focus, hide/show or event would interrupt the
+                                // candidate the user is choosing.
+                                if global_shortcuts::composition_blocks_shortcuts(&handle_for_shortcuts) {
                                     return;
                                 }
                                 match spec.id {
@@ -1815,6 +1822,7 @@ pub fn run() {
             search::get_page,
             search::create_page,
             search::rename_page,
+            search::restore_page,
             search::create_page_draft,
             search::knowledge_folders_list,
             search::knowledge_folder_create,
@@ -1918,6 +1926,7 @@ pub fn run() {
             daemon_start::restart_daemon_to_move_pages,
             // Which global hotkeys this session actually holds
             global_shortcuts::global_shortcut_status,
+            global_shortcuts::set_editor_composing,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -1940,12 +1949,17 @@ pub fn run() {
                 label,
                 event: tauri::WindowEvent::Destroyed,
                 ..
-            } if label == "main"
-                && !lifecycle::is_quitting()
-                && with_guarded_quit(GuardedQuitCoordinator::force_if_in_flight) =>
-            {
-                log::warn!("[app] main window was destroyed during guarded quit; forcing shutdown");
-                force_full_quit(app.clone());
+            } => {
+                use tauri::Manager;
+                app.state::<global_shortcuts::EditorCompositionGuard>()
+                    .clear_window(&label);
+                if label == "main"
+                    && !lifecycle::is_quitting()
+                    && with_guarded_quit(GuardedQuitCoordinator::force_if_in_flight)
+                {
+                    log::warn!("[app] main window was destroyed during guarded quit; forcing shutdown");
+                    force_full_quit(app.clone());
+                }
             }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {

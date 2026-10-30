@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { quickCapture } from "../lib/tauri";
+import { isInputCompositionActive } from "../lib/inputComposition";
 
 interface QuickCaptureProps {
   isOpen: boolean;
@@ -48,7 +49,9 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
       setTooShort(true);
       return;
     }
-    captureMutation.mutate({ content: content.trim() });
+    // Send the body exactly as typed: leading and trailing whitespace can be
+    // Markdown (an indented code block, a hard line break).
+    captureMutation.mutate({ content });
   };
 
   // Document-level keydown so Esc / Cmd+Enter work regardless of focus target.
@@ -59,6 +62,8 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      // Escape and Enter while the IME composes pick or drop its candidate.
+      if (e.isComposing || e.keyCode === 229 || isInputCompositionActive()) return;
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();

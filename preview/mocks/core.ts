@@ -27,6 +27,7 @@ import {
   REPEAT_CITED_SOURCES,
 } from "../fixtures";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
+import { restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { createReviewDecisionFixture } from "../../e2e/fixtures/reviewDecisions";
 const folderRuntime = new TauriMockRuntime(createReviewDecisionFixture("wiki-folders"), [], [], { projectionPendingOnce: new URLSearchParams(window.location.search).get("pending") === "1" });
 import {
@@ -77,6 +78,8 @@ export async function invoke(
   if ((cmd === "list_pages" || cmd === "list_pages_explicit_browse" || cmd === "list_onboarding_milestones") && new URLSearchParams(location.search).get("pages") === "0") {
     return [];
   }
+  // Native window composition state has no daemon or browser-fixture side effect.
+  if (cmd === "set_editor_composing") return null;
   if (!(window as { __PREVIEW_FIXTURES__?: boolean }).__PREVIEW_FIXTURES__) {
     return liveInvoke(cmd, args);
   }
@@ -208,6 +211,12 @@ export async function invoke(
     case "delete_page":
       delete PAGES[args?.id as string];
       return null;
+    case "restore_page": {
+      const id = String(args?.id ?? "");
+      const restored = restoreFixturePage(PAGES[id], Object.values(PAGES), args?.expectedVersion, args?.title);
+      PAGES[id] = restored.page;
+      return restored.response;
+    }
     // --- review queue (DistillReviewPanel + ReviewDialog preview) ---
     case "distill_review":
       return REVIEW_DISTILL;

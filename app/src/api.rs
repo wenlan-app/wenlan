@@ -688,6 +688,33 @@ impl WenlanClient {
     // an automatic/background read must use the plain helpers instead, or
     // the marker will be recorded against a call that never gestured at it.
 
+    /// An explicit human action on a page the person already browsed to,
+    /// such as restoring it from the archive. Errors keep the daemon's JSON
+    /// body so the frontend can read its `code`.
+    pub async fn post_json_explicit_browse<Req: Serialize, Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &Req,
+    ) -> Result<Resp, String> {
+        let resp = self
+            .client
+            .post(self.url(path))
+            .header(TRUTH_CONTRACT_HEADER, TRUTH_CONTRACT_VERSION)
+            .header(TRUTH_INTENT_HEADER, TRUTH_INTENT_EXPLICIT)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| format!("HTTP POST {}: {}", path, e))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP POST {} returned {}: {}", path, status, text));
+        }
+        resp.json()
+            .await
+            .map_err(|e| format!("Parse {}: {}", path, e))
+    }
+
     pub async fn get_json_explicit_browse<T: DeserializeOwned>(
         &self,
         path: &str,

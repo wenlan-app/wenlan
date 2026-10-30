@@ -5,10 +5,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { applyTheme } from "../lib/theme";
 import QuickCapture from "./QuickCapture";
+import { useInputCompositionGuard } from "../lib/useInputCompositionGuard";
 
 const queryClient = new QueryClient();
 
 export default function QuickCaptureWindow() {
+  // Global hotkeys wait while this window's IME composes, as in the main window.
+  useInputCompositionGuard();
   useEffect(() => {
     const win = getCurrentWindow();
     const unlisten = win.onFocusChanged(({ payload: focused }) => {

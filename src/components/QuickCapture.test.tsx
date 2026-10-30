@@ -81,6 +81,30 @@ function queryTextareaAndSave(container: HTMLElement) {
   return { textarea: textarea as HTMLTextAreaElement, saveButton: saveButton as HTMLButtonElement };
 }
 
+describe("QuickCapture leaves Escape and Cmd/Ctrl+Enter to the IME while it composes", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+  });
+
+  it("neither closes nor saves on a composing keydown, then works once the candidate is chosen", () => {
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <QuickCapture isOpen onClose={onClose} standalone />
+      </QueryClientProvider>,
+    );
+    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: "今天天氣非常晴朗好熱" } });
+    fireEvent.keyDown(textarea, { key: "Escape", isComposing: true });
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true, keyCode: 229 });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockedInvoke).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("QuickCapture standalone window has no exterior shadow or inset", () => {
   const platforms: Array<[string, string | undefined]> = [
     ["macOS", MACOS_WKWEBVIEW],
@@ -200,5 +224,24 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
     expect(alert.textContent).toBe("Write at least 10 characters before saving.");
     expect(mockedInvoke).not.toHaveBeenCalled();
     expect((textarea as HTMLTextAreaElement).value).toBe("今天天氣非常晴朗好");
+  });
+});
+
+describe("QuickCapture sends the body exactly as typed", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+  });
+
+  it("keeps leading indentation and trailing spaces", async () => {
+    mockedInvoke.mockResolvedValueOnce(1);
+    renderCapture(false);
+
+    const body = "    indented code\n\n| a | b |\n| - | - |\nline with a hard break  \n";
+    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: body } });
+    fireEvent.click(screen.getByText("Save"));
+
+    expect(await screen.findByText("Saved to memory")).toBeTruthy();
+    expect(mockedInvoke).toHaveBeenCalledWith("quick_capture", { req: { content: body } });
   });
 });

@@ -32,6 +32,7 @@ const ANSWERS_WITHOUT_DAEMON = new Set<string>([
   "daemon_version_status",
   "restart_daemon",
   "set_traffic_lights_visible",
+  "set_editor_composing",
   "acknowledge_guarded_quit_request",
   "cancel_guarded_quit_request",
   "quit_wenlan_full",
