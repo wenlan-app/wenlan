@@ -85,6 +85,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "rename_page",
     "update_page",
     "delete_page",
+    "restore_page",
     "redistill_page",
     "daemon_version",
     "get_system_info",
