@@ -188,6 +188,8 @@ mod page_drafts_test;
 #[cfg(test)]
 mod page_history_title_test;
 #[cfg(test)]
+mod page_link_rename_test;
+#[cfg(test)]
 mod page_rename_test;
 #[cfg(test)]
 mod presence_review_test;
@@ -53340,8 +53342,9 @@ impl MemoryDB {
     ) -> Result<Option<BasisWriteOutcome>, WenlanError> {
         // This entry point's guard is the source revision. `expected_version`
         // is `Some` only for an agent refresh that proved it read the current
-        // version; the UPDATE then fences on both, and the inner fn refuses
-        // that combination for any other writer. `None` means the write did
+        // version, or the link rewrite that follows a rename; the UPDATE then
+        // fences on both, and the inner fn refuses that combination for any
+        // other writer. `None` means the write did
         // not land.
         self.try_update_page_content(
             id,
@@ -53715,13 +53718,15 @@ impl MemoryDB {
         // `expected_version` also fences on both: the route reads the
         // source revision first, and the agent's version is the page it read,
         // so a human rename (which bumps only `version`) between the gate and
-        // this UPDATE cannot let the stale agent body land. Every other caller
-        // stays single-fence.
+        // this UPDATE cannot let the stale agent body land. The link rewrite
+        // after a rename fences on both for the same reason. Every other
+        // caller stays single-fence.
         if expected_version.is_some()
             && expected_source_revision.is_some()
             && page_growth_guard.is_none()
             && link_reason != "citation_backfill"
             && link_reason != "agent_refresh"
+            && link_reason != "link_rename"
             && consume_revision_id.is_none()
         {
             return Err(WenlanError::Validation(

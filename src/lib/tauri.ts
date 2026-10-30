@@ -1690,6 +1690,12 @@ export interface RenamePageResponse {
   id: string;
   title: string;
   version: number;
+  /** Other pages in the same Space whose [[links]] now name the new title. */
+  links_updated?: number;
+  /** Pages set to "Ask me first" whose link update waits for review. */
+  links_pending_review?: number;
+  /** Pages that still link by the old title. */
+  links_not_updated?: number;
 }
 
 export async function renamePage(

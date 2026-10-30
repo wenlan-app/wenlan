@@ -560,8 +560,9 @@ async fn outbound_links_show_live_target_title_and_hide_ungranted_titles() {
     .unwrap();
 
     let before = db.get_page(&target_id).await.unwrap().unwrap();
-    wenlan_core::post_write::rename_page(
-        &db,
+    // The title-only primitive: the source keeps its old mention, as a page
+    // whose link update waits for review (or lives in another Space) does.
+    db.rename_page(
         &target_id,
         "Current linked title",
         before.version,

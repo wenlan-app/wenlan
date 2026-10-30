@@ -69,6 +69,125 @@ pub fn extract_wikilinks(content: &str) -> Vec<String> {
     out
 }
 
+/// Characters that end or split a wikilink target. A title holding one of
+/// them cannot be written as `[[title]]`, so no link is rewritten to it.
+pub(crate) const WIKILINK_TARGET_BREAKERS: [char; 4] = ['[', ']', '|', '#'];
+
+/// Rewrite the target of every wikilink in `content` for which `replacement`
+/// returns a new target, and return the new body with the number of links
+/// changed. `replacement` receives the target trimmed, without its `#heading`
+/// or `|label`; both are kept as written, as is the whitespace around the
+/// target. Covers `[[T]]`, `[[T|label]]`, `[[T#heading]]` and `![[T]]`.
+///
+/// Uses the same parser as the link graph (`sources::obsidian`), so fenced
+/// code is skipped the same way, and additionally leaves alone links inside
+/// inline code spans and links whose `[[` is escaped with a backslash: text a
+/// reader sees literally is not a link to update.
+pub fn rewrite_wikilink_targets(
+    content: &str,
+    mut replacement: impl FnMut(&str) -> Option<String>,
+) -> (String, usize) {
+    let fenced = obsidian::code_block_ranges(content);
+    let inline = inline_code_ranges(content, &fenced);
+    let bytes = content.as_bytes();
+    let mut out = String::with_capacity(content.len());
+    let mut copied = 0;
+    let mut changed = 0;
+    for link in obsidian::extract_wikilinks_with_spans(content) {
+        let range = link.target_range;
+        // The target starts right after `[[`.
+        let open = range.start.saturating_sub(2);
+        if open > 0 && bytes[open - 1] == b'\\' {
+            continue;
+        }
+        if inline.iter().any(|span| span.contains(&open)) {
+            continue;
+        }
+        let raw = &content[range.clone()];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.contains(WIKILINK_TARGET_BREAKERS) {
+            continue;
+        }
+        let Some(target) = replacement(trimmed) else {
+            continue;
+        };
+        if target == trimmed
+            || target.trim().is_empty()
+            || target.contains(WIKILINK_TARGET_BREAKERS)
+        {
+            continue;
+        }
+        let lead = raw.len() - raw.trim_start().len();
+        let start = range.start + lead;
+        out.push_str(&content[copied..start]);
+        out.push_str(&target);
+        copied = start + trimmed.len();
+        changed += 1;
+    }
+    out.push_str(&content[copied..]);
+    (out, changed)
+}
+
+/// Byte ranges of inline code spans (`` `code` ``, ``` ``code`` ```) outside
+/// fenced blocks. A span opens on a run of backticks and closes on the next
+/// run of the same length before a blank line; an opener with no closer is a
+/// literal backtick.
+fn inline_code_ranges(
+    content: &str,
+    fenced: &[std::ops::Range<usize>],
+) -> Vec<std::ops::Range<usize>> {
+    let bytes = content.as_bytes();
+    let in_fence = |at: usize| fenced.iter().find(|range| range.contains(&at));
+    let mut ranges = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if let Some(fence) = in_fence(at) {
+            at = fence.end.max(at + 1);
+            continue;
+        }
+        match bytes[at] {
+            b'\\' => {
+                at += 2;
+                continue;
+            }
+            b'`' => {}
+            _ => {
+                at += 1;
+                continue;
+            }
+        }
+        let start = at;
+        while at < bytes.len() && bytes[at] == b'`' {
+            at += 1;
+        }
+        let run = at - start;
+        let mut scan = at;
+        let mut close = None;
+        while scan < bytes.len() {
+            if in_fence(scan).is_some() || bytes[scan..].starts_with(b"\n\n") {
+                break;
+            }
+            if bytes[scan] != b'`' {
+                scan += 1;
+                continue;
+            }
+            let run_start = scan;
+            while scan < bytes.len() && bytes[scan] == b'`' {
+                scan += 1;
+            }
+            if scan - run_start == run {
+                close = Some(scan);
+                break;
+            }
+        }
+        if let Some(end) = close {
+            ranges.push(start..end);
+            at = end;
+        }
+    }
+    ranges
+}
+
 /// Folded title to its unique owner page (`None`: ambiguous), as built by the
 /// database's active non-entity owner scan.
 pub(crate) type TitleOwners = HashMap<String, Option<String>>;
@@ -273,6 +392,50 @@ mod tests {
         // there immediately after. Nothing captured.
         let v = extract_wikilinks("noise [[foo]bar]] more");
         assert!(v.is_empty());
+    }
+
+    fn rename_old(content: &str) -> (String, usize) {
+        rewrite_wikilink_targets(content, |target| {
+            (MemoryDB::page_title_key(target) == "old").then(|| "New".to_string())
+        })
+    }
+
+    #[test]
+    fn rewrite_keeps_label_heading_embed_and_spacing() {
+        let (out, n) = rename_old("[[Old]] [[old|shown]] [[ Old #Part|x]] ![[OLD]] [[Older]]");
+        assert_eq!(
+            out,
+            "[[New]] [[New|shown]] [[ New #Part|x]] ![[New]] [[Older]]"
+        );
+        assert_eq!(n, 4);
+    }
+
+    #[test]
+    fn rewrite_leaves_code_and_escaped_links_alone() {
+        let body = "a `[[Old]]` b ``x ` [[Old]]`` c \\[[Old]] d [[Old]]\n```\n[[Old]]\n```\n~~~\n[[Old]]\n~~~\n";
+        let (out, n) = rename_old(body);
+        assert_eq!(n, 1);
+        assert_eq!(out, body.replacen("d [[Old]]", "d [[New]]", 1));
+    }
+
+    #[test]
+    fn rewrite_treats_an_unclosed_backtick_as_text() {
+        let (out, n) = rename_old("it`s [[Old]]");
+        assert_eq!((out.as_str(), n), ("it`s [[New]]", 1));
+    }
+
+    #[test]
+    fn rewrite_never_writes_a_target_that_breaks_the_link() {
+        for broken in ["A|B", "C#D", "E]F"] {
+            let (out, n) = rewrite_wikilink_targets("[[Old]]", |_| Some(broken.to_string()));
+            assert_eq!((out.as_str(), n), ("[[Old]]", 0));
+        }
+    }
+
+    #[test]
+    fn rewrite_handles_utf8_around_links() {
+        let (out, n) = rename_old("中文 [[Old]] 後面 `程式 [[Old]]`");
+        assert_eq!((out.as_str(), n), ("中文 [[New]] 後面 `程式 [[Old]]`", 1));
     }
 
     #[test]

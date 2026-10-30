@@ -163,3 +163,80 @@ async fn page_rename_cannot_cross_the_selected_space() {
         .unwrap();
     assert_eq!(allowed.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn page_rename_updates_links_in_the_same_space_and_reports_the_rest() {
+    let (app, _tmp, db) = common::test_app().await;
+    db.create_space("work", None, false).await.unwrap();
+    db.create_space("home", None, false).await.unwrap();
+    let target = common::create_page_fixture(
+        &db,
+        "Origin positioning",
+        "Target body.",
+        Some("work"),
+        &[],
+        "authored",
+    )
+    .await;
+    let linker = common::create_page_fixture(
+        &db,
+        "Strategy",
+        "See [[Origin positioning|the old name]] and `[[Origin positioning]]`.",
+        Some("work"),
+        &[],
+        "authored",
+    )
+    .await;
+    let elsewhere = common::create_page_fixture(
+        &db,
+        "Home notes",
+        "Also [[Origin positioning]].",
+        Some("home"),
+        &[],
+        "authored",
+    )
+    .await;
+    let before = db.get_page(&target).await.unwrap().unwrap();
+    let linker_before = db.get_page(&linker).await.unwrap().unwrap();
+    let elsewhere_before = db.get_page(&elsewhere).await.unwrap().unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(rename(&target, "Wenlan positioning", before.version, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+    let reply: wenlan_types::responses::RenamePageResponse =
+        serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(reply.links_updated, 1);
+    assert_eq!(reply.links_pending_review, 0);
+    assert_eq!(reply.links_not_updated, 1);
+
+    let linker_after = db.get_page(&linker).await.unwrap().unwrap();
+    assert_eq!(
+        linker_after.content,
+        "See [[Wenlan positioning|the old name]] and `[[Origin positioning]]`."
+    );
+    assert_eq!(linker_after.version, linker_before.version + 1);
+    let elsewhere_after = db.get_page(&elsewhere).await.unwrap().unwrap();
+    assert_eq!(elsewhere_after.content, elsewhere_before.content);
+    assert_eq!(elsewhere_after.version, elsewhere_before.version);
+
+    let links = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/pages/{target}/links"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(links.status(), StatusCode::OK);
+    let links: wenlan_types::responses::PageLinksResponse =
+        serde_json::from_slice(&to_bytes(links.into_body(), 65536).await.unwrap()).unwrap();
+    assert!(links
+        .inbound
+        .iter()
+        .any(|link| link.source_page_id == linker && link.label == "Wenlan positioning"));
+}

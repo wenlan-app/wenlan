@@ -14,6 +14,10 @@ pub enum PipelineStage<'a> {
     ReDistill,
     PageGrowth,
     RefineryMerge,
+    /// Another page was renamed and this page's `[[links]]` to it now name the
+    /// new title. A mechanical rewrite of link targets only, computed from the
+    /// exact version it fences on; see `post_write::page_link_rename`.
+    LinkRename,
     /// A writer string the gate does not recognize, carried verbatim.
     ///
     /// Two kinds of string land here. Legitimate ones: `edited_by` values that
@@ -57,6 +61,7 @@ impl<'a> Writer<'a> {
             "re_distill" => Writer::Pipeline(PipelineStage::ReDistill),
             "page_growth" => Writer::Pipeline(PipelineStage::PageGrowth),
             "refinery_merge" => Writer::Pipeline(PipelineStage::RefineryMerge),
+            "link_rename" => Writer::Pipeline(PipelineStage::LinkRename),
             other => Writer::Pipeline(PipelineStage::Unknown(other)),
         }
     }
@@ -70,6 +75,7 @@ impl<'a> Writer<'a> {
                 PipelineStage::ReDistill => "re_distill",
                 PipelineStage::PageGrowth => "page_growth",
                 PipelineStage::RefineryMerge => "refinery_merge",
+                PipelineStage::LinkRename => "link_rename",
                 PipelineStage::Unknown(s) => s,
             },
         }
@@ -94,8 +100,14 @@ impl<'a> Writer<'a> {
     /// own page (in the app or in the vault) is not a machine drifting. It
     /// used to refuse a hand edit with "diverges from cited sources", even a
     /// stale-version edit that deserved a version conflict instead.
+    ///
+    /// A link rewrite after a rename changes only link targets, so the body
+    /// says what it said before and there is nothing new to hold to sources.
     pub(super) fn skips_hallucination_guard(&self) -> bool {
-        matches!(self, Writer::Human(_) | Writer::Agent(_)) || self.is_llm_rewrite()
+        matches!(
+            self,
+            Writer::Human(_) | Writer::Agent(_) | Writer::Pipeline(PipelineStage::LinkRename)
+        ) || self.is_llm_rewrite()
     }
 
     /// A recognized LLM-rewrite stage, checked by the shrink-guard. `Unknown` is
@@ -130,6 +142,9 @@ pub fn page_is_human_owned(page: &crate::pages::Page) -> bool {
 ///   sent an `expected_version` that matched) may update a human-owned page
 ///   directly; the human-owned rule exists to stop blind overwrites, and a
 ///   version-checked write is not blind.
+/// - The same holds for the link rewrite that follows a rename the person
+///   made: it is computed from the exact version it fences on and changes
+///   only link targets. The review lock still gates it, above.
 /// - A user-forced rebuild may release `user_edited`, but an authored page
 ///   still gets a card.
 /// - Every other machine writer is gated on a human-owned page.
@@ -150,7 +165,7 @@ pub fn machine_write_requires_review(
         return true;
     }
     match writer {
-        Writer::Agent(_) if version_checked => false,
+        Writer::Agent(_) | Writer::Pipeline(PipelineStage::LinkRename) if version_checked => false,
         _ if user_forced => page.creation_kind == "authored",
         _ => page_is_human_owned(page),
     }
@@ -1468,12 +1483,16 @@ async fn update_page_db_impl(
                     &new_changelog,
                     citations.as_ref().map(|(json, _)| json.as_str()),
                     source_revision,
-                    // Only the agent lane fences on both. Distill also carries
-                    // an `expected_version` here, but its write has always been
-                    // source-revision-only and the db layer refuses the pair
-                    // for any writer but `agent_refresh`.
-                    req.expected_version
-                        .filter(|_| matches!(writer, Writer::Agent(_))),
+                    // Only the agent lane and the link rewrite after a rename
+                    // fence on both. Distill also carries an `expected_version`
+                    // here, but its write has always been source-revision-only
+                    // and the db layer refuses the pair for any other writer.
+                    req.expected_version.filter(|_| {
+                        matches!(
+                            writer,
+                            Writer::Agent(_) | Writer::Pipeline(PipelineStage::LinkRename)
+                        )
+                    }),
                     receipt,
                     basis,
                 )

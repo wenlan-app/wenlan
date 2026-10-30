@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { PageIcon } from "../assets/PageIcon";
 import { getPage, renamePage, type Page } from "../../../lib/tauri";
 import { canRenameFromList } from "./RecentNoteMenu";
+import { finishRenameLinks } from "./renameLinksNotice";
 
 // Queries a rename can change; mirrors the page's own Rename action.
 const RENAME_INVALIDATIONS: readonly (readonly string[])[] = [
@@ -47,6 +48,7 @@ export function RecentNoteRename({ page, onDone }: {
       for (const queryKey of [...RENAME_INVALIDATIONS, ["page-revisions", latest.id]]) {
         void queryClient.invalidateQueries({ queryKey });
       }
+      finishRenameLinks(t, queryClient, renamed);
       finish(renamed.title);
     } catch {
       setPending(false);

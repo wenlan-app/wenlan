@@ -100,6 +100,7 @@ import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
 import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
+import { finishRenameLinks } from "./pages/renameLinksNotice";
 import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInventory";
 import { PageAutosave } from "./editor/pageAutosave";
 import { NoteReviewNotice } from "./page/NoteReviewNotice";
@@ -974,6 +975,7 @@ export default function PageDetail({
       ]) {
         void queryClient.invalidateQueries({ queryKey });
       }
+      finishRenameLinks(t, queryClient, renamed);
       if (activePageIdRef.current !== input.id) return;
       renameAttemptRef.current += 1;
       setRenaming(false);

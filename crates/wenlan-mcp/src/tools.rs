@@ -4138,10 +4138,27 @@ impl WenlanMcpServer {
         let path = format!("/api/pages/{}/rename", url_encode_simple(&params.page_id));
         let resp: wenlan_types::responses::RenamePageResponse =
             try_call!(self.client.post(&path, &req), "rename_page");
-        Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+        let mut text = format!(
             "Renamed page {} to \"{}\" (version {}).",
             resp.id, resp.title, resp.version
-        ))]))
+        );
+        // The daemon also rewrote other pages' [[links]] to the old title.
+        for (count, what) in [
+            (
+                resp.links_updated,
+                "had their [[links]] updated to the new title",
+            ),
+            (
+                resp.links_pending_review,
+                "are locked for review; their link update waits as a revision card",
+            ),
+            (resp.links_not_updated, "still link to the old title"),
+        ] {
+            if count > 0 {
+                text.push_str(&format!(" Other pages that {what}: {count}."));
+            }
+        }
+        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
     }
 
     pub async fn delete_page_impl(&self, page_id: &str) -> Result<CallToolResult, McpError> {
@@ -5228,7 +5245,7 @@ impl WenlanMcpServer {
     }
 
     #[tool(
-        description = "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest page result; the version prevents renaming a page that changed since it was read. This changes the title only and preserves the page id and content. It is unavailable over remote HTTP MCP transport (local stdio only). Do not call this during distillation, synthesis, or content refresh; write_page keeps an existing title when refreshing.",
+        description = "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest page result; the version prevents renaming a page that changed since it was read. This keeps the page id and content and updates [[links]] to it. It is unavailable over remote HTTP MCP transport (local stdio only). Do not call this during distillation, synthesis, or content refresh; write_page keeps an existing title when refreshing.",
         annotations(
             title = "Rename page",
             read_only_hint = false,
@@ -5516,7 +5533,7 @@ fn query_surface_description(name: &str, allows_writes: bool) -> String {
 fn web_write_description(name: &str) -> Option<&'static str> {
     Some(match name {
         "write_page" => "Create or refresh a wiki page. When the user asks to turn something from this conversation into a page, call write_page with a title and the content; source_memory_ids are optional. This write can replace an existing page: omit page_id to create a new page (title required), or pass page_id to refresh that page in place, which keeps its id and version history. Never delete_page and recreate a page to refresh it. Before a refresh, read_page and pass its page.version as expected_version: if the page moved on, the write is refused with nothing changed, so re-read and retry. Without expected_version, a refresh of a page the user wrote or edited is refused the same way. A page with review_required set stages every refresh as a revision card for the user to accept. To change a page's title at the user's explicit request, use rename_page; a refresh keeps the existing title. `minor: true` marks a small edit. Writes only reach the Space this connection is limited to.",
-        "rename_page" => "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest read_page result; the version prevents renaming a page that changed since it was read. This changes the title only and preserves the page id and content. Do not call this to refresh content; write_page keeps an existing title when refreshing.",
+        "rename_page" => "Rename an existing page only when the user explicitly asks to change its title. Pass the page_id and expected_version from the latest read_page result; the version prevents renaming a page that changed since it was read. This keeps the page id and content and updates [[links]] to it. Do not call this to refresh content; write_page keeps an existing title when refreshing.",
         "delete_page" => "Delete a page by id only when the user explicitly asks to remove it. Destructive and cannot be undone: removes the page and its file projection. To refresh a page while preserving its id and version history, use write_page.",
         _ => return None,
     })
@@ -6717,7 +6734,7 @@ mod tests {
             .and(path("/api/pages/page_1/rename"))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(
-                    serde_json::json!({"id": "page_1", "title": "New", "version": 4}),
+                    serde_json::json!({"id": "page_1", "title": "New", "version": 4, "links_updated": 2}),
                 ),
             )
             .mount(&mock)
@@ -6745,6 +6762,12 @@ mod tests {
             text_of(&rename).contains("Renamed page page_1"),
             "{rename:?}"
         );
+        assert!(
+            text_of(&rename)
+                .contains("Other pages that had their [[links]] updated to the new title: 2."),
+            "{rename:?}"
+        );
+        assert!(!text_of(&rename).contains("still link"), "{rename:?}");
         let mut refresh = write_params(Some("page_1"));
         refresh.basis = Vec::new();
         let refreshed = server.write_page_impl(refresh).await.unwrap();

@@ -460,11 +460,26 @@ pub struct CreatePageResponse {
 }
 
 /// Result of an explicit page-title change. Does not expose page prose.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// The three counts describe the other pages whose `[[links]]` pointed at the
+/// page by its old title. All default to 0 so an older daemon's reply still
+/// reads.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RenamePageResponse {
     pub id: String,
     pub title: String,
     pub version: i64,
+    /// Pages in the same Space whose links were rewritten to the new title.
+    #[serde(default)]
+    pub links_updated: u32,
+    /// Pages locked for review ("Ask me first") whose link update waits as a
+    /// revision card instead of being applied.
+    #[serde(default)]
+    pub links_pending_review: u32,
+    /// Pages that still link by the old title: another Space, a page Wenlan
+    /// does not edit, or a page that changed while its links were updated.
+    #[serde(default)]
+    pub links_not_updated: u32,
 }
 
 /// `POST /api/memory/entities` (legacy list) and `POST /api/memory/entities/query`.
