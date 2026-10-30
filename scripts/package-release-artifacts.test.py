@@ -31,7 +31,7 @@ class PackageReleaseArtifactsTests(unittest.TestCase):
         for member in members:
             payload = binary_dir / member
             payload.write_bytes(f"payload:{target}:{member}\n".encode())
-            if not member.lower().endswith((".dll", ".txt")):
+            if not member.lower().endswith((".dll", ".txt", ".rtf")):
                 payload.chmod(0o755)
         return binary_dir
 
@@ -70,6 +70,18 @@ class PackageReleaseArtifactsTests(unittest.TestCase):
             ("x86_64-unknown-linux-gnu", "wenlan-mcp"),
             ("x86_64-pc-windows-msvc", "onnxruntime.dll"),
             ("x86_64-pc-windows-msvc", "VulkanRT-License.txt"),
+            ("x86_64-pc-windows-msvc", "concrt140.dll"),
+            ("x86_64-pc-windows-msvc", "msvcp140.dll"),
+            ("x86_64-pc-windows-msvc", "msvcp140_1.dll"),
+            ("x86_64-pc-windows-msvc", "msvcp140_2.dll"),
+            ("x86_64-pc-windows-msvc", "msvcp140_atomic_wait.dll"),
+            ("x86_64-pc-windows-msvc", "msvcp140_codecvt_ids.dll"),
+            ("x86_64-pc-windows-msvc", "vccorlib140.dll"),
+            ("x86_64-pc-windows-msvc", "vcruntime140.dll"),
+            ("x86_64-pc-windows-msvc", "vcruntime140_1.dll"),
+            ("x86_64-pc-windows-msvc", "vcomp140.dll"),
+            ("x86_64-pc-windows-msvc", "MSVC-Runtime-License.rtf"),
+            ("x86_64-pc-windows-msvc", "MSVC-Runtime-Source.txt"),
         ]:
             with self.subTest(target=target, missing=missing), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)

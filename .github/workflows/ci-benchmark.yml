@@ -518,7 +518,10 @@ jobs:
         shell: pwsh
         run: |
           & scripts/stage-vulkan-loader-windows.test.ps1
+          & scripts/stage-msvc-runtime-windows.test.ps1
           & scripts/stage-vulkan-loader-windows.ps1 `
+            -DestinationDirectory "target\${{ matrix.target }}\release"
+          & scripts/stage-msvc-runtime-windows.ps1 `
             -DestinationDirectory "target\${{ matrix.target }}\release"
           & scripts/stage-onnxruntime-windows.ps1 `
             -DestinationDirectory "target\${{ matrix.target }}\release"

@@ -290,6 +290,15 @@ jobs:
               # none of its cases run. The library every probe depends on was
               # the one file whose own changes were unguarded.
               - 'scripts/lib/host-process.sh'
+              # The Windows runtime inventory suites in prepare-sidecars.test.ts
+              # and dev-runtime.test.ts read these against
+              # scripts/release_targets.py; a change to any one of them alone
+              # must still schedule those suites.
+              - 'scripts/lib/windows-release-inventory.ts'
+              - 'scripts/release_targets.py'
+              - 'scripts/stage-msvc-runtime-windows.ps1'
+              - 'scripts/first-run/windows-zip.ps1'
+              - '.github/workflows/release.yml'
               - 'scripts/install-git-hooks.mjs'
               - 'scripts/run-bash.mjs'
               - '.github/workflows/ci.yml'
@@ -665,6 +674,8 @@ jobs:
               - 'scripts/setup-vulkan-sdk-windows.test.ps1'
               - 'scripts/stage-vulkan-loader-windows.ps1'
               - 'scripts/stage-vulkan-loader-windows.test.ps1'
+              - 'scripts/stage-msvc-runtime-windows.ps1'
+              - 'scripts/stage-msvc-runtime-windows.test.ps1'
               - 'scripts/setup-msvc-ninja-windows.ps1'
               - 'scripts/setup-msvc-ninja-windows.test.ps1'
               - 'scripts/release_targets.py'
@@ -694,6 +705,8 @@ jobs:
               - 'scripts/lint-scale-gate.sh'
               - 'scripts/stage-vulkan-loader-windows.ps1'
               - 'scripts/stage-vulkan-loader-windows.test.ps1'
+              - 'scripts/stage-msvc-runtime-windows.ps1'
+              - 'scripts/stage-msvc-runtime-windows.test.ps1'
             macos-m4:
               - 'crates/wenlan-core/src/community_grouping.rs'
               - 'crates/wenlan-core/src/community_partition.rs'
@@ -732,6 +745,8 @@ jobs:
               - 'scripts/setup-vulkan-sdk-windows.test.ps1'
               - 'scripts/stage-vulkan-loader-windows.ps1'
               - 'scripts/stage-vulkan-loader-windows.test.ps1'
+              - 'scripts/stage-msvc-runtime-windows.ps1'
+              - 'scripts/stage-msvc-runtime-windows.test.ps1'
               - 'scripts/setup-msvc-ninja-windows.ps1'
               - 'scripts/setup-msvc-ninja-windows.test.ps1'
             release-preflight:
@@ -774,6 +789,8 @@ jobs:
               - 'scripts/setup-vulkan-sdk-windows.test.ps1'
               - 'scripts/stage-vulkan-loader-windows.ps1'
               - 'scripts/stage-vulkan-loader-windows.test.ps1'
+              - 'scripts/stage-msvc-runtime-windows.ps1'
+              - 'scripts/stage-msvc-runtime-windows.test.ps1'
               - 'scripts/setup-msvc-ninja-windows.ps1'
               - 'scripts/setup-msvc-ninja-windows.test.ps1'
               - 'scripts/release_targets.py'
@@ -1427,8 +1444,11 @@ jobs:
           & scripts/setup-vulkan-sdk-windows.test.ps1
           & scripts/setup-vulkan-sdk-windows.ps1
           & scripts/stage-vulkan-loader-windows.test.ps1
+          & scripts/stage-msvc-runtime-windows.test.ps1
           $loaderDir = Join-Path $env:RUNNER_TEMP "wenlan-test-vulkan-loader"
           & scripts/stage-vulkan-loader-windows.ps1 `
+            -DestinationDirectory $loaderDir
+          & scripts/stage-msvc-runtime-windows.ps1 `
             -DestinationDirectory $loaderDir
       - name: Configure MSVC Ninja (Windows tests)
         if: matrix.os == 'windows-2022'
@@ -1579,6 +1599,8 @@ jobs:
           & scripts/stage-onnxruntime-windows.ps1 `
             -DestinationDirectory "target\debug"
           & scripts/stage-vulkan-loader-windows.ps1 `
+            -DestinationDirectory "target\debug"
+          & scripts/stage-msvc-runtime-windows.ps1 `
             -DestinationDirectory "target\debug"
 
       - name: Validate Windows LLM probe
@@ -2283,7 +2305,10 @@ jobs:
         shell: pwsh
         run: |
           & scripts/stage-vulkan-loader-windows.test.ps1
+          & scripts/stage-msvc-runtime-windows.test.ps1
           & scripts/stage-vulkan-loader-windows.ps1 `
+            -DestinationDirectory "target\${{ matrix.target }}\release"
+          & scripts/stage-msvc-runtime-windows.ps1 `
             -DestinationDirectory "target\${{ matrix.target }}\release"
           & scripts/stage-onnxruntime-windows.ps1 `
             -DestinationDirectory "target\${{ matrix.target }}\release"
@@ -3075,6 +3100,7 @@ jobs:
           $dllDir = "app/binaries"
           & scripts/stage-onnxruntime-windows.ps1 -DestinationDirectory $dllDir
           & scripts/stage-vulkan-loader-windows.ps1 -DestinationDirectory $dllDir
+          & scripts/stage-msvc-runtime-windows.ps1 -DestinationDirectory $dllDir
           Get-ChildItem $dllDir | Format-Table Name, Length
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -3133,7 +3159,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $bundle = "target/x86_64-pc-windows-msvc/release/bundle"
-          $required = @("onnxruntime.dll", "vulkan-1.dll", "VulkanRT-License.txt")
+          $required = @("onnxruntime.dll", "vulkan-1.dll", "VulkanRT-License.txt", "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll", "MSVC-Runtime-License.rtf", "MSVC-Runtime-Source.txt")
           $failed = $false
 
           $nsis = Get-ChildItem -Path (Join-Path $bundle "nsis") -Filter *-setup.exe -File |

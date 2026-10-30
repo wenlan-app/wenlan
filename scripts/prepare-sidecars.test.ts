@@ -14,6 +14,10 @@ import { dirname, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  windowsReleaseMembers,
+  windowsRuntimeFiles,
+} from "./lib/windows-release-inventory";
 
 // These tests spawn real login shells, which is slow on a loaded CI runner and
 // unrelated to what they assert. One of them timed out at vitest's 5s default in
@@ -453,5 +457,84 @@ describe("prepare-sidecars backend discovery", () => {
     expect(output).toContain(
       `cli_dest=${appRoot}/app/binaries/wenlan-x86_64-pc-windows-msvc.exe`,
     );
+  });
+});
+
+
+describe("Windows runtime packaging inventory", () => {
+  // scripts/release_targets.py is the one written list of what ships beside
+  // the Windows executables. Every other place that names those files is read
+  // here and compared with it as a set, so adding or dropping a runtime file in
+  // one place and not the others fails before a Windows runner ever sees it.
+  const shipped = () => windowsRuntimeFiles(root).sort();
+  const quotedList = (source: string, pattern: RegExp, what: string) => {
+    const list = source.match(pattern);
+    expect(list, `${what} no longer declares its runtime file list`).not.toBeNull();
+    return [...list![1]!.matchAll(/"([^"]+)"/g)].map((match) => match[1]!);
+  };
+
+  it("ships the MSVC C/C++ and OpenMP runtime with its license and provenance", () => {
+    const files = windowsRuntimeFiles(root);
+    for (const name of [
+      "vcruntime140.dll",
+      "vcruntime140_1.dll",
+      "msvcp140.dll",
+      "vcomp140.dll",
+      "MSVC-Runtime-License.rtf",
+      "MSVC-Runtime-Source.txt",
+    ]) {
+      expect(files).toContain(name);
+    }
+  });
+
+  it("bundles exactly the release runtime files into the Windows installer", () => {
+    const resources = JSON.parse(
+      readFileSync(resolve(root, "app/tauri.windows.conf.json"), "utf8"),
+    ).bundle.resources as Record<string, string>;
+    for (const [source, destination] of Object.entries(resources)) {
+      expect(source).toBe(`binaries/${destination}`);
+    }
+    expect(Object.values(resources).sort()).toEqual(shipped());
+  });
+
+  it("checks exactly the release runtime files in both installer workflows", () => {
+    for (const workflow of ["ci.yml", "release.yml"]) {
+      const source = readFileSync(resolve(root, ".github/workflows", workflow), "utf8");
+      expect(quotedList(source, /\$required = @\(([^)]*)\)/, workflow).sort()).toEqual(shipped());
+    }
+  });
+
+  it("expects exactly the release ZIP members in the first-run ZIP check", () => {
+    const source = readFileSync(resolve(root, "scripts/first-run/windows-zip.ps1"), "utf8");
+    expect(
+      quotedList(source, /\$ExpectedMembers = @\(([^)]*)\)/, "windows-zip.ps1").sort(),
+    ).toEqual(windowsReleaseMembers(root).sort());
+  });
+
+  it("stages and checks exactly the release runtime files in prepare-sidecars.sh", () => {
+    const source = readFileSync(resolve(root, "scripts/prepare-sidecars.sh"), "utf8");
+    const lists = [...source.matchAll(/^\s*(?:WINDOWS|MSVC)_RUNTIME_FILES=\(([^)]*)\)/gm)];
+    expect(lists).toHaveLength(2);
+    expect(lists.flatMap((match) => match[1]!.trim().split(/\s+/)).sort()).toEqual(shipped());
+    // The MSVC staging script runs on every Windows preparation (it reuses a
+    // verified stage itself) and receives the local bundle cache when one is set.
+    const call = source.indexOf("stage-msvc-runtime-windows.ps1");
+    expect(call).toBeGreaterThan(-1);
+    expect(source.slice(call, call + 120)).toContain('"${MSVC_STAGE_ARGS[@]}"');
+    expect(source.slice(0, call)).not.toContain('if [[ "$WINDOWS_RUNTIME_MISSING" == "true" ]]');
+    expect(source).toMatch(/WENLAN_MSVC_REDIST_PATH[\s\S]{0,200}-ArchivePath/);
+  });
+
+  it("names the same ten MSVC DLLs in the staging script as prepare-sidecars.sh", () => {
+    const script = readFileSync(resolve(root, "scripts/stage-msvc-runtime-windows.ps1"), "utf8");
+    const declared = script.match(/\$runtimeNames = @\(([^)]*)\)/);
+    expect(declared, "stage-msvc-runtime-windows.ps1 no longer declares $runtimeNames").not.toBeNull();
+    const staged = [...declared![1]!.matchAll(/'([^']+)'/g)].map((match) => match[1]!);
+    expect(staged).toHaveLength(10);
+    const prepare = readFileSync(resolve(root, "scripts/prepare-sidecars.sh"), "utf8");
+    const msvc = prepare.match(/^\s*MSVC_RUNTIME_FILES=\(([^)]*)\)/m);
+    expect(msvc).not.toBeNull();
+    const msvcLibraries = msvc![1]!.trim().split(/\s+/).filter((name) => name.endsWith(".dll"));
+    expect(staged.sort()).toEqual(msvcLibraries.sort());
   });
 });

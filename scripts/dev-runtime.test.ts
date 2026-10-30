@@ -18,6 +18,7 @@ import { resolve, win32 } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { branchesOnUnmeasured, probeCallSites } from "./lib/probe-call-sites";
+import { windowsRuntimeLibraries } from "./lib/windows-release-inventory";
 
 // The same reason as scripts/host-process.test.ts: these cases spawn node and
 // Git Bash, and dev-runtime.sh's file-scope production-root guard canonicalizes
@@ -1365,8 +1366,8 @@ describe("dev runtime daemon staging", () => {
 
   it("refuses when a prepared app/binaries has lost the libraries it must carry", () => {
     // prepare-sidecars.sh installs the sidecars under triple-qualified names and
-    // refuses to finish on a Windows triple unless onnxruntime.dll and
-    // vulkan-1.dll are beside them. So a binaries directory holding a prepared
+    // refuses to finish on a Windows triple unless the runtime libraries the
+    // release ships are beside them. So a binaries directory holding a prepared
     // sidecar and NOT holding those is a broken layout, and a zero-library stage
     // out of it is a failure — which is exactly what the glob could not say.
     const fixture = makeFixture();
@@ -1378,9 +1379,9 @@ describe("dev runtime daemon staging", () => {
 
     const result = runStaging(fixture);
     expect(result.stdout.trim(), result.stderr).toBe("rc=1");
-    expect(result.stderr).toContain(
-      "the dev daemon was staged without onnxruntime.dll vulkan-1.dll",
-    );
+    const refusal = result.stderr.match(/the dev daemon was staged without (.*)/);
+    expect(refusal, result.stderr).not.toBeNull();
+    expect(refusal![1]!.trim().split(/\s+/).sort()).toEqual(windowsRuntimeLibraries(root).sort());
   });
 
   it("stages every expected runtime library out of a prepared app/binaries", () => {
@@ -1390,13 +1391,14 @@ describe("dev runtime daemon staging", () => {
       resolve(fixture.repo, "app/binaries/wenlan-server-x86_64-pc-windows-msvc.exe"),
       "a prepared sidecar\n",
     );
-    for (const name of ["onnxruntime.dll", "vulkan-1.dll"]) {
+    const libraries = windowsRuntimeLibraries(root);
+    for (const name of libraries) {
       writeFileSync(resolve(fixture.repo, "app/binaries", name), `${name} as prepared\n`);
     }
 
     const result = runStaging(fixture);
     expect(result.stdout.trim(), result.stderr).toBe("rc=0");
-    for (const name of ["onnxruntime.dll", "vulkan-1.dll"]) {
+    for (const name of libraries) {
       expect(readFileSync(resolve(fixture.stage, name), "utf8")).toBe(`${name} as prepared\n`);
     }
     // The positive count was reached, so the zero-library note must NOT appear.
@@ -1474,24 +1476,28 @@ describe("dev runtime daemon staging", () => {
   });
 
   it("expects exactly the runtime libraries the rest of the repository stages", () => {
-    // The expected set is not a guess and must not become one. Three files
-    // already say what the daemon loads from its own directory; this reads all
-    // three and fails when the list in dev-runtime.sh stops agreeing with them.
+    // The expected set is not a guess and must not become one. The files below
+    // already say what the daemon loads from its own directory; this reads them
+    // and fails when the list in dev-runtime.sh stops agreeing with them.
     const script = readFileSync(resolve(root, "scripts/dev-runtime.sh"), "utf8");
     const declared = script.match(/local -a expected_libraries=\(([^)]*)\)/);
     expect(declared, "stage_windows_daemon no longer declares expected_libraries").not.toBeNull();
     const expected = declared![1].trim().split(/\s+/).sort();
 
+    // 0. scripts/release_targets.py is the one written inventory of the Windows
+    //    release, and every DLL it ships beside the executables is one they
+    //    resolve from there.
+    expect(expected).toEqual(windowsRuntimeLibraries(root).sort());
+
     // 1. prepare-sidecars.sh is what PUTS them in app/binaries, and refuses to
-    //    finish for a Windows triple without them. Its list carries a licence
-    //    text file too, which is not loaded and so is not staged here.
+    //    finish for a Windows triple without them. Its lists carry licence and
+    //    provenance text files too, which are not loaded and so are not staged here.
     const prepare = readFileSync(resolve(root, "scripts/prepare-sidecars.sh"), "utf8");
-    const staged = prepare.match(/WINDOWS_RUNTIME_FILES=\(([^)]*)\)/);
-    expect(staged, "prepare-sidecars.sh no longer declares WINDOWS_RUNTIME_FILES").not.toBeNull();
+    const staged = [...prepare.matchAll(/^\s*(?:WINDOWS|MSVC)_RUNTIME_FILES=\(([^)]*)\)/gm)];
+    expect(staged, "prepare-sidecars.sh no longer declares WINDOWS_RUNTIME_FILES and MSVC_RUNTIME_FILES").toHaveLength(2);
     expect(
-      staged![1]
-        .trim()
-        .split(/\s+/)
+      staged
+        .flatMap((match) => match[1]!.trim().split(/\s+/))
         .filter((name) => name.endsWith(".dll"))
         .sort(),
     ).toEqual(expected);
@@ -1513,9 +1519,10 @@ describe("dev runtime daemon staging", () => {
         .sort(),
     ).toEqual(expected);
 
-    // 3. And the REASON: neither library is inside the executable. fastembed is
+    // 3. And the REASON: no library is inside the executable. fastembed is
     //    built with `ort-load-dynamic`, so ONNX Runtime is dlopen'd at runtime,
-    //    and llama-cpp-2 is built with `vulkan`, which links the loader.
+    //    llama-cpp-2 is built with `vulkan`, which links the loader, and the
+    //    MSVC runtime is linked dynamically (the default /MD).
     const cargo = readFileSync(resolve(root, "crates/wenlan-core/Cargo.toml"), "utf8");
     expect(cargo).toContain("ort-load-dynamic");
     expect(cargo).toMatch(/llama-cpp-2[\s\S]{0,200}vulkan/);

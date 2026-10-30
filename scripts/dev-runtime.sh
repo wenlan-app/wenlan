@@ -452,14 +452,18 @@ stage_windows_daemon() {
   #
   # Not a guess and not a glob's opinion. `scripts/prepare-sidecars.sh` refuses
   # to finish for a Windows triple unless exactly these are in `app/binaries`,
-  # and `app/tauri.windows.conf.json` bundles exactly these out of it. They are
-  # needed because the daemon loads ONNX Runtime DYNAMICALLY (fastembed's
-  # `ort-load-dynamic`, selected in `crates/wenlan-core/Cargo.toml`) and links
-  # the Vulkan loader for llama.cpp (`llama-cpp-2` with the `vulkan` feature) --
-  # neither is inside the executable and both are looked for beside it.
-  # `scripts/dev-runtime.test.ts` reads those three files and fails if this line
+  # `app/tauri.windows.conf.json` bundles exactly these out of it, and
+  # `scripts/release_targets.py` ships exactly these in the Windows ZIP. They
+  # are needed because the daemon loads ONNX Runtime DYNAMICALLY (fastembed's
+  # `ort-load-dynamic`, selected in `crates/wenlan-core/Cargo.toml`), links the
+  # Vulkan loader for llama.cpp (`llama-cpp-2` with the `vulkan` feature), and
+  # links the MSVC C/C++ and OpenMP runtime, which the release ships app-local
+  # so a clean PC can start it -- none is inside the executable and all are
+  # looked for beside it first. Staging the same runtime here keeps the dev
+  # daemon on the CRT the release ships rather than whatever System32 has.
+  # `scripts/dev-runtime.test.ts` reads those files and fails if this line
   # stops agreeing with them, so the repository stays the authority for it.
-  local -a expected_libraries=(onnxruntime.dll vulkan-1.dll)
+  local -a expected_libraries=(onnxruntime.dll vulkan-1.dll concrt140.dll msvcp140.dll msvcp140_1.dll msvcp140_2.dll msvcp140_atomic_wait.dll msvcp140_codecvt_ids.dll vccorlib140.dll vcruntime140.dll vcruntime140_1.dll vcomp140.dll)
   # `dirname` is a measurement too. Under `set -e` a bare assignment from a
   # failing command substitution aborts the whole script from inside a function
   # whose caller was going to branch on its status.
