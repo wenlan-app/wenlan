@@ -1700,6 +1700,79 @@ export async function renamePage(
   return invoke("rename_page", { id, title, expectedVersion });
 }
 
+export interface RestorePageResponse {
+  id: string;
+  title: string;
+  version: number;
+  status: "active";
+  projection_status: "synced" | "pending" | "hidden" | "not_configured";
+  projection_error?: string;
+}
+
+/** Why the daemon refused a restore. Switch on this, never on the text. */
+export type RestorePageErrorCode =
+  | "page_version_conflict"
+  | "page_title_taken"
+  | "page_not_archived"
+  | "page_title_fixed"
+  | "page_not_restorable";
+
+const RESTORE_PAGE_ERROR_CODES: readonly RestorePageErrorCode[] = [
+  "page_version_conflict",
+  "page_title_taken",
+  "page_not_archived",
+  "page_title_fixed",
+  "page_not_restorable",
+];
+
+export class RestorePageApiError extends Error {
+  readonly name = "RestorePageApiError";
+
+  constructor(
+    message: string,
+    readonly code: RestorePageErrorCode,
+    readonly currentVersion?: number,
+  ) {
+    super(message);
+  }
+}
+
+export function parseRestorePageError(error: unknown): RestorePageApiError | null {
+  const text = pageDraftErrorText(error);
+  const objectStart = text.indexOf("{");
+  if (objectStart < 0) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text.slice(objectStart));
+  } catch {
+    return null;
+  }
+  if (typeof payload !== "object" || payload === null) return null;
+  const code = Reflect.get(payload, "code");
+  if (!RESTORE_PAGE_ERROR_CODES.includes(code as RestorePageErrorCode)) return null;
+  const message = Reflect.get(payload, "error");
+  const currentVersion = Reflect.get(payload, "current_version");
+  return new RestorePageApiError(
+    typeof message === "string" && message.trim() !== "" ? message : text,
+    code as RestorePageErrorCode,
+    typeof currentVersion === "number" ? currentVersion : undefined,
+  );
+}
+
+/** Restore an archived page as the same page. A refusal rejects with a
+ * {@link RestorePageApiError}; anything else rejects unchanged. */
+export async function restorePage(
+  id: string,
+  expectedVersion: number,
+  title?: string,
+): Promise<RestorePageResponse> {
+  try {
+    return await invoke<RestorePageResponse>("restore_page", { id, expectedVersion, title });
+  } catch (error) {
+    throw parseRestorePageError(error) ?? error;
+  }
+}
+
 export interface KnowledgeFolder { path: string; parent_path: string; name: string; }
 export interface KnowledgeFoldersResponse { folders: KnowledgeFolder[]; truncated: boolean; }
 export function knowledgeFoldersList(): Promise<KnowledgeFoldersResponse> {

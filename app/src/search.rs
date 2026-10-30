@@ -4155,6 +4155,28 @@ pub async fn rename_page(
         .await
 }
 
+/// Restore an archived page, optionally under a new title. The daemon owns
+/// every rule (version, title collision, Space); refusals come back with a
+/// typed `code` in the error text.
+#[tauri::command]
+pub async fn restore_page(
+    state: tauri::State<'_, State>,
+    id: String,
+    expected_version: i64,
+    title: Option<String>,
+) -> Result<responses::RestorePageResponse, String> {
+    let client = daemon_client(&state).await;
+    client
+        .post_json_explicit_browse(
+            &format!("/api/pages/{}/restore", percent_encode_path_segment(&id)),
+            &requests::RestorePageRequest {
+                expected_version,
+                title,
+            },
+        )
+        .await
+}
+
 #[derive(Debug, Serialize)]
 struct DraftWriteRequest {
     draft_id: String,

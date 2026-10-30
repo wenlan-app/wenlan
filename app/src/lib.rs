@@ -1815,6 +1815,7 @@ pub fn run() {
             search::get_page,
             search::create_page,
             search::rename_page,
+            search::restore_page,
             search::create_page_draft,
             search::knowledge_folders_list,
             search::knowledge_folder_create,
