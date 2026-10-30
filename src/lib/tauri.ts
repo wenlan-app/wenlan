@@ -98,6 +98,11 @@ export async function setTrafficLightsVisible(visible: boolean): Promise<void> {
   return invoke("set_traffic_lights_visible", { visible });
 }
 
+/** Tell the native global-hotkey guard whether this window has an IME composition in progress. */
+export async function setEditorComposing(active: boolean): Promise<void> {
+  return invoke("set_editor_composing", { active });
+}
+
 export interface SearchResult {
   id: string;
   content: string;

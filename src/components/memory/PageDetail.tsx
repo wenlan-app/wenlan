@@ -288,6 +288,9 @@ export default function PageDetail({
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  // IME composition in the rename field: Enter picks a candidate and Escape
+  // drops the preedit, so neither may submit or cancel the rename.
+  const renameComposingRef = useRef(false);
   const [titleRenamePending, setTitleRenamePending] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const [renameExpectedVersion, setRenameExpectedVersion] = useState<number | null>(null);
@@ -727,6 +730,7 @@ export default function PageDetail({
     renameAttemptRef.current += 1;
     titleRenamePendingRef.current = false;
     setTitleRenamePending(false);
+    renameComposingRef.current = false;
     setRenaming(false);
     setRenameExpectedVersion(null);
     setRenameError(false);
@@ -2124,7 +2128,7 @@ export default function PageDetail({
   };
 
   const cancelRename = () => {
-    if (renameMutation.isPending) return;
+    if (renameMutation.isPending || renameComposingRef.current) return;
     renameAttemptRef.current += 1;
     setRenaming(false);
     setRenameExpectedVersion(null);
@@ -2136,7 +2140,7 @@ export default function PageDetail({
   const submitRename = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const title = renameTitle.trim();
-    if (!title || title === page.title || renameDisabled) return;
+    if (!title || title === page.title || renameDisabled || renameComposingRef.current) return;
     setRenameError(false);
     setRenameNeedsReview(false);
     if (renameExpectedVersion === null) return;
@@ -2355,7 +2359,15 @@ export default function PageDetail({
                     setRenameError(false);
                     setRenameNeedsReview(false);
                   }}
+                  onCompositionStart={() => { renameComposingRef.current = true; }}
+                  onCompositionEnd={() => { renameComposingRef.current = false; }}
+                  // Focus loss ends the composition even when compositionend is lost.
+                  onBlur={() => { renameComposingRef.current = false; }}
                   onKeyDown={(event) => {
+                    if (renameComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+                      if (event.key === "Enter") event.preventDefault();
+                      return;
+                    }
                     if (event.key === "Escape") {
                       event.preventDefault();
                       cancelRename();

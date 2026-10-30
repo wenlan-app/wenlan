@@ -81,6 +81,30 @@ function queryTextareaAndSave(container: HTMLElement) {
   return { textarea: textarea as HTMLTextAreaElement, saveButton: saveButton as HTMLButtonElement };
 }
 
+describe("QuickCapture leaves Escape and Cmd/Ctrl+Enter to the IME while it composes", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+  });
+
+  it("neither closes nor saves on a composing keydown, then works once the candidate is chosen", () => {
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <QuickCapture isOpen onClose={onClose} standalone />
+      </QueryClientProvider>,
+    );
+    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: "今天天氣非常晴朗好熱" } });
+    fireEvent.keyDown(textarea, { key: "Escape", isComposing: true });
+    fireEvent.keyDown(textarea, { key: "Enter", ctrlKey: true, keyCode: 229 });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mockedInvoke).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("QuickCapture standalone window has no exterior shadow or inset", () => {
   const platforms: Array<[string, string | undefined]> = [
     ["macOS", MACOS_WKWEBVIEW],

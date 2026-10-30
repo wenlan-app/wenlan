@@ -61,6 +61,27 @@ describe("usePageDraftAutosave", () => {
     vi.useRealTimers();
   });
 
+  it("pauses pending autosave and explicit flush during composition, then saves committed text", async () => {
+    vi.mocked(createPageDraft).mockImplementation(async (input) =>
+      page({ id: input.clientDraftId, title: input.title, content: input.content, version: 1 }));
+    const changed = { title: "中文 title", content: "輸入中", space: null };
+    const { result, rerender } = renderHook(
+      ({ snapshot, composing }) => usePageDraftAutosave({ initial: EMPTY, snapshot, composing }),
+      { initialProps: { snapshot: EMPTY, composing: false }, wrapper },
+    );
+    rerender({ snapshot: changed, composing: false });
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    rerender({ snapshot: changed, composing: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await result.current.flush()).toBe(false);
+    });
+    expect(createPageDraft).not.toHaveBeenCalled();
+    rerender({ snapshot: { ...changed, content: "輸入完成" }, composing: false });
+    await act(async () => { await vi.advanceTimersByTimeAsync(701); });
+    expect(createPageDraft).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: "輸入完成" }));
+  });
+
   it("does not write an untouched or Space-only draft", async () => {
     const { result, rerender } = renderHook(
       ({ snapshot }) => usePageDraftAutosave({ initial: EMPTY, snapshot }),

@@ -77,6 +77,8 @@ export async function invoke(
   if ((cmd === "list_pages" || cmd === "list_pages_explicit_browse" || cmd === "list_onboarding_milestones") && new URLSearchParams(location.search).get("pages") === "0") {
     return [];
   }
+  // Native window composition state has no daemon or browser-fixture side effect.
+  if (cmd === "set_editor_composing") return null;
   if (!(window as { __PREVIEW_FIXTURES__?: boolean }).__PREVIEW_FIXTURES__) {
     return liveInvoke(cmd, args);
   }
