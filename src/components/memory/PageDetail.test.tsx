@@ -183,6 +183,36 @@ describe("PageDetail", () => {
     await i18n.changeLanguage("en");
   });
 
+  it("reads an authored page as written: its own Sources, a distinct H1 and literal code", async () => {
+    const { getPage } = await import("../../lib/tauri");
+    const baseline = await getPage("concept_abc");
+    const fence = "`".repeat(3);
+    vi.mocked(getPage).mockResolvedValueOnce({
+      ...baseline!,
+      title: "My title",
+      creation_kind: "authored",
+      summary: null,
+      citations: [],
+      content: [
+        "# A different heading",
+        "",
+        "## Sources",
+        "My own bibliography",
+        "",
+        `${fence}md`,
+        "[[Missing]]. Array [1].",
+        "a | b | c",
+        fence,
+      ].join("\n"),
+    });
+    renderWithQuery(<PageDetail {...defaultProps} initialMode="read" />);
+    expect(await screen.findByRole("heading", { name: "A different heading" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Sources", level: 2 })).toBeInTheDocument();
+    const reading = screen.getByTestId("page-document-reading");
+    expect(reading).toHaveTextContent("My own bibliography");
+    expect(reading.querySelector("pre code")?.textContent).toBe("[[Missing]]. Array [1].\na | b | c\n");
+  });
+
   it("renders page title", async () => {
     renderWithQuery(<PageDetail {...defaultProps} />);
     expect(await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeInTheDocument();
