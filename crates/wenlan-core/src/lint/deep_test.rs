@@ -269,3 +269,103 @@ async fn deep_page_body_alignment_uses_state_mapping_and_canonical_body() {
     assert_eq!(check(&drifted, PAGE_BODY).outcome(), LintOutcome::Finding);
     assert_eq!(check(&drifted, PAGE_BODY).severity(), LintSeverity::Error);
 }
+
+/// The body check applies the page watcher's rule: authored blank lines at
+/// the start, link conversion and an editor's save noise (CRLF, an extra
+/// final newline) are not drift; a changed word is.
+#[tokio::test]
+async fn deep_page_body_alignment_follows_the_watchers_exact_round_trip() {
+    let (db, _dir) = test_db().await;
+    db.test_primary_session()
+        .await
+        .execute_batch(
+            "INSERT INTO pages
+                 (id,title,content,source_memory_ids,version,status,created_at,last_compiled,
+                  last_modified,creation_kind,review_status)
+             VALUES
+                 ('page_lead','lead','\n\n    indented code\n\nLast line  ','[]',1,'active',
+                  'now','now','now','authored','confirmed'),
+                 ('page_noise','noise','line one\nsee [Topic](concept_topic-1)','[]',1,'active',
+                  'now','now','now','authored','confirmed'),
+                 ('page_edit','edit','original words','[]',1,'active',
+                  'now','now','now','authored','confirmed');",
+        )
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".wenlan")).unwrap();
+    let state = |files: &[(&str, &str)]| {
+        let pages = files
+            .iter()
+            .map(|(id, file)| format!(r#""{id}":{{"file":"{file}","version":1}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(r#"{{"schema_version":2,"pages":{{{pages}}}}}"#)
+    };
+    let envelope = |id: &str, body: &str| {
+        format!(
+            "---\norigin_id: {id}\norigin_version: 1\n---\n\n{body}\n\n<!-- origin:sources:start -->\n## Sources\n- [[mem_a]]\n<!-- origin:sources:end -->\n"
+        )
+    };
+    std::fs::write(
+        root.path().join("lead.md"),
+        envelope("page_lead", "\n\n    indented code\n\nLast line  "),
+    )
+    .unwrap();
+    // Saved by an editor: whole file CRLF plus an extra final newline. The
+    // projection writes the concept link as a wikilink.
+    std::fs::write(
+        root.path().join("noise.md"),
+        format!("{}\n", envelope("page_noise", "line one\nsee [[Topic]]")).replace('\n', "\r\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".wenlan/state.json"),
+        state(&[("page_lead", "lead.md"), ("page_noise", "noise.md")]),
+    )
+    .unwrap();
+
+    let aligned = deep_report(&db, Some(root.path())).await;
+    assert_eq!(check(&aligned, PAGE_BODY).outcome(), LintOutcome::Pass);
+    assert_eq!(check(&aligned, PAGE_BODY).coverage().denominator(), 2);
+
+    // Positive control: the leading blank lines are part of the page, so a
+    // file that lost them has drifted.
+    std::fs::write(
+        root.path().join("lead.md"),
+        envelope("page_lead", "    indented code\n\nLast line  "),
+    )
+    .unwrap();
+    let trimmed = deep_report(&db, Some(root.path())).await;
+    assert_eq!(check(&trimmed, PAGE_BODY).outcome(), LintOutcome::Finding);
+    std::fs::write(
+        root.path().join("lead.md"),
+        envelope("page_lead", "\n\n    indented code\n\nLast line  "),
+    )
+    .unwrap();
+
+    std::fs::write(
+        root.path().join("edit.md"),
+        envelope("page_edit", "edited words"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join(".wenlan/state.json"),
+        state(&[
+            ("page_lead", "lead.md"),
+            ("page_noise", "noise.md"),
+            ("page_edit", "edit.md"),
+        ]),
+    )
+    .unwrap();
+    let drifted = deep_report(&db, Some(root.path())).await;
+    let body = check(&drifted, PAGE_BODY);
+    assert_eq!(body.outcome(), LintOutcome::Finding);
+    assert_eq!(body.severity(), LintSeverity::Error);
+    assert_eq!(body.coverage().denominator(), 3);
+    assert_eq!(
+        body.coverage().evidence_returned(),
+        1,
+        "only the edited page drifted"
+    );
+}

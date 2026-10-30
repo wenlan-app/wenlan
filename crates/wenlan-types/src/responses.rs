@@ -467,6 +467,48 @@ pub struct RenamePageResponse {
     pub version: i64,
 }
 
+/// Result of restoring the original archived page, without returning prose.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RestorePageResponse {
+    pub id: String,
+    pub title: String,
+    pub version: i64,
+    pub status: String,
+    pub projection_status: PageProjectionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_error: Option<String>,
+}
+
+/// Why `POST /api/pages/{id}/restore` refused, sent as `code` in the error
+/// body next to `error` (English text) and `current_version`. Clients switch
+/// on the code, never on the text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RestorePageErrorCode {
+    /// The page moved past `expected_version` (409). Reload it first.
+    PageVersionConflict,
+    /// Another active page in the same Space has this title (409). Pick another.
+    PageTitleTaken,
+    /// The page is already active under a different title (409).
+    PageNotArchived,
+    /// Source and imported pages keep their original title (422).
+    PageTitleFixed,
+    /// Drafts and entity pages are not restored here (422).
+    PageNotRestorable,
+}
+
+impl RestorePageErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PageVersionConflict => "page_version_conflict",
+            Self::PageTitleTaken => "page_title_taken",
+            Self::PageNotArchived => "page_not_archived",
+            Self::PageTitleFixed => "page_title_fixed",
+            Self::PageNotRestorable => "page_not_restorable",
+        }
+    }
+}
+
 /// `POST /api/memory/entities` (legacy list) and `POST /api/memory/entities/query`.
 /// `total` is the number of entities matching the filter before `limit`/`offset`;
 /// the legacy route sets it to `entities.len()`.
@@ -2338,5 +2380,23 @@ mod page_write_response_warnings_tests {
         };
         let value = serde_json::to_value(&warned).unwrap();
         assert_eq!(value["warnings"][0], "code_basis was not recorded");
+    }
+}
+
+#[cfg(test)]
+mod restore_page_error_code_tests {
+    use super::RestorePageErrorCode;
+
+    #[test]
+    fn restore_page_error_codes_serialize_as_their_wire_names() {
+        for code in [
+            RestorePageErrorCode::PageVersionConflict,
+            RestorePageErrorCode::PageTitleTaken,
+            RestorePageErrorCode::PageNotArchived,
+            RestorePageErrorCode::PageTitleFixed,
+            RestorePageErrorCode::PageNotRestorable,
+        ] {
+            assert_eq!(serde_json::to_value(code).unwrap(), code.as_str());
+        }
     }
 }

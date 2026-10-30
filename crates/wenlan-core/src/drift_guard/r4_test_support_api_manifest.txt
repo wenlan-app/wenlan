@@ -423,6 +423,8 @@ crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::alias_collisi
 crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::alias_collision_inventory_flags_the_same_alias_on_two_active_pages|test_primary_session|1
 crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::alias_collision_inventory_is_silent_on_a_clean_store|TestDbSession::execute_batch|1
 crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::alias_collision_inventory_is_silent_on_a_clean_store|test_primary_session|1
+crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::deep_page_body_alignment_follows_the_watchers_exact_round_trip|TestDbSession::execute_batch|1
+crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::deep_page_body_alignment_follows_the_watchers_exact_round_trip|test_primary_session|1
 crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::deep_page_body_alignment_uses_state_mapping_and_canonical_body|TestDbSession::execute_batch|1
 crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::deep_page_body_alignment_uses_state_mapping_and_canonical_body|test_primary_session|1
 crates/wenlan-core/src/lint/deep_test.rs|crate::lint::deep::tests::deep_profile_detects_structural_and_advisory_counterexamples|TestDbSession::execute_batch|1

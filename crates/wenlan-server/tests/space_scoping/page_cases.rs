@@ -119,6 +119,13 @@ pub async fn unknown_selectors_are_rejected() {
             Method::Post,
         ),
         (
+            HttpMethod::POST,
+            format!("/api/pages/{page}/restore"),
+            Some(json!({"expected_version":1})),
+            "/api/pages/{id}/restore",
+            Method::Post,
+        ),
+        (
             HttpMethod::GET,
             format!("/api/pages/{page}/sources"),
             None,
@@ -571,6 +578,43 @@ pub async fn direct_and_child_routes_are_gated() {
         assert_eq!(mismatch.1, missing.1, "{suffix}");
         assert_eq!(mismatch.1, br#"{"error":"page not found"}"#);
     }
+
+    // Restore names one page: another Space's page answers exactly like a
+    // missing one, and nothing is written.
+    fixture.db.archive_page(&personal).await.unwrap();
+    let archived_version = fixture
+        .db
+        .get_page(&personal)
+        .await
+        .unwrap()
+        .unwrap()
+        .version;
+    let restore = |id: String| {
+        let fixture = &fixture;
+        async move {
+            body_bytes(
+                fixture
+                    .send(
+                        HttpMethod::POST,
+                        &format!("/api/pages/{id}/restore"),
+                        Some(json!({"expected_version":archived_version})),
+                        Some("work"),
+                    )
+                    .await,
+            )
+            .await
+        }
+    };
+    let mismatch = restore(personal.clone()).await;
+    let missing = restore("missing".to_string()).await;
+    assert_eq!(mismatch.0, StatusCode::NOT_FOUND);
+    assert_eq!(mismatch, missing);
+    assert_eq!(mismatch.1, br#"{"error":"page not found"}"#);
+    let untouched = fixture.db.get_page(&personal).await.unwrap().unwrap();
+    assert_eq!(
+        (untouched.status.as_str(), untouched.version),
+        ("archived", archived_version)
+    );
 
     let (status, links) = json_body(
         fixture

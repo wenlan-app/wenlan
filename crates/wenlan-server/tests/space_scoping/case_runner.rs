@@ -88,6 +88,11 @@ pub const WAVE_3_PAGES: &[ExpectedContract] = &[
         SelectionGate::SingleId404,
     ),
     page_header_gate(
+        Method::Post,
+        "/api/pages/{id}/restore",
+        SelectionGate::SingleId404,
+    ),
+    page_header_gate(
         Method::Get,
         "/api/pages/{id}/sources",
         SelectionGate::ParentCollectionFiltered,
@@ -312,8 +317,8 @@ pub fn assert_wave_3_pages_catalog_contract() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         keys.len(),
-        11,
-        "Wave 3 Pages must contain eleven unique keys"
+        12,
+        "Wave 3 Pages must contain twelve unique keys"
     );
 
     for expected in WAVE_3_PAGES {
@@ -383,8 +388,9 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
     // recheck and cited-blob reads two, the session detail and page
     // sessions reads two, the steep worklist and claim two, and steep's new
     // material list, claim and organize tasks three. The vault note setting
-    // and the note proposal list and detail add three Global readers.
-    assert_eq!(rows.len(), 88);
+    // and the note proposal list and detail add three Global readers. Page
+    // restore adds one PageWorkspace-scoped single-id route.
+    assert_eq!(rows.len(), 89);
     assert_eq!(
         rows.iter()
             .filter(|row| row.scope_binding == ScopeBinding::Global)
@@ -395,7 +401,7 @@ pub fn assert_wave_4_knowledge_catalog_contract() {
         rows.iter()
             .filter(|row| row.scope_binding != ScopeBinding::Global)
             .count(),
-        65
+        66
     );
     assert_eq!(
         rows.iter()
