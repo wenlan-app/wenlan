@@ -7,6 +7,7 @@ import {
   NATIVE_TITLE_BAR_INSET,
   dragStripHeight,
   hostPlatform,
+  primaryShortcutModifier,
   topBarLeftInset,
 } from "./windowChrome";
 
@@ -144,5 +145,17 @@ describe("window chrome", () => {
     expect(Object.keys(windowChrome)).not.toContain("cssWindowShadowInset");
     expect(Object.keys(windowChrome)).not.toContain("CSS_WINDOW_SHADOW_INSET");
     expect(Object.keys(windowChrome)).toContain("hostPlatform");
+  });
+});
+
+describe("primaryShortcutModifier", () => {
+  it("names the modifier each platform's keyboard has", () => {
+    expect(primaryShortcutModifier(MACOS_WKWEBVIEW)).toBe("⌘");
+    expect(primaryShortcutModifier(WINDOWS_WEBVIEW2)).toBe("Ctrl");
+    expect(primaryShortcutModifier(LINUX_WEBKITGTK)).toBe("Ctrl");
+  });
+
+  it("names both when the platform cannot be read", () => {
+    expect(primaryShortcutModifier(UNRECOGNISED_UA)).toBe("Ctrl/⌘");
   });
 });
