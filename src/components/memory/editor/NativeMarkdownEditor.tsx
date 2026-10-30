@@ -149,6 +149,12 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         }}
         onKeyDown={(event) => {
           const mod = event.metaKey || event.ctrlKey;
+          // Keys pressed while the IME composes belong to it. Still keep
+          // Cmd/Ctrl+S from opening the browser's save dialog.
+          if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+            if (mod && event.key.toLowerCase() === "s") event.preventDefault();
+            return;
+          }
           if (mod && event.key.toLowerCase() === "s") {
             event.preventDefault();
             requestSave();
