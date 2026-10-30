@@ -23,6 +23,8 @@ const SOURCE_CONFIG: Record<string, { labelKey: ToastLabelKey; color: string; si
   screen_capture: { labelKey: "toast.screen",    color: "#fbbf24" },
   local_files:    { labelKey: "toast.files",     color: "#60a5fa", silent: true },
   manual:         { labelKey: "toast.captured",  color: "#c084fc" },
+  // Quick Capture confirms its own save; its event only refreshes the other windows.
+  memory:         { labelKey: "toast.captured",  color: "#c084fc", silent: true },
   ambient:        { labelKey: "toast.ambient",   color: "#2dd4bf", silent: true },
   focus:          { labelKey: "toast.focus",     color: "#fbbf24", silent: true },
   focus_capture:  { labelKey: "toast.focus",     color: "#fbbf24", silent: true },
