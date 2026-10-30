@@ -1,17 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as renderInto, screen, waitFor, within } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RECENT_PAGES_STORAGE_KEY } from "../../../lib/recentPages";
-import { deletePage, getPage, renamePage, type Page } from "../../../lib/tauri";
+import { archivePage, deletePage, getPage, listPagesExplicitBrowse, renamePage, type Page } from "../../../lib/tauri";
 import { RecentNotesPanel } from "./RecentNotesPanel";
+
+// Recently used reads the archived set to hide archived pages, so every
+// render needs a query client. Each render gets its own.
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderInto(ui, { wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
+}
 
 vi.mock("../../../lib/tauri", async original => ({
   ...await original<typeof import("../../../lib/tauri")>(),
   deletePage: vi.fn(),
+  archivePage: vi.fn(),
   getPage: vi.fn(),
   renamePage: vi.fn(),
+  // The archived set Recently used hides; empty unless a test archives a page.
+  listPagesExplicitBrowse: vi.fn(async () => []),
 }));
 
 const preferenceKey = "wenlan:wiki-inventory:v1";
@@ -120,6 +131,8 @@ describe("RecentNotesPanel page menu", () => {
     localStorage.setItem(RECENT_PAGES_STORAGE_KEY, JSON.stringify({ version: 1, entries: recent }));
     vi.mocked(getPage).mockReset().mockImplementation(async id => pages[id] ?? null);
     vi.mocked(deletePage).mockReset().mockResolvedValue();
+    vi.mocked(archivePage).mockReset().mockResolvedValue();
+    vi.mocked(listPagesExplicitBrowse).mockReset().mockResolvedValue([]);
     vi.mocked(renamePage).mockReset();
   });
 
@@ -130,8 +143,10 @@ describe("RecentNotesPanel page menu", () => {
     row.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getAllByRole("menuitem").map(item => item.textContent))
-      .toEqual(["Open", "Rename page", "Move to folder", "Remove from Recently used", "Delete page"]);
+    await waitFor(() => expect(within(menu).getAllByRole("menuitem").map(item => item.textContent))
+      .toEqual(["Open", "Rename page", "Move to folder", "Remove from Recently used", "Archive page", "Delete page"]));
+    expect(within(menu).getByRole("menuitem", { name: "Delete page" })).toHaveClass("is-danger");
+    expect(within(menu).getByRole("menuitem", { name: "Archive page" })).not.toHaveClass("is-danger");
     expect(within(menu).getByRole("menuitem", { name: "Open" })).toHaveFocus();
     await waitFor(() => expect(within(menu).getByRole("menuitem", { name: "Rename page" })).toHaveAttribute("aria-disabled", "false"));
     await user.keyboard("{Escape}");
@@ -165,11 +180,62 @@ describe("RecentNotesPanel page menu", () => {
     const item = await screen.findByRole("menuitem", { name: "Delete page" });
     await waitFor(() => expect(item).toHaveAttribute("aria-disabled", "false"));
     await user.click(item);
-    expect(confirmSpy).toHaveBeenCalledWith("Delete this page?");
+    expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");
     await waitFor(() => expect(onDeletePage).toHaveBeenCalledWith("b"));
     expect(deletePage).toHaveBeenCalledWith("b");
     expect(rowTitles()).toEqual(["Alpha", "Gamma"]);
     confirmSpy.mockRestore();
+  });
+
+  it("archives after confirmation: the row leaves the list but the history keeps it", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onDeletePage = vi.fn();
+    vi.mocked(archivePage).mockImplementation(async id => {
+      vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "archived" ? [{ ...pages[id], status: "archived" }] : []);
+    });
+    const user = setup({ onDeletePage });
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "Beta" }) });
+    await user.click(await screen.findByRole("menuitem", { name: "Archive page" }));
+    expect(confirmSpy).toHaveBeenCalledWith("Archive this page? You can restore it from Archived pages.");
+    await waitFor(() => expect(rowTitles()).toEqual(["Alpha", "Gamma"]));
+    expect(archivePage).toHaveBeenCalledWith("b");
+    expect(deletePage).not.toHaveBeenCalled();
+    expect(onDeletePage).not.toHaveBeenCalled();
+    // Hidden, not forgotten: a restore brings it back in its place.
+    expect(storedTitles()).toEqual(["Alpha", "Beta", "Gamma"]);
+    confirmSpy.mockRestore();
+  });
+
+  it("shows an archived page again, in its place, once it is restored", async () => {
+    vi.mocked(listPagesExplicitBrowse).mockImplementation(async status => status === "archived" ? [{ ...pages.b, status: "archived" }] : []);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><RecentNotesPanel onOpenPage={vi.fn()} /></QueryClientProvider>);
+    await waitFor(() => expect(rowTitles()).toEqual(["Alpha", "Gamma"]));
+    vi.mocked(listPagesExplicitBrowse).mockResolvedValue([]);
+    await act(async () => { await client.invalidateQueries({ queryKey: ["pages"] }); });
+    await waitFor(() => expect(rowTitles()).toEqual(["Alpha", "Beta", "Gamma"]));
+  });
+
+  it("hands Archive to the editor that has the page open instead of archiving around it", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onArchiveOpenPage = vi.fn(async () => true);
+    const user = setup({ onArchiveOpenPage });
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "Alpha" }) });
+    await user.click(await screen.findByRole("menuitem", { name: "Archive page" }));
+    await waitFor(() => expect(onArchiveOpenPage).toHaveBeenCalledWith("a"));
+    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(archivePage).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it("does not offer Archive for a page that is not active", async () => {
+    pages.c = { ...pages.c, creation_kind: "entity" };
+    const user = setup();
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "Gamma" }) });
+    const menu = await screen.findByRole("menu");
+    await waitFor(() => expect(within(menu).getByRole("menuitem", { name: "Delete page" })).toHaveAttribute("aria-disabled", "false"));
+    expect(within(menu).queryByRole("menuitem", { name: "Archive page" })).toBeNull();
+    pages.c = page("c", "Gamma");
   });
 
   it("renames in place at the page's latest version", async () => {

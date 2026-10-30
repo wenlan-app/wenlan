@@ -27,7 +27,7 @@ import {
   REPEAT_CITED_SOURCES,
 } from "../fixtures";
 import { TauriMockRuntime } from "../../e2e/tauriMock/runtime";
-import { restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
+import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 import { createReviewDecisionFixture } from "../../e2e/fixtures/reviewDecisions";
 const folderRuntime = new TauriMockRuntime(createReviewDecisionFixture("wiki-folders"), [], [], { projectionPendingOnce: new URLSearchParams(window.location.search).get("pending") === "1" });
 import {
@@ -211,6 +211,11 @@ export async function invoke(
     case "delete_page":
       delete PAGES[args?.id as string];
       return null;
+    case "archive_page": {
+      const id = String(args?.id ?? "");
+      PAGES[id] = archiveFixturePage(PAGES[id]);
+      return null;
+    }
     case "restore_page": {
       const id = String(args?.id ?? "");
       const restored = restoreFixturePage(PAGES[id], Object.values(PAGES), args?.expectedVersion, args?.title);

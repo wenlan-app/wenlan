@@ -17,6 +17,23 @@ describe("translation resources", () => {
     expect(supportedAppLocales).toEqual(["en", "zh-Hans", "zh-Hant"]);
   });
 
+  it("names archive and restore the same way in every locale, and tells it apart from delete", () => {
+    const copies = supportedAppLocales.map(locale => resources[locale].translation);
+    expect(copies.map(copy => copy.pageDetail.archivePage)).toEqual(["Archive page", "归档笔记", "封存筆記"]);
+    expect(copies.map(copy => copy.pages.archive.title)).toEqual(["Archived pages", "已归档笔记", "已封存筆記"]);
+    expect(copies.map(copy => copy.pages.archive.restore)).toEqual(["Restore page", "恢复笔记", "還原筆記"]);
+    // The confirmation names the real place to restore from.
+    copies.forEach(copy => expect(copy.pageDetail.archiveConfirm).toContain(copy.pages.archive.title));
+    expect(copies.map(copy => copy.pageDetail.deleteConfirm)).toEqual([
+      "Permanently delete this page? This cannot be undone.",
+      "永久删除此笔记？此操作无法撤销。",
+      "永久刪除此筆記？此操作無法復原。",
+    ]);
+    const english = JSON.stringify(resources.en.translation.pages.archive);
+    expect(english).not.toMatch(/\bnotes?\b/i);
+    expect(english).not.toMatch(/[\u2013\u2014]| - /);
+  });
+
   it("contains representative primary interface keys", () => {
     expect(resources.en.translation.setup.welcomeTitle).toBe(
       "Welcome to Wenlan",

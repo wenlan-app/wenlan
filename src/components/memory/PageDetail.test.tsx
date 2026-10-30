@@ -741,7 +741,7 @@ describe("PageDetail", () => {
 
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
-    expect(confirmSpy).toHaveBeenCalledWith("Delete this page?");
+    expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");
     expect(deletePage).not.toHaveBeenCalled();
 
     confirmSpy.mockReturnValue(true);

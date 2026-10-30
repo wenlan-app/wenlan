@@ -5,7 +5,7 @@
 
 import { daemonMeetsFloor } from "../../src/lib/daemonVersion";
 import type { RenamePageResponse, RestorePageResponse } from "../../src/lib/tauri";
-import { restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
+import { archiveFixturePage, restoreFixturePage } from "../../e2e/tauriMock/pageRestore";
 
 type Args = Record<string, unknown> | undefined;
 const PAGE_EDIT_DAEMON_FLOOR = "0.14.1";
@@ -902,7 +902,7 @@ export const HANDLERS: Record<string, (a: any) => Promise<unknown>> = {
     const id = String(a.id);
     const local = PREVIEW_AUTHORED_PAGES.get(id);
     if (local) {
-      PREVIEW_AUTHORED_PAGES.set(id, { ...local, status: "archived" });
+      PREVIEW_AUTHORED_PAGES.set(id, archiveFixturePage(local));
       return Promise.resolve(null);
     }
     return post(`/api/pages/${enc(id)}/archive`);

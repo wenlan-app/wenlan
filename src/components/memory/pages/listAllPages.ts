@@ -9,14 +9,14 @@ export { EXPLICIT_BROWSE_QUERY_POLICY } from "../../../hooks/useTruthStatus";
 const PAGE_BATCH_SIZE = 500;
 
 type PageBatchFetcher = (
-  status: "active" | "draft",
+  status: "active" | "draft" | "archived",
   domain: undefined,
   limit: number,
   offset: number,
 ) => Promise<Page[]>;
 
 async function listAllPagesWithStatus(
-  status: "active" | "draft",
+  status: "active" | "draft" | "archived",
   fetchBatch: PageBatchFetcher,
 ): Promise<Page[]> {
   const pages: Page[] = [];
@@ -76,3 +76,10 @@ export function listAllActivePagesExplicitBrowse(): Promise<Page[]> {
 export function listAllDraftPagesExplicitBrowse(): Promise<Page[]> {
   return listAllPagesWithStatus("draft", listPagesExplicitBrowse);
 }
+
+export function listAllArchivedPagesExplicitBrowse(): Promise<Page[]> {
+  return listAllPagesWithStatus("archived", listPagesExplicitBrowse);
+}
+
+/** One cache entry for every view of the archived set (panel, home entry, Recently used). */
+export const ARCHIVED_PAGES_QUERY_KEY = ["pages", "archived"] as const;

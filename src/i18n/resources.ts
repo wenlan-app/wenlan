@@ -535,6 +535,7 @@ const en = {
     },
   },
   pages: {
+    archive: {"title": "Archived pages", "restore": "Restore page", "restoreShort": "Restore", "restoreNamed": "Restore {{title}}", "restoring": "Restoring…", "titleLabel": "Page title", "explanation": "The page comes back to your library with its text, sources and history.", "empty": "No archived pages.", "noMatches": "No archived pages match.", "loadError": "Archived pages could not be loaded.", "retry": "Try again", "search": "Search archived pages", "restoreError": "The page could not be restored. Try again.", "titleTaken": "Another page already has this title. Choose a different title.", "titleTakenFixed": "Another page already has this title. Rename that page, then restore this one.", "changed": "This page changed since you opened it. Reload it, then restore.", "notRestorable": "This page cannot be restored.", "restored": "Page restored.", "readOnly": "This page is archived. Restore it to edit.", "filePending": "Page restored. Its file could not be updated yet.", "fileHidden": "Page restored. Its file is not available right now.", "fixedTitle": "Source and imported pages keep their original title.", "reload": "Reload", "busy": "This page is busy. Try again in a moment."},
     groups: { central: "Central pages", right: "Right pages", moveToRight: "Move to right group", moveToCentral: "Move to central group", openBeside: "Open beside", moveBack: "Move back", openInRight: "This page is open on the right.", openInCentral: "This page is open in the central group.", showNote: "Show page", dismiss: "Dismiss" },
     recent: { title: "Recently used", remove: "Remove from Recently used", custom: "Manual order", dragNote: "Drag to reorder {{title}}", reorderHint: "Use arrow keys to reorder.", customHint: "Drag pages to set your order. Opening a page keeps its place.", modeLabel: "Browse pages", empty: "Pages you open appear here.", browseFolders: "Browse folders" },
     tabs: { label: "Open pages", close: "Close {{title}}", home: "Wiki home" },
@@ -926,7 +927,10 @@ const en = {
   pageDetail: {
     diagramFailed: "This diagram could not be drawn, so its text is shown.",
     actions: "Page actions",
-    deleteConfirm: "Delete this page?",
+    deleteConfirm: "Permanently delete this page? This cannot be undone.",
+    archivePage: "Archive page",
+    archiveConfirm: "Archive this page? You can restore it from Archived pages.",
+    archiveError: "Could not archive this page. Try again.",
     deleteError: "Could not delete this page. Try again.",
     redistillEditedConfirm: "Update this page from its sources? Your edits may be replaced.",
     entityGuardOpen: "Open the topic",
@@ -3590,6 +3594,7 @@ const zhHans = {
     },
   },
   pages: {
+    archive: {"title": "已归档笔记", "restore": "恢复笔记", "restoreShort": "恢复", "restoreNamed": "恢复「{{title}}」", "restoring": "正在恢复…", "titleLabel": "笔记名称", "explanation": "笔记会连同正文、来源和历史记录回到笔记库。", "empty": "没有已归档的笔记。", "noMatches": "没有匹配的已归档笔记。", "loadError": "未能加载已归档笔记。", "retry": "重试", "search": "搜索已归档笔记", "restoreError": "未能恢复笔记，请重试。", "titleTaken": "已有其他笔记使用这个名称，请换一个名称。", "titleTakenFixed": "已有其他笔记使用这个名称。请先重命名那篇笔记，再恢复这篇。", "changed": "这篇笔记在你打开后有变化，请重新加载后再恢复。", "notRestorable": "这篇笔记无法恢复。", "restored": "笔记已恢复。", "readOnly": "这篇笔记已归档，恢复后才能编辑。", "filePending": "笔记已恢复，但文件暂时未能更新。", "fileHidden": "笔记已恢复，但目前无法访问它的文件。", "fixedTitle": "来源笔记和导入的笔记会保留原名称。", "reload": "重新加载", "busy": "这篇笔记正在处理中，请稍后再试。"},
     groups: { central: "中央笔记", right: "右侧笔记", moveToRight: "移至右侧分组", moveToCentral: "移至中央分组", openBeside: "并排打开", moveBack: "移回中央", openInRight: "这篇笔记已在右侧打开。", openInCentral: "这篇笔记已在中央打开。", showNote: "查看笔记", dismiss: "关闭提示" },
     recent: { title: "最近使用", remove: "从最近使用中移除", custom: "手动排序", dragNote: "拖动调整「{{title}}」的位置", reorderHint: "使用方向键调整顺序。", customHint: "拖动笔记调整顺序，打开笔记时位置保持不变。", modeLabel: "浏览笔记", empty: "打开过的笔记会出现在这里。", browseFolders: "按文件夹浏览" },
     tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "Wiki 首页" },
@@ -3981,7 +3986,10 @@ const zhHans = {
   pageDetail: {
     diagramFailed: "这张图画不出来，下面是它的原文。",
     actions: "笔记操作",
-    deleteConfirm: "删除此笔记？",
+    deleteConfirm: "永久删除此笔记？此操作无法撤销。",
+    archivePage: "归档笔记",
+    archiveConfirm: "归档此笔记？之后可以从“已归档笔记”恢复。",
+    archiveError: "无法归档此笔记，请重试。",
     deleteError: "无法删除此笔记，请重试。",
     redistillEditedConfirm: "要按来源更新此笔记吗？您的编辑可能会被替换。",
     entityGuardOpen: "打开该主题",
@@ -6601,6 +6609,7 @@ const zhHant = {
     },
   },
   pages: {
+    archive: {"title": "已封存筆記", "restore": "還原筆記", "restoreShort": "還原", "restoreNamed": "還原「{{title}}」", "restoring": "還原中…", "titleLabel": "筆記名稱", "explanation": "筆記會連同內文、來源與歷史記錄回到筆記庫。", "empty": "沒有已封存的筆記。", "noMatches": "沒有符合的已封存筆記。", "loadError": "無法載入已封存筆記。", "retry": "重試", "search": "搜尋已封存筆記", "restoreError": "無法還原筆記，請再試一次。", "titleTaken": "已有其他筆記使用這個名稱，請換一個名稱。", "titleTakenFixed": "已有其他筆記使用這個名稱。請先重新命名那篇筆記，再還原這篇。", "changed": "這篇筆記在你開啟後有變更，請重新載入後再還原。", "notRestorable": "這篇筆記無法還原。", "restored": "筆記已還原。", "readOnly": "這篇筆記已封存，還原後才能編輯。", "filePending": "筆記已還原，但檔案暫時無法更新。", "fileHidden": "筆記已還原，但目前無法存取它的檔案。", "fixedTitle": "來源筆記與匯入的筆記會保留原本的名稱。", "reload": "重新載入", "busy": "這篇筆記正在處理中，請稍後再試。"},
     groups: { central: "中央筆記", right: "右側筆記", moveToRight: "移至右側分組", moveToCentral: "移至中央分組", openBeside: "並排開啟", moveBack: "移回中央", openInRight: "這篇筆記已在右側開啟。", openInCentral: "這篇筆記已在中央開啟。", showNote: "查看筆記", dismiss: "關閉提示" },
     recent: { title: "最近使用", remove: "從最近使用中移除", custom: "手動排序", dragNote: "拖曳調整「{{title}}」的位置", reorderHint: "使用方向鍵調整順序。", customHint: "拖曳筆記調整順序，開啟筆記時位置保持不變。", modeLabel: "瀏覽筆記", empty: "開啟過的筆記會出現在這裡。", browseFolders: "按資料夾瀏覽" },
     tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "Wiki 首頁" },
@@ -6992,7 +7001,10 @@ const zhHant = {
   pageDetail: {
     diagramFailed: "這張圖畫不出來，下面是它的原文。",
     actions: "筆記操作",
-    deleteConfirm: "刪除此筆記？",
+    deleteConfirm: "永久刪除此筆記？此操作無法復原。",
+    archivePage: "封存筆記",
+    archiveConfirm: "封存此筆記？之後可以從「已封存筆記」還原。",
+    archiveError: "無法封存此筆記，請再試一次。",
     deleteError: "無法刪除此筆記，請再試一次。",
     redistillEditedConfirm: "要依來源更新此筆記嗎？您的編輯可能會被取代。",
     entityGuardOpen: "開啟這個主題",

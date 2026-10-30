@@ -8,6 +8,8 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
 import { deleteWikiPage } from "./deleteWikiPage";
+import { archivePageFromList, canArchivePage } from "./archiveWikiPage";
+import { useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { confirmAction } from "../../../lib/confirmAction";
 import { listAllActivePages, listAllDraftPages, listAllActivePagesExplicitBrowse, listAllDraftPagesExplicitBrowse, EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { pageSpaceContext } from "./pagePresentation";
@@ -30,6 +32,8 @@ type PageInventoryPanelProps = {
   readonly onOpenPage?: (page: Page) => void;
   /** File-tree mode: called after a note (published page or draft) was deleted from the directory, so the host can close its tab. */
   readonly onDeletePage?: (pageId: string) => void;
+  /** Hand an archive request to the editor that has this page open; see WikiWorkspace. */
+  readonly onArchiveOpenPage?: (pageId: string) => Promise<boolean>;
   /** File-tree mode: the number of notes the tree lists, or null until it has loaded. */
   readonly onNoteCountChange?: (count: number | null) => void;
 };
@@ -43,7 +47,8 @@ type FolderContextMenuState = {
   readonly invoker: HTMLElement;
 };
 
-export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage, onDeletePage, onNoteCountChange }: PageInventoryPanelProps) {
+export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage, onDeletePage, onArchiveOpenPage, onNoteCountChange }: PageInventoryPanelProps) {
+  const exampleWiki = useExampleWikiActive();
   const { i18n, t } = useTranslation();
   const id = useId();
   const queryClient = useQueryClient();
@@ -171,6 +176,17 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     } catch {
       toast(t("pageDetail.deleteError"));
     } finally { deletingRef.current = false; }
+  };
+  const archiveNote = async (noteId: string, invoker: HTMLElement | undefined) => {
+    const note = pages.find(candidate => candidate.id === noteId);
+    if (!note) return;
+    const archived = await archivePageFromList(queryClient, note, { t, onArchiveOpenPage });
+    // The row leaves the tree once archived; otherwise focus goes back to it.
+    if (!archived) invoker?.focus();
+    else requestAnimationFrame(() => {
+      const focused = document.activeElement;
+      if (!focused || focused === document.body) scrollRef.current?.focus();
+    });
   };
   const handleContextMenuKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if ((event.key === "Delete" || event.key === "Backspace") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
@@ -308,6 +324,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     }}>
       {contextMenu.noteId ? <>
         <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
+        {!exampleWiki && canArchivePage(contextNote) && <button type="button" role="menuitem" onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; const { invoker } = contextMenu; setContextMenu(null); void archiveNote(noteId, invoker); }}>{t("pageDetail.archivePage")}</button>}
         <button type="button" role="menuitem" className="is-danger" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>
       </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}
     </div>, document.body)}

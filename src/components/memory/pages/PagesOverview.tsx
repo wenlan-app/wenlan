@@ -17,10 +17,14 @@ import { NoteSuggestionsSummary } from "../sources/VaultNotes";
 import { pagesWrittenSince, useWritePages, WritePagesLine } from "../askAi/WritePages";
 import { NewPagesList, newestPages } from "./NewPagesList";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
+import { useQuery } from "@tanstack/react-query";
+import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, isKnowledgePage, listAllArchivedPagesExplicitBrowse } from "./listAllPages";
+import "./archivedNotes.css";
 
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
   readonly onBrowseAll?: () => void;
+  readonly onBrowseArchived?: () => void;
   readonly onBrowseFolder?: (scope: WikiInventoryScope) => void;
   readonly onCreatePage: (space: string | null, folderPath?: string) => void;
   readonly onSelectDraft: (draftId: string, space: string | null) => void;
@@ -42,6 +46,7 @@ interface PagesOverviewProps {
 
 export function PagesOverview({
   onBrowseAll,
+  onBrowseArchived,
   onCreatePage,
   onSelectPage,
   onConnectTool,
@@ -98,6 +103,14 @@ export function PagesOverview({
   // Once the three steps are done, a still-new library gets the everyday
   // sentences, once, as an overlay.
   const example = useExampleWikiActive();
+  // The way back to archived pages shows only when there is one to go back to.
+  const archived = useQuery({
+    queryKey: ARCHIVED_PAGES_QUERY_KEY,
+    queryFn: listAllArchivedPagesExplicitBrowse,
+    ...EXPLICIT_BROWSE_QUERY_POLICY,
+    enabled: !!onBrowseArchived && !example && daemonReady,
+  });
+  const archivedCount = example ? 0 : (archived.data ?? []).filter(isKnowledgePage).length;
   const everyday = !example && gettingStarted !== null && checklist.loaded && checklist.newLibrary && !checklist.visible && writePages.tool
     ? <EverydayUse tool={writePages.tool} />
     : null;
@@ -156,6 +169,11 @@ export function PagesOverview({
       {newPages}
       {gettingStarted}
       {everyday}
+      {onBrowseArchived && archivedCount > 0 && (
+        <button className="wiki-archive-entry" type="button" onClick={onBrowseArchived}>
+          {t("pages.archive.title")}<span className="wiki-archive-entry-count" aria-hidden="true">{archivedCount}</span>
+        </button>
+      )}
       {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
     </section>
   );

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, it, expect, vi, beforeAll, beforeEach } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PageDetail from "./PageDetail";
@@ -26,6 +26,8 @@ const tauriMocks = vi.hoisted(() => ({
   daemonMeetsFloor: vi.fn(),
   recordPageEditorDiagnostic: vi.fn(),
   deletePage: vi.fn(),
+  archivePage: vi.fn(),
+  restorePage: vi.fn(),
   clipboardWrite: vi.fn(),
   exportPageToObsidian: vi.fn(),
   getTruthStatus: vi.fn(),
@@ -41,6 +43,7 @@ vi.mock("../../lib/tauri", () => ({
   // Fails closed, which is what an older or unreachable daemon looks like:
   // the review action stays disabled unless a test opts in.
   ...tauriMocks,
+  RestorePageApiError: class RestorePageApiError extends Error {},
   FACET_COLORS: {},
   STABILITY_TIERS: {},
 }));
@@ -86,6 +89,7 @@ describe("PageDetail stored actions in seamless editing", () => {
   tauriMocks.getSystemInfo.mockResolvedValue({os:'macos'}); tauriMocks.daemonMeetsFloor.mockReturnValue(true);
   tauriMocks.recordPageEditorDiagnostic.mockResolvedValue(undefined); tauriMocks.getTruthStatus.mockResolvedValue(null);
   tauriMocks.pageReviewSupported.mockResolvedValue('ready'); tauriMocks.reviewPage.mockResolvedValue({kind:'applied'});
+  tauriMocks.archivePage.mockReset().mockResolvedValue(undefined);
   tauriMocks.deletePage.mockResolvedValue(undefined); tauriMocks.redistillPage.mockResolvedValue({status:'ok',updated:true});
   tauriMocks.updatePage.mockImplementation(async input => {current={...current,content:input.content,version:input.expectedVersion+1,user_edited:true};return {outcome:'saved'};});
   vi.spyOn(window,'confirm').mockReturnValue(true);
@@ -103,6 +107,107 @@ describe("PageDetail stored actions in seamless editing", () => {
   await user.click(screen.getByRole('button',{name:i18n.t('pageInspector.open')}));
   return screen.getByRole('button',{name:i18n.t('pageDetail.markPageReviewed')});
  }
+ it('archived arrival while the asynchronous editor opener waits cannot open its stale active source', async () => {
+  let finish!: (version: string) => void;
+  tauriMocks.getDaemonVersion.mockReturnValueOnce(new Promise<string>(resolve => { finish = resolve; }));
+  const {client}=renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} initialMode="edit"/>);
+  await waitFor(()=>expect(tauriMocks.getDaemonVersion).toHaveBeenCalled());
+  current={...current,status:'archived',version:2};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(screen.getByText(i18n.t('pages.archive.readOnly'))).toBeVisible());
+  await act(async()=>finish('0.14.1'));
+  expect(document.querySelector('.page-editor-stack')).toBeNull();
+  expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull();
+  expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+ });
+ it('archived background arrival locks a clean mounted editor and restore uses the new version',async()=>{
+  let flush:(()=>Promise<boolean>)|null=null;
+  const {editor,client}=await start({onRegisterFlush:value=>{flush=value;}});
+  current={...current,status:'archived',version:2};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','false'));
+  expect(editorViewFromTextbox(editor).state.doc.toString()).toBe(current.content);
+  await act(async()=>expect(await flush!()).toBe(true));
+  expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+  current={...current,status:'active',version:3};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','true'));
+  act(()=>replaceDocument(editorViewFromTextbox(editor),'After real restore'));
+  await act(async()=>expect(await flush!()).toBe(true));
+  expect(tauriMocks.updatePage).toHaveBeenCalledWith(expect.objectContaining({expectedVersion:3,content:'After real restore'}));
+ });
+ it('archived background arrival preserves dirty local text and blocks save and navigation until recovery',async()=>{
+  let flush:(()=>Promise<boolean>)|null=null;
+  const onBack=vi.fn();const {editor,client,user}=await start({onBack,onRegisterFlush:value=>{flush=value;}});
+  act(()=>replaceDocument(editorViewFromTextbox(editor),'Unsaved local recovery text'));
+  current={...current,status:'archived',version:2};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','false'));
+  expect(editorViewFromTextbox(editor).state.doc.toString()).toBe('Unsaved local recovery text');
+  await act(async()=>expect(await flush!()).toBe(false));
+  await user.click(screen.getByRole('button',{name:'Copy my draft'}));
+  expect(tauriMocks.clipboardWrite).toHaveBeenCalledWith('Unsaved local recovery text');
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Reload latest'})).toBeEnabled());
+  expect(tauriMocks.updatePage).not.toHaveBeenCalled();expect(onBack).not.toHaveBeenCalled();
+  current={...current,status:'active',version:3};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Reload latest'})).toBeEnabled());
+  expect(editorViewFromTextbox(editor).state.doc.toString()).toBe('Unsaved local recovery text');
+  await act(async()=>expect(await flush!()).toBe(false));
+  await user.click(screen.getByRole('button',{name:'Reload latest'}));
+  await waitFor(()=>expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Page editor'})).state.doc.toString()).toBe(current.content));
+  const recovered=screen.getByRole('textbox',{name:'Page editor'});
+  act(()=>replaceDocument(editorViewFromTextbox(recovered),'Unsaved local recovery text'));
+  await act(async()=>expect(await flush!()).toBe(true));
+  expect(tauriMocks.updatePage).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({expectedVersion:3,content:'Unsaved local recovery text'}));
+ });
+ it('archived clean background content shows the newest readonly body',async()=>{
+  const {client}=await start();
+  current={...current,status:'archived',version:3,content:'Newest archived canonical body'};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull());
+  expect(await screen.findByText('Newest archived canonical body')).toBeVisible();
+  expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+ });
+ it('archived changed body does not discard a clean live preedit session',async()=>{
+  const {editor,client}=await start();
+  fireEvent.compositionStart(editor,{data:''});
+  current={...current,status:'archived',version:3,content:'New canonical while composing'};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','false'));
+  expect(screen.getByRole('textbox',{name:'Page editor'})).toBe(editor);
+  expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+ });
+ it('archived dirty recovery can cancel or confirm reload into readonly without restoring or writing',async()=>{
+  let flush:(()=>Promise<boolean>)|null=null;
+  const {editor,client,user}=await start({onRegisterFlush:value=>{flush=value;}});
+  act(()=>replaceDocument(editorViewFromTextbox(editor),'Local draft to copy before leaving'));
+  current={...current,status:'archived',version:2,content:'Archived canonical body'};
+  act(()=>client.setQueryData(['page','page-1'],current));
+  const reload=await screen.findByRole('button',{name:'Reload latest'});
+  await waitFor(()=>expect(reload).toBeEnabled());
+  vi.mocked(window.confirm).mockReturnValueOnce(false);
+  await user.click(reload);
+  expect(editorViewFromTextbox(editor).state.doc.toString()).toBe('Local draft to copy before leaving');
+  await act(async()=>expect(await flush!()).toBe(false));
+  await user.click(reload);
+  await waitFor(()=>expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull());
+  expect(await screen.findByText('Archived canonical body')).toBeVisible();
+  await act(async()=>expect(await flush!()).toBe(true));
+  expect(current.status).toBe('archived');expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+ });
+ it('archived read intent never autoopens a stale active cache before its refetch',async()=>{
+  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
+  client.setQueryData(['page','page-1'],current);
+  let loaded!:(value:typeof current)=>void;
+  tauriMocks.getPage.mockReturnValueOnce(new Promise<typeof current>(resolve=>{loaded=resolve;}));
+  renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} initialMode="read"/>,client);
+  expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull();
+  current={...current,status:'archived',version:2};
+  await act(async()=>loaded(current));
+  expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull();
+  expect(tauriMocks.updatePage).not.toHaveBeenCalled();
+ });
  it('hides Re-distill on a page with no sources to rebuild from',async()=>{
   current={...current,source_memory_ids:[]};
   tauriMocks.getPageSources.mockResolvedValue([]);
@@ -147,6 +252,107 @@ describe("PageDetail stored actions in seamless editing", () => {
   await user.click(await action(user,'Delete page'));
   await waitFor(()=>expect(onBack).toHaveBeenCalledOnce());
   expect(tauriMocks.updatePage.mock.invocationCallOrder[0]).toBeLessThan(tauriMocks.deletePage.mock.invocationCallOrder[0]);
+ });
+ it('archive flushes the latest body, keeps the tab open read only and never runs the delete path',async()=>{
+  tauriMocks.archivePage.mockImplementation(async()=>{current={...current,status:'archived',version:current.version+1};});
+  const onBack=vi.fn(),onDeleted=vi.fn();const {user,editor,client}=await start({onBack,onDeleted});
+  const invalidation=vi.spyOn(client,'invalidateQueries');
+  act(()=>replaceDocument(editorViewFromTextbox(editor),'Keep this archived body'));
+  await user.click(await action(user,'Archive page'));
+  expect(await screen.findByText('This page is archived. Restore it to edit.')).toBeVisible();
+  expect(tauriMocks.archivePage).toHaveBeenCalledWith('page-1');
+  expect(tauriMocks.updatePage.mock.invocationCallOrder[0]).toBeLessThan(tauriMocks.archivePage.mock.invocationCallOrder[0]);
+  expect(current.content).toBe('Keep this archived body');
+  expect(tauriMocks.deletePage).not.toHaveBeenCalled();
+  expect(onDeleted).not.toHaveBeenCalled();
+  expect(onBack).not.toHaveBeenCalled();
+  expect(window.confirm).toHaveBeenCalledWith('Archive this page? You can restore it from Archived pages.');
+  expect(invalidation).toHaveBeenCalledWith({queryKey:['pages']});
+  await waitFor(()=>expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull());
+  await user.click(screen.getByRole('button',{name:'Page actions'}));
+  expect(screen.queryByRole('menuitem',{name:'Edit page'})).toBeNull();
+  expect(screen.queryByRole('menuitem',{name:'Archive page'})).toBeNull();
+  expect(screen.getByRole('menuitem',{name:'Delete page'})).toBeInTheDocument();
+ });
+ it('an archived page offers Restore from its banner and is editable again after restore',async()=>{
+  Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(this:HTMLDialogElement){this.open=true;}});
+  Object.defineProperty(HTMLDialogElement.prototype,'close',{configurable:true,value:function(this:HTMLDialogElement){this.open=false;}});
+  current={...current,status:'archived',version:4};
+  tauriMocks.restorePage.mockImplementation(async(_id:string,expectedVersion:number)=>{current={...current,status:'active',version:expectedVersion+1};return{id:'page-1',title:current.title,version:current.version,status:'active',projection_status:'synced'};});
+  const onRestored=vi.fn();
+  const {user}=renderWithQuery(<PageDetail pageId="page-1" initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onRestored={onRestored}/>);
+  await screen.findByText('This page is archived. Restore it to edit.');
+  expect(screen.queryByRole('textbox',{name:'Page editor'})).toBeNull();
+  await user.click(screen.getByRole('button',{name:'Restore page'}));
+  const dialog=await screen.findByRole('dialog');
+  await user.click(within(dialog).getByRole('button',{name:'Restore page'}));
+  await waitFor(()=>expect(tauriMocks.restorePage).toHaveBeenCalledWith('page-1',4,'Link Test Page'));
+  await waitFor(()=>expect(screen.queryByText('This page is archived. Restore it to edit.')).toBeNull());
+  expect(onRestored).toHaveBeenCalledWith('page-1');
+  // The tab asked for editing; once the page is active again it gets it.
+  expect(await screen.findByRole('textbox',{name:'Page editor'})).toBeVisible();
+ });
+ it('autosave never writes an archived page, but a cache miss is left to the daemon',async()=>{
+  const {editor,client}=await start();
+  client.removeQueries({queryKey:['page','page-1'],exact:true});
+  act(()=>replaceDocument(editorViewFromTextbox(editor),'Written after a cache miss'));
+  await waitFor(()=>expect(tauriMocks.updatePage).toHaveBeenCalled());
+ });
+ it('archive refusal or a failed save preserves the editor and never archives',async()=>{
+  tauriMocks.updatePage.mockRejectedValue(new Error('offline'));
+  const {user,editor}=await start();
+  act(()=>replaceDocument(editorViewFromTextbox(editor),'Unsaved archive body'));
+  await user.click(await action(user,'Archive page'));
+  await waitFor(()=>expect(tauriMocks.updatePage).toHaveBeenCalled());
+  expect(tauriMocks.archivePage).not.toHaveBeenCalled();
+  expect(editorViewFromTextbox(screen.getByRole('textbox',{name:'Page editor'})).state.doc.toString()).toBe('Unsaved archive body');
+ });
+ it('archive cancellation keeps the saved page open',async()=>{
+  vi.mocked(window.confirm).mockReturnValue(false);
+  const onBack=vi.fn();const {user}=await start({onBack});
+  await user.click(await action(user,'Archive page'));
+  await waitFor(()=>expect(window.confirm).toHaveBeenCalled());
+  expect(tauriMocks.archivePage).not.toHaveBeenCalled();expect(onBack).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox',{name:'Page editor'})).toBeVisible();
+ });
+ it('archive errors keep the page and show the archive-specific message',async()=>{
+  tauriMocks.archivePage.mockRejectedValue(new Error('offline'));
+  const onBack=vi.fn();const {user}=await start({onBack});
+  await user.click(await action(user,'Archive page'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not archive this page. Try again.');
+  expect(onBack).not.toHaveBeenCalled();
+  expect(screen.getByRole('textbox',{name:'Page editor'})).toBeVisible();
+ });
+ it('directory archive uses the same composition guard and pending editor lock',async()=>{
+  let archive:(()=>Promise<boolean>)|null=null;
+  let flush:(()=>Promise<boolean>)|null=null;
+  let release!:()=>void;
+  tauriMocks.archivePage.mockImplementation(()=>new Promise<void>(resolve=>{release=resolve;}));
+  const {editor}=await start({onRegisterArchive:(_id,fn)=>{archive=fn;},onRegisterFlush:fn=>{flush=fn;}});
+  fireEvent.compositionStart(editor,{data:''});
+  await act(async()=>{expect(await archive!()).toBe(false);});
+  expect(tauriMocks.archivePage).not.toHaveBeenCalled();
+  fireEvent.compositionEnd(editor,{data:''});
+  await waitFor(()=>expect(editorViewFromTextbox(editor).composing).toBe(false));
+  let pending!:Promise<boolean>;
+  await act(async()=>{pending=archive!();});
+  await waitFor(()=>expect(tauriMocks.archivePage).toHaveBeenCalledOnce());
+  expect(await flush!()).toBe(false);
+  await waitFor(()=>expect(editor).toHaveAttribute('contenteditable','false'));
+  await act(async()=>{expect(await archive!()).toBe(false);});
+  expect(tauriMocks.archivePage).toHaveBeenCalledOnce();
+  await act(async()=>{release();expect(await pending).toBe(true);});
+ });
+ it('archived pages cannot be archived or edited through a registered directory action',async()=>{
+  current={...current,status:'archived'};
+  let archive:(()=>Promise<boolean>)|null=null;
+  const {user}=renderWithQuery(<PageDetail pageId="page-1" initialMode="edit" onBack={vi.fn()} onMemoryClick={vi.fn()} onRegisterArchive={(_id,fn)=>{archive=fn;}}/>);
+  await screen.findByText('Link Test Page');
+  await user.click(screen.getByRole('button',{name:'Page actions'}));
+  expect(screen.queryByRole('menuitem',{name:'Archive page'})).not.toBeInTheDocument();
+  await act(async()=>{expect(await archive!()).toBe(false);});
+  expect(tauriMocks.archivePage).not.toHaveBeenCalled();
+  expect(screen.queryByRole('textbox',{name:'Page editor'})).not.toBeInTheDocument();
  });
  it('reopens the saved fresh result after rebuilding',async()=>{
   current.user_edited=true;

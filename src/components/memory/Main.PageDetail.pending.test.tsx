@@ -4,9 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Main from "./Main";
+import { toast } from "sonner";
 import { i18n } from "../../i18n";
 import { clearPendingPairingCode, setPendingPairingCode } from "../../lib/pairingLink";
 
+const archiveHarness = vi.hoisted(() => ({ enabled: true, action: vi.fn<(id:string)=>Promise<boolean>>(), handled: vi.fn() }));
+vi.mock("sonner", async original => {
+  const actual = await original<typeof import("sonner")>();
+  return { ...actual, toast: Object.assign(vi.fn(), actual.toast) };
+});
 const flushHarness = vi.hoisted(() => ({
   enabled: false,
   flush: vi.fn<() => Promise<boolean>>(),
@@ -64,20 +70,27 @@ vi.mock("./PageDetail", async () => {
   const { useEffect } = await import("react");
   return ({
   default: (props: {
+    onRegisterArchive?: (id: string, archive: (() => Promise<boolean>) | null) => void;
     onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void;
     onBack?: () => void;
     onDeleted?: (pageId: string) => void;
     onEditDirtyChange?: (dirty: boolean) => void;
     onSavePendingChange?: (pending: boolean) => void;
     pageId: string;
+    initialMode?: "read" | "edit";
   }) => {
     useEffect(() => {
       if (!flushHarness.enabled) return;
       props.onRegisterFlush?.(flushHarness.flush);
       return () => props.onRegisterFlush?.(null);
     }, [props.onRegisterFlush]);
+    useEffect(() => {
+      if (!archiveHarness.enabled) return;
+      props.onRegisterArchive?.(props.pageId, () => archiveHarness.action(props.pageId));
+      return () => props.onRegisterArchive?.(props.pageId, null);
+    }, [props.onRegisterArchive, props.pageId]);
     return (
-    <section data-testid="page-detail">
+    <section data-testid="page-detail" data-editor-intent={props.initialMode}>
       <h1>{props.pageId === "page-two" ? "Second page" : "Pending page"}</h1>
       <button type="button" onClick={() => props.onEditDirtyChange?.(true)}>
         Make page dirty
@@ -155,15 +168,20 @@ vi.mock("./pages/WikiWorkspace", () => ({
     tabs?: React.ReactNode;
     onSecondaryHost?: (node: HTMLDivElement | null) => void;
     currentPageId?: string | null;
-    onOpenPage: (page: { id: string }) => void;
+    inventoryMode?: string;
+    directoryOpenRequest?: number;
+    onOpenPage: (page: { id: string; status?: string }) => void;
     onCreatePage?: () => void;
     onOpenDraft?: (draftId: string, space: string | null) => void;
     onDeletePage?: (pageId: string) => void;
+    onArchiveOpenPage?: (pageId: string) => Promise<boolean>;
   }) => (
-    <div data-current-page={props.currentPageId ?? "none"} data-testid="wiki-workspace">
+    <div data-current-page={props.currentPageId ?? "none"} data-inventory-mode={props.inventoryMode} data-directory-request={props.directoryOpenRequest ?? 0} data-testid="wiki-workspace">
       {props.tabs}{props.children}<div ref={props.onSecondaryHost} />
       {props.currentPageId && <button type="button" onClick={() => props.onOpenPage({ id: props.currentPageId! })}>Reselect current page</button>}
       <button type="button" onClick={() => props.onOpenPage({ id: "page-two" })}>Wiki directory second page</button>
+      <button type="button" onClick={() => props.onOpenPage({ id: "archived-page", status: "archived" })}>Read archived page</button>
+      {props.onArchiveOpenPage && <button type="button" onClick={() => void props.onArchiveOpenPage!("page-one").then(archiveHarness.handled)}>Archive first page from directory</button>}
       {props.onDeletePage && <button type="button" onClick={() => props.onDeletePage!("page-two")}>Delete second page from directory</button>}
       {props.onDeletePage && <button type="button" onClick={() => props.onDeletePage!("draft-x")}>Delete draft X from directory</button>}
       {props.onCreatePage && <button type="button" onClick={props.onCreatePage}>Create note draft</button>}
@@ -172,8 +190,9 @@ vi.mock("./pages/WikiWorkspace", () => ({
   ),
 }));
 vi.mock("./pages/PagesOverview", () => ({
-  PagesOverview: ({ onSelectPage }: { onSelectPage: (id: string) => void }) => (
+  PagesOverview: ({ onSelectPage, onBrowseArchived }: { onSelectPage: (id: string) => void; onBrowseArchived?: () => void }) => (
     <div data-testid="pages-overview">
+      <button type="button" onClick={onBrowseArchived}>Browse archived notes</button>
       <button type="button" onClick={() => onSelectPage("page-two")}>
         Open second page
       </button>
@@ -282,6 +301,7 @@ function renderMain(props: RenderMainProps = { initialPageId: "page-one" }) {
 describe("Main published PageDetail navigation guards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    archiveHarness.enabled = true; archiveHarness.action.mockReset().mockResolvedValue(true); vi.mocked(toast).mockClear(); archiveHarness.handled.mockReset();
     flushHarness.enabled = false;
     flushHarness.flush.mockReset();
     routeFlushHarness.enabled = false;
@@ -295,6 +315,74 @@ describe("Main published PageDetail navigation guards", () => {
     clearPendingPairingCode();
   });
 
+  it.each(["recent", "archived"])("archive browse requests open the directory even when its initial mode is %s", async mode => {
+    localStorage.setItem("wenlan:wiki-inventory:v1", JSON.stringify({ version: 1, mode }));
+    const { user } = renderMain({});
+    const workspace = await screen.findByTestId("wiki-workspace");
+    expect(workspace).toHaveAttribute("data-directory-request", "0");
+    await user.click(screen.getByRole("button", { name: "Browse archived notes" }));
+    expect(workspace).toHaveAttribute("data-inventory-mode", "archived");
+    expect(workspace).toHaveAttribute("data-directory-request", "1");
+    await user.click(screen.getByRole("button", { name: "Browse archived notes" }));
+    expect(workspace).toHaveAttribute("data-directory-request", "2");
+  });
+
+  it("archived directory navigation explicitly requests read mode", async () => {
+    const { user } = renderMain({});
+    await user.click(screen.getByRole("button", { name: "Read archived page" }));
+    await waitFor(() => expect(screen.getByTestId("page-detail")).toHaveAttribute("data-editor-intent", "read"));
+  });
+
+  it("directory archive delegates to the current primary editor owner", async()=>{
+    const {user}=renderMain();
+    await user.click(screen.getByRole("button",{name:"Archive first page from directory"}));
+    await waitFor(()=>expect(archiveHarness.action).toHaveBeenCalledWith("page-one"));
+    expect(archiveHarness.handled).toHaveBeenCalledWith(true);
+  });
+  it("directory archive fails closed, with a short message, until an open editor registers its action",async()=>{
+    archiveHarness.enabled=false;const {user}=renderMain();
+    await user.click(screen.getByRole("button",{name:"Archive first page from directory"}));
+    await waitFor(()=>expect(archiveHarness.handled).toHaveBeenCalledWith(true));
+    expect(archiveHarness.action).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith("This page is busy. Try again in a moment.");
+  });
+  it("tells the person when the open editor refuses the archive because it is busy",async()=>{
+    archiveHarness.action.mockResolvedValue(false);const {user}=renderMain();
+    await user.click(screen.getByRole("button",{name:"Archive first page from directory"}));
+    await waitFor(()=>expect(archiveHarness.handled).toHaveBeenCalledWith(true));
+    expect(toast).toHaveBeenCalledWith("This page is busy. Try again in a moment.");
+  });
+  it("does not swallow an archive request while a page is moving between groups",async()=>{
+    flushHarness.enabled=true;
+    let release!:(saved:boolean)=>void;
+    flushHarness.flush.mockReturnValueOnce(new Promise<boolean>(resolve=>{release=resolve;})).mockResolvedValue(true);
+    const {user}=renderMain();
+    await user.pointer({keys:"[MouseRight]",target:document.querySelector<HTMLElement>('[data-note-tab-group="primary"] [role="tab"][aria-selected="true"]')!});
+    await user.click(screen.getByRole("menuitem",{name:"Move to right group"}));
+    await user.click(screen.getByRole("button",{name:"Archive first page from directory"}));
+    await waitFor(()=>expect(archiveHarness.handled).toHaveBeenCalledWith(true));
+    expect(archiveHarness.action).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith("This page is busy. Try again in a moment.");
+    await act(async()=>release(true));
+  });
+  it("lets the list archive a page that no editor has open",async()=>{
+    const {user}=renderMain({initialPageId:"page-two"});
+    await user.click(screen.getByRole("button",{name:"Archive first page from directory"}));
+    await waitFor(()=>expect(archiveHarness.handled).toHaveBeenCalledWith(false));
+    expect(archiveHarness.action).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+  });
+  it("directory archive delegates to the independently mounted secondary editor",async()=>{
+    flushHarness.enabled=true;flushHarness.flush.mockResolvedValue(true);
+    const {user}=renderMain();
+    await user.pointer({keys:"[MouseRight]",target:document.querySelector<HTMLElement>('[data-note-tab-group="primary"] [role="tab"][aria-selected="true"]')!});
+    await user.click(screen.getByRole("menuitem",{name:"Move to right group"}));
+    await screen.findByRole("region",{name:"Right pages"});
+    await user.click(screen.getByRole("button",{name:"Open second page"}));
+    await user.click(screen.getByRole("button",{name:"Archive first page from directory"}));
+    await waitFor(()=>expect(archiveHarness.action).toHaveBeenCalledWith("page-one"));
+    expect(archiveHarness.handled).toHaveBeenCalledWith(true);
+  });
   it("includes the independently mounted right editor in the quit guard", async () => {
     flushHarness.enabled = true;
     flushHarness.flush.mockResolvedValue(true);
@@ -795,3 +883,4 @@ describe("Main published PageDetail navigation guards", () => {
     expect(await screen.findByText("Second page")).toBeInTheDocument();
   });
 });
+

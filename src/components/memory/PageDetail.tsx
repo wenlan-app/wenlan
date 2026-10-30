@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
+import { RestorePageDialog } from "./pages/RestorePageDialog";
+import { archiveWikiPage, canArchivePage } from "./pages/archiveWikiPage";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
 import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect, useContext, useId } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -118,6 +120,12 @@ interface PageDetailProps {
   onEditorReady?: () => void;
   onBack: () => void;
   onDeleted?: (pageId: string) => void;
+  /** Lets a list row (folder tree, Recently used) archive this page through
+   *  its own editor owner: the same flush, confirmation and action lock.
+   *  The registered function resolves false when the page is busy. */
+  onRegisterArchive?: (pageId: string, archive: (() => Promise<boolean>) | null) => void;
+  /** Called after this archived page was restored from its read-only banner. */
+  onRestored?: (pageId: string) => void;
   onMemoryClick: (sourceId: string) => void;
   onPageClick?: (pageId: string) => void;
   onEntityClick?: (entityId: string) => void;
@@ -266,6 +274,8 @@ export default function PageDetail({
   onEditorReady,
   onBack,
   onDeleted,
+  onRegisterArchive,
+  onRestored,
   onMemoryClick,
   onPageClick,
   onEntityClick,
@@ -287,6 +297,8 @@ export default function PageDetail({
   const [exported, setExported] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  useEffect(() => setRestoreOpen(false), [pageId]);
   const [renaming, setRenaming] = useState(false);
   // IME composition in the rename field: Enter picks a candidate and Escape
   // drops the preedit, so neither may submit or cancel the rename.
@@ -804,6 +816,12 @@ export default function PageDetail({
   if (!autosaveRef.current) {
     autosaveRef.current = new PageAutosave({
       write: async (input) => {
+        // Only a page known to be archived is refused here. A cache miss is
+        // unknown, not a conflict: the daemon answers for it.
+        const canonical = queryClient.getQueryData<Page | null>(["page", input.id]);
+        if (canonical && canonical.id === input.id && canonical.status !== "active") {
+          return { outcome: "conflict", message: "The page is not active." };
+        }
         // The confirm intent belongs to the note it was chosen on.
         const intent = confirmIntentRef.current?.pageId === input.id ? confirmIntentRef.current : null;
         const outcome = await updatePage({
@@ -921,6 +939,23 @@ export default function PageDetail({
     },
     [autosave, pageId, queryClient],
   );
+
+  // Archive is not a delete: the page keeps its tab, its place in Recently
+  // used and its back history. It turns read only and can be restored here.
+  const archiveMutation = useMutation({
+    mutationFn: (page: Page) => archiveWikiPage(queryClient, page),
+    onSuccess: (_result, { id }) => {
+      if (activePageIdRef.current !== id) return;
+      setActionErrorMessage(null);
+      closeEditor();
+    },
+    onError: (error, { id }) => {
+      if (activePageIdRef.current !== id) return;
+      const guard = parseEntityGuardError(error);
+      if (guard) setActionErrorMessage(guard.message, guard.entityId);
+      else setActionErrorMessage(t("pageDetail.archiveError"));
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deletePage(id),
@@ -1161,7 +1196,11 @@ export default function PageDetail({
   };
 
   const openPageSourceForEditing = (sourcePage: Page, automatic = false) => {
-    if (activePageIdRef.current !== sourcePage.id) return;
+    // Never open an editor on a page that is, or has since become, archived.
+    const canonical = queryClient.getQueryData<Page | null>(["page", sourcePage.id]);
+    if (activePageIdRef.current !== sourcePage.id || sourcePage.status !== "active" ||
+        (canonical && canonical.id === sourcePage.id &&
+          (canonical.status !== "active" || canonical.version > sourcePage.version))) return;
 
     editorFocusIntentRef.current = {
       pageId: sourcePage.id,
@@ -1229,7 +1268,7 @@ export default function PageDetail({
   };
 
   const beginEditing = async (automatic = false) => {
-    if (!page || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
+    if (!page || page.status !== "active" || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
     setCanvasOpen(false);
     canvasReturnToEditorRef.current = false;
     const originPageId = page.id;
@@ -1242,7 +1281,9 @@ export default function PageDetail({
     };
     const isActiveBeginEdit = () =>
       activePageIdRef.current === originPageId &&
-      beginEditAttemptRef.current === beginEditAttempt;
+      beginEditAttemptRef.current === beginEditAttempt &&
+      (!automatic || autoEditIntentRef.current?.mode !== "read") &&
+      (queryClient.getQueryData<Page | null>(["page", originPageId])?.status ?? "active") === "active";
 
     setActionErrorMessage(null);
     setEditing(true);
@@ -1305,7 +1346,8 @@ export default function PageDetail({
     }
 
     if (!isActiveBeginEdit()) return;
-    openPageSourceForEditing(page, automatic);
+    const latest = queryClient.getQueryData<Page | null>(["page", originPageId]) ?? page;
+    if (latest.id === originPageId) openPageSourceForEditing(latest, automatic);
   };
 
   useEffect(() => {
@@ -1356,7 +1398,19 @@ export default function PageDetail({
       : editDocumentRef.current;
 
   useLayoutEffect(() => {
+    if (editing && editGate.kind === "checking" && canonicalPage?.status !== "active") {
+      // No document has been mounted yet; retire the opener, not a local draft.
+      if (!autosave.snapshot().dirty) closeEditor();
+      return;
+    }
     if (editing && editGate.kind === "editor" && canonicalPage !== undefined) {
+      // An unchanged local document can yield to the archived canonical body.
+      // A dirty document or live preedit stays mounted for copy/recovery.
+      if (canonicalPage?.status === "archived" && !autosave.snapshot().dirty &&
+          !editorStatus.compositionActive && canonicalPage.content !== autosave.snapshot().baseline?.content) {
+        closeEditor();
+        return;
+      }
       // Changed in Obsidian or another editor with nothing typed here: show it.
       if (autosave.observeCanonical(canonicalPage) === "adopt" && canonicalPage) {
         openPageSourceForEditing(canonicalPage, true);
@@ -1364,7 +1418,7 @@ export default function PageDetail({
     }
     // The opener reads only refs and setters; the canonical page drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autosave, editing, editGate.kind, canonicalPage]);
+  }, [autosave, editing, editGate.kind, canonicalPage, editorStatus.compositionActive]);
 
   const requestCloseEditor = async () => {
     if (storedActionRef.current) return;
@@ -1564,13 +1618,17 @@ export default function PageDetail({
     const cached = queryClient.getQueryData<Page | null>(["page", pageId]);
     if (cached) autosave.observeConflictLatest(cached, operationId);
     const latest = autosave.snapshot().latest;
-    if (!latest) return;
-    queryClient.setQueryData<Page | null>(["page", pageId], (currentPage) =>
+    if (!latest || latest.id !== pageId) return;
+    const resolved = queryClient.setQueryData<Page | null>(["page", pageId], (currentPage) =>
       currentPage?.id === pageId && currentPage.version >= latest.version
         ? currentPage
         : latest,
     );
-    openPageSourceForEditing(latest);
+    if (resolved?.id !== pageId) return;
+    // The existing confirmation authorizes discarding the local draft only.
+    // Loading an archived canonical page never restores it or opens an editor.
+    if (resolved.status === "archived") closeEditor();
+    else if (resolved.status === "active") openPageSourceForEditing(resolved);
   };
 
   const handleDiscardDeletedDraft = async () => {
@@ -1606,10 +1664,18 @@ export default function PageDetail({
     }
   };
 
-  const requestStoredPageAction = async (kind: "redistill" | "review" | "delete") => {
-    if (storedActionRef.current || titleRenamePendingRef.current || renaming || renameMutation.isPending || canvasSwitchPendingRef.current || showCanvas ||
-        (editing && (editGate.kind !== "editor" || !editorStatus?.ready || editorStatus.compositionActive)) ||
-        (kind === "review" && !reviewSupported)) return;
+  type StoredPageAction = "redistill" | "review" | "delete" | "archive";
+  // True when the action cannot start now: the page is ineligible, or another
+  // action, a rename, the map or a live composition holds the page.
+  const storedActionRefused = (kind: StoredPageAction) =>
+    (kind !== "delete" && page?.status !== "active") ||
+    (kind === "archive" && !canArchivePage(page)) ||
+    !!storedActionRef.current || titleRenamePendingRef.current || renaming || renameMutation.isPending || canvasSwitchPendingRef.current || showCanvas ||
+    (editing && (editGate.kind !== "editor" || !editorStatus?.ready || editorStatus.compositionActive)) ||
+    (kind === "review" && !reviewSupported);
+
+  const requestStoredPageAction = async (kind: StoredPageAction) => {
+    if (storedActionRefused(kind)) return;
     const originPageId = pageId;
     const originSession = activeEditorSessionRef.current;
     const wasEditing = editing;
@@ -1629,26 +1695,31 @@ export default function PageDetail({
       const snapshot = autosave.snapshot();
       if (snapshot.dirty || snapshot.state.phase !== "idle") return;
       const saved = queryClient.getQueryData<Page | null>(["page", originPageId]) ?? page;
-      if (!saved || saved.id !== originPageId) return;
+      if (!saved || saved.id !== originPageId || (kind !== "delete" && saved.status !== "active")) return;
       const content = snapshot.baseline?.content ?? saved.content;
       if (kind === "review") {
         setRedistillNotice(null);
         setReviewNotice(null);
         await reviewMutation.mutateAsync({ id: originPageId, content });
-      } else if (kind === "delete") {
-        if (!await confirmAction(t("pageDetail.deleteConfirm"), {
-          confirm: t("pageDetail.deletePage"),
+      } else if (kind === "delete" || kind === "archive") {
+        if (kind === "archive" && (saved.status !== "active" || saved.creation_kind === "entity")) return;
+        if (!await confirmAction(t(kind === "archive" ? "pageDetail.archiveConfirm" : "pageDetail.deleteConfirm"), {
+          confirm: t(kind === "archive" ? "pageDetail.archivePage" : "pageDetail.deletePage"),
           cancel: t("common.cancel"),
         }) || !ownsAction()) return;
+        const current = queryClient.getQueryData<Page | null>(["page", originPageId]) ?? saved;
         setActionErrorMessage(null);
-        await deleteMutation.mutateAsync(originPageId);
+        if (kind === "archive") {
+          if (!canArchivePage(current)) return;
+          await archiveMutation.mutateAsync(current);
+        } else await deleteMutation.mutateAsync(originPageId);
       } else {
         if ((saved.user_edited || pageRevisions?.user_edited) &&
             !await confirmAction(t("pageDetail.redistillEditedConfirm"), {
               confirm: t("pageDetail.redistillPage"),
               cancel: t("common.cancel"),
             })) return;
-        if (!ownsAction()) return;
+        if (!ownsAction() || queryClient.getQueryData<Page | null>(["page", originPageId])?.status !== "active") return;
         setReviewNotice(null);
         setRedistillNotice(null);
         // A rebuild changes the saved body. Retire the old autosave session
@@ -1687,6 +1758,19 @@ export default function PageDetail({
       takeReviewToOpen();
     }
   };
+
+  // Directory actions must use the same editor owner, flush and action lock.
+  const archiveActionRef = useRef<() => Promise<boolean>>(() => Promise.resolve(false));
+  archiveActionRef.current = async () => {
+    if (storedActionRefused("archive")) return false;
+    await requestStoredPageAction("archive");
+    return true;
+  };
+  useLayoutEffect(() => {
+    onRegisterArchive?.(pageId, async () =>
+      activePageIdRef.current === pageId ? archiveActionRef.current() : false);
+    return () => onRegisterArchive?.(pageId, null);
+  }, [onRegisterArchive, pageId]);
 
   const closeActionMenu = () => {
     setActionMenuOpen(false);
@@ -2249,8 +2333,8 @@ export default function PageDetail({
                     role="menu"
                     tabIndex={-1}
                   >
-                    <button type="button" role="menuitem" disabled={storedActionPending || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
-                    {!editing && !showCanvas ? (
+                    <button type="button" role="menuitem" disabled={storedActionPending || page.status !== "active" || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
+                    {page.status === "active" && !editing && !showCanvas ? (
                       <button type="button" role="menuitem" disabled={storedActionPending || renaming || renameMutation.isPending} onClick={() => { setActionMenuOpen(false); void beginEditing(); }}>
                         {t("pageDetail.editPage")}
                       </button>
@@ -2270,7 +2354,7 @@ export default function PageDetail({
                     ) : null}
                     {/* Re-distill rebuilds a page from its sources; a page
                         with none has nothing to rebuild from. */}
-                    {canUpdateFromSources ? <button
+                    {page.status === "active" && canUpdateFromSources ? <button
                         className="page-detail-mobile-menu-item"
                         disabled={storedActionBlocked || redistillMutation.isPending}
                         aria-busy={redistillMutation.isPending}
@@ -2313,10 +2397,21 @@ export default function PageDetail({
                         </button>
                       ))
                     )}
+                    {canArchivePage(page) && (
+                      <button
+                        className="page-detail-mobile-menu-item"
+                        disabled={storedActionBlocked || renaming || renameMutation.isPending || archiveMutation.isPending || deleteMutation.isPending}
+                        onClick={() => void requestStoredPageAction("archive")}
+                        role="menuitem"
+                        type="button"
+                      >
+                        {t("pageDetail.archivePage")}
+                      </button>
+                    )}
                     <button
                       className="page-detail-menu-danger"
                       disabled={
-                        storedActionBlocked || renaming || renameMutation.isPending || deleteMutation.isPending
+                        storedActionBlocked || renaming || renameMutation.isPending || deleteMutation.isPending || archiveMutation.isPending
                       }
                       onClick={() => void requestStoredPageAction("delete")}
                       role="menuitem"
@@ -2335,7 +2430,12 @@ export default function PageDetail({
   return (
     <div className={`page-detail document-context-host${infoOpen || showCanvas ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && (infoOpen || showCanvas) ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
       {documentToolsHost && createPortal(inspectorToggle, documentToolsHost)}
+      {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} onRestored={onRestored} />}
       <DetailReadingFrame className="page-detail-document">
+        {page.status === "archived" && <div className="wiki-archive-notice" role="status">
+          <p>{t("pages.archive.readOnly")}</p>
+          {!exampleWiki && <button type="button" onClick={() => setRestoreOpen(true)}>{t("pages.archive.restore")}</button>}
+        </div>}
         {!hideOuterTitleWhileEditing && (
           <div className="page-document-title-row">
             {renaming ? (
@@ -2755,7 +2855,7 @@ export default function PageDetail({
                   {t("pageDetail.editor.retry")}
                 </button>
               )}
-              <p
+              {page.status === "active" && <p
                 id="page-markdown-editor-description"
                 className="sr-only"
               >
@@ -2765,7 +2865,7 @@ export default function PageDetail({
                     : "pageDetail.editor.autosaveDescription",
                   { modifier: editorShortcutModifier },
                 )}
-              </p>
+              </p>}
               {editorSessionId && (
                 <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
@@ -2775,7 +2875,7 @@ export default function PageDetail({
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
                   sessionId={editorSessionId}
-                  disabled={storedActionPending || exampleWiki}
+                  disabled={storedActionPending || exampleWiki || page.status !== "active" || autosave.snapshot().readOnly}
                   seamless
                   ariaLabel={t("pageDetail.editor.label")}
                   describedBy="page-markdown-editor-description"

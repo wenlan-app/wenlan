@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { DotsSixVertical } from "@phosphor-icons/react";
 import { PageIcon } from "../assets/PageIcon";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { forgetRecentPage, readRecentPageHistory, renameRecentPage } from "../../../lib/recentPages";
 import type { Page } from "../../../lib/tauri";
 import { MovePageDialog } from "./MovePageDialog";
@@ -11,6 +12,7 @@ import { RecentNoteRename } from "./RecentNoteRename";
 import { orderWikiRecentEntries, readWikiCustomOrder, writeWikiCustomOrder } from "../../../lib/wikiNotesPreferences";
 import { useNoteReorderDrag } from "./useNoteReorderDrag";
 import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
+import { ARCHIVED_PAGES_QUERY_KEY, EXPLICIT_BROWSE_QUERY_POLICY, listAllArchivedPagesExplicitBrowse } from "./listAllPages";
 import "./recentNotesPanel.css";
 
 export interface RecentNotesPanelProps {
@@ -20,18 +22,25 @@ export interface RecentNotesPanelProps {
   readonly onOpenPage?: (id: string) => void;
   /** Called after a page is deleted from this list, so open tabs can let it go. */
   readonly onDeletePage?: (id: string) => void;
+  /** Hand an archive request to the editor that has this page open; see WikiWorkspace. */
+  readonly onArchiveOpenPage?: (id: string) => Promise<boolean>;
   /** Offered from the empty list, so a note that was written but never opened is one click away. */
   readonly onBrowseFolders?: () => void;
 }
 
-export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "recent", onOpenPage, onDeletePage, onBrowseFolders }: RecentNotesPanelProps) {
+export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "recent", onOpenPage, onDeletePage, onArchiveOpenPage, onBrowseFolders }: RecentNotesPanelProps) {
   const { t } = useTranslation();
   const isManualOrder = mode === "custom";
   const reorderHintId = useId();
   // Bumped when this list changes the history itself (remove, rename, delete).
   const [localRevision, setLocalRevision] = useState(0);
   const refresh = useCallback(() => setLocalRevision(value => value + 1), []);
-  const entries = useMemo(() => readRecentPageHistory().entries, [revision, currentPageId, localRevision]);
+  // An archived page is hidden here, not forgotten: once restored it is back in
+  // its place. The archived set is the same cache entry the Archived pages list reads.
+  const archived = useQuery({ queryKey: ARCHIVED_PAGES_QUERY_KEY, queryFn: listAllArchivedPagesExplicitBrowse, ...EXPLICIT_BROWSE_QUERY_POLICY });
+  const archivedIds = useMemo(() => new Set((archived.data ?? []).map(({ id }) => id)), [archived.data]);
+  const history = useMemo(() => readRecentPageHistory().entries, [revision, currentPageId, localRevision]);
+  const entries = useMemo(() => history.filter(({ id }) => !archivedIds.has(id)), [history, archivedIds]);
   const [menu, setMenu] = useState<RecentNoteMenuTarget | null>(null);
   const [renaming, setRenaming] = useState<Page | null>(null);
   const [movePage, setMovePage] = useState<Page | null>(null);
@@ -160,6 +169,8 @@ export function RecentNotesPanel({ currentPageId = null, revision = 0, mode = "r
           onMove={page => { setMenu(null); setMovePage(page); }}
           onRemove={() => removeFromList(menu.id)}
           onDeleted={deleted}
+          onArchiveOpenPage={onArchiveOpenPage}
+          onArchived={refresh}
         />
       )}
       {movePage && <MovePageDialog page={movePage} onClose={() => { const { id } = movePage; setMovePage(null); focusRow(id); }} />}

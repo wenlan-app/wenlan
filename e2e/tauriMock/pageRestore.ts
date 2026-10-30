@@ -70,3 +70,12 @@ export function restoreFixturePage<T extends object>(
   };
 }
 
+/** Archive an active ordinary page in place, as the daemon does: status and version only. */
+export function archiveFixturePage<T extends object>(page: T | undefined): T {
+  if (!page) throw new Error("page not found (404)");
+  const current = page as T & RestoreFields;
+  if (current.status !== "active" || current.creation_kind === "entity") {
+    throw new Error("only active ordinary pages can be archived (409)");
+  }
+  return { ...page, status: "archived", version: current.version + 1, last_modified: new Date().toISOString() };
+}
