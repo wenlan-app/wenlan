@@ -4092,3 +4092,20 @@ p.entity-error {
 }
 .mem-toast-icon { display: flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-danger); }
 .mem-toast-icon svg { width: 14px; height: 14px; }
+
+/* Quick Capture: the Markdown editor scrolls inside the fixed window; state
+   lines sit between it and the bottom bar. */
+.quick-capture-editor { scrollbar-gutter: stable; }
+.quick-capture-note {
+  margin: 0 0 6px;
+  font: 11px/1.4 var(--mem-font-body);
+  color: var(--mem-text-tertiary);
+}
+.quick-capture-alert {
+  margin-top: 6px;
+  font: 11px/1.4 var(--mem-font-body);
+  color: var(--mem-status-danger-text);
+  overflow-wrap: anywhere;
+}
+.quick-capture-alert p { margin: 0; }
+.quick-capture-alert .quick-capture-alert-note { color: var(--mem-text-secondary); }
