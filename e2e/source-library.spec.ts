@@ -300,7 +300,7 @@ test("the Pages entry reopens a newly saved draft after browsing sources", async
   await page.getByRole("button", { name: "Wiki", exact: true }).click();
   await page.locator(".note-tab-create").click();
   await page.locator(".page-draft-title").fill("A page to return to");
-  await page.locator(".page-draft-content").fill("Keep this draft when I look at sources.");
+  await page.locator(".page-draft-content").getByRole("textbox").fill("Keep this draft when I look at sources.");
   // Leave before the debounce: navigation must flush and remember the assigned id.
   await openPrimaryDestination(page, "來源", "更多");
   await expect(page.getByRole("heading", { name: "來源", exact: true })).toBeVisible();

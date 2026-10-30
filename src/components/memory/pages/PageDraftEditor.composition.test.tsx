@@ -6,6 +6,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createPageDraft, publishPageDraft, type Page } from "../../../lib/tauri";
 import { PageDraftEditor, type PageDraftEditorHandle } from "./PageDraftEditor";
 
+// The body runs on the native fallback engine here, so these tests drive a
+// plain textarea; PageDraftEditor.codemirror.test.tsx covers CodeMirror.
+vi.mock("../editor/MarkdownEditor", async () => ({
+  MarkdownEditor: (await import("../editor/NativeMarkdownEditor")).NativeMarkdownEditor,
+}));
 vi.mock("../../../lib/tauri", () => ({
   createPageDraft: vi.fn(),
   discardPageDraft: vi.fn(),

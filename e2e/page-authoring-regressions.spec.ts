@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { installTauriMock, collectBrowserErrors } from "./tauriMock";
 import { openPrimaryDestination } from "./helpers/primaryNavigation";
 import { openWikiNote } from "./helpers/wikiWorkspace";
+import { expectEditorSource } from "./helpers/markdownEditor";
 
 test("draft inspector toggles without leaving the draft or losing autosaved content", async ({ page }, info) => {
   const errors = collectBrowserErrors(page);
@@ -29,7 +30,7 @@ test("draft inspector toggles without leaving the draft or losing autosaved cont
   await expect(infoDialog).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Open page sidebar", exact: true })).toBeFocused();
   await expect(title).toHaveValue("Regression draft");
-  await expect(content).toHaveValue("Draft body survives opening and closing Info.");
+  await expectEditorSource(content, "Draft body survives opening and closing Info.");
   expect(runtime.calls().filter((call) => call.command === "publish_page_draft")).toHaveLength(0);
 
   expect(errors.pageErrors).toEqual([]);

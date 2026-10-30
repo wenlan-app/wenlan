@@ -2,9 +2,9 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { MarkdownEditorHandle, MarkdownEditorProps } from "./MarkdownEditor";
 
-function resizeToDocument(textarea: HTMLTextAreaElement): void {
+function resizeToDocument(textarea: HTMLTextAreaElement, minHeight: number): void {
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.max(textarea.scrollHeight, 300)}px`;
+  textarea.style.height = `${Math.max(textarea.scrollHeight, minHeight)}px`;
 }
 
 export const NativeMarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
@@ -16,6 +16,7 @@ export const NativeMarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEdi
 const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
   function NativeMarkdownEditorSession(props, ref) {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const minHeight = props.minHeight ?? 300;
     const documentRef = useRef(props.initialDocument);
     const composingRef = useRef(false);
     const disabledRef = useRef(props.disabled);
@@ -88,7 +89,7 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
     useLayoutEffect(() => {
       publishStatus(false);
       if (textareaRef.current) {
-        resizeToDocument(textareaRef.current);
+        resizeToDocument(textareaRef.current, minHeight);
         if (props.initialSelection) {
           const length = documentRef.current.length;
           const anchor = Math.max(0, Math.min(Math.trunc(props.initialSelection.anchor) || 0, length));
@@ -115,10 +116,11 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         aria-describedby={props.describedBy}
         aria-disabled={props.disabled}
         aria-multiline="true"
+        placeholder={props.placeholder}
         style={{
           boxSizing: "border-box",
           width: "100%",
-          minHeight: "300px",
+          minHeight: `${minHeight}px`,
           resize: "none",
           overflow: "hidden",
           padding: props.seamless ? "0" : "0.75rem",
@@ -134,7 +136,7 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         }}
         onChange={(event) => {
           documentRef.current = event.currentTarget.value;
-          resizeToDocument(event.currentTarget);
+          resizeToDocument(event.currentTarget, minHeight);
           callbacksRef.current.onDocumentChange(documentRef.current);
           publishSelection(event.currentTarget);
         }}
@@ -144,6 +146,13 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
           publishStatus(true);
         }}
         onCompositionEnd={() => {
+          composingRef.current = false;
+          publishStatus(false);
+        }}
+        // Focus loss ends a composition in WebView2 and WebKit, even when
+        // compositionend is not delivered; keep the preedit as typed text.
+        onBlur={() => {
+          if (!composingRef.current) return;
           composingRef.current = false;
           publishStatus(false);
         }}

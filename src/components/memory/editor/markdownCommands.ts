@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { redo, undo } from "@codemirror/commands";
+import { isolateHistory, redo, undo } from "@codemirror/commands";
 import { ensureSyntaxTree } from "@codemirror/language";
 import {
   EditorSelection,
@@ -57,7 +57,7 @@ export function runMarkdownCommand(
   const transaction = view.state.changeByRange((range) =>
     inlineRangeChange(view.state, range, command),
   );
-  view.dispatch(transaction);
+  view.dispatch({ ...transaction, annotations: isolateHistory.of("full") });
   view.focus();
   return true;
 }
@@ -107,7 +107,7 @@ function inlineSelectionIsSafe(
   if (command === "link") {
     return !selected.includes("]") && !selected.includes("\\") && !hasLineBreak(selected);
   }
-  return !hasLineBreak(selected) && selected.trim() === selected;
+  return !hasLineBreak(selected) && selected.trim().length > 0;
 }
 
 function hasLineBreak(value: string): boolean {
@@ -119,6 +119,12 @@ function inlineRangeChange(
   range: SelectionRange,
   command: InlineCommand,
 ): { range: SelectionRange; changes: ChangeSpec | readonly ChangeSpec[] } {
+  if (!range.empty && (command === "bold" || command === "italic")) {
+    const selected = state.sliceDoc(range.from, range.to);
+    const from = range.from + selected.length - selected.trimStart().length;
+    const to = range.to - (selected.length - selected.trimEnd().length);
+    range = range.anchor <= range.head ? EditorSelection.range(from, to) : EditorSelection.range(to, from);
+  }
   const wrapper = recognizedWrapper(state, range, command);
   if (wrapper) {
     return {
@@ -227,14 +233,16 @@ function hasExactSyntaxNode(
 
 function runLineCommand(view: EditorView, command: LineCommand): boolean {
   const lines = selectedLines(view.state);
-  const nonEmpty = lines.filter((line) => line.body.length > 0);
+  // A cursor on an empty line must be able to start a block before typing.
+  // Preserve blank separators when formatting a multi-line selection.
+  const nonEmpty = lines.filter((line) => line.body.length > 0 || lines.length === 1);
   if (nonEmpty.length === 0) return false;
 
   const changes = lineChanges(view.state, nonEmpty, command);
   if (changes.length === 0) return false;
   const changeSet = view.state.changes(changes);
   const selection = mapSelection(view.state.selection, changeSet);
-  view.dispatch({ changes: changeSet, selection });
+  view.dispatch({ changes: changeSet, selection, annotations: isolateHistory.of("full") });
   view.focus();
   return true;
 }
@@ -290,7 +298,12 @@ function lineChanges(
         : command === "bulletList"
           ? "- "
           : `${(orderedIndex += 1)}. `;
-    return { from: at, insert };
+    const otherListPrefix = command === "bulletList"
+      ? recognizedBlockPrefix(state, line, "numberedList")
+      : command === "numberedList"
+        ? recognizedBlockPrefix(state, line, "bulletList")
+        : null;
+    return { from: at, to: at + (otherListPrefix?.length ?? 0), insert };
   });
 }
 

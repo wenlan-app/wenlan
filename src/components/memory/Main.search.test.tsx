@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -11,6 +11,15 @@ import type { Page, SearchResult, Space } from "../../lib/tauri";
 import { createPageDraft, getPage, publishPageDraft, searchPages, updatePageDraft } from "../../lib/tauri";
 import { clearPendingPairingCode } from "../../lib/pairingLink";
 import Main from "./Main";
+import { editorViewFromTextbox, installCodeMirrorDomPolyfills, replaceDocument } from "./editor/editorTestUtils";
+
+beforeAll(() => installCodeMirrorDomPolyfills());
+
+/** The draft body is a CodeMirror editor; set its whole Markdown source. */
+async function setDraftBody(value: string): Promise<void> {
+  const textbox = await screen.findByRole("textbox", { name: "Content" });
+  act(() => replaceDocument(editorViewFromTextbox(textbox), value));
+}
 import ActivityStatus from "./activity/ActivityStatus";
 
 const eventListeners = vi.hoisted(
@@ -1149,7 +1158,7 @@ describe("Main search", () => {
     const { rerenderMain } = renderMain();
     await user.click(screen.getByRole("button", { name: "New context page" }));
     await user.type(await screen.findByRole("textbox", { name: "Title" }), "Original");
-    await user.type(screen.getByRole("textbox", { name: "Content" }), "Keep this body");
+    await setDraftBody("Keep this body");
     rerenderMain();
     expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Original");
 
@@ -1157,7 +1166,7 @@ describe("Main search", () => {
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue(""));
     expect(saved).toHaveLength(1);
     await user.type(screen.getByRole("textbox", { name: "Title" }), "Second");
-    await user.type(screen.getByRole("textbox", { name: "Content" }), "Separate body");
+    await setDraftBody("Separate body");
     await user.click(screen.getByRole("button", { name: "Open graph" }));
     await screen.findByTestId("atlas-view");
 
@@ -1219,7 +1228,7 @@ describe("Main search", () => {
     rerenderMain(props);
     expect(screen.getByRole("textbox", { name: "Title" })).toBe(title);
     expect(title).toHaveValue("Stable page");
-    await user.type(screen.getByRole("textbox", { name: "Content" }), "More content");
+    await setDraftBody("More content");
     await act(async () => { expect(await quitGuard!()).toBe(true); });
     expect(createPageDraft).toHaveBeenCalledTimes(1);
     expect(updatePageDraft).toHaveBeenCalledWith(expect.objectContaining({
@@ -1268,7 +1277,7 @@ describe("Main search", () => {
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("A title"));
     await user.click(screen.getByRole("button", { name: "Select draft B" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Title" })).toHaveValue("B title"));
-    await user.type(screen.getByRole("textbox", { name: "Content" }), " changed");
+    await setDraftBody("B body changed");
     await user.click(screen.getByRole("button", { name: "Open graph" }));
     await screen.findByTestId("atlas-view");
     expect(updatePageDraft).toHaveBeenCalledWith(expect.objectContaining({ id: "draft-b", content: "B body changed" }));
