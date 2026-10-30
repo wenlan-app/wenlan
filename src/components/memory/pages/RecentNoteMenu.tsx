@@ -40,7 +40,7 @@ export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, on
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ x: target.x, y: target.y });
+  const [placement, setPlacement] = useState({ x: target.x, y: target.y });
   const page = useQuery({
     queryKey: ["page", target.id],
     queryFn: () => getPage(target.id, "explicit"),
@@ -54,7 +54,7 @@ export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, on
     const menu = menuRef.current;
     if (!menu) return;
     const bounds = menu.getBoundingClientRect();
-    setPosition({
+    setPlacement({
       x: Math.max(8, Math.min(target.x, window.innerWidth - bounds.width - 8)),
       y: Math.max(8, Math.min(target.y, window.innerHeight - bounds.height - 8)),
     });
@@ -107,7 +107,7 @@ export function RecentNoteMenu({ target, onDismiss, onOpen, onRename, onMove, on
       role="menu"
       aria-label={t("pageDetail.actions")}
       ref={menuRef}
-      style={{ left: position.x, top: position.y }}
+      style={{ left: placement.x, top: placement.y }}
       onContextMenu={event => event.preventDefault()}
       onKeyDown={event => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onDismiss(true); }
