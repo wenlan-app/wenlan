@@ -676,6 +676,7 @@ jobs:
               - 'scripts/stage-vulkan-loader-windows.test.ps1'
               - 'scripts/stage-msvc-runtime-windows.ps1'
               - 'scripts/stage-msvc-runtime-windows.test.ps1'
+              - 'scripts/lib/windows-release-inventory.ts'
               - 'scripts/setup-msvc-ninja-windows.ps1'
               - 'scripts/setup-msvc-ninja-windows.test.ps1'
               - 'scripts/release_targets.py'
