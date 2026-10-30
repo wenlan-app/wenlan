@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 param([string]$ArchivePath)
 # Focused validation controls plus real app-local staging; no runtime installer is executed.
 $ErrorActionPreference = 'Stop'

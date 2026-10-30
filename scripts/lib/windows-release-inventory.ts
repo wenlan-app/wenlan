@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//
 // The Windows release payload, read out of `scripts/release_targets.py`.
 //
 // That file is the one place the shipped Windows ZIP inventory is written down.

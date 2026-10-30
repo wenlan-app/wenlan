@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 param(
     [Parameter(Mandatory = $true)][string]$DestinationDirectory,
     [string]$VisualStudioInstallPath,
