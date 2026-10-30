@@ -64,15 +64,20 @@ pub(crate) fn page_body_from_projection(raw: &str) -> String {
 /// indentation (an indented code block), and trailing spaces inside the
 /// body (a Markdown hard line break) all change the rendered page.
 pub(crate) fn same_page_text_ignoring_save_noise(left: &str, right: &str) -> bool {
-    fn key(body: &str) -> std::borrow::Cow<'_, str> {
-        let body = body.trim_end();
-        if body.contains('\r') {
-            std::borrow::Cow::Owned(body.replace("\r\n", "\n"))
-        } else {
-            std::borrow::Cow::Borrowed(body)
-        }
+    left == right || page_text_key(left) == page_text_key(right)
+}
+
+/// The form of a decoded page body that [`same_page_text_ignoring_save_noise`]
+/// compares: two bodies are the same page exactly when their keys are equal.
+/// For callers that compare digests rather than strings (the deep lint's
+/// projection body check), so they apply the watcher's rule, not their own.
+pub(crate) fn page_text_key(body: &str) -> std::borrow::Cow<'_, str> {
+    let body = body.trim_end();
+    if body.contains('\r') {
+        std::borrow::Cow::Owned(body.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(body)
     }
-    left == right || key(left) == key(right)
 }
 
 /// Strip ONLY the delimiter-owned Sources block from a page body. A user may

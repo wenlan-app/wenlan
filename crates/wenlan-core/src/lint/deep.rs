@@ -417,8 +417,13 @@ async fn page_body_result(context: &LintContext<'_, '_>) -> LintCheckResult {
                 let Some(projected_digest) = projected.get(id.as_str()) else {
                     continue;
                 };
-                let canonical = crate::export::provenance::canonicalize_page_body(&content);
-                let digest: [u8; 32] = Sha256::digest(canonical.as_bytes()).into();
+                // Compare what the projection writes for this content (its
+                // link conversion included) under the watcher's rule, so the
+                // check flags exactly the files the watcher would read as an
+                // edit. The file side is keyed the same way in the page scan.
+                let projected_body = crate::export::obsidian::convert_links_to_wikilinks(&content);
+                let key = crate::export::provenance::page_text_key(&projected_body);
+                let digest: [u8; 32] = Sha256::digest(key.as_bytes()).into();
                 push_row(&mut result, projected_digest != &digest);
             }
             Ok(None) => break,
