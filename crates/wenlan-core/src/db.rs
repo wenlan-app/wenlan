@@ -66,6 +66,8 @@ mod page_drafts;
 pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
+mod page_restore;
+pub use page_restore::{restore_refusal_message, RestorePageError};
 mod page_summary_backfill;
 mod presence_review;
 mod quick_capture_repair;
@@ -190,6 +192,8 @@ mod page_drafts_test;
 mod page_history_title_test;
 #[cfg(test)]
 mod page_rename_test;
+#[cfg(test)]
+mod page_restore_test;
 #[cfg(test)]
 mod presence_review_test;
 #[cfg(test)]

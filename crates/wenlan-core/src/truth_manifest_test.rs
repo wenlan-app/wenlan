@@ -238,10 +238,11 @@ fn manifest_counts_match_the_spec() {
     // count receipt, not page-bearing), and 244 after POST
     // `/api/steep/new/links` (a claim's fresh link titles; not page-bearing),
     // and 245 after POST `/api/steep/new/tasks` (a claim's organize tasks for
-    // its helper; memory text, not page-bearing).
+    // its helper; memory text, not page-bearing). Then 246 after POST
+    // `/api/pages/{id}/restore` (puts an archived page back; names one page).
     assert_eq!(
         HTTP_READERS.len(),
-        245,
+        246,
         "registered (method, path, handler) triples"
     );
     assert_eq!(MCP_READERS.len(), 37, "#[tool( declarations");
@@ -252,7 +253,7 @@ fn manifest_counts_match_the_spec() {
     let entries: Vec<_> = runtime_entries().collect();
     assert_eq!(
         entries.len(),
-        257,
+        258,
         "(builder, method, path) runtime entries"
     );
     assert_eq!(
@@ -260,7 +261,7 @@ fn manifest_counts_match_the_spec() {
             .iter()
             .filter(|(b, _, _)| *b == Builder::Main)
             .count(),
-        240,
+        241,
         "main builder entries"
     );
     assert_eq!(
@@ -276,7 +277,7 @@ fn manifest_counts_match_the_spec() {
         .iter()
         .filter(|r| r.page_bearing == PageBearing::Yes)
         .count();
-    assert_eq!(bearing, 85, "page-bearing HTTP routes");
+    assert_eq!(bearing, 86, "page-bearing HTTP routes");
 }
 
 #[test]
@@ -397,6 +398,11 @@ fn marker_shape_allowlist_is_fail_closed() {
         (ReaderMethod::Get, "/api/pages/{id}/links"),
         (ReaderMethod::Get, "/api/pages/{id}/revisions"),
         (ReaderMethod::Get, "/api/pages/{id}/sources"),
+        // Restore names the archived page it puts back. A person restoring a
+        // page they browsed to with the explicit marker may restore one an
+        // automatic reader cannot see; the response is title metadata only,
+        // and the projection still takes the automatic `page_write_permit`.
+        (ReaderMethod::Post, "/api/pages/{id}/restore"),
     ];
 
     for r in HTTP_READERS {
@@ -429,7 +435,7 @@ fn marker_shape_allowlist_is_fail_closed() {
             .iter()
             .filter(|r| r.marker_shape == MarkerShape::NamedPage)
             .count(),
-        5 // main and repair each have a distinct page-detail adapter
+        6 // main and repair each have a distinct page-detail adapter; +1 restore
     );
     assert_eq!(
         HTTP_READERS

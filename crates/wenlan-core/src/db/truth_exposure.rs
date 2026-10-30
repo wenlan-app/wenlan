@@ -114,7 +114,7 @@ impl CutoverFence {
         format!("{}:{}", self.epoch, self.phase.as_str())
     }
 
-    fn parse(raw: &str) -> Option<Self> {
+    pub(super) fn parse(raw: &str) -> Option<Self> {
         let (epoch, phase) = raw.split_once(':')?;
         Some(Self {
             epoch: epoch.trim().parse().ok()?,
