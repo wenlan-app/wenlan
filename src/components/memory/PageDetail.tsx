@@ -2512,7 +2512,8 @@ export default function PageDetail({
         )}
 
 
-        {onOpenReview && <NoteReviewNotice key={pageId} page={page}
+        {/* An archived page is read only, so its review items wait until it is restored. */}
+        {onOpenReview && page.status !== "archived" && <NoteReviewNotice key={pageId} page={page}
           onReview={onOpenReview}
           onShowSources={() => void requestPageInfo()}
           disabled={exampleWiki || storedActionPending || canvasSwitchPending || !!editorStatus?.compositionActive}

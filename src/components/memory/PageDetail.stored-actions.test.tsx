@@ -34,6 +34,9 @@ const tauriMocks = vi.hoisted(() => ({
   pageReviewSupported: vi.fn(),
   reviewPage: vi.fn(),
   parseEntityGuardError: vi.fn().mockReturnValue(null),
+  listPendingRevisions: vi.fn(),
+  listRefinements: vi.fn(),
+  getResolvedRouting: vi.fn(),
 }));
 
 vi.mock("./PageCanvas", () => ({ default: () => <div /> }));
@@ -93,6 +96,8 @@ describe("PageDetail stored actions in seamless editing", () => {
   tauriMocks.deletePage.mockResolvedValue(undefined); tauriMocks.redistillPage.mockResolvedValue({status:'ok',updated:true});
   tauriMocks.updatePage.mockImplementation(async input => {current={...current,content:input.content,version:input.expectedVersion+1,user_edited:true};return {outcome:'saved'};});
   vi.spyOn(window,'confirm').mockReturnValue(true);
+  tauriMocks.listPendingRevisions.mockResolvedValue([]); tauriMocks.listRefinements.mockResolvedValue({proposals:[]});
+  tauriMocks.getResolvedRouting.mockResolvedValue(null);
  });
  async function start(extra:Partial<React.ComponentProps<typeof PageDetail>>={}) {
   const r=renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} initialMode="edit" {...extra}/>);
@@ -291,6 +296,34 @@ describe("PageDetail stored actions in seamless editing", () => {
   expect(onRestored).toHaveBeenCalledWith('page-1');
   // The tab asked for editing; once the page is active again it gets it.
   expect(await screen.findByRole('textbox',{name:'Page editor'})).toBeVisible();
+ });
+ it('an archived page hides its pending review line and shows it again after restore',async()=>{
+  Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(this:HTMLDialogElement){this.open=true;}});
+  Object.defineProperty(HTMLDialogElement.prototype,'close',{configurable:true,value:function(this:HTMLDialogElement){this.open=false;}});
+  tauriMocks.listPendingRevisions.mockResolvedValue([{target_source_id:'page-1',revision_source_id:'revision-page-1',revision_content:'proposal',source_agent:'codex',last_modified:1,target_kind:'page'}]);
+  current={...current,status:'archived',version:4};
+  tauriMocks.restorePage.mockImplementation(async(_id:string,expectedVersion:number)=>{current={...current,status:'active',version:expectedVersion+1};return{id:'page-1',title:current.title,version:current.version,status:'active',projection_status:'synced'};});
+  const onOpenReview=vi.fn();
+  const {user}=renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} onOpenReview={onOpenReview}/>);
+  await screen.findByText('This page is archived. Restore it to edit.');
+  // Give the review queries a chance to answer: the line must still stay hidden.
+  await waitFor(()=>expect(tauriMocks.getPage).toHaveBeenCalled());
+  await act(async()=>{await new Promise(resolve=>setTimeout(resolve,50));});
+  expect(screen.queryByText('1 item needs review')).toBeNull();
+  expect(screen.queryByRole('button',{name:'Review changes'})).toBeNull();
+  await user.click(screen.getByRole('button',{name:'Restore page'}));
+  const dialog=await screen.findByRole('dialog');
+  await user.click(within(dialog).getByRole('button',{name:'Restore page'}));
+  await waitFor(()=>expect(screen.queryByText('This page is archived. Restore it to edit.')).toBeNull());
+  expect(await screen.findByText('1 item needs review')).toBeVisible();
+  await user.click(screen.getByRole('button',{name:'Review changes'}));
+  expect(onOpenReview).toHaveBeenCalledWith('revision:page-1');
+ });
+ it('an active page shows its pending review line',async()=>{
+  tauriMocks.listPendingRevisions.mockResolvedValue([{target_source_id:'page-1',revision_source_id:'revision-page-1',revision_content:'proposal',source_agent:'codex',last_modified:1,target_kind:'page'}]);
+  renderWithQuery(<PageDetail pageId="page-1" onBack={vi.fn()} onMemoryClick={vi.fn()} onOpenReview={vi.fn()}/>);
+  expect(await screen.findByText('1 item needs review')).toBeVisible();
+  expect(screen.queryByText('This page is archived. Restore it to edit.')).toBeNull();
  });
  it('autosave never writes an archived page, but a cache miss is left to the daemon',async()=>{
   const {editor,client}=await start();
