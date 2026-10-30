@@ -1000,6 +1000,15 @@ pub struct RenamePageRequest {
     pub expected_version: i64,
 }
 
+/// Restore an archived ordinary page, optionally choosing an unoccupied title.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestorePageRequest {
+    pub expected_version: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
 // ===== Concept Export =====
 
 /// Request body for `POST /api/pages/export` (bulk export all pages to an Obsidian vault).

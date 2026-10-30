@@ -37,6 +37,130 @@
 use serde::Serialize;
 use tauri_plugin_global_shortcut::Shortcut;
 
+// Kept independent of Tauri so the cross-window state has a small unit-test lane.
+mod editor_composition {
+    use std::sync::atomic::{AtomicU8, Ordering};
+
+    /// Composition survives native focus loss: Windows IME can own focus while
+    /// the editor still has an active preedit. Only composition end or window
+    /// destruction releases the corresponding window's bit.
+    #[derive(Default)]
+    pub struct EditorCompositionGuard(AtomicU8);
+
+    impl EditorCompositionGuard {
+        fn window_bit(label: &str) -> Option<u8> {
+            match label {
+                "main" => Some(1),
+                "quick-capture" => Some(2),
+                _ => None,
+            }
+        }
+
+        pub fn set_window_composing(&self, label: &str, active: bool) -> Result<(), String> {
+            let bit = Self::window_bit(label)
+                .ok_or_else(|| "Only editor windows can report composition".to_string())?;
+            if active {
+                self.0.fetch_or(bit, Ordering::SeqCst);
+            } else {
+                self.0.fetch_and(!bit, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+
+        pub fn blocks_shortcuts(&self) -> bool {
+            self.0.load(Ordering::SeqCst) != 0
+        }
+
+        pub fn clear_destroyed_window(&self, label: &str) {
+            if let Some(bit) = Self::window_bit(label) {
+                self.0.fetch_and(!bit, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn either_editor_blocks_until_its_composition_ends() {
+            for label in ["main", "quick-capture"] {
+                let guard = EditorCompositionGuard::default();
+                assert!(!guard.blocks_shortcuts());
+                guard.set_window_composing(label, true).unwrap();
+                assert!(guard.blocks_shortcuts());
+                guard.set_window_composing(label, false).unwrap();
+                assert!(!guard.blocks_shortcuts());
+            }
+        }
+
+        #[test]
+        fn one_window_cannot_release_the_other_windows_composition() {
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true).unwrap();
+            guard.set_window_composing("quick-capture", false).unwrap();
+            assert!(guard.blocks_shortcuts());
+            guard.set_window_composing("quick-capture", true).unwrap();
+            guard.set_window_composing("main", false).unwrap();
+            assert!(guard.blocks_shortcuts());
+            guard.set_window_composing("quick-capture", false).unwrap();
+            assert!(!guard.blocks_shortcuts());
+        }
+
+        #[test]
+        fn unknown_window_cannot_set_or_clear_editor_state() {
+            let guard = EditorCompositionGuard::default();
+            for label in ["", "toast", "tray-panel", "MAIN", "main/quick-capture"] {
+                assert!(guard.set_window_composing(label, true).is_err());
+                assert!(!guard.blocks_shortcuts());
+            }
+            guard.set_window_composing("main", true).unwrap();
+            assert!(guard.set_window_composing("toast", false).is_err());
+            guard.clear_destroyed_window("toast");
+            assert!(guard.blocks_shortcuts());
+        }
+
+        #[test]
+        fn destruction_clears_only_the_destroyed_editor() {
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true).unwrap();
+            guard.set_window_composing("quick-capture", true).unwrap();
+            guard.clear_destroyed_window("main");
+            assert!(guard.blocks_shortcuts());
+            guard.clear_destroyed_window("quick-capture");
+            assert!(!guard.blocks_shortcuts());
+        }
+
+        #[test]
+        fn duplicate_notifications_are_idempotent_and_destroyed_label_can_reopen() {
+            let guard = EditorCompositionGuard::default();
+            guard.set_window_composing("main", true).unwrap();
+            guard.set_window_composing("main", true).unwrap();
+            guard.set_window_composing("main", false).unwrap();
+            assert!(!guard.blocks_shortcuts());
+            guard.set_window_composing("main", true).unwrap();
+            guard.clear_destroyed_window("main");
+            guard.clear_destroyed_window("main");
+            assert!(!guard.blocks_shortcuts());
+            guard.set_window_composing("main", true).unwrap();
+            assert!(guard.blocks_shortcuts());
+        }
+    }
+}
+
+pub use editor_composition::EditorCompositionGuard;
+
+/// The caller's injected window identity owns its bit; no label is accepted
+/// from the frontend payload.
+#[tauri::command]
+pub fn set_editor_composing(
+    window: tauri::WebviewWindow,
+    guard: tauri::State<'_, EditorCompositionGuard>,
+    active: bool,
+) -> Result<(), String> {
+    guard.set_window_composing(window.label(), active)
+}
+
 /// Which of the app's shortcuts a spec is. An id rather than a comparison
 /// against the parsed `Shortcut`, so a shortcut that failed to register (and
 /// therefore has no parsed value to compare against) is still nameable.

@@ -66,8 +66,10 @@ mod page_drafts;
 pub mod page_map;
 pub mod page_map_independent;
 mod page_rename;
+mod page_restore;
 mod page_summary_backfill;
 mod presence_review;
+mod quick_capture_repair;
 pub(crate) mod relation_write;
 pub(crate) use relation_write::RelationWriteInput;
 pub(crate) mod repair_deterministic;
@@ -189,6 +191,8 @@ mod page_drafts_test;
 mod page_history_title_test;
 #[cfg(test)]
 mod page_rename_test;
+#[cfg(test)]
+mod page_restore_test;
 #[cfg(test)]
 mod presence_review_test;
 #[cfg(test)]
@@ -1540,7 +1544,7 @@ pub const EMBEDDING_DIM: usize = 768;
 /// `entities` table, skip every `version < N` branch, and quietly operate
 /// against a schema it cannot see. Refusing to open is recoverable; writing is
 /// not.
-pub const SCHEMA_VERSION: u32 = 143;
+pub const SCHEMA_VERSION: u32 = 144;
 
 /// The text a `source = 'memory'` row is embedded from: `[space] ` when the
 /// row has a space, its retrieval cue on its own line when it has one, then
@@ -10695,6 +10699,14 @@ impl MemoryDB {
             }
             if version < 143 {
                 self.migrate_143_code_basis_recheck(version).await?;
+            }
+            // Preserve authored capture bodies independently of retrieval chunks,
+            // and restore surviving pre-memory-namespace desktop captures.
+            if ceiling < 144 {
+                return Ok(());
+            }
+            if version < 144 {
+                self.migrate_144_legacy_quick_captures(version).await?;
             }
         }
 
@@ -27406,6 +27418,7 @@ impl MemoryDB {
             episode_of: Option<String>,
         }
 
+        let mut authored_bodies: HashMap<String, String> = HashMap::new();
         let mut memory_rows: Vec<MemoryRow> = Vec::new();
         let mut chunk_texts: Vec<String> = Vec::new();
         let mut source_ids_to_delete: HashSet<(String, String)> = HashSet::new();
@@ -27421,6 +27434,12 @@ impl MemoryDB {
         for doc in &docs {
             let content = redact_pii(&doc.content);
             let metadata = doc.metadata.clone();
+            if doc.source == "memory"
+                && metadata.get("capture_source").map(String::as_str) == Some("manual")
+            {
+                // Retain human Markdown after the existing PII policy, before chunking.
+                authored_bodies.insert(doc.source_id.clone(), content.clone());
+            }
 
             // T11: write-time temporal grounding (deterministic prose grounder).
             // When WENLAN_ENABLE_TEMPORAL_GROUNDING is set, relative date phrases
@@ -28076,6 +28095,9 @@ impl MemoryDB {
                     .map(|s| s.into())
                     .unwrap_or(libsql::Value::Null);
 
+                let authored_content = if row.source == "memory" && row.chunk_index == 0 {
+                    authored_bodies.get(&row.source_id).cloned()
+                } else { None };
                 conn.execute(
                     "INSERT INTO memories (id, content, source, source_id, title, summary, url,
                     chunk_index, last_modified, chunk_type, language, byte_start, byte_end,
@@ -28084,13 +28106,13 @@ impl MemoryDB {
                     entity_id, enrichment_status, quality, is_recap, supersede_mode,
                     structured_fields, retrieval_cue, source_text,
                     embedding, created_at, importance, episode_of, content_hash, version,
-                    origin_class)
+                    origin_class, authored_content)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                     ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23,
                     ?24, ?25, ?26, ?27, ?28,
                     ?29, ?30, ?31,
                     CASE WHEN ?32 IS NULL THEN NULL ELSE vector32(?32) END,
-                    ?33, ?34, ?35, ?36, ?37, ?38)",
+                    ?33, ?34, ?35, ?36, ?37, ?38, ?39)",
                     libsql::params![
                         row.id,
                         row.content,
@@ -28129,7 +28151,8 @@ impl MemoryDB {
                         episode_of_val,
                         content_hash_val,
                         replacement_version,
-                        row.origin_class
+                        row.origin_class,
+                        authored_content
                     ],
                 )
                 .await
@@ -35374,7 +35397,7 @@ impl MemoryDB {
                 let mut rows = conn
                     .query(
                         "SELECT
-                            (SELECT GROUP_CONCAT(content, '\n')
+                            (SELECT COALESCE(MAX(authored_content), GROUP_CONCAT(content, '\n'))
                              FROM memories
                              WHERE pending_revision = 0
                                AND source != 'episode'
@@ -35433,7 +35456,11 @@ impl MemoryDB {
                 let affected = conn
                     .execute(
                         "UPDATE memories
-                         SET content = ?1, embedding = vector32(?2), word_count = ?3
+                         SET content = ?1, embedding = vector32(?2), word_count = ?3,
+                             authored_content = CASE
+                               WHEN authored_content IS NOT NULL
+                                 OR (source = 'memory' AND substr(source_id, 1, 7) = 'manual_')
+                               THEN ?1 ELSE authored_content END
                          WHERE source_id = ?4 AND chunk_index = 0 AND source != 'episode'",
                         libsql::params![
                             content,
@@ -35968,7 +35995,7 @@ impl MemoryDB {
     fn memory_item_columns(title_expr: &str, is_archived: &str) -> String {
         format!(
             "source_id, {title_expr},
-                GROUP_CONCAT(content, '\n') as content,
+                COALESCE(MAX(authored_content), GROUP_CONCAT(content, '\n')) as content,
                 MAX(summary) as summary,
                 MAX(memory_type) as memory_type,
                 MAX(space) as space,
@@ -36594,7 +36621,7 @@ impl MemoryDB {
                     MAX(memory_type), MAX(space), MAX(source_agent),
                     MAX(CAST(confidence AS REAL)), MAX(confirmed), MAX(pinned),
                     MAX(created_at) as created_at,
-                    MAX(content) as content,
+                    COALESCE(MAX(authored_content), MAX(content)) as content,
                     {is_archived} AS is_archived
              FROM memories
              {}
@@ -44326,7 +44353,7 @@ impl MemoryDB {
             // Load this version's data (aggregate across rows)
             let mut rows = conn
                 .query(
-                    "SELECT source_id, MAX(title), MAX(content), MAX(memory_type),
+                    "SELECT source_id, MAX(title), COALESCE(MAX(authored_content), MAX(content)), MAX(memory_type),
                             MAX(CAST(confirmed AS INTEGER)), MAX(supersedes), MAX(last_modified)
                      FROM memories WHERE source_id = ?1 AND source = 'memory' GROUP BY source_id",
                     libsql::params![current.clone()],
@@ -44438,7 +44465,7 @@ impl MemoryDB {
                 break;
             }
             let item_sql = format!(
-                "SELECT source_id, MAX(title), MAX(content), MAX(memory_type),
+                "SELECT source_id, MAX(title), COALESCE(MAX(authored_content), MAX(content)), MAX(memory_type),
                         MAX(CAST(confirmed AS INTEGER)), MAX(supersedes), MAX(last_modified)
                  FROM memories
                  WHERE source_id = ?1 AND source = 'memory' {scope_sql}

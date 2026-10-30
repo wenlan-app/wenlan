@@ -21,6 +21,7 @@ import { useDaemonStartupPhase } from "../../../lib/daemonStartup";
 interface PagesOverviewProps {
   readonly inventoryScope?: WikiInventoryScope;
   readonly onBrowseAll?: () => void;
+  readonly onBrowseArchived?: () => void;
   readonly onBrowseFolder?: (scope: WikiInventoryScope) => void;
   readonly onCreatePage: (space: string | null, folderPath?: string) => void;
   readonly onSelectDraft: (draftId: string, space: string | null) => void;
@@ -42,6 +43,7 @@ interface PagesOverviewProps {
 
 export function PagesOverview({
   onBrowseAll,
+  onBrowseArchived,
   onCreatePage,
   onSelectPage,
   onConnectTool,
@@ -156,6 +158,7 @@ export function PagesOverview({
       {newPages}
       {gettingStarted}
       {everyday}
+      {onBrowseArchived && <button className="wiki-archive-entry" type="button" onClick={onBrowseArchived}>{t("pages.archive.title")}</button>}
       {adding ? <AddSourceMenu start={adding} onQuickChats={onImportChatsQuick} onClose={closeAdding} /> : null}
     </section>
   );

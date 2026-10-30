@@ -55,6 +55,7 @@ pub(crate) fn register(router: TrackedRouter<SharedState>) -> TrackedRouter<Shar
         .route("/api/pages/{id}/links", get(handle_get_page_links))
         .route("/api/pages/{id}/move", post(handle_move_page))
         .route("/api/pages/{id}/archive", post(handle_archive_page))
+        .route("/api/pages/{id}/restore", post(handle_restore_page))
         .route("/api/pages/{id}/rename", post(handle_rename_page))
         .route("/api/pages/{id}/revisions", get(handle_get_page_revisions))
         .route("/api/pages/{id}/review", post(handle_review_page))
@@ -485,6 +486,61 @@ pub async fn handle_archive_page(
     reject_entity_page_mutation(&db, &id).await?;
     db.archive_page(&id).await.map_err(ServerError::from)?;
     Ok(Json(serde_json::json!({"status": "archived"})))
+}
+
+/// Restore metadata first; projection failures do not undo a durable restore.
+pub async fn handle_restore_page(
+    State(state): State<Arc<RwLock<ServerState>>>,
+    crate::space_header::SpaceHeader(header_space): crate::space_header::SpaceHeader,
+    view: crate::truth_guard::TruthView,
+    Path(id): Path<String>,
+    Json(req): Json<wenlan_types::requests::RestorePageRequest>,
+) -> Result<Json<wenlan_types::responses::RestorePageResponse>, ServerError> {
+    let (db, page_root) = {
+        let state = state.read().await;
+        (
+            state.db.clone().ok_or(ServerError::DbNotInitialized)?,
+            state
+                .lint_config
+                .page_root()
+                .map(std::path::Path::to_path_buf),
+        )
+    };
+    let scope = crate::read_scope::effective_read_scope(&db, None, header_space.as_deref()).await?;
+    if wenlan_core::truth_adapter::filter_page_refs(&db, &view.grant, vec![id.clone()], |id| {
+        id.as_str()
+    })
+    .await?
+    .is_empty()
+    {
+        return Err(ServerError::NotFound("page not found".into()));
+    }
+    let mut response = db
+        .restore_page(&id, req.title.as_deref(), req.expected_version, &scope)
+        .await?;
+    if let Some(root) = page_root {
+        // Use the current durable row rather than request/saved editor text.
+        let projection = wenlan_core::export::knowledge::KnowledgeProjectionWrite::new(root, &db);
+        match db.get_page_scoped(&id, &scope).await {
+            Ok(Some(page)) if page.status == "active" && page.version == response.version => {
+                match projection.write_page_gated(&db, &page).await {
+                    Ok(Some(_)) => response.projection_status = PageProjectionStatus::Synced,
+                    Ok(None) => response.projection_status = PageProjectionStatus::Hidden,
+                    Err(error) => {
+                        response.projection_status = PageProjectionStatus::Pending;
+                        response.projection_error = Some(error.to_string());
+                    }
+                }
+            }
+            _ => {
+                response.projection_status = PageProjectionStatus::Pending;
+                response.projection_error = Some(
+                    "restored page changed before projection; reload its current version".into(),
+                );
+            }
+        }
+    }
+    Ok(Json(response))
 }
 
 /// DELETE /api/pages/{id}

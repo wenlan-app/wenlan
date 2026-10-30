@@ -19,6 +19,8 @@ import {
   type PageDraftEditorHandle,
 } from "./PageDraftEditor";
 
+vi.mock("../editor/MarkdownEditor", async () => ({ MarkdownEditor: (await import("../editor/NativeMarkdownEditor")).NativeMarkdownEditor }));
+
 vi.mock("../../../lib/tauri", () => ({
   createPageDraft: vi.fn(),
   discardPageDraft: vi.fn(),

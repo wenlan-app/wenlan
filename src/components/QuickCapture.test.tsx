@@ -5,8 +5,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import QuickCapture from "./QuickCapture";
+vi.mock("./memory/editor/MarkdownEditor", async () => ({ MarkdownEditor: (await import("./memory/editor/NativeMarkdownEditor")).NativeMarkdownEditor }));
 
 const mockedInvoke = vi.mocked(invoke);
+beforeEach(() => { localStorage.clear(); });
 
 // The standalone window draws no exterior shadow on any platform, so the user
 // agents below only prove the absence holds everywhere rather than scoping it.
@@ -130,7 +132,7 @@ describe("QuickCapture standalone window has no exterior shadow or inset", () =>
   it.each(platforms)("saved state on %s: no shadow or glow, no inset", async (_name, ua) => {
     setPlatform(ua);
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValueOnce({ ok: true });
+    mockedInvoke.mockResolvedValueOnce(1);
     const { container, wrapper } = renderCapture(true);
 
     const { textarea, saveButton } = queryTextareaAndSave(container);
@@ -177,7 +179,7 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
     );
     renderCapture(false);
 
-    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    const textarea = screen.getByRole("textbox", { name: "Quick capture" });
     fireEvent.change(textarea, { target: { value: "long enough to save" } });
     fireEvent.click(screen.getByText("Save"));
 
@@ -192,7 +194,7 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
   it("blocks a too-short draft client-side without invoking", async () => {
     renderCapture(false);
 
-    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    const textarea = screen.getByRole("textbox", { name: "Quick capture" });
     fireEvent.change(textarea, { target: { value: "今天天氣非常晴朗好" } });
     fireEvent.click(screen.getByText("Save"));
 

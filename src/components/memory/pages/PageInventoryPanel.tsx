@@ -6,7 +6,8 @@ import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { deletePage, discardPageDraft, getPage, knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
+import { archivePage, deletePage, discardPageDraft, getPage, knowledgeFolderCreate, type Page, type KnowledgeFolder } from "../../../lib/tauri";
+import { exampleWikiActive, useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { confirmAction } from "../../../lib/confirmAction";
 import { listAllActivePages, listAllDraftPages, listAllActivePagesExplicitBrowse, listAllDraftPagesExplicitBrowse, EXPLICIT_BROWSE_QUERY_POLICY } from "./listAllPages";
 import { pageSpaceContext } from "./pagePresentation";
@@ -27,7 +28,9 @@ type PageInventoryPanelProps = {
   readonly onCreatePage?: (folderPath?: string) => void;
   readonly onOpenDraft?: (draftId: string, space: string | null) => void;
   readonly onOpenPage?: (page: Page) => void;
-  /** File-tree mode: called after a note (published page or draft) was deleted from the directory, so the host can close its tab. */
+  /** Return true when an open editor owns this archive attempt, including a blocked attempt. */
+  readonly onArchiveOpenPage?: (pageId: string) => Promise<boolean>;
+  /** File-tree mode: called after a note was removed from the directory, so the host can close its tab. */
   readonly onDeletePage?: (pageId: string) => void;
   /** File-tree mode: the number of notes the tree lists, or null until it has loaded. */
   readonly onNoteCountChange?: (count: number | null) => void;
@@ -42,8 +45,9 @@ type FolderContextMenuState = {
   readonly invoker: HTMLElement;
 };
 
-export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage, onDeletePage, onNoteCountChange }: PageInventoryPanelProps) {
+export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fileTree = false, inventoryScope = "all", browsing = false, filter: controlledFilter, onFilterChange, onBrowse, onCreatePage, onOpenDraft, onOpenPage, onArchiveOpenPage, onDeletePage, onNoteCountChange }: PageInventoryPanelProps) {
   const { i18n, t } = useTranslation();
+  const exampleWiki = useExampleWikiActive();
   const id = useId();
   const queryClient = useQueryClient();
   const [localFilter, setLocalFilter] = useState("");
@@ -95,7 +99,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     });
   }, [selectedPath]);
   const hasFilter = !fileTree && !!filter.trim();
-  const canCreate = !!folders.data && !folders.data.truncated;
+  const canCreate = !exampleWiki && !!folders.data && !folders.data.truncated;
   const folderUnavailable = folders.isError || !!folders.data?.truncated;
   const createStateRef = useRef({ canCreate, createPending, creating });
   const requestedCreatePath = (fileTree ? creationPath : selectedPath) ?? "";
@@ -151,16 +155,20 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     event.preventDefault();
     openContextMenu(target.path, target.invoker, event.clientX, event.clientY, target.noteId);
   };
-  const deleteNote = async (noteId: string) => {
+  const deleteNote = async (noteId: string, kind: "delete" | "archive" = "delete") => {
+    if (exampleWikiActive()) return;
     const note = pages.find(candidate => candidate.id === noteId);
-    if (!note || deletingRef.current) return;
+    if (!note || deletingRef.current || (kind === "archive" && (note.status !== "active" || note.creation_kind === "entity"))) return;
     deletingRef.current = true;
-    const confirmed = await confirmAction(t("pageDetail.deleteConfirm"), {
-      confirm: t("pageDetail.deletePage"),
-      cancel: t("common.cancel"),
-    });
-    if (!confirmed) { deletingRef.current = false; return; }
+    const invoker = contextMenu?.invoker;
     try {
+      if (kind === "archive" && await onArchiveOpenPage?.(noteId)) return;
+      const confirmed = await confirmAction(t(kind === "archive" ? "pageDetail.archiveConfirm" : "pageDetail.deleteConfirm"), {
+        confirm: t(kind === "archive" ? "pageDetail.archivePage" : "pageDetail.deletePage"),
+        cancel: t("common.cancel"),
+      });
+      if (!confirmed) { invoker?.focus(); return; }
+      if (exampleWikiActive()) return;
       if (note.status === "draft") {
         // delete_page rejects drafts; a draft is discarded at its latest version.
         // An open editor can autosave between the read and the discard, so a
@@ -175,7 +183,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
             if (code !== "draft_version_conflict" || attempt > 0) throw cause;
           }
         }
-      } else await deletePage(noteId);
+      } else if (kind === "archive") await archivePage(noteId);
+      else await deletePage(noteId);
       void queryClient.invalidateQueries({ queryKey: ["page", noteId], refetchType: "none" });
       void queryClient.invalidateQueries({ queryKey: ["pages"] });
       void queryClient.invalidateQueries({ queryKey: ["knowledge-graph"] });
@@ -188,7 +197,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
         if (!focused || focused === document.body) scrollRef.current?.focus();
       });
     } catch {
-      toast(t("pageDetail.deleteError"));
+      toast(t(kind === "archive" ? "pageDetail.archiveError" : "pageDetail.deleteError"));
+      invoker?.focus();
     } finally { deletingRef.current = false; }
   };
   const handleContextMenuKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -267,7 +277,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     </li>;
   };
   const create = async (event: React.FormEvent) => {
-    event.preventDefault(); if (!name.trim() || createPending || !canCreate) return;
+    event.preventDefault(); if (exampleWikiActive() || !name.trim() || createPending || !canCreate) return;
     setCreatePending(true); setCreateError(false);
     try {
       const parentPath = folderFormParentPath;
@@ -293,7 +303,7 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
   </form>;
   return <section aria-label={fileTree ? undefined : t("sidebar.notes")} className={`notes-list-panel notes-inventory-panel${fileTree ? " notes-inventory-panel--file-tree" : ""}`}>
     {fileTree ? <h2 className="sr-only">{t("pages.folders.title")}</h2> : <div className="notes-list-header"><h2>{t("sidebar.notes")}</h2><div className="flex items-center gap-1">
-      {onCreatePage && <button type="button" className="notes-list-create" aria-label={t("sidebar.newNote")} title={t("sidebar.newNote")} onClick={() => { if (selectedPath === null) onCreatePage(); else onCreatePage(selectedPath); }}><Plus aria-hidden="true" size={16}/></button>}
+      {!exampleWiki && onCreatePage && <button type="button" className="notes-list-create" aria-label={t("sidebar.newNote")} title={t("sidebar.newNote")} onClick={() => { if (selectedPath === null) onCreatePage(); else onCreatePage(selectedPath); }}><Plus aria-hidden="true" size={16}/></button>}
       <button type="button" className="notes-list-create" aria-label={t("pages.folders.newFolder")} title={t("pages.folders.newFolder")} disabled={!canCreate || createPending} onClick={event => { if (creating) closeFolderForm(false); else openCreateFolderFormAt(selectedPath ?? "", event.currentTarget); }}><FolderPlus aria-hidden="true" size={16}/></button>
     </div></div>}
     {!fileTree && folderCreateForm}
@@ -327,7 +337,8 @@ export function PageInventoryPanel({ currentPageId = null, currentFolderPath, fi
     }}>
       {contextMenu.noteId ? <>
         <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!contextNote || (contextNote.status === "draft" ? !onOpenDraft : !onOpenPage)} onClick={openContextNote}>{t("pages.folders.openNote")}</button>
-        <button type="button" role="menuitem" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>
+        {!exampleWiki && contextNote?.status === "active" && contextNote.creation_kind !== "entity" && <button type="button" role="menuitem" onClick={() => { const noteId = contextNote.id; setContextMenu(null); void deleteNote(noteId, "archive"); }}>{t("pageDetail.archivePage")}</button>}
+        {!exampleWiki && <button type="button" role="menuitem" aria-disabled={!contextNote} onClick={() => { if (!contextNote) return; const { id: noteId } = contextNote; setContextMenu(null); void deleteNote(noteId); }}>{t("pages.folders.deleteNote")}</button>}
       </> : <button type="button" role="menuitem" ref={contextMenuItemRef} aria-disabled={!canCreate || createPending || creating} onClick={() => { if (!canCreate || createPending || creating) return; const { path, invoker } = contextMenu; setContextMenu(null); openCreateFolderFormAt(path, invoker); }}>{t("pages.folders.newFolderIn", { name: contextMenu.path || t("pages.folders.root") })}</button>}
     </div>, document.body)}
   </section>;

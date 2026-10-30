@@ -167,3 +167,26 @@ describe("ContentRenderer citation links", () => {
     expect(link?.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 });
+
+describe("authored Markdown fidelity", () => {
+  it("keeps tables, code pipes, unresolved links and code wiki syntax intact", () => {
+    const fence=String.fromCharCode(96).repeat(3);
+    const content=["## Sources","My own bibliography","","| Name | Value |","| --- | --- |","| alpha | beta |","","See [[Target]] and [[Missing]].","",fence+"md","[[Target]]. Array [1].","a | b | c",fence].join("\n");
+    const {container}=render(<ContentRenderer variant="detail" content={content} preserveMarkdown
+      resolveWikilink={inner=>inner==="Target"?{label:"Renamed target",href:"#concept:target"}:null} />);
+    expect(screen.getByRole("heading",{name:"Sources"})).toBeInTheDocument();
+    expect(container.querySelector("table")).toHaveTextContent("alpha");
+    expect(screen.getByRole("link",{name:"Renamed target"})).toHaveAttribute("href","#concept:target");
+    expect(container.querySelector("pre code")).toHaveTextContent("[[Target]]. Array [1].");
+    expect(container.querySelector("pre code")?.textContent).toContain("a | b | c");
+    expect(container.textContent).toContain("[[Missing]]");
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+  it("does not reinterpret escaped wiki brackets or existing Markdown links", () => {
+    const {container}=render(<ContentRenderer variant="detail" content="\\[\\[Target]] [literal [[Target]]](https://example.com)" preserveMarkdown
+      resolveWikilink={()=>({label:"wrong",href:"#concept:wrong"})} />);
+    expect(container.textContent).toContain("[[Target]]");
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByRole("link")).toHaveAttribute("href","https://example.com");
+  });
+});

@@ -2213,9 +2213,8 @@ describe("SetupWizard", () => {
     expect(
       screen.getByText(/Wenlan saved a test memory but couldn't find it again\./),
     ).toBeInTheDocument();
-    // Never cleaned up: cleanup only runs once the round trip has actually
-    // proved the pipeline works.
-    expect(deleteMemory).not.toHaveBeenCalled();
+    // The write succeeded even though read-back failed; do not strand its probe.
+    expect(deleteMemory).toHaveBeenCalledWith("mem_probe-2");
   });
 
   it("a delete that fails once then succeeds on retry leaves the runtime row done, with no warning", async () => {

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import App from "./App";
+import { observeInputComposition } from "./lib/inputComposition";
 
 const eventListeners = vi.hoisted(
   () => new Map<string, (event: { payload: unknown }) => void>(),
@@ -48,6 +49,7 @@ vi.mock("./lib/tauri", () => ({
   getStartupPreflightStatus: getStartupPreflightStatusMock,
   setSetupCompleted: vi.fn().mockResolvedValue(undefined),
   setTrafficLightsVisible: vi.fn().mockResolvedValue(undefined),
+  setEditorComposing: vi.fn().mockResolvedValue(undefined),
   startDaemonSidecar: startDaemonSidecarMock,
   getWireState: getWireStateMock,
 }));
@@ -851,5 +853,35 @@ describe("App - opening before the daemon answers", () => {
 
     await waitFor(() => expect(getDaemonStartupPhase()).toBe("ready"));
     expect(invalidate).toHaveBeenCalledWith(expect.objectContaining({ predicate: expect.any(Function) }));
+  });
+});
+
+describe("App native shortcuts during OS composition", () => {
+  beforeEach(() => {
+    eventListeners.clear();
+    emitMock.mockReset().mockResolvedValue(undefined);
+    focusWindowMock.mockReset().mockResolvedValue(undefined);
+    showWindowMock.mockReset().mockResolvedValue(undefined);
+    vi.mocked(localSetupCompleted).mockResolvedValue(true);
+    vi.mocked(shouldShowWizard).mockResolvedValue(false);
+    setDaemonStartupPhase("ready");
+  });
+
+  it.each(["editor-primary-shortcut", "toggle-spotlight"])("does not steal an IME title's focus through %s", async event => {
+    renderApp();
+    const input = await screen.findByRole("textbox", { name: "Draft title" });
+    const stop = observeInputComposition(() => {});
+    try {
+      input.focus();
+      fireEvent.compositionStart(input);
+      await act(async () => { await eventListeners.get(event)?.({ payload: null }); });
+      expect(focusWindowMock).not.toHaveBeenCalled();
+      expect(showWindowMock).not.toHaveBeenCalled();
+      expect(emitMock).not.toHaveBeenCalledWith("focus-search");
+      expect(input).toHaveFocus();
+      fireEvent.compositionEnd(input, { data: "你好" });
+      await act(async () => { await eventListeners.get(event)?.({ payload: null }); });
+      expect(emitMock).toHaveBeenCalledWith("focus-search");
+    } finally { stop(); }
   });
 });

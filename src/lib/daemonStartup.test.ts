@@ -12,6 +12,7 @@ import {
   restartDaemon,
   shouldShowWizard,
   startDaemonSidecar,
+  setEditorComposing,
 } from "./tauri";
 
 async function flush() {
@@ -19,6 +20,12 @@ async function flush() {
 }
 
 describe("daemon startup hold", () => {
+  it("does not delay native composition protection behind daemon startup", async () => {
+    tauriInvokeMock.mockResolvedValue(undefined);
+    setDaemonStartupPhase("starting");
+    await setEditorComposing(true);
+    expect(tauriInvokeMock).toHaveBeenCalledWith("set_editor_composing", { active: true });
+  });
   afterEach(() => {
     setDaemonStartupPhase("ready");
     tauriInvokeMock.mockReset();

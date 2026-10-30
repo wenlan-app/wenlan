@@ -12,6 +12,8 @@ import {
   redoDepth,
   undoDepth,
 } from "@codemirror/commands";
+import { closeSearchPanel, openSearchPanel, search, searchKeymap } from "@codemirror/search";
+import { EDITOR_LINK_REQUEST } from "../../../lib/focusedEditorCommand";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { Compartment, EditorState } from "@codemirror/state";
@@ -20,6 +22,7 @@ import {
   dropCursor,
   EditorView,
   highlightSpecialChars,
+  placeholder,
   keymap,
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
@@ -83,6 +86,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
   const focusRequestedRef = useRef(false);
   const disabledCompartmentRef = useRef(new Compartment());
   const attributesCompartmentRef = useRef(new Compartment());
+  const searchPhrasesRef = useRef(new Compartment());
   const compositionActiveRef = useRef(false);
   const lastStatusRef = useRef<{
     callback: ((status: MarkdownEditorStatus) => void) | undefined;
@@ -158,6 +162,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
       runCommand(command): boolean {
         const view = viewRef.current;
         if (!view || actionsBlocked(view)) return false;
+        if (command === "find") return openSearchPanel(view);
         const applied = runMarkdownCommand(view, command);
         publishStatus(view);
         return applied;
@@ -172,6 +177,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     slashLabelsRef.current = { label: t("slashEditing.label"), ...Object.fromEntries(slashItems.map((item) => [item.id, t(`slashEditing.${item.id}`)])) } as SlashLabels;
     linkLabelsRef.current = linkCompletionLabels(t);
     sourcePasteLabelsRef.current = sourcePasteLabels(t);
+    viewRef.current?.dispatch({ effects: searchPhrasesRef.current.reconfigure(EditorState.phrases.of(searchPhrases(t))) });
     viewRef.current?.dispatch({ effects: [refreshSlashLabels.of(null), refreshLinkCompletion.of(null)] });
   }, [t]);
 
@@ -240,6 +246,8 @@ export const CodeMirrorMarkdownEditor = forwardRef<
           },
           extensions: [
             history(),
+            search({ top: true }),
+            searchPhrasesRef.current.of(EditorState.phrases.of(searchPhrases(t))),
             drawSelection(),
             dropCursor(),
             highlightSpecialChars(),
@@ -265,7 +273,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               "&.cm-editor": {
                 boxSizing: "border-box",
                 width: "100%",
-                minHeight: "300px",
+                minHeight: `${props.minHeight ?? 300}px`,
                 overflow: "hidden",
                 color: "var(--mem-text)",
                 backgroundColor: props.seamless ? "transparent" : "var(--mem-detail-surface)",
@@ -278,14 +286,14 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 borderColor: props.seamless ? "transparent" : "var(--mem-accent-page)",
               },
               ".cm-scroller": {
-                minHeight: "300px",
+                minHeight: `${props.minHeight ?? 300}px`,
                 height: "auto",
                 overflow: "visible",
                 fontFamily:
                   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
               },
               ".cm-content": {
-                minHeight: "300px",
+                minHeight: `${props.minHeight ?? 300}px`,
                 padding: props.seamless ? "0" : "0.75rem",
                 caretColor: "var(--mem-accent-indigo)",
               },
@@ -386,7 +394,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
               },
             }),
             keymap.of([
-              ...([ ["Mod-b", "bold"], ["Mod-i", "italic"] ] as const).map(([key, command]) => ({
+              ...([ ["Mod-b", "bold"], ["Mod-i", "italic"], ["Mod-k", "link"] ] as const).map(([key, command]) => ({
                 key,
                 run: (currentView: EditorView) => {
                   if (currentView.state.readOnly) return true;
@@ -408,6 +416,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
                 run: (currentView) => {
                   if (currentView.state.readOnly) return true;
                   if (actionsBlocked(currentView)) return false;
+                  if (closeSearchPanel(currentView)) return true;
                   requestCancel();
                   return true;
                 },
@@ -415,6 +424,7 @@ export const CodeMirrorMarkdownEditor = forwardRef<
             ]),
             keymap.of(sourcePreservingDefaultKeymap),
             keymap.of(historyKeymap),
+            keymap.of(searchKeymap),
             EditorView.updateListener.of((update) => {
               if (update.docChanged) {
                 callbacksRef.current.onDocumentChange(update.state.doc.toString());
@@ -437,9 +447,16 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     }
 
     viewRef.current = view;
+    const handleNativeLink = (event: Event) => {
+      if (!(event.target instanceof Node) || !view.contentDOM.contains(event.target)) return;
+      event.preventDefault();
+      if (!actionsBlocked(view)) { runMarkdownCommand(view, "link"); publishStatus(view); }
+    };
+    mount.addEventListener(EDITOR_LINK_REQUEST, handleNativeLink);
     publishStatus(view);
     if (focusRequestedRef.current) view.focus();
     return () => {
+      mount.removeEventListener(EDITOR_LINK_REQUEST, handleNativeLink);
       if (viewRef.current === view) viewRef.current = null;
       compositionActiveRef.current = false;
       view.destroy();
@@ -469,13 +486,13 @@ export const CodeMirrorMarkdownEditor = forwardRef<
     view.dispatch({
       effects: attributesCompartmentRef.current.reconfigure(contentAttributes(props)),
     });
-  }, [props.ariaLabel, props.describedBy, props.disabled, props.sessionId]);
+  }, [props.ariaLabel, props.describedBy, props.disabled, props.placeholder, props.sessionId]);
 
   return (
     <div
       ref={mountRef}
       data-markdown-editor-engine="codemirror"
-      style={{ width: "100%", minHeight: "300px" }}
+      style={{ width: "100%", minHeight: `${props.minHeight ?? 300}px` }}
       onKeyDownCapture={(event) => {
         if (
           (compositionActiveRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
@@ -502,13 +519,13 @@ function disabledExtensions(disabled: boolean) {
   return [EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)];
 }
 
-function contentAttributes(props: Pick<MarkdownEditorProps, "ariaLabel" | "describedBy" | "disabled">) {
-  return EditorView.contentAttributes.of({
+function contentAttributes(props: Pick<MarkdownEditorProps, "ariaLabel" | "describedBy" | "disabled" | "placeholder">) {
+  return [EditorView.contentAttributes.of({
     "aria-label": props.ariaLabel,
     "aria-multiline": "true",
     "aria-disabled": String(props.disabled),
     ...(props.describedBy ? { "aria-describedby": props.describedBy } : {}),
-  });
+  }), props.placeholder ? placeholder(props.placeholder) : []];
 }
 
 function linkCompletionLabels(t: TFunction): LinkCompletionLabels {
@@ -528,4 +545,8 @@ function sourcePasteLabels(t: TFunction): SourcePasteLabels {
     failed: t("sourcePaste.failed"),
     retry: t("sourcePaste.retry"),
   };
+}
+
+function searchPhrases(t: TFunction): Record<string, string> {
+  return { Find: t("editorSearch.find"), Replace: t("editorSearch.replace"), next: t("editorSearch.next"), previous: t("editorSearch.previous"), all: t("editorSearch.all"), "match case": t("editorSearch.matchCase"), regexp: t("editorSearch.regexp"), "by word": t("editorSearch.wholeWord"), replace: t("editorSearch.replace"), "replace all": t("editorSearch.replaceAll"), close: t("common.close") };
 }

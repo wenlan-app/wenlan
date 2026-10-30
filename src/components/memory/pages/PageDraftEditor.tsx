@@ -18,6 +18,8 @@ import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "..
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import PageInfoDrawer from "../page/PageInfoDrawer";
 import { AskInsteadHint } from "../askAi/AskInsteadHint";
+import { useEditorLinkNotes } from "../editor/useEditorLinkNotes";
+import { MarkdownEditor } from "../editor/MarkdownEditor";
 import { getPage, publishPageDraft, type Page } from "../../../lib/tauri";
 import {
   usePageDraftAutosave,
@@ -93,7 +95,19 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     const [title, setTitle] = useState(initialPage?.title ?? "");
     useEffect(() => { onTitleChange?.(title); }, [title, onTitleChange]);
     const [content, setContent] = useState(initialPage?.content ?? "");
+    const [editorRevision, setEditorRevision] = useState(0);
+    const [composing, setComposing] = useState(false);
+    const composingRef = useRef(false);
+    const titleComposingRef = useRef(false);
+    const bodyComposingRef = useRef(false);
+    const setComposition = (part: "title" | "body", active: boolean) => {
+      (part === "title" ? titleComposingRef : bodyComposingRef).current = active;
+      composingRef.current = titleComposingRef.current || bodyComposingRef.current;
+      setComposing(composingRef.current);
+    };
     const [space, setSpace] = useState(initialPage?.space ?? initialSpace ?? "");
+    const liveSnapshotRef = useRef<PageDraftSnapshot>({ title, content, space: space || null });
+    const linkNotes = useEditorLinkNotes(space || null, initialPage?.id ?? "", content.includes("[["));
     const [operationKind, setOperationKind] = useState<"idle" | "finalizing" | "uncertain" | "finalized">("idle");
     const [publishError, setPublishError] = useState<Error | null>(null);
     const [publishConflict, setPublishConflict] = useState(false);
@@ -117,6 +131,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       space: initialPage?.space ?? initialSpace ?? null,
     }), [initialPage, initialSpace]);
     const reconcileSpace = useCallback((reconciledSpace: string | null) => {
+      liveSnapshotRef.current = { ...liveSnapshotRef.current, space: reconciledSpace };
       setSpace(reconciledSpace ?? "");
     }, []);
     const autosave = usePageDraftAutosave({
@@ -127,6 +142,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       onDraftIdentity,
       onSpaceReconciled: reconcileSpace,
       snapshot,
+      composing,
     });
 
     const finishPublished = useCallback(async (published: Page) => {
@@ -145,6 +161,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     }, [queryClient]);
 
     const finalize = useCallback((): Promise<boolean> => {
+      if (composingRef.current) return Promise.resolve(false);
       if (publishedPageRef.current) return Promise.resolve(true);
       if (finalizePromiseRef.current) return finalizePromiseRef.current;
 
@@ -180,8 +197,9 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
             uncertainPublishRef.current = false;
           }
 
-          if (!await autosave.flush()) return false;
-          if (snapshot.title.trim().length === 0 && snapshot.content.trim().length === 0) return true;
+          if (!await autosave.flush(liveSnapshotRef.current)) return false;
+          const savedInput = liveSnapshotRef.current;
+          if (savedInput.title.trim().length === 0 && savedInput.content.trim().length === 0) return true;
 
           identity = autosave.getIdentity();
           if (!identity.draftId || identity.version == null) {
@@ -283,7 +301,8 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
 
     useEffect(() => {
       const handleEscape = (event: KeyboardEvent) => {
-        if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+        if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || composingRef.current) return;
+        if (event.target instanceof Element && event.target.closest("[data-markdown-editor-engine], .page-editor-native-surface")) return;
         if (noteGroup && !noteGroup.element?.contains(event.target as Node)) return;
         // Let an open sidebar popup consume Escape before draft navigation or
         // the narrow drawer's close guard sees it.
@@ -317,8 +336,10 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
           content: latest.content,
           space: latest.space ?? null,
         };
+        liveSnapshotRef.current = latestSnapshot;
         setTitle(latest.title);
         setContent(latest.content);
+        setEditorRevision(value => value + 1);
         setSpace(latest.space ?? "");
         autosave.adoptRemote({
           draftId: latest.id,
@@ -432,29 +453,27 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
             className="page-draft-title"
             disabled={locked}
             onChange={(event) => {
+              liveSnapshotRef.current = { ...liveSnapshotRef.current, title: event.target.value };
               setTitle(event.target.value);
               setPublishConflict(false);
               setPublishError(null);
               setPublishVersionConflict(false);
             }}
             placeholder={t("pages.editor.titlePlaceholder")}
+            onCompositionStart={() => setComposition("title", true)}
+            onCompositionEnd={() => setComposition("title", false)}
             ref={titleRef}
             value={title}
           />
 
-          <textarea
-            aria-label={t("pages.editor.contentLabel")}
-            className="page-draft-content"
-            disabled={locked}
-            onChange={(event) => {
-              setContent(event.target.value);
-              setPublishConflict(false);
-              setPublishError(null);
-              setPublishVersionConflict(false);
-            }}
-            placeholder={t("pages.editor.contentPlaceholder")}
-            value={content}
-          />
+          <div className="page-draft-content">
+            <MarkdownEditor linkNotes={linkNotes} initialDocument={content} sessionId={`${headingId}:${editorRevision}`} seamless
+              disabled={locked} ariaLabel={t("pages.editor.contentLabel")} placeholder={t("pages.editor.contentPlaceholder")}
+              onDocumentChange={document => { liveSnapshotRef.current = { ...liveSnapshotRef.current, content: document }; setContent(document); setPublishConflict(false); setPublishError(null); setPublishVersionConflict(false); }}
+              onStatusChange={status => setComposition("body", status.compositionActive)}
+              onSave={document => { liveSnapshotRef.current = { ...liveSnapshotRef.current, content: document }; setContent(document); void autosave.flush(liveSnapshotRef.current); }}
+              onCancel={() => { if (onEscapeBeforeLeave?.()) return; void requestBack(); }} onFallback={() => {}} />
+          </div>
         </div>
       </section>
       <PageInfoDrawer

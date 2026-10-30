@@ -25,6 +25,7 @@ export interface MarkdownEditorHandle {
 }
 
 export type MarkdownEditorCommand =
+  | "find"
   | "undo"
   | "redo"
   | "paragraph"
@@ -58,6 +59,8 @@ export interface MarkdownEditorProps {
   initialSelection?: MarkdownEditorSelection;
   sessionId: string;
   seamless?: boolean;
+  minHeight?: number;
+  placeholder?: string;
   disabled: boolean;
   ariaLabel: string;
   describedBy?: string;

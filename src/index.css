@@ -4092,3 +4092,12 @@ p.entity-error {
 }
 .mem-toast-icon { display: flex; flex-shrink: 0; margin-top: 2px; color: var(--mem-danger); }
 .mem-toast-icon svg { width: 14px; height: 14px; }
+
+.quick-capture-editor > [data-markdown-editor-engine] { min-height: 140px; }
+.quick-capture-editor .cm-panel.cm-search input, .quick-capture-editor .cm-panel.cm-search button { background: var(--mem-surface); color: var(--mem-text); border: 1px solid var(--mem-border); border-radius: 4px; }
+
+.content-renderer table { border-collapse: collapse; margin: 1em 0; max-width: 100%; }
+.content-renderer th, .content-renderer td { padding: 8px 12px; border: 1px solid var(--mem-border); }
+.content-renderer th { background: var(--mem-hover); }
+
+.content-renderer th:not([align]), .content-renderer td:not([align]) { text-align: start; }

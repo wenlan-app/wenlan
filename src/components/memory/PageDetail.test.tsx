@@ -183,6 +183,19 @@ describe("PageDetail", () => {
     await i18n.changeLanguage("en");
   });
 
+  it("preserves authored Sources, a distinct H1 and literal code in read mode", async () => {
+    const { getPage } = await import("../../lib/tauri");
+    const baseline = await getPage("concept_abc");
+    const fence=String.fromCharCode(96).repeat(3);
+    vi.mocked(getPage).mockResolvedValueOnce({...baseline!,title:"My title",creation_kind:"authored",summary:null,citations:[],
+      content:["# A different heading","","## Sources","My own bibliography","",fence+"md","[[Missing]]. Array [1].","a | b | c",fence].join("\n")});
+    renderWithQuery(<PageDetail {...defaultProps} initialMode="read" />);
+    expect(await screen.findByRole("heading",{name:"A different heading"})).toBeInTheDocument();
+    expect(screen.getByRole("heading",{name:"Sources",level:2})).toBeInTheDocument();
+    const reading=screen.getByTestId("page-document-reading");
+    expect(reading).toHaveTextContent("My own bibliography");
+    expect(reading.querySelector("pre code")?.textContent).toBe("[[Missing]]. Array [1].\na | b | c\n");
+  });
   it("renders page title", async () => {
     renderWithQuery(<PageDetail {...defaultProps} />);
     expect(await screen.findByRole("heading", { level: 1, name: "libSQL Architecture" })).toBeInTheDocument();
@@ -251,6 +264,69 @@ describe("PageDetail", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Renamed architecture" })).toBeInTheDocument();
     expect(client.getQueryState(["page-links", "referencing-note"])?.isInvalidated).toBe(true);
     expect(screen.getByText(/libSQL is the core database layer powering Origin/)).toBeInTheDocument();
+  });
+
+  it("keeps title rename IME candidate Escape and Enter inside the title field", async () => {
+    const { renamePage } = await import("../../lib/tauri");
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
+    await user.click(await screen.findByRole("button", { name: "Rename page" }));
+    const input = screen.getByRole("textbox", { name: "Page title" });
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "標題ㄕ" } });
+
+    fireEvent.keyDown(input, { key: "Escape", isComposing: true });
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue("標題ㄕ");
+    // A missing native isComposing flag must still respect the composition ref.
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input).toBeInTheDocument();
+    expect(fireEvent.keyDown(input, { key: "Enter", isComposing: true })).toBe(false);
+    expect(fireEvent.keyDown(input, { key: "Enter", keyCode: 229 })).toBe(false);
+    expect(renamePage).not.toHaveBeenCalled();
+  });
+
+  it("keeps title rename IME legacy keyCode 229 from cancelling or submitting", async () => {
+    const { renamePage } = await import("../../lib/tauri");
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
+    await user.click(await screen.findByRole("button", { name: "Rename page" }));
+    const input = screen.getByRole("textbox", { name: "Page title" });
+    // Some engines deliver the last candidate key after compositionend.
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "中文標題" } });
+    fireEvent.compositionEnd(input);
+    fireEvent.keyDown(input, { key: "Escape", keyCode: 229 });
+    expect(input).toBeInTheDocument();
+    expect(fireEvent.keyDown(input, { key: "Enter", keyCode: 229 })).toBe(false);
+    expect(renamePage).not.toHaveBeenCalled();
+    // Ordinary Escape still cancels after the candidate operation is over.
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Page title" })).toBeNull();
+  });
+
+  it("blocks title rename IME form submission until the exact title is committed", async () => {
+    const { getPage, renamePage } = await import("../../lib/tauri");
+    const baseline = await getPage("concept_abc");
+    const { user } = renderWithQuery(<PageDetail {...defaultProps} />);
+    await user.click(await screen.findByRole("button", { name: "Rename page" }));
+    const input = screen.getByRole("textbox", { name: "Page title" });
+    const form = input.closest("form")!;
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "拼音 zhong" } });
+    fireEvent.submit(form);
+    expect(renamePage).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Save title" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel rename" })).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "拼音中文與注音標題" } });
+    fireEvent.compositionEnd(input);
+    const renamed = { ...baseline!, title: "拼音中文與注音標題", version: 4 };
+    vi.mocked(renamePage).mockResolvedValueOnce(renamed);
+    await vi.mocked(getPage).withImplementation(async () => renamed, async () => {
+      await user.click(screen.getByRole("button", { name: "Save title" }));
+      expect(renamePage).toHaveBeenCalledTimes(1);
+      expect(renamePage).toHaveBeenCalledWith("concept_abc", "拼音中文與注音標題", 3);
+      expect(await screen.findByRole("heading", { level: 1, name: "拼音中文與注音標題" })).toBeInTheDocument();
+    });
   });
 
   it("cancels a page rename without changing the title", async () => {
@@ -716,7 +792,7 @@ describe("PageDetail", () => {
 
     await user.click(trigger);
     await user.click(screen.getByRole("menuitem", { name: "Delete page" }));
-    expect(confirmSpy).toHaveBeenCalledWith("Delete this page?");
+    expect(confirmSpy).toHaveBeenCalledWith("Permanently delete this page? This cannot be undone.");
     expect(deletePage).not.toHaveBeenCalled();
 
     confirmSpy.mockReturnValue(true);

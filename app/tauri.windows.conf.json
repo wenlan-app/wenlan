@@ -3,7 +3,19 @@
     "resources": {
       "binaries/onnxruntime.dll": "onnxruntime.dll",
       "binaries/vulkan-1.dll": "vulkan-1.dll",
-      "binaries/VulkanRT-License.txt": "VulkanRT-License.txt"
+      "binaries/VulkanRT-License.txt": "VulkanRT-License.txt",
+      "binaries/concrt140.dll": "concrt140.dll",
+      "binaries/msvcp140.dll": "msvcp140.dll",
+      "binaries/msvcp140_1.dll": "msvcp140_1.dll",
+      "binaries/msvcp140_2.dll": "msvcp140_2.dll",
+      "binaries/msvcp140_atomic_wait.dll": "msvcp140_atomic_wait.dll",
+      "binaries/msvcp140_codecvt_ids.dll": "msvcp140_codecvt_ids.dll",
+      "binaries/vccorlib140.dll": "vccorlib140.dll",
+      "binaries/vcruntime140.dll": "vcruntime140.dll",
+      "binaries/vcruntime140_1.dll": "vcruntime140_1.dll",
+      "binaries/vcomp140.dll": "vcomp140.dll",
+      "binaries/MSVC-Runtime-License.rtf": "MSVC-Runtime-License.rtf",
+      "binaries/MSVC-Runtime-Source.txt": "MSVC-Runtime-Source.txt"
     },
     "windows": {
       "nsis": {

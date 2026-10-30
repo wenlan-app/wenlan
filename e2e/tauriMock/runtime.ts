@@ -30,6 +30,7 @@ import { ConfiguredTauriFailureError, TauriMockArgumentError } from "./errors";
 import { PageBasisStore } from "./pageBasis";
 import { PageCodeBasisStore } from "./pageCodeBasis";
 import { PageMapStore } from "./pageMap";
+import { restoreFixturePage } from "./pageRestore";
 import type { MockCommandCall, MockFailure, TauriMockPageScenario } from "./types";
 
 const CLIENT_PAGE_DRAFT_ID =
@@ -401,6 +402,14 @@ export class TauriMockRuntime {
       // rejected as an unknown command.
       case "active_import_batches_cmd": return { batches: [] };
       case "create_page": return this.createPage(args);
+      case "restore_page": {
+        const id = requiredString(command, args, "id");
+        const index = this.pages.findIndex((page) => page.id === id);
+        const restored = restoreFixturePage(this.pages[index], this.pages,
+          requiredNumber(command, args, "expectedVersion"), optionalValue(args, "title"));
+        this.pages[index] = restored.page;
+        return restored.response;
+      }
       case "rename_page": return this.renamePage(args);
       case "update_page": return this.updatePage(args);
       case "delete_page": return this.deletePage(args);

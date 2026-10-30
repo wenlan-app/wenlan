@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { isInputCompositionActive } from "../../lib/inputComposition";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { SearchModal } from "./SearchModal";
@@ -33,7 +34,8 @@ import { FirstUseGuide } from "../onboarding/FirstUseGuide";
 import { useGettingStartedState } from "../onboarding/useGettingStartedState";
 import { TabIntro, type IntroTab } from "../onboarding/TabIntro";
 import { ExampleWikiBanner, useExampleWikiSwitch } from "../onboarding/ExampleWikiBanner";
-import { useExampleWikiActive } from "../../lib/exampleWiki/mode";
+import { exampleWikiActive, useExampleWikiActive } from "../../lib/exampleWiki/mode";
+import { setStartIntent } from "../onboarding/startIntent";
 import { readRememberedDirectoryHidden, rememberDirectoryHidden } from "../../lib/wikiLayoutMemory";
 import AtlasView from "./AtlasView";
 import { SearchResults } from "./SearchResults";
@@ -246,6 +248,21 @@ export default function Main({
     inFlight: null,
   });
   const pageFlushRef = useRef<(() => Promise<boolean>) | null>(null);
+  const pageArchiveRef = useRef<{ pageId: string; archive: () => Promise<void> } | null>(null);
+  const registerPageArchive = useCallback((pageId: string, archive: (() => Promise<void>) | null) => {
+    if (archive) pageArchiveRef.current = { pageId, archive };
+    else if (pageArchiveRef.current?.pageId === pageId) pageArchiveRef.current = null;
+  }, []);
+  const archiveOpenPage = async (pageId: string): Promise<boolean> => {
+    if (movingNoteRef.current) return true;
+    if (viewRef.current.kind === "page" && viewRef.current.pageId === pageId) {
+      // An open but unready editor must fail closed, never bypass its owner.
+      if (pageArchiveRef.current?.pageId === pageId) await pageArchiveRef.current.archive();
+      return true;
+    }
+    return await secondaryGroupRef.current?.archiveOpenPage(pageId) ?? false;
+  };
+
   const memoryFlushRef = useRef<(() => Promise<boolean>) | null>(null);
   const registerMemoryFlush = useCallback((flush: (() => Promise<boolean>) | null) => {
     memoryFlushRef.current = flush;
@@ -282,6 +299,7 @@ export default function Main({
   const primaryDraftIdentityByTab = useRef(new Map<string, string>());
   const [wikiCreationFolderPath, setWikiCreationFolderPath] = useState<string | null>(null);
   const [wikiInventoryMode, setWikiInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
+  const [wikiDirectoryOpenRequest, setWikiDirectoryOpenRequest] = useState(0);
   const [recentPageRevision, setRecentPageRevision] = useState(0);
   const updateNoteTabs = (next: NoteTab[]) => { noteTabsRef.current = next; setNoteTabs(next); };
   const findPrimaryNoteTab = (next: NoteView) => noteTabsRef.current.find(tab =>
@@ -309,18 +327,8 @@ export default function Main({
     setViewHistory(past);
     setViewForward(forward);
   };
-  // Opening or leaving the example wiki starts the workspace over, so no
-  // tab, split or step back leads from one wiki into the other.
-  const exampleWikiShown = useRef(exampleWiki);
-  useEffect(() => {
-    if (exampleWikiShown.current === exampleWiki) return;
-    exampleWikiShown.current = exampleWiki;
-    noteTabsRef.current = [];
-    setNoteTabs([]);
-    updateHistory([], []);
-    setSecondaryOpen(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on the switch
-  }, [exampleWiki]);
+  const [exampleWorkspaceEpoch, setExampleWorkspaceEpoch] = useState(0);
+  const exampleSwitchPendingRef = useRef(false);
   const dismissSearch = () => {
     pendingDraftSearchCancelRef.current?.();
     pendingDraftSearchCancelRef.current = null;
@@ -342,6 +350,7 @@ export default function Main({
   const openSearchRef = useRef(openSearch);
   openSearchRef.current = openSearch;
   const showView = (next: View, dismissSearchOverlay = true) => {
+    if (exampleWikiActive() && next.kind === "page-draft") return;
     setOwnershipNotice(null);
     if (dismissSearchOverlay) dismissSearch();
     if (isNoteView(next) && secondaryGroupRef.current?.contains(next)) {
@@ -351,8 +360,11 @@ export default function Main({
     }
     if (isNoteView(next)) {
       const existing = findPrimaryNoteTab(next);
-      if (existing) next = existing.view;
-      else updateNoteTabs(upsertNoteTab(noteTabsRef.current, next));
+      if (existing) {
+        next = next.kind === "page" && next.mode != null && existing.view.kind === "page"
+          ? { ...existing.view, ...next } : existing.view;
+        if (next !== existing.view) updateNoteTabs(upsertNoteTab(noteTabsRef.current, next));
+      } else updateNoteTabs(upsertNoteTab(noteTabsRef.current, next));
     }
     const currentView = viewRef.current;
     if (currentView.kind === "sources" || currentView.kind === "source-document") {
@@ -685,6 +697,7 @@ export default function Main({
 
   // New destinations branch from the current entry only after saving succeeds.
   const navigateTo = (next: View, onRefused?: () => void) => {
+    if (exampleWikiActive() && next.kind === "page-draft") { onRefused?.(); return; }
     if (movingNoteRef.current) return;
     if (isNoteView(next) && secondaryGroupRef.current?.contains(next)) {
       const ownedNote = next;
@@ -712,7 +725,7 @@ export default function Main({
       if (existingTab && !noteTabsRef.current.some(tab => tab.key === existingTab.key)) return;
       updateHistory([...viewHistoryRef.current, sourceView], []);
       // Allocate only after the current editor's save guard succeeds.
-      showView(existingTab?.view ?? (next.kind === "page-draft" && next.sessionKey == null
+      showView((next.kind === "page" && next.mode != null ? next : existingTab?.view) ?? (next.kind === "page-draft" && next.sessionKey == null
         ? { ...next, sessionKey: ++nextDraftSessionRef.current }
         : next));
     }, onRefused, !isNoteView(next) && next.kind !== "pages" && next.kind !== "home");
@@ -816,7 +829,7 @@ export default function Main({
     onSelect={tab => { focusPrimaryGroup(); navigateTo(tab.view); }} onClose={closeNoteTab}
     onHome={() => { focusPrimaryGroup(); navigatePages(); }} homeActive={view.kind === "pages" || view.kind === "home"}
     onMoveToOtherGroup={moveToSecondary} moveLabel={t("pages.groups.moveToRight")}
-    onCreate={() => navigateTo({
+    onCreate={exampleWiki ? undefined : () => navigateTo({
       kind: "page-draft",
       space: null,
       folderPath: wikiInventoryMode === "folders" ? wikiCreationFolderPath ?? undefined : undefined,
@@ -984,7 +997,8 @@ export default function Main({
     kind: "page-draft", draftId, space, inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
   });
   const openWikiPage = (page: Page) => openWikiNote({
-    kind: "page", pageId: page.id, inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
+    kind: "page", pageId: page.id, mode: page.status === "archived" ? "read" : undefined,
+    inventoryScope: retainWikiScope ? view.inventoryScope : undefined,
   });
   // The menu bar panel hands over here once it has shown this window: a page
   // from its recent list, or the review list for an AI edit waiting on the
@@ -1021,6 +1035,42 @@ export default function Main({
   const { empty: libraryEmpty } = useLibraryInventory();
   const gettingStarted = useGettingStartedState();
   const exampleWikiSwitch = useExampleWikiSwitch();
+  const switchExampleWiki = (active: boolean, startOwn = false) => {
+    if (active === exampleWiki || exampleSwitchPendingRef.current || movingNoteRef.current || isInputCompositionActive()) return;
+    exampleSwitchPendingRef.current = true;
+    // Reuse the workspace transfer lock: neither group may accept new input
+    // between its flush and the other owner's asynchronous settlement.
+    movingNoteRef.current = true;
+    setMovingNote(true);
+    const settled = () => {
+      exampleSwitchPendingRef.current = false;
+      movingNoteRef.current = false;
+      setMovingNote(false);
+    };
+    afterNavigationGuards(() => {
+      if (isInputCompositionActive()) { settled(); return; }
+      // Only after both owners accept may their documents, identities and
+      // caches be retired. Remount the secondary owner, not merely its portal.
+      updateNoteTabs([]);
+      primaryDraftIdentityByTab.current.clear();
+      updateHistory([], []);
+      lastNoteViewRef.current = null;
+      pageSelectionsRef.current.clear();
+      readingPositions.clear();
+      setOwnershipNotice(null);
+      setSecondaryOpen(false);
+      setExampleWorkspaceEpoch(value => value + 1);
+      setWikiInventoryMode("recent");
+      setPageInventoryFilter("");
+      dismissSearch();
+      focusPrimaryGroup();
+      showView({ kind: "pages" }, false);
+      if (startOwn) setStartIntent("material");
+      if (active) exampleWikiSwitch.open(); else exampleWikiSwitch.close();
+      settled();
+    }, settled, true);
+  };
+
   const liveDirectoryHidden = libraryEmpty
     || (gettingStarted.visible && !gettingStarted.dismissed);
   // Until both reads answer (they wait on the daemon at launch), keep the
@@ -1169,7 +1219,7 @@ export default function Main({
   // Cmd/Ctrl+K is delivered by App.tsx and opens the shared search dialog.
   useEffect(() => {
     const unlisten = listen("focus-search", () => {
-      if (pageSavePending) return;
+      if (pageSavePending || isInputCompositionActive()) return;
       if (searchDialogOpenRef.current) {
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -1190,7 +1240,7 @@ export default function Main({
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing) return;
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || isInputCompositionActive()) return;
       // Cmd/Ctrl+R reloads the window, like other desktop apps built on a web
       // view. It works from inside an editor too, and saves the open note first.
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "r") {
@@ -1453,11 +1503,12 @@ export default function Main({
               onImport={() => navigateTo({ kind: "import" })}
             />
           ) : (view.kind === "pages" || view.kind === "home") ? (
-            <WikiWorkspace
+            <WikiWorkspace key={exampleWiki ? "example" : "own"}
               directoryHidden={directoryHidden}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
+              directoryOpenRequest={wikiDirectoryOpenRequest}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1471,8 +1522,14 @@ export default function Main({
               onOpenDraft={openWikiDraft}
               onOpenPage={openWikiPage}
               onDeletePage={handleDirectoryNoteDeleted}
+              onArchiveOpenPage={archiveOpenPage}
             >
               <PagesOverview
+                onBrowseArchived={() => {
+                  writeWikiInventoryMode("archived");
+                  setWikiInventoryMode("archived");
+                  setWikiDirectoryOpenRequest(request => request + 1);
+                }}
                 inventoryScope={view.kind === "pages" ? view.inventoryScope : undefined}
                 onBrowseAll={() => {
                   // The home lists only the newest pages; every page is in the
@@ -1486,10 +1543,7 @@ export default function Main({
                 onSelectPage={(id) => navigateTo({ kind: "page", pageId: id, inventoryScope: view.kind === "pages" ? view.inventoryScope : undefined })}
                 onSelectSpace={(spaceName) => navigateTo({ kind: "space", spaceId: null, spaceName })}
                 onConnectTool={() => navigateTo({ kind: "connect-agent" })}
-                onSeeExample={() => {
-                  exampleWikiSwitch.open();
-                  navigateTo({ kind: "pages" });
-                }}
+                onSeeExample={() => switchExampleWiki(true)}
                 onImportChatsQuick={() => navigateTo({ kind: "import", fromHome: true })}
                 onOpenIntelligence={() => navigateTo({ kind: "settings", section: "intelligence" })}
                 onOpenBasisUpdates={() => navigateTo({ kind: "distill-review", reviewItemId: BASIS_UPDATES_REVIEW_ID })}
@@ -1556,10 +1610,11 @@ export default function Main({
               onPageClick={(pageId) => navigateTo({ kind: "page", pageId })}
             />
           ) : view.kind === "page-draft" ? (
-            <WikiWorkspace
+            <WikiWorkspace key={exampleWiki ? "example" : "own"}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
+              directoryOpenRequest={wikiDirectoryOpenRequest}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1574,6 +1629,7 @@ export default function Main({
               onOpenDraft={openWikiDraft}
               onOpenPage={openWikiPage}
               onDeletePage={handleDirectoryNoteDeleted}
+              onArchiveOpenPage={archiveOpenPage}
             >
             <PageDraftEditor
               key={view.sessionKey ?? view.draftId ?? "new"}
@@ -1608,10 +1664,11 @@ export default function Main({
             />
             </WikiWorkspace>
           ) : view.kind === "page" ? (
-            <WikiWorkspace
+            <WikiWorkspace key={exampleWiki ? "example" : "own"}
               tabs={noteTabStrip} onGroupFocus={focusPrimaryGroup} onGlobalToolsHost={setGroupToolsHost}
               secondaryOpen={secondaryOpen} onSecondaryHost={setSecondaryHost}
               inventoryMode={wikiInventoryMode}
+              directoryOpenRequest={wikiDirectoryOpenRequest}
               onInventoryModeChange={setWikiInventoryMode}
               recentRevision={recentPageRevision}
               onOpenRecentPage={(pageId) => openWikiNote({ kind: "page", pageId })}
@@ -1626,6 +1683,7 @@ export default function Main({
               onOpenDraft={openWikiDraft}
               onOpenPage={openWikiPage}
               onDeletePage={handleDirectoryNoteDeleted}
+              onArchiveOpenPage={archiveOpenPage}
             >
             <PageDetail
               pageId={view.pageId}
@@ -1639,6 +1697,7 @@ export default function Main({
               initialMode={view.mode ?? "edit"}
               onBack={navigateBackFromPageDetail}
               onRegisterFlush={registerPageFlush}
+              onRegisterArchive={registerPageArchive}
               onEditDirtyChange={reportPageDirty}
               onMemoryClick={(sid) => navigateTo({ kind: "memory", sourceId: sid })}
               onOpenGraph={(pageId) => navigateTo({ kind: "graph", focusPageId: pageId })}
@@ -1726,7 +1785,7 @@ export default function Main({
         </main>
       </div>
       {/* While the example wiki is open, one line says so and leads back. */}
-      <ExampleWikiBanner onLeave={() => navigateTo({ kind: "pages" })} areaRef={mainContentRef} />
+      <ExampleWikiBanner onLeave={startOwn => switchExampleWiki(false, startOwn)} areaRef={mainContentRef} />
 
       {ownershipNotice && <div className="note-owner-notice" role="status">
         <span>{t(ownershipNotice.side === "secondary" ? "pages.groups.openInRight" : "pages.groups.openInCentral")}</span>
@@ -1738,7 +1797,7 @@ export default function Main({
         }}>{t("pages.groups.showNote")}</button>
         <button className="note-owner-notice-dismiss" type="button" aria-label={t("pages.groups.dismiss")} onClick={() => setOwnershipNotice(null)}><X size={16} aria-hidden="true" /></button>
       </div>}
-      <SecondaryNoteGroup readingPositions={readingPositions} selections={pageSelectionsRef.current} ref={secondaryGroupRef} host={isWikiWorkspaceView ? secondaryHost : null}
+      <SecondaryNoteGroup key={exampleWorkspaceEpoch} readingPositions={readingPositions} selections={pageSelectionsRef.current} ref={secondaryGroupRef} host={isWikiWorkspaceView ? secondaryHost : null}
         movingNote={movingNote}
         onPageDeleted={handlePageDeleted}
         onPresenceChange={setSecondaryPresence} onFocus={focusSecondaryGroup}

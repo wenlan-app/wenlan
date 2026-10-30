@@ -144,3 +144,52 @@ bash scripts/smoke-linux.sh
 
 Builds the multi-arch daemon image (linux/arm64 for native Apple Silicon speed via OrbStack / Docker Desktop), starts a container, exercises the HTTP API, asserts responses, tears down. Runtime ~3 minutes after the first build.
 
+
+## Microsoft runtime on Windows
+
+Windows installers and the release ZIP ship the x64 MSVC 14.x CRT and OpenMP
+DLLs beside the app and three executables. A clean Windows machine does not
+necessarily have these libraries: their absence prevents process startup with
+`0xC0000135` before Wenlan can log an error or initialize WebView2.
+
+`scripts/stage-msvc-runtime-windows.ps1` extracts Microsoft's signed Visual Studio
+2022 x64 redistributable **14.44.35211.0**, pinned to an immutable Microsoft download
+URL and SHA-256 `cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b`.
+The host needs 7-Zip; staging reads the pinned Burn cabinet slices, verifies their
+layout, and extracts the x64 runtime cabinet and original English license using
+signed-manifest hashes. It never runs the EXE/MSI, copies from System32, or installs
+a global runtime. `-ArchivePath` accepts a previously downloaded copy under the
+same hash/signature checks; it cannot override the pin.
+
+The effective version floor is the newer of the local compiler and the prebuilt
+ONNX Runtime dependency's deployment floor. ONNX Runtime 1.23.2 reports PE linker
+14.40; that metadata does not identify the full compiler patch. We conservatively
+require the pinned 14.44.35211.0 runtime for this prebuilt dependency, even when
+Wenlan itself is compiled with VS2019 14.29. An older CRT can resolve every imported
+symbol yet crash inside the newer STL's mutex initialization. Import/export-name
+closure alone therefore does not establish ABI compatibility. Microsoft's
+[binary compatibility requirement](https://learn.microsoft.com/en-us/cpp/porting/binary-compat-2015-2017)
+applies to the newest toolset used by **any** component; the
+[mutex documentation](https://learn.microsoft.com/en-us/cpp/standard-library/mutex-class-stl)
+records the constexpr constructor change in VS2022 17.10.
+
+Staging verifies the source bundle and every DLL's valid Microsoft Authenticode
+signature, x64 PE architecture, and coherent pinned file version. The ten CRT/OpenMP
+DLLs include `vcomp140.dll`; no MFC, debug, ARM64, or OneCore payload is staged.
+`MSVC-Runtime-License.rtf` and `MSVC-Runtime-Source.txt` accompany every package with
+the original license bytes, source URL, compiler/dependency floors, and SHA-256
+receipts. Refresh the URL, hash, version, dependency floor, and pinned cabinet
+offsets together when upgrading the runtime or prebuilt ONNX dependency. A local
+compiler newer than the pin fails staging until that pin is reviewed and refreshed.
+Run `powershell -NoProfile -File scripts/stage-msvc-runtime-windows.test.ps1` for
+focused controls and real signed extraction. Native first-run verification must
+still reach BGE initialization, daemon health, and the desktop welcome screen;
+successful individual DLL loads or packaging checks alone are insufficient.
+
+Build/release hosts must be licensed for the Visual Studio tools they use and
+follow Microsoft's [redistribution terms](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution)
+([VS2019 terms](https://learn.microsoft.com/en-us/visualstudio/releases/2019/redistribution)).
+Microsoft documents [app-local deployment](https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files)
+and the [CRT/OpenMP redistributable folders](https://learn.microsoft.com/en-us/cpp/windows/determining-which-dlls-to-redistribute).
+The copied Microsoft DLLs remain unmodified; staging revalidates their source on
+each local Tauri build. Installer/ZIP inventory checks require the DLLs and notices.

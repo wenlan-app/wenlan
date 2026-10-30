@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { requestFocusedMarkdownLink } from "./lib/focusedEditorCommand";
+import { isInputCompositionActive } from "./lib/inputComposition";
+import { useInputCompositionGuard } from "./lib/useInputCompositionGuard";
 import { useCallback, useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -31,6 +34,7 @@ import { setDaemonStartupPhase, type DaemonStartupPhase } from "./lib/daemonStar
 import { setServiceFallback } from "./lib/serviceNotices";
 
 export default function App() {
+  useInputCompositionGuard();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: showWizard, isPending: wizardPending, isError: wizardError } = useQuery({
@@ -304,25 +308,31 @@ export default function App() {
   // lights are always visible and the window is never always-on-top.
   useEffect(() => {
     setTrafficLightsVisible(true).catch(() => {});
-    getCurrentWindow().setAlwaysOnTop(false);
   }, []);
 
   // Cmd+K: summon main window and focus the header search input.
   // (Spotlight page mode is retired — the event name is kept to avoid a Rust
   // shortcut-registration change.)
   useEffect(() => {
+    const editorUnlisten = listen("editor-primary-shortcut", async () => {
+      if (!requestFocusedMarkdownLink()) await emit("focus-search");
+    });
     const unlisten = listen("toggle-spotlight", async () => {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      if (isInputCompositionActive()) return;
       const win = getCurrentWindow();
-      if (!(await win.isVisible())) {
+      const visible = await win.isVisible();
+      if (isInputCompositionActive()) return;
+      if (!visible) {
         await win.show();
       }
+      if (isInputCompositionActive()) return;
       await win.setFocus();
       // Give Main a tick to mount, then signal it to focus the search input.
       await new Promise((r) => setTimeout(r, 30));
+      if (isInputCompositionActive()) return;
       await emit("focus-search");
     });
-    return () => { unlisten.then((f) => f()); };
+    return () => { unlisten.then((f) => f()); editorUnlisten.then((f) => f()); };
   }, []);
 
   // Cmd+Shift+K: show Memory page (no-op now that Home is the only page —

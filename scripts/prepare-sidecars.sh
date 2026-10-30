@@ -108,6 +108,20 @@ install -m 755 "$CLI_SRC" "$CLI_DEST"
 # deleting these files by hand on a machine that has already staged them; CI
 # always starts from a clean checkout and is unaffected.
 if [[ "$TRIPLE" == *windows* ]]; then
+  if ! command -v powershell.exe >/dev/null 2>&1; then
+    echo "error: powershell.exe is required to verify/stage the Microsoft runtime" >&2
+    exit 1
+  fi
+  if command -v cygpath >/dev/null 2>&1; then
+    PS_BIN_DIR="$(cygpath -w "$BIN_DIR")"
+    PS_SCRIPT_DIR="$(cygpath -w "$SCRIPT_DIR")"
+  else
+    PS_BIN_DIR="$BIN_DIR"
+    PS_SCRIPT_DIR="$SCRIPT_DIR"
+  fi
+  powershell.exe -NoProfile -ExecutionPolicy Bypass \
+    -File "$PS_SCRIPT_DIR\\stage-msvc-runtime-windows.ps1" \
+    -DestinationDirectory "$PS_BIN_DIR"
   WINDOWS_RUNTIME_FILES=(onnxruntime.dll vulkan-1.dll VulkanRT-License.txt)
   WINDOWS_RUNTIME_MISSING=false
   for name in "${WINDOWS_RUNTIME_FILES[@]}"; do

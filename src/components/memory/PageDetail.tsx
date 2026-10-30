@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import SourceDocumentPreview from "./sources/SourceDocumentPreview";
+import { RestorePageDialog } from "./pages/RestorePageDialog";
 import { WorkspaceBackButton } from "./navigation/WorkspaceNavigation";
 import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect, useContext, useId } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -23,6 +24,7 @@ import {
   daemonMeetsFloor,
   recordPageEditorDiagnostic,
   deletePage,
+  archivePage,
   clipboardWrite,
   exportPageToObsidian,
   listRegisteredSources,
@@ -118,6 +120,7 @@ interface PageDetailProps {
   onEditorReady?: () => void;
   onBack: () => void;
   onDeleted?: (pageId: string) => void;
+  onRegisterArchive?: (pageId: string, archive: (() => Promise<void>) | null) => void;
   onMemoryClick: (sourceId: string) => void;
   onPageClick?: (pageId: string) => void;
   onEntityClick?: (entityId: string) => void;
@@ -266,6 +269,7 @@ export default function PageDetail({
   onEditorReady,
   onBack,
   onDeleted,
+  onRegisterArchive,
   onMemoryClick,
   onPageClick,
   onEntityClick,
@@ -287,7 +291,11 @@ export default function PageDetail({
   const [exported, setExported] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  useEffect(() => setRestoreOpen(false), [pageId]);
   const [renaming, setRenaming] = useState(false);
+  const [renameComposing, setRenameComposing] = useState(false);
+  const renameComposingRef = useRef(false);
   const [titleRenamePending, setTitleRenamePending] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const [renameExpectedVersion, setRenameExpectedVersion] = useState<number | null>(null);
@@ -727,6 +735,8 @@ export default function PageDetail({
     renameAttemptRef.current += 1;
     titleRenamePendingRef.current = false;
     setTitleRenamePending(false);
+    renameComposingRef.current = false;
+    setRenameComposing(false);
     setRenaming(false);
     setRenameExpectedVersion(null);
     setRenameError(false);
@@ -800,6 +810,10 @@ export default function PageDetail({
   if (!autosaveRef.current) {
     autosaveRef.current = new PageAutosave({
       write: async (input) => {
+        const canonical = queryClient.getQueryData<Page | null>(["page", input.id]);
+        if (!canonical || canonical.status !== "active") {
+          return { outcome: "conflict", message: "The page is not active." };
+        }
         // The confirm intent belongs to the note it was chosen on.
         const intent = confirmIntentRef.current?.pageId === input.id ? confirmIntentRef.current : null;
         const outcome = await updatePage({
@@ -918,9 +932,9 @@ export default function PageDetail({
     [autosave, pageId, queryClient],
   );
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deletePage(id),
-    onSuccess: (_result, id) => {
+  const removePageMutation = useMutation({
+    mutationFn: ({ id, kind }: { id: string; kind: "delete" | "archive" }) => kind === "archive" ? archivePage(id) : deletePage(id),
+    onSuccess: (_result, { id }) => {
       // The detail remains mounted until navigation completes. Mark its caches
       // stale without immediately requesting a page that was just deleted.
       queryClient.invalidateQueries({ queryKey: ["page", id], refetchType: "none" });
@@ -938,11 +952,11 @@ export default function PageDetail({
       setStoredActionPending(false);
       void requestBack();
     },
-    onError: (error, id) => {
+    onError: (error, { id, kind }) => {
       if (activePageIdRef.current !== id) return;
       const guard = parseEntityGuardError(error);
       if (guard) setActionErrorMessage(guard.message, guard.entityId);
-      else setActionErrorMessage(t("pageDetail.deleteError"));
+      else setActionErrorMessage(t(kind === "archive" ? "pageDetail.archiveError" : "pageDetail.deleteError"));
     },
   });
 
@@ -1157,7 +1171,9 @@ export default function PageDetail({
   };
 
   const openPageSourceForEditing = (sourcePage: Page, automatic = false) => {
-    if (activePageIdRef.current !== sourcePage.id) return;
+    const canonical = queryClient.getQueryData<Page | null>(["page", sourcePage.id]);
+    if (activePageIdRef.current !== sourcePage.id || sourcePage.status !== "active" ||
+        !canonical || canonical.id !== sourcePage.id || canonical.status !== "active" || canonical.version > sourcePage.version) return;
 
     editorFocusIntentRef.current = {
       pageId: sourcePage.id,
@@ -1225,7 +1241,7 @@ export default function PageDetail({
   };
 
   const beginEditing = async (automatic = false) => {
-    if (!page || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
+    if (!page || page.status !== "active" || renaming || renameMutation.isPending || titleRenamePendingRef.current) return;
     setCanvasOpen(false);
     canvasReturnToEditorRef.current = false;
     const originPageId = page.id;
@@ -1238,7 +1254,9 @@ export default function PageDetail({
     };
     const isActiveBeginEdit = () =>
       activePageIdRef.current === originPageId &&
-      beginEditAttemptRef.current === beginEditAttempt;
+      beginEditAttemptRef.current === beginEditAttempt &&
+      (!automatic || autoEditIntentRef.current?.mode !== "read") &&
+      queryClient.getQueryData<Page | null>(["page", originPageId])?.status === "active";
 
     setActionErrorMessage(null);
     setEditing(true);
@@ -1301,12 +1319,14 @@ export default function PageDetail({
     }
 
     if (!isActiveBeginEdit()) return;
-    openPageSourceForEditing(page, automatic);
+    const latest = queryClient.getQueryData<Page | null>(["page", originPageId]);
+    if (latest?.id === originPageId) openPageSourceForEditing(latest, automatic);
   };
 
   useEffect(() => {
     if (initialMode === "read") {
       autoEditIntentRef.current = { pageId, mode: "read" };
+      if (editing && !autosave.snapshot().dirty && !editorStatus.compositionActive) closeEditor();
       return;
     }
     if (!page || page.id !== pageId || page.status !== "active" || canvasOpen) return;
@@ -1352,7 +1372,19 @@ export default function PageDetail({
       : editDocumentRef.current;
 
   useLayoutEffect(() => {
+    if (editing && editGate.kind === "checking" && canonicalPage?.status !== "active") {
+      // No document has been mounted yet; retire the opener, not a local draft.
+      if (!autosave.snapshot().dirty) closeEditor();
+      return;
+    }
     if (editing && editGate.kind === "editor" && canonicalPage !== undefined) {
+      // An unchanged local document can yield to the archived canonical body.
+      // A dirty document or live preedit stays mounted for copy/recovery.
+      if (canonicalPage?.status === "archived" && !autosave.snapshot().dirty &&
+          !editorStatus.compositionActive && canonicalPage.content !== autosave.snapshot().baseline?.content) {
+        closeEditor();
+        return;
+      }
       // Changed in Obsidian or another editor with nothing typed here: show it.
       if (autosave.observeCanonical(canonicalPage) === "adopt" && canonicalPage) {
         openPageSourceForEditing(canonicalPage, true);
@@ -1360,7 +1392,7 @@ export default function PageDetail({
     }
     // The opener reads only refs and setters; the canonical page drives this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autosave, editing, editGate.kind, canonicalPage]);
+  }, [autosave, editing, editGate.kind, canonicalPage, editorStatus.compositionActive]);
 
   const requestCloseEditor = async () => {
     if (storedActionRef.current) return;
@@ -1560,13 +1592,17 @@ export default function PageDetail({
     const cached = queryClient.getQueryData<Page | null>(["page", pageId]);
     if (cached) autosave.observeConflictLatest(cached, operationId);
     const latest = autosave.snapshot().latest;
-    if (!latest) return;
-    queryClient.setQueryData<Page | null>(["page", pageId], (currentPage) =>
+    if (!latest || latest.id !== pageId) return;
+    const resolved = queryClient.setQueryData<Page | null>(["page", pageId], (currentPage) =>
       currentPage?.id === pageId && currentPage.version >= latest.version
         ? currentPage
         : latest,
     );
-    openPageSourceForEditing(latest);
+    if (resolved?.id !== pageId) return;
+    // The existing confirmation authorizes discarding the local draft only.
+    // Loading an archived canonical page never restores it or opens an editor.
+    if (resolved.status === "archived") closeEditor();
+    else if (resolved.status === "active") openPageSourceForEditing(resolved);
   };
 
   const handleDiscardDeletedDraft = async () => {
@@ -1602,8 +1638,10 @@ export default function PageDetail({
     }
   };
 
-  const requestStoredPageAction = async (kind: "redistill" | "review" | "delete") => {
-    if (storedActionRef.current || titleRenamePendingRef.current || renaming || renameMutation.isPending || canvasSwitchPendingRef.current || showCanvas ||
+  const requestStoredPageAction = async (kind: "redistill" | "review" | "delete" | "archive") => {
+    if ((kind !== "delete" && page?.status !== "active") ||
+        (kind === "archive" && page?.creation_kind === "entity") ||
+        storedActionRef.current || titleRenamePendingRef.current || renaming || renameMutation.isPending || canvasSwitchPendingRef.current || showCanvas ||
         (editing && (editGate.kind !== "editor" || !editorStatus?.ready || editorStatus.compositionActive)) ||
         (kind === "review" && !reviewSupported)) return;
     const originPageId = pageId;
@@ -1625,26 +1663,28 @@ export default function PageDetail({
       const snapshot = autosave.snapshot();
       if (snapshot.dirty || snapshot.state.phase !== "idle") return;
       const saved = queryClient.getQueryData<Page | null>(["page", originPageId]) ?? page;
-      if (!saved || saved.id !== originPageId) return;
+      if (!saved || saved.id !== originPageId || (kind !== "delete" && saved.status !== "active")) return;
       const content = snapshot.baseline?.content ?? saved.content;
       if (kind === "review") {
         setRedistillNotice(null);
         setReviewNotice(null);
         await reviewMutation.mutateAsync({ id: originPageId, content });
-      } else if (kind === "delete") {
-        if (!await confirmAction(t("pageDetail.deleteConfirm"), {
-          confirm: t("pageDetail.deletePage"),
+      } else if (kind === "delete" || kind === "archive") {
+        if (kind === "archive" && (saved.status !== "active" || saved.creation_kind === "entity")) return;
+        if (!await confirmAction(t(kind === "archive" ? "pageDetail.archiveConfirm" : "pageDetail.deleteConfirm"), {
+          confirm: t(kind === "archive" ? "pageDetail.archivePage" : "pageDetail.deletePage"),
           cancel: t("common.cancel"),
         }) || !ownsAction()) return;
+        if (kind === "archive" && queryClient.getQueryData<Page | null>(["page", originPageId])?.status !== "active") return;
         setActionErrorMessage(null);
-        await deleteMutation.mutateAsync(originPageId);
+        await removePageMutation.mutateAsync({ id: originPageId, kind });
       } else {
         if ((saved.user_edited || pageRevisions?.user_edited) &&
             !await confirmAction(t("pageDetail.redistillEditedConfirm"), {
               confirm: t("pageDetail.redistillPage"),
               cancel: t("common.cancel"),
             })) return;
-        if (!ownsAction()) return;
+        if (!ownsAction() || queryClient.getQueryData<Page | null>(["page", originPageId])?.status !== "active") return;
         setReviewNotice(null);
         setRedistillNotice(null);
         // A rebuild changes the saved body. Retire the old autosave session
@@ -1683,6 +1723,16 @@ export default function PageDetail({
       takeReviewToOpen();
     }
   };
+
+  // Directory actions must use the same editor owner, flush and action lock.
+  const archiveActionRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  archiveActionRef.current = () => requestStoredPageAction("archive");
+  useLayoutEffect(() => {
+    onRegisterArchive?.(pageId, async () => {
+      if (activePageIdRef.current === pageId) await archiveActionRef.current();
+    });
+    return () => onRegisterArchive?.(pageId, null);
+  }, [onRegisterArchive, pageId]);
 
   const closeActionMenu = () => {
     setActionMenuOpen(false);
@@ -1935,30 +1985,31 @@ export default function PageDetail({
 
   // Citations first (occurrence counting mirrors the backend and runs over the
   // raw stored body), then the existing display transforms.
-  const processed = processCitations(page.content, page.citations);
+  const authoredBody = page.creation_kind === "authored" || page.user_edited === true;
+  const citationResult = processCitations(page.content, page.citations);
+  const processed = authoredBody && !page.citations?.length ? { ...citationResult, content: page.content } : citationResult;
 
-  // Strip ## Sources (shown in Page info below)
-  // Convert [[wikilinks]] to markdown links if they resolve to pages, else plain text
-  const renderWikilinks = (content: string) => content.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
+  const resolveWikilink = (inner: string) => {
     const link = parseWikilink(inner);
     const target = outboundTargetByLabel.get(normalizeLinkLabel(link.targetLabel));
-    const cid = target?.id;
-    // A `[[Space/Title]]` link reads as written, so it keeps naming the other Space.
+    if (!target?.id) return null;
     const labelKey = normalizeLinkLabel(link.targetLabel);
-    const namesOtherSpace = !!target?.title && labelKey !== normalizeLinkLabel(target.title)
+    const namesOtherSpace = !!target.title && labelKey !== normalizeLinkLabel(target.title)
       && labelKey.endsWith(`/${normalizeLinkLabel(target.title)}`);
-    const currentTitle = cid === page.id ? page.title : namesOtherSpace ? link.targetLabel : target?.title;
-    const displayText = !link.hasAlias && currentTitle
-      ? currentTitle.replace(/[\\`*_[\]<>]/g, "\\$&")
-      : link.displayText;
-    // Self references read as the page's name, not a link back to this page.
-    if (cid && cid !== page.id) return `[${displayText}](${PAGE_LINK_ANCHOR_PREFIX}${cid})`;
-    return displayText;
+    const currentTitle = target.id === page.id ? page.title : namesOtherSpace ? link.targetLabel : target.title;
+    const label = !link.hasAlias && currentTitle ? currentTitle : link.displayText;
+    return { label, ...(target.id !== page.id ? { href: `${PAGE_LINK_ANCHOR_PREFIX}${target.id}` } : {}) };
+  };
+  // Summaries use the existing label expansion; document bodies resolve only
+  // Markdown text nodes, preserving code and unresolved wiki syntax.
+  const renderWikilinks = (content: string) => content.replace(/\[\[([^\]]+)\]\]/g, (literal, inner: string) => {
+    const target = resolveWikilink(inner); if (!target) return literal;
+    const label = target.label.replace(/[\\`*_[\]<>]/g, "\\$&");
+    return target.href ? `[${label}](${target.href})` : label;
   });
-  const cleanedContent = renderWikilinks(processed.content)
-    .replace(/^#\s+.*\n+/, "")
-    .replace(/## Sources\n[\s\S]*?(?=\n## |\s*$)/, "")
-    .trim();
+  const cleanedContent = (leadingMarkdownH1MatchesTitle(processed.content, page.title)
+    ? processed.content.replace(/^(?:[ \t]*(?:\r\n|\n|\r))*[ \t]{0,3}#[ \t]+[^\r\n]*(?:\r\n|\n|\r|$)/u, "")
+    : processed.content);
 
   const sourceMemoryByLocator = new Map(
     (pageSources ?? [])
@@ -1984,7 +2035,7 @@ export default function PageDetail({
     sentenceEnd > 0 ? stripLedeLabel(bodyAfterHeadings.slice(0, sentenceEnd + 1).trim()) : "";
   const firstSentenceText = stripCitationLinks(firstSentenceMarkdown);
   const tldr =
-    firstSentenceText.length > 0 && firstSentenceText.length < 400 ? firstSentenceText : "";
+    !authoredBody && firstSentenceText.length > 0 && firstSentenceText.length < 400 ? firstSentenceText : "";
   // The lede shows the page summary when there is one; the first sentence is
   // cut from the body only when it is what the lede shows (no summary, or a
   // summary that repeats it). Cutting it under a different summary dropped
@@ -2124,7 +2175,7 @@ export default function PageDetail({
   };
 
   const cancelRename = () => {
-    if (renameMutation.isPending) return;
+    if (renameMutation.isPending || renameComposingRef.current) return;
     renameAttemptRef.current += 1;
     setRenaming(false);
     setRenameExpectedVersion(null);
@@ -2136,7 +2187,7 @@ export default function PageDetail({
   const submitRename = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const title = renameTitle.trim();
-    if (!title || title === page.title || renameDisabled) return;
+    if (!title || title === page.title || renameDisabled || renameComposingRef.current) return;
     setRenameError(false);
     setRenameNeedsReview(false);
     if (renameExpectedVersion === null) return;
@@ -2246,7 +2297,7 @@ export default function PageDetail({
                     tabIndex={-1}
                   >
                     <button type="button" role="menuitem" disabled={storedActionPending || !inventoryPageFilename(page) || editDirty || saveState.phase !== "idle" || editorStatus?.compositionActive} onClick={() => { closeActionMenu(); setMoveOpen(true); }}>{t("pages.folders.move")}</button>
-                    {!editing && !showCanvas ? (
+                    {page.status === "active" && !editing && !showCanvas ? (
                       <button type="button" role="menuitem" disabled={storedActionPending || renaming || renameMutation.isPending} onClick={() => { setActionMenuOpen(false); void beginEditing(); }}>
                         {t("pageDetail.editPage")}
                       </button>
@@ -2309,10 +2360,21 @@ export default function PageDetail({
                         </button>
                       ))
                     )}
+                    {page.status === "active" && page.creation_kind !== "entity" && (
+                      <button
+                        className="page-detail-mobile-menu-item"
+                        disabled={storedActionBlocked || removePageMutation.isPending}
+                        onClick={() => void requestStoredPageAction("archive")}
+                        role="menuitem"
+                        type="button"
+                      >
+                        {t("pageDetail.archivePage")}
+                      </button>
+                    )}
                     <button
                       className="page-detail-menu-danger"
                       disabled={
-                        storedActionBlocked || renaming || renameMutation.isPending || deleteMutation.isPending
+                        storedActionBlocked || renaming || renameMutation.isPending || removePageMutation.isPending
                       }
                       onClick={() => void requestStoredPageAction("delete")}
                       role="menuitem"
@@ -2331,7 +2393,9 @@ export default function PageDetail({
   return (
     <div className={`page-detail document-context-host${infoOpen || showCanvas ? " document-context-open" : ""}${showCanvas ? " page-document-map-open" : ""}${canvasWorkspaceExpanded && (infoOpen || showCanvas) ? " page-detail--workspace-expanded" : ""}`} onKeyDown={handlePageDetailKeyDown} ref={setPageDetailRootRef}>
       {documentToolsHost && createPortal(inspectorToggle, documentToolsHost)}
+      {restoreOpen && <RestorePageDialog page={page} onClose={() => setRestoreOpen(false)} />}
       <DetailReadingFrame className="page-detail-document">
+        {page.status === "archived" && <div className="wiki-archive-notice" role="status"><p>{t("pages.archive.readOnly")}</p><button type="button" onClick={() => setRestoreOpen(true)}>{t("pages.archive.restore")}</button></div>}
         {!hideOuterTitleWhileEditing && (
           <div className="page-document-title-row">
             {renaming ? (
@@ -2355,7 +2419,19 @@ export default function PageDetail({
                     setRenameError(false);
                     setRenameNeedsReview(false);
                   }}
+                  onCompositionStart={() => {
+                    renameComposingRef.current = true;
+                    setRenameComposing(true);
+                  }}
+                  onCompositionEnd={() => {
+                    renameComposingRef.current = false;
+                    setRenameComposing(false);
+                  }}
                   onKeyDown={(event) => {
+                    if (renameComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+                      if (event.key === "Enter") event.preventDefault();
+                      return;
+                    }
                     if (event.key === "Escape") {
                       event.preventDefault();
                       cancelRename();
@@ -2363,10 +2439,10 @@ export default function PageDetail({
                   }}
                   disabled={renameMutation.isPending}
                 />
-                <button type="submit" disabled={!renameTitle.trim() || renameTitle.trim() === page.title || renameExpectedVersion === null || renameMutation.isPending}>
+                <button type="submit" disabled={!renameTitle.trim() || renameTitle.trim() === page.title || renameExpectedVersion === null || renameMutation.isPending || renameComposing}>
                   {renameMutation.isPending ? t("pageDetail.renaming") : t("pageDetail.saveTitle")}
                 </button>
-                <button type="button" onClick={cancelRename} disabled={renameMutation.isPending}>
+                <button type="button" onClick={cancelRename} disabled={renameMutation.isPending || renameComposing}>
                   {t("pageDetail.cancelRename")}
                 </button>
                 {renameError || renameNeedsReview ? (
@@ -2638,7 +2714,7 @@ export default function PageDetail({
                         type="button"
                         className="page-editor-action"
                         onClick={handleReloadLatest}
-                        disabled={conflictLatest.kind !== "loaded"}
+                        disabled={conflictLatest.kind !== "loaded" || editorStatus.compositionActive}
                       >
                         {t("pageDetail.editor.reloadLatest")}
                       </button>
@@ -2743,7 +2819,7 @@ export default function PageDetail({
                   {t("pageDetail.editor.retry")}
                 </button>
               )}
-              <p
+              {page.status === "active" && <p
                 id="page-markdown-editor-description"
                 className="sr-only"
               >
@@ -2753,7 +2829,7 @@ export default function PageDetail({
                     : "pageDetail.editor.autosaveDescription",
                   { modifier: editorShortcutModifier },
                 )}
-              </p>
+              </p>}
               {editorSessionId && (
                 <div className={hideOuterTitleWhileEditing ? "page-document-editor page-document-editor--title" : "page-document-editor"}>
                 {hideOuterTitleWhileEditing && <><h1 className="sr-only">{page.title}</h1>{documentTools}</>}
@@ -2763,7 +2839,7 @@ export default function PageDetail({
                   initialSelection={initialSelection}
                   onSelectionChange={onSelectionChange}
                   sessionId={editorSessionId}
-                  disabled={storedActionPending || exampleWiki}
+                  disabled={storedActionPending || exampleWiki || page.status !== "active" || autosave.snapshot().readOnly}
                   seamless
                   ariaLabel={t("pageDetail.editor.label")}
                   describedBy="page-markdown-editor-description"
@@ -2839,6 +2915,7 @@ export default function PageDetail({
                     <ContentRenderer
                       content={ledeMarkdown}
                       variant="lede"
+                      preserveMarkdown resolveWikilink={resolveWikilink}
                       renderCitation={renderCitation}
                     />
                   ) : (
@@ -2849,6 +2926,7 @@ export default function PageDetail({
               <ContentRenderer
                 content={displayContent}
                 variant="detail"
+                preserveMarkdown resolveWikilink={resolveWikilink}
                 renderCitation={renderCitation}
               />
             </div>

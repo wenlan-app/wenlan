@@ -184,6 +184,8 @@ enum Outcome {
     Unchanged,
 }
 
+use crate::export::provenance::page_body_from_projection as projected_content;
+
 async fn sync_one_file(
     db: &MemoryDB,
     relative: &str,
@@ -221,15 +223,16 @@ async fn sync_one_file(
     // the diff. The projected file always carries the generated block while
     // Page.content never does; a raw compare would mark every page
     // user_edited on the first tick and lock the refinery out.
-    let body_norm = crate::export::provenance::canonicalize_page_body(body);
-    let db_norm = crate::export::provenance::canonicalize_page_body(&existing.content);
-    if body_norm == db_norm {
+    let body_norm = projected_content(&raw);
+    let fresh = crate::export::knowledge::render_markdown_for(&existing);
+    // Compare against the exact projection, including its link conversion,
+    // so a fresh export is never mistaken for an external edit.
+    if body_norm == projected_content(&fresh) {
         // Canonicalized prose is identical, but the raw bytes may differ
         // (user touched the protected Sources block). If so, re-project from
         // DB truth so the file stops lying about its sources; otherwise it
         // really is unchanged.
         let raw_body = body.trim_end_matches('\n');
-        let fresh = crate::export::knowledge::render_markdown_for(&existing);
         let (_, fresh_body) = obsidian::extract_frontmatter(&fresh);
         if raw_body != fresh_body.trim_end_matches('\n') {
             let writer =
@@ -408,6 +411,120 @@ mod tests {
         }
     }
 
+    #[test]
+    fn projection_decoder_preserves_authored_boundaries_with_or_without_sources() {
+        let bodies = [
+            "\n\n# A note\n\ntext  \nnext\n\n",
+            "    indented code\n    second line\n\n",
+            "a final Markdown hard break  ",
+            "\u{feff}\r\n  mixed-line-ending source\t \r\n\r\n",
+        ];
+        for body in bodies {
+            for sources in [vec![], vec!["mem_seed".to_string()]] {
+                let mut page = sample_page("page_exact", "Exact", body);
+                page.source_memory_ids = sources;
+                let projected = crate::export::knowledge::render_markdown_for(&page);
+                assert_eq!(projected_content(&projected), body);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn published_body_survives_projection_readback_exactly() {
+        use crate::pages::PageDraftPublishOutcome;
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        for (index, body) in [
+            "\n\n# A note\n\ntext  \nnext\n\n",
+            "    indented code\n    second line\n\n",
+            "a final Markdown hard break  ",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let title = format!("  Exact publish {index}  ");
+            let draft = db
+                .create_page_draft(&title, body, None, None)
+                .await
+                .unwrap();
+            let PageDraftPublishOutcome::Published(published) = db
+                .publish_page_draft(&draft.id, draft.version)
+                .await
+                .unwrap()
+            else {
+                panic!("draft must publish");
+            };
+            assert_eq!(published.title, title.trim());
+            assert_eq!(published.content, body);
+            let filename = project_page(&db, &writer, &published);
+            // This is the same read-back invoked when GET /api/pages/{id}
+            // opens a newly published Page, not just a direct DB assertion.
+            assert!(
+                !sync_page_file_if_changed(&db, knowledge_dir.path(), &published.id)
+                    .await
+                    .unwrap()
+            );
+            let after = db.get_page(&published.id).await.unwrap().unwrap();
+            assert_eq!(after.content, body);
+            assert_eq!(
+                after.version, published.version,
+                "fresh projection must not create an fs_edit"
+            );
+            assert_eq!(
+                std::fs::read_to_string(knowledge_dir.path().join(filename)).unwrap(),
+                crate::export::knowledge::render_markdown_for(&published)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn external_prose_edit_preserves_authored_boundaries_and_remains_stable() {
+        let (db, _ddir) = fresh_db().await;
+        let knowledge_dir = TempDir::new().unwrap();
+        let writer = tracked_writer(&db, knowledge_dir.path());
+        let before = "\n\n    original code\n\nLast line  \n\n";
+        let edited = "\n\n    changed code\n\nLast line  \n\n\n";
+        for (index, source_ids) in [vec![], vec!["mem_seed"]].into_iter().enumerate() {
+            let id = format!("page_external_exact_{index}");
+            db.insert_page(
+                &id,
+                &format!("External exact {index}"),
+                None,
+                before,
+                None,
+                None,
+                &source_ids,
+                &chrono::Utc::now().to_rfc3339(),
+            )
+            .await
+            .unwrap();
+            let page = db.get_page(&id).await.unwrap().unwrap();
+            project_page(&db, &writer, &page);
+            let filename = writer.page_filename(&id).expect("projected relative path");
+            let path = knowledge_dir.path().join(&filename);
+            let projected = std::fs::read_to_string(&path).unwrap();
+            assert!(projected.contains(before));
+            std::fs::write(&path, projected.replacen(before, edited, 1)).unwrap();
+            let stats =
+                sync_filesystem_edits_in(&db, knowledge_dir.path(), false, &[filename.clone()])
+                    .await
+                    .unwrap();
+            assert_eq!(
+                stats.applied, 1,
+                "external authored edit must be applied: {stats:?}"
+            );
+            let after = db.get_page(&id).await.unwrap().unwrap();
+            assert_eq!(after.content, edited);
+            assert_eq!(after.source_memory_ids, page.source_memory_ids);
+            assert_eq!(after.version, page.version + 1);
+            let stats = sync_filesystem_edits_in(&db, knowledge_dir.path(), false, &[filename])
+                .await
+                .unwrap();
+            assert_eq!(stats.applied, 0, "reprojection must stabilize: {stats:?}");
+            assert_eq!(db.get_page(&id).await.unwrap().unwrap().content, edited);
+        }
+    }
     #[tokio::test]
     async fn applies_user_edit_when_md_body_differs() {
         let (db, _ddir) = fresh_db().await;

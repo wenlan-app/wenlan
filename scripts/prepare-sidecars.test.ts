@@ -455,3 +455,22 @@ describe("prepare-sidecars backend discovery", () => {
     );
   });
 });
+
+
+describe("Windows app-local MSVC runtime packaging", () => {
+  it("puts the complete CRT/OpenMP set and original license beside every executable", () => {
+    const names = ["concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll", "MSVC-Runtime-License.rtf", "MSVC-Runtime-Source.txt"];
+    const resources = JSON.parse(readFileSync(resolve(root, "app/tauri.windows.conf.json"), "utf8")).bundle.resources;
+    const zipInventory = readFileSync(resolve(root, "scripts/release_targets.py"), "utf8");
+    const firstRunInventory = readFileSync(resolve(root, "scripts/first-run/windows-zip.ps1"), "utf8");
+    for (const name of names) {
+      expect(resources[`binaries/${name}`]).toBe(name);
+      expect(zipInventory).toContain(`"${name}"`);
+      expect(firstRunInventory).toContain(`"${name}"`);
+      for (const workflow of ["ci.yml", "release.yml"]) {
+        expect(readFileSync(resolve(root, ".github/workflows", workflow), "utf8")).toContain(`"${name}"`);
+      }
+    }
+    expect(readFileSync(resolve(root, "scripts/prepare-sidecars.sh"), "utf8")).toContain("stage-msvc-runtime-windows.ps1");
+  });
+});

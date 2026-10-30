@@ -12,6 +12,7 @@ export interface PageAutosaveSnapshot {
   baseline: PageEditBaseline | null;
   state: PageSaveCoordinatorState;
   dirty: boolean;
+  readOnly: boolean;
   validation: "empty" | null;
   latest: Page | null;
 }
@@ -34,6 +35,8 @@ export class PageAutosave {
   private latest: Page | null = null;
   private validation: "empty" | null = null;
   private composing = false;
+  private readOnly = false;
+  private observedVersion = 0;
   private awaitingCanonical: PendingPageSave | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running: Promise<boolean> | null = null;
@@ -48,6 +51,7 @@ export class PageAutosave {
   snapshot(): PageAutosaveSnapshot {
     return {
       baseline: this.baseline,
+      readOnly: this.readOnly,
       state: this.state,
       dirty: this.baseline !== null && (
         this.source !== this.baseline.content ||
@@ -66,6 +70,8 @@ export class PageAutosave {
     this.running = null;
     this.baseline = page ? { pageId: page.id, content: page.content, version: page.version } : null;
     this.source = page?.content ?? "";
+    this.readOnly = !!page && page.status !== "active";
+    this.observedVersion = page?.version ?? 0;
     this.state = { phase: "idle" };
     this.latest = null;
     this.awaitingCanonical = null;
@@ -119,7 +125,32 @@ export class PageAutosave {
       this.emit();
       return;
     }
-    if (page.id !== baseline.pageId) return;
+    if (page.id !== baseline.pageId || page.version < Math.max(this.observedVersion, baseline.version)) return;
+    if (page.status !== "active") {
+      const dirty = this.snapshot().dirty;
+      this.cancelTimer();
+      // Retire any old response without erasing the local document or its recovery state.
+      if (!this.readOnly) { this.generation += 1; this.running = null; }
+      this.readOnly = true;
+      this.observedVersion = page.version;
+      this.awaitingCanonical = null;
+      this.latest = page;
+      if (dirty) {
+        this.state = {
+          phase: "conflict",
+          pending: this.state.phase === "idle"
+            ? { operationId: this.options.operationId(), content: this.source, expectedVersion: baseline.version }
+            : this.state.pending,
+          message: "The canonical page is no longer active. The local draft is retained.",
+        };
+      }
+      this.emit();
+      return;
+    }
+    // A stale active cache cannot unlock a subsequently archived version.
+    if (this.readOnly && page.version <= this.observedVersion) return;
+    this.readOnly = false;
+    this.observedVersion = page.version;
     if (this.state.phase === "conflict") {
       this.observeConflictLatest(page, this.state.pending.operationId);
       return;
@@ -154,6 +185,10 @@ export class PageAutosave {
       this.state.pending.operationId !== operationId ||
       !this.baseline
     ) return null;
+    if (page && page.id === this.baseline.pageId && page.status !== "active") {
+      this.observeCanonical(page);
+      return this.latest;
+    }
     if (
       page && page.id === this.baseline.pageId &&
       page.version >= this.baseline.version &&
@@ -185,6 +220,7 @@ export class PageAutosave {
   flush(): Promise<boolean> {
     this.cancelTimer();
     if (this.composing) return Promise.resolve(false);
+    if (this.readOnly) return Promise.resolve(!this.snapshot().dirty);
     if (this.running) return this.running;
     if (this.state.phase !== "idle") return Promise.resolve(false);
     return this.start();
@@ -192,7 +228,7 @@ export class PageAutosave {
 
   retry(): Promise<boolean> {
     this.cancelTimer();
-    if (this.composing || this.state.phase === "conflict") return Promise.resolve(false);
+    if (this.readOnly || this.composing || this.state.phase === "conflict") return Promise.resolve(false);
     if (this.running) return this.running;
     let replay: PendingPageSave | undefined;
     if (this.state.phase !== "idle" && this.state.phase !== "pending") {
@@ -225,7 +261,7 @@ export class PageAutosave {
       replay = undefined;
     }
     while (generation === this.generation && this.baseline) {
-      if (this.composing || this.state.phase !== "idle") return false;
+      if (this.readOnly || this.composing || this.state.phase !== "idle") return false;
       if (!replay && this.source === this.baseline.content) return true;
       const attempt = replay
         ? {
@@ -300,6 +336,11 @@ export class PageAutosave {
       this.confirmMissing(generation, baseline.pageId, pending.operationId);
       return false;
     }
+    if (canonical.status !== "active") {
+      this.observeCanonical(canonical);
+      this.options.onCanonical(canonical);
+      return false;
+    }
     this.awaitingCanonical = null;
     if (canonical.content !== pending.content || canonical.version <= pending.expectedVersion) {
       this.latest = canonical;
@@ -326,7 +367,7 @@ export class PageAutosave {
 
   private schedule(): void {
     this.cancelTimer();
-    if (this.composing || this.running || this.validation || this.state.phase !== "idle" || !this.snapshot().dirty) return;
+    if (this.readOnly || this.composing || this.running || this.validation || this.state.phase !== "idle" || !this.snapshot().dirty) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.flush();

@@ -1112,6 +1112,7 @@ jobs:
           $dllDir = "app/binaries"
           & scripts/stage-onnxruntime-windows.ps1 -DestinationDirectory $dllDir
           & scripts/stage-vulkan-loader-windows.ps1 -DestinationDirectory $dllDir
+          & scripts/stage-msvc-runtime-windows.ps1 -DestinationDirectory $dllDir
           Get-ChildItem $dllDir | Format-Table Name, Length
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -1414,7 +1415,7 @@ jobs:
           STAGED_SETUP: ${{ runner.temp }}/app-bundle-windows-staging/${{ steps.stage.outputs.setup_filename }}
         run: |
           $ErrorActionPreference = "Stop"
-          $required = @("onnxruntime.dll", "vulkan-1.dll", "VulkanRT-License.txt")
+          $required = @("onnxruntime.dll", "vulkan-1.dll", "VulkanRT-License.txt", "concrt140.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll", "MSVC-Runtime-License.rtf", "MSVC-Runtime-Source.txt")
           $failed = $false
 
           if (-not (Test-Path -LiteralPath $env:STAGED_SETUP)) {

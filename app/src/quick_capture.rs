@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
-pub const QC_WIDTH: f64 = 400.0;
-pub const QC_HEIGHT: f64 = 160.0;
+pub const QC_WIDTH: f64 = 560.0;
+pub const QC_HEIGHT: f64 = 360.0;
 pub const QC_CORNER_PADDING: f64 = 16.0;
 pub const QC_OPENED_EVENT: &str = "quick-capture-opened";
 pub const QC_CLOSED_EVENT: &str = "quick-capture-closed";

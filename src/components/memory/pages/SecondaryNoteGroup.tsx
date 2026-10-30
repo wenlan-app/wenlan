@@ -11,6 +11,7 @@ import type { View } from "../navigation/viewState";
 import type { MarkdownEditorSelection } from "../editor/MarkdownEditor";
 import { ReferenceNavigationProvider } from "../links/ReferenceNavigationContext";
 import { useViewScroll } from "../navigation/useViewScroll";
+import { exampleWikiActive, useExampleWikiActive } from "../../../lib/exampleWiki/mode";
 import { recordRecentPageVisit } from "../../../lib/recentPages";
 
 export interface SecondaryNoteGroupHandle {
@@ -20,6 +21,7 @@ export interface SecondaryNoteGroupHandle {
   reorder: (key: string, beforeKey: string | null) => void;
   move: (key: string, beforeKey: string | null) => Promise<void>;
   removePage: (pageId: string) => void;
+  archiveOpenPage: (pageId: string) => Promise<boolean>;
 }
 interface Props {
   host: HTMLElement | null;
@@ -39,6 +41,7 @@ interface Props {
 /** An independent editor owner; moving its portal never recreates its draft. */
 export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(function SecondaryNoteGroup({ host, onPresenceChange, onFocus, onNavigationIntent, onNavigate, onOpenNote, onMove, onPageDeleted, movingNote = false, allocateDraftSession, readingPositions, selections: sharedSelections }, ref) {
   const { t } = useTranslation();
+  const exampleWiki = useExampleWikiActive();
   const [mount] = useState(() => document.createElement("div"));
   mount.className = "secondary-note-group-mount";
   const root = useRef<HTMLDivElement>(null);
@@ -48,6 +51,12 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
   const viewRef = useRef(view);
   const [ready, setReady] = useState<NoteView | null>(null);
   const pageFlush = useRef<(() => Promise<boolean>) | null>(null);
+  const pageArchive = useRef<{ pageId: string; archive: () => Promise<void> } | null>(null);
+  const registerArchive = useCallback((pageId: string, archive: (() => Promise<void>) | null) => {
+    if (archive) pageArchive.current = { pageId, archive };
+    else if (pageArchive.current?.pageId === pageId) pageArchive.current = null;
+  }, []);
+
   const draft = useRef<PageDraftEditorHandle>(null);
   const draftIdentityByTab = useRef(new Map<string, string>());
   const dirty = useRef(false);
@@ -124,6 +133,7 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
     } catch { return false; }
   };
   const open = async (next: NoteView, incoming?: NoteTab, commit?: () => boolean, beforeKey?: string | null) => {
+    if (exampleWikiActive() && next.kind === "page-draft") return false;
     onNavigationIntent();
     const token = Symbol("secondary-navigation"); intent.current = token;
     const existing = findTab(next);
@@ -131,8 +141,12 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
     if (existing && !tabsRef.current.some(tab => tab.key === existing.key)) return false;
     if (beforeKey != null && !tabsRef.current.some(tab => tab.key === beforeKey)) return false;
     if (commit && !commit()) return false;
-    const target = existing?.view ?? (next.kind === "page-draft" && next.sessionKey == null ? { ...next, sessionKey: allocateDraftSession() } : next);
-    if (!viewRef.current || !matchesNote({ key: "", title: "", view: viewRef.current }, target)) show(target, incoming);
+    const target = existing?.view.kind === "page" && next.kind === "page" && next.mode != null
+      ? { ...existing.view, ...next }
+      : existing?.view ?? (next.kind === "page-draft" && next.sessionKey == null ? { ...next, sessionKey: allocateDraftSession() } : next);
+    const modeChanged = target.kind === "page" && viewRef.current?.kind === "page" &&
+      (target.mode ?? "edit") !== (viewRef.current.mode ?? "edit");
+    if (!viewRef.current || modeChanged || !matchesNote({ key: "", title: "", view: viewRef.current }, target)) show(target, incoming);
     if (beforeKey !== undefined) {
       const inserted = tabsRef.current.find(tab => matchesNote(tab, target));
       if (inserted) updateTabs(reorderNoteTab(tabsRef.current, inserted.key, beforeKey));
@@ -164,6 +178,11 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
     reorder: (key, beforeKey) => updateTabs(reorderNoteTab(tabsRef.current, key, beforeKey)),
     move: async (key, beforeKey) => { const tab = tabsRef.current.find(item => item.key === key); if (tab) await transfer(tab, beforeKey); },
     removePage,
+    archiveOpenPage: async pageId => {
+      if (viewRef.current?.kind !== "page" || viewRef.current.pageId !== pageId) return false;
+      if (!movingNote && pageArchive.current?.pageId === pageId) await pageArchive.current.archive();
+      return true;
+    },
   }));
   useViewScroll(root, view ? noteReadingKey(view) : "empty", view?.kind !== "page" || ready === view, ".wiki-workspace-content", readingPositions);
   const close = async (tab: NoteTab) => {
@@ -236,8 +255,8 @@ export const SecondaryNoteGroup = forwardRef<SecondaryNoteGroupHandle, Props>(fu
         tabs={tabs} activeKey={tabs.find(tab => matchesNote(tab, view))?.key} contentId="wiki-secondary-note-content"
         groupId="secondary" tabListLabel={t("pages.groups.right")} moveLabel={t("pages.groups.moveToCentral")}
         onMoveToOtherGroup={tab => { if (!movingNote) void transfer(tab); }} onSelect={tab => { if (!movingNote) void open(tab.view); }} onClose={tab => void close(tab)}
-        onCreate={() => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
-        {view.kind === "page" ? <PageDetail pageId={view.pageId} projectionIssue={view.projectionIssue}
+        onCreate={exampleWiki ? undefined : () => { if (!movingNote) void open({ kind: "page-draft", space: null }); }} />}>
+        {view.kind === "page" ? <PageDetail onRegisterArchive={registerArchive} pageId={view.pageId} projectionIssue={view.projectionIssue}
           onDeleted={pageId => onPageDeleted ? onPageDeleted(pageId) : removePage(pageId)}
           onProjectionResolved={() => replace({ ...view, projectionIssue: undefined })}
           initialSelection={selections.current.get(view.pageId)} onSelectionChange={selection => selections.current.set(view.pageId, selection)}

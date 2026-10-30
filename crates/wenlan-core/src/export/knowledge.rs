@@ -4578,7 +4578,7 @@ fn projection_bytes_replaceable(
     let Ok(raw) = std::str::from_utf8(bytes) else {
         return false;
     };
-    let (fm, body) = crate::sources::obsidian::extract_frontmatter(raw);
+    let (fm, _) = crate::sources::obsidian::extract_frontmatter(raw);
     let owned = fm
         .get_str("origin_id")
         .map_or(baseline.is_some(), |id| id == page.id);
@@ -4586,9 +4586,10 @@ fn projection_bytes_replaceable(
     let unchanged = baseline.and_then(|entry| entry.content_sha256.as_deref())
         == Some(projection_digest(bytes).as_str());
     let rendered = render_markdown(page);
-    let (_, rendered_body) = crate::sources::obsidian::extract_frontmatter(&rendered);
-    let adopted = crate::export::provenance::canonicalize_page_body(body)
-        == crate::export::provenance::canonicalize_page_body(rendered_body);
+    // Boundary whitespace belongs to the author. Reuse the exact projection
+    // decoder used by the watcher; a trim-based match can overwrite edits.
+    let adopted = crate::export::provenance::page_body_from_projection(raw)
+        == crate::export::provenance::page_body_from_projection(&rendered);
     owned && not_newer && (unchanged || adopted)
 }
 

@@ -73,6 +73,18 @@ describe("commands while the example wiki is open", () => {
     expect(toast).toHaveBeenCalledWith(expect.any(String), { id: "example-wiki-read-only" });
   });
 
+  it("passes native composition lifecycle through without permitting library writes",async()=>{
+    vi.mocked(tauriInvoke).mockResolvedValue(null);
+    await exampleInvoke("set_editor_composing",{active:true});
+    await exampleInvoke("set_editor_composing",{active:false});
+    expect(tauriInvoke).toHaveBeenNthCalledWith(1,"set_editor_composing",{active:true});
+    expect(tauriInvoke).toHaveBeenNthCalledWith(2,"set_editor_composing",{active:false});
+    expect(toast).not.toHaveBeenCalled();
+    await expect(exampleInvoke("archive_page",{id:"sample"})).rejects.toBeInstanceOf(ExampleWikiReadOnly);
+    await expect(exampleInvoke("restore_page",{id:"sample"})).rejects.toBeInstanceOf(ExampleWikiReadOnly);
+    expect(tauriInvoke).toHaveBeenCalledTimes(2);
+  });
+
   it("still lets app commands through: profile, settings and connected tools", async () => {
     vi.mocked(tauriInvoke).mockResolvedValueOnce([]);
     await exampleInvoke("list_agents");

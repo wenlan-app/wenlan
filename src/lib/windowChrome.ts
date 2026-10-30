@@ -132,3 +132,8 @@ export function dragStripHeight(ua?: string): number {
   if (platform === "unknown") return UNKNOWN_PLATFORM_DRAG_STRIP_HEIGHT;
   return platform === "macos" ? MACOS_DRAG_STRIP_HEIGHT : NATIVE_DRAG_STRIP_HEIGHT;
 }
+
+/** Keep native shortcut labels correct when the host is known. */
+export function primaryShortcutModifier(ua?: string): string {
+  switch (hostPlatform(ua)) { case "macos": return "⌘"; case "other": return "Ctrl"; case "unknown": return "Ctrl/⌘"; }
+}

@@ -24,6 +24,11 @@ function invoke<T>(...call: Parameters<typeof tauriInvoke>): Promise<T> {
   return tauriInvoke<T>(...call);
 }
 
+/** Native window shortcuts must not interrupt an OS IME session in either editor window. */
+export async function setEditorComposing(active: boolean): Promise<void> {
+  return invoke("set_editor_composing", { active });
+}
+
 export async function repairLint(query: RepairLintQuery): Promise<RepairLintReport> {
   return invoke("repair_lint", { query });
 }
@@ -1698,6 +1703,19 @@ export async function renamePage(
   expectedVersion: number,
 ): Promise<RenamePageResponse> {
   return invoke("rename_page", { id, title, expectedVersion });
+}
+
+export interface RestorePageResponse {
+  id: string;
+  title: string;
+  version: number;
+  status: "active";
+  projection_status: "synced" | "pending" | "hidden" | "not_configured";
+  projection_error?: string;
+}
+
+export function restorePage(id: string, expectedVersion: number, title?: string): Promise<RestorePageResponse> {
+  return invoke("restore_page", { id, expectedVersion, title });
 }
 
 export interface KnowledgeFolder { path: string; parent_path: string; name: string; }

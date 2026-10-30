@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { RECENT_PAGES_STORAGE_KEY } from "../../../lib/recentPages";
 import { WikiWorkspace } from "./WikiWorkspace";
 import { useWikiFolderCreation } from "./WikiFolderCreationContext";
@@ -13,8 +13,54 @@ vi.mock("./PageInventoryPanel", () => ({
   },
 }));
 
+vi.mock("./ArchivedNotesPanel", () => ({ ArchivedNotesPanel: ({ onOpenPage }: { onOpenPage: (page: { id: string }) => void }) => <div data-testid="archived-notes"><button type="button" onClick={() => onOpenPage({ id: "archived-one" })}>Open archived note</button></div> }));
+
 describe("WikiWorkspace", () => {
   beforeEach(() => localStorage.removeItem("wenlan:wiki-inventory:v1"));
+  it.each(["recent", "archived"] as const)("archive browse request opens the narrow drawer from %s, reopens it and closes on selection", async initialMode => {
+    const onOpenPage = vi.fn();
+    function BrowseArchive() {
+      const [mode, setMode] = useState<"recent" | "archived">(initialMode);
+      const [request, setRequest] = useState(0);
+      return <WikiWorkspace directoryHidden inventoryMode={mode} directoryOpenRequest={request}
+        onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={onOpenPage}>
+        <button type="button" onClick={() => { setMode("archived"); setRequest(value => value + 1); }}>Browse archived notes</button>
+        <textarea data-testid="retained-editor" defaultValue="unsaved text" />
+      </WikiWorkspace>;
+    }
+    const { container } = render(<BrowseArchive />);
+    const editor = screen.getByTestId("retained-editor");
+    const drawer = container.querySelector(".wiki-workspace-body");
+    const toggle = screen.getByRole("button", { name: "Pages" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      fireEvent.click(screen.getByRole("button", { name: "Browse archived notes" }));
+      await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "true"));
+      // This is the existing container-query CSS selector that reveals the narrow drawer.
+      expect(drawer).toHaveClass("is-folder-open");
+      expect(container.querySelector(".wiki-workspace")).not.toHaveAttribute("data-directory-hidden");
+      expect(screen.getByRole("combobox")).toHaveValue("archived");
+      expect(screen.getByTestId("retained-editor")).toBe(editor);
+      expect(editor).toHaveValue("unsaved text");
+      fireEvent.click(screen.getByRole("button", { name: "Open archived note" }));
+      expect(onOpenPage).toHaveBeenLastCalledWith({ id: "archived-one" });
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+      expect(drawer).not.toHaveClass("is-folder-open");
+    }
+  });
+
+  it("does not replay an old directory request on mount or unrelated rerenders", () => {
+    const props = { inventoryMode: "archived" as const, onBrowse: vi.fn(), onCreatePage: vi.fn(), onOpenDraft: vi.fn(), onOpenPage: vi.fn() };
+    const { rerender } = render(<WikiWorkspace {...props} directoryOpenRequest={7}><textarea /></WikiWorkspace>);
+    const toggle = screen.getByRole("button", { name: "Pages" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    rerender(<WikiWorkspace {...props} directoryOpenRequest={8}><textarea /></WikiWorkspace>);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    rerender(<WikiWorkspace {...props} directoryOpenRequest={8} recentRevision={1}><textarea /></WikiWorkspace>);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("defaults to recent pages and switches modes without remounting the active editor", () => {
     const { getByTestId } = render(
       <WikiWorkspace onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}>
@@ -191,4 +237,15 @@ describe("WikiWorkspace", () => {
     rerender(<WikiWorkspace {...props} directoryHidden={false}><textarea /></WikiWorkspace>);
     expect(workspace).not.toHaveAttribute("data-directory-hidden");
   });
+  it("shows the archive directory in an otherwise empty workspace without replacing the editor", () => {
+    const { container } = render(<WikiWorkspace directoryHidden onBrowse={vi.fn()} onCreatePage={vi.fn()} onOpenDraft={vi.fn()} onOpenPage={vi.fn()}><textarea data-testid="kept-editor" defaultValue="unsaved" /></WikiWorkspace>);
+    const editor = screen.getByTestId("kept-editor");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "archived" } });
+    expect(screen.getByTestId("archived-notes")).toBeInTheDocument();
+    expect(container.querySelector(".wiki-workspace")).not.toHaveAttribute("data-directory-hidden");
+    expect(screen.getByTestId("kept-editor")).toBe(editor);
+    expect(editor).toHaveValue("unsaved");
+    expect(JSON.parse(localStorage.getItem("wenlan:wiki-inventory:v1")!).mode).toBe("archived");
+  });
+
 });

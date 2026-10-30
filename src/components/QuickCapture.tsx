@@ -2,7 +2,12 @@
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { useEditorLinkNotes } from "./memory/editor/useEditorLinkNotes";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./memory/editor/MarkdownEditor";
+import { confirmAction } from "../lib/confirmAction";
+import { primaryShortcutModifier } from "../lib/windowChrome";
 import { quickCapture } from "../lib/tauri";
+import { quickCaptureDraftKey, readQuickCaptureDraft, writeQuickCaptureDraft, clearQuickCaptureDraft } from "./quickCaptureDraftRecovery";
 
 interface QuickCaptureProps {
   isOpen: boolean;
@@ -12,24 +17,49 @@ interface QuickCaptureProps {
 
 export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptureProps) {
   const { t } = useTranslation();
-  const [content, setContent] = useState("");
+  const [draftKey] = useState(() => quickCaptureDraftKey(standalone));
+  const [recovered] = useState(() => readQuickCaptureDraft(draftKey));
+  const [content, setContent] = useState(recovered.content);
+  const [recoveryError, setRecoveryError] = useState<"backup" | "cleanup" | null>(recovered.failed ? "backup" : null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current); }, []);
   const [saved, setSaved] = useState(false);
   const [tooShort, setTooShort] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<MarkdownEditorHandle>(null);
+  const documentRef = useRef(recovered.content);
+  const savingRef = useRef(false);
+  const savedRef = useRef(false);
+  const composingRef = useRef(false);
+  const [composing, setComposing] = useState(false);
+  const [fallback, setFallback] = useState(false);
+  const [session, setSession] = useState(0);
   const queryClient = useQueryClient();
+  const linkNotes = useEditorLinkNotes(null, "", isOpen && content.includes("[["));
 
   const captureMutation = useMutation({
-    mutationFn: quickCapture,
+    mutationFn: async (request: Parameters<typeof quickCapture>[0]) => {
+      const chunks = await quickCapture(request);
+      if (!(chunks > 0)) throw new Error(t("quickCapture.noChunksSaved"));
+      return chunks;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["indexedFiles"] });
       queryClient.invalidateQueries({ queryKey: ["memories"] });
       setSaved(true);
-      setTimeout(() => {
+      savedRef.current = true;
+      if (!clearQuickCaptureDraft(draftKey)) { setRecoveryError("cleanup"); return; }
+      setRecoveryError(null);
+      closeTimerRef.current = setTimeout(() => {
+        closeTimerRef.current = null;
         setSaved(false);
+        savedRef.current = false;
+        documentRef.current = "";
         setContent("");
+        setSession(value => value + 1);
         onClose();
       }, 500);
     },
+    onSettled: () => { savingRef.current = false; },
   });
 
   // Surfaced verbatim below the textarea on rejection -- same policy other
@@ -42,13 +72,30 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
       : String(captureMutation.error)
     : null;
 
-  const handleSubmit = () => {
-    if (!content.trim() || captureMutation.isPending) return;
-    if (Array.from(content.trim()).length < 10) {
+  const handleSubmit = (document = documentRef.current) => {
+    if (!document.trim() || savingRef.current || savedRef.current || composingRef.current) return;
+    if (Array.from(document.trim()).length < 10) {
       setTooShort(true);
       return;
     }
-    captureMutation.mutate({ content: content.trim() });
+    savingRef.current = true;
+    captureMutation.mutate({ content: document });
+  };
+
+  const requestClose = async () => {
+    if (savingRef.current || composingRef.current) return;
+    if (!savedRef.current && documentRef.current.trim()) {
+      if (!await confirmAction(t("pageDetail.editor.discardConfirm"), { confirm: t("quickCapture.discard"), cancel: t("common.cancel") })) return;
+      // The modal can remain open while a save or IME operation begins.
+      if (savingRef.current || composingRef.current) return;
+    }
+    if (!clearQuickCaptureDraft(draftKey)) { setRecoveryError("cleanup"); return; }
+    setRecoveryError(null);
+    if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+    savedRef.current = false; setSaved(false);
+    documentRef.current = ""; setContent(""); setSession(value => value + 1);
+    onClose();
   };
 
   // Document-level keydown so Esc / Cmd+Enter work regardless of focus target.
@@ -59,9 +106,11 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   useEffect(() => {
     if (!isOpen) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.isComposing || e.keyCode === 229 || composingRef.current) return;
+      if (e.target instanceof Element && e.target.closest("[data-markdown-editor-engine], .page-editor-native-surface")) return;
       if (e.key === "Escape") {
         e.preventDefault();
-        onClose();
+        void requestClose();
       } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSubmit();
@@ -82,8 +131,8 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   useEffect(() => {
     if (!isOpen) return;
     const refocus = () => {
-      if (!document.hidden && textareaRef.current) {
-        textareaRef.current.focus();
+      if (!document.hidden && editorRef.current) {
+        editorRef.current.focus();
       }
     };
     refocus(); // initial mount + any state toggle
@@ -160,7 +209,8 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
           </span>
         </div>
         <button
-          onClick={onClose}
+          onClick={() => void requestClose()}
+          disabled={isPending || composing}
           className="p-0.5 rounded transition-colors duration-150 hover:bg-[var(--mem-hover-strong)]"
           style={{ color: "var(--mem-text-tertiary)" }}
           title={t("quickCapture.closeTitle")}
@@ -173,27 +223,17 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
 
       {/* Writing surface */}
       <div className="flex-1 flex flex-col px-4 pb-3 min-h-0">
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={(e) => {
-            setContent(e.target.value);
-            setTooShort(false);
-          }}
-          placeholder={t("quickCapture.placeholder")}
-          rows={standalone ? undefined : 7}
-          className={`w-full bg-transparent focus:outline-none resize-none pt-3 ${standalone ? "flex-1" : ""}`}
-          style={{
-            fontFamily: "var(--mem-font-body)",
-            fontSize: "14px",
-            lineHeight: "1.6",
-            color: "var(--mem-text)",
-            caretColor: "var(--mem-accent-indigo)",
-          }}
-          autoFocus
-          disabled={isPending || saved}
-        />
+        <div className="quick-capture-editor flex-1 min-h-0 overflow-y-auto pt-3">
+          {fallback && <p role="status">{t("pageDetail.editor.fallbackTitle")}</p>}
+          <MarkdownEditor key={session} ref={editorRef} sessionId={`quick-capture:${session}`}
+            linkNotes={linkNotes} initialDocument={content} seamless minHeight={140} disabled={isPending || saved}
+            ariaLabel={t("quickCapture.title")} placeholder={t("quickCapture.placeholder")}
+            onDocumentChange={document => { documentRef.current = document; setContent(document); setRecoveryError(writeQuickCaptureDraft(draftKey, document) ? null : "backup"); setTooShort(false); captureMutation.reset(); }}
+            onSave={handleSubmit} onCancel={() => void requestClose()} onFallback={() => setFallback(true)}
+            onStatusChange={status => { composingRef.current = status.compositionActive; setComposing(status.compositionActive); }} />
+        </div>
 
+        {recoveryError && <p role="alert" className="text-xs mt-1" style={{ color: "var(--mem-status-danger-text)" }}>{t(recoveryError === "cleanup" ? "quickCapture.draftCleanupError" : "quickCapture.draftRecoveryError")}</p>}
         {(errorMessage || tooShort) && (
           <p
             role="alert"
@@ -238,11 +278,11 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
                 opacity: 0.5,
               }}
             >
-              {standalone ? t("quickCapture.standaloneShortcut") : t("quickCapture.saveShortcut")}
+              {t(standalone ? "quickCapture.standaloneShortcut" : "quickCapture.saveShortcut", { modifier: primaryShortcutModifier() })}
             </span>
             <button
-              onClick={handleSubmit}
-              disabled={isEmpty || isPending || saved}
+              onClick={() => handleSubmit()}
+              disabled={isEmpty || isPending || saved || composing}
               className="transition-all duration-200"
               style={{
                 fontFamily: "var(--mem-font-body)",
@@ -292,7 +332,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
   return (
     <div
       className="fixed inset-0 flex items-center justify-center z-50"
-      onClick={onClose}
+      onClick={() => void requestClose()}
       style={{
         backgroundColor: "rgba(0,0,0,0.5)",
         backdropFilter: "blur(4px)",
@@ -301,7 +341,7 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
       }}
     >
       <div
-        className="w-[500px] max-h-[55vh] flex flex-col"
+        className="w-[560px] max-w-[calc(100vw-2rem)] h-[360px] max-h-[80vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
         style={{ animation: "mem-fade-up 0.2s cubic-bezier(0.16, 1, 0.3, 1)" }}
       >

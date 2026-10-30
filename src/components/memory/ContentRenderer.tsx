@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { remarkReadingWikilinks, type ResolvedReadingWikilink } from "../../lib/readingWikilinks";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -24,6 +25,8 @@ interface ContentRendererProps {
   renderCitation?: (occurrence: number) => React.ReactNode;
   /** Imported source previews must not load remote images while being read. */
   allowImages?: boolean;
+  preserveMarkdown?: boolean;
+  resolveWikilink?: (inner: string) => ResolvedReadingWikilink | null;
 }
 
 interface HastNode {
@@ -265,6 +268,8 @@ export default function ContentRenderer({
   className,
   renderCitation,
   allowImages = true,
+  preserveMarkdown = false,
+  resolveWikilink,
 }: ContentRendererProps) {
   if (variant === "card") {
     return (
@@ -289,9 +294,8 @@ export default function ContentRenderer({
     );
   }
 
-  const normalized = normalizeContent(content);
-  const shape = classifyContent(normalized, structuredFields);
-  const prepared = prepareForRender(normalized, shape);
+  const normalized = preserveMarkdown ? content : normalizeContent(content);
+  const prepared = preserveMarkdown ? content : prepareForRender(normalized, classifyContent(normalized, structuredFields));
 
   const baseComponents =
     variant === "lede"
@@ -316,7 +320,7 @@ export default function ContentRenderer({
 
   return (
     <div className={["content-renderer", className].filter(Boolean).join(" ")}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={allowImages ? components : {
+      <ReactMarkdown remarkPlugins={resolveWikilink ? [remarkGfm, [remarkReadingWikilinks, { source: prepared, resolve: resolveWikilink }]] : [remarkGfm]} components={allowImages ? components : {
         ...components,
         img: ({ alt }: { alt?: string }) => <span>{alt}</span>,
       }}>

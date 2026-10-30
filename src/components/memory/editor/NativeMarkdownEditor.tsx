@@ -2,9 +2,9 @@
 import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { MarkdownEditorHandle, MarkdownEditorProps } from "./MarkdownEditor";
 
-function resizeToDocument(textarea: HTMLTextAreaElement): void {
+function resizeToDocument(textarea: HTMLTextAreaElement, minimum = 300): void {
   textarea.style.height = "auto";
-  textarea.style.height = `${Math.max(textarea.scrollHeight, 300)}px`;
+  textarea.style.height = `${Math.max(textarea.scrollHeight, minimum)}px`;
 }
 
 export const NativeMarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorProps>(
@@ -88,7 +88,7 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
     useLayoutEffect(() => {
       publishStatus(false);
       if (textareaRef.current) {
-        resizeToDocument(textareaRef.current);
+        resizeToDocument(textareaRef.current, props.minHeight);
         if (props.initialSelection) {
           const length = documentRef.current.length;
           const anchor = Math.max(0, Math.min(Math.trunc(props.initialSelection.anchor) || 0, length));
@@ -110,6 +110,7 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         ref={textareaRef}
         className="page-editor-native-surface"
         defaultValue={documentRef.current}
+        placeholder={props.placeholder}
         disabled={props.disabled}
         aria-label={props.ariaLabel}
         aria-describedby={props.describedBy}
@@ -118,7 +119,7 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         style={{
           boxSizing: "border-box",
           width: "100%",
-          minHeight: "300px",
+          minHeight: `${props.minHeight ?? 300}px`,
           resize: "none",
           overflow: "hidden",
           padding: props.seamless ? "0" : "0.75rem",
@@ -134,7 +135,7 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         }}
         onChange={(event) => {
           documentRef.current = event.currentTarget.value;
-          resizeToDocument(event.currentTarget);
+          resizeToDocument(event.currentTarget, props.minHeight);
           callbacksRef.current.onDocumentChange(documentRef.current);
           publishSelection(event.currentTarget);
         }}
@@ -149,6 +150,10 @@ const NativeMarkdownEditorSession = forwardRef<MarkdownEditorHandle, MarkdownEdi
         }}
         onKeyDown={(event) => {
           const mod = event.metaKey || event.ctrlKey;
+          if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+            if (mod && event.key.toLowerCase() === "s") event.preventDefault();
+            return;
+          }
           if (mod && event.key.toLowerCase() === "s") {
             event.preventDefault();
             requestSave();

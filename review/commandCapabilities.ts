@@ -11,6 +11,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "should_show_wizard",
     "local_setup_completed",
     "set_traffic_lights_visible",
+    "set_editor_composing",
     "set_setup_completed",
     // Shared app shell preflight status; the Review fixture has no OS service
     // manager, so it reports the ordinary ready state.
@@ -82,6 +83,7 @@ export const REVIEW_COMMAND_CAPABILITIES = {
     "get_page_explicit_browse",
     "create_page",
     "rename_page",
+    "restore_page",
     "update_page",
     "delete_page",
     "redistill_page",

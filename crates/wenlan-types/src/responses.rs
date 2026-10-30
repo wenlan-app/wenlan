@@ -467,7 +467,19 @@ pub struct RenamePageResponse {
     pub version: i64,
 }
 
-/// `POST /api/memory/entities` (legacy list) and `POST /api/memory/entities/query`.
+/// Result of restoring the original archived page, without returning prose.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RestorePageResponse {
+    pub id: String,
+    pub title: String,
+    pub version: i64,
+    pub status: String,
+    pub projection_status: PageProjectionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_error: Option<String>,
+}
+
+/// POST /api/memory/entities (legacy list) and `POST /api/memory/entities/query`.
 /// `total` is the number of entities matching the filter before `limit`/`offset`;
 /// the legacy route sets it to `entities.len()`.
 #[derive(Debug, Serialize, Deserialize)]

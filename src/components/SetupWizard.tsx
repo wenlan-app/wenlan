@@ -1289,33 +1289,20 @@ function SettingUpStep({
               nonce: crypto.randomUUID(),
             });
             storeMemory({ content: probeContent, source_agent: "wenlan-setup" })
-              .then((stored) =>
-                getMemoryDetail(stored.source_id).then((detail) => {
-                  if (!detail || detail.source_id !== stored.source_id) {
-                    throw new Error(t("setup.settingUp.daemonReadBackFailed"));
-                  }
-                  return stored.source_id;
-                }),
-              )
+              .then(async (stored) => {
+                try {
+                  const detail = await getMemoryDetail(stored.source_id);
+                  if (!detail || detail.source_id !== stored.source_id) throw new Error(t("setup.settingUp.daemonReadBackFailed"));
+                } finally {
+                  // A failed read can still leave a durable probe. Keep the
+                  // current cleanup retry/warning without masking that error.
+                  await deleteMemory(stored.source_id).catch(() => deleteMemory(stored.source_id).catch(() => {
+                    setWarnings((prev) => ({ ...prev, [row.id]: t("setup.settingUp.daemonCleanupWarning") }));
+                  }));
+                }
+              })
               .then(
-                (sourceId) => {
-                  setStatuses((prev) => ({ ...prev, [row.id]: "done" }));
-                  // Cleanup: the round trip above already proved the pipeline
-                  // works, so a failed delete must never fail the row — but
-                  // silently swallowing it (the old `.catch(() => {})`)
-                  // strands a Wenlan-authored memory in the user's knowledge
-                  // base while the row's own copy says the test memory "is
-                  // removed right after". One retry, then a non-fatal warning
-                  // that tells the user how to find and delete it.
-                  void deleteMemory(sourceId).catch(() =>
-                    deleteMemory(sourceId).catch(() => {
-                      setWarnings((prev) => ({
-                        ...prev,
-                        [row.id]: t("setup.settingUp.daemonCleanupWarning"),
-                      }));
-                    }),
-                  );
-                },
+                () => { setStatuses((prev) => ({ ...prev, [row.id]: "done" })); },
                 (err) => {
                   setStatuses((prev) => ({ ...prev, [row.id]: "failed" }));
                   setErrors((prev) => ({ ...prev, [row.id]: describeSetupError(err) }));

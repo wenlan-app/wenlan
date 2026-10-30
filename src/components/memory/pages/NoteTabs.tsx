@@ -10,7 +10,7 @@ type NoteTabsProps = {
   readonly activeKey?: string;
   readonly onSelect: (tab: NoteTab) => void;
   readonly onClose: (tab: NoteTab) => void;
-  readonly onCreate: () => void;
+  readonly onCreate?: () => void;
   readonly contentId?: string;
   readonly onMoveToOtherGroup?: (tab: NoteTab) => void;
   readonly moveLabel?: string;
@@ -158,8 +158,8 @@ export function NoteTabs({ tabs, activeKey, onSelect, onClose, onCreate, content
         onMoveToOtherGroup(target);
       }}>{moveLabel}</button>
     </div>, document.body)}
-    <button type="button" className="note-tab-create" aria-label={t("pages.overview.newPage")} title={t("pages.overview.newPage")} onClick={onCreate} ref={createButton}>
+    {onCreate && <button type="button" className="note-tab-create" aria-label={t("pages.overview.newPage")} title={t("pages.overview.newPage")} onClick={onCreate} ref={createButton}>
       <Plus size={14} aria-hidden="true" />
-    </button>
+    </button>}
   </div>;
 }

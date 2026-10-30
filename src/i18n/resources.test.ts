@@ -17,6 +17,12 @@ describe("translation resources", () => {
     expect(supportedAppLocales).toEqual(["en", "zh-Hans", "zh-Hant"]);
   });
 
+  it("distinguishes recoverable archive from permanent deletion in every locale",()=>{
+    const copies=supportedAppLocales.map(locale=>resources[locale].translation.pageDetail);
+    expect(copies.map(copy=>copy.archivePage)).toEqual(["Archive page","封存笔记","封存筆記"]);
+    expect(copies.map(copy=>copy.archiveConfirm)).toEqual(["Archive this page? You can restore it from Archived pages.","封存此笔记？你可以从“已封存笔记”恢复。","封存此筆記？你可以從「已封存筆記」還原。"]);
+    expect(copies.map(copy=>copy.deleteConfirm)).toEqual(["Permanently delete this page? This cannot be undone.","永久删除此笔记？此操作无法撤销。","永久刪除此筆記？此操作無法復原。"]);
+  });
   it("contains representative primary interface keys", () => {
     expect(resources.en.translation.setup.welcomeTitle).toBe(
       "Welcome to Wenlan",

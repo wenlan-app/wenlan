@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { Page } from "../../../lib/tauri";
 import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../../lib/wikiNotesPreferences";
 import { PageInventoryPanel } from "./PageInventoryPanel";
+import { ArchivedNotesPanel } from "./ArchivedNotesPanel";
 import { RecentNotesPanel } from "./RecentNotesPanel";
 import { WikiFolderCreationContext } from "./WikiFolderCreationContext";
 import type { WikiInventoryScope } from "./pageInventory";
@@ -23,6 +24,8 @@ export interface WikiWorkspaceProps {
   readonly currentPageId?: string | null;
   readonly currentFolderPath?: string | null;
   readonly inventoryMode?: WikiInventoryMode;
+  /** Increment to reveal the existing directory drawer, even if its mode is unchanged. */
+  readonly directoryOpenRequest?: number;
   readonly onInventoryModeChange?: (mode: WikiInventoryMode) => void;
   readonly recentRevision?: number;
   readonly onOpenRecentPage?: (id: string) => void;
@@ -40,7 +43,9 @@ export interface WikiWorkspaceProps {
   readonly onCreationFolderPathChange?: (path: string | null) => void;
   readonly onOpenDraft: (draftId: string, space: string | null) => void;
   readonly onOpenPage: (page: Page) => void;
-  /** Called after a note was deleted from the directory so its tab closes. */
+  /** Delegate an open note to its editor before archiving. */
+  readonly onArchiveOpenPage?: (pageId: string) => Promise<boolean>;
+  /** Called after a note was removed from the directory so its tab closes. */
   readonly onDeletePage?: (pageId: string) => void;
 }
 
@@ -55,6 +60,7 @@ export function WikiWorkspace({
   currentPageId = null,
   currentFolderPath,
   inventoryMode: controlledInventoryMode,
+  directoryOpenRequest = 0,
   onInventoryModeChange,
   recentRevision = 0,
   onOpenRecentPage,
@@ -69,9 +75,16 @@ export function WikiWorkspace({
   onOpenDraft,
   onOpenPage,
   onDeletePage,
+  onArchiveOpenPage,
 }: WikiWorkspaceProps) {
   const { t } = useTranslation();
   const [folderOpen, setFolderOpen] = useState(false);
+  const handledDirectoryRequest = useRef(directoryOpenRequest);
+  useEffect(() => {
+    if (handledDirectoryRequest.current === directoryOpenRequest) return;
+    handledDirectoryRequest.current = directoryOpenRequest;
+    setFolderOpen(true);
+  }, [directoryOpenRequest]);
   const [localInventoryMode, setLocalInventoryMode] = useState<WikiInventoryMode>(readWikiInventoryMode);
   const inventoryMode = controlledInventoryMode ?? localInventoryMode;
   const [creationFolderPath, reportCreationFolderPath] = useState<string | null>(null);
@@ -121,7 +134,7 @@ export function WikiWorkspace({
 
   return (
     <WikiFolderCreationContext.Provider value={folderCreationContext}>
-    <div className="wiki-workspace" data-directory-hidden={directoryHidden ? "true" : undefined}>
+    <div className="wiki-workspace" data-directory-hidden={directoryHidden && inventoryMode !== "archived" ? "true" : undefined}>
       <button
         type="button"
         className="wiki-workspace-folders-toggle"
@@ -138,7 +151,7 @@ export function WikiWorkspace({
             <label className="wiki-workspace-mode">
               <span>{t("pages.recent.modeLabel")}</span>
               {/* Sizes the selector to the chosen mode's name so the note count can sit right after it. */}
-              <span className="wiki-workspace-mode-sizer" aria-hidden="true">{t(inventoryMode === "recent" ? "pages.recent.title" : inventoryMode === "custom" ? "pages.recent.custom" : "pages.folders.title")}</span>
+              <span className="wiki-workspace-mode-sizer" aria-hidden="true">{t(inventoryMode === "recent" ? "pages.recent.title" : inventoryMode === "custom" ? "pages.recent.custom" : inventoryMode === "archived" ? "pages.archive.title" : "pages.folders.title")}</span>
               <select
                 aria-label={t("pages.recent.modeLabel")}
                 title={isManualOrder ? t("pages.recent.customHint") : undefined}
@@ -148,6 +161,7 @@ export function WikiWorkspace({
                 <option value="recent">{t("pages.recent.title")}</option>
                 <option value="custom">{t("pages.recent.custom")}</option>
                 <option value="folders">{t("pages.folders.title")}</option>
+                <option value="archived">{t("pages.archive.title")}</option>
               </select>
               <CaretDown aria-hidden="true" size={16} />
             </label>
@@ -170,7 +184,9 @@ export function WikiWorkspace({
               </button>
             )}
           </div>
-          {inventoryMode !== "folders" ? (
+          {inventoryMode === "archived" ? (
+            <ArchivedNotesPanel currentPageId={currentPageId} onOpenPage={closeForNavigation(onOpenPage)} />
+          ) : inventoryMode !== "folders" ? (
             <RecentNotesPanel
               mode={inventoryMode}
               currentPageId={currentPageId}
@@ -192,6 +208,7 @@ export function WikiWorkspace({
               onOpenDraft={closeForNavigation(onOpenDraft)}
               onOpenPage={closeForNavigation(onOpenPage)}
               onDeletePage={onDeletePage}
+              onArchiveOpenPage={onArchiveOpenPage}
               onNoteCountChange={setNoteCount}
             />
           )}

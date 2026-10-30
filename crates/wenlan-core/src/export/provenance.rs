@@ -13,6 +13,45 @@ pub const SOURCES_BLOCK_START: &str = "<!-- origin:sources:start -->";
 /// Closing delimiter for the export-only Sources block.
 pub const SOURCES_BLOCK_END: &str = "<!-- origin:sources:end -->";
 
+/// Decode the envelope emitted by `render_markdown_for`, removing only its
+/// separators and reserved provenance block. Generic Obsidian import trims
+/// leading newlines, and the legacy provenance canonicalizer trims trailing
+/// whitespace; neither is suitable for writing an authored Page back to DB.
+pub(crate) fn page_body_from_projection(raw: &str) -> String {
+    let Some((_, after_frontmatter)) = crate::sources::obsidian::split_frontmatter_untrimmed(raw)
+    else {
+        return raw.to_string();
+    };
+    // Wenlan emits LF. Also recognize an external editor's whole-file CRLF
+    // conversion without normalizing the authored body itself.
+    let newline = if raw.starts_with("---\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let separator = format!("{newline}{newline}");
+    let body = after_frontmatter
+        .strip_prefix(&separator)
+        .or_else(|| after_frontmatter.strip_prefix(newline))
+        .unwrap_or(after_frontmatter);
+    if let Some(start) = body.find(SOURCES_BLOCK_START) {
+        let after_start = start + SOURCES_BLOCK_START.len();
+        if let Some(end_relative) = body[after_start..].find(SOURCES_BLOCK_END) {
+            let end = after_start + end_relative + SOURCES_BLOCK_END.len();
+            let head = body[..start]
+                .strip_suffix(&separator)
+                .unwrap_or(&body[..start]);
+            let tail = body[end..].strip_prefix(newline).unwrap_or(&body[end..]);
+            return if tail.is_empty() {
+                head.to_string()
+            } else {
+                format!("{head}{separator}{tail}")
+            };
+        }
+    }
+    body.strip_suffix(newline).unwrap_or(body).to_string()
+}
+
 /// Strip ONLY the delimiter-owned Sources block from a page body. A user may
 /// legitimately type a `## Sources` heading or a `[[mem_123]]` wikilink in
 /// prose; neither is touched. Removes the first `START..END` span (inclusive

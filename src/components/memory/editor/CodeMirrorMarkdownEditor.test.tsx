@@ -2,6 +2,8 @@
 import { StrictMode, createRef } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { SearchQuery, setSearchQuery, replaceAll } from "@codemirror/search";
+import { requestFocusedMarkdownLink } from "../../../lib/focusedEditorCommand";
 import { EditorView } from "@codemirror/view";
 import { undo, undoDepth } from "@codemirror/commands";
 import { CodeMirrorMarkdownEditor } from "./CodeMirrorMarkdownEditor";
@@ -637,6 +639,36 @@ describe("CodeMirrorMarkdownEditor", () => {
     expect(view.state.doc.toString()).toBe(expected);
   });
 
+
+  it("connects the stock Find/Replace panel and preserves package undo history", () => {
+    const ref=createRef<MarkdownEditorHandle>();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...baseProps({initialDocument:"alpha beta alpha"})} />);
+    const view=editorViewFromTextbox(screen.getByRole("textbox"));
+    act(()=>{expect(ref.current?.runCommand("find")).toBe(true);});
+    expect(screen.getByRole("textbox",{name:"Find"})).toBeInTheDocument();
+    act(()=>{view.dispatch({effects:setSearchQuery.of(new SearchQuery({search:"alpha",replace:"中文"}))});replaceAll(view);});
+    expect(view.state.doc.toString()).toBe("中文 beta 中文");
+    act(()=>{undo(view);});
+    expect(view.state.doc.toString()).toBe("alpha beta alpha");
+  });
+  it("closes Find before leaving when Escape is pressed back in the document", () => {
+    const ref=createRef<MarkdownEditorHandle>();const props=baseProps();
+    render(<CodeMirrorMarkdownEditor ref={ref} {...props} />);
+    const textbox=screen.getByRole("textbox",{name:"Page source"});const view=editorViewFromTextbox(textbox);
+    act(()=>{ref.current?.runCommand("find");view.focus();pressKey(textbox,"Escape");});
+    expect(screen.queryByRole("textbox",{name:"Find"})).not.toBeInTheDocument();
+    expect(props.onCancel).not.toHaveBeenCalled();
+    act(()=>{pressKey(textbox,"Escape");});expect(props.onCancel).toHaveBeenCalledTimes(1);
+  });
+  it("routes a native primary shortcut into the focused editor and blocks it during composition", () => {
+    render(<CodeMirrorMarkdownEditor {...baseProps({initialDocument:"alpha"})} />);
+    const textbox=screen.getByRole("textbox");const view=editorViewFromTextbox(textbox);
+    act(()=>{view.focus();selectRange(view,0,5);expect(requestFocusedMarkdownLink()).toBe(true);});
+    expect(view.state.doc.toString()).toBe("[alpha]()");
+    fireEvent.compositionStart(textbox);
+    act(()=>{expect(requestFocusedMarkdownLink()).toBe(true);});
+    expect(view.state.doc.toString()).toBe("[alpha]()");
+  });
   it("removes an empty Markdown marker with markup-aware Backspace", () => {
     render(<CodeMirrorMarkdownEditor {...baseProps({ initialDocument: "- " })} />);
     const textbox = screen.getByRole("textbox");

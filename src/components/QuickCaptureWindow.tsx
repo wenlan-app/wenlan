@@ -3,13 +3,18 @@ import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { requestFocusedMarkdownLink } from "../lib/focusedEditorCommand";
+import { useInputCompositionGuard } from "../lib/useInputCompositionGuard";
 import { applyTheme } from "../lib/theme";
 import QuickCapture from "./QuickCapture";
 
 const queryClient = new QueryClient();
 
 export default function QuickCaptureWindow() {
+  useInputCompositionGuard();
   useEffect(() => {
+    const editorUnlisten = listen("editor-primary-shortcut", () => { requestFocusedMarkdownLink(); });
     const win = getCurrentWindow();
     const unlisten = win.onFocusChanged(({ payload: focused }) => {
       if (focused) {
@@ -21,6 +26,7 @@ export default function QuickCaptureWindow() {
       }
     });
     return () => {
+      editorUnlisten.then(fn => fn());
       unlisten.then((fn) => fn());
     };
   }, []);

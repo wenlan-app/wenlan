@@ -15,6 +15,7 @@ import { enSourceAccess, hansSourceAccess, hantSourceAccess } from "../component
 import { enSourceContainer, hansSourceContainer, hantSourceContainer } from "../components/memory/sources/sourceContainerCopy";
 
 const en = {
+  editorSearch: {"find":"Find","replace":"Replace","next":"Next","previous":"Previous","all":"All","matchCase":"Match case","regexp":"Regular expression","wholeWord":"Whole word","replaceAll":"Replace all"},
   detailInfo: {"details": "Details", "additional": "Additional information", "relatedMemories": "Related memories", "relatedMemoriesHint": "Search matches that may be related, not confirmed connections."},
   memoryAutosave: {"empty": "Add some text before leaving. Your draft is still here.", "failed": "Changes could not be saved. Your draft is still here.", "conflict": "This memory changed elsewhere. Your draft is still here.", "retry": "Retry saving", "compare": "View current version", "latest": "Current version", "loadLatest": "Use current version", "discard": "Replace your unsaved draft with the current version?", "saving": "Saving…", "deleted": "This memory was deleted elsewhere.", "discardDraft": "Discard draft", "discardDeleted": "Discard this unsaved draft? Copy any text you want to keep first."},
   knowledgeCheck: enKnowledgeCheck,
@@ -535,6 +536,7 @@ const en = {
     },
   },
   pages: {
+    archive: {"title":"Archived notes","restore":"Restore note","restoreNamed":"Restore {{title}}","restoring":"Restoring…","titleLabel":"Note title","explanation":"The original note and its contents will return to your library.","empty":"No archived notes.","noMatches":"No matching archived notes.","loadError":"Archived notes could not be loaded.","retry":"Try again","search":"Search archived notes","restoreError":"The note could not be restored. Try again.","titleConflict":"A note with this name already exists. Choose another name and restore again.","changed":"This note changed. Reload it before restoring.","restored":"Note restored.","readOnly":"This note is archived. Restore it to edit.","filePending":"Restored in Wenlan. Its file could not be updated yet.","fileHidden":"Restored in Wenlan. Its file is not currently available.","fixedTitle":"Source and imported notes keep their original title.","reload":"Reload note"},
     groups: { central: "Central pages", right: "Right pages", moveToRight: "Move to right group", moveToCentral: "Move to central group", openBeside: "Open beside", moveBack: "Move back", openInRight: "This page is open on the right.", openInCentral: "This page is open in the central group.", showNote: "Show page", dismiss: "Dismiss" },
     recent: { title: "Recently used", custom: "Manual order", dragNote: "Drag to reorder {{title}}", reorderHint: "Use arrow keys to reorder.", customHint: "Drag pages to set your order. Opening a page keeps its place.", modeLabel: "Browse pages", empty: "Pages you open appear here.", browseFolders: "Browse folders" },
     tabs: { label: "Open pages", close: "Close {{title}}", home: "Wiki home" },
@@ -926,7 +928,10 @@ const en = {
   pageDetail: {
     diagramFailed: "This diagram could not be drawn, so its text is shown.",
     actions: "Page actions",
-    deleteConfirm: "Delete this page?",
+    deleteConfirm: "Permanently delete this page? This cannot be undone.",
+    archivePage: "Archive page",
+    archiveConfirm: "Archive this page? You can restore it from Archived pages.",
+    archiveError: "Could not archive this page. Try again.",
     deleteError: "Could not delete this page. Try again.",
     redistillEditedConfirm: "Update this page from its sources? Your edits may be replaced.",
     entityGuardOpen: "Open the topic",
@@ -1278,6 +1283,10 @@ const en = {
     quit: "Quit",
   },
   quickCapture: {
+    draftRecoveryError: "This draft could not be backed up on this device. Keep this window open until it is saved.",
+    draftCleanupError: "The local draft could not be cleared. Your text is still here; try again.",
+    noChunksSaved: "No memory was saved. Your draft is still here.",
+    discard: "Discard draft",
     title: "Quick capture",
     savedToMemory: "Saved to memory",
     saving: "Saving...",
@@ -1285,8 +1294,8 @@ const en = {
     placeholder: "What's on your mind?",
     chars_one: "{{count}} char",
     chars_other: "{{count}} chars",
-    standaloneShortcut: "esc close",
-    saveShortcut: "⌘⏎ save",
+    standaloneShortcut: "Esc close · {{modifier}}+Enter save",
+    saveShortcut: "{{modifier}}+Enter save",
     saved: "Saved",
     save: "Save",
     saveError: "Couldn't save: {{message}}",
@@ -3087,6 +3096,7 @@ const en = {
 };
 
 const zhHans = {
+  editorSearch: {"find":"查找","replace":"替换","next":"下一处","previous":"上一处","all":"全部","matchCase":"区分大小写","regexp":"正则表达式","wholeWord":"全词匹配","replaceAll":"全部替换"},
   detailInfo: {"details": "详细信息", "additional": "补充信息", "relatedMemories": "相关记忆", "relatedMemoriesHint": "根据搜索找到的可能相关内容，并非已确认的关联。"},
   memoryAutosave: {"empty": "请填写内容后再离开。草稿仍保留在这里。", "failed": "更改未能保存，草稿仍保留在这里。", "conflict": "这条记忆已在别处更改，草稿仍保留在这里。", "retry": "重试保存", "compare": "查看当前版本", "latest": "当前版本", "loadLatest": "使用当前版本", "discard": "要用当前版本替换尚未保存的草稿吗？", "saving": "正在保存…", "deleted": "这条记忆已在别处删除。", "discardDraft": "舍弃草稿", "discardDeleted": "要舍弃尚未保存的草稿吗？请先复制要保留的文字。"},
   knowledgeCheck: hansKnowledgeCheck,
@@ -3590,6 +3600,7 @@ const zhHans = {
     },
   },
   pages: {
+    archive: {"title":"已封存笔记","restore":"还原笔记","restoreNamed":"还原「{{title}}」","restoring":"正在还原…","titleLabel":"笔记名称","explanation":"原笔记及其正文会回到笔记库。","empty":"没有已封存的笔记。","noMatches":"没有匹配的已封存笔记。","loadError":"未能载入已封存笔记。","retry":"重试","search":"搜索已封存笔记","restoreError":"未能还原笔记，请重试。","titleConflict":"已有同名笔记，请换个名称后再次还原。","changed":"这篇笔记已发生变化，请重新载入后还原。","restored":"笔记已还原。","readOnly":"这篇笔记已封存，还原后即可编辑。","filePending":"笔记已在文篮中还原，但文件暂时未能更新。","fileHidden":"笔记已在文篮中还原，其文件暂时不可用。","fixedTitle":"来源笔记和导入的笔记保留原名称。","reload":"重新载入笔记"},
     groups: { central: "中央笔记", right: "右侧笔记", moveToRight: "移至右侧分组", moveToCentral: "移至中央分组", openBeside: "并排打开", moveBack: "移回中央", openInRight: "这篇笔记已在右侧打开。", openInCentral: "这篇笔记已在中央打开。", showNote: "查看笔记", dismiss: "关闭提示" },
     recent: { title: "最近使用", custom: "手动排序", dragNote: "拖动调整「{{title}}」的位置", reorderHint: "使用方向键调整顺序。", customHint: "拖动笔记调整顺序，打开笔记时位置保持不变。", modeLabel: "浏览笔记", empty: "打开过的笔记会出现在这里。", browseFolders: "按文件夹浏览" },
     tabs: { label: "已打开的笔记", close: "关闭 {{title}}", home: "Wiki 首页" },
@@ -3981,7 +3992,10 @@ const zhHans = {
   pageDetail: {
     diagramFailed: "这张图画不出来，下面是它的原文。",
     actions: "笔记操作",
-    deleteConfirm: "删除此笔记？",
+    deleteConfirm: "永久删除此笔记？此操作无法撤销。",
+    archivePage: "封存笔记",
+    archiveConfirm: "封存此笔记？你可以从“已封存笔记”恢复。",
+    archiveError: "无法封存此笔记，请重试。",
     deleteError: "无法删除此笔记，请重试。",
     redistillEditedConfirm: "要按来源更新此笔记吗？您的编辑可能会被替换。",
     entityGuardOpen: "打开该主题",
@@ -4322,6 +4336,10 @@ const zhHans = {
     quit: "退出",
   },
   quickCapture: {
+    draftRecoveryError: "未能在这台设备上备份草稿。保存成功前请保持此窗口打开。",
+    draftCleanupError: "未能清除本地草稿。内容仍在这里，请重试。",
+    noChunksSaved: "没有保存任何记忆。草稿仍在这里。",
+    discard: "放弃草稿",
     title: "快速捕捉",
     savedToMemory: "已保存到记忆",
     saving: "正在保存...",
@@ -4329,8 +4347,8 @@ const zhHans = {
     placeholder: "你在想什么？",
     chars_one: "{{count}} 个字符",
     chars_other: "{{count}} 个字符",
-    standaloneShortcut: "esc 关闭",
-    saveShortcut: "⌘⏎ 保存",
+    standaloneShortcut: "Esc 关闭 · {{modifier}}+Enter 保存",
+    saveShortcut: "{{modifier}}+Enter 保存",
     saved: "已保存",
     save: "保存",
     saveError: "保存失败：{{message}}",
@@ -6098,6 +6116,7 @@ const zhHans = {
 };
 
 const zhHant = {
+  editorSearch: {"find":"尋找","replace":"取代","next":"下一處","previous":"上一處","all":"全部","matchCase":"區分大小寫","regexp":"正規表示式","wholeWord":"全詞比對","replaceAll":"全部取代"},
   detailInfo: {"details": "詳細資訊", "additional": "補充資訊", "relatedMemories": "相關記憶", "relatedMemoriesHint": "依搜尋找到的可能相關內容，並非已確認的關聯。"},
   memoryAutosave: {"empty": "請填寫內容後再離開。草稿仍保留在這裡。", "failed": "更改未能儲存，草稿仍保留在這裡。", "conflict": "這則記憶已在別處更改，草稿仍保留在這裡。", "retry": "重試儲存", "compare": "查看目前版本", "latest": "目前版本", "loadLatest": "使用目前版本", "discard": "要用目前版本取代尚未儲存的草稿嗎？", "saving": "正在儲存…", "deleted": "這則記憶已在別處刪除。", "discardDraft": "捨棄草稿", "discardDeleted": "要捨棄尚未儲存的草稿嗎？請先複製要保留的文字。"},
   knowledgeCheck: hantKnowledgeCheck,
@@ -6601,6 +6620,7 @@ const zhHant = {
     },
   },
   pages: {
+    archive: {"title":"已封存筆記","restore":"還原筆記","restoreNamed":"還原「{{title}}」","restoring":"還原中…","titleLabel":"筆記名稱","explanation":"原筆記及其正文會回到筆記庫。","empty":"沒有已封存的筆記。","noMatches":"沒有符合的已封存筆記。","loadError":"無法載入已封存筆記。","retry":"重試","search":"搜尋已封存筆記","restoreError":"無法還原筆記，請重試。","titleConflict":"已有同名筆記，請換個名稱後再次還原。","changed":"這篇筆記已變更，請重新載入後還原。","restored":"筆記已還原。","readOnly":"這篇筆記已封存，還原後即可編輯。","filePending":"筆記已在文籃中還原，但檔案暫時無法更新。","fileHidden":"筆記已在文籃中還原，其檔案暫時無法使用。","fixedTitle":"來源筆記與匯入的筆記保留原名稱。","reload":"重新載入筆記"},
     groups: { central: "中央筆記", right: "右側筆記", moveToRight: "移至右側分組", moveToCentral: "移至中央分組", openBeside: "並排開啟", moveBack: "移回中央", openInRight: "這篇筆記已在右側開啟。", openInCentral: "這篇筆記已在中央開啟。", showNote: "查看筆記", dismiss: "關閉提示" },
     recent: { title: "最近使用", custom: "手動排序", dragNote: "拖曳調整「{{title}}」的位置", reorderHint: "使用方向鍵調整順序。", customHint: "拖曳筆記調整順序，開啟筆記時位置保持不變。", modeLabel: "瀏覽筆記", empty: "開啟過的筆記會出現在這裡。", browseFolders: "按資料夾瀏覽" },
     tabs: { label: "已開啟的筆記", close: "關閉 {{title}}", home: "Wiki 首頁" },
@@ -6992,7 +7012,10 @@ const zhHant = {
   pageDetail: {
     diagramFailed: "這張圖畫不出來，下面是它的原文。",
     actions: "筆記操作",
-    deleteConfirm: "刪除此筆記？",
+    deleteConfirm: "永久刪除此筆記？此操作無法復原。",
+    archivePage: "封存筆記",
+    archiveConfirm: "封存此筆記？你可以從「已封存筆記」還原。",
+    archiveError: "無法封存此筆記，請再試一次。",
     deleteError: "無法刪除此筆記，請再試一次。",
     redistillEditedConfirm: "要依來源更新此筆記嗎？您的編輯可能會被取代。",
     entityGuardOpen: "開啟這個主題",
@@ -7333,6 +7356,10 @@ const zhHant = {
     quit: "結束",
   },
   quickCapture: {
+    draftRecoveryError: "未能在這台裝置上備份草稿。儲存成功前請保持此視窗開啟。",
+    draftCleanupError: "未能清除本機草稿。內容仍在這裡，請重試。",
+    noChunksSaved: "沒有儲存任何記憶。草稿仍在這裡。",
+    discard: "捨棄草稿",
     title: "快速捕捉",
     savedToMemory: "已儲存到記憶",
     saving: "正在儲存...",
@@ -7340,8 +7367,8 @@ const zhHant = {
     placeholder: "你在想什麼？",
     chars_one: "{{count}} 個字元",
     chars_other: "{{count}} 個字元",
-    standaloneShortcut: "esc 關閉",
-    saveShortcut: "⌘⏎ 儲存",
+    standaloneShortcut: "Esc 關閉 · {{modifier}}+Enter 儲存",
+    saveShortcut: "{{modifier}}+Enter 儲存",
     saved: "已儲存",
     save: "儲存",
     saveError: "儲存失敗：{{message}}",

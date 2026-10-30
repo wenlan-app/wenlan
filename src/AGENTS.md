@@ -54,3 +54,8 @@ pnpm test:i18n
 pnpm test:e2e
 pnpm test:coverage
 ```
+
+## Note editing
+
+- Note bodies in capture, new drafts, pages and memories reuse the current `MarkdownEditor` and CodeMirror extensions. Keep `NativeMarkdownEditor` as the failure fallback instead of adding separate body editors.
+- Persistence remains with each existing owner. Composition must block canonical saves and leaving; an explicit save/finalization must use the latest editor snapshot, including input before React renders it.

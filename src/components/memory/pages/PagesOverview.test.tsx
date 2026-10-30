@@ -52,6 +52,7 @@ function renderOverview({
   onSelectPage = vi.fn(),
   onSelectSpace = vi.fn(),
   onBrowseAll = undefined as (() => void) | undefined,
+  onBrowseArchived = undefined as (() => void) | undefined,
   inventoryScope = "all" as WikiInventoryScope,
   checklist = false,
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
@@ -61,6 +62,7 @@ function renderOverview({
       <PagesOverview
         inventoryScope={inventoryScope}
         onBrowseAll={onBrowseAll}
+        onBrowseArchived={onBrowseArchived}
         onCreatePage={onCreatePage}
         onSelectDraft={onSelectDraft}
         onSelectPage={onSelectPage}
@@ -237,6 +239,16 @@ describe("PagesOverview reading workspace", () => {
       expect(await screen.findByRole("dialog", { name: "Past AI chats" })).toBeInTheDocument();
     });
   });
+  it("keeps an archive recovery entry when no active pages or drafts remain", async () => {
+    const onBrowseArchived = vi.fn();
+    const { container } = renderOverview({ onBrowseArchived });
+    await waitFor(() => expect(container.querySelector(".wiki-overview")).toHaveAttribute("data-library-empty", "true"));
+    const entry = screen.getByRole("button", { name: "Archived notes" });
+    fireEvent.click(entry);
+    expect(onBrowseArchived).toHaveBeenCalledOnce();
+    expect(listPagesExplicitBrowse).not.toHaveBeenCalledWith("archived", undefined, 500, 0);
+  });
+
 });
 
 describe("PagesOverview arriving from the welcome", () => {

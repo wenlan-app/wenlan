@@ -345,6 +345,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_setup_first_memory_is_hidden_and_replaced_only_once() {
+        let (db, _tmp) = crate::db::tests::test_db().await;
+        db.record_milestone(
+            MilestoneId::FirstMemory,
+            Some(serde_json::json!({
+                "source": SETUP_PROBE_AGENT, "memory_id": "old-probe", "preview": "setup check"
+            })),
+        )
+        .await
+        .unwrap();
+        db.acknowledge_milestone(MilestoneId::FirstMemory)
+            .await
+            .unwrap();
+        db.record_milestone(MilestoneId::IntelligenceReady, None)
+            .await
+            .unwrap();
+        assert_eq!(db.list_milestones().await.unwrap().len(), 1);
+
+        let emitter = Arc::new(CapturingEmitter::new());
+        let ev = MilestoneEvaluator::new(&db, emitter.clone());
+        ev.check_after_ingest("actual-first", "claude")
+            .await
+            .unwrap();
+        ev.check_after_ingest("actual-second", "cursor")
+            .await
+            .unwrap();
+        let milestones = db.list_milestones().await.unwrap();
+        assert_eq!(milestones.len(), 2);
+        let first = milestones
+            .iter()
+            .find(|m| m.id == MilestoneId::FirstMemory)
+            .unwrap();
+        assert!(first.acknowledged_at.is_none());
+        assert_eq!(first.payload.as_ref().unwrap()["memory_id"], "actual-first");
+        assert_eq!(emitter.events.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
     async fn test_check_after_context_call_fires_first_recall_with_agent() {
         let (db, _tmp) = crate::db::tests::test_db().await;
         let emitter = Arc::new(CapturingEmitter::new());
