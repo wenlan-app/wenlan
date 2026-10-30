@@ -13,6 +13,68 @@ pub const SOURCES_BLOCK_START: &str = "<!-- origin:sources:start -->";
 /// Closing delimiter for the export-only Sources block.
 pub const SOURCES_BLOCK_END: &str = "<!-- origin:sources:end -->";
 
+/// Decode the envelope emitted by `render_markdown_for`, removing only its
+/// separators and reserved provenance block. Generic Obsidian import trims
+/// leading newlines, and the legacy provenance canonicalizer trims trailing
+/// whitespace; neither is suitable for writing an authored Page back to DB.
+///
+/// Wenlan always writes the envelope with LF. A file whose frontmatter
+/// fence ends in CRLF was rewritten line by line by an external editor (or
+/// by Git's `autocrlf`), so the author's original line endings are gone
+/// either way: such a file is read back with LF. A CRLF the author put in
+/// the body of an LF envelope is kept exactly.
+pub(crate) fn page_body_from_projection(raw: &str) -> String {
+    if raw.starts_with("---\r\n") {
+        return page_body_from_projection(&raw.replace("\r\n", "\n"));
+    }
+    let Some((_, after_frontmatter)) = crate::sources::obsidian::split_frontmatter_untrimmed(raw)
+    else {
+        return raw.to_string();
+    };
+    let body = after_frontmatter
+        .strip_prefix("\n\n")
+        .or_else(|| after_frontmatter.strip_prefix('\n'))
+        .unwrap_or(after_frontmatter);
+    if let Some(start) = body.find(SOURCES_BLOCK_START) {
+        let after_start = start + SOURCES_BLOCK_START.len();
+        if let Some(end_relative) = body[after_start..].find(SOURCES_BLOCK_END) {
+            let end = after_start + end_relative + SOURCES_BLOCK_END.len();
+            let head = body[..start].strip_suffix("\n\n").unwrap_or(&body[..start]);
+            let tail = body[end..].strip_prefix('\n').unwrap_or(&body[end..]);
+            return if tail.is_empty() {
+                head.to_string()
+            } else {
+                format!("{head}\n\n{tail}")
+            };
+        }
+    }
+    body.strip_suffix('\n').unwrap_or(body).to_string()
+}
+
+/// Whether two decoded page bodies (see [`page_body_from_projection`]) hold
+/// the same page once the changes an editor makes on save, without the
+/// author typing anything, are set aside: the line-ending style, and
+/// whitespace after the last visible character (an added or trimmed final
+/// newline, a trimmed trailing space). Neither changes what the Markdown
+/// renders, and treating them as edits would version the page and flip
+/// `user_edited` (locking it for review under `lock_my_pages`) because a
+/// file was merely opened and saved.
+///
+/// Every other whitespace difference is an edit: leading blank lines,
+/// indentation (an indented code block), and trailing spaces inside the
+/// body (a Markdown hard line break) all change the rendered page.
+pub(crate) fn same_page_text_ignoring_save_noise(left: &str, right: &str) -> bool {
+    fn key(body: &str) -> std::borrow::Cow<'_, str> {
+        let body = body.trim_end();
+        if body.contains('\r') {
+            std::borrow::Cow::Owned(body.replace("\r\n", "\n"))
+        } else {
+            std::borrow::Cow::Borrowed(body)
+        }
+    }
+    left == right || key(left) == key(right)
+}
+
 /// Strip ONLY the delimiter-owned Sources block from a page body. A user may
 /// legitimately type a `## Sources` heading or a `[[mem_123]]` wikilink in
 /// prose; neither is touched. Removes the first `START..END` span (inclusive
@@ -745,6 +807,39 @@ mod tests {
                     || content.contains("owned")
                     || content.contains("kept prose")
             );
+        }
+    }
+
+    #[test]
+    fn projection_decoder_reads_a_crlf_envelope_back_with_lf_and_keeps_lf_envelopes_exact() {
+        let lf = format!(
+            "---\ntitle: \"T\"\n---\n\n\n  lead\r\nnext  \n\n{SOURCES_BLOCK_START}\n## Sources\n- [[mem_1]]\n{SOURCES_BLOCK_END}\n"
+        );
+        assert_eq!(page_body_from_projection(&lf), "\n  lead\r\nnext  ");
+        let crlf = lf.replace("\r\n", "\n").replace('\n', "\r\n");
+        assert_eq!(page_body_from_projection(&crlf), "\n  lead\nnext  ");
+        assert_eq!(
+            page_body_from_projection("no frontmatter\n"),
+            "no frontmatter\n"
+        );
+    }
+
+    #[test]
+    fn save_noise_is_line_endings_and_end_of_body_whitespace_only() {
+        let body = "\n  lead\nnext  \nlast  ";
+        for noise in [
+            "\n  lead\r\nnext  \r\nlast",
+            "\n  lead\nnext  \nlast  \n\n\t",
+        ] {
+            assert!(same_page_text_ignoring_save_noise(body, noise), "{noise:?}");
+        }
+        for edit in [
+            "  lead\nnext  \nlast  ",
+            "\n lead\nnext  \nlast  ",
+            "\n  lead\nnext\nlast  ",
+            "\n  lead\n\nnext  \nlast  ",
+        ] {
+            assert!(!same_page_text_ignoring_save_noise(body, edit), "{edit:?}");
         }
     }
 
