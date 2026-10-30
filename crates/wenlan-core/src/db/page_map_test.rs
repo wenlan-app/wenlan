@@ -1831,3 +1831,42 @@ async fn reparent_onto_dismissed_parent_rejected() {
         .unwrap_err();
     assert!(matches!(err, crate::WenlanError::Validation(_)));
 }
+
+// `page_maps.page_id` references `pages(id)` without ON DELETE CASCADE, so a
+// page whose map was ever opened could not be deleted ("FOREIGN KEY
+// constraint failed"). Deleting the page takes its map with it.
+#[tokio::test]
+async fn delete_page_removes_its_map() {
+    let (db, _tmp) = test_db().await;
+    seed_page(&db, "page-with-map").await;
+    let (map, _) = db.init_page_map("page-with-map").await.unwrap();
+    let root = root_id(&map.nodes);
+    let created = db
+        .create_map_node(
+            "page-with-map",
+            map.map.revision,
+            &root,
+            "memory",
+            "mem-1",
+            None,
+            0.0,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(created, CreateNodeOutcome::Created(_)));
+
+    db.delete_page("page-with-map").await.unwrap();
+
+    let conn = db.conn.lock().await;
+    for table in ["page_maps", "page_map_nodes", "page_map_edges"] {
+        let mut rows = conn
+            .query(
+                &format!("SELECT COUNT(*) FROM {table} WHERE page_id = ?1"),
+                libsql::params!["page-with-map"],
+            )
+            .await
+            .unwrap();
+        let count: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(count, 0, "{table} rows must go with the page");
+    }
+}

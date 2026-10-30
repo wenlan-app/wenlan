@@ -68,7 +68,7 @@ import AboutWenlanDialog from "./AboutWenlanDialog";
 import PairingApprovalDialog from "./PairingApprovalDialog";
 import RemoteAccessNotifier from "./RemoteAccessNotifier";
 import { searchResultTarget } from "../../lib/searchResultTarget";
-import { readRecentPageHistory, recordRecentPageVisit } from "../../lib/recentPages";
+import { forgetRecentPage, readRecentPageHistory, recordRecentPageVisit } from "../../lib/recentPages";
 import { readWikiInventoryMode, writeWikiInventoryMode, type WikiInventoryMode } from "../../lib/wikiNotesPreferences";
 import { deleteRecentSpace, readRecentSpaceHistory, recordRecentSpaceVisit, renameRecentSpace } from "../../lib/recentSpaces";
 import { createSpaceDetailCopy, createSpacesOverviewLabels } from "./navigation/copy";
@@ -1060,6 +1060,8 @@ export default function Main({
   }, []);
   const handlePageDeleted = useCallback((pageId: string) => {
     deletedPageIdsRef.current.add(pageId);
+    forgetRecentPage(pageId);
+    setRecentPageRevision(revision => revision + 1);
     const isPage = (candidate: View) => candidate.kind === "page" && candidate.pageId === pageId;
     updateNoteTabs(noteTabsRef.current.filter(tab => !isPage(tab.view)));
     updateHistory(viewHistoryRef.current.filter(candidate => !isPage(candidate)), viewForwardRef.current.filter(candidate => !isPage(candidate)));

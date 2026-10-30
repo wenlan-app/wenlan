@@ -136,3 +136,34 @@
   .wiki-recent-note-grip { transition: none; }
   .wiki-recent-notes-list:has(.is-dragging) > .wiki-recent-note-row { transition: none; }
 }
+
+.wiki-recent-note-rename {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  padding: 4px 8px;
+  color: var(--mem-text-secondary);
+}
+.wiki-recent-note-rename > svg { flex: 0 0 auto; width: 16px; height: 16px; }
+.wiki-recent-note-rename input {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--mem-border);
+  border-radius: 4px;
+  background: var(--mem-surface, var(--mem-bg));
+  color: var(--mem-text);
+  font: 14px/1.35 var(--mem-font-body);
+}
+.wiki-recent-note-rename input:focus-visible { outline: 2px solid var(--mem-text-secondary); outline-offset: -1px; }
+.wiki-recent-note-rename p {
+  flex: 1 0 100%;
+  margin: 0 0 2px 24px;
+  color: var(--mem-status-warning-text);
+  font: 12px/1.35 var(--mem-font-body);
+}

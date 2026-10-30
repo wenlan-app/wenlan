@@ -55857,6 +55857,15 @@ impl MemoryDB {
             code_basis::delete_code_basis_for_page(&conn, id)
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page code basis: {e}")))?;
+            // `page_maps.page_id` references `pages(id)` without ON DELETE
+            // CASCADE, so a page whose map was ever opened fails the FK check
+            // below. Its nodes and edges cascade from the map row.
+            conn.execute(
+                "DELETE FROM page_maps WHERE page_id = ?1",
+                libsql::params![id],
+            )
+            .await
+            .map_err(|e| WenlanError::VectorDb(format!("delete_page map: {e}")))?;
             conn.execute("DELETE FROM pages WHERE id = ?1", libsql::params![id])
                 .await
                 .map_err(|e| WenlanError::VectorDb(format!("delete_page row: {e}")))?;

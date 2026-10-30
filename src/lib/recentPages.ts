@@ -165,6 +165,21 @@ export function recordRecentPageVisit(
   writeHistory([{ id: page.id, title: page.title, visitedAt: now }, ...existing], runtime);
 }
 
+/** Drop a page from the history: it was deleted, or the person removed it from the list. */
+export function forgetRecentPage(id: string, runtime?: RecentPagesRuntime): void {
+  const entries = readRecentPageHistory(runtime).entries;
+  if (!entries.some((entry) => entry.id === id)) return;
+  writeHistory(entries.filter((entry) => entry.id !== id), runtime);
+}
+
+/** Show a renamed page under its new title without moving it in the list. */
+export function renameRecentPage(id: string, title: string, runtime?: RecentPagesRuntime): void {
+  if (title.length === 0) return;
+  const entries = readRecentPageHistory(runtime).entries;
+  if (!entries.some((entry) => entry.id === id)) return;
+  writeHistory(entries.map((entry) => entry.id === id ? { ...entry, title } : entry), runtime);
+}
+
 function compareTitles(left: Page, right: Page): number {
   if (left.title !== right.title) return left.title < right.title ? -1 : 1;
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;

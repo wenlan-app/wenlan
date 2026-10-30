@@ -184,6 +184,7 @@
 .notes-folder-context-menu > [role="menuitem"]:hover:not([aria-disabled="true"]),
 .notes-folder-context-menu > [role="menuitem"]:focus-visible:not([aria-disabled="true"]) { background: var(--mem-hover); }
 .notes-folder-context-menu > [role="menuitem"][aria-disabled="true"] { opacity: .45; cursor: default; }
+.notes-folder-context-menu > [role="menuitem"].is-danger { color: var(--mem-status-warning-text); }
 .notes-folder-create { margin: 4px 0 8px 18px; padding: 8px; border: 1px solid var(--mem-border); border-radius: 6px; background: var(--mem-surface); }
 
 @media (pointer: coarse) {
