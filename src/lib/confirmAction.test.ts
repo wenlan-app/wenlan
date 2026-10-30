@@ -48,6 +48,26 @@ describe("confirmAction", () => {
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
+  it("keeps the confirm button red unless the caller asks for the neutral tone", async () => {
+    let { answer } = await ask();
+    let confirm = await screen.findByRole("button", { name: "Delete page" });
+    expect(confirm).toHaveAttribute("data-tone", "danger");
+    expect(confirm.className).toContain("--mem-status-danger");
+    await act(async () => { fireEvent.click(confirm); });
+    await expect(answer).resolves.toBe(true);
+
+    await act(async () => {
+      answer = confirmAction("Archive this page?", { confirm: "Archive page", cancel: "Cancel", tone: "neutral" });
+    });
+    confirm = await screen.findByRole("button", { name: "Archive page" });
+    expect(confirm).toHaveAttribute("data-tone", "neutral");
+    expect(confirm.className).not.toContain("--mem-status-danger");
+    expect(confirm.className).toContain("--mem-accent-indigo");
+    expect(confirm).toHaveFocus();
+    await act(async () => { fireEvent.click(confirm); });
+    await expect(answer).resolves.toBe(true);
+  });
+
   it("keeps one question open: a newer one answers the older with no", async () => {
     const { answer: first } = await ask();
     await screen.findByRole("alertdialog");

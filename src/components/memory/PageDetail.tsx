@@ -1706,6 +1706,8 @@ export default function PageDetail({
         if (!await confirmAction(t(kind === "archive" ? "pageDetail.archiveConfirm" : "pageDetail.deleteConfirm"), {
           confirm: t(kind === "archive" ? "pageDetail.archivePage" : "pageDetail.deletePage"),
           cancel: t("common.cancel"),
+          // Archive can be undone from Archived pages; delete cannot and stays red.
+          tone: kind === "archive" ? "neutral" : "danger",
         }) || !ownsAction()) return;
         const current = queryClient.getQueryData<Page | null>(["page", originPageId]) ?? saved;
         setActionErrorMessage(null);
