@@ -2213,9 +2213,21 @@ describe("SetupWizard", () => {
     expect(
       screen.getByText(/Wenlan saved a test memory but couldn't find it again\./),
     ).toBeInTheDocument();
-    // Never cleaned up: cleanup only runs once the round trip has actually
-    // proved the pipeline works.
-    expect(deleteMemory).not.toHaveBeenCalled();
+    // The write succeeded even though the read-back failed, so its probe is
+    // still removed rather than left behind as the user's first memory.
+    expect(deleteMemory).toHaveBeenCalledWith("mem_probe-2");
+  });
+
+  it("a read-back that errors still removes the stored probe", async () => {
+    (storeMemory as ReturnType<typeof vi.fn>).mockResolvedValue({ source_id: "mem_probe-read-error" });
+    (getMemoryDetail as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("read timed out"));
+
+    renderWizard({ initialStep: "setting-up" });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-status-daemon")).toHaveTextContent("Couldn't set up");
+    });
+    expect(deleteMemory).toHaveBeenCalledWith("mem_probe-read-error");
   });
 
   it("a delete that fails once then succeeds on retry leaves the runtime row done, with no warning", async () => {

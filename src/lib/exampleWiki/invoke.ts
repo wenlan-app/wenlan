@@ -140,7 +140,11 @@ export function exampleInvoke<T>(command: string, args?: Record<string, unknown>
   if (value !== undefined) return Promise.resolve(value as T);
   // Everything else would read or change the user's own library.
   if (import.meta.env.DEV) console.warn("[example-wiki] refused", command);
-  // One quiet line for whatever tried to change it; the same id never stacks.
-  toast(i18n.t("exampleWiki.readOnly"), { id: "example-wiki-read-only" });
+  showExampleWikiReadOnly();
   return Promise.reject(new ExampleWikiReadOnly(command));
+}
+
+/** One quiet line for whatever tried to change the example; the same id never stacks. */
+export function showExampleWikiReadOnly() {
+  toast(i18n.t("exampleWiki.readOnly"), { id: "example-wiki-read-only" });
 }
