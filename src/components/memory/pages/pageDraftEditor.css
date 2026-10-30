@@ -74,13 +74,13 @@
 }
 
 .page-draft-title::placeholder,
-.page-draft-content::placeholder {
+.page-draft-content textarea::placeholder,
+.page-draft-content .cm-placeholder {
   color: var(--mem-text-tertiary);
   opacity: 0.72;
 }
 
-.page-draft-title:focus-visible,
-.page-draft-content:focus-visible {
+.page-draft-title:focus-visible {
   outline: 0;
 }
 
@@ -98,9 +98,8 @@
   font: 15px/1.72 var(--mem-font-body);
   margin-top: 34px;
   min-height: 420px;
-  outline: 0;
+  min-width: 0;
   padding: 0;
-  resize: none;
   width: 100%;
 }
 

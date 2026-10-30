@@ -18,6 +18,8 @@ import { WorkspaceDocumentToolsHostContext, WorkspaceNoteGroupContext } from "..
 import { WorkspaceBackButton } from "../navigation/WorkspaceNavigation";
 import PageInfoDrawer from "../page/PageInfoDrawer";
 import { AskInsteadHint } from "../askAi/AskInsteadHint";
+import { MarkdownEditor, type MarkdownEditorHandle } from "../editor/MarkdownEditor";
+import { useEditorLinkNotes } from "../editor/useEditorLinkNotes";
 import { getPage, publishPageDraft, type Page } from "../../../lib/tauri";
 import {
   usePageDraftAutosave,
@@ -88,11 +90,15 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
     const headingId = useId();
     const queryClient = useQueryClient();
     const titleRef = useRef<HTMLInputElement>(null);
+    const bodyRef = useRef<MarkdownEditorHandle>(null);
     const inspectorToggleRef = useRef<HTMLButtonElement>(null);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const [title, setTitle] = useState(initialPage?.title ?? "");
     useEffect(() => { onTitleChange?.(title); }, [title, onTitleChange]);
     const [content, setContent] = useState(initialPage?.content ?? "");
+    // The body editor owns its document; a new revision remounts it with the
+    // content loaded by "Reload latest".
+    const [editorRevision, setEditorRevision] = useState(0);
     // IME composition in the title or the body: autosave, finalize and Escape
     // wait for the committed text instead of saving or leaving mid-preedit.
     const [composing, setComposing] = useState(false);
@@ -105,6 +111,10 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       setComposing(composingRef.current);
     };
     const [space, setSpace] = useState(initialPage?.space ?? initialSpace ?? "");
+    // What the fields hold right now. An editor change and a tab switch can
+    // land in the same task, before React renders the new content, so finalize
+    // and the explicit save read this instead of the rendered snapshot.
+    const liveSnapshotRef = useRef<PageDraftSnapshot>({ title, content, space: space || null });
     const [operationKind, setOperationKind] = useState<"idle" | "finalizing" | "uncertain" | "finalized">("idle");
     const [publishError, setPublishError] = useState<Error | null>(null);
     const [publishConflict, setPublishConflict] = useState(false);
@@ -128,6 +138,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       space: initialPage?.space ?? initialSpace ?? null,
     }), [initialPage, initialSpace]);
     const reconcileSpace = useCallback((reconciledSpace: string | null) => {
+      liveSnapshotRef.current = { ...liveSnapshotRef.current, space: reconciledSpace };
       setSpace(reconciledSpace ?? "");
     }, []);
     const autosave = usePageDraftAutosave({
@@ -140,6 +151,8 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       snapshot,
       composing,
     });
+    // `[[` in the body offers pages to link; candidates load once it is typed.
+    const linkNotes = useEditorLinkNotes(space || null, autosave.draftId ?? "", content.includes("[["));
 
     const finishPublished = useCallback(async (published: Page) => {
       publishedPageRef.current = published;
@@ -193,8 +206,9 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
             uncertainPublishRef.current = false;
           }
 
-          if (!await autosave.flush()) return false;
-          if (snapshot.title.trim().length === 0 && snapshot.content.trim().length === 0) return true;
+          if (!await autosave.flush(liveSnapshotRef.current)) return false;
+          const saved = liveSnapshotRef.current;
+          if (saved.title.trim().length === 0 && saved.content.trim().length === 0) return true;
 
           identity = autosave.getIdentity();
           if (!identity.draftId || identity.version == null) {
@@ -261,7 +275,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
         setOperationKind(uncertainPublishRef.current || blockedVersionRef.current ? "uncertain" : "idle");
       });
       return finalizing;
-    }, [autosave.flush, autosave.getIdentity, finishPublished, snapshot]);
+    }, [autosave.flush, autosave.getIdentity, finishPublished]);
 
     const retryFinalize = useCallback(async () => {
       if (!await finalize()) return;
@@ -294,6 +308,17 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
       requestBack,
     ]);
 
+    // Escape closes the inspector first, then leaves the draft.
+    const escapeDraft = useCallback(() => {
+      if (inspectorOpen) {
+        setInspectorOpen(false);
+        inspectorToggleRef.current?.focus({ preventScroll: true });
+        return;
+      }
+      if (onEscapeBeforeLeave?.()) return;
+      void requestBack();
+    }, [inspectorOpen, onEscapeBeforeLeave, requestBack]);
+
     useEffect(() => {
       const handleEscape = (event: KeyboardEvent) => {
         if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || composingRef.current) return;
@@ -301,19 +326,16 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
         // Let an open sidebar popup consume Escape before draft navigation or
         // the narrow drawer's close guard sees it.
         if (event.target instanceof Element && event.target.closest("[data-sidebar-escape-scope]")) return;
+        // The body editor handles its own Escape (onCancel), so its find
+        // panel and link menu close before the draft is left.
+        if (event.target instanceof Element && event.target.closest(".page-draft-content")) return;
         event.preventDefault();
         event.stopPropagation();
-        if (inspectorOpen) {
-          setInspectorOpen(false);
-          inspectorToggleRef.current?.focus({ preventScroll: true });
-          return;
-        }
-        if (onEscapeBeforeLeave?.()) return;
-        void requestBack();
+        escapeDraft();
       };
       window.addEventListener("keydown", handleEscape, true);
       return () => window.removeEventListener("keydown", handleEscape, true);
-    }, [inspectorOpen, onEscapeBeforeLeave, requestBack, noteGroup]);
+    }, [escapeDraft, noteGroup]);
 
     const reloadLatest = async () => {
       const identity = autosave.getIdentity();
@@ -330,8 +352,10 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
           content: latest.content,
           space: latest.space ?? null,
         };
+        liveSnapshotRef.current = latestSnapshot;
         setTitle(latest.title);
         setContent(latest.content);
+        setEditorRevision((revision) => revision + 1);
         setSpace(latest.space ?? "");
         autosave.adoptRemote({
           draftId: latest.id,
@@ -347,6 +371,20 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
         setReloadError(true);
       }
     };
+
+    const changeContent = useCallback((document: string) => {
+      liveSnapshotRef.current = { ...liveSnapshotRef.current, content: document };
+      setContent(document);
+      setPublishConflict(false);
+      setPublishError(null);
+      setPublishVersionConflict(false);
+    }, []);
+    // Cmd/Ctrl+S and Cmd/Ctrl+Enter in the body save the draft now; the page
+    // is still published when the draft is left.
+    const saveContent = useCallback((document: string) => {
+      changeContent(document);
+      void autosave.flush(liveSnapshotRef.current);
+    }, [autosave.flush, changeContent]);
 
     const renameDraft = () => {
       setPublishConflict(false);
@@ -445,6 +483,7 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
             className="page-draft-title"
             disabled={locked}
             onChange={(event) => {
+              liveSnapshotRef.current = { ...liveSnapshotRef.current, title: event.target.value };
               setTitle(event.target.value);
               setPublishConflict(false);
               setPublishError(null);
@@ -460,22 +499,34 @@ const HydratedPageDraftEditor = forwardRef<PageDraftEditorHandle, HydratedEditor
             value={title}
           />
 
-          <textarea
-            aria-label={t("pages.editor.contentLabel")}
+          <div
             className="page-draft-content"
-            disabled={locked}
-            onChange={(event) => {
-              setContent(event.target.value);
-              setPublishConflict(false);
-              setPublishError(null);
-              setPublishVersionConflict(false);
+            // The writing area is taller than an empty editor; a click below
+            // the text still puts the caret in the body.
+            onMouseDown={(event) => {
+              if (event.target !== event.currentTarget || locked) return;
+              event.preventDefault();
+              bodyRef.current?.focus();
             }}
-            placeholder={t("pages.editor.contentPlaceholder")}
-            onCompositionStart={() => setComposition("body", true)}
-            onCompositionEnd={() => setComposition("body", false)}
-            onBlur={() => { if (bodyComposingRef.current) setComposition("body", false); }}
-            value={content}
-          />
+          >
+            <MarkdownEditor
+              ariaLabel={t("pages.editor.contentLabel")}
+              disabled={locked}
+              initialDocument={content}
+              linkNotes={linkNotes}
+              onCancel={escapeDraft}
+              onDocumentChange={changeContent}
+              onFallback={() => {}}
+              onSave={saveContent}
+              // Composition in the body, reported by either engine; both
+              // release it on blur when compositionend never arrives.
+              onStatusChange={(status) => setComposition("body", status.compositionActive)}
+              placeholder={t("pages.editor.contentPlaceholder")}
+              ref={bodyRef}
+              seamless
+              sessionId={`${headingId}:${editorRevision}`}
+            />
+          </div>
         </div>
       </section>
       <PageInfoDrawer

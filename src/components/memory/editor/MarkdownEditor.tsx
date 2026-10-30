@@ -25,6 +25,8 @@ export interface MarkdownEditorHandle {
 }
 
 export type MarkdownEditorCommand =
+  /** Open the find and replace panel (CodeMirror only; the native fallback returns false). */
+  | "find"
   | "undo"
   | "redo"
   | "paragraph"
@@ -58,6 +60,10 @@ export interface MarkdownEditorProps {
   initialSelection?: MarkdownEditorSelection;
   sessionId: string;
   seamless?: boolean;
+  /** Smallest editor height in CSS pixels; defaults to 300. */
+  minHeight?: number;
+  /** Shown while the document is empty. */
+  placeholder?: string;
   disabled: boolean;
   ariaLabel: string;
   describedBy?: string;
