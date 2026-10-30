@@ -202,3 +202,22 @@ describe("QuickCapture surfaces a save error instead of swallowing it", () => {
     expect((textarea as HTMLTextAreaElement).value).toBe("今天天氣非常晴朗好");
   });
 });
+
+describe("QuickCapture sends the body exactly as typed", () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset();
+  });
+
+  it("keeps leading indentation and trailing spaces", async () => {
+    mockedInvoke.mockResolvedValueOnce(1);
+    renderCapture(false);
+
+    const body = "    indented code\n\n| a | b |\n| - | - |\nline with a hard break  \n";
+    const textarea = screen.getByPlaceholderText("What's on your mind?");
+    fireEvent.change(textarea, { target: { value: body } });
+    fireEvent.click(screen.getByText("Save"));
+
+    expect(await screen.findByText("Saved to memory")).toBeTruthy();
+    expect(mockedInvoke).toHaveBeenCalledWith("quick_capture", { req: { content: body } });
+  });
+});

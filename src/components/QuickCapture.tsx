@@ -48,7 +48,9 @@ export default function QuickCapture({ isOpen, onClose, standalone }: QuickCaptu
       setTooShort(true);
       return;
     }
-    captureMutation.mutate({ content: content.trim() });
+    // Send the body exactly as typed: leading and trailing whitespace can be
+    // Markdown (an indented code block, a hard line break).
+    captureMutation.mutate({ content });
   };
 
   // Document-level keydown so Esc / Cmd+Enter work regardless of focus target.
