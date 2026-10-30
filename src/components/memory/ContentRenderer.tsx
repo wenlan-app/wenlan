@@ -12,6 +12,7 @@ import { ReferenceLink } from "./links/ReferenceLink";
 import { referenceTargetFromHref } from "./links/referenceTypes";
 import { displayUrl, isBareUrlLink } from "../../lib/displayUrl";
 import MermaidDiagram from "./MermaidDiagram";
+import { remarkReadingWikilinks, type ResolvedReadingWikilink } from "../../lib/readingWikilinks";
 import { attachmentKind, attachmentName, attachmentUrl, useAttachmentsDir, videoSource } from "../../lib/pageAttachments";
 
 interface ContentRendererProps {
@@ -24,6 +25,16 @@ interface ContentRendererProps {
   renderCitation?: (occurrence: number) => React.ReactNode;
   /** Imported source previews must not load remote images while being read. */
   allowImages?: boolean;
+  /**
+   * Render the Markdown exactly as written: no line normalisation or label
+   * bolding, so a page someone wrote keeps its tables and spacing.
+   */
+  preserveMarkdown?: boolean;
+  /**
+   * Rewrites `[[wikilinks]]` in prose text after parsing; code stays literal.
+   * Returning null leaves that link as written.
+   */
+  resolveWikilink?: (inner: string) => ResolvedReadingWikilink | null;
 }
 
 interface HastNode {
@@ -265,6 +276,8 @@ export default function ContentRenderer({
   className,
   renderCitation,
   allowImages = true,
+  preserveMarkdown = false,
+  resolveWikilink,
 }: ContentRendererProps) {
   if (variant === "card") {
     return (
@@ -289,9 +302,11 @@ export default function ContentRenderer({
     );
   }
 
-  const normalized = normalizeContent(content);
-  const shape = classifyContent(normalized, structuredFields);
-  const prepared = prepareForRender(normalized, shape);
+  let prepared = content;
+  if (!preserveMarkdown) {
+    const normalized = normalizeContent(content);
+    prepared = prepareForRender(normalized, classifyContent(normalized, structuredFields));
+  }
 
   const baseComponents =
     variant === "lede"
@@ -316,7 +331,9 @@ export default function ContentRenderer({
 
   return (
     <div className={["content-renderer", className].filter(Boolean).join(" ")}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={allowImages ? components : {
+      <ReactMarkdown remarkPlugins={resolveWikilink
+        ? [remarkGfm, [remarkReadingWikilinks, { source: prepared, resolve: resolveWikilink }]]
+        : [remarkGfm]} components={allowImages ? components : {
         ...components,
         img: ({ alt }: { alt?: string }) => <span>{alt}</span>,
       }}>

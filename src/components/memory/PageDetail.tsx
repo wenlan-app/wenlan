@@ -97,7 +97,7 @@ import { SHARE_PREVIEW_APPS, sharePreview as readSharePreview, sharePreviewTitle
 import { getSourceAppFromUrl, sourceAppName, sourceHandleFromUrl, sourceLinkKind, type SourceApp } from "./sources/sourcePresentation";
 import { linkCompletionText, pageTitleKey, trimLikeDaemon } from "./editor/pageTitleKey";
 import { loadAllLinkCandidates, linkNotesFor } from "./page/linkCandidates";
-import { leadingMarkdownH1MatchesTitle } from "./editor/pageEditorPresentation";
+import { leadingMarkdownH1MatchesTitle, withoutLeadingTitleH1 } from "./editor/pageEditorPresentation";
 import { MovePageDialog } from "./pages/MovePageDialog";
 import { PageProjectionNotice } from "./pages/PageProjectionNotice";
 import { inventoryPageFilename, type PageProjectionIssue } from "./pages/pageInventory";
@@ -1937,13 +1937,22 @@ export default function PageDetail({
   // An entity's own page cannot rely on, or be, a note.
   const basisEditable = page.creation_kind !== "entity";
 
-  // Citations first (occurrence counting mirrors the backend and runs over the
-  // raw stored body), then the existing display transforms.
-  const processed = processCitations(page.content, page.citations);
+  // A page someone wrote reads as written: its own Markdown (tables, a
+  // `## Sources` heading of its own, a first H1 that is not the title), with
+  // no first sentence lifted out as a lede. Distilled pages keep the display
+  // transforms below.
+  const authoredBody = page.creation_kind === "authored";
 
-  // Strip ## Sources (shown in Page info below)
-  // Convert [[wikilinks]] to markdown links if they resolve to pages, else plain text
-  const renderWikilinks = (content: string) => content.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
+  // Citations first (occurrence counting mirrors the backend and runs over the
+  // raw stored body), then the existing display transforms. Without citations
+  // the markers are display-stripped; in a page someone wrote, `[1]` is text.
+  const citationResult = processCitations(page.content, page.citations);
+  const processed = authoredBody && !page.citations?.length
+    ? { ...citationResult, content: page.content }
+    : citationResult;
+
+  // Resolve a [[wikilink]] to the title it reads as and, for another page, its link.
+  const resolveWikilinkTarget = (inner: string) => {
     const link = parseWikilink(inner);
     const target = outboundTargetByLabel.get(normalizeLinkLabel(link.targetLabel));
     const cid = target?.id;
@@ -1952,17 +1961,34 @@ export default function PageDetail({
     const namesOtherSpace = !!target?.title && labelKey !== normalizeLinkLabel(target.title)
       && labelKey.endsWith(`/${normalizeLinkLabel(target.title)}`);
     const currentTitle = cid === page.id ? page.title : namesOtherSpace ? link.targetLabel : target?.title;
+    // Self references read as the page's name, not a link back to this page.
+    const href = cid && cid !== page.id ? `${PAGE_LINK_ANCHOR_PREFIX}${cid}` : undefined;
+    return { link, currentTitle, href };
+  };
+  // Convert [[wikilinks]] to markdown links if they resolve to pages, else plain text
+  const renderWikilinks = (content: string) => content.replace(/\[\[([^\]]+)\]\]/g, (_match, inner) => {
+    const { link, currentTitle, href } = resolveWikilinkTarget(inner);
     const displayText = !link.hasAlias && currentTitle
       ? currentTitle.replace(/[\\`*_[\]<>]/g, "\\$&")
       : link.displayText;
-    // Self references read as the page's name, not a link back to this page.
-    if (cid && cid !== page.id) return `[${displayText}](${PAGE_LINK_ANCHOR_PREFIX}${cid})`;
-    return displayText;
+    return href ? `[${displayText}](${href})` : displayText;
   });
-  const cleanedContent = renderWikilinks(processed.content)
-    .replace(/^#\s+.*\n+/, "")
-    .replace(/## Sources\n[\s\S]*?(?=\n## |\s*$)/, "")
-    .trim();
+  // The same reading for an authored body, applied to parsed prose only so
+  // code keeps its brackets. An unresolved link reads as its label alone.
+  const resolveReadingWikilink = (inner: string) => {
+    const { link, currentTitle, href } = resolveWikilinkTarget(inner);
+    const label = !link.hasAlias && currentTitle ? currentTitle : link.displayText;
+    return href ? { label, href } : { label };
+  };
+  // Distilled bodies: drop the leading H1 and a `## Sources` section (the
+  // sources are in Page info). Authored bodies drop only an H1 that repeats
+  // the title, which the page heading already shows.
+  const cleanedContent = authoredBody
+    ? withoutLeadingTitleH1(processed.content, page.title)
+    : renderWikilinks(processed.content)
+      .replace(/^#\s+.*\n+/, "")
+      .replace(/## Sources\n[\s\S]*?(?=\n## |\s*$)/, "")
+      .trim();
 
   const sourceMemoryByLocator = new Map(
     (pageSources ?? [])
@@ -1987,8 +2013,9 @@ export default function PageDetail({
   const firstSentenceMarkdown =
     sentenceEnd > 0 ? stripLedeLabel(bodyAfterHeadings.slice(0, sentenceEnd + 1).trim()) : "";
   const firstSentenceText = stripCitationLinks(firstSentenceMarkdown);
-  const tldr =
-    firstSentenceText.length > 0 && firstSentenceText.length < 400 ? firstSentenceText : "";
+  const tldr = !authoredBody && firstSentenceText.length > 0 && firstSentenceText.length < 400
+    ? firstSentenceText
+    : "";
   // The lede shows the page summary when there is one; the first sentence is
   // cut from the body only when it is what the lede shows (no summary, or a
   // summary that repeats it). Cutting it under a different summary dropped
@@ -2861,6 +2888,8 @@ export default function PageDetail({
               <ContentRenderer
                 content={displayContent}
                 variant="detail"
+                preserveMarkdown={authoredBody}
+                resolveWikilink={authoredBody ? resolveReadingWikilink : undefined}
                 renderCitation={renderCitation}
               />
             </div>

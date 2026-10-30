@@ -167,3 +167,52 @@ describe("ContentRenderer citation links", () => {
     expect(link?.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 });
+
+describe("ContentRenderer preserveMarkdown", () => {
+  const fence = "`".repeat(3);
+  const table = ["| Name | Value |", "| --- | --- |", "| alpha | beta |"].join("\n");
+  const resolve = (inner: string) =>
+    inner === "Target" ? { label: "Renamed target", href: "#concept:target" }
+      : inner === "Missing" ? { label: "Missing" }
+        : null;
+
+  it("keeps tables and code as written, and rewrites wikilinks in prose only", () => {
+    const content = [
+      table,
+      "",
+      "See [[Target]], [[Missing]] and [[Unknown]].",
+      "",
+      `${fence}md`,
+      "[[Target]]. Array [1].",
+      "a | b | c",
+      fence,
+    ].join("\n");
+    const { container } = render(
+      <ContentRenderer variant="detail" content={content} preserveMarkdown resolveWikilink={resolve} />,
+    );
+    expect(container.querySelector("table")).toHaveTextContent("alphabeta");
+    expect(screen.getByRole("link", { name: "Renamed target" })).toHaveAttribute("href", "#concept:target");
+    expect(container.querySelector("p")?.textContent).toBe("See Renamed target, Missing and [[Unknown]].");
+    expect(container.querySelector("pre code")?.textContent).toBe("[[Target]]. Array [1].\na | b | c\n");
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("does not reinterpret escaped brackets, embeds or existing Markdown links", () => {
+    render(
+      <ContentRenderer
+        variant="detail"
+        content={"\\[\\[Target]] ![[Target]] [literal [[Target]]](https://example.com)"}
+        preserveMarkdown
+        resolveWikilink={() => ({ label: "wrong", href: "#concept:wrong" })}
+      />,
+    );
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByRole("link")).toHaveAttribute("href", "https://example.com");
+    expect(screen.queryByText(/wrong/)).toBeNull();
+  });
+
+  it("still flattens pipe rows by default, so other readers are unchanged", () => {
+    const { container } = render(<ContentRenderer variant="detail" content={table} />);
+    expect(container.querySelector("table")).toBeNull();
+  });
+});
