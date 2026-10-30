@@ -1506,3 +1506,28 @@ describe("physical folder bridge", () => {
     expect(mockInvoke).toHaveBeenLastCalledWith("update_page_draft", { id: "draft", expectedVersion: 1, ...snapshot });
   });
 });
+
+describe('restorePage', () => {
+  it('sends the expected version and optional title to the restore command', async () => {
+    mockInvoke.mockResolvedValue({ id: 'p1', title: 'New', version: 4, status: 'active', projection_status: 'synced' });
+    await expect(tauri.restorePage('p1', 3, 'New')).resolves.toMatchObject({ version: 4 });
+    expect(mockInvoke).toHaveBeenCalledWith('restore_page', { id: 'p1', expectedVersion: 3, title: 'New' });
+  });
+
+  it('turns a daemon refusal into a typed error by its code', async () => {
+    mockInvoke.mockRejectedValue(
+      'HTTP POST /api/pages/p1/restore returned 409 Conflict: {"code":"page_title_taken","error":"page title already exists","current_version":3}',
+    );
+    const error = await tauri.restorePage('p1', 3).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(tauri.RestorePageApiError);
+    expect(error).toMatchObject({ code: 'page_title_taken', currentVersion: 3 });
+  });
+
+  it('leaves other failures untouched', async () => {
+    mockInvoke.mockRejectedValue('HTTP POST /api/pages/p1/restore returned 404 Not Found: {"error":"page not found"}');
+    await expect(tauri.restorePage('p1', 3)).rejects.toBe(
+      'HTTP POST /api/pages/p1/restore returned 404 Not Found: {"error":"page not found"}',
+    );
+    expect(tauri.parseRestorePageError('daemon offline')).toBeNull();
+  });
+});

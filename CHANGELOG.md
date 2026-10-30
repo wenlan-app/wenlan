@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.20.4](https://github.com/wenlan-app/wenlan/compare/v0.20.3...v0.20.4) (2026-10-30)
+
+
+### Features
+
+* **onboarding:** Obsidian-style first run with a read-only example wiki ([#1032](https://github.com/wenlan-app/wenlan/issues/1032)) ([16a548c](https://github.com/wenlan-app/wenlan/commit/16a548c6af425e2827ee7641d6049e31e97fba3b))
+
+
+### Bug Fixes
+
+* **pages:** delete pages that have a map; right-click menu for Recently used ([#1034](https://github.com/wenlan-app/wenlan/issues/1034)) ([f6ff881](https://github.com/wenlan-app/wenlan/commit/f6ff881c075bd78eb993736ea53c6c7233247480))
+* **updater:** install the latest release and restart owned services ([#1023](https://github.com/wenlan-app/wenlan/issues/1023)) ([f36db2f](https://github.com/wenlan-app/wenlan/commit/f36db2fe795525ee76b945dc5622c99d31b4f26c))
+* **windows:** harden source identity, paths, and service ownership ([#1031](https://github.com/wenlan-app/wenlan/issues/1031)) ([062a515](https://github.com/wenlan-app/wenlan/commit/062a5159246f1d7a8ee9b4e7927abb73f35fb190))
+
 ## [0.20.3](https://github.com/wenlan-app/wenlan/compare/v0.20.2...v0.20.3) (2026-10-28)
 
 

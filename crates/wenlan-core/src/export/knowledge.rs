@@ -4578,7 +4578,7 @@ fn projection_bytes_replaceable(
     let Ok(raw) = std::str::from_utf8(bytes) else {
         return false;
     };
-    let (fm, body) = crate::sources::obsidian::extract_frontmatter(raw);
+    let (fm, _) = crate::sources::obsidian::extract_frontmatter(raw);
     let owned = fm
         .get_str("origin_id")
         .map_or(baseline.is_some(), |id| id == page.id);
@@ -4586,9 +4586,16 @@ fn projection_bytes_replaceable(
     let unchanged = baseline.and_then(|entry| entry.content_sha256.as_deref())
         == Some(projection_digest(bytes).as_str());
     let rendered = render_markdown(page);
-    let (_, rendered_body) = crate::sources::obsidian::extract_frontmatter(&rendered);
-    let adopted = crate::export::provenance::canonicalize_page_body(body)
-        == crate::export::provenance::canonicalize_page_body(rendered_body);
+    // Boundary whitespace belongs to the author: decode with the watcher's
+    // exact projection decoder and the watcher's notion of an unchanged page,
+    // so this writer replaces exactly the files the watcher reads as holding
+    // this page's text. A looser (trim-based) match would overwrite authored
+    // indentation or leading blank lines; a stricter one would refuse to
+    // repair a file an editor only re-saved with other line endings.
+    let adopted = crate::export::provenance::same_page_text_ignoring_save_noise(
+        &crate::export::provenance::page_body_from_projection(raw),
+        &crate::export::provenance::page_body_from_projection(&rendered),
+    );
     owned && not_newer && (unchanged || adopted)
 }
 

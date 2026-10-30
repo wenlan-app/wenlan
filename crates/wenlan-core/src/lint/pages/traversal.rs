@@ -154,39 +154,43 @@ fn visit_entry(
                     *traversal.manifest_bytes = Some(bytes);
                 }
             }
-            let (frontmatter, body_digest) =
-                if scope == EntryScope::PageMarkdown && traversal.include_body_digests {
-                    if opened.len() > super::fs::DEEP_PAGE_BODY_MAX_BYTES
-                        || opened.len() > *traversal.body_bytes_remaining
-                    {
-                        return Err(PageFsError::BodyBudgetExceeded);
+            let (frontmatter, body_digest) = if scope == EntryScope::PageMarkdown
+                && traversal.include_body_digests
+            {
+                if opened.len() > super::fs::DEEP_PAGE_BODY_MAX_BYTES
+                    || opened.len() > *traversal.body_bytes_remaining
+                {
+                    return Err(PageFsError::BodyBudgetExceeded);
+                }
+                *traversal.body_bytes_remaining =
+                    (*traversal.body_bytes_remaining).saturating_sub(opened.len());
+                let mut bytes = Vec::new();
+                read_to_end_controlled(&mut file, &mut bytes, traversal.control)?;
+                let frontmatter = super::frontmatter::parse_frontmatter(bytes.as_slice())?;
+                let body_digest = match std::str::from_utf8(&bytes) {
+                    Ok(content) => {
+                        // The watcher's decoder and save-noise rule: a body
+                        // that starts with blank lines or was only re-saved
+                        // by an editor is not drift; a real edit is.
+                        use crate::export::provenance::{page_body_from_projection, page_text_key};
+                        let body = page_body_from_projection(content);
+                        Sha256::digest(page_text_key(&body).as_bytes()).into()
                     }
-                    *traversal.body_bytes_remaining =
-                        (*traversal.body_bytes_remaining).saturating_sub(opened.len());
-                    let mut bytes = Vec::new();
-                    read_to_end_controlled(&mut file, &mut bytes, traversal.control)?;
-                    let frontmatter = super::frontmatter::parse_frontmatter(bytes.as_slice())?;
-                    let body_digest = match std::str::from_utf8(&bytes) {
-                        Ok(content) => {
-                            let (_, body) = crate::sources::obsidian::extract_frontmatter(content);
-                            let canonical = crate::export::provenance::canonicalize_page_body(body);
-                            Sha256::digest(canonical.as_bytes()).into()
-                        }
-                        Err(_) => {
-                            let mut digest = Sha256::new();
-                            digest.update(b"wenlan-page-non-utf8-body-v1");
-                            digest.update(&bytes);
-                            digest.finalize().into()
-                        }
-                    };
-                    (frontmatter, Some(body_digest))
-                } else if scope == EntryScope::PageMarkdown {
-                    let frontmatter = read_frontmatter(file)?;
-                    traversal.control.check()?;
-                    (frontmatter, None)
-                } else {
-                    (Frontmatter::unparsed(), None)
+                    Err(_) => {
+                        let mut digest = Sha256::new();
+                        digest.update(b"wenlan-page-non-utf8-body-v1");
+                        digest.update(&bytes);
+                        digest.finalize().into()
+                    }
                 };
+                (frontmatter, Some(body_digest))
+            } else if scope == EntryScope::PageMarkdown {
+                let frontmatter = read_frontmatter(file)?;
+                traversal.control.check()?;
+                (frontmatter, None)
+            } else {
+                (Frontmatter::unparsed(), None)
+            };
             traversal.entries.push(page_entry(
                 &path,
                 EntryKind::File,
